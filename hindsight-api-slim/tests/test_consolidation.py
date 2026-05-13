@@ -1939,6 +1939,45 @@ def test_consolidation_prompt_observations_mission():
     assert spec in rendered
 
 
+def test_consolidation_prompt_explains_similarity():
+    """The prompt documents the new `similarity` field so the LLM can rely on it."""
+    from hindsight_api.engine.consolidation.prompts import build_batch_consolidation_prompt
+
+    prompt = build_batch_consolidation_prompt()
+    assert "similarity" in prompt
+    # Concrete thresholds the LLM is told to act on must be in the prompt;
+    # if these constants change, the test should change deliberately.
+    assert "0.85" in prompt
+    assert "0.95" in prompt
+
+
+def test_build_observations_for_llm_emits_similarity_and_sorts():
+    """_build_observations_for_llm copies MemoryFact.similarity through and orders by it desc.
+
+    Sort order matters: the LLM's token-attention bias favours leading items,
+    so the strongest merge candidate must come first to nudge UPDATE over CREATE.
+    """
+    from hindsight_api.engine.consolidation.consolidator import _build_observations_for_llm
+    from hindsight_api.engine.response_models import MemoryFact
+
+    obs_low = MemoryFact(id="o-low", text="Unrelated.", fact_type="observation", similarity=0.31)
+    obs_high = MemoryFact(id="o-high", text="Near-duplicate.", fact_type="observation", similarity=0.972)
+    obs_none = MemoryFact(id="o-none", text="No similarity attached.", fact_type="observation")
+    obs_mid = MemoryFact(id="o-mid", text="Related.", fact_type="observation", similarity=0.65)
+
+    # Input order is deliberately scrambled and includes a None.
+    result = _build_observations_for_llm([obs_low, obs_high, obs_none, obs_mid], {})
+
+    ids_in_order = [r["id"] for r in result]
+    assert ids_in_order == ["o-high", "o-mid", "o-low", "o-none"]
+
+    assert result[0]["similarity"] == 0.972
+    assert result[1]["similarity"] == 0.65
+    assert result[2]["similarity"] == 0.31
+    # Absent score must not surface as 0 — that would falsely tell the LLM the obs is unrelated.
+    assert "similarity" not in result[3]
+
+
 def test_observations_mission_config():
     """Test that observations_mission is loaded from env and exposed as configurable."""
     import os

@@ -179,6 +179,14 @@ class MemoryFact(BaseModel):
         None,
         description="IDs of source facts this observation was derived from (observation type only, when source_facts is enabled)",
     )
+    similarity: float | None = Field(
+        None,
+        description=(
+            "Cosine similarity (0–1) to the query embedding when this fact was "
+            "surfaced via semantic recall. None when the fact did not arrive "
+            "through a semantic retrieval path."
+        ),
+    )
 
 
 class ChunkInfo(BaseModel):

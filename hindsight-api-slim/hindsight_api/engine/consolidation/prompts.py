@@ -36,6 +36,11 @@ Each observation includes:
 - id: unique identifier for updating
 - text: the observation content
 - proof_count: number of supporting memories
+- similarity (when present): cosine similarity (0–1) of this observation to
+  the embedding used to recall it. Higher = more semantically related to the
+  facts being consolidated. Observations with similarity ≥ 0.85 are very
+  likely the SAME facet — strongly prefer UPDATE. ≥ 0.95 should almost
+  always UPDATE unless the new fact is structurally distinct.
 - occurred_start/occurred_end: temporal range of source facts
 - source_memories: array of supporting facts with their text and dates
 

@@ -1191,7 +1191,18 @@ def _build_observations_for_llm(
     observations: "list[MemoryFact]",
     source_facts: "dict[str, MemoryFact]",
 ) -> list[dict[str, Any]]:
-    """Serialize MemoryFact observations into dicts for the consolidation LLM prompt."""
+    """Serialize MemoryFact observations into dicts for the consolidation LLM prompt.
+
+    Observations are ordered by semantic similarity descending so the strongest
+    merge candidates appear first — token-attention bias in the LLM favours
+    leading items, which nudges the model toward UPDATE on the closest
+    existing observation instead of CREATE.
+    """
+    observations = sorted(
+        observations,
+        key=lambda o: o.similarity if o.similarity is not None else 0.0,
+        reverse=True,
+    )
     obs_list = []
     for obs in observations:
         obs_data: dict[str, Any] = {
@@ -1199,6 +1210,8 @@ def _build_observations_for_llm(
             "text": obs.text,
             "proof_count": len(obs.source_fact_ids or []) or 1,
         }
+        if obs.similarity is not None:
+            obs_data["similarity"] = round(obs.similarity, 3)
         if obs.occurred_start:
             obs_data["occurred_start"] = obs.occurred_start
         if obs.occurred_end:
