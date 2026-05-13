@@ -285,7 +285,7 @@
       "name": "ContextForge",
       "description": "Register Hindsight as an MCP backend in ContextForge gateway. Gives every connected AI tool access to long-term memory via a unified MCP hub.",
       "type": "community",
-      "by": "omarouldali",
+      "by": "ooa-andera",
       "category": "mcp",
       "link": "/sdks/integrations/context-forge",
       "icon": "/img/icons/mcp.png"
