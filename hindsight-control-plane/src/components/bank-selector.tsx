@@ -62,6 +62,11 @@ function formatCompact(n: number): string {
   return n.toString();
 }
 
+// Pads date-only Event Date input ("YYYY-MM-DD") with midnight so the API never sees an ambiguous value.
+function toIsoTimestamp(value: string): string {
+  return value.includes("T") ? value : `${value}T00:00:00`;
+}
+
 function formatTimeAgo(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();
   const seconds = Math.floor(diff / 1000);
@@ -329,7 +334,7 @@ function BankSelectorInner() {
 
       const perFileMeta = filesMetadata.map((meta) => ({
         ...(meta.context && { context: meta.context }),
-        ...(meta.timestamp && { timestamp: meta.timestamp + ":00" }),
+        ...(meta.timestamp && { timestamp: toIsoTimestamp(meta.timestamp) }),
         ...(meta.document_id && { document_id: meta.document_id }),
         ...(meta.tags && {
           tags: meta.tags
@@ -389,7 +394,7 @@ function BankSelectorInner() {
         strategy?: string;
       } = { content: docContent };
       if (docContext) item.context = docContext;
-      if (docEventDate) item.timestamp = docEventDate + ":00";
+      if (docEventDate) item.timestamp = toIsoTimestamp(docEventDate);
       if (docDocumentId) item.document_id = docDocumentId;
       if (parsedTags.length > 0) item.tags = parsedTags;
       if (docObservationScopes === "per_tag") {
@@ -873,7 +878,7 @@ function BankSelectorInner() {
                                                 Event Date
                                               </label>
                                               <Input
-                                                type="datetime-local"
+                                                type="date"
                                                 value={meta.timestamp}
                                                 onChange={(e) =>
                                                   updateFileMeta(index, "timestamp", e.target.value)
@@ -1056,7 +1061,7 @@ function BankSelectorInner() {
                               Event Date
                             </label>
                             <Input
-                              type="datetime-local"
+                              type="date"
                               value={docEventDate}
                               onChange={(e) => setDocEventDate(e.target.value)}
                               className="text-foreground"

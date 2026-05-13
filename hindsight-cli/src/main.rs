@@ -591,6 +591,12 @@ enum MemoryCommands {
         #[arg(short = 'c', long)]
         context: Option<String>,
 
+        /// When the content occurred (ISO 8601 datetime, e.g. 2024-01-15T10:30:00Z
+        /// or 2024-01-15). Pass "unset" to store without a timestamp.
+        /// Omit to default to now.
+        #[arg(short = 't', long)]
+        timestamp: Option<String>,
+
         /// Queue for background processing
         #[arg(long)]
         r#async: bool,
@@ -1434,6 +1440,7 @@ fn run() -> Result<()> {
                 content,
                 doc_id,
                 context,
+                timestamp,
                 r#async,
                 document_tags,
             } => commands::memory::retain(
@@ -1442,6 +1449,7 @@ fn run() -> Result<()> {
                 content,
                 doc_id,
                 context,
+                timestamp,
                 r#async,
                 document_tags,
                 verbose,
