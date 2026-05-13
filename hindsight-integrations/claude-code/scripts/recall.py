@@ -110,7 +110,11 @@ def main():
 
     api_token = config.get("hindsightApiToken")
     try:
-        client = HindsightClient(api_url, api_token)
+        client = HindsightClient(
+            api_url,
+            api_token,
+            request_timeout_override=config.get("requestTimeoutSeconds"),
+        )
     except ValueError as e:
         print(f"[Hindsight] Invalid API URL: {e}", file=sys.stderr)
         return

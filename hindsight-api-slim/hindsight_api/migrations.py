@@ -478,6 +478,9 @@ def _migrate_table_embedding_dimension(
     logger.info(f"Altering {table_name}.embedding column dimension from {current_dim} to {required_dimension}")
 
     # Drop existing vector index (works for HNSW, DiskANN, vchordrq, and ScaNN)
+    # The EXCEPTION block handles 'could not open relation with OID' errors that
+    # occur when concurrent sessions drop schemas (e.g. pytest-xdist workers),
+    # invalidating pg_indexes OID references mid-cursor-iteration.
     conn.execute(
         text(f"""
             DO $$
@@ -492,6 +495,9 @@ def _migrate_table_embedding_dimension(
                 LOOP
                     EXECUTE 'DROP INDEX IF EXISTS {schema_name}.' || idx_name;
                 END LOOP;
+            EXCEPTION WHEN internal_error THEN
+                -- Stale OID from concurrent schema drop; nothing to drop anyway
+                NULL;
             END $$;
         """)
     )

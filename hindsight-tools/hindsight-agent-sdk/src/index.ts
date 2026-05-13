@@ -117,8 +117,15 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
         required: ["page_id"],
       },
       async execute(params: Record<string, unknown>) {
-        const result = await client.getMentalModel(bankId, params.page_id as string);
-        return ok(result);
+        const resp = await sdk.getMentalModel({
+          client: lowLevel,
+          path: { bank_id: bankId, mental_model_id: params.page_id as string },
+          query: { detail: "content" },
+        });
+        if (resp.error) {
+          throw new Error(`agent_knowledge_get_page failed: ${JSON.stringify(resp.error)}`);
+        }
+        return ok(resp.data);
       },
     },
     {

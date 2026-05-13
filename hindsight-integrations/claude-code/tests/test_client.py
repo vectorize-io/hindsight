@@ -212,6 +212,91 @@ class TestHindsightClientHealthCheck:
         assert call_count == 3
 
 
+class TestRequestTimeoutOverride:
+    """The override (passed via constructor) replaces the per-call timeout
+    argument that recall/retain/request would otherwise use. When unset,
+    the original per-call default is preserved (issue #1575)."""
+
+    def test_override_replaces_recall_default(self):
+        c = HindsightClient("http://localhost:9077", request_timeout_override=60)
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["timeout"] = timeout
+            return FakeResp({"results": []})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.recall("bank", "query")
+
+        assert captured["timeout"] == 60
+
+    def test_override_replaces_retain_default(self):
+        c = HindsightClient("http://localhost:9077", request_timeout_override=60)
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["timeout"] = timeout
+            return FakeResp({})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.retain("bank", "content")
+
+        assert captured["timeout"] == 60
+
+    def test_override_replaces_explicit_request_timeout(self):
+        c = HindsightClient("http://localhost:9077", request_timeout_override=60)
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["timeout"] = timeout
+            return FakeResp({})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.request("GET", "/v1/anything", timeout=10)
+
+        assert captured["timeout"] == 60
+
+    def test_no_override_preserves_recall_default(self):
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["timeout"] = timeout
+            return FakeResp({"results": []})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.recall("bank", "query")
+
+        assert captured["timeout"] == 10
+
+    def test_no_override_preserves_retain_default(self):
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["timeout"] = timeout
+            return FakeResp({})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.retain("bank", "content")
+
+        assert captured["timeout"] == 15
+
+    def test_override_does_not_affect_health_check(self):
+        c = HindsightClient("http://localhost:9077", request_timeout_override=60)
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["timeout"] = timeout
+            return FakeResp({}, status=200)
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            with patch("time.sleep"):
+                c.health_check()
+
+        assert captured["timeout"] == 5
+
+
 class TestHindsightClientSetBankMission:
     def test_patches_config_endpoint(self):
         c = HindsightClient("http://localhost:9077")

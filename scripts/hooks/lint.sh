@@ -33,8 +33,14 @@ run_task() {
 
 echo "  Syncing Python dependencies..."
 # Run uv sync first to avoid race conditions when multiple uv run commands
-# try to reinstall local packages in parallel (e.g., after version bump)
-uv sync --quiet
+# try to reinstall local packages in parallel (e.g., after version bump).
+# In CI, use --frozen to avoid re-resolving the lockfile (which would cause
+# verify-generated-files to report spurious diffs on Dependabot PRs).
+if [ -n "$CI" ]; then
+    uv sync --frozen --quiet
+else
+    uv sync --quiet
+fi
 
 echo "  Running lints in parallel..."
 

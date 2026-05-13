@@ -71,6 +71,17 @@ class TestLoadConfig:
         cfg = load_config()
         assert cfg["apiPort"] == 9999
 
+    def test_request_timeout_default_none(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        cfg = load_config()
+        assert cfg["requestTimeoutSeconds"] is None
+
+    def test_request_timeout_env_override(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        monkeypatch.setenv("HINDSIGHT_REQUEST_TIMEOUT_SECONDS", "60")
+        cfg = load_config()
+        assert cfg["requestTimeoutSeconds"] == 60
+
     def test_invalid_settings_json_falls_back_to_defaults(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
         (tmp_path / "settings.json").write_text("not valid json{{")
