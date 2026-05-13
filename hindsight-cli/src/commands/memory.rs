@@ -3,7 +3,9 @@ use std::fs;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
-use crate::api::{ApiClient, MemoryItem, RecallRequest, ReflectRequest, RetainRequest};
+use crate::api::{
+    ApiClient, MemoryItem, MemoryItemTimestamp, RecallRequest, ReflectRequest, RetainRequest,
+};
 use crate::config;
 use crate::output::{self, OutputFormat};
 use crate::ui;
@@ -450,6 +452,15 @@ pub fn retain(
         Some(ui::create_spinner("Retaining memory..."))
     } else {
         None
+    };
+
+    // MemoryItem.timestamp is a progenitor anyOf enum; round-trip through JSON to pick the matching variant.
+    let timestamp = match timestamp {
+        Some(s) => Some(
+            serde_json::from_value::<MemoryItemTimestamp>(serde_json::Value::String(s.clone()))
+                .with_context(|| format!("invalid --timestamp value: {:?}", s))?,
+        ),
+        None => None,
     };
 
     let item = MemoryItem {
