@@ -2972,7 +2972,16 @@ def _register_routes(app: FastAPI):
     async def api_graph(
         bank_id: str,
         type: str | None = None,
-        limit: int = 1000,
+        limit: int = Query(
+            200,
+            ge=1,
+            description=(
+                "Max nodes to return. Silently clamped to 200 server-side because "
+                "edge count scales quadratically with node count on dense banks and "
+                "the Control Plane UI cannot parse responses past V8's ~512 MiB "
+                "string limit. Requests above 200 are clamped, not rejected."
+            ),
+        ),
         q: str | None = None,
         tags: list[str] | None = Query(None),
         tags_match: str = "all_strict",
@@ -2981,13 +2990,11 @@ def _register_routes(app: FastAPI):
         request_context: RequestContext = Depends(get_request_context),
     ):
         """Get graph data from database, filtered by bank_id and optionally by type."""
-        # Edge count scales quadratically with node count for densely-linked banks.
-        # Empirical measurement on a 14k-memory bank: limit=200 → 23 MiB,
-        # limit=500 → 147 MiB, limit=1000 → 596 MiB. The Control Plane fetches
-        # via Next.js which deserializes the response as a single JS string,
-        # and V8 caps string length at ~512 MiB. Cap server-side so giant banks
-        # remain visualizable instead of erroring out the UI entirely.
-        limit = min(max(1, limit), 200)
+        # Empirical sizing on a 14k-memory bank: limit=200 → 23 MiB,
+        # limit=500 → 147 MiB, limit=1000 → 596 MiB (past V8's ~512 MiB
+        # string cap). Clamp silently rather than 422 so existing UI/SDK
+        # callers passing limit>200 keep working with a smaller response.
+        limit = min(limit, 200)
         try:
             data = await app.state.memory.get_graph_data(
                 bank_id,
