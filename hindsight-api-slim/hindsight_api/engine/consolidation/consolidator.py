@@ -250,43 +250,97 @@ class _BatchExecutionResult:
     elapsed: float
 
 
-def _apply_action_to_stats(stats: dict[str, int], result: dict[str, Any]) -> dict[str, int]:
-    """Apply one consolidation result to ``stats`` and return per-batch counters.
+@dataclass
+class _ResultDelta:
+    """Per-result counters returned by ``_record_result`` for per-batch log lines."""
 
-    Returns a small dict of ``{created, updated, skipped, failed}`` deltas so
-    callers can both update aggregate stats and emit per-batch log lines from a
-    single pass over results.
+    created: int = 0
+    updated: int = 0
+    merged: int = 0
+    skipped: int = 0
+    failed: int = 0
+
+    def __iadd__(self, other: "_ResultDelta") -> "_ResultDelta":
+        self.created += other.created
+        self.updated += other.updated
+        self.merged += other.merged
+        self.skipped += other.skipped
+        self.failed += other.failed
+        return self
+
+
+def _record_result(stats: dict[str, int], result: dict[str, Any]) -> _ResultDelta:
+    """Apply one consolidation result to aggregate ``stats`` and return per-result deltas.
+
+    Both mutates ``stats`` and returns a delta so callers can build per-batch
+    counters in a single pass over results.
     """
-    counters = {"created": 0, "updated": 0, "skipped": 0, "failed": 0}
+    delta = _ResultDelta()
     stats["memories_processed"] += 1
     action = result.get("action")
     if action == "created":
         stats["observations_created"] += 1
         stats["actions_executed"] += 1
-        counters["created"] = 1
+        delta.created = 1
     elif action == "updated":
         stats["observations_updated"] += 1
         stats["actions_executed"] += 1
-        counters["updated"] = 1
+        delta.updated = 1
     elif action == "merged":
         stats["observations_merged"] += 1
         stats["actions_executed"] += 1
+        delta.merged = 1
     elif action == "multiple":
         c = result.get("created", 0)
         u = result.get("updated", 0)
+        m = result.get("merged", 0)
         stats["observations_created"] += c
         stats["observations_updated"] += u
-        stats["observations_merged"] += result.get("merged", 0)
+        stats["observations_merged"] += m
         stats["actions_executed"] += result.get("total_actions", 0)
-        counters["created"] = c
-        counters["updated"] = u
+        delta.created = c
+        delta.updated = u
+        delta.merged = m
     elif action == "skipped":
         stats["skipped"] += 1
-        counters["skipped"] = 1
+        delta.skipped = 1
     elif action == "failed":
         stats["memories_failed"] += 1
-        counters["failed"] = 1
-    return counters
+        delta.failed = 1
+    return delta
+
+
+def _merge_pass_result(existing: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
+    """Combine two per-memory results from sibling multi-pass consolidation passes.
+
+    ``skipped`` is the weak default — any non-skipped pass wins. Two non-skipped
+    passes combine into ``"multiple"`` with summed created/updated counts.
+    """
+    existing_action = existing.get("action")
+    new_action = new.get("action")
+    if existing_action == "skipped":
+        return new
+    if new_action == "skipped":
+        return existing
+
+    existing_created = existing.get("created", 1 if existing_action == "created" else 0)
+    existing_updated = existing.get("updated", 1 if existing_action == "updated" else 0)
+    new_created = new.get("created", 1 if new_action == "created" else 0)
+    new_updated = new.get("updated", 1 if new_action == "updated" else 0)
+    return {
+        "action": "multiple",
+        "created": existing_created + new_created,
+        "updated": existing_updated + new_updated,
+        "merged": 0,
+        "total_actions": existing_created + existing_updated + new_created + new_updated,
+    }
+
+
+async def _is_op_cancelled(memory_engine: "MemoryEngine", operation_id: str | None) -> bool:
+    """True when ``operation_id`` is set and its async_operations row is no longer alive."""
+    if not operation_id:
+        return False
+    return not await memory_engine._check_op_alive(operation_id)
 
 
 def _resolve_obs_tags_list(memory_tags: list[str], scope_spec: Any) -> list[list[str]] | None:
@@ -345,9 +399,8 @@ async def _execute_one_llm_batch(
 
     pending: list[list[dict[str, Any]]] = [llm_batch]
     while pending:
-        # Per-sub-batch cancellation: a deleted bank is honored mid-wave rather
-        # than waiting for the whole gather to drain.
-        if operation_id and not await memory_engine._check_op_alive(operation_id):
+        # Honor a deleted bank mid-wave instead of waiting for gather to drain.
+        if await _is_op_cancelled(memory_engine, operation_id):
             break
 
         sub_batch = pending.pop(0)
@@ -357,7 +410,6 @@ async def _execute_one_llm_batch(
             sub_deleted: int = 0
             sub_llm_failed = False
             if obs_tags_list:
-                # Multi-pass: run one observation consolidation pass per tag set
                 sub_results: list[dict[str, Any]] = []
                 for obs_tags in obs_tags_list:
                     pass_results, pass_deleted, pass_failed = await _process_memory_batch(
@@ -373,33 +425,11 @@ async def _execute_one_llm_batch(
                     )
                     sub_deleted += pass_deleted
                     sub_llm_failed = sub_llm_failed or pass_failed
-                    # Merge results: prefer non-skipped actions
                     if not sub_results:
                         sub_results = pass_results
                     else:
-                        for i, (existing, new) in enumerate(zip(sub_results, pass_results)):
-                            if existing.get("action") == "skipped" and new.get("action") != "skipped":
-                                sub_results[i] = new
-                            elif existing.get("action") != "skipped" and new.get("action") != "skipped":
-                                # Both did something — combine into "multiple"
-                                existing_created = existing.get(
-                                    "created", 1 if existing.get("action") == "created" else 0
-                                )
-                                existing_updated = existing.get(
-                                    "updated", 1 if existing.get("action") == "updated" else 0
-                                )
-                                new_created = new.get("created", 1 if new.get("action") == "created" else 0)
-                                new_updated = new.get("updated", 1 if new.get("action") == "updated" else 0)
-                                total = existing_created + existing_updated + new_created + new_updated
-                                sub_results[i] = {
-                                    "action": "multiple",
-                                    "created": existing_created + new_created,
-                                    "updated": existing_updated + new_updated,
-                                    "merged": 0,
-                                    "total_actions": total,
-                                }
+                        sub_results = [_merge_pass_result(e, n) for e, n in zip(sub_results, pass_results)]
             else:
-                # Normal single pass using the memory's own tags
                 sub_results, sub_deleted, sub_llm_failed = await _process_memory_batch(
                     conn=conn,
                     memory_engine=memory_engine,
@@ -592,14 +622,13 @@ async def run_consolidation_job(
         # The bound here stacks on top of the global LLM semaphore in
         # llm_wrapper.py — effective concurrency is min(this, the global cap).
         sem = asyncio.Semaphore(max(1, config.consolidation_llm_max_concurrent))
-        start_num = llm_batch_num  # captured because llm_batch_num is reassigned below
 
-        async def _bounded_batch(idx: int, batch: list[dict[str, Any]]) -> _BatchExecutionResult:
+        async def _bounded_batch(batch_num: int, batch: list[dict[str, Any]]) -> _BatchExecutionResult:
             async with sem:
                 return await _execute_one_llm_batch(
                     bank_id=bank_id,
                     llm_batch=batch,
-                    llm_batch_num=start_num + idx + 1,
+                    llm_batch_num=batch_num,
                     pool=pool,
                     memory_engine=memory_engine,
                     llm_config=llm_config,
@@ -608,7 +637,9 @@ async def run_consolidation_job(
                     operation_id=operation_id,
                 )
 
-        batch_results = await asyncio.gather(*(_bounded_batch(i, batch) for i, batch in enumerate(llm_batches)))
+        batch_results = await asyncio.gather(
+            *(_bounded_batch(num, batch) for num, batch in enumerate(llm_batches, start=llm_batch_num + 1))
+        )
         llm_batch_num += len(llm_batches)
 
         # Single DB commit for all succeeded/failed IDs across the wave.
@@ -636,11 +667,9 @@ async def run_consolidation_job(
             consolidated_tags.update(batch_result.tags)
             stats["observations_deleted"] += batch_result.deleted
 
-            batch_counters = {"created": 0, "updated": 0, "skipped": 0, "failed": 0}
+            batch_counters = _ResultDelta()
             for result in batch_result.results:
-                deltas = _apply_action_to_stats(stats, result)
-                for k, v in deltas.items():
-                    batch_counters[k] += v
+                batch_counters += _record_result(stats, result)
 
             timing_parts = [
                 f"{k}={batch_result.perf.timings[k]:.3f}s"
@@ -648,23 +677,25 @@ async def run_consolidation_job(
                 if k in batch_result.perf.timings
             ]
             input_tokens = int(batch_result.perf.total_prompt_chars / 4)
-            failed_part = f" failed={batch_counters['failed']}" if batch_counters["failed"] else ""
+            failed_part = f" failed={batch_counters.failed}" if batch_counters.failed else ""
+            merged_part = f" merged={batch_counters.merged}" if batch_counters.merged else ""
             logger.info(
                 f"[CONSOLIDATION] bank={bank_id} llm_batch #{batch_result.batch_num}"
                 f" ({batch_result.memories_count} memories, {batch_result.perf.llm_calls} llm calls)"
                 f" | {stats['memories_processed']}/{total_count} processed"
                 f" | {', '.join(timing_parts)}"
-                f" | created={batch_counters['created']}"
-                f" updated={batch_counters['updated']}"
-                f" skipped={batch_counters['skipped']}"
+                f" | created={batch_counters.created}"
+                f" updated={batch_counters.updated}"
+                f"{merged_part}"
+                f" skipped={batch_counters.skipped}"
                 f"{failed_part}"
                 f" | input_tokens=~{input_tokens}"
-                f" | avg={batch_result.elapsed / (batch_result.memories_count or 1):.3f}s/memory"
+                f" | avg={batch_result.elapsed / batch_result.memories_count:.3f}s/memory"
             )
 
         # End-of-wave checkpoint (per-sub-batch checks inside _execute_one_llm_batch
         # already shorten the in-wave cancellation window).
-        if operation_id and not await memory_engine._check_op_alive(operation_id):
+        if await _is_op_cancelled(memory_engine, operation_id):
             logger.info(
                 f"[CONSOLIDATION] bank={bank_id} operation {operation_id} cancelled (bank deleted), stopping early"
             )
