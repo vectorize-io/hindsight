@@ -226,6 +226,7 @@ class RecallResult(BaseModel):
     source_fact_ids: list[str] | None = (
         None  # IDs of source facts (observation type only, when source_facts is enabled)
     )
+    similarity: float | None = None  # Cosine similarity to the query (semantic recall only; None otherwise)
 
 
 class EntityObservationResponse(BaseModel):
@@ -3233,6 +3234,7 @@ def _register_routes(app: FastAPI):
                     chunk_id=fact.chunk_id,
                     tags=fact.tags,
                     source_fact_ids=fact.source_fact_ids,
+                    similarity=fact.similarity,
                 )
 
             recall_results = [_fact_to_result(fact) for fact in core_result.results]
