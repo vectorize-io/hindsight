@@ -2755,6 +2755,18 @@ class MemoryEngine(MemoryEngineInterface):
         budget_config_dict = await self._config_resolver.get_bank_config(bank_id, request_context)
         thinking_budget = _resolve_thinking_budget(budget_config_dict, budget, max_tokens)
 
+        # Build effective retrieval weights: config defaults + per-request overrides
+        effective_weights: dict[str, float] = {
+            "semantic": float(budget_config_dict.get("recall_weight_semantic", 1.0)),
+            "bm25": float(budget_config_dict.get("recall_weight_bm25", 1.0)),
+            "graph": float(budget_config_dict.get("recall_weight_graph", 1.0)),
+            "temporal": float(budget_config_dict.get("recall_weight_temporal", 1.0)),
+        }
+        if retrieval_weights:
+            effective_weights.update(retrieval_weights)
+        # Only pass weights if any differ from default (1.0)
+        rrf_weights = effective_weights if any(w != 1.0 for w in effective_weights.values()) else None
+
         # Log recall start with tags if present (skip if quiet mode for internal operations)
         if not _quiet:
             tags_info = f", tags={tags} ({tags_match})" if tags else ""
@@ -2808,6 +2820,7 @@ class MemoryEngine(MemoryEngineInterface):
                             include_source_facts=include_source_facts,
                             max_source_facts_tokens=max_source_facts_tokens,
                             max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
+                            rrf_weights=rrf_weights,
                         )
                         break  # Success - exit retry loop
                     except Exception as e:
@@ -2939,6 +2952,7 @@ class MemoryEngine(MemoryEngineInterface):
         include_source_facts: bool = False,
         max_source_facts_tokens: int = 4096,
         max_source_facts_tokens_per_observation: int = -1,
+        rrf_weights: dict[str, float] | None = None,
     ) -> RecallResultModel:
         """
         Search implementation with modular retrieval and reranking.
@@ -3254,19 +3268,6 @@ class MemoryEngine(MemoryEngineInterface):
             # Step 3: Merge with RRF
             step_start = time.time()
             from .search.fusion import reciprocal_rank_fusion
-
-            # Build effective retrieval weights: config defaults + per-request overrides
-            effective_weights: dict[str, float] = {
-                "semantic": float(budget_config_dict.get("recall_weight_semantic", 1.0)),
-                "bm25": float(budget_config_dict.get("recall_weight_bm25", 1.0)),
-                "graph": float(budget_config_dict.get("recall_weight_graph", 1.0)),
-                "temporal": float(budget_config_dict.get("recall_weight_temporal", 1.0)),
-            }
-            if retrieval_weights:
-                effective_weights.update(retrieval_weights)
-
-            # Only pass weights to RRF if any differ from default (1.0)
-            rrf_weights = effective_weights if any(w != 1.0 for w in effective_weights.values()) else None
 
             fusion_span = tracer_otel.start_span("hindsight.recall_fusion")
             fusion_span.set_attribute("hindsight.bank_id", bank_id)
