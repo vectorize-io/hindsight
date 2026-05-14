@@ -1377,7 +1377,7 @@ wheels = [
 
 [[package]]
 name = "smolagents"
-version = "1.24.0"
+version = "1.25.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub" },
@@ -1387,9 +1387,9 @@ dependencies = [
     { name = "requests" },
     { name = "rich" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0a/1c/8d8e7f39f3586dc85a7f96681b08b7c1cfbd734b258a025f368632f2d666/smolagents-1.24.0.tar.gz", hash = "sha256:4d5028ffbd72aca85fb2e8daac52d03fb7d4290a9bf99dbc311dd65980f6b5de", size = 225246, upload-time = "2026-01-16T05:37:04.156Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/44/b0/bb21276a171d99910649da5fd54f450033135858caf63257532bbac7b7fe/smolagents-1.25.0.tar.gz", hash = "sha256:f394a65cb1de76c5938624ca8ef56573460f55a9ab517c2a4b6c2c4dbc932228", size = 242056, upload-time = "2026-05-14T11:36:18.356Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/76/7a/461ead649c088d30f7847ef1c70f245a9c188381ed09a264633831050497/smolagents-1.24.0-py3-none-any.whl", hash = "sha256:54853759d07a92a939f1ff59238b757fb1a153204c90b69324c8e9709025aa86", size = 155727, upload-time = "2026-01-16T05:37:02.903Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/f9/8e3c92bdf5310c307d3d1ec105e8a6677c34b9c85650facc890569395efa/smolagents-1.25.0-py3-none-any.whl", hash = "sha256:fbb6716ef9ff164c9ca6238d8bd2559736c9e171a21443e2c61c400d443bdcde", size = 164726, upload-time = "2026-05-14T11:36:16.367Z" },
 ]
 
 [[package]]
