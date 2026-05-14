@@ -696,7 +696,16 @@ class TestMentalModelHistory:
     async def test_history_snapshots_previous_reflect_response(
         self, memory: MemoryEngine, request_context
     ):
-        """Each history entry snapshots the reflect_response that produced previous_content."""
+        """Each history entry stores only the slim {based_on: ...} slice of
+        previous_reflect_response.
+
+        Rationale: the only consumer of `previous_reflect_response` in history
+        is the control-plane UI's "based_on diff" view. Storing the full reflect
+        response (including `text`, fact bodies, scoring) made each UPDATE
+        rewrite ~10-20 MB of TOAST per refresh and prevented HOT updates. The
+        slim shape keeps row size bounded so HOT updates apply and dead tuples
+        self-clean inline.
+        """
         bank_id = f"test-mm-history-reflect-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
@@ -728,11 +737,52 @@ class TestMentalModelHistory:
 
         history = await memory.get_mental_model_history(bank_id, mm["id"], request_context=request_context)
         assert len(history) == 2
-        # Most recent first: replacing v2 snapshotted rr_v1 (the reflect that produced v2).
+        # Most recent first: replacing v2 snapshotted rr_v1's based_on (the only slice
+        # the UI consumes). The bulky `text` and `mental_models` fields are dropped.
         assert history[0]["previous_content"] == "v2"
-        assert history[0]["previous_reflect_response"] == rr_v1
+        assert history[0]["previous_reflect_response"] == {"based_on": rr_v1["based_on"]}
         # The first update replaced v1, which had no reflect_response stored yet.
         assert history[1]["previous_content"] == "v1"
+        assert history[1]["previous_reflect_response"] is None
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_history_snapshots_omit_reflect_response_when_based_on_missing(
+        self, memory: MemoryEngine, request_context
+    ):
+        """If a reflect_response has no `based_on` (older snapshots, malformed
+        payloads), the slim path stores None rather than an empty shell."""
+        bank_id = f"test-mm-history-no-based-on-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Test Model",
+            source_query="What is the test?",
+            content="v1",
+            request_context=request_context,
+        )
+
+        # reflect_response with no based_on field
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            content="v2",
+            reflect_response={"text": "v1", "mental_models": []},
+            request_context=request_context,
+        )
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            content="v3",
+            reflect_response={"text": "v2", "based_on": {}},
+            request_context=request_context,
+        )
+
+        history = await memory.get_mental_model_history(bank_id, mm["id"], request_context=request_context)
+        # First (most recent): had based_on={} → stored as {"based_on": {}}
+        assert history[0]["previous_reflect_response"] == {"based_on": {}}
+        # Second: had no based_on field → stored as None
         assert history[1]["previous_reflect_response"] is None
 
         await memory.delete_bank(bank_id, request_context=request_context)

@@ -765,7 +765,7 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` | Max candidates to rerank per recall (RRF pre-filters the rest) | `300` |
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_CONCURRENCY` | Max concurrent mental model refreshes | `8` |
 | `HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY` | Track history of content changes to each mental model (previous content + timestamp). Disable to reduce storage if audit trails are not needed. | `true` |
-| `HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES` | Max entries retained in the per-mental-model history jsonb array. Older entries are dropped at write time. Prevents the array from crossing Postgres's hard 256MB jsonb size limit (which would otherwise make further UPDATEs to the row fail with SQLSTATE 54000). | `50` |
+| `HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES` | Max entries retained in the per-mental-model history jsonb array. Older entries are dropped at write time. Prevents the array from crossing Postgres's hard 256MB jsonb size limit (which would otherwise make further UPDATEs to the row fail with SQLSTATE 54000). Each entry stores only the slim `{based_on}` slice of the prior `reflect_response` (the only field consumed by the control-plane UI's history view) so per-row size stays bounded and HOT updates apply. | `50` |
 
 #### Graph Retrieval Algorithm
 

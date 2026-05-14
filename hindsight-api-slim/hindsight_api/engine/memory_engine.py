@@ -7980,18 +7980,29 @@ class MemoryEngine(MemoryEngineInterface):
                 updates.append("last_refreshed_at = NOW()")
                 # Record history entry with the previous content.
                 #
-                # Cap the array to the most recent N entries at write time. Each
-                # entry snapshots previous_reflect_response, which can be hundreds
-                # of KB; without a cap, sustained refresh load grows the jsonb
-                # array unboundedly until it crosses Postgres's hard 256MB jsonb
-                # limit and the UPDATE fails with SQLSTATE 54000, making the row
-                # permanently un-writable until manually trimmed.
+                # Cap the array to the most recent N entries at write time
+                # (see HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES).
+                #
+                # Each entry stores only the slim slice of previous_reflect_response
+                # that consumers actually read: `based_on` (the fact references that
+                # backed that version). The full reflect_response can be hundreds of
+                # KB once `text`, fact bodies, scoring, and embeddings are included;
+                # storing the full payload made each UPDATE rewrite ~10-20 MB of TOAST
+                # per refresh, which prevented HOT updates and accumulated dead
+                # tuples faster than autovacuum could reclaim them. The slim shape
+                # keeps per-row size in the ~hundreds-of-KB range, which fits in a
+                # single heap page and re-enables HOT updates.
                 if get_config().enable_mental_model_history:
+                    slim_reflect_response: dict[str, Any] | None = None
+                    if previous_reflect_response is not None:
+                        based_on = previous_reflect_response.get("based_on")
+                        if based_on is not None:
+                            slim_reflect_response = {"based_on": based_on}
                     history_entry = json.dumps(
                         [
                             {
                                 "previous_content": previous_content,
-                                "previous_reflect_response": previous_reflect_response,
+                                "previous_reflect_response": slim_reflect_response,
                                 "changed_at": datetime.now(timezone.utc).isoformat(),
                             }
                         ]
