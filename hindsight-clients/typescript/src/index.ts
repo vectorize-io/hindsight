@@ -51,6 +51,15 @@ import type {
   TagGroupAndInput,
   TagGroupOrInput,
   TagGroupNotInput,
+  AsyncOperationSubmitResponse,
+  CreateMentalModelResponse,
+  DirectiveListResponse,
+  DirectiveResponse,
+  DocumentResponse,
+  ListDocumentsResponse,
+  MentalModelListResponse,
+  MentalModelResponse,
+  UpdateDocumentResponse,
 } from "../generated/types.gen";
 
 // __CLIENT_VERSION__ is replaced by tsup's `define` with package.json's version
@@ -638,7 +647,7 @@ export class HindsightClient {
       tags?: string[];
       signal?: AbortSignal;
     }
-  ): Promise<any> {
+  ): Promise<DirectiveResponse> {
     const response = await sdk.createDirective({
       client: this.client,
       path: { bank_id: bankId },
@@ -661,7 +670,7 @@ export class HindsightClient {
   async listDirectives(
     bankId: string,
     options?: { tags?: string[]; signal?: AbortSignal }
-  ): Promise<any> {
+  ): Promise<DirectiveListResponse> {
     const response = await sdk.listDirectives({
       client: this.client,
       path: { bank_id: bankId },
@@ -679,7 +688,7 @@ export class HindsightClient {
     bankId: string,
     directiveId: string,
     options?: { signal?: AbortSignal }
-  ): Promise<any> {
+  ): Promise<DirectiveResponse> {
     const response = await sdk.getDirective({
       client: this.client,
       path: { bank_id: bankId, directive_id: directiveId },
@@ -703,7 +712,7 @@ export class HindsightClient {
       tags?: string[];
       signal?: AbortSignal;
     }
-  ): Promise<any> {
+  ): Promise<DirectiveResponse> {
     const response = await sdk.updateDirective({
       client: this.client,
       path: { bank_id: bankId, directive_id: directiveId },
@@ -754,7 +763,7 @@ export class HindsightClient {
       trigger?: { refreshAfterConsolidation?: boolean };
       signal?: AbortSignal;
     }
-  ): Promise<any> {
+  ): Promise<CreateMentalModelResponse> {
     const response = await sdk.createMentalModel({
       client: this.client,
       path: { bank_id: bankId },
@@ -780,7 +789,7 @@ export class HindsightClient {
   async listMentalModels(
     bankId: string,
     options?: { tags?: string[]; signal?: AbortSignal }
-  ): Promise<any> {
+  ): Promise<MentalModelListResponse> {
     const response = await sdk.listMentalModels({
       client: this.client,
       path: { bank_id: bankId },
@@ -798,7 +807,7 @@ export class HindsightClient {
     bankId: string,
     mentalModelId: string,
     options?: { signal?: AbortSignal }
-  ): Promise<any> {
+  ): Promise<MentalModelResponse> {
     const response = await sdk.getMentalModel({
       client: this.client,
       path: { bank_id: bankId, mental_model_id: mentalModelId },
@@ -815,7 +824,7 @@ export class HindsightClient {
     bankId: string,
     mentalModelId: string,
     options?: { signal?: AbortSignal }
-  ): Promise<any> {
+  ): Promise<AsyncOperationSubmitResponse> {
     const response = await sdk.refreshMentalModel({
       client: this.client,
       path: { bank_id: bankId, mental_model_id: mentalModelId },
@@ -839,7 +848,7 @@ export class HindsightClient {
       trigger?: { refreshAfterConsolidation?: boolean };
       signal?: AbortSignal;
     }
-  ): Promise<any> {
+  ): Promise<MentalModelResponse> {
     const response = await sdk.updateMentalModel({
       client: this.client,
       path: { bank_id: bankId, mental_model_id: mentalModelId },
@@ -883,7 +892,7 @@ export class HindsightClient {
     bankId: string,
     mentalModelId: string,
     options?: { signal?: AbortSignal }
-  ): Promise<any> {
+  ): Promise<unknown> {
     const response = await sdk.getMentalModelHistory({
       client: this.client,
       path: { bank_id: bankId, mental_model_id: mentalModelId },
@@ -900,7 +909,7 @@ export class HindsightClient {
     bankId: string,
     documentId: string,
     options?: { signal?: AbortSignal }
-  ): Promise<any | null> {
+  ): Promise<DocumentResponse | null> {
     const response = await sdk.getDocument({
       client: this.client,
       path: { bank_id: bankId, document_id: documentId },
@@ -920,7 +929,7 @@ export class HindsightClient {
   async listDocuments(
     bankId: string,
     options?: { limit?: number; offset?: number; signal?: AbortSignal }
-  ): Promise<any> {
+  ): Promise<ListDocumentsResponse> {
     const response = await sdk.listDocuments({
       client: this.client,
       path: { bank_id: bankId },
@@ -956,7 +965,7 @@ export class HindsightClient {
     bankId: string,
     documentId: string,
     options: { tags?: string[]; signal?: AbortSignal }
-  ): Promise<any> {
+  ): Promise<UpdateDocumentResponse> {
     const response = await sdk.updateDocument({
       client: this.client,
       path: { bank_id: bankId, document_id: documentId },
@@ -1037,6 +1046,15 @@ export type {
   TagGroupAndInput,
   TagGroupOrInput,
   TagGroupNotInput,
+  AsyncOperationSubmitResponse,
+  CreateMentalModelResponse,
+  DirectiveListResponse,
+  DirectiveResponse,
+  DocumentResponse,
+  ListDocumentsResponse,
+  MentalModelListResponse,
+  MentalModelResponse,
+  UpdateDocumentResponse,
 };
 
 // Also export low-level SDK functions for advanced usage
