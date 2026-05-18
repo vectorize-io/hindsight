@@ -10,18 +10,44 @@ set -e
 # loss scenarios where a container restart caused the data directory to be
 # wiped despite a volume mount being present.
 # =============================================================================
-PG0_DATA_DIR="${HOME}/.pg0"
-if [ -d "$PG0_DATA_DIR" ]; then
+pg0_has_pg_version() {
+    local pg0_data_dir="$1"
+
+    # pg0 has used more than one on-disk layout. Newer standalone images keep
+    # PostgreSQL data under instances/<name>/data, while older volumes may have
+    # placed PG_VERSION at or one level below the mount.
+    [ -f "$pg0_data_dir/PG_VERSION" ] && return 0
+    compgen -G "$pg0_data_dir"/*/PG_VERSION > /dev/null 2>&1 && return 0
+    compgen -G "$pg0_data_dir"/instances/*/data/PG_VERSION > /dev/null 2>&1 && return 0
+
+    return 1
+}
+
+check_pg0_data_integrity() {
+    local pg0_data_dir="$1"
+
+    if [ ! -d "$pg0_data_dir" ]; then
+        return 0
+    fi
+
     # Look for actual PostgreSQL data directories (pg0 creates subdirs per instance)
-    if compgen -G "$PG0_DATA_DIR"/*/PG_VERSION > /dev/null 2>&1; then
-        echo "✅ Existing pg0 data directory detected at $PG0_DATA_DIR"
-    elif [ "$(ls -A "$PG0_DATA_DIR" 2>/dev/null)" ]; then
-        echo "⚠️  WARNING: pg0 data directory exists at $PG0_DATA_DIR but no PG_VERSION found."
+    if pg0_has_pg_version "$pg0_data_dir"; then
+        echo "✅ Existing pg0 data directory detected at $pg0_data_dir"
+    elif [ "$(ls -A "$pg0_data_dir" 2>/dev/null)" ]; then
+        echo "⚠️  WARNING: pg0 data directory exists at $pg0_data_dir but no PG_VERSION found."
         echo "   This may indicate data corruption or an incomplete previous shutdown."
         echo "   If you see all migrations running from scratch after this, your data may have been lost."
         echo "   See: https://github.com/vectorize-io/hindsight/issues/675"
     fi
+
+    return 0
+}
+
+if [ "${HINDSIGHT_START_ALL_SOURCE_ONLY:-false}" = "true" ]; then
+    return 0 2>/dev/null || exit 0
 fi
+
+check_pg0_data_integrity "${HOME}/.pg0"
 
 # Service flags (default to true if not set)
 ENABLE_API="${HINDSIGHT_ENABLE_API:-true}"
