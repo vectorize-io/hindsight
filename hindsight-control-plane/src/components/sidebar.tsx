@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useBank } from "@/lib/bank-context";
 import { bankRoute } from "@/lib/bank-url";
-import { useFeatures } from "@/lib/features-context";
 import {
   Search,
   Sparkles,
@@ -26,7 +25,6 @@ interface SidebarProps {
 
 export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
   const { currentBank } = useBank();
-  const { features } = useFeatures();
   const [isCollapsed, setIsCollapsed] = useState(true);
 
   if (!currentBank) {

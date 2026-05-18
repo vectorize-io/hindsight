@@ -10,12 +10,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "^0.0.4"
+    "@cloudflare/workers-oauth-provider": "^0.5.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250327.0",
     "typescript": "^5.7.0",
-    "vitest": "^2.1.9",
+    "vitest": "^4.1.6",
     "wrangler": "^4.0.0"
   },
   "engines": {

@@ -25,10 +25,10 @@ on:
           - recall-with-observations
           - consolidation
         default: ""
-      locomo_max_conversations:
-        description: "LoComo max conversations (0 = skip, blank = all)"
-        type: number
-        default: 0
+      locomo_conversations:
+        description: "LoComo conversation IDs (space-separated). Blank = curated set (conv-26 conv-30 conv-43)."
+        type: string
+        default: ""
       locomo_skip:
         description: "Skip LoComo job"
         type: boolean
@@ -169,14 +169,20 @@ jobs:
         cd hindsight-dev && uv sync --frozen --all-extras --index-strategy unsafe-best-match
 
     - name: Run LoComo benchmark
+      # Curated 3-conversation subset (best/middle/worst by accuracy on the
+      # last successful full run): conv-26 (best), conv-30 (middle), conv-43
+      # (worst). Excludes conv-44, the bank with the largest unconsolidated
+      # set that has been pushing scheduled runs over the per-bank
+      # _wait_for_consolidation timeout. Override via workflow_dispatch with
+      # the locomo_conversations input.
       run: |
-        MAX_CONV_ARG=""
-        if [ "${{ inputs.locomo_max_conversations }}" != "0" ] && [ -n "${{ inputs.locomo_max_conversations }}" ]; then
-          MAX_CONV_ARG="--max-conversations ${{ inputs.locomo_max_conversations }}"
+        CONVERSATIONS="${{ inputs.locomo_conversations }}"
+        if [ -z "$CONVERSATIONS" ]; then
+          CONVERSATIONS="conv-26 conv-30 conv-43"
         fi
         uv run python hindsight-dev/benchmarks/locomo/locomo_benchmark.py \
           --wait-consolidation \
-          $MAX_CONV_ARG
+          --conversation $CONVERSATIONS
 
     - name: Upload LoComo results
       if: always()

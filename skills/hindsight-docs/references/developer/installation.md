@@ -250,6 +250,7 @@ This connects to your running API server and provides a visual interface for man
 | `-p, --port` | `PORT` | 9999 | Port to listen on |
 | `-H, --hostname` | `HOSTNAME` | 0.0.0.0 | Hostname to bind to |
 | `-a, --api-url` | `HINDSIGHT_CP_DATAPLANE_API_URL` | http://localhost:8888 | Hindsight API URL |
+| | `HINDSIGHT_CP_ACCESS_KEY` | *(none)* | Access key to protect the Control Plane UI. When set, users must enter this key to log in. |
 
 #### Examples
 
@@ -323,6 +324,32 @@ hindsight-api
 :::tip
 You can also use the slim package (`pip install hindsight-api-slim`) if you configure external providers for embeddings and reranking. See [Configuration](./configuration#embeddings) for details.
 :::
+
+### Windows + China Network Notes
+
+If you are running on Windows behind China network restrictions:
+
+1. DeepSeek works well for `HINDSIGHT_API_LLM_PROVIDER`, but DeepSeek does not provide an embeddings endpoint.
+2. Use local embeddings (recommended for privacy and reliability in restricted networks).
+3. Set `HF_ENDPOINT=https://hf-mirror.com` before starting Hindsight so Hugging Face model downloads use a China-accessible mirror.
+
+```powershell
+set HF_ENDPOINT=https://hf-mirror.com
+
+set HINDSIGHT_API_LLM_PROVIDER=deepseek
+set HINDSIGHT_API_LLM_API_KEY=sk-your-deepseek-key
+set HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
+set HINDSIGHT_API_LLM_BASE_URL=https://api.deepseek.com
+
+set HINDSIGHT_API_EMBEDDINGS_PROVIDER=local
+set HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL=BAAI/bge-small-en-v1.5
+
+set HINDSIGHT_API_RERANKER_PROVIDER=flashrank
+
+hindsight-api
+```
+
+The `HF_ENDPOINT` variable is used by Hugging Face tooling (`huggingface_hub`), not by Hindsight itself.
 
 ---
 

@@ -107,6 +107,7 @@ export interface PluginConfig {
   recallMaxTokens?: number; // Max tokens for recall response. Default: 1024
   recallTypes?: Array<"world" | "experience" | "observation">; // Memory types to recall. Default: ['world', 'experience']
   recallRoles?: Array<"user" | "assistant" | "system" | "tool">; // Roles to include when composing contextual recall query. Default: ['user', 'assistant']
+  includeSenderContext?: boolean; // When true (default), prepend a session context block (sender, channel, provider) to retained transcripts so similarity search can distinguish memories by speaker even when dynamicBankGranularity does not include 'user'. Set false to omit.
   retainDocumentScope?: "session" | "turn"; // Granularity of the retained document_id. 'session' (default) groups all retains under a single document per OpenClaw session (`openclaw:{sessionKey}`). 'turn' produces a new document per retain (`openclaw:{sessionKey}:turn:NNNNNN` / `:window:NNNNNN`).
   retainEveryNTurns?: number; // Retain every Nth turn (1 = every turn, default: 1). Values > 1 enable chunked retention.
   retainOverlapTurns?: number; // Extra prior turns included when chunked retention fires (default: 0). Window = retainEveryNTurns + retainOverlapTurns.

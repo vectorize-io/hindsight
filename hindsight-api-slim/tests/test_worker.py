@@ -2394,6 +2394,75 @@ async def test_pending_breakdown_explains_unclaimable_rows(pool, backend, clean_
     assert buckets["consolidation"]["claimable"] >= 1
 
 
+class TestSummariseChildErrorMessages:
+    """Pure unit tests for the _summarise_child_error_messages helper.
+
+    The helper picks a representative error message for a parent whose
+    children failed. The integration tests above exercise the full path
+    through _mark_failed; these tests focus on the choice itself.
+    """
+
+    def _sib(self, status: str, error_message: str | None = None) -> dict:
+        return {"status": status, "error_message": error_message}
+
+    def test_all_failed_with_same_message_inherits_that_message(self):
+        from hindsight_api.worker.poller import _summarise_child_error_messages
+
+        siblings = [
+            self._sib("failed", "boom"),
+            self._sib("failed", "boom"),
+            self._sib("failed", "boom"),
+        ]
+        assert _summarise_child_error_messages(siblings) == "boom"
+
+    def test_mixed_failed_messages_picks_most_common(self):
+        from hindsight_api.worker.poller import _summarise_child_error_messages
+
+        siblings = [
+            self._sib("failed", "common cause"),
+            self._sib("failed", "common cause"),
+            self._sib("failed", "rare cause"),
+        ]
+        assert _summarise_child_error_messages(siblings) == "common cause"
+
+    def test_completed_siblings_ignored(self):
+        from hindsight_api.worker.poller import _summarise_child_error_messages
+
+        siblings = [
+            self._sib("completed", None),
+            self._sib("completed", None),
+            self._sib("failed", "the one real failure"),
+        ]
+        assert _summarise_child_error_messages(siblings) == "the one real failure"
+
+    def test_no_failed_siblings_falls_back_to_generic(self):
+        from hindsight_api.worker.poller import _summarise_child_error_messages
+
+        siblings = [
+            self._sib("completed", None),
+            self._sib("completed", None),
+        ]
+        assert _summarise_child_error_messages(siblings) == "One or more sub-batches failed"
+
+    def test_failed_siblings_with_no_error_message_falls_back_to_generic(self):
+        from hindsight_api.worker.poller import _summarise_child_error_messages
+
+        siblings = [
+            self._sib("failed", None),
+            self._sib("failed", ""),
+        ]
+        assert _summarise_child_error_messages(siblings) == "One or more sub-batches failed"
+
+    def test_whitespace_only_messages_treated_as_empty(self):
+        from hindsight_api.worker.poller import _summarise_child_error_messages
+
+        siblings = [
+            self._sib("failed", "   "),
+            self._sib("failed", "actual error"),
+        ]
+        assert _summarise_child_error_messages(siblings) == "actual error"
+
+
 class TestMarkFailedParentPropagation:
     """Tests for _mark_failed parent propagation in WorkerPoller.
 
@@ -2473,9 +2542,20 @@ class TestMarkFailedParentPropagation:
         assert "DB constraint violation" in child2_row["error_message"]
 
         # parent must now be failed (all siblings done, at least one failed)
-        parent_row = await pool.fetchrow("SELECT status FROM async_operations WHERE operation_id = $1", parent_id)
+        parent_row = await pool.fetchrow(
+            "SELECT status, error_message FROM async_operations WHERE operation_id = $1",
+            parent_id,
+        )
         assert parent_row["status"] == "failed", (
             f"Parent should be 'failed' when last sibling fails, got '{parent_row['status']}'"
+        )
+        # Parent error_message must propagate the child's actual error reason,
+        # not the legacy generic "One or more sub-batches failed". Without this,
+        # downstream filters that classify failures by error_message lose all
+        # signal once a batch has children.
+        assert "DB constraint violation" in (parent_row["error_message"] or ""), (
+            f"Parent error_message should inherit child's reason, "
+            f"got: {parent_row['error_message']!r}"
         )
 
     @pytest.mark.asyncio

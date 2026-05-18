@@ -19,6 +19,7 @@ interface BankContextType {
   setCurrentBank: (bank: string | null) => void;
   banks: string[];
   bankInfos: BankInfo[];
+  banksLoading: boolean;
   loadBanks: () => Promise<void>;
 }
 
@@ -28,8 +29,10 @@ export function BankProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [currentBank, setCurrentBank] = useState<string | null>(null);
   const [bankInfos, setBankInfos] = useState<BankInfo[]>([]);
+  const [banksLoading, setBanksLoading] = useState(true);
 
   const loadBanks = async () => {
+    setBanksLoading(true);
     try {
       const response = await client.listBanks();
       const infos: BankInfo[] =
@@ -45,6 +48,8 @@ export function BankProvider({ children }: { children: React.ReactNode }) {
       setBankInfos(infos);
     } catch (error) {
       console.error("Error loading banks:", error);
+    } finally {
+      setBanksLoading(false);
     }
   };
 
@@ -64,7 +69,9 @@ export function BankProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <BankContext.Provider value={{ currentBank, setCurrentBank, banks, bankInfos, loadBanks }}>
+    <BankContext.Provider
+      value={{ currentBank, setCurrentBank, banks, bankInfos, banksLoading, loadBanks }}
+    >
       {children}
     </BankContext.Provider>
   );

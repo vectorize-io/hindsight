@@ -53,7 +53,12 @@ import type {
   TagGroupNotInput,
 } from "../generated/types.gen";
 
-export const CLIENT_VERSION = "0.5.1";
+// __CLIENT_VERSION__ is replaced by tsup's `define` with package.json's version
+// at build time. The typeof guard keeps raw-source loads (jest, deno test:deno)
+// from throwing ReferenceError; they get a sentinel that makes drift obvious.
+declare const __CLIENT_VERSION__: string | undefined;
+export const CLIENT_VERSION: string =
+  typeof __CLIENT_VERSION__ !== "undefined" ? __CLIENT_VERSION__ : "0.0.0-dev";
 export const DEFAULT_USER_AGENT = `hindsight-client-typescript/${CLIENT_VERSION}`;
 
 export interface HindsightClientOptions {

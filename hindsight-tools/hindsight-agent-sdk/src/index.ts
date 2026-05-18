@@ -117,8 +117,15 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
         required: ["page_id"],
       },
       async execute(params: Record<string, unknown>) {
-        const result = await client.getMentalModel(bankId, params.page_id as string);
-        return ok(result);
+        const resp = await sdk.getMentalModel({
+          client: lowLevel,
+          path: { bank_id: bankId, mental_model_id: params.page_id as string },
+          query: { detail: "content" },
+        });
+        if (resp.error) {
+          throw new Error(`agent_knowledge_get_page failed: ${JSON.stringify(resp.error)}`);
+        }
+        return ok(resp.data);
       },
     },
     {
@@ -203,13 +210,17 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
         type: "object",
         properties: {
           query: { type: "string", description: "What to search for" },
-          max_results: { type: "number", description: "Max results (default 10)" },
+          max_tokens: { type: "number", description: "Token budget for results (default 1024)" },
         },
         required: ["query"],
       },
       async execute(params: Record<string, unknown>) {
+        const maxTokens =
+          (params.max_tokens as number | undefined) ??
+          (params.max_results as number | undefined) ??
+          1024;
         const result = await client.recall(bankId, params.query as string, {
-          maxTokens: (params.max_results as number | undefined) ?? 10,
+          maxTokens,
         });
         return ok(result);
       },

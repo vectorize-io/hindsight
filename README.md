@@ -30,7 +30,7 @@ It eliminates the shortcomings of alternative techniques such as RAG and knowled
 
 Hindsight is the most accurate agent memory system ever tested according to benchmark performance. It has achieved state-of-the-art performance on the LongMemEval benchmark, widely used to assess memory system performance across a variety of conversational AI scenarios. The current reported performance of Hindsight and other agent memory solutions as of January 2026 is shown here:
 
-![Overview](./hindsight-docs/static/img/hindsight-bench.jpg)
+![Overview](./hindsight-docs/static/img/hindsight-benchmarks.png)
 
 The benchmark performance data for Hindsight has been independently reproduced by research collaborators at the Virginia Tech [Sanghani Center for Artificial Intelligence and Data Analytics](https://sanghani.cs.vt.edu/) and The Washington Post. Other scores are self-reported by software vendors.
 

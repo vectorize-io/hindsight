@@ -33,7 +33,9 @@ run_task() {
 
 echo "  Syncing Python dependencies..."
 # Run uv sync first to avoid race conditions when multiple uv run commands
-# try to reinstall local packages in parallel (e.g., after version bump)
+# try to reinstall local packages in parallel (e.g., after version bump).
+# In CI, UV_FROZEN=1 is set at the job level so this becomes a no-op for
+# lockfile resolution (see verify-generated-files in test.yml).
 uv sync --quiet
 
 echo "  Running lints in parallel..."

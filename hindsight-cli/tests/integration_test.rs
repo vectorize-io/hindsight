@@ -92,6 +92,25 @@ fn test_ui_command_with_config() {
 }
 
 #[test]
+fn test_memory_retain_exposes_timestamp_flag() {
+    // Regression: `hindsight memory retain` historically had no way to set the
+    // memory's event date even though the SDKs do. The flag must appear in
+    // --help so users (and docs) can discover it.
+    let output = Command::new("cargo")
+        .args(["run", "--", "memory", "retain", "--help"])
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(output.status.success(), "retain --help failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--timestamp") && stdout.contains("-t"),
+        "expected --timestamp/-t flag in retain --help, got: {}",
+        stdout
+    );
+}
+
+#[test]
 fn test_configure_command() {
     // Test that configure command creates/updates config
     let temp_dir = std::env::temp_dir().join(format!("hindsight-test-{}", std::process::id()));

@@ -3,7 +3,7 @@ title: "The Missing Layer in Every Agent Harness"
 description: "Modern agent harnesses ship with tools, MCP, and IDE integrations — but no memory. Why that's the missing layer, and how harnesses are starting to fix it."
 authors: [benfrank241]
 date: 2026-05-04
-tags: [memory, agents, hindsight, harness, claude-code, openclaw, hermes]
+tags: [memory, agents, hindsight, harness, claude-code, openclaw, hermes, deep-dive]
 image: /img/blog/agent-harness-needs-memory.png
 ---
 

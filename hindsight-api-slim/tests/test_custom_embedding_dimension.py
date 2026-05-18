@@ -112,6 +112,35 @@ def _ensure_embedding_dimension_with_retry(db_url: str, dimension: int, schema: 
             raise
 
 
+def _assert_raises_runtime_error_with_retry(
+    db_url: str,
+    dimension: int,
+    schema: str,
+    expected_messages: list[str],
+):
+    """Assert ensure_embedding_dimension raises RuntimeError, retrying on transient OID errors.
+
+    Concurrent xdist workers can cause 'could not open relation with OID' errors
+    that mask the expected RuntimeError. This retries to give the system a chance to
+    reach the actual dimension-mismatch check.
+    """
+    import time
+
+    for attempt in range(3):
+        try:
+            ensure_embedding_dimension(db_url, dimension, schema=schema)
+            raise AssertionError("Expected RuntimeError but ensure_embedding_dimension succeeded")
+        except RuntimeError as e:
+            for msg in expected_messages:
+                assert msg in str(e), f"Expected '{msg}' in error message, got: {e}"
+            return
+        except Exception as e:
+            if "could not open relation with OID" in str(e) and attempt < 2:
+                time.sleep(0.5)
+                continue
+            raise
+
+
 def get_column_dimension(db_url: str, schema: str = "public", table: str = "memory_units") -> int | None:
     """Get the current embedding column dimension from the database."""
     engine = create_engine(db_url)
@@ -255,12 +284,12 @@ class TestEmbeddingDimension:
         insert_test_embedding(db_url, schema, 384)
         assert get_row_count(db_url, schema) == 1
 
-        # Try to change dimension - should raise error
-        with pytest.raises(RuntimeError) as exc_info:
-            ensure_embedding_dimension(db_url, 768, schema=schema)
-
-        assert "Cannot change embedding dimension" in str(exc_info.value)
-        assert "1 rows with embeddings" in str(exc_info.value)
+        # Try to change dimension - should raise RuntimeError.
+        # Retry on transient OID errors from concurrent xdist schema drops.
+        _assert_raises_runtime_error_with_retry(
+            db_url, 768, schema,
+            expected_messages=["Cannot change embedding dimension", "1 rows with embeddings"],
+        )
 
         # Dimension should be unchanged
         assert get_column_dimension(db_url, schema) == 384
@@ -300,11 +329,12 @@ class TestEmbeddingDimension:
         clear_mental_model_embeddings(db_url, schema)
         insert_test_mental_model_embedding(db_url, schema, 384)
 
-        with pytest.raises(RuntimeError) as exc_info:
-            ensure_embedding_dimension(db_url, 768, schema=schema)
-
-        assert "Cannot change embedding dimension" in str(exc_info.value)
-        assert "mental_models" in str(exc_info.value)
+        # Try to change dimension - should raise RuntimeError.
+        # Retry on transient OID errors from concurrent xdist schema drops.
+        _assert_raises_runtime_error_with_retry(
+            db_url, 768, schema,
+            expected_messages=["Cannot change embedding dimension", "mental_models"],
+        )
 
         assert get_column_dimension(db_url, schema, table="mental_models") == 384
 

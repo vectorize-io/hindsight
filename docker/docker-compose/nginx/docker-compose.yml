@@ -51,6 +51,8 @@ services:
 
       # Control Plane config
       HINDSIGHT_CP_DATAPLANE_API_URL: http://localhost:8888
+      # Optional: Require a shared access key for Control Plane UI access
+      # HINDSIGHT_CP_ACCESS_KEY: your-secret-key
     volumes:
       # Persist embedded pg0 database
       - hindsight_data:/app/data

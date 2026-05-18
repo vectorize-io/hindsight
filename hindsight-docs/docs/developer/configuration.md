@@ -176,7 +176,7 @@ To switch between backends:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `ollama`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `volcano`, `openrouter`, `none` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `ollama`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `none` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
@@ -281,6 +281,12 @@ export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
 # - Use `deepseek-v4-pro` for the higher-quality reasoning route.
 # - Use `deepseek-chat` for the non-thinking alias (faster, cheaper).
 
+# z.ai (Zhipu GLM series, OpenAI-compatible, https://z.ai)
+export HINDSIGHT_API_LLM_PROVIDER=zai
+export HINDSIGHT_API_LLM_API_KEY=your-zai-api-key
+export HINDSIGHT_API_LLM_MODEL=glm-4.5-flash  # or glm-4.5-air for the paid tier
+# Default base_url: https://api.z.ai/api/coding/paas/v4 (override with HINDSIGHT_API_LLM_BASE_URL if needed)
+
 # AWS Bedrock (native support - no API key needed, uses AWS credentials)
 export HINDSIGHT_API_LLM_PROVIDER=bedrock
 export HINDSIGHT_API_LLM_MODEL=us.amazon.nova-2-lite-v1:0
@@ -310,6 +316,28 @@ export HINDSIGHT_API_LLM_PROVIDER=none
 :::tip OpenAI Codex, Claude Code & Vertex AI Setup
 For detailed setup instructions for **OpenAI Codex** (ChatGPT Plus/Pro), **Claude Code** (Claude Pro/Max), and **Vertex AI** (Google Cloud), see the [Models documentation](./models#openai-codex-setup-chatgpt-pluspro).
 :::
+
+### LLM Router (LiteLLM Router)
+
+`HINDSIGHT_API_LLM_PROVIDER=litellmrouter` runs the default LLM through [LiteLLM's `Router`](https://docs.litellm.ai/docs/routing). The config JSON is forwarded verbatim — for fallback chains, load-balancing, rate limits, routing strategies, and the rest of the supported keys, see the [LiteLLM Router docs](https://docs.litellm.ai/docs/routing). Hindsight always issues completions against `model_name: "default"`, so include at least one entry with that name.
+
+| Variable | Description |
+|----------|-------------|
+| `HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG` | JSON object passed to `litellm.Router(**config)`. Required when provider is `litellmrouter`. |
+| `HINDSIGHT_API_{RETAIN,REFLECT,CONSOLIDATION}_LLM_LITELLMROUTER_CONFIG` | Per-operation overrides. Fall back to the default config when unset. |
+
+```bash
+export HINDSIGHT_API_LLM_PROVIDER=litellmrouter
+export HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG='{
+  "model_list": [
+    {"model_name": "default",  "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "sk-..."}},
+    {"model_name": "fallback", "litellm_params": {"model": "anthropic/claude-sonnet-4-5", "api_key": "sk-ant-..."}}
+  ],
+  "fallbacks": [{"default": ["fallback"]}]
+}'
+```
+
+The config is a credential field — never returned by the bank-config API. Hindsight already retries calls; set `"num_retries": 0` in the Router config to avoid double-retries. Batch APIs aren't supported in router mode.
 
 ### Built-in llama.cpp
 
@@ -451,6 +479,30 @@ export HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF=120.0    # Cap at 2min instead of 1m
 | `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_PROJECT_ID` | Vertex AI project ID for embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_REGION` | Vertex AI region for embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_REGION`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_SERVICE_ACCOUNT_KEY` | Service account key for Vertex AI embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY`) | - |
+
+#### Common Pitfall: Provider-Specific Embedding Env Var Names
+
+Embedding environment variables include a provider segment in the key name:
+
+`HINDSIGHT_API_EMBEDDINGS_{PROVIDER}_{PARAMETER}`
+
+For example, when `HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai`:
+
+| Wrong | Correct |
+|---|---|
+| `HINDSIGHT_API_EMBEDDINGS_BASE_URL` | `HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL` |
+| `HINDSIGHT_API_EMBEDDINGS_MODEL` | `HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL` |
+| `HINDSIGHT_API_EMBEDDINGS_API_KEY` | `HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY` |
+
+This differs from LLM variables, which follow `HINDSIGHT_API_LLM_{PARAMETER}` without a provider segment.
+
+:::warning
+If embedding keys are misnamed, Hindsight may fall back to default OpenAI embedding settings (for example, `text-embedding-3-small`) and fail with auth errors against the wrong endpoint.
+:::
+
+#### DeepSeek and Embeddings
+
+DeepSeek is supported as an **LLM** provider, but it does **not** expose an embeddings endpoint. If your LLM is DeepSeek, use a different embedding provider (for example `local`, `openai`, `cohere`, or `google`).
 
 ```bash
 # Local (default) - uses SentenceTransformers
@@ -1352,11 +1404,15 @@ The Control Plane is the web UI for managing memory banks.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_CP_DATAPLANE_API_URL` | URL of the API service | `http://localhost:8888` |
+| `HINDSIGHT_CP_ACCESS_KEY` | Access key to protect the Control Plane UI. When set, users must enter this key to log in. | *(none — auth disabled)* |
 | `NEXT_PUBLIC_BASE_PATH` | Base path for Control Plane UI when behind reverse proxy (e.g., `/hindsight`) | `""` (root) |
 
 ```bash
 # Point Control Plane to a remote API service
 export HINDSIGHT_CP_DATAPLANE_API_URL=http://api.example.com:8888
+
+# Protect the Control Plane with an access key
+export HINDSIGHT_CP_ACCESS_KEY=my-secret-key
 ```
 
 ### Hierarchical Configuration

@@ -88,6 +88,12 @@ hindsight memory retain <bank_id> "Bob loves hiking" --context "hobby discussion
 
 # Queue for background processing
 hindsight memory retain <bank_id> "Meeting notes" --async
+
+# With an event date (ISO 8601 datetime or date)
+hindsight memory retain <bank_id> "Project launched" --timestamp 2024-01-15
+
+# Store without a timestamp (overrides the default of "now")
+hindsight memory retain <bank_id> "Background fact" --timestamp unset
 ```
 
 ### Retain Files
@@ -103,6 +109,9 @@ hindsight memory retain-files <bank_id> ./documents/
 
 # With context
 hindsight memory retain-files <bank_id> meeting-notes.txt --context "team meeting"
+
+# With a named retain strategy (see retain_strategies in bank config)
+hindsight memory retain-files <bank_id> ./documents/ --strategy conversations
 
 # Background processing
 hindsight memory retain-files <bank_id> ./data/ --async

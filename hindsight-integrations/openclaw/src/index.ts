@@ -2396,7 +2396,12 @@ ${memoriesFormatted}
         const retention = prepareRetentionTranscript(
           messagesToRetain,
           pluginConfig,
-          retainFullWindow
+          retainFullWindow,
+          {
+            senderId: resolvedCtxForRetain?.senderId,
+            channelId: effectiveCtxForRetain?.channelId,
+            provider: effectiveCtxForRetain?.messageProvider,
+          }
         );
         if (!retention) {
           debug("[Hindsight Hook] No messages to retain (filtered/short/no-user)");
@@ -2636,10 +2641,36 @@ export function buildRetainRequest(
   };
 }
 
+export interface RetentionSessionContext {
+  senderId?: string;
+  channelId?: string;
+  provider?: string;
+}
+
+/**
+ * Build a session-context block describing who is speaking, on which channel,
+ * via which provider. Prepending this to retained transcripts lets similarity
+ * search distinguish memories by speaker without requiring per-user banks
+ * (`dynamicBankGranularity: ["agent", "user"]`). Returns null when no usable
+ * fields are available.
+ */
+export function formatRetentionSessionContext(
+  ctx: RetentionSessionContext | null | undefined
+): string | null {
+  if (!ctx) return null;
+  const lines: string[] = [];
+  if (ctx.senderId) lines.push(`sender: ${ctx.senderId}`);
+  if (ctx.channelId) lines.push(`channel: ${ctx.channelId}`);
+  if (ctx.provider) lines.push(`provider: ${ctx.provider}`);
+  if (lines.length === 0) return null;
+  return ["[context]", ...lines, "[/context]"].join("\n");
+}
+
 export function prepareRetentionTranscript(
   messages: any[],
   pluginConfig: PluginConfig,
-  retainFullWindow = false
+  retainFullWindow = false,
+  sessionContext?: RetentionSessionContext | null
 ): { transcript: string; messageCount: number } | null {
   if (!messages || messages.length === 0) {
     return null;
@@ -2666,13 +2697,22 @@ export function prepareRetentionTranscript(
 
   const format = pluginConfig.retainFormat ?? "json";
   const includeToolCalls = format === "json" && pluginConfig.retainToolCalls !== false;
+  const contextHeader =
+    pluginConfig.includeSenderContext === false
+      ? null
+      : formatRetentionSessionContext(sessionContext);
 
   if (includeToolCalls) {
     const structured = buildAnthropicStructuredMessages(targetMessages, pluginConfig);
     if (structured.length === 0) return null;
-    const transcript = JSON.stringify(structured);
+    // Prepend session context as a system-role message so similarity search
+    // and downstream LLM consumers can attribute the conversation to a speaker.
+    const withContext = contextHeader
+      ? [{ role: "system", content: contextHeader }, ...structured]
+      : structured;
+    const transcript = JSON.stringify(withContext);
     if (!transcript.trim() || transcript.length < 10) return null;
-    return { transcript, messageCount: structured.length };
+    return { transcript, messageCount: withContext.length };
   }
 
   // Role filtering (text-only path)
@@ -2710,16 +2750,25 @@ export function prepareRetentionTranscript(
 
   if (normalized.length === 0) return null;
 
-  const transcript =
-    format === "text"
-      ? normalized
-          .map(({ role, content }) => `[role: ${role}]\n${content}\n[${role}:end]`)
-          .join("\n\n")
-      : JSON.stringify(normalized);
+  let transcript: string;
+  let messageCount: number;
+  if (format === "text") {
+    const body = normalized
+      .map(({ role, content }) => `[role: ${role}]\n${content}\n[${role}:end]`)
+      .join("\n\n");
+    transcript = contextHeader ? `${contextHeader}\n\n${body}` : body;
+    messageCount = normalized.length;
+  } else {
+    const withContext = contextHeader
+      ? [{ role: "system", content: contextHeader }, ...normalized]
+      : normalized;
+    transcript = JSON.stringify(withContext);
+    messageCount = withContext.length;
+  }
 
   if (!transcript.trim() || transcript.length < 10) return null;
 
-  return { transcript, messageCount: normalized.length };
+  return { transcript, messageCount };
 }
 
 // MCP tool name suffixes that are operational (recall/retain/search/CRUD) and

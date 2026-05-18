@@ -37,8 +37,10 @@ import {
   Lock,
   ChevronDown,
   ChevronRight,
+  LogOut,
 } from "lucide-react";
 import { useTheme } from "@/lib/theme-context";
+import { useFeatures } from "@/lib/features-context";
 import Image from "next/image";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -60,6 +62,11 @@ function formatCompact(n: number): string {
   return n.toString();
 }
 
+// Pads date-only Event Date input ("YYYY-MM-DD") with midnight so the API never sees an ambiguous value.
+function toIsoTimestamp(value: string): string {
+  return value.includes("T") ? value : `${value}T00:00:00`;
+}
+
 function formatTimeAgo(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();
   const seconds = Math.floor(diff / 1000);
@@ -78,8 +85,9 @@ function formatTimeAgo(isoDate: string): string {
 function BankSelectorInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { currentBank, setCurrentBank, banks, bankInfos, loadBanks } = useBank();
+  const { currentBank, setCurrentBank, banks, bankInfos, banksLoading, loadBanks } = useBank();
   const { theme, toggleTheme } = useTheme();
+  const { features } = useFeatures();
   const [open, setOpen] = React.useState(false);
   const [createDialogOpen, setCreateDialogOpen] = React.useState(false);
   const [newBankId, setNewBankId] = React.useState("");
@@ -326,7 +334,7 @@ function BankSelectorInner() {
 
       const perFileMeta = filesMetadata.map((meta) => ({
         ...(meta.context && { context: meta.context }),
-        ...(meta.timestamp && { timestamp: meta.timestamp + ":00" }),
+        ...(meta.timestamp && { timestamp: toIsoTimestamp(meta.timestamp) }),
         ...(meta.document_id && { document_id: meta.document_id }),
         ...(meta.tags && {
           tags: meta.tags
@@ -386,7 +394,7 @@ function BankSelectorInner() {
         strategy?: string;
       } = { content: docContent };
       if (docContext) item.context = docContext;
-      if (docEventDate) item.timestamp = docEventDate + ":00";
+      if (docEventDate) item.timestamp = toIsoTimestamp(docEventDate);
       if (docDocumentId) item.document_id = docDocumentId;
       if (parsedTags.length > 0) item.tags = parsedTags;
       if (docObservationScopes === "per_tag") {
@@ -482,7 +490,16 @@ function BankSelectorInner() {
             <Command>
               {sortedBanks.length > 0 && <CommandInput placeholder="Search memory banks..." />}
               <CommandList>
-                <CommandEmpty>No memory banks yet.</CommandEmpty>
+                <CommandEmpty>
+                  {banksLoading ? (
+                    <div className="flex items-center justify-center gap-2 py-2">
+                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                      <span>Loading banks...</span>
+                    </div>
+                  ) : (
+                    "No memory banks yet."
+                  )}
+                </CommandEmpty>
                 <CommandGroup>
                   {sortedBanks.map((bank) => {
                     const barPct = (bank.fact_count / maxFactCount) * 100;
@@ -601,6 +618,27 @@ function BankSelectorInner() {
         >
           {theme === "light" ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
         </Button>
+
+        {features?.access_key_auth && (
+          <>
+            <div className="h-8 w-px bg-border" />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              title="Logout"
+              onClick={async () => {
+                try {
+                  await fetch("/api/auth/logout", { method: "POST" });
+                } finally {
+                  window.location.href = "/login";
+                }
+              }}
+            >
+              <LogOut className="h-5 w-5" />
+            </Button>
+          </>
+        )}
 
         <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
           <DialogContent className="sm:max-w-[550px]">
@@ -840,7 +878,7 @@ function BankSelectorInner() {
                                                 Event Date
                                               </label>
                                               <Input
-                                                type="datetime-local"
+                                                type="date"
                                                 value={meta.timestamp}
                                                 onChange={(e) =>
                                                   updateFileMeta(index, "timestamp", e.target.value)
@@ -1023,7 +1061,7 @@ function BankSelectorInner() {
                               Event Date
                             </label>
                             <Input
-                              type="datetime-local"
+                              type="date"
                               value={docEventDate}
                               onChange={(e) => setDocEventDate(e.target.value)}
                               className="text-foreground"

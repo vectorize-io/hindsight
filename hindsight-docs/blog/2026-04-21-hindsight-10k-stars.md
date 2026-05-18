@@ -4,6 +4,7 @@ description: "How Hindsight became the community's choice for agent memory in 4.
 slug: "2026/04/22/hindsight-10k-stars"
 date: 2026-04-22T12:00
 image: "/img/blog/hindsight-10k-stars.png"
+tags: [release]
 ---
 
 ![Hindsight Reaches 10,000 Stars](/img/blog/hindsight-10k-stars.png)

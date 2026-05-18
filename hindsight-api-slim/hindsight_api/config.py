@@ -141,6 +141,14 @@ ENV_LLM_OPENAI_SERVICE_TIER = "HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER"
 ENV_LLM_EXTRA_BODY = "HINDSIGHT_API_LLM_EXTRA_BODY"
 ENV_LLM_DEFAULT_HEADERS = "HINDSIGHT_API_LLM_DEFAULT_HEADERS"
 
+# LiteLLM Router chain — provider-specific config consumed by the "litellmrouter"
+# provider. Each entry is a deployment; the Router tries them in declared order and
+# falls back to the next on transient errors (5xx, rate-limit, timeout).
+# Provider-scoped naming mirrors other provider-specific flags (e.g. llm_groq_*,
+# llm_vertexai_*). Note the single token "LITELLMROUTER" — keeping it one word
+# disambiguates from the embeddings/reranker LITELLM_* settings.
+ENV_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG"
+
 # Defaults for service tiers
 DEFAULT_LLM_GROQ_SERVICE_TIER = "auto"  # "on_demand", "flex", or "auto"
 DEFAULT_LLM_OPENAI_SERVICE_TIER = None  # None (default) or "flex" (50% cheaper)
@@ -159,6 +167,7 @@ ENV_RETAIN_LLM_MAX_RETRIES = "HINDSIGHT_API_RETAIN_LLM_MAX_RETRIES"
 ENV_RETAIN_LLM_INITIAL_BACKOFF = "HINDSIGHT_API_RETAIN_LLM_INITIAL_BACKOFF"
 ENV_RETAIN_LLM_MAX_BACKOFF = "HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF"
 ENV_RETAIN_LLM_TIMEOUT = "HINDSIGHT_API_RETAIN_LLM_TIMEOUT"
+ENV_RETAIN_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_RETAIN_LLM_LITELLMROUTER_CONFIG"
 
 ENV_REFLECT_LLM_PROVIDER = "HINDSIGHT_API_REFLECT_LLM_PROVIDER"
 ENV_REFLECT_LLM_API_KEY = "HINDSIGHT_API_REFLECT_LLM_API_KEY"
@@ -169,6 +178,7 @@ ENV_REFLECT_LLM_MAX_RETRIES = "HINDSIGHT_API_REFLECT_LLM_MAX_RETRIES"
 ENV_REFLECT_LLM_INITIAL_BACKOFF = "HINDSIGHT_API_REFLECT_LLM_INITIAL_BACKOFF"
 ENV_REFLECT_LLM_MAX_BACKOFF = "HINDSIGHT_API_REFLECT_LLM_MAX_BACKOFF"
 ENV_REFLECT_LLM_TIMEOUT = "HINDSIGHT_API_REFLECT_LLM_TIMEOUT"
+ENV_REFLECT_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_REFLECT_LLM_LITELLMROUTER_CONFIG"
 
 ENV_CONSOLIDATION_LLM_PROVIDER = "HINDSIGHT_API_CONSOLIDATION_LLM_PROVIDER"
 ENV_CONSOLIDATION_LLM_API_KEY = "HINDSIGHT_API_CONSOLIDATION_LLM_API_KEY"
@@ -179,6 +189,7 @@ ENV_CONSOLIDATION_LLM_MAX_RETRIES = "HINDSIGHT_API_CONSOLIDATION_LLM_MAX_RETRIES
 ENV_CONSOLIDATION_LLM_INITIAL_BACKOFF = "HINDSIGHT_API_CONSOLIDATION_LLM_INITIAL_BACKOFF"
 ENV_CONSOLIDATION_LLM_MAX_BACKOFF = "HINDSIGHT_API_CONSOLIDATION_LLM_MAX_BACKOFF"
 ENV_CONSOLIDATION_LLM_TIMEOUT = "HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT"
+ENV_CONSOLIDATION_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_CONSOLIDATION_LLM_LITELLMROUTER_CONFIG"
 
 ENV_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_EMBEDDINGS_PROVIDER"
 ENV_EMBEDDINGS_LOCAL_MODEL = "HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL"
@@ -463,6 +474,7 @@ PROVIDER_DEFAULT_MODELS = {
     "groq": "openai/gpt-oss-120b",
     "minimax": "MiniMax-M2.7",
     "deepseek": "deepseek-v4-flash",
+    "zai": "glm-4.5-flash",
     "ollama": "gemma3:12b",
     "llamacpp": "gemma-4-e2b-it",
     "lmstudio": "local-model",
@@ -814,6 +826,24 @@ def _get_default_model_for_provider(provider: str) -> str:
     return PROVIDER_DEFAULT_MODELS.get(provider.lower(), DEFAULT_LLM_MODEL)
 
 
+def _parse_llm_router_config(env_var: str) -> dict | None:
+    """
+    Parse a LiteLLM Router configuration from a JSON env var.
+
+    The value is forwarded verbatim to ``litellm.Router(**config)``. We only
+    check that it parses as JSON; LiteLLM Router is authoritative about the
+    shape (``model_list``, ``fallbacks``, ``routing_strategy``, …). See
+    https://docs.litellm.ai/docs/routing.
+    """
+    raw = os.getenv(env_var, "").strip()
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid {env_var}: invalid JSON: {e}") from e
+
+
 def _parse_default_bank_template(raw: str | None) -> dict | None:
     """
     Parse HINDSIGHT_API_DEFAULT_BANK_TEMPLATE as JSON.
@@ -870,6 +900,12 @@ class HindsightConfig:
         dict | None
     )  # Custom headers passed as default_headers to provider SDK clients (e.g. {"X-Component-Id": "hindsight"} for proxies / request tracing)
 
+    # LiteLLM Router chain (provider-specific; consumed by the "litellmrouter" provider).
+    # List of deployment dicts evaluated in order with fallback on transient errors.
+    # Each entry: {"provider": str, "model": str, "api_key": str | None, "base_url": str | None}.
+    # Treated as a credential field because entries embed api keys.
+    llm_litellmrouter_config: dict | None
+
     # Vertex AI configuration
     llm_vertexai_project_id: str | None
     llm_vertexai_region: str
@@ -896,6 +932,7 @@ class HindsightConfig:
     retain_llm_initial_backoff: float | None
     retain_llm_max_backoff: float | None
     retain_llm_timeout: float | None
+    retain_llm_litellmrouter_config: dict | None
 
     reflect_llm_provider: str | None
     reflect_llm_api_key: str | None
@@ -906,6 +943,7 @@ class HindsightConfig:
     reflect_llm_initial_backoff: float | None
     reflect_llm_max_backoff: float | None
     reflect_llm_timeout: float | None
+    reflect_llm_litellmrouter_config: dict | None
 
     consolidation_llm_provider: str | None
     consolidation_llm_api_key: str | None
@@ -916,6 +954,7 @@ class HindsightConfig:
     consolidation_llm_initial_backoff: float | None
     consolidation_llm_max_backoff: float | None
     consolidation_llm_timeout: float | None
+    consolidation_llm_litellmrouter_config: dict | None
 
     # Embeddings
     embeddings_provider: str
@@ -1157,6 +1196,11 @@ class HindsightConfig:
         "retain_llm_api_key",
         "reflect_llm_api_key",
         "consolidation_llm_api_key",
+        # LiteLLM Router chains — entries embed api_keys and base_urls
+        "llm_litellmrouter_config",
+        "retain_llm_litellmrouter_config",
+        "reflect_llm_litellmrouter_config",
+        "consolidation_llm_litellmrouter_config",
         # Base URLs (could expose infrastructure)
         "llm_base_url",
         "retain_llm_base_url",
@@ -1393,6 +1437,7 @@ class HindsightConfig:
             llm_openai_service_tier=os.getenv(ENV_LLM_OPENAI_SERVICE_TIER, DEFAULT_LLM_OPENAI_SERVICE_TIER),
             llm_extra_body=json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null")),
             llm_default_headers=json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null")),
+            llm_litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
             # Vertex AI
             llm_vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or DEFAULT_LLM_VERTEXAI_PROJECT_ID,
             llm_vertexai_region=os.getenv(ENV_LLM_VERTEXAI_REGION, DEFAULT_LLM_VERTEXAI_REGION),
@@ -1431,6 +1476,7 @@ class HindsightConfig:
             if os.getenv(ENV_RETAIN_LLM_MAX_BACKOFF)
             else None,
             retain_llm_timeout=float(os.getenv(ENV_RETAIN_LLM_TIMEOUT)) if os.getenv(ENV_RETAIN_LLM_TIMEOUT) else None,
+            retain_llm_litellmrouter_config=_parse_llm_router_config(ENV_RETAIN_LLM_LITELLMROUTER_CONFIG),
             reflect_llm_provider=os.getenv(ENV_REFLECT_LLM_PROVIDER) or None,
             reflect_llm_api_key=os.getenv(ENV_REFLECT_LLM_API_KEY) or None,
             reflect_llm_model=os.getenv(ENV_REFLECT_LLM_MODEL)
@@ -1455,6 +1501,7 @@ class HindsightConfig:
             reflect_llm_timeout=float(os.getenv(ENV_REFLECT_LLM_TIMEOUT))
             if os.getenv(ENV_REFLECT_LLM_TIMEOUT)
             else None,
+            reflect_llm_litellmrouter_config=_parse_llm_router_config(ENV_REFLECT_LLM_LITELLMROUTER_CONFIG),
             consolidation_llm_provider=os.getenv(ENV_CONSOLIDATION_LLM_PROVIDER) or None,
             consolidation_llm_api_key=os.getenv(ENV_CONSOLIDATION_LLM_API_KEY) or None,
             consolidation_llm_model=os.getenv(ENV_CONSOLIDATION_LLM_MODEL)
@@ -1479,6 +1526,7 @@ class HindsightConfig:
             consolidation_llm_timeout=float(os.getenv(ENV_CONSOLIDATION_LLM_TIMEOUT))
             if os.getenv(ENV_CONSOLIDATION_LLM_TIMEOUT)
             else None,
+            consolidation_llm_litellmrouter_config=_parse_llm_router_config(ENV_CONSOLIDATION_LLM_LITELLMROUTER_CONFIG),
             # Embeddings
             embeddings_provider=os.getenv(ENV_EMBEDDINGS_PROVIDER, DEFAULT_EMBEDDINGS_PROVIDER),
             embeddings_local_model=os.getenv(ENV_EMBEDDINGS_LOCAL_MODEL, DEFAULT_EMBEDDINGS_LOCAL_MODEL),

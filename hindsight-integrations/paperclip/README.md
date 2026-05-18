@@ -6,8 +6,8 @@ Install once. Every agent in your Paperclip instance gets memory that persists a
 
 ## What It Does
 
-- **Before each run** — recalls relevant memories from past runs and caches them for the agent
-- **After each run** — retains the agent's output to Hindsight automatically
+- **Before each run** — fetches the run's issue and recalls relevant memories on its title + description, caches them for the agent
+- **After each comment** — retains the full comment body to Hindsight (durable record of both user and agent output)
 - **Agent tools** — `hindsight_recall` and `hindsight_retain` tools for agents to query and store memory mid-run
 
 ## Installation
@@ -61,16 +61,22 @@ Agents can call these tools directly during a run:
 
 ```
 agent.run.started
-  └─ recall(issueTitle + description)
-       └─ store in plugin state for this run (instant lookup by tools)
+  └─ fetch issue via ctx.issues.get
+       └─ recall(issueTitle + description) → cached in plugin state for the run
 
 agent running…
   ├─ hindsight_recall(query) → returns cached context or live recall
   └─ hindsight_retain(content) → stores immediately
 
+issue.comment.created
+  └─ retain(full comment body via ctx.issues.listComments)
+       └─ bank attribution: agent comment author when present; otherwise issue assignee
+
 agent.run.finished
-  └─ retain(output) → stored in Hindsight with runId as document_id
+  └─ no-op (subscription kept for future use when payload carries output)
 ```
+
+The bundled plugin manifest declares the `issues.read` and `issue.comments.read` capabilities needed by the new SDK calls, so Paperclip may prompt for these on first install or upgrade.
 
 Memory is keyed to `companyId` + `agentId`, never to the Paperclip session or run ID — so it survives across any number of runs.
 

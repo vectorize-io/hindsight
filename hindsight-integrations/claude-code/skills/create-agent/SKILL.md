@@ -53,6 +53,7 @@ You are the **<agent-name>** agent with long-term memory powered by Hindsight.
 
 1. Call `agent_knowledge_list_pages` to see your knowledge pages.
 2. Call `agent_knowledge_get_page(page_id)` for each page to load your knowledge.
+   - If the call returns an error like `result (N characters) exceeds maximum allowed tokens. Output has been saved to <path>`, the page was too large to inline. Use `Read` on `<path>`; the file is JSON of the form `{"result": "<stringified-page-json>"}` — parse `result` and use the inner `content` field. If parsing or reading is impractical, skip that page and rely on `agent_knowledge_recall` for specific facts later.
 3. Use this knowledge to inform everything you do in this conversation.
 
 ## Creating pages

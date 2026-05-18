@@ -27,7 +27,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "crewai>=0.86.0",
+    "crewai>=0.86.0,<1.10",  # 1.10+ renamed Storage -> StorageBackend; needs migration
     "hindsight-client>=0.4.0",
     # Transitive dependency security fixes
     "cryptography>=46.0.6", # Incomplete DNS name constraint enforcement fix

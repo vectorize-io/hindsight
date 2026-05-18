@@ -10,6 +10,12 @@ For the source code, see [`hindsight-integrations/openai-agents`](https://github
 
 ← [Back to main changelog](../index.md)
 
+## [0.1.1](https://github.com/vectorize-io/hindsight/tree/integrations/openai-agents/v0.1.1)
+
+**Features**
+
+- Added a configuration option to limit how many memories can be consolidated per round (to control consolidation behavior).<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/ca561aca" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>ca561aca</a>
+
 ## [0.1.0](https://github.com/vectorize-io/hindsight/tree/integrations/openai-agents/v0.1.0)
 
 **Features**

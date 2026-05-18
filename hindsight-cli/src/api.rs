@@ -1262,8 +1262,8 @@ impl ApiClient {
 
 // Re-export types from the generated client for use in commands
 pub use types::{
-    BankProfileResponse, MemoryItem, RecallRequest, RecallResponse, RecallResult, ReflectRequest,
-    ReflectResponse, RetainRequest,
+    BankProfileResponse, MemoryItem, MemoryItemTimestamp, RecallRequest, RecallResponse,
+    RecallResult, ReflectRequest, ReflectResponse, RetainRequest,
 };
 
 #[cfg(test)]

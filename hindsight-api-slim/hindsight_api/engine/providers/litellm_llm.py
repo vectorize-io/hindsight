@@ -103,11 +103,57 @@ class LiteLLMLLM(LLMInterface):
         if self.base_url:
             kwargs["api_base"] = self.base_url
         if max_completion_tokens is not None:
-            kwargs["max_completion_tokens"] = max_completion_tokens
+            kwargs["max_completion_tokens"] = self._cap_max_completion_tokens(max_completion_tokens)
         if temperature is not None:
             kwargs["temperature"] = temperature
 
         return kwargs
+
+    # ── per-model output-tokens cap (shared with Router subclass) ────────────
+    # Hindsight's defaults (e.g. retain_max_completion_tokens=64000) target
+    # high-capacity models. When a configured deployment supports fewer
+    # completion tokens (e.g. gpt-4.1-nano caps at 32768), the call would
+    # otherwise be rejected. Cap pre-emptively using LiteLLM's per-model
+    # registry so things work out of the box across the supported model set.
+
+    def _cap_max_completion_tokens(self, value: int) -> int:
+        cap = self._get_model_output_cap()
+        if cap and value > cap:
+            logger.debug("capping max_completion_tokens %d -> %d for model %s", value, cap, self.model)
+            return cap
+        return value
+
+    def _get_model_output_cap(self) -> int | None:
+        """Return the configured model's max output tokens, per LiteLLM's registry."""
+        try:
+            cap = self._litellm.get_max_tokens(self.model)
+            return int(cap) if cap else None
+        except Exception:
+            return None
+
+    # ── hooks for Router-style subclasses ────────────────────────────────────
+    # The retry+parse loop in call() / call_with_tools() is shared by every
+    # LiteLLM-backed provider. Subclasses override the small surface below to
+    # swap the completion fn (direct vs Router) and rename the deployment that
+    # actually answered the request.
+
+    @property
+    def _stage_label(self) -> str:
+        """Stage breadcrumb label — overridden by subclasses (e.g. ``litellmrouter``)."""
+        return "litellm"
+
+    async def _acompletion(self, **kwargs: Any) -> Any:
+        """Issue a chat completion. Subclasses override to route via ``litellm.Router``."""
+        return await self._litellm.acompletion(**kwargs)
+
+    def _resolve_completion_model(self, response: Any) -> str:
+        """
+        Return the model name to record in metrics/tracing.
+
+        For Router-backed providers this can differ from ``self.model`` — the Router
+        may pick a different deployment than the primary. Default: ``self.model``.
+        """
+        return self.model
 
     async def call(
         self,
@@ -143,12 +189,13 @@ class LiteLLMLLM(LLMInterface):
 
         for attempt in range(max_retries + 1):
             if attempt > 0:
-                set_stage(f"llm.litellm.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                set_stage(f"llm.{self._stage_label}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
             try:
-                response = await self._litellm.acompletion(**call_kwargs)
+                response = await self._acompletion(**call_kwargs)
 
                 content = response.choices[0].message.content or ""
                 finish_reason = response.choices[0].finish_reason
+                model_name = self._resolve_completion_model(response)
 
                 # Check for length-limited output
                 if finish_reason == "length":
@@ -184,7 +231,7 @@ class LiteLLMLLM(LLMInterface):
                 metrics = get_metrics_collector()
                 metrics.record_llm_call(
                     provider=self.provider,
-                    model=self.model,
+                    model=model_name,
                     scope=scope,
                     duration=duration,
                     input_tokens=input_tokens,
@@ -198,7 +245,7 @@ class LiteLLMLLM(LLMInterface):
                 span_recorder = get_span_recorder()
                 span_recorder.record_llm_call(
                     provider=self.provider,
-                    model=self.model,
+                    model=model_name,
                     scope=scope,
                     messages=messages,
                     response_content=_serialize_for_span(result),
@@ -211,7 +258,7 @@ class LiteLLMLLM(LLMInterface):
 
                 if duration > 10.0:
                     logger.info(
-                        f"slow llm call: scope={scope}, model={self.provider}/{self.model}, "
+                        f"slow llm call: scope={scope}, model={self.provider}/{model_name}, "
                         f"input_tokens={input_tokens}, output_tokens={output_tokens}, "
                         f"time={duration:.3f}s"
                     )
@@ -287,13 +334,14 @@ class LiteLLMLLM(LLMInterface):
         last_exception = None
         for attempt in range(max_retries + 1):
             if attempt > 0:
-                set_stage(f"llm.litellm.tools.attempt={attempt + 1}/{max_retries + 1}")
+                set_stage(f"llm.{self._stage_label}.tools.attempt={attempt + 1}/{max_retries + 1}")
             try:
-                response = await self._litellm.acompletion(**call_kwargs)
+                response = await self._acompletion(**call_kwargs)
 
                 message = response.choices[0].message
                 content = message.content
                 finish_reason = response.choices[0].finish_reason
+                model_name = self._resolve_completion_model(response)
 
                 # Extract tool calls
                 tool_calls: list[LLMToolCall] = []
@@ -319,7 +367,7 @@ class LiteLLMLLM(LLMInterface):
                 metrics = get_metrics_collector()
                 metrics.record_llm_call(
                     provider=self.provider,
-                    model=self.model,
+                    model=model_name,
                     scope=scope,
                     duration=duration,
                     input_tokens=input_tokens,
@@ -338,7 +386,7 @@ class LiteLLMLLM(LLMInterface):
                 )
                 span_recorder.record_llm_call(
                     provider=self.provider,
-                    model=self.model,
+                    model=model_name,
                     scope=scope,
                     messages=messages,
                     response_content=content,

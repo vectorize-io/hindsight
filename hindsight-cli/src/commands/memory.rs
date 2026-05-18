@@ -3,7 +3,9 @@ use std::fs;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
-use crate::api::{ApiClient, MemoryItem, RecallRequest, ReflectRequest, RetainRequest};
+use crate::api::{
+    ApiClient, MemoryItem, MemoryItemTimestamp, RecallRequest, ReflectRequest, RetainRequest,
+};
 use crate::config;
 use crate::output::{self, OutputFormat};
 use crate::ui;
@@ -438,6 +440,7 @@ pub fn retain(
     content: String,
     doc_id: Option<String>,
     context: Option<String>,
+    timestamp: Option<String>,
     r#async: bool,
     document_tags: Option<Vec<String>>,
     verbose: bool,
@@ -451,11 +454,20 @@ pub fn retain(
         None
     };
 
+    // MemoryItem.timestamp is a progenitor anyOf enum; round-trip through JSON to pick the matching variant.
+    let timestamp = match timestamp {
+        Some(s) => Some(
+            serde_json::from_value::<MemoryItemTimestamp>(serde_json::Value::String(s.clone()))
+                .with_context(|| format!("invalid --timestamp value: {:?}", s))?,
+        ),
+        None => None,
+    };
+
     let item = MemoryItem {
         content: content.clone(),
         context,
         metadata: None,
-        timestamp: None,
+        timestamp,
         document_id: Some(doc_id.clone()),
         entities: None,
         tags: None,

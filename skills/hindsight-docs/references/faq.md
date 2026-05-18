@@ -75,6 +75,7 @@ Browse all supported integrations in the Integrations Hub.
 - llama.cpp
 - MiniMax
 - DeepSeek
+- z.ai
 - Volcano Engine
 - OpenRouter
 - OpenAI Codex

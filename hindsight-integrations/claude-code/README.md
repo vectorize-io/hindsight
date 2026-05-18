@@ -182,6 +182,7 @@ These settings control how the plugin connects to the Hindsight API.
 | `daemonIdleTimeout` | `HINDSIGHT_DAEMON_IDLE_TIMEOUT` | `0` | Seconds of inactivity before the local daemon shuts itself down. `0` means the daemon stays running until the session ends. |
 | `embedVersion` | `HINDSIGHT_EMBED_VERSION` | `"latest"` | Which version of `hindsight-embed` to install via `uvx`. Pin to a specific version (e.g. `"0.5.2"`) for reproducibility. |
 | `embedPackagePath` | `HINDSIGHT_EMBED_PACKAGE_PATH` | `null` | Local filesystem path to a `hindsight-embed` checkout. When set, the plugin runs from this path instead of installing via `uvx`. Useful for development. |
+| `requestTimeoutSeconds` | `HINDSIGHT_REQUEST_TIMEOUT_SECONDS` | `null` | Overrides the per-call request timeout for recall (default `10s`), retain (default `15s`) and knowledge tool calls (`10–15s`). When unset, the per-call defaults are preserved. Bump this when self-hosted Hindsight legitimately takes longer than 10s under contention (e.g. parallel recalls), to avoid client-side `read operation timed out` errors on requests the server completes successfully. Does not affect the health check, which intentionally stays fast (5s). |
 
 ---
 

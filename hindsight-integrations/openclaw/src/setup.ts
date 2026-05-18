@@ -294,10 +294,7 @@ function assertNotCancelled<T>(value: T | symbol): asserts value is T {
 // of forcing the user to paste it again on every wizard rerun. Skipped when
 // the existing value is a SecretRef object (env-var reference) or absent —
 // SecretRefs aren't pasteable here so the regular prompt path handles them.
-async function promptInlineSecretWithReuse(
-  message: string,
-  existing: unknown
-): Promise<string> {
+async function promptInlineSecretWithReuse(message: string, existing: unknown): Promise<string> {
   if (typeof existing === "string" && existing.trim().length > 0) {
     const reuse = await p.confirm({
       message: `Reuse the existing token (ends in …${maskSecret(existing).slice(-8)})?`,
@@ -315,9 +312,10 @@ async function promptInlineSecretWithReuse(
 }
 
 async function promptCloud(pluginConfig: Record<string, unknown>): Promise<string> {
-  const existingUrl = typeof pluginConfig.hindsightApiUrl === "string"
-    ? (pluginConfig.hindsightApiUrl as string).trim()
-    : "";
+  const existingUrl =
+    typeof pluginConfig.hindsightApiUrl === "string"
+      ? (pluginConfig.hindsightApiUrl as string).trim()
+      : "";
   const currentUrl = existingUrl || HINDSIGHT_CLOUD_URL;
   const useCurrentUrl = await p.confirm({
     message:
@@ -352,9 +350,10 @@ async function promptCloud(pluginConfig: Record<string, unknown>): Promise<strin
 }
 
 async function promptApi(pluginConfig: Record<string, unknown>): Promise<string> {
-  const existingUrl = typeof pluginConfig.hindsightApiUrl === "string"
-    ? (pluginConfig.hindsightApiUrl as string).trim()
-    : "";
+  const existingUrl =
+    typeof pluginConfig.hindsightApiUrl === "string"
+      ? (pluginConfig.hindsightApiUrl as string).trim()
+      : "";
   const apiUrl = await p.text({
     message: "Hindsight API URL",
     placeholder: "https://mcp.hindsight.example.com",
@@ -363,8 +362,9 @@ async function promptApi(pluginConfig: Record<string, unknown>): Promise<string>
   });
   assertNotCancelled(apiUrl);
 
-  const hasExistingToken = typeof pluginConfig.hindsightApiToken === "string"
-    && (pluginConfig.hindsightApiToken as string).trim().length > 0;
+  const hasExistingToken =
+    typeof pluginConfig.hindsightApiToken === "string" &&
+    (pluginConfig.hindsightApiToken as string).trim().length > 0;
   const needsToken = await p.confirm({
     message: "Does this API require an auth token?",
     initialValue: hasExistingToken,

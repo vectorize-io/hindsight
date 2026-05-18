@@ -35,16 +35,22 @@ Or [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — no self-hosti
 
 ```
 agent.run.started
-  └─ recall(issueTitle + description)
-       └─ cached in plugin state for this run
+  └─ fetch issue via ctx.issues.get
+       └─ recall(issueTitle + description) → cached in plugin state for this run
 
 agent running…
   ├─ hindsight_recall(query) → returns cached context or live recall
   └─ hindsight_retain(content) → stores immediately
 
+issue.comment.created
+  └─ retain(full comment body via ctx.issues.listComments)
+       └─ bank attribution: agent comment author when present; otherwise issue assignee
+
 agent.run.finished
-  └─ retain(output) → stored with runId as document_id
+  └─ no-op (subscription kept for future use when payload carries output)
 ```
+
+The bundled plugin manifest declares the `issues.read` and `issue.comments.read` capabilities needed by the new SDK calls, so Paperclip may prompt for these on first install or upgrade.
 
 Memory is keyed to `companyId` + `agentId` — never to the run ID — so it accumulates across every run.
 
