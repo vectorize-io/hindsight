@@ -394,6 +394,8 @@ recall(
 | `["observation"]` | Consolidated patterns only — faster for high-level questions |
 | `["world", "experience"]` | Raw facts only — for ground-truth or citation-sensitive queries |
 
+**Long-running agents:** Observation-only recall is useful for reducing prompt noise, but it does not stop observations from accumulating. Agents that retain every conversation turn can still build overlapping observations over days of normal use, especially for broad user-profile or project-status queries. Keep a stable [`document_id`](developer/api/retain.md#document_id), lower retain frequency when the integration allows it, use tags and `max_tokens` to narrow recall, and periodically delete obsolete source documents before [resetting observations](developer/observations.md#resetting-all-observations) if the bank has become noisy. Use `max_observations_per_scope` when you need a hard cap per observation scope.
+
 ---
 
 ### Filtering by Memory Shape with Entity Labels

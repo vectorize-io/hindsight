@@ -82,6 +82,12 @@ Each type runs the full four-strategy retrieval pipeline independently, so narro
 Observations are deduplicated, evidence-grounded beliefs consolidated from multiple facts — preferences, recurring patterns, and durable learnings the memory bank has built up. Each observation references its supporting memories (with exact quotes) and carries a computed freshness trend, and is refined rather than overwritten when new evidence arrives. They are created and maintained automatically in the background after retain operations.
 :::
 
+#### Observation-only recall in long-running agents
+
+Using `types=["observation"]` (or an integration setting such as `recall_types=["observation"]`) is a good way to avoid injecting every raw fact into an agent prompt. It is not a retention or output-deduplication policy. If an agent retains every turn for days, broad queries can still match many overlapping observations because the observation layer continues to accumulate durable patterns.
+
+For long-running conversational agents, use stable [`document_id`](./retain#document_id) values, retain less aggressively when your integration allows it, keep `max_tokens` tight, and scope recall with tags. If a bank has already accumulated noisy or obsolete observations, delete the noisy source documents or memories first, then [reset observations](../observations#resetting-all-observations) so consolidation rebuilds from the remaining evidence. To bound future growth, consider `max_observations_per_scope` in the bank's observations configuration.
+
 ### budget
 
 Controls retrieval depth and breadth. Accepted values are `low`, `mid` (default), and `high`. Use `low` for fast simple lookups, `mid` for balanced everyday queries, and `high` when you need to find indirect connections or exhaustive coverage.
