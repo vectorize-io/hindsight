@@ -548,12 +548,14 @@ class _CohereCompatibleRerankClient:
         rerank_url: str,
         timeout: float = 60.0,
         include_top_n: bool = True,
+        include_return_documents: bool = False,
     ):
         self.api_key = api_key
         self.model = model
         self.rerank_url = rerank_url
         self.timeout = timeout
         self.include_top_n = include_top_n
+        self.include_return_documents = include_return_documents
         self._async_client: httpx.AsyncClient | None = None
 
     async def initialize(self) -> None:
@@ -1540,15 +1542,13 @@ class AlibabaCloudCrossEncoder(CrossEncoderModel):
     """
     Alibaba Cloud DashScope text reranking API.
 
-    Authentication via DashScope API key (DASHSCOPE_API_KEY or HINDSIGHT_API_RERANKER_ALIBABA_API_KEY).
+    Uses the Cohere-compatible /reranks endpoint, which is the standard interface
+    for qwen3-rerank. Authentication via HINDSIGHT_API_RERANKER_ALIBABA_API_KEY
+    (or DASHSCOPE_API_KEY as a fallback).
     See: https://help.aliyun.com/zh/model-studio/text-rerank-api
     """
 
-    COMPATIBLE_API_URL = "https://dashscope.aliyuncs.com/compatible-api/v1/reranks"
-    NATIVE_API_URL = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
-
-    # Models using the Cohere-compatible API format
-    _COMPATIBLE_MODELS: frozenset[str] = frozenset({"qwen3-rerank"})
+    RERANK_URL = "https://dashscope.aliyuncs.com/compatible-api/v1/reranks"
 
     def __init__(
         self,
@@ -1556,115 +1556,28 @@ class AlibabaCloudCrossEncoder(CrossEncoderModel):
         model: str = DEFAULT_RERANKER_ALIBABA_MODEL,
         timeout: float = 60.0,
     ):
-        """
-        Initialize Alibaba Cloud DashScope reranker client.
-
-        Args:
-            api_key: DashScope API key
-            model: Model name. Supported: qwen3-rerank (default), gte-rerank-v2
-            timeout: Request timeout in seconds (default: 60.0)
-        """
-        self.api_key = api_key
         self.model = model
-        self.timeout = timeout
-        self._async_client: httpx.AsyncClient | None = None
+        self._client = _CohereCompatibleRerankClient(
+            api_key=api_key,
+            model=model,
+            rerank_url=self.RERANK_URL,
+            timeout=timeout,
+            include_return_documents=False,
+        )
 
     @property
     def provider_name(self) -> str:
         return "alibaba"
 
     async def initialize(self) -> None:
-        """Initialize the async HTTP client."""
-        if self._async_client is not None:
+        if self._client._async_client is not None:
             return
         logger.info(f"Reranker: initializing Alibaba Cloud provider with model {self.model}")
-        self._async_client = httpx.AsyncClient(
-            timeout=self.timeout,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-        )
+        await self._client.initialize()
         logger.info("Reranker: Alibaba Cloud provider initialized")
 
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
-        """
-        Score query-document pairs using the DashScope reranking API.
-
-        Args:
-            pairs: List of (query, document) tuples to score
-
-        Returns:
-            List of relevance scores (0.0–1.0, higher = more relevant)
-        """
-        if self._async_client is None:
-            raise RuntimeError("Reranker not initialized. Call initialize() first.")
-
-        if not pairs:
-            return []
-
-        query_groups: dict[str, list[tuple[int, str]]] = {}
-        for idx, (query, text) in enumerate(pairs):
-            query_groups.setdefault(query, []).append((idx, text))
-
-        all_scores = [0.0] * len(pairs)
-
-        for query, indexed_texts in query_groups.items():
-            texts = [text for _, text in indexed_texts]
-            indices = [idx for idx, _ in indexed_texts]
-
-            if self.model in self._COMPATIBLE_MODELS:
-                local_scores = await self._rerank_compatible(query, texts)
-            else:
-                local_scores = await self._rerank_native(query, texts)
-
-            for local_idx, score in enumerate(local_scores):
-                all_scores[indices[local_idx]] = score
-
-        return all_scores
-
-    async def _rerank_compatible(self, query: str, texts: list[str]) -> list[float]:
-        """Call the Cohere-compatible endpoint (qwen3-rerank)."""
-        response = await self._async_client.post(
-            self.COMPATIBLE_API_URL,
-            json={
-                "model": self.model,
-                "query": query,
-                "documents": texts,
-                "top_n": len(texts),
-            },
-        )
-        response.raise_for_status()
-        result = response.json()
-
-        scores = [0.0] * len(texts)
-        for item in result.get("results", []):
-            scores[item["index"]] = item["relevance_score"]
-        return scores
-
-    async def _rerank_native(self, query: str, texts: list[str]) -> list[float]:
-        """Call the DashScope native endpoint (gte-rerank-v2)."""
-        response = await self._async_client.post(
-            self.NATIVE_API_URL,
-            json={
-                "model": self.model,
-                "input": {
-                    "query": query,
-                    "documents": texts,
-                },
-                "parameters": {
-                    "top_n": len(texts),
-                    "return_documents": False,
-                },
-            },
-        )
-        response.raise_for_status()
-        result = response.json()
-
-        scores = [0.0] * len(texts)
-        for item in result.get("output", {}).get("results", []):
-            scores[item["index"]] = item["relevance_score"]
-        return scores
+        return await self._client.predict(pairs)
 
 
 def create_cross_encoder_from_env() -> CrossEncoderModel:
