@@ -90,7 +90,7 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
     Returns:
         Configured FastMCP server instance
     """
-    mcp = FastMCP("hindsight-mcp-server", version=HINDSIGHT_VERSION)
+    mcp = _create_fastmcp_server()
 
     global_config = _get_raw_config()
 
@@ -155,6 +155,16 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
     _make_tools_tolerant(mcp)
 
     return mcp
+
+
+def _create_fastmcp_server() -> FastMCP:
+    """Create a FastMCP server without HTTP transport options.
+
+    FastMCP 3.x rejects transport kwargs such as stateless_http on the constructor.
+    Keep those options on http_app() so importing or creating the MCP server works
+    across FastMCP 3.x releases.
+    """
+    return FastMCP("hindsight-mcp-server", version=HINDSIGHT_VERSION)
 
 
 def _get_mcp_tools(mcp: FastMCP) -> dict:
