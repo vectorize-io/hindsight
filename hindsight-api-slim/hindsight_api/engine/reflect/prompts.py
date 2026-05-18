@@ -10,9 +10,7 @@ The reflect agent uses hierarchical retrieval:
 import json
 from typing import Any
 
-import tiktoken
-
-_TIKTOKEN_ENCODING = tiktoken.get_encoding("cl100k_base")
+from .tokenization import count_cl100k_tokens
 
 # Fraction of max_context_tokens reserved for tool results in the final synthesis prompt.
 # The remainder covers the system prompt, question, bank context, and output tokens.
@@ -453,7 +451,7 @@ def build_final_prompt(
             except (TypeError, ValueError):
                 output_str = str(output)
             block = f"\n### From {tool}:\n```json\n{output_str}\n```"
-            block_tokens = len(_TIKTOKEN_ENCODING.encode(block))
+            block_tokens = count_cl100k_tokens(block)
             if block_tokens > token_budget:
                 truncated = True
                 break
