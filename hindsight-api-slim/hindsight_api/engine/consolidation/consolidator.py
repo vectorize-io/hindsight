@@ -15,6 +15,7 @@ NOTE: Observations are distinct from mental models (pinned reflections).
 - Mental models: user-defined queries stored in the mental_models table, refreshed on demand via reflect
 """
 
+import asyncio
 import json
 import logging
 import time
@@ -363,21 +364,30 @@ async def run_consolidation_job(
             for i in range(0, len(group), llm_batch_size):
                 llm_batches.append(group[i : i + llm_batch_size])
 
-        for llm_batch in llm_batches:
-            llm_batch_num += 1
-            llm_batch_start = time.time()
+        # Process LLM batches either sequentially (default, parallelism=1) or in
+        # parallel via asyncio.gather + Semaphore. Per-bank single-flight is still
+        # enforced at the SQL claim level (see ops_postgresql.claim_tasks), so only
+        # one worker process owns this consolidation op at a time — intra-op
+        # parallelism here just lets that one worker fire N LLM calls concurrently.
+        # State mutations to outer `stats` and `consolidated_tags` are deferred:
+        # each parallel batch returns local deltas, and the outer loop merges them
+        # after gather completes to avoid lost-update races.
+        llm_parallelism = max(1, getattr(config, "consolidation_llm_parallelism", 1))
 
-            # Snapshot perf and stats before this LLM batch
+        async def _process_one_llm_batch(
+            llm_batch_local: list[dict[str, Any]], batch_num_local: int
+        ) -> dict[str, Any]:
+            """Process one LLM batch independently. Returns local deltas + a cancelled flag."""
+            llm_batch_start = time.time()
             snap_timings = perf.timings.copy()
             snap_llm_calls = perf.llm_calls
             snap_total_chars = perf.total_prompt_chars
-            snap_stats = stats.copy()
 
-            # Track tags for mental model refresh filtering
-            for memory in llm_batch:
+            local_tags: set[str] = set()
+            for memory in llm_batch_local:
                 memory_tags = memory.get("tags") or []
                 if memory_tags:
-                    consolidated_tags.update(memory_tags)
+                    local_tags.update(memory_tags)
 
             # Process llm_batch with adaptive splitting: on LLM failure, halve the sub-batch
             # and retry, down to batch_size=1. Only if a single-memory batch still fails is
@@ -388,7 +398,7 @@ async def run_consolidation_job(
             succeeded_ids: list[Any] = []
             failed_ids: list[Any] = []
 
-            pending: list[list[dict[str, Any]]] = [llm_batch]
+            pending: list[list[dict[str, Any]]] = [llm_batch_local]
             while pending:
                 sub_batch = pending.pop(0)
 
@@ -512,39 +522,52 @@ async def run_consolidation_job(
                         [(mem_id,) for mem_id in failed_ids],
                     )
 
-            stats["observations_deleted"] += all_deleted
-            results = all_results
-
-            # Checkpoint: abort if the operation (and thus the bank) was deleted mid-run.
+            # Checkpoint: signal cancellation if the operation (and thus the bank) was deleted mid-run.
+            cancelled_local = False
             if operation_id and not await memory_engine._check_op_alive(operation_id):
                 logger.info(
-                    f"[CONSOLIDATION] bank={bank_id} operation {operation_id} cancelled (bank deleted), stopping early"
+                    f"[CONSOLIDATION] bank={bank_id} operation {operation_id} cancelled (bank deleted),"
+                    " stopping early"
                 )
-                return {"status": "cancelled", "bank_id": bank_id, **stats}
+                cancelled_local = True
 
-            for result in results:
-                stats["memories_processed"] += 1
+            # Aggregate stats deltas into a LOCAL dict so the outer loop can safely
+            # merge them after asyncio.gather completes (no lost-update race).
+            local_stats: dict[str, int] = {
+                "memories_processed": 0,
+                "observations_created": 0,
+                "observations_updated": 0,
+                "observations_merged": 0,
+                "observations_deleted": all_deleted,
+                "actions_executed": 0,
+                "skipped": 0,
+                "memories_failed": 0,
+            }
+            for result in all_results:
+                local_stats["memories_processed"] += 1
                 action = result.get("action")
                 if action == "created":
-                    stats["observations_created"] += 1
-                    stats["actions_executed"] += 1
+                    local_stats["observations_created"] += 1
+                    local_stats["actions_executed"] += 1
                 elif action == "updated":
-                    stats["observations_updated"] += 1
-                    stats["actions_executed"] += 1
+                    local_stats["observations_updated"] += 1
+                    local_stats["actions_executed"] += 1
                 elif action == "merged":
-                    stats["observations_merged"] += 1
-                    stats["actions_executed"] += 1
+                    local_stats["observations_merged"] += 1
+                    local_stats["actions_executed"] += 1
                 elif action == "multiple":
-                    stats["observations_created"] += result.get("created", 0)
-                    stats["observations_updated"] += result.get("updated", 0)
-                    stats["observations_merged"] += result.get("merged", 0)
-                    stats["actions_executed"] += result.get("total_actions", 0)
+                    local_stats["observations_created"] += result.get("created", 0)
+                    local_stats["observations_updated"] += result.get("updated", 0)
+                    local_stats["observations_merged"] += result.get("merged", 0)
+                    local_stats["actions_executed"] += result.get("total_actions", 0)
                 elif action == "skipped":
-                    stats["skipped"] += 1
+                    local_stats["skipped"] += 1
                 elif action == "failed":
-                    stats["memories_failed"] += 1
+                    local_stats["memories_failed"] += 1
 
-            # Per-LLM-batch log
+            # Per-LLM-batch log. Note: under parallelism, perf timings are shared,
+            # so timing deltas reflect activity from other in-flight batches too.
+            # For accurate per-batch isolation, run with parallelism=1.
             llm_batch_time = time.time() - llm_batch_start
             timing_parts = []
             for key in ["recall", "llm", "embedding", "db_write"]:
@@ -552,21 +575,53 @@ async def run_consolidation_job(
                     delta = perf.timings[key] - snap_timings.get(key, 0)
                     timing_parts.append(f"{key}={delta:.3f}s")
             input_tokens = int((perf.total_prompt_chars - snap_total_chars) / 4)
-            batch_created = stats["observations_created"] - snap_stats["observations_created"]
-            batch_updated = stats["observations_updated"] - snap_stats["observations_updated"]
-            batch_skipped = stats["skipped"] - snap_stats["skipped"]
-            batch_failed = stats["memories_failed"] - snap_stats["memories_failed"]
             llm_calls_made = perf.llm_calls - snap_llm_calls
             logger.info(
-                f"[CONSOLIDATION] bank={bank_id} llm_batch #{llm_batch_num}"
-                f" ({len(llm_batch)} memories, {llm_calls_made} llm calls)"
-                f" | {stats['memories_processed']}/{total_count} processed"
+                f"[CONSOLIDATION] bank={bank_id} llm_batch #{batch_num_local}"
+                f" ({len(llm_batch_local)} memories, {llm_calls_made} llm calls)"
+                f" | batch_processed={local_stats['memories_processed']}/{total_count}"
                 f" | {', '.join(timing_parts)}"
-                f" | created={batch_created} updated={batch_updated} skipped={batch_skipped}"
-                + (f" failed={batch_failed}" if batch_failed else "")
+                f" | created={local_stats['observations_created']}"
+                f" updated={local_stats['observations_updated']}"
+                f" skipped={local_stats['skipped']}"
+                + (f" failed={local_stats['memories_failed']}" if local_stats["memories_failed"] else "")
                 + f" | input_tokens=~{input_tokens}"
-                f" | avg={llm_batch_time / len(llm_batch):.3f}s/memory"
+                f" | avg={llm_batch_time / max(1, len(llm_batch_local)):.3f}s/memory"
             )
+
+            return {"stats": local_stats, "tags": local_tags, "cancelled": cancelled_local}
+
+        # Number all batches up-front so the log line numbering is deterministic
+        # regardless of which dispatch mode we use below.
+        numbered_batches = []
+        for b in llm_batches:
+            llm_batch_num += 1
+            numbered_batches.append((b, llm_batch_num))
+
+        if llm_parallelism > 1 and len(numbered_batches) > 1:
+            sem = asyncio.Semaphore(llm_parallelism)
+
+            async def _run_with_sem(b: list[dict[str, Any]], n: int) -> dict[str, Any]:
+                async with sem:
+                    return await _process_one_llm_batch(b, n)
+
+            batch_results = await asyncio.gather(*(_run_with_sem(b, n) for b, n in numbered_batches))
+        else:
+            batch_results = []
+            for b, n in numbered_batches:
+                batch_results.append(await _process_one_llm_batch(b, n))
+
+        # Merge per-batch deltas into outer state and surface cancellation
+        any_cancelled = False
+        for r in batch_results:
+            for k, v in r["stats"].items():
+                stats[k] = stats.get(k, 0) + v
+            consolidated_tags.update(r["tags"])
+            if r["cancelled"]:
+                any_cancelled = True
+
+        if any_cancelled:
+            return {"status": "cancelled", "bank_id": bank_id, **stats}
 
         # Update round budget after processing this DB fetch batch
         if round_limit_enabled:
