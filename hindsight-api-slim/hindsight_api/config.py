@@ -471,6 +471,7 @@ PROVIDER_DEFAULT_MODELS = {
     "minimax": "MiniMax-M2.7",
     "deepseek": "deepseek-v4-flash",
     "zai": "glm-4.5-flash",
+    "opencode-go": "deepseek-v4-flash",
     "ollama": "gemma3:12b",
     "llamacpp": "gemma-4-e2b-it",
     "lmstudio": "local-model",
