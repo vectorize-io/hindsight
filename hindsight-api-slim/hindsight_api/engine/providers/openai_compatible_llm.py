@@ -561,10 +561,11 @@ class OpenAICompatibleLLM(LLMInterface):
                     )
 
                     # Strip reasoning model thinking tags
-                    # Supports: <think>, <thinking>, <reasoning>, |startthink|/|endthink|
+                    # Supports: <think>, <thinking>, <thought>, <reasoning>, |startthink|/|endthink|
                     original_len = len(content)
                     content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
                     content = re.sub(r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL)
+                    content = re.sub(r"<thought>.*?</thought>", "", content, flags=re.DOTALL)
                     content = re.sub(r"<reasoning>.*?</reasoning>", "", content, flags=re.DOTALL)
                     content = re.sub(r"\|startthink\|.*?\|endthink\|", "", content, flags=re.DOTALL)
                     content = content.strip()

@@ -1,5 +1,5 @@
-from unittest.mock import AsyncMock, MagicMock, patch
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
@@ -50,6 +50,24 @@ async def test_json_object_call_adds_json_hint_to_user_message():
     assert result.ok is True
     sent_messages = create.call_args.kwargs["messages"]
     assert sent_messages[0]["content"].startswith("Return valid json only.")
+
+
+@pytest.mark.asyncio
+async def test_json_object_call_strips_gemma_thought_tags_before_parsing():
+    llm = _llm()
+    create = AsyncMock(
+        return_value=_response(content='<thought>\nI should return a compact JSON object.\n</thought>\n{"ok": true}')
+    )
+    llm._client.chat.completions.create = create
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        result = await llm.call(
+            messages=[{"role": "user", "content": "Return whether this worked."}],
+            response_format=SimpleJsonResponse,
+            max_retries=0,
+        )
+
+    assert result.ok is True
 
 
 @pytest.mark.asyncio
