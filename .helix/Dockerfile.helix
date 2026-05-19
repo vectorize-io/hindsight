@@ -1,0 +1,48 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV CI=true \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    UV_LINK_MODE=copy \
+    HINDSIGHT_API_LLM_PROVIDER=mock \
+    HINDSIGHT_API_LLM_API_KEY= \
+    HINDSIGHT_API_LLM_MODEL=mock-model \
+    TOKENIZERS_PARALLELISM=false \
+    TRANSFORMERS_VERBOSITY=error \
+    HF_HUB_VERBOSITY=error
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    git \
+    libgssapi-krb5-2 \
+    libreadline8 \
+    libssl3 \
+    libxml2 \
+    && (apt-get install -y --no-install-recommends libicu72 2>/dev/null \
+        || apt-get install -y --no-install-recommends libicu74 2>/dev/null \
+        || apt-get install -y --no-install-recommends libicu76 2>/dev/null \
+        || true) \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir uv \
+    && useradd -m -s /bin/bash hindsight
+
+COPY --chown=hindsight:hindsight . .
+
+# Sync only the API package with test deps (embedded pg0 + local embeddings).
+# Keep uv's package cache out of the image and chown the generated virtualenv in
+# the same layer; a later recursive chown duplicated the ~2 GB venv layer and
+# made the reusable validation workflow run out of temporary disk space.
+RUN if ! uv sync --no-cache --package hindsight-api-slim --extra embedded-db --extra local-ml --group dev --frozen; then \
+        uv sync --no-cache --package hindsight-api-slim --extra embedded-db --extra local-ml --group dev; \
+    fi \
+    && chown -R hindsight:hindsight /app/.venv \
+    && mkdir -p /home/hindsight/.pg0 \
+    && chown -R hindsight:hindsight /home/hindsight/.pg0
+
+# Default to root so Helix CI can git checkout a mounted .git volume.
+# run-tests-eval.sh drops to the hindsight user before pg0/pytest (initdb refuses root).
+CMD ["./.helix/run-tests-eval.sh"]
