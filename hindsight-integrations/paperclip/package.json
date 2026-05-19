@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/hindsight-paperclip",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Persistent long-term memory for Paperclip agents via Hindsight — recall before every heartbeat, retain after every run",
   "type": "module",
   "paperclipPlugin": {

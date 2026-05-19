@@ -8,6 +8,12 @@ import PageHero from '@site/src/components/PageHero';
 
 ← Claude Code integration
 
+## [0.6.5](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.6.5)
+
+**Features**
+
+- Added a configurable timeout for MCP requests in the Claude Code integration.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/rsaulo" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@rsaulo</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/55ef7067" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>55ef7067</a>
+
 ## [0.6.4](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.6.4)
 
 **Bug Fixes**
