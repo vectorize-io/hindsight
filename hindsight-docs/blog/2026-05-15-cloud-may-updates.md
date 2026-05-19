@@ -44,9 +44,13 @@ You can now pay for credits with **Alipay** (支付宝) in addition to credit an
 
 The Memories Data view has a new **Constellation** visualization that lays out memories and their relationships as an interactive graph, and the Entities view gains a new **Relations** tab using the same engine to explore entity-to-entity connections.
 
+![Constellation View — interactive memory graph in the Hindsight control plane](/img/blog/constellation-view.png)
+
 - **Interactive layout** — zoom, pan, and click any node to inspect the underlying memory or entity.
 - **Color-coded fact types** so World Facts, Experiences, and Observations are easy to tell apart at a glance.
 - **Legend overlay** explains each node and edge type.
+
+![Entity co-occurrence graph — the same engine now powers the Entities Relations tab](/img/blog/hindsight-0-5-2-entity-graph.png)
 
 ## A richer Memories view
 
@@ -57,6 +61,8 @@ The Memories Data view picks up several quality-of-life improvements:
 - **Memories-ingested chart** with a 24h / 7d / 30d period switcher on the bank stats page so you can see ingestion trends over time.
 - **Failed-consolidation drilldown** — click a failure on the Consolidation card to see exactly which inputs failed and why.
 - **Empty-state CTA** — banks with no memories now surface an Add Document button right in the data view.
+
+![Bank statistics page where the new ingestion chart and period switcher live](/img/blog/hindsight-0-5-2-bank-stats.png)
 
 ## Mental Models, refreshed
 
