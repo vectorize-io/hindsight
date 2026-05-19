@@ -1,14 +1,12 @@
 ---
 title: "What's New in Hindsight Cloud: April–May Updates"
 authors: [benfrank241]
-date: 2026-05-15T12:00
+date: 2026-05-19T12:00
 tags: [hindsight-cloud, release, i18n, internationalization, billing, ui]
 description: "Catching up on six weeks of Hindsight Cloud: a multilingual control plane, Alipay at checkout, a new Constellation graph view, and a refreshed Memories, Mental Models, and Operations experience."
-image: /img/blog/cloud-may-updates.png
+image: /img/blog/hindsight-0-5-2-bank-stats.png
 hide_table_of_contents: true
 ---
-
-<!-- TODO: replace placeholder hero image before merge -->
 
 Six weeks of Cloud work has landed since the last update. Two big rollouts on **May 15** make the control plane usable in more languages and accept more ways to pay, and a wave of UI work on **May 6** rebuilds how you browse memories, inspect mental models, and manage bank lifecycle. Here's the catch-up.
 
@@ -61,8 +59,6 @@ The Memories Data view picks up several quality-of-life improvements:
 - **Memories-ingested chart** with a 24h / 7d / 30d period switcher on the bank stats page so you can see ingestion trends over time.
 - **Failed-consolidation drilldown** — click a failure on the Consolidation card to see exactly which inputs failed and why.
 - **Empty-state CTA** — banks with no memories now surface an Add Document button right in the data view.
-
-![Bank statistics page where the new ingestion chart and period switcher live](/img/blog/hindsight-0-5-2-bank-stats.png)
 
 ## Mental Models, refreshed
 
