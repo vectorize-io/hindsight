@@ -178,6 +178,11 @@ export HINDSIGHT_API_LLM_PROVIDER=zai
 export HINDSIGHT_API_LLM_API_KEY=your-zai-api-key
 export HINDSIGHT_API_LLM_MODEL=glm-4.5-flash  # or glm-4.5-air for the paid tier
 
+# opencode-go (OpenAI-compatible)
+export HINDSIGHT_API_LLM_PROVIDER=opencode-go
+export HINDSIGHT_API_LLM_API_KEY=your-opencode-go-api-key
+export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
+
 # Vertex AI (Google Cloud)
 export HINDSIGHT_API_LLM_PROVIDER=vertexai
 export HINDSIGHT_API_LLM_MODEL=gemini-2.0-flash-001
@@ -583,4 +588,3 @@ export HINDSIGHT_API_RERANKER_PROVIDER=rrf
 ```
 
 See [Configuration](./configuration#reranker) for all options including Azure-hosted endpoints and batch settings.
-

@@ -318,6 +318,7 @@ def create_llm_provider(
         "volcano",
         "openrouter",
         "zai",
+        "opencode-go",
     ):
         return OpenAICompatibleLLM(
             provider=provider,
@@ -425,6 +426,7 @@ class LLMProvider:
             "volcano",
             "openrouter",
             "zai",
+            "opencode-go",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")
@@ -445,6 +447,8 @@ class LLMProvider:
                 self.base_url = "https://openrouter.ai/api/v1"
             elif self.provider == "zai":
                 self.base_url = "https://api.z.ai/api/coding/paas/v4"
+            elif self.provider == "opencode-go":
+                self.base_url = "https://opencode.ai/zen/go/v1"
 
         # Prepare Vertex AI config (if applicable)
         vertexai_project_id = None
@@ -836,7 +840,6 @@ class LLMProvider:
     def from_env(cls) -> "LLMProvider":
         """Create provider from environment variables using config.py constants."""
         from ..config import (
-            DEFAULT_LLM_MODEL,
             DEFAULT_LLM_PROVIDER,
             ENV_LLM_API_KEY,
             ENV_LLM_BASE_URL,
@@ -844,6 +847,7 @@ class LLMProvider:
             ENV_LLM_EXTRA_BODY,
             ENV_LLM_MODEL,
             ENV_LLM_PROVIDER,
+            _get_default_model_for_provider,
         )
 
         provider = os.getenv(ENV_LLM_PROVIDER, DEFAULT_LLM_PROVIDER)
@@ -857,7 +861,7 @@ class LLMProvider:
             )
 
         base_url = os.getenv(ENV_LLM_BASE_URL, "")
-        model = os.getenv(ENV_LLM_MODEL, DEFAULT_LLM_MODEL)
+        model = os.getenv(ENV_LLM_MODEL) or _get_default_model_for_provider(provider)
         extra_body = json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null"))
         default_headers = json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null"))
 

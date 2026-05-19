@@ -109,6 +109,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `minimax` | `MiniMax-M2.7` |
 | `deepseek` | `deepseek-v4-flash` |
 | `zai` | `glm-4.5-flash` |
+| `opencode-go` | `deepseek-v4-flash` |
 | `volcano` | `doubao-pro-32k` |
 | `openrouter` | `qwen/qwen3.5-9b` |
 | `openai-codex` | `gpt-5.4-mini` |
@@ -204,6 +205,11 @@ export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash  # or deepseek-v4-pro / deepsee
 export HINDSIGHT_API_LLM_PROVIDER=zai
 export HINDSIGHT_API_LLM_API_KEY=your-zai-api-key
 export HINDSIGHT_API_LLM_MODEL=glm-4.5-flash  # or glm-4.5-air for the paid tier
+
+# opencode-go (OpenAI-compatible)
+export HINDSIGHT_API_LLM_PROVIDER=opencode-go
+export HINDSIGHT_API_LLM_API_KEY=your-opencode-go-api-key
+export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
 
 # Vertex AI (Google Cloud)
 export HINDSIGHT_API_LLM_PROVIDER=vertexai
@@ -605,4 +611,3 @@ export HINDSIGHT_API_RERANKER_PROVIDER=rrf
 ```
 
 See [Configuration](./configuration#reranker) for all options including Azure-hosted endpoints and batch settings.
-
