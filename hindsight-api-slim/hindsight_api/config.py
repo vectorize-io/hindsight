@@ -200,6 +200,7 @@ ENV_EMBEDDINGS_OPENAI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY"
 ENV_EMBEDDINGS_OPENAI_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL"
 ENV_EMBEDDINGS_OPENAI_BASE_URL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL"
 ENV_EMBEDDINGS_OPENAI_BATCH_SIZE = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE"
+ENV_EMBEDDINGS_OPENAI_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS"
 
 # Gemini/Vertex AI embeddings configuration
 ENV_EMBEDDINGS_GEMINI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_GEMINI_API_KEY"
@@ -792,6 +793,13 @@ def _parse_positive_int(name: str, raw: str | None, default: int) -> int:
     return parsed
 
 
+def _parse_optional_positive_int(name: str, raw: str | None) -> int | None:
+    """Parse an optional env var that must be a positive integer when set."""
+    if raw is None or raw == "":
+        return None
+    return _parse_positive_int(name, raw, 1)
+
+
 def _validate_extraction_mode(mode: str) -> str:
     """Validate and normalize extraction mode."""
     mode_lower = mode.lower()
@@ -1179,6 +1187,7 @@ class HindsightConfig:
     # Defaulted fields (source-compatible additions — existing direct constructor callers keep working).
     # Keep at the end of the dataclass; Python forbids non-default fields after default fields.
     embeddings_openai_batch_size: int = DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE
+    embeddings_openai_dimensions: int | None = None
 
     # Class-level sets for configuration categorization
 
@@ -1537,6 +1546,10 @@ class HindsightConfig:
                 ENV_EMBEDDINGS_OPENAI_BATCH_SIZE,
                 os.getenv(ENV_EMBEDDINGS_OPENAI_BATCH_SIZE),
                 DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE,
+            ),
+            embeddings_openai_dimensions=_parse_optional_positive_int(
+                ENV_EMBEDDINGS_OPENAI_DIMENSIONS,
+                os.getenv(ENV_EMBEDDINGS_OPENAI_DIMENSIONS),
             ),
             # Cohere embeddings (with backward-compatible fallback to shared API key)
             embeddings_cohere_api_key=os.getenv(ENV_EMBEDDINGS_COHERE_API_KEY) or os.getenv(ENV_COHERE_API_KEY),

@@ -9,10 +9,12 @@ The database schema is automatically adjusted to match the model's dimension.
 Configuration via environment variables - see hindsight_api.config for all env var names.
 """
 
+import json
 import logging
 import os
 import warnings
 from abc import ABC, abstractmethod
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 import httpx
@@ -385,6 +387,7 @@ class OpenAIEmbeddings(Embeddings):
         model: str = DEFAULT_EMBEDDINGS_OPENAI_MODEL,
         base_url: str | None = None,
         batch_size: int = 100,
+        dimensions: int | None = None,
         max_retries: int = 3,
     ):
         """
@@ -395,12 +398,14 @@ class OpenAIEmbeddings(Embeddings):
             model: OpenAI embedding model name (default: text-embedding-3-small)
             base_url: Custom base URL for OpenAI-compatible API (e.g., Azure OpenAI endpoint)
             batch_size: Maximum batch size for embedding requests (default: 100)
+            dimensions: Optional requested output dimensions for OpenAI text-embedding-3 models
             max_retries: Maximum number of retries for failed requests (default: 3)
         """
         self.api_key = api_key
         self.model = model
         self.base_url = base_url
         self.batch_size = batch_size
+        self.dimensions = dimensions
         self.max_retries = max_retries
         self._client = None
         self._dimension: int | None = None
@@ -445,7 +450,9 @@ class OpenAIEmbeddings(Embeddings):
         self._client = OpenAI(**client_kwargs)
 
         # Try to get dimension from known models, otherwise do a test embedding
-        if self.model in self.MODEL_DIMENSIONS:
+        if self.dimensions is not None:
+            self._dimension = self.dimensions
+        elif self.model in self.MODEL_DIMENSIONS:
             self._dimension = self.MODEL_DIMENSIONS[self.model]
         else:
             # Do a test embedding to detect dimension
@@ -480,16 +487,72 @@ class OpenAIEmbeddings(Embeddings):
         for i in range(0, len(texts), self.batch_size):
             batch = texts[i : i + self.batch_size]
 
-            response = self._client.embeddings.create(
-                model=self.model,
-                input=batch,
-            )
+            request = {
+                "model": self.model,
+                "input": batch,
+            }
+            if self.dimensions is not None:
+                request["dimensions"] = self.dimensions
+
+            response = self._client.embeddings.create(**request)
 
             # Sort by index to ensure correct order
             batch_embeddings = sorted(response.data, key=lambda x: x.index)
             all_embeddings.extend([e.embedding for e in batch_embeddings])
 
         return all_embeddings
+
+
+class CodexOAuthEmbeddings(OpenAIEmbeddings):
+    """
+    OpenAI embeddings using the Codex/ChatGPT OAuth token from ``~/.codex/auth.json``.
+
+    Codex OAuth is an LLM-provider auth path in Hindsight, but the same bearer token
+    can also authenticate against the standard OpenAI embeddings endpoint. This keeps
+    embeddings on the user's existing Codex subscription/OAuth path without requiring
+    a separate OpenAI/OpenRouter/Gemini/Cohere API key.
+    """
+
+    def __init__(
+        self,
+        model: str = DEFAULT_EMBEDDINGS_OPENAI_MODEL,
+        batch_size: int = 100,
+        dimensions: int | None = None,
+        max_retries: int = 3,
+    ):
+        access_token = self._load_codex_access_token()
+        super().__init__(
+            api_key=access_token,
+            model=model,
+            base_url="https://api.openai.com/v1",
+            batch_size=batch_size,
+            dimensions=dimensions,
+            max_retries=max_retries,
+        )
+
+    @property
+    def provider_name(self) -> str:
+        return "openai-codex"
+
+    @staticmethod
+    def _load_codex_access_token() -> str:
+        """Load the Codex OAuth access token without logging or exposing it."""
+        auth_file = Path.home() / ".codex" / "auth.json"
+        if not auth_file.exists():
+            raise FileNotFoundError(f"Codex auth file not found: {auth_file}. Run 'codex auth login' to authenticate.")
+
+        with open(auth_file) as f:
+            data = json.load(f)
+
+        auth_mode = data.get("auth_mode")
+        if auth_mode != "chatgpt":
+            raise ValueError(f"Expected Codex auth_mode='chatgpt', got: {auth_mode}")
+
+        access_token = (data.get("tokens") or {}).get("access_token")
+        if not access_token:
+            raise ValueError("No access_token found in Codex auth file. Run 'codex auth login' again.")
+
+        return access_token
 
 
 class CohereEmbeddings(Embeddings):
@@ -1140,6 +1203,14 @@ def create_embeddings_from_env() -> Embeddings:
             model=model,
             base_url=base_url,
             batch_size=config.embeddings_openai_batch_size,
+            dimensions=config.embeddings_openai_dimensions,
+        )
+    elif provider == "openai-codex":
+        model = os.environ.get(ENV_EMBEDDINGS_OPENAI_MODEL, DEFAULT_EMBEDDINGS_OPENAI_MODEL)
+        return CodexOAuthEmbeddings(
+            model=model,
+            batch_size=config.embeddings_openai_batch_size,
+            dimensions=config.embeddings_openai_dimensions,
         )
     elif provider == "openrouter":
         api_key = config.embeddings_openrouter_api_key
@@ -1206,5 +1277,6 @@ def create_embeddings_from_env() -> Embeddings:
     else:
         raise ValueError(
             f"Unknown embeddings provider: {provider}. "
-            f"Supported: 'local', 'tei', 'openai', 'cohere', 'google', 'litellm', 'litellm-sdk'"
+            f"Supported: 'local', 'tei', 'openai', 'openai-codex', 'openrouter', 'cohere', 'google', "
+            f"'litellm', 'litellm-sdk'"
         )
