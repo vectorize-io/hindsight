@@ -31,7 +31,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/nicoloboschi/hindsight.git",
+    "url": "https://github.com/vectorize-io/hindsight.git",
     "directory": "hindsight-clients/typescript"
   },
   "devDependencies": {
