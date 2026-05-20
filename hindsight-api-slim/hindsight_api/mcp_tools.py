@@ -922,6 +922,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
             response_schema: dict | None = None,
             tags: list[str] | None = None,
             tags_match: str = "any",
+            include_based_on: bool = False,
             bank_id: str | None = None,
         ) -> str:
             """
@@ -951,6 +952,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 response_schema: Optional JSON schema for structured output. When provided, the response includes a 'structured_output' field.
                 tags: Optional tags to filter memories by (e.g., ['project:alpha'])
                 tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                include_based_on: Include source facts used for synthesis. Defaults to false because broad reflections can exceed MCP client result limits.
                 bank_id: Optional bank to reflect in (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -978,6 +980,8 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 reflect_result = await memory.reflect_async(**reflect_kwargs)
 
                 result_data = json.loads(reflect_result.model_dump_json(indent=2))
+                if not include_based_on:
+                    result_data.pop("based_on", None)
                 if response_schema is not None and hasattr(reflect_result, "structured_output"):
                     result_data["structured_output"] = reflect_result.structured_output
                 return json.dumps(result_data, indent=2)
@@ -999,6 +1003,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
             response_schema: dict | None = None,
             tags: list[str] | None = None,
             tags_match: str = "any",
+            include_based_on: bool = False,
         ) -> dict:
             """
             Generate thoughtful analysis by synthesizing stored memories with the bank's personality.
@@ -1027,6 +1032,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 response_schema: Optional JSON schema for structured output. When provided, the response includes a 'structured_output' field.
                 tags: Optional tags to filter memories by (e.g., ['project:alpha'])
                 tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                include_based_on: Include source facts used for synthesis. Defaults to false because broad reflections can exceed MCP client result limits.
             """
             try:
                 target_bank = config.bank_id_resolver()
@@ -1053,6 +1059,8 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 reflect_result = await memory.reflect_async(**reflect_kwargs)
 
                 result_data = reflect_result.model_dump()
+                if not include_based_on:
+                    result_data.pop("based_on", None)
                 if response_schema is not None and hasattr(reflect_result, "structured_output"):
                     result_data["structured_output"] = reflect_result.structured_output
                 return result_data

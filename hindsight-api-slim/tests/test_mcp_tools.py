@@ -90,7 +90,10 @@ _FULL_MENTAL_MODELS = [
         "trigger": {"interval": "daily"},
         "last_refreshed_at": "2026-01-01T00:00:00",
         "created_at": "2026-01-01T00:00:00",
-        "reflect_response": {"text": "Prefers Python", "based_on": {"world_facts": [{"id": "f1", "text": "Python is popular"}]}},
+        "reflect_response": {
+            "text": "Prefers Python",
+            "based_on": {"world_facts": [{"id": "f1", "text": "Python is popular"}]},
+        },
     },
     {
         "id": "mm-2",
@@ -148,11 +151,23 @@ def mock_memory():
     # Retain/recall/reflect
     memory.retain_batch_async = AsyncMock()
     memory.submit_async_retain = AsyncMock(return_value={"operation_id": "op-retain"})
-    memory.recall_async = AsyncMock(return_value=MagicMock(model_dump_json=lambda indent=None: '{"results": []}', model_dump=lambda: {"results": []}))
-    memory.reflect_async = AsyncMock(return_value=MagicMock(model_dump_json=lambda indent=None: '{"text": "reflection"}', model_dump=lambda: {"text": "reflection"}, structured_output=None))
+    memory.recall_async = AsyncMock(
+        return_value=MagicMock(
+            model_dump_json=lambda indent=None: '{"results": []}', model_dump=lambda: {"results": []}
+        )
+    )
+    memory.reflect_async = AsyncMock(
+        return_value=MagicMock(
+            model_dump_json=lambda indent=None: '{"text": "reflection"}',
+            model_dump=lambda: {"text": "reflection"},
+            structured_output=None,
+        )
+    )
 
     # Directive methods
-    memory.list_directives = AsyncMock(return_value=[{"id": "dir-1", "name": "Be concise", "content": "Keep responses short"}])
+    memory.list_directives = AsyncMock(
+        return_value=[{"id": "dir-1", "name": "Be concise", "content": "Keep responses short"}]
+    )
     memory.create_directive = AsyncMock(return_value={"id": "dir-new", "name": "Test", "content": "Test content"})
     memory.delete_directive = AsyncMock(return_value=True)
 
@@ -540,9 +555,7 @@ class TestGetMentalModelDetail:
         assert "trigger" not in parsed
 
     async def test_get_detail_single_bank_content(self, mcp_server_single_bank, mock_memory):
-        result = await _tools(mcp_server_single_bank)["get_mental_model"].fn(
-            mental_model_id="mm-1", detail="content"
-        )
+        result = await _tools(mcp_server_single_bank)["get_mental_model"].fn(mental_model_id="mm-1", detail="content")
         assert isinstance(result, dict)
         assert "content" in result
         assert "reflect_response" not in result
@@ -1038,6 +1051,78 @@ class TestReflectNewParams:
         call_kwargs = mock_memory.reflect_async.call_args.kwargs
         assert "tags" not in call_kwargs
 
+    async def test_reflect_omits_based_on_by_default_multi_bank(self, mock_memory):
+        based_on = {"world": [{"id": "fact-1", "text": "large provenance payload"}]}
+        mock_memory.reflect_async = AsyncMock(
+            return_value=MagicMock(
+                model_dump_json=lambda indent=None: json.dumps(
+                    {"text": "reflection", "based_on": based_on}, indent=indent
+                ),
+                model_dump=lambda: {"text": "reflection", "based_on": based_on},
+                structured_output=None,
+            )
+        )
+
+        mcp = _make_mcp_server(mock_memory, {"reflect"})
+        result = await _tools(mcp)["reflect"].fn(query="test")
+
+        parsed = json.loads(result)
+        assert parsed == {"text": "reflection"}
+        assert "include_based_on" not in mock_memory.reflect_async.call_args.kwargs
+
+    async def test_reflect_can_include_based_on_multi_bank(self, mock_memory):
+        based_on = {"world": [{"id": "fact-1", "text": "large provenance payload"}]}
+        mock_memory.reflect_async = AsyncMock(
+            return_value=MagicMock(
+                model_dump_json=lambda indent=None: json.dumps(
+                    {"text": "reflection", "based_on": based_on}, indent=indent
+                ),
+                model_dump=lambda: {"text": "reflection", "based_on": based_on},
+                structured_output=None,
+            )
+        )
+
+        mcp = _make_mcp_server(mock_memory, {"reflect"})
+        result = await _tools(mcp)["reflect"].fn(query="test", include_based_on=True)
+
+        parsed = json.loads(result)
+        assert parsed["based_on"] == based_on
+
+    async def test_reflect_omits_based_on_by_default_single_bank(self, mock_memory):
+        based_on = {"world": [{"id": "fact-1", "text": "large provenance payload"}]}
+        mock_memory.reflect_async = AsyncMock(
+            return_value=MagicMock(
+                model_dump_json=lambda indent=None: json.dumps(
+                    {"text": "reflection", "based_on": based_on}, indent=indent
+                ),
+                model_dump=lambda: {"text": "reflection", "based_on": based_on},
+                structured_output=None,
+            )
+        )
+
+        mcp = _make_mcp_server(mock_memory, {"reflect"}, include_bank_id=False)
+        result = await _tools(mcp)["reflect"].fn(query="test")
+
+        assert result == {"text": "reflection"}
+        assert "include_based_on" not in mock_memory.reflect_async.call_args.kwargs
+
+    async def test_reflect_can_include_based_on_single_bank(self, mock_memory):
+        based_on = {"world": [{"id": "fact-1", "text": "large provenance payload"}]}
+        mock_memory.reflect_async = AsyncMock(
+            return_value=MagicMock(
+                model_dump_json=lambda indent=None: json.dumps(
+                    {"text": "reflection", "based_on": based_on}, indent=indent
+                ),
+                model_dump=lambda: {"text": "reflection", "based_on": based_on},
+                structured_output=None,
+            )
+        )
+
+        mcp = _make_mcp_server(mock_memory, {"reflect"}, include_bank_id=False)
+        result = await _tools(mcp)["reflect"].fn(query="test", include_based_on=True)
+
+        assert result["based_on"] == based_on
+
 
 @pytest.mark.asyncio
 class TestMentalModelTrigger:
@@ -1059,9 +1144,7 @@ class TestMentalModelTrigger:
 
     async def test_update_with_trigger(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"update_mental_model"})
-        await _tools(mcp)["update_mental_model"].fn(
-            mental_model_id="mm-1", trigger_refresh_after_consolidation=True
-        )
+        await _tools(mcp)["update_mental_model"].fn(mental_model_id="mm-1", trigger_refresh_after_consolidation=True)
         call_kwargs = mock_memory.update_mental_model.call_args.kwargs
         assert call_kwargs["trigger"] == {"refresh_after_consolidation": True}
 
@@ -1442,26 +1525,26 @@ class TestUpdateBankVariants:
     async def test_update_bank_config_reflect_mission_takes_precedence_over_mission(self, mock_memory):
         """When both mission and config_updates.reflect_mission are provided, config wins."""
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
-        await _tools(mcp)["update_bank"].fn(
-            mission="old", config_updates={"reflect_mission": "new"}
-        )
+        await _tools(mcp)["update_bank"].fn(mission="old", config_updates={"reflect_mission": "new"})
         config_call = mock_memory._config_resolver.update_bank_config.call_args
         assert config_call.args[1]["reflect_mission"] == "new"
 
     async def test_update_bank_multiple_config_fields(self, mock_memory):
         """Multiple config fields can be set in a single config_updates dict."""
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
-        await _tools(mcp)["update_bank"].fn(config_updates={
-            "retain_mission": "Extract technical decisions",
-            "disposition_skepticism": 5,
-            "disposition_literalism": 1,
-            "disposition_empathy": 4,
-            "enable_observations": True,
-            "observations_mission": "Focus on preferences",
-            "retain_extraction_mode": "custom",
-            "retain_custom_instructions": "Extract only action items",
-            "retain_chunk_size": 2000,
-        })
+        await _tools(mcp)["update_bank"].fn(
+            config_updates={
+                "retain_mission": "Extract technical decisions",
+                "disposition_skepticism": 5,
+                "disposition_literalism": 1,
+                "disposition_empathy": 4,
+                "enable_observations": True,
+                "observations_mission": "Focus on preferences",
+                "retain_extraction_mode": "custom",
+                "retain_custom_instructions": "Extract only action items",
+                "retain_chunk_size": 2000,
+            }
+        )
         config_call = mock_memory._config_resolver.update_bank_config.call_args
         updates = config_call.args[1]
         assert updates["retain_mission"] == "Extract technical decisions"
@@ -1508,9 +1591,7 @@ class TestUpdateBankVariants:
     async def test_update_bank_with_bank_id_override(self, mock_memory):
         """bank_id override routes config update to the correct bank."""
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
-        await _tools(mcp)["update_bank"].fn(
-            config_updates={"reflect_mission": "Test"}, bank_id="other-bank"
-        )
+        await _tools(mcp)["update_bank"].fn(config_updates={"reflect_mission": "Test"}, bank_id="other-bank")
         config_call = mock_memory._config_resolver.update_bank_config.call_args
         assert config_call.args[0] == "other-bank"
 
@@ -1527,11 +1608,13 @@ class TestUpdateBankVariants:
     async def test_update_bank_any_configurable_field(self, mock_memory):
         """Any field in _CONFIGURABLE_FIELDS is accepted (future-proof)."""
         mcp = _make_mcp_server(mock_memory, {"update_bank"}, include_bank_id=True)
-        await _tools(mcp)["update_bank"].fn(config_updates={
-            "recall_budget_fixed_low": 100,
-            "consolidation_llm_batch_size": 8,
-            "entity_labels": ["PERSON", "ORG"],
-        })
+        await _tools(mcp)["update_bank"].fn(
+            config_updates={
+                "recall_budget_fixed_low": 100,
+                "consolidation_llm_batch_size": 8,
+                "entity_labels": ["PERSON", "ORG"],
+            }
+        )
         updates = mock_memory._config_resolver.update_bank_config.call_args.args[1]
         assert updates["recall_budget_fixed_low"] == 100
         assert updates["consolidation_llm_batch_size"] == 8
@@ -1577,6 +1660,7 @@ class TestEmptyListReturns:
         mcp = _make_mcp_server(mock_memory, {"list_tags"}, include_bank_id=True)
         result = await _tools(mcp)["list_tags"].fn()
         assert '"items": []' in result or "[]" in result
+
 
 # =========================================================================
 # Bank-Level Tool Filtering Tests
