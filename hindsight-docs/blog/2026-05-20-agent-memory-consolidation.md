@@ -1,5 +1,5 @@
 ---
-title: "Agent Memory Consolidation: Keep, Merge, Decay, Forget"
+title: "Agent Memory Consolidation: Keep, Merge, Decay, Evict"
 description: "Agents that remember everything remember nothing useful. A four-lever framework — importance, merge, decay, eviction — for consolidating agent memory."
 authors: [benfrank241]
 date: 2026-05-20T12:00
@@ -8,9 +8,9 @@ image: /img/blog/agent-memory-consolidation.png
 hide_table_of_contents: true
 ---
 
-![Agent Memory Consolidation: Keep, Merge, Decay, Forget](/img/blog/agent-memory-consolidation.png)
+![Agent Memory Consolidation: Keep, Merge, Decay, Evict](/img/blog/agent-memory-consolidation.png)
 
-Agent memory consolidation is the policy layer that decides what an agent's memory keeps, merges, or forgets. It operates on four levers: importance (what becomes a memory at all), merge (how facts about the same entity unify into one record), decay (how confidence in old facts degrades over time), and eviction (when a memory leaves the system entirely).
+Agent memory consolidation is the policy layer that decides what an agent's memory keeps, merges, or evicts. It operates on four levers: importance (what becomes a memory at all), merge (how facts about the same entity unify into one record), decay (how confidence in old facts degrades over time), and eviction (when a memory leaves the system entirely).
 
 An agent that remembers everything is an agent that remembers nothing useful. Six months into production, a support assistant has logged every utterance from every user. It now confidently tells a customer they're still on Postgres, six weeks after they migrated to MySQL. Retrieval worked. The memory just wasn't right.
 
@@ -20,17 +20,17 @@ This is a consolidation problem, not a retrieval problem. Every long-running [ag
 
 This post lays out a four-lever framework for agent memory consolidation — importance, merge, decay, eviction — and walks through how [Mem0](https://mem0.ai), [Zep](https://www.getzep.com), [Letta](https://www.letta.com), [LangChain](https://www.langchain.com), and Hindsight handle (or skip) each one.
 
-## Why Agents Need to Forget
+## Why Stale Memory Degrades Performance
 
-Three forces push every production agent memory system toward aggressive forgetting.
+Three forces push every production agent memory system toward aggressive pruning.
 
 **Context economics.** At 128K-token windows and frontier-model pricing, stuffing the full conversation history into every prompt costs roughly an order of magnitude more per turn than retrieving a curated subset. The cost is real, but the bigger problem is attention dilution. Retrieved context that contains five contradictory facts about the same entity does not produce a coherent answer, even from a strong model.
 
 **Entity drift.** Users change. Codebases change. The customer who used Postgres in January migrated to MySQL in March. If both facts sit in memory with equal weight, the agent will pick whichever one the retriever scored higher this turn. The right behavior is for the older fact to lose confidence as the newer one supersedes it.
 
-**Index precision.** Retrieval quality degrades as the index grows. More documents mean more near-duplicates competing for the top-k slot, and more chances for a stale fact to outscore a current one. Forgetting is not just storage hygiene — it is the only way to keep retrieval precision stable over time.
+**Index precision.** Retrieval quality degrades as the index grows. More documents mean more near-duplicates competing for the top-k slot, and more chances for a stale fact to outscore a current one. Pruning is not just storage hygiene — it is the only way to keep retrieval precision stable over time.
 
-A brief detour through cognitive science: humans forget on purpose. The Ebbinghaus forgetting curve and the complementary learning systems hypothesis (McClelland et al., 1995) both describe forgetting as an active process, not a failure of storage. The hippocampus stores episodes, the neocortex consolidates patterns, and most episodic detail is discarded along the way. That structure is the analogue for what production agent memory consolidation needs.
+A brief detour through cognitive science: human memory is not a passive archive — it actively discards. Ebbinghaus's retention research and the complementary learning systems hypothesis (McClelland et al., 1995) both model memory attrition as an active process, not a failure of storage. The hippocampus stores episodes, the neocortex consolidates patterns, and most episodic detail is discarded along the way. That structure is the analogue for what production agent memory consolidation needs.
 
 ## The Four Levers of Memory Consolidation
 
@@ -87,13 +87,13 @@ Three decay shapes are common:
 
 Zep's Graphiti is the production system that takes decay most seriously, and it's worth being direct about it. Every edge in Zep's knowledge graph carries explicit temporal metadata: a `valid_at` timestamp, an `expired_at` timestamp when the fact has been superseded, and an `invalid_at` marker when it has been explicitly contradicted. This lets Zep answer questions most memory systems fumble: "What was the customer's address before they moved last October?" Hindsight supports temporal filtering as one of its four retrieval strategies, so it can handle "show me interactions from March," but Zep's fact-validity windows go deeper. If your agent's primary job is tracking how state evolves over time, that depth is hard to match.
 
-The trade-off with decay is straightforward: it buys recency at the cost of stable long-term facts. Decay tuned too aggressively will forget a user's name; tuned too laxly will keep stale state forever. There is no universal right answer — it depends on the domain.
+The trade-off with decay is straightforward: it buys recency at the cost of stable long-term facts. Decay tuned too aggressively will lose a user's name; tuned too laxly will keep stale state forever. There is no universal right answer — it depends on the domain.
 
 ## Eviction: When Memories Leave
 
 Eviction is the last lever, and the most irreversible. Once a memory is gone, it is gone. Three legitimate reasons to evict:
 
-**Hard delete.** GDPR, user-requested forgetting, security incident, PII redaction. These are non-negotiable and should bypass all other policy.
+**Hard delete.** GDPR, user-requested deletion, security incident, PII redaction. These are non-negotiable and should bypass all other policy.
 
 **Archival tiering.** Letta's pattern: core memory stays in context, archival memory lives in vector storage, and the agent itself decides what moves between tiers using tool calls. This is closer to eviction-as-policy than true deletion — facts are still retrievable, just not in the prompt.
 
