@@ -1,19 +1,21 @@
 """Hindsight-LangGraph: Persistent memory for LangGraph and LangChain agents.
 
-Provides Hindsight-backed tools, nodes, and a BaseStore adapter,
+Provides Hindsight-backed tools, nodes, and a memory instructions helper,
 giving agents long-term memory across conversations.
 
-The **tools** pattern works with both LangChain and LangGraph — only
-``langchain-core`` is required. The **nodes** and **store** patterns
-require ``langgraph`` (install with ``pip install hindsight-langgraph[langgraph]``).
+The **tools** and **memory_instructions** patterns work with both LangChain
+and LangGraph — only ``langchain-core`` is required. The **nodes** pattern
+requires ``langgraph`` (install with ``pip install hindsight-langgraph[langgraph]``).
 
 Basic usage with tools (LangChain or LangGraph)::
 
-    from hindsight_client import Hindsight
     from hindsight_langgraph import create_hindsight_tools
 
-    client = Hindsight(base_url="http://localhost:8888")
-    tools = create_hindsight_tools(client=client, bank_id="user-123")
+    # Uses Hindsight Cloud by default (set HINDSIGHT_API_KEY env var)
+    tools = create_hindsight_tools(bank_id="user-123")
+
+    # Or connect to a self-hosted instance:
+    # tools = create_hindsight_tools(bank_id="user-123", hindsight_api_url="http://localhost:8888")
 
     # Bind tools to your model
     model = ChatOpenAI(model="gpt-4o").bind_tools(tools)
@@ -31,12 +33,15 @@ Usage with memory nodes (requires langgraph)::
     builder.add_edge("recall", "agent")
     builder.add_edge("agent", "retain")
 
-Usage with BaseStore (requires langgraph)::
+Usage with memory_instructions (LangChain, no graph needed)::
 
-    from hindsight_langgraph import HindsightStore
+    from hindsight_langgraph import memory_instructions
 
-    store = HindsightStore(client=client)
-    graph = builder.compile(checkpointer=checkpointer, store=store)
+    get_instructions = memory_instructions(
+        client=client, bank_id="user-123",
+        base_instructions="You are a helpful assistant.",
+    )
+    instructions = await get_instructions()
 """
 
 from .config import (
@@ -46,7 +51,7 @@ from .config import (
     reset_config,
 )
 from .errors import HindsightError
-from .tools import create_hindsight_tools
+from .tools import create_hindsight_tools, memory_instructions
 
 
 def __getattr__(name: str):
@@ -60,15 +65,6 @@ def __getattr__(name: str):
             ) from None
         return create_recall_node if name == "create_recall_node" else create_retain_node
 
-    if name == "HindsightStore":
-        try:
-            from .store import HindsightStore
-        except ImportError:
-            raise ImportError(
-                "HindsightStore requires langgraph. Install with: pip install hindsight-langgraph[langgraph]"
-            ) from None
-        return HindsightStore
-
     raise AttributeError(f"module 'hindsight_langgraph' has no attribute {name!r}")
 
 
@@ -81,11 +77,12 @@ __all__ = [
     "HindsightLangGraphConfig",
     "HindsightError",
     "create_hindsight_tools",
+    "memory_instructions",
 ]
 
 try:
     import langgraph  # noqa: F401
 
-    __all__ += ["create_recall_node", "create_retain_node", "HindsightStore"]
+    __all__ += ["create_recall_node", "create_retain_node"]
 except ImportError:
     pass

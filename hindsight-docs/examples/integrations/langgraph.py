@@ -4,12 +4,13 @@ These snippets are embedded in the documentation via CodeSnippet.
 """
 
 # [docs:setup]
-from hindsight_client import Hindsight
 from hindsight_langgraph import create_hindsight_tools
 
-client = Hindsight(base_url="http://localhost:8888")
+# Uses the default API URL. Set HINDSIGHT_API_KEY env var to authenticate.
+tools = create_hindsight_tools(bank_id="user-123")
 
-tools = create_hindsight_tools(client=client, bank_id="user-123")
+# To connect to a self-hosted instance, pass the URL explicitly:
+# tools = create_hindsight_tools(bank_id="user-123", hindsight_api_url="http://localhost:8888")
 # [/docs:setup]
 
 # [docs:react-agent]
@@ -39,13 +40,11 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, MessagesState, START, END
 
 recall = create_recall_node(
-    client=client,
     bank_id_from_config="user_id",
     budget="mid",
     max_results=5,
 )
 retain = create_retain_node(
-    client=client,
     bank_id_from_config="user_id",
     tags=["source:auto"],
 )
@@ -75,28 +74,25 @@ result = await graph.ainvoke(
 )
 # [/docs:memory-nodes]
 
-# [docs:base-store]
-from hindsight_langgraph import HindsightStore
-from langgraph.checkpoint.memory import MemorySaver
+# [docs:memory-instructions]
+from hindsight_langgraph import memory_instructions
 
-store = HindsightStore(client=client)
-checkpointer = MemorySaver()
+get_instructions = memory_instructions(
+    bank_id="user-123",
+    base_instructions="You are a helpful assistant with long-term memory.",
+    budget="mid",
+    max_results=5,
+)
 
-graph = builder.compile(checkpointer=checkpointer, store=store)
-
-# Store memories via the BaseStore API
-await store.aput(("user", "123", "prefs"), "theme", {"value": "dark mode"})
-await store.aput(("user", "123", "prefs"), "language", {"value": "Python"})
-
-# Semantic search across stored memories
-results = await store.asearch(("user", "123", "prefs"), query="display preferences")
-for item in results:
-    print(f"{item.key}: {item.value}")
-# [/docs:base-store]
+# Use in a LangChain chain (no graph needed)
+instructions = await get_instructions()
+response = await ChatOpenAI(model="gpt-4o").ainvoke(
+    [{"role": "system", "content": instructions}, {"role": "user", "content": "What do you know about me?"}]
+)
+# [/docs:memory-instructions]
 
 # [docs:constructor-options]
 tools = create_hindsight_tools(
-    client=client,
     bank_id="user-123",
     budget="high",
     max_tokens=2048,

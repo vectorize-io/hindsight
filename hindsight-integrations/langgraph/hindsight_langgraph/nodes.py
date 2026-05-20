@@ -13,6 +13,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import MessagesState
 
 from ._client import resolve_client
+from .errors import HindsightError
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,8 @@ def create_recall_node(
     max_results: int = 10,
     tags: Optional[list[str]] = None,
     tags_match: str = "any",
+    recall_types: Optional[list[str]] = None,
+    recall_include_entities: bool = False,
     bank_id_from_config: str = "user_id",
     output_key: Optional[str] = None,
 ):
@@ -93,6 +96,8 @@ def create_recall_node(
         max_results: Maximum number of memories to inject.
         tags: Tags to filter recall results.
         tags_match: Tag matching mode.
+        recall_types: Fact types to filter (world, experience, opinion, observation).
+        recall_include_entities: Include entity information in recall results.
         bank_id_from_config: Config key to read bank_id from at runtime.
             Looked up in ``config["configurable"][bank_id_from_config]``.
             Only used when ``bank_id`` is not provided.
@@ -140,6 +145,10 @@ def create_recall_node(
             if tags:
                 recall_kwargs["tags"] = tags
                 recall_kwargs["tags_match"] = tags_match
+            if recall_types:
+                recall_kwargs["types"] = recall_types
+            if recall_include_entities:
+                recall_kwargs["include_entities"] = True
 
             response = await resolved_client.arecall(**recall_kwargs)
             results = response.results[:max_results] if response.results else []
@@ -159,9 +168,7 @@ def create_recall_node(
             return {"messages": [SystemMessage(content=memory_text, id="hindsight_memory_context")]}
         except Exception as e:
             logger.error(f"Recall node failed: {e}")
-            if output_key:
-                return {output_key: None}
-            return {"messages": []}
+            raise HindsightError(f"Recall node failed: {e}") from e
 
     return recall_node
 
@@ -173,6 +180,8 @@ def create_retain_node(
     hindsight_api_url: Optional[str] = None,
     api_key: Optional[str] = None,
     tags: Optional[list[str]] = None,
+    metadata: Optional[dict[str, str]] = None,
+    document_id: Optional[str] = None,
     bank_id_from_config: str = "user_id",
     retain_human: bool = True,
     retain_ai: bool = False,
@@ -189,6 +198,8 @@ def create_retain_node(
         hindsight_api_url: API URL (used if no client provided).
         api_key: API key (used if no client provided).
         tags: Tags to apply to stored memories.
+        metadata: Metadata dict to attach to retained memories.
+        document_id: Document ID for grouping/upserting memories.
         bank_id_from_config: Config key to read bank_id from at runtime.
         retain_human: Store human messages as memories.
         retain_ai: Store AI responses as memories.
@@ -238,9 +249,14 @@ def create_retain_node(
             }
             if tags:
                 retain_kwargs["tags"] = tags
+            if metadata:
+                retain_kwargs["metadata"] = metadata
+            if document_id:
+                retain_kwargs["document_id"] = document_id
             await resolved_client.aretain(**retain_kwargs)
         except Exception as e:
             logger.error(f"Retain node failed: {e}")
+            raise HindsightError(f"Retain node failed: {e}") from e
 
         return {"messages": []}
 

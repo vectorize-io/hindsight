@@ -6,6 +6,7 @@ to a ChatModel via `model.bind_tools()` or used in a ToolNode.
 """
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any, Optional
 
 from hindsight_client import Hindsight
@@ -199,3 +200,88 @@ def create_hindsight_tools(
         tools.append(hindsight_reflect)
 
     return tools
+
+
+def memory_instructions(
+    *,
+    bank_id: str,
+    base_instructions: str = "",
+    client: Optional[Hindsight] = None,
+    hindsight_api_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    query: str = "relevant context about the user",
+    budget: Optional[str] = None,
+    max_results: int = 5,
+    max_tokens: Optional[int] = None,
+    prefix: str = "\n\nRelevant memories:\n",
+    tags: Optional[list[str]] = None,
+    tags_match: Optional[str] = None,
+) -> Callable[..., Awaitable[str]]:
+    """Create an async callable that auto-injects relevant memories into instructions.
+
+    Returns an async function that recalls memories from Hindsight and appends
+    them to base instructions. Useful for LangChain chains or any context where
+    you want memory injection without a full LangGraph graph.
+
+    Args:
+        bank_id: The Hindsight memory bank to recall from.
+        base_instructions: Static instructions prepended before memories.
+        client: Pre-configured Hindsight client (preferred).
+        hindsight_api_url: API URL (used if no client provided).
+        api_key: API key (used if no client provided).
+        query: The recall query to find relevant memories.
+        budget: Recall budget level (low/mid/high).
+        max_results: Maximum number of memories to include.
+        max_tokens: Maximum tokens for recall results.
+        prefix: Text prepended before the memory list.
+        tags: Tags to filter when searching memories.
+        tags_match: Tag matching mode (any/all/any_strict/all_strict).
+
+    Returns:
+        An async callable that returns instructions with memories appended.
+
+    Example::
+
+        from hindsight_langgraph import memory_instructions
+
+        get_instructions = memory_instructions(
+            client=client,
+            bank_id="user-123",
+            base_instructions="You are a helpful assistant.",
+        )
+        instructions = await get_instructions()
+    """
+    resolved_client = resolve_client(client, hindsight_api_url, api_key)
+
+    config = get_config()
+    effective_budget = budget if budget is not None else (config.budget if config else "mid")
+    effective_max_tokens = max_tokens if max_tokens is not None else (config.max_tokens if config else 4096)
+    effective_tags = tags if tags is not None else (config.recall_tags if config else None)
+    effective_tags_match = (
+        tags_match if tags_match is not None else (config.recall_tags_match if config else "any")
+    )
+
+    async def _instructions(*args: Any, **kwargs: Any) -> str:
+        """Recall memories and format as instructions text."""
+        try:
+            recall_kwargs: dict[str, Any] = {
+                "bank_id": bank_id,
+                "query": query,
+                "budget": effective_budget,
+                "max_tokens": effective_max_tokens,
+            }
+            if effective_tags:
+                recall_kwargs["tags"] = effective_tags
+                recall_kwargs["tags_match"] = effective_tags_match
+            response = await resolved_client.arecall(**recall_kwargs)
+            if not response.results:
+                return base_instructions
+            lines = []
+            for i, result in enumerate(response.results[:max_results], 1):
+                lines.append(f"{i}. {result.text}")
+            return base_instructions + prefix + "\n".join(lines)
+        except Exception as e:
+            logger.error("memory_instructions recall failed: %s", e)
+            return base_instructions
+
+    return _instructions
