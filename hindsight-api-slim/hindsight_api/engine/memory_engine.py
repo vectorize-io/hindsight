@@ -13,6 +13,7 @@ import asyncio
 import contextvars
 import json
 import logging
+import os
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -24,6 +25,7 @@ import asyncpg
 import httpx
 import tiktoken
 
+from .._vector_index import ann_search_tuning_settings
 from ..config import (
     DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
     DEFAULT_RECALL_INCLUDE_CHUNKS,
@@ -2047,13 +2049,18 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Per-connection initialization callback (PostgreSQL-specific for now)
         async def _init_connection(conn: asyncpg.Connection) -> None:
-            # SET (not SET LOCAL) so it persists for the connection lifetime.
-            # ef_search=200 improves HNSW recall quality for the per-fact_type
-            # semantic queries in retrieve_semantic_bm25_combined().
-            try:
-                await conn.execute("SET hnsw.ef_search = 200")
-            except Exception:
-                logger.debug("Could not set hnsw.ef_search — extension may not support it")
+            # SET (not SET LOCAL) so per-backend ANN tuning persists for the
+            # connection lifetime. Each backend exposes its own GUC: pgvector
+            # uses hnsw.ef_search, vchord uses vchordrq.probes. The dispatcher
+            # returns the right one for the configured extension, tuned for
+            # the higher recall the per-fact_type semantic queries in
+            # retrieve_semantic_bm25_combined() need.
+            ext = os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector").lower()
+            for guc, value in ann_search_tuning_settings(ext, kind="high_recall"):
+                try:
+                    await conn.execute(f"SET {guc} = {value}")
+                except Exception:
+                    logger.debug("Could not set %s — extension may not support it", guc)
 
             # Server-side safety net for runaway queries. Migrations use a
             # separate SQLAlchemy/psycopg2 engine, so long-running DDL is

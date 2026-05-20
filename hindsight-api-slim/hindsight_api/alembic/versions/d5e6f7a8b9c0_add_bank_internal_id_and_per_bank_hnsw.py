@@ -55,7 +55,7 @@ def _vector_index_using_clause(ext: str) -> str:
     if ext == "pgvectorscale":
         return "USING diskann (embedding vector_cosine_ops) WITH (num_neighbors = 50)"
     if ext == "vchord":
-        return "USING vchordrq (embedding vector_l2_ops)"
+        return "USING vchordrq (embedding vector_cosine_ops)"
     if ext == "scann":
         return "USING scann (embedding cosine) WITH (mode = 'AUTO')"
     return "USING hnsw (embedding vector_cosine_ops)"

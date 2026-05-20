@@ -3,10 +3,12 @@ Link creation utilities for temporal, semantic, and entity links.
 """
 
 import logging
+import os
 import time
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from ..._vector_index import ann_search_tuning_settings
 from ..memory_engine import fq_table
 from .types import EntityLink
 
@@ -701,16 +703,19 @@ async def compute_semantic_links_ann(
     # `relation "_ann_seeds" does not exist` on the second statement.
     #
     # Using ON COMMIT DROP + SET LOCAL also means we don't have to remember to
-    # manually drop the temp table or reset hnsw.ef_search — the transaction
-    # end handles both.
+    # manually drop the temp table or reset the per-backend ANN tuning GUC —
+    # the transaction end handles both.
     rows: list = []
     async with conn.transaction():
-        # Transaction-local ef_search. Default 400 is tuned for recall precision
-        # but at 164k units each HNSW probe takes 94ms. ef_search=60 gives 2.7ms
-        # per probe (35x faster) with sufficient accuracy for top-50 semantic
-        # link creation. SET LOCAL auto-reverts at commit, so we don't pollute
-        # the pool for subsequent recall queries.
-        await conn.execute("SET LOCAL hnsw.ef_search = 60")
+        # Transaction-local ANN tuning. Each supported backend exposes its own
+        # GUC (hnsw.ef_search on pgvector, vchordrq.probes on vchord); the
+        # dispatcher returns the right knob for the configured backend with a
+        # value tuned for top-50 semantic link creation (lower recall but much
+        # lower latency than the recall-side default). SET LOCAL auto-reverts
+        # at commit, so we don't pollute the pool for subsequent queries.
+        ext = os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector").lower()
+        for guc, value in ann_search_tuning_settings(ext, kind="low_latency"):
+            await conn.execute(f"SET LOCAL {guc} = {value}")
 
         t_setup = time_mod.time()
         await conn.execute("CREATE TEMP TABLE _ann_seeds (unit_id text, emb_text text, fact_type text) ON COMMIT DROP")
