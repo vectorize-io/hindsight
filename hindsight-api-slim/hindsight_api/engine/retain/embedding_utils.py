@@ -15,9 +15,21 @@ class EmbeddingsBackend(Protocol):
     """Minimal duck-typed surface used by retain/recall — the concrete `Embeddings`
     ABC supplies default implementations that delegate to `encode()`."""
 
+    @property
+    def dimension(self) -> int: ...
+
     def encode_query(self, texts: list[str]) -> list[list[float]]: ...
 
     def encode_documents(self, texts: list[str]) -> list[list[float]]: ...
+
+
+def _validate_embedding_vector(vector: list[float], *, index: int, expected_dimension: int) -> list[float]:
+    actual_dimension = len(vector)
+    if actual_dimension == 0:
+        raise RuntimeError(f"embedding {index} has dimension 0; expected {expected_dimension}")
+    if actual_dimension != expected_dimension:
+        raise RuntimeError(f"embedding {index} has dimension {actual_dimension}; expected {expected_dimension}")
+    return vector
 
 
 def generate_embedding(
@@ -36,9 +48,19 @@ def generate_embedding(
     """
     try:
         embeddings = _encode_with_input_type(embeddings_backend, [text], input_type)
-        return embeddings[0]
     except Exception as e:
         raise Exception(f"Failed to generate embedding: {str(e)}")
+
+    if len(embeddings) != 1:
+        raise RuntimeError(
+            f"Embeddings backend returned {len(embeddings)} vectors for 1 input text; "
+            "expected exact 1:1 alignment"
+        )
+    return _validate_embedding_vector(
+        embeddings[0],
+        index=0,
+        expected_dimension=embeddings_backend.dimension,
+    )
 
 
 def _encode_with_input_type(
@@ -81,4 +103,7 @@ async def generate_embeddings_batch(
             "expected exact 1:1 alignment"
         )
 
-    return embeddings
+    return [
+        _validate_embedding_vector(embedding, index=index, expected_dimension=embeddings_backend.dimension)
+        for index, embedding in enumerate(embeddings)
+    ]
