@@ -935,6 +935,22 @@ jobs:
     - name: Lint Helm chart
       run: helm lint helm/hindsight
 
+  test-standalone-start-script:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.docker == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Run standalone start script tests
+      run: bash docker/standalone/test-start-all.sh
+
   build-docker-images:
     needs: [detect-changes]
     if: >-
@@ -3651,6 +3667,7 @@ jobs:
       - build-docs
       - test-rust-cli
       - lint-helm-chart
+      - test-standalone-start-script
       - build-docker-images
       - test-api
       - test-api-oracle
