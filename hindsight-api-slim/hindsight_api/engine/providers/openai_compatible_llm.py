@@ -306,15 +306,19 @@ class OpenAICompatibleLLM(LLMInterface):
             self.api_key = "local"
 
         # Validate API key for cloud providers
-        if self.provider in (
-            "openai",
-            "groq",
-            "minimax",
-            "deepseek",
-            "openrouter",
-            "zai",
-            "opencode-go",
-        ) and not self.api_key:
+        if (
+            self.provider
+            in (
+                "openai",
+                "groq",
+                "minimax",
+                "deepseek",
+                "openrouter",
+                "zai",
+                "opencode-go",
+            )
+            and not self.api_key
+        ):
             raise ValueError(f"API key is required for {self.provider}")
 
         # Service tier configuration (from config, not env vars)
