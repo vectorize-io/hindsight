@@ -195,6 +195,75 @@ class WorkerPoller:
         # Convert default schema to None for SQL compatibility (no prefix), keep others as-is
         return [t.schema if t.schema != DEFAULT_DATABASE_SCHEMA else None for t in tenants]
 
+    async def _quarantine_unclaimable_pending_operations(self, schemas: list[str | None]) -> int:
+        """Move deterministic null-payload poison rows out of the pending lane.
+
+        Worker claim queries intentionally skip ``task_payload IS NULL`` because
+        there is no executable task to hand to the executor. Most such rows are
+        legitimate ``batch_retain`` parent aggregators while their child rows
+        are still active. A null-payload row with no child references, or any
+        non-parent operation with a null payload, is unclaimable forever and
+        makes queue health look like ordinary backlog. Mark those rows failed so
+        the pending lane reflects claimable/retryable work only.
+        """
+        if self._backend.backend_type != "postgresql":
+            return 0
+
+        total = 0
+        error_message = "Quarantined unclaimable async operation: task_payload is NULL"
+        async with self._backend.acquire() as conn:
+            for schema in schemas:
+                table = fq_table("async_operations", schema)
+                try:
+                    result = await conn.execute(
+                        f"""
+                        UPDATE {table} AS op
+                        SET status = 'failed',
+                            error_message = $1,
+                            result_metadata = COALESCE(op.result_metadata, '{{}}'::jsonb) || jsonb_build_object(
+                                'quarantined', true,
+                                'quarantine_reason', 'task_payload_null',
+                                'quarantine_payload_null', true
+                            ),
+                            updated_at = now()
+                        WHERE op.status = 'pending'
+                          AND op.task_payload IS NULL
+                          AND (
+                            op.operation_type != 'batch_retain'
+                            OR NOT EXISTS (
+                              SELECT 1
+                              FROM {table} AS child
+                              WHERE child.bank_id = op.bank_id
+                                AND child.result_metadata::jsonb @> jsonb_build_object(
+                                  'parent_operation_id', op.operation_id::text
+                                )
+                            )
+                          )
+                        """,
+                        error_message,
+                    )
+                    count = int(result.split()[-1]) if result else 0
+                    if count:
+                        total += count
+                        schema_display = schema or "default"
+                        logger.warning(
+                            "Worker %s quarantined %d unclaimable pending async operation(s) in schema %s",
+                            self._worker_id,
+                            count,
+                            schema_display,
+                        )
+                except Exception as e:
+                    # Keep polling resilient on partially provisioned schemas or
+                    # non-PostgreSQL backends whose JSON predicate syntax differs.
+                    schema_display = f'"{schema}"' if schema else str(schema)
+                    logger.debug(
+                        "Worker %s could not quarantine unclaimable operations for schema %s: %s",
+                        self._worker_id,
+                        schema_display,
+                        e,
+                    )
+        return total
+
     async def _scan_active_schemas(self, schemas: list[str | None]) -> set[str | None]:
         """Find which schemas have pending work.
 
@@ -316,6 +385,8 @@ class WorkerPoller:
         schemas = await self._get_schemas()
         if not schemas:
             return []
+
+        await self._quarantine_unclaimable_pending_operations(schemas)
 
         # Scan: find which schemas have pending work using a lightweight
         # EXISTS check (no locks). Then only claim from those schemas
