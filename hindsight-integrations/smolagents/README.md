@@ -18,13 +18,16 @@ pip install hindsight-smolagents
 
 ## Quick Start
 
+> ✨ **Recommended: [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** — free tier, no self-hosting required. Sign up and grab an API key in under a minute.
+
 ```python
 from smolagents import CodeAgent, HfApiModel
 from hindsight_smolagents import create_hindsight_tools
 
 tools = create_hindsight_tools(
     bank_id="user-123",
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key="hsk_...",  # or set HINDSIGHT_API_KEY env var
 )
 
 agent = CodeAgent(
@@ -42,6 +45,19 @@ The agent now has three tools it can call:
 - **`hindsight_recall`** — Search long-term memory for relevant facts
 - **`hindsight_reflect`** — Synthesize a reasoned answer from memories
 
+### Self-hosting (local development)
+
+If you're running Hindsight locally with `./scripts/dev/start-api.sh`, point at your local server instead:
+
+```python
+tools = create_hindsight_tools(
+    bank_id="user-123",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+)
+```
+
+See the [Hindsight installation guide](https://hindsight.vectorize.io/developer/installation) for self-hosting setup.
+
 ## With Memory Instructions
 
 Pre-recall relevant memories and inject them into the system prompt:
@@ -51,12 +67,12 @@ from hindsight_smolagents import create_hindsight_tools, memory_instructions
 
 tools = create_hindsight_tools(
     bank_id="user-123",
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
 )
 
 memories = memory_instructions(
     bank_id="user-123",
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
 )
 
 agent = CodeAgent(
@@ -77,11 +93,11 @@ agent = CodeAgent(
     tools=[
         HindsightRetainTool(
             bank_id="user-123",
-            hindsight_api_url="http://localhost:8888",
+            hindsight_api_url="https://api.hindsight.vectorize.io",
         ),
         HindsightRecallTool(
             bank_id="user-123",
-            hindsight_api_url="http://localhost:8888",
+            hindsight_api_url="https://api.hindsight.vectorize.io",
         ),
     ],
     model=HfApiModel(),
@@ -95,7 +111,7 @@ Include only the tools you need via the factory:
 ```python
 tools = create_hindsight_tools(
     bank_id="user-123",
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
     enable_retain=True,
     enable_recall=True,
     enable_reflect=False,  # Omit reflect
@@ -110,7 +126,7 @@ Instead of passing connection details to every tool, configure once:
 from hindsight_smolagents import configure, create_hindsight_tools
 
 configure(
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",  # Hindsight Cloud (default)
     api_key="your-api-key",       # Or set HINDSIGHT_API_KEY env var
     budget="mid",                  # Recall budget: low/mid/high
     max_tokens=4096,               # Max tokens for recall results
@@ -162,7 +178,7 @@ tools = create_hindsight_tools(bank_id="user-123")
 
 | Parameter | Default | Description |
 |---|---|---|
-| `hindsight_api_url` | Production API | Hindsight API URL |
+| `hindsight_api_url` | Hindsight Cloud (`https://api.hindsight.vectorize.io`) | Hindsight API URL |
 | `api_key` | `HINDSIGHT_API_KEY` env | API key for authentication |
 | `budget` | `"mid"` | Default recall budget level |
 | `max_tokens` | `4096` | Default max tokens for recall |
