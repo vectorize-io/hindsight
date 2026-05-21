@@ -32,13 +32,13 @@ hindsight-api
 
 ## Configuration
 
-| Field                | Default                 | Description                                                    |
-| -------------------- | ----------------------- | -------------------------------------------------------------- |
+| Field                | Default                              | Description                                                                       |
+| -------------------- | ------------------------------------ | --------------------------------------------------------------------------------- |
 | `hindsightApiUrl`    | `https://api.hindsight.vectorize.io` | Hindsight server URL (Cloud default; use `http://localhost:8888` for self-hosted) |
-| `hindsightApiKeyRef` | —                       | Paperclip secret name holding Hindsight Cloud API key          |
-| `bankGranularity`    | `["company", "agent"]`  | Memory isolation: per company+agent, per company, or per agent |
-| `recallBudget`       | `mid`                   | `low` = fastest, `mid` = balanced, `high` = most thorough      |
-| `autoRetain`         | `true`                  | Automatically retain run output after every run                |
+| `hindsightApiKeyRef` | —                                    | Paperclip secret name holding Hindsight Cloud API key                             |
+| `bankGranularity`    | `["company", "agent"]`               | Memory isolation: per company+agent, per company, or per agent                    |
+| `recallBudget`       | `mid`                                | `low` = fastest, `mid` = balanced, `high` = most thorough                         |
+| `autoRetain`         | `true`                               | Automatically retain run output after every run                                   |
 
 ## Bank ID Format
 
