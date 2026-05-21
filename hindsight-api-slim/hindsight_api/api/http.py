@@ -466,6 +466,13 @@ class MemoryItem(BaseModel):
         description="Optional tags for visibility scoping. Memories with tags can be filtered during recall.",
     )
 
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("content cannot be empty")
+        return v
+
     @field_validator("tags", mode="before")
     @classmethod
     def coerce_tags(cls, v):
