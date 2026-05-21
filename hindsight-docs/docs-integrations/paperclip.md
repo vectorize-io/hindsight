@@ -20,16 +20,17 @@ Then configure in **Settings → Plugins → Hindsight Memory**.
 
 ## Prerequisites
 
-Either:
+:::tip Hindsight Cloud (recommended)
+[Sign up free](https://ui.hindsight.vectorize.io/signup) — no infrastructure to run. Skip straight to Configuration below.
+:::
+
+**Self-hosting alternative** — run Hindsight locally:
 
 ```bash
-# Self-hosted
 pip install hindsight-all
 export HINDSIGHT_API_LLM_API_KEY=your-openai-key
 hindsight-api
 ```
-
-Or [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — no self-hosting required.
 
 ## How It Works
 
@@ -58,7 +59,7 @@ Memory is keyed to `companyId` + `agentId` — never to the run ID — so it acc
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `hindsightApiUrl` | `http://localhost:8888` | Hindsight server URL |
+| `hindsightApiUrl` | `https://api.hindsight.vectorize.io` | Hindsight server URL (Cloud default; use `http://localhost:8888` for self-hosted) |
 | `hindsightApiKeyRef` | — | Paperclip secret name holding Hindsight Cloud API key |
 | `bankGranularity` | `["company", "agent"]` | Memory isolation: per company+agent, per company, or per agent |
 | `recallBudget` | `mid` | `low` = fastest, `mid` = balanced, `high` = most thorough |
