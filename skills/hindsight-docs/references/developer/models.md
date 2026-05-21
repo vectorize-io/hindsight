@@ -30,6 +30,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - MiniMax
 - DeepSeek
 - z.ai
+- opencode-go
 - Volcano Engine
 - OpenRouter
 - OpenAI Codex

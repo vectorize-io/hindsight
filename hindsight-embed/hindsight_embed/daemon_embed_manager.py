@@ -9,6 +9,7 @@ import logging
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sysconfig
 import time
@@ -580,6 +581,33 @@ class DaemonEmbedManager(EmbedManager):
         except Exception:
             return False
 
+    @staticmethod
+    def _print_ui_unavailable_panel(missing_cmd: str, api_url: str) -> None:
+        """Print an actionable panel when the UI launcher (npx/node) is missing.
+
+        The daemon is already running at this point, so the panel reframes the
+        situation: the API is usable now, the UI is optional, and there's a
+        concrete install link plus a follow-up command.
+        """
+        message = (
+            f"The UI requires [bold]{missing_cmd}[/bold], which was not found on PATH.\n\n"
+            f"Your daemon is running and the API is usable at: [bold]{api_url}[/bold]\n"
+            "Memory operations via the API, MCP, or SDKs work without the UI.\n\n"
+            "To enable the UI:\n"
+            "  1. Install Node.js from https://nodejs.org (the LTS build includes npx)\n"
+            "  2. Re-open your shell so PATH picks up the new install\n"
+            "  3. Run: hindsight-embed ui start"
+        )
+        console.print(
+            Panel(
+                Text.from_markup(message),
+                title="[bold yellow]UI Unavailable (Node.js not found)[/bold yellow]",
+                border_style="yellow",
+                padding=(1, 2),
+            )
+        )
+        console.print()
+
     def start_ui(self, profile: str, ui_port: int | None = None, hostname: str = "0.0.0.0") -> bool:
         """Start the control plane UI in background.
 
@@ -621,6 +649,13 @@ class DaemonEmbedManager(EmbedManager):
             "--api-url",
             api_url,
         ]
+
+        # Pre-flight: the UI runs via npx (or `node` in dev). If neither is on
+        # PATH the spawn would raise FileNotFoundError — catch it up-front and
+        # show an actionable panel that frames the daemon as still usable.
+        if shutil.which(cmd[0]) is None:
+            self._print_ui_unavailable_panel(cmd[0], api_url)
+            return False
 
         try:
             with open(ui_log, "wb") as log_file:
@@ -677,18 +712,10 @@ class DaemonEmbedManager(EmbedManager):
             return False
 
         except FileNotFoundError:
-            error_msg = (
-                f"Command not found: {cmd[0]}\nFull command: {' '.join(cmd)}\n\nInstall Node.js and npx to run the UI."
-            )
-            console.print(
-                Panel(
-                    Text(error_msg, style="red"),
-                    title="[bold red]✗ Command Not Found[/bold red]",
-                    border_style="red",
-                    padding=(1, 2),
-                )
-            )
-            console.print()
+            # `shutil.which` found the binary but the spawn still failed to
+            # locate it — rare, but can happen on Windows when PATH resolution
+            # diverges between Python and the OS loader.
+            self._print_ui_unavailable_panel(cmd[0], api_url)
             return False
         except Exception as e:
             error_msg = f"Failed to start UI: {e}\n\nCommand: {' '.join(cmd)}\nLog file: {ui_log}"

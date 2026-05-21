@@ -109,6 +109,34 @@ def test_find_ui_command_uses_npx_yes_flag_for_published_control_plane(monkeypat
         ]
 
 
+def test_start_ui_skips_spawn_when_npx_missing(tmp_path, monkeypatch):
+    """When npx is absent, start_ui must surface a friendly panel and never
+    invoke subprocess.Popen (which would crash on a non-existent binary)."""
+    manager = DaemonEmbedManager()
+
+    paths = MagicMock()
+    paths.port = 8000
+    paths.ui_log = tmp_path / "ui.log"
+
+    manager._profile_manager = MagicMock()
+    manager._profile_manager.resolve_profile_paths.return_value = paths
+
+    monkeypatch.setattr(manager, "is_ui_running", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(manager, "get_url", lambda _profile: "http://127.0.0.1:8000")
+    monkeypatch.setattr(
+        manager, "_find_ui_command", lambda: ["npx", "-y", "@vectorize-io/hindsight-control-plane@9.9.9"]
+    )
+
+    with (
+        patch("hindsight_embed.daemon_embed_manager.shutil.which", return_value=None),
+        patch("hindsight_embed.daemon_embed_manager.subprocess.Popen") as popen,
+    ):
+        result = manager.start_ui("default")
+
+    assert result is False
+    popen.assert_not_called()
+
+
 def test_find_api_command_prefers_installed_binary_over_uvx(tmp_path, monkeypatch):
     """
     When hindsight-api is installed alongside hindsight-embed (e.g. via

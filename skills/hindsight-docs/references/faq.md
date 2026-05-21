@@ -76,6 +76,7 @@ Browse all supported integrations in the Integrations Hub.
 - MiniMax
 - DeepSeek
 - z.ai
+- opencode-go
 - Volcano Engine
 - OpenRouter
 - OpenAI Codex
