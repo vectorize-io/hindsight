@@ -14,7 +14,7 @@ from typing import Any, Callable
 from crewai.memory.storage.interface import Storage
 
 from ._compat import call_sync
-from .config import get_config
+from .config import DEFAULT_HINDSIGHT_API_URL, get_config
 from .errors import HindsightError
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,10 @@ class HindsightStorage(Storage):
         from hindsight_crewai import configure, HindsightStorage
         from crewai.memory.external.external_memory import ExternalMemory
 
-        configure(hindsight_api_url="http://localhost:8888")
+        configure(
+            hindsight_api_url="https://api.hindsight.vectorize.io",
+            api_key="hsk_...",
+        )
         storage = HindsightStorage(bank_id="my-crew")
         external_memory = ExternalMemory(storage=storage)
     """
@@ -84,7 +87,7 @@ class HindsightStorage(Storage):
 
         # Resolve settings: constructor args override global config
         config = get_config()
-        self._api_url = hindsight_api_url or (config.hindsight_api_url if config else "http://localhost:8888")
+        self._api_url = hindsight_api_url or (config.hindsight_api_url if config else DEFAULT_HINDSIGHT_API_URL)
         self._api_key = api_key or (config.api_key if config else None)
         self._budget = budget or (config.budget if config else "mid")
         self._max_tokens = max_tokens or (config.max_tokens if config else 4096)
