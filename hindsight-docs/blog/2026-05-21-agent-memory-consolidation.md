@@ -1,14 +1,14 @@
 ---
-title: "Agent Memory Consolidation: Keep, Merge, Decay, Evict"
+title: "The Consolidation Problem in Agent Memory"
 description: "Agents that remember everything remember nothing useful. A four-lever framework — importance, merge, decay, eviction — for consolidating agent memory."
 authors: [benfrank241]
-date: 2026-05-20T12:00
+date: 2026-05-21T12:00
 tags: [memory, agents, hindsight, architecture, consolidation, deep-dive]
 image: /img/blog/agent-memory-consolidation.png
 hide_table_of_contents: true
 ---
 
-![Agent Memory Consolidation: Keep, Merge, Decay, Evict](/img/blog/agent-memory-consolidation.png)
+![The Consolidation Problem in Agent Memory](/img/blog/agent-memory-consolidation.png)
 
 Agent memory consolidation is the policy layer that decides what an agent's memory keeps, merges, or evicts. It operates on four levers: importance (what becomes a memory at all), merge (how facts about the same entity unify into one record), decay (how confidence in old facts degrades over time), and eviction (when a memory leaves the system entirely).
 
