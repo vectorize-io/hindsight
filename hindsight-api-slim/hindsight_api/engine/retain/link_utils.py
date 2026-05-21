@@ -3,12 +3,11 @@ Link creation utilities for temporal, semantic, and entity links.
 """
 
 import logging
-import os
 import time
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from ..._vector_index import ann_search_tuning_settings
+from ..._vector_index import ann_search_tuning_settings, configured_vector_extension
 from ..memory_engine import fq_table
 from .types import EntityLink
 
@@ -713,8 +712,7 @@ async def compute_semantic_links_ann(
         # value tuned for top-50 semantic link creation (lower recall but much
         # lower latency than the recall-side default). SET LOCAL auto-reverts
         # at commit, so we don't pollute the pool for subsequent queries.
-        ext = os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector").lower()
-        for guc, value in ann_search_tuning_settings(ext, kind="low_latency"):
+        for guc, value in ann_search_tuning_settings(configured_vector_extension(), kind="low_latency"):
             await conn.execute(f"SET LOCAL {guc} = {value}")
 
         t_setup = time_mod.time()

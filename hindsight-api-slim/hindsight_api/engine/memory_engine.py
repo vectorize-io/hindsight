@@ -13,7 +13,6 @@ import asyncio
 import contextvars
 import json
 import logging
-import os
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -25,7 +24,7 @@ import asyncpg
 import httpx
 import tiktoken
 
-from .._vector_index import ann_search_tuning_settings
+from .._vector_index import ann_search_tuning_settings, configured_vector_extension
 from ..config import (
     DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
     DEFAULT_RECALL_INCLUDE_CHUNKS,
@@ -2055,8 +2054,7 @@ class MemoryEngine(MemoryEngineInterface):
             # returns the right one for the configured extension, tuned for
             # the higher recall the per-fact_type semantic queries in
             # retrieve_semantic_bm25_combined() need.
-            ext = os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector").lower()
-            for guc, value in ann_search_tuning_settings(ext, kind="high_recall"):
+            for guc, value in ann_search_tuning_settings(configured_vector_extension(), kind="high_recall"):
                 try:
                     await conn.execute(f"SET {guc} = {value}")
                 except Exception:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -83,6 +84,18 @@ _INSTALL_HINTS = {
     "vchord": "CREATE EXTENSION vchord CASCADE;",
     "scann": "CREATE EXTENSION vector; then CREATE EXTENSION alloydb_scann CASCADE;",
 }
+
+
+def configured_vector_extension() -> str:
+    """Return the user-configured vector backend extension.
+
+    Reads ``HINDSIGHT_API_VECTOR_EXTENSION`` (default ``"pgvector"``) and
+    validates it via :func:`validate_extension`. This is the single source of
+    truth for runtime code that needs to dispatch behaviour by vector backend;
+    callers should prefer this over reading the env var directly, so the
+    default value and the lookup mechanism live in one place.
+    """
+    return validate_extension(os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector"))
 
 
 def validate_extension(name: str) -> str:

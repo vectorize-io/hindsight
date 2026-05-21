@@ -23,23 +23,19 @@ vector index and does not depend on this mapping.
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Sequence
 
 from alembic import context, op
 from sqlalchemy import text
 
+from hindsight_api._vector_index import configured_vector_extension
 from hindsight_api.alembic._dialect import run_for_dialect
 
 revision: str = "b8c9d0e1f2a3"
 down_revision: str | Sequence[str] | None = "86f7a033d372"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
-
-
-def _configured_vector_extension() -> str:
-    return os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector").lower()
 
 
 def _rebuild_vchordrq_indexes(old_ops: str, new_ops: str) -> None:
@@ -79,14 +75,14 @@ def _rebuild_vchordrq_indexes(old_ops: str, new_ops: str) -> None:
 
 
 def _pg_upgrade() -> None:
-    if _configured_vector_extension() != "vchord":
+    if configured_vector_extension() != "vchord":
         return
     with op.get_context().autocommit_block():
         _rebuild_vchordrq_indexes("vector_l2_ops", "vector_cosine_ops")
 
 
 def _pg_downgrade() -> None:
-    if _configured_vector_extension() != "vchord":
+    if configured_vector_extension() != "vchord":
         return
     with op.get_context().autocommit_block():
         _rebuild_vchordrq_indexes("vector_cosine_ops", "vector_l2_ops")
