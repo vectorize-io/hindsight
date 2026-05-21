@@ -52,6 +52,7 @@ from .sql import SQLDialect, create_sql_dialect
 # Context variable for current schema (async-safe, per-task isolation)
 # Note: default is None, actual default comes from config via get_current_schema()
 _current_schema: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_schema", default=None)
+MENTAL_MODEL_PENDING_CONTENT = "Generating content..."
 
 
 def get_current_schema() -> str:
@@ -7596,7 +7597,8 @@ class MemoryEngine(MemoryEngineInterface):
             # stub out the DB don't hit an unexpected pool access).
             use_delta = False
             stored_structured_content: dict[str, Any] | None = None
-            if refresh_mode == "delta" and current_content:
+            has_delta_baseline = bool(current_content) and current_content != MENTAL_MODEL_PENDING_CONTENT
+            if refresh_mode == "delta" and has_delta_baseline:
                 backend = await self._get_backend()
                 async with acquire_with_retry(backend) as conn:
                     tracking_row = await conn.fetchrow(
