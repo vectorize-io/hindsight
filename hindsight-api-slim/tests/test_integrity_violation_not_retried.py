@@ -151,13 +151,33 @@ async def test_foreign_key_violation_also_not_retried(memory):
     await pool.execute("DELETE FROM banks WHERE bank_id = $1", bank_id)
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "embedding 0 has dimension 0; expected 384",
+        "different vector dimensions 384 and 0",
+    ],
+)
+def test_invalid_embedding_dimension_error_is_non_retryable(message):
+    """Embedding dimension mismatches are deterministic and must not be retried.
+
+    PR #1670 validates empty/mismatched embedding vectors before pgvector writes.
+    pgvector may also raise its own dimension-mismatch error if an invalid vector
+    reaches the database layer. In both cases, rerunning the same poisoned
+    embedding response only burns worker slots; a fresh retain request or fixed
+    embedding backend is required.
+    """
+    from hindsight_api.engine.memory_engine import _is_non_retryable_task_error
+
+    assert _is_non_retryable_task_error(RuntimeError(message)) is True
+
+
 @pytest.mark.asyncio
 async def test_non_integrity_error_still_retried(memory):
     """
     Sanity check: non-integrity errors (network errors, timeouts, value errors)
     should STILL use the existing retry path — i.e., raise RetryTaskAt when
-    ``_retry_count < 3``. Only integrity violations are the new non-retryable
-    class.
+    ``_retry_count < 3``. Only deterministic task errors are non-retryable.
     """
     bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
     operation_id = uuid.uuid4()
