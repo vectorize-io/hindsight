@@ -22,7 +22,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 RULES_SRC = SCRIPT_DIR / "rules" / "hindsight-memory.md"
 
-DEFAULT_API_URL = "http://localhost:8888"
+DEFAULT_API_URL = "https://api.hindsight.vectorize.io"
 MCP_TIMEOUT_SECONDS = 30
 
 

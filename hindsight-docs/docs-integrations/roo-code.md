@@ -10,22 +10,27 @@ Persistent long-term memory for [Roo Code](https://github.com/RooVetGit/Roo-Code
 
 ## Quick Start
 
+:::tip Hindsight Cloud (recommended)
+[Sign up free](https://ui.hindsight.vectorize.io/signup) — get an API key instantly, no infrastructure to run.
+:::
+
 ```bash
-# 1. Start Hindsight (self-hosted)
+# Install the integration into your project (defaults to Hindsight Cloud)
+python /path/to/hindsight-integrations/roo-code/install.py
+
+# Restart Roo Code — memory is active
+```
+
+**Self-hosting alternative:**
+
+```bash
+# Start Hindsight locally first
 pip install hindsight-all
 export HINDSIGHT_API_LLM_API_KEY=your-openai-key
 hindsight-api
 
-# 2. Install the integration into your project
-python /path/to/hindsight-integrations/roo-code/install.py
-
-# 3. Restart Roo Code — memory is active
-```
-
-Or with [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup):
-
-```bash
-python install.py --api-url https://api.hindsight.vectorize.io
+# Then install with the local URL
+python install.py --api-url http://localhost:8888
 ```
 
 ## How It Works
@@ -57,7 +62,8 @@ Writes to `.roo/` in the current directory — memory is scoped to this project:
 
 ```bash
 python install.py
-python install.py --api-url http://localhost:8888  # default
+python install.py --api-url https://api.hindsight.vectorize.io  # default (Hindsight Cloud)
+python install.py --api-url http://localhost:8888                 # self-hosted
 python install.py --project-dir /path/to/project
 ```
 
@@ -110,11 +116,11 @@ The rules file instructs Roo to call these automatically at task start and end. 
 
 A running Hindsight instance:
 
+**Hindsight Cloud (recommended):** [Sign up](https://ui.hindsight.vectorize.io/signup) — no self-hosting required.
+
 **Self-hosted:**
 ```bash
 pip install hindsight-all
 export HINDSIGHT_API_LLM_API_KEY=your-api-key
 hindsight-api  # starts on http://localhost:8888
 ```
-
-**Hindsight Cloud:** [Sign up](https://ui.hindsight.vectorize.io/signup) — no self-hosting required.

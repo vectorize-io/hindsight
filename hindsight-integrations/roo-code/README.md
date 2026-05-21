@@ -12,16 +12,15 @@ Run the installer once and every Roo Code session automatically recalls past con
 
 ## Prerequisites
 
-A running Hindsight instance. Either:
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — sign up free, get an API key, and skip the self-hosting setup entirely.
+
+**Self-hosting alternative** — run Hindsight locally:
 
 ```bash
-# Self-hosted (runs locally on port 8888)
 pip install hindsight-all
 export HINDSIGHT_API_LLM_API_KEY=your-openai-key
-hindsight-api
+hindsight-api  # starts on http://localhost:8888
 ```
-
-Or [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — no self-hosting required.
 
 ## Installation
 
