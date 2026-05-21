@@ -108,6 +108,9 @@ from .types import (
 
 logger = logging.getLogger(__name__)
 
+RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
+RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
+
 
 def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None):
     """Build retain_params and merged_tags from content dicts."""
@@ -340,7 +343,7 @@ async def _insert_facts_and_links(
     # an IndexError (see issue #1037).
     result_unit_ids = _map_results_to_contents(contents, processed_facts, unit_ids if unit_ids else [])
 
-    if outbox_callback:
+    if outbox_callback is not None:
         await outbox_callback(conn)
 
     return result_unit_ids, phase3_context
@@ -449,7 +452,8 @@ async def retain_batch(
     document_tags: list[str] | None = None,
     operation_id: str | None = None,
     schema: str | None = None,
-    outbox_callback: Callable[["asyncpg.Connection"], Awaitable[None]] | None = None,
+    outbox_callback: RetainOutboxCallback | None = None,
+    outbox_callback_factory: RetainOutboxCallbackFactory | None = None,
     db_semaphore: "asyncio.Semaphore | None" = None,
 ) -> tuple[list[list[str]], TokenUsage, int | None]:
     """
@@ -507,6 +511,10 @@ async def retain_batch(
             total_usage = TokenUsage()
             total_processed_tokens: int | None = 0
             for doc_key, (group_dicts, group_contents) in groups.items():
+                group_outbox_callback = (
+                    outbox_callback_factory(group_dicts) if outbox_callback_factory is not None else outbox_callback
+                )
+
                 group_ids, group_usage, group_processed = await retain_batch(
                     pool=pool,
                     embeddings_model=embeddings_model,
@@ -522,7 +530,8 @@ async def retain_batch(
                     document_tags=document_tags,
                     operation_id=operation_id,
                     schema=schema,
-                    outbox_callback=outbox_callback,
+                    outbox_callback=group_outbox_callback,
+                    outbox_callback_factory=outbox_callback_factory,
                     db_semaphore=db_semaphore,
                 )
                 for group_idx, orig_idx in enumerate(original_indices[doc_key]):
@@ -1844,7 +1853,7 @@ async def _delta_metadata_only(
                 merged_tags,
             )
             await fact_storage.update_memory_units_tags(conn, bank_id, document_id, merged_tags)
-            if outbox_callback:
+            if outbox_callback is not None:
                 await outbox_callback(conn)
 
     total_time = time.time() - start_time

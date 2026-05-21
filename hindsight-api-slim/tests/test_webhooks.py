@@ -16,6 +16,7 @@ import httpx
 import pytest
 import pytest_asyncio
 
+from hindsight_api import LLMConfig
 from hindsight_api.api import create_app
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.webhooks.manager import MAX_ATTEMPTS, RETRY_DELAYS, WebhookManager
@@ -27,7 +28,6 @@ from hindsight_api.webhooks.models import (
     WebhookEventType,
 )
 from hindsight_api.worker.exceptions import RetryTaskAt
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -896,6 +896,87 @@ class TestRetainCompletedWebhook:
             assert "doc-2" in doc_ids_in_payloads
         finally:
             async with memory._pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM async_operations WHERE operation_type = 'webhook_delivery' AND bank_id = $1",
+                    bank_id,
+                )
+                await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
+
+    @pytest.mark.asyncio
+    async def test_async_batch_retain_queues_one_webhook_per_document(
+        self, memory_no_llm_verify: MemoryEngine, request_context
+    ):
+        """Distinct document_id groups must not replay the full-batch outbox."""
+        bank_id = f"wh-retain-batch-{uuid.uuid4().hex[:8]}"
+        webhook_id = uuid.uuid4()
+        original_llm_config = memory_no_llm_verify._llm_config
+        original_retain_llm_config = memory_no_llm_verify._retain_llm_config
+        original_webhook_manager = memory_no_llm_verify._webhook_manager
+
+        try:
+            none_config = LLMConfig(provider="none", api_key="", base_url="", model="none")
+            memory_no_llm_verify._llm_config = none_config
+            memory_no_llm_verify._retain_llm_config = none_config
+            memory_no_llm_verify._webhook_manager = WebhookManager(
+                backend=memory_no_llm_verify._backend,
+                global_webhooks=[],
+            )
+
+            await _ensure_bank(memory_no_llm_verify._pool, bank_id)
+            async with memory_no_llm_verify._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO webhooks (id, bank_id, url, secret, event_types, enabled, created_at, updated_at)
+                    VALUES ($1, $2, $3, NULL, $4, true, NOW(), NOW())
+                    """,
+                    webhook_id,
+                    bank_id,
+                    "https://example.com/retain-hook",
+                    ["retain.completed"],
+                )
+
+            await memory_no_llm_verify.submit_async_retain(
+                bank_id=bank_id,
+                contents=[
+                    {"content": "Alice works at Google", "document_id": "doc-1"},
+                    {"content": "Bob loves Python", "document_id": "doc-2"},
+                ],
+                request_context=request_context,
+            )
+
+            async with memory_no_llm_verify._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT task_payload
+                    FROM async_operations
+                    WHERE operation_type = 'webhook_delivery'
+                      AND bank_id = $1
+                      AND task_payload->>'event_type' = 'retain.completed'
+                    ORDER BY created_at
+                    """,
+                    bank_id,
+                )
+
+            assert len(rows) == 2
+            doc_ids = []
+            event_operation_ids = []
+            for row in rows:
+                payload = row["task_payload"]
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+                event_payload = json.loads(payload["payload"])
+                doc_ids.append(event_payload.get("data", {}).get("document_id"))
+                event_operation_ids.append(event_payload.get("operation_id"))
+
+            assert len(doc_ids) == len(set(doc_ids))
+            assert sorted(doc_ids) == ["doc-1", "doc-2"]
+            assert all(event_operation_ids)
+            assert len(set(event_operation_ids)) == 1
+        finally:
+            memory_no_llm_verify._llm_config = original_llm_config
+            memory_no_llm_verify._retain_llm_config = original_retain_llm_config
+            memory_no_llm_verify._webhook_manager = original_webhook_manager
+            async with memory_no_llm_verify._pool.acquire() as conn:
                 await conn.execute(
                     "DELETE FROM async_operations WHERE operation_type = 'webhook_delivery' AND bank_id = $1",
                     bank_id,

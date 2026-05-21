@@ -5807,9 +5807,8 @@ def _register_routes(app: FastAPI):
                             strategy=group_strategy,
                             request_context=request_context,
                             return_usage=True,
-                            outbox_callback=app.state.memory._build_retain_outbox_callback(
+                            outbox_callback_factory=app.state.memory._build_retain_outbox_callback_factory(
                                 bank_id=bank_id,
-                                contents=contents,
                                 operation_id=None,
                                 schema=_current_schema.get(),
                             ),
