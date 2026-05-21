@@ -629,13 +629,18 @@ def enable() -> None:
     memory injection fails (when inject_memories=True) or storage fails
     (when store_conversations=True), the error will propagate to your code.
 
+    NOTE: enable() and HindsightCallback are mutually exclusive injection paths.
+    Do not register HindsightCallback in litellm.callbacks while enable() is
+    active — memories will be injected twice (once by the monkeypatch, once by
+    the callback running inside the original litellm.completion).
+
     Must be called after configure() and set_defaults(bank_id=...).
 
     Example:
         >>> from hindsight_litellm import configure, set_defaults, enable, HindsightError
         >>> import litellm
         >>>
-        >>> configure(hindsight_api_url="http://localhost:8888")
+        >>> configure()
         >>> set_defaults(bank_id="my-agent")
         >>> enable()
         >>>
@@ -1364,7 +1369,7 @@ async def acompletion(*args, **kwargs):
 
 @contextmanager
 def hindsight_memory(
-    hindsight_api_url: str = "http://localhost:8888",
+    hindsight_api_url: Optional[str] = None,
     bank_id: Optional[str] = None,
     api_key: Optional[str] = None,
     store_conversations: bool = True,
@@ -1375,10 +1380,16 @@ def hindsight_memory(
     budget: str = "mid",
     fact_types: Optional[List[str]] = None,
     document_id: Optional[str] = None,
+    session_id: Optional[str] = None,
     excluded_models: Optional[List[str]] = None,
     verbose: bool = False,
     include_entities: bool = True,
     trace: bool = False,
+    use_reflect: bool = False,
+    reflect_context: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    recall_tags: Optional[List[str]] = None,
+    recall_tags_match: str = "any",
 ):
     """Context manager for temporary Hindsight memory integration.
 
@@ -1387,6 +1398,7 @@ def hindsight_memory(
 
     Args:
         hindsight_api_url: URL of the Hindsight API server
+            (default: https://api.hindsight.vectorize.io)
         bank_id: Memory bank ID for memory operations (required). For multi-user
             support, use different bank_ids per user (e.g., f"user-{user_id}")
         api_key: Optional API key for Hindsight authentication
@@ -1397,11 +1409,17 @@ def hindsight_memory(
         max_memory_tokens: Maximum tokens for memory context
         budget: Budget for memory recall (low, mid, high)
         fact_types: List of fact types to filter (world, experience, opinion, observation)
-        document_id: Optional document ID for grouping conversations
+        document_id: Document ID for grouping conversations (deprecated, use session_id)
+        session_id: Session ID for grouping conversations (upsert behavior)
         excluded_models: List of model patterns to exclude
         verbose: Enable verbose logging
         include_entities: Include entity observations in recall (default True)
         trace: Enable trace info for debugging (default False)
+        use_reflect: Use reflect API instead of recall (default False)
+        reflect_context: Context for reflect reasoning
+        tags: Tags to apply when storing conversations
+        recall_tags: Tags to filter by when recalling memories
+        recall_tags_match: Tag matching mode - any/all/any_strict/all_strict (default "any")
 
     Example:
         >>> from hindsight_litellm import hindsight_memory
@@ -1410,6 +1428,10 @@ def hindsight_memory(
         >>> with hindsight_memory(bank_id="user-123"):
         ...     response = litellm.completion(model="gpt-4", messages=[...])
         >>> # Memory integration automatically disabled after context
+        >>>
+        >>> # With tag scoping
+        >>> with hindsight_memory(bank_id="user-123", tags=["session:abc"], recall_tags=["session:abc"]):
+        ...     response = litellm.completion(model="gpt-4", messages=[...])
     """
     # Save previous state
     was_enabled = is_enabled()
@@ -1430,12 +1452,18 @@ def hindsight_memory(
         set_defaults(
             bank_id=bank_id,
             document_id=document_id,
+            session_id=session_id,
             budget=budget,
             fact_types=fact_types,
             max_memories=max_memories,
             max_memory_tokens=max_memory_tokens,
             include_entities=include_entities,
             trace=trace,
+            use_reflect=use_reflect,
+            reflect_context=reflect_context,
+            tags=tags,
+            recall_tags=recall_tags,
+            recall_tags_match=recall_tags_match,
         )
         enable()
         yield

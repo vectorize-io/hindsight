@@ -1002,3 +1002,201 @@ class TestStreamingSupport:
             call_kwargs = mock_hindsight_client.retain.call_args[1]
             assert "USER: Hello" in call_kwargs["content"]
             assert "ASSISTANT: Hello world!" in call_kwargs["content"]
+
+
+class TestRecallNewParams:
+    """Tests for new parameters added to recall()."""
+
+    def setup_method(self):
+        reset_config()
+
+    def teardown_method(self):
+        cleanup()
+
+    def test_recall_passes_include_entities(self):
+        """recall() should forward include_entities to the client."""
+        from unittest.mock import MagicMock, patch
+        from hindsight_litellm import recall
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="test-agent")
+
+        mock_client = MagicMock()
+        mock_client.recall.return_value = []
+
+        with patch("hindsight_litellm.wrappers._get_client", return_value=mock_client):
+            recall("test query", include_entities=False)
+            call_kwargs = mock_client.recall.call_args[1]
+            assert call_kwargs["include_entities"] is False
+
+    def test_recall_passes_trace(self):
+        """recall() should forward trace to the client."""
+        from unittest.mock import MagicMock, patch
+        from hindsight_litellm import recall
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="test-agent")
+
+        mock_client = MagicMock()
+        mock_client.recall.return_value = []
+
+        with patch("hindsight_litellm.wrappers._get_client", return_value=mock_client):
+            recall("test query", trace=True)
+            call_kwargs = mock_client.recall.call_args[1]
+            assert call_kwargs["trace"] is True
+
+    def test_recall_passes_recall_tags(self):
+        """recall() should forward recall_tags and recall_tags_match to the client."""
+        from unittest.mock import MagicMock, patch
+        from hindsight_litellm import recall
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="test-agent")
+
+        mock_client = MagicMock()
+        mock_client.recall.return_value = []
+
+        with patch("hindsight_litellm.wrappers._get_client", return_value=mock_client):
+            recall("test query", recall_tags=["user:alice"], recall_tags_match="any_strict")
+            call_kwargs = mock_client.recall.call_args[1]
+            assert call_kwargs["tags"] == ["user:alice"]
+            assert call_kwargs["tags_match"] == "any_strict"
+
+    def test_recall_no_tags_key_when_empty(self):
+        """recall() should not pass tags key when recall_tags is None."""
+        from unittest.mock import MagicMock, patch
+        from hindsight_litellm import recall
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="test-agent")
+
+        mock_client = MagicMock()
+        mock_client.recall.return_value = []
+
+        with patch("hindsight_litellm.wrappers._get_client", return_value=mock_client):
+            recall("test query")
+            call_kwargs = mock_client.recall.call_args[1]
+            assert "tags" not in call_kwargs
+
+    def test_recall_inherits_include_entities_from_defaults(self):
+        """recall() should inherit include_entities from set_defaults() if not overridden."""
+        from unittest.mock import MagicMock, patch
+        from hindsight_litellm import recall
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="test-agent", include_entities=False)
+
+        mock_client = MagicMock()
+        mock_client.recall.return_value = []
+
+        with patch("hindsight_litellm.wrappers._get_client", return_value=mock_client):
+            recall("test query")
+            call_kwargs = mock_client.recall.call_args[1]
+            assert call_kwargs["include_entities"] is False
+
+
+class TestReflectNewParams:
+    """Tests for new parameters added to reflect()."""
+
+    def setup_method(self):
+        reset_config()
+
+    def teardown_method(self):
+        cleanup()
+
+    def test_reflect_passes_recall_tags(self):
+        """reflect() should forward recall_tags and recall_tags_match to the client."""
+        from unittest.mock import MagicMock, patch
+        from hindsight_litellm import reflect
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="test-agent")
+
+        mock_result = MagicMock()
+        mock_result.text = "some reflection"
+        mock_result.based_on = None
+        mock_client = MagicMock()
+        mock_client.reflect.return_value = mock_result
+
+        with patch("hindsight_litellm.wrappers._get_client", return_value=mock_client):
+            reflect("test query", recall_tags=["user:bob"], recall_tags_match="all")
+            call_kwargs = mock_client.reflect.call_args[1]
+            assert call_kwargs["tags"] == ["user:bob"]
+            assert call_kwargs["tags_match"] == "all"
+
+    def test_reflect_no_tags_key_when_empty(self):
+        """reflect() should not pass tags key when recall_tags is None."""
+        from unittest.mock import MagicMock, patch
+        from hindsight_litellm import reflect
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="test-agent")
+
+        mock_result = MagicMock()
+        mock_result.text = "some reflection"
+        mock_result.based_on = None
+        mock_client = MagicMock()
+        mock_client.reflect.return_value = mock_result
+
+        with patch("hindsight_litellm.wrappers._get_client", return_value=mock_client):
+            reflect("test query")
+            call_kwargs = mock_client.reflect.call_args[1]
+            assert "tags" not in call_kwargs
+
+
+class TestHindsightMemoryNewParams:
+    """Tests for new parameters added to hindsight_memory() context manager."""
+
+    def setup_method(self):
+        cleanup()
+
+    def teardown_method(self):
+        cleanup()
+
+    def test_hindsight_memory_session_id(self):
+        """hindsight_memory() should pass session_id through to defaults."""
+        from hindsight_litellm import hindsight_memory
+
+        with hindsight_memory(bank_id="test-agent", session_id="conv-123"):
+            defaults = get_defaults()
+            assert defaults.session_id == "conv-123"
+
+    def test_hindsight_memory_use_reflect(self):
+        """hindsight_memory() should pass use_reflect through to defaults."""
+        from hindsight_litellm import hindsight_memory
+
+        with hindsight_memory(bank_id="test-agent", use_reflect=True):
+            defaults = get_defaults()
+            assert defaults.use_reflect is True
+
+    def test_hindsight_memory_tags(self):
+        """hindsight_memory() should pass tags and recall_tags through to defaults."""
+        from hindsight_litellm import hindsight_memory
+
+        with hindsight_memory(
+            bank_id="test-agent",
+            tags=["session:abc"],
+            recall_tags=["session:abc"],
+            recall_tags_match="any_strict",
+        ):
+            defaults = get_defaults()
+            assert defaults.tags == ["session:abc"]
+            assert defaults.recall_tags == ["session:abc"]
+            assert defaults.recall_tags_match == "any_strict"
+
+    def test_hindsight_memory_reflect_context(self):
+        """hindsight_memory() should pass reflect_context through to defaults."""
+        from hindsight_litellm import hindsight_memory
+
+        with hindsight_memory(bank_id="test-agent", reflect_context="I am an assistant."):
+            defaults = get_defaults()
+            assert defaults.reflect_context == "I am an assistant."
+
+    def test_hindsight_memory_default_url_is_cloud(self):
+        """hindsight_memory() default URL should be the cloud endpoint, not localhost."""
+        from hindsight_litellm import hindsight_memory
+        from hindsight_litellm.config import DEFAULT_HINDSIGHT_API_URL
+
+        with hindsight_memory(bank_id="test-agent"):
+            config = get_config()
+            assert config.hindsight_api_url == DEFAULT_HINDSIGHT_API_URL

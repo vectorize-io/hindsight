@@ -74,9 +74,15 @@ class HindsightCallback(CustomLogger):
     - Configurable memory injection modes
     - Support for entity observations in recall
 
+    NOTE: HindsightCallback and enable() are mutually exclusive injection paths.
+    Use one or the other — not both. Registering HindsightCallback in
+    litellm.callbacks while enable() is active causes double memory injection.
+    Prefer enable() for most use cases; use HindsightCallback directly only if
+    you need LiteLLM's native callback lifecycle (e.g., failure hooks).
+
     Usage:
         >>> from hindsight_litellm import configure, enable
-        >>> configure(bank_id="my-agent", hindsight_api_url="http://localhost:8888")
+        >>> configure(bank_id="my-agent")
         >>> enable()
         >>>
         >>> # Now all LiteLLM calls will have memory integration

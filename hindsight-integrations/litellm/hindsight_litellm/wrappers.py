@@ -104,6 +104,10 @@ def recall(
     budget: Optional[str] = None,
     max_tokens: Optional[int] = None,
     hindsight_api_url: Optional[str] = None,
+    include_entities: Optional[bool] = None,
+    trace: Optional[bool] = None,
+    recall_tags: Optional[List[str]] = None,
+    recall_tags_match: Optional[str] = None,
 ) -> RecallResponse:
     """Recall memories from Hindsight.
 
@@ -118,6 +122,10 @@ def recall(
         budget: Recall budget level (low, mid, high) - controls how many memories are returned
         max_tokens: Maximum tokens for memory context
         hindsight_api_url: Override the configured API URL
+        include_entities: Include entity observations in results (default: from config)
+        trace: Enable trace info for debugging (default: from config)
+        recall_tags: Tags to filter by when recalling memories
+        recall_tags_match: Tag matching mode - any/all/any_strict/all_strict (default: from config)
 
     Returns:
         RecallResponse containing matched memories (iterable like a list).
@@ -128,7 +136,7 @@ def recall(
 
     Example:
         >>> from hindsight_litellm import configure, recall
-        >>> configure(bank_id="my-agent", hindsight_api_url="http://localhost:8888")
+        >>> configure(bank_id="my-agent")
         >>>
         >>> # Query memories
         >>> memories = recall("what projects am I working on?")
@@ -136,11 +144,8 @@ def recall(
         ...     print(f"- [{m.fact_type}] {m.text}")
         - [world] User is building a FastAPI project
         >>>
-        >>> # With verbose mode, access debug info
-        >>> configure(bank_id="my-agent", verbose=True)
-        >>> memories = recall("what projects am I working on?")
-        >>> if memories.debug:
-        ...     print(f"Queried bank: {memories.debug.bank_id}")
+        >>> # Filter by tags
+        >>> memories = recall("preferences", recall_tags=["user:alice"], recall_tags_match="any_strict")
     """
     # Get config and defaults, or use overrides
     config = get_config()
@@ -151,6 +156,10 @@ def recall(
     target_fact_types = fact_types or (defaults.fact_types if defaults else None)
     target_budget = budget or (defaults.budget if defaults else "mid")
     target_max_tokens = max_tokens or (defaults.max_memory_tokens if defaults else 4096)
+    target_include_entities = include_entities if include_entities is not None else (defaults.include_entities if defaults else True)
+    target_trace = trace if trace is not None else (defaults.trace if defaults else False)
+    target_recall_tags = recall_tags or (defaults.recall_tags if defaults else None)
+    target_recall_tags_match = recall_tags_match or (defaults.recall_tags_match if defaults else "any")
 
     if not api_url or not target_bank_id:
         raise RuntimeError("Hindsight not configured. Call configure() or provide bank_id and hindsight_api_url.")
@@ -161,13 +170,19 @@ def recall(
         client = _get_client(api_url, config.api_key if config else None)
 
         # Call recall API
-        results = client.recall(
-            bank_id=target_bank_id,
-            query=query,
-            types=target_fact_types,
-            budget=target_budget,
-            max_tokens=target_max_tokens,
-        )
+        recall_kwargs: dict = {
+            "bank_id": target_bank_id,
+            "query": query,
+            "types": target_fact_types,
+            "budget": target_budget,
+            "max_tokens": target_max_tokens,
+            "trace": target_trace,
+            "include_entities": target_include_entities,
+        }
+        if target_recall_tags:
+            recall_kwargs["tags"] = target_recall_tags
+            recall_kwargs["tags_match"] = target_recall_tags_match
+        results = client.recall(**recall_kwargs)
 
         # Convert to RecallResult objects
         recall_results = []
@@ -283,6 +298,8 @@ def reflect(
     context: Optional[str] = None,
     response_schema: Optional[dict] = None,
     hindsight_api_url: Optional[str] = None,
+    recall_tags: Optional[List[str]] = None,
+    recall_tags_match: Optional[str] = None,
 ) -> ReflectResult:
     """Generate a contextual answer based on memories.
 
@@ -319,6 +336,8 @@ def reflect(
     api_url = hindsight_api_url or (config.hindsight_api_url if config else None)
     target_bank_id = bank_id or (defaults.bank_id if defaults else None)
     target_budget = budget or (defaults.budget if defaults else "mid")
+    target_recall_tags = recall_tags or (defaults.recall_tags if defaults else None)
+    target_recall_tags_match = recall_tags_match or (defaults.recall_tags_match if defaults else "any")
 
     if not api_url or not target_bank_id:
         raise RuntimeError("Hindsight not configured. Call configure() or provide bank_id and hindsight_api_url.")
@@ -329,7 +348,7 @@ def reflect(
         client = _get_client(api_url, config.api_key if config else None)
 
         # Call reflect API
-        reflect_kwargs = {
+        reflect_kwargs: dict = {
             "bank_id": target_bank_id,
             "query": query,
             "budget": target_budget,
@@ -338,6 +357,9 @@ def reflect(
             reflect_kwargs["context"] = context
         if response_schema is not None:
             reflect_kwargs["response_schema"] = response_schema
+        if target_recall_tags:
+            reflect_kwargs["tags"] = target_recall_tags
+            reflect_kwargs["tags_match"] = target_recall_tags_match
         result = client.reflect(**reflect_kwargs)
 
         # Convert to ReflectResult
