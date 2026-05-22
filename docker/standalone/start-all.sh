@@ -156,7 +156,7 @@ PIDS=()
 # Start API if enabled
 if [ "$ENABLE_API" = "true" ]; then
     cd /app/api
-    API_HEALTH_URL="${HINDSIGHT_API_HEALTH_URL:-http://localhost:8888/health}"
+    API_HEALTH_URL="${HINDSIGHT_API_HEALTH_URL:-http://localhost:${HINDSIGHT_API_PORT:-8888}/health}"
     API_STARTUP_WAIT_SECONDS="${HINDSIGHT_API_STARTUP_WAIT_SECONDS:-300}"
 
     # Run API directly - Python's PYTHONUNBUFFERED=1 handles output buffering
