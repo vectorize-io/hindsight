@@ -46,6 +46,8 @@ The installer places the hook scripts under `~/.hindsight/codex/scripts/`, write
 
 ## Step 2: Connect Codex CLI to Hindsight
 
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — free tier, no self-hosting required.
+
 ```json
 {
   "hindsightApiUrl": "https://api.hindsight.vectorize.io",
@@ -54,7 +56,7 @@ The installer places the hook scripts under `~/.hindsight/codex/scripts/`, write
 }
 ```
 
-Save that as `~/.hindsight/codex.json`. For local daemon mode, you can leave `hindsightApiUrl` empty and export a provider key before starting Codex:
+Save that as `~/.hindsight/codex.json`. If you'd rather self-host with the local daemon (`hindsight-embed`), leave `hindsightApiUrl` empty and export a provider key before starting Codex:
 
 ```bash
 export OPENAI_API_KEY=sk-your-key

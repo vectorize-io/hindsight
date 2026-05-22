@@ -9,7 +9,10 @@ Basic usage::
     from crewai.memory.external.external_memory import ExternalMemory
     from crewai import Crew
 
-    configure(hindsight_api_url="http://localhost:8888")
+    configure(
+        hindsight_api_url="https://api.hindsight.vectorize.io",
+        api_key="hsk_...",
+    )
 
     crew = Crew(
         agents=[...],

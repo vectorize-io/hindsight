@@ -13,11 +13,11 @@ Basic usage::
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[HindsightTools(
             bank_id="user-123",
-            hindsight_api_url="http://localhost:8888",
+            hindsight_api_url="https://api.hindsight.vectorize.io",
         )],
         instructions=[memory_instructions(
             bank_id="user-123",
-            hindsight_api_url="http://localhost:8888",
+            hindsight_api_url="https://api.hindsight.vectorize.io",
         )],
     )
 
