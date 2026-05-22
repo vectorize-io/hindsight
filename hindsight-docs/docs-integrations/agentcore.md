@@ -40,6 +40,10 @@ pip install hindsight-agentcore
 
 ## Quick Start
 
+:::tip Recommended: Hindsight Cloud
+[Sign up free](https://ui.hindsight.vectorize.io/signup) and grab an API key — no self-hosting required.
+:::
+
 ```python
 import os
 from hindsight_agentcore import HindsightRuntimeAdapter, TurnContext, configure
