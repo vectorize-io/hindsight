@@ -44,11 +44,15 @@ pip install hindsight-pydantic-ai
 
 ## Step 2: Connect Pydantic AI to Hindsight
 
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — free tier, no self-hosting required.
+
 ```python
 from hindsight_client import Hindsight
 
-client = Hindsight(base_url="http://localhost:8888")
+client = Hindsight(base_url="https://api.hindsight.vectorize.io", api_key="hsk_...")
 ```
+
+If you're self-hosting Hindsight locally instead, use `Hindsight(base_url="http://localhost:8888")`.
 
 You can also call `configure()` once and create tools without passing a client each time.
 
@@ -59,7 +63,7 @@ from hindsight_client import Hindsight
 from hindsight_pydantic_ai import create_hindsight_tools, memory_instructions
 from pydantic_ai import Agent
 
-client = Hindsight(base_url="http://localhost:8888")
+client = Hindsight(base_url="https://api.hindsight.vectorize.io", api_key="hsk_...")
 
 agent = Agent(
     "openai:gpt-4o",

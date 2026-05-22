@@ -254,6 +254,6 @@ class TestHindsightStorage:
     def test_falls_back_to_defaults_without_config(self):
         reset_config()
         storage = HindsightStorage(bank_id="test")
-        assert storage._api_url == "http://localhost:8888"
+        assert storage._api_url == "https://api.hindsight.vectorize.io"
         assert storage._budget == "mid"
         assert storage._max_tokens == 4096

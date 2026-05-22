@@ -44,6 +44,8 @@ pip install hindsight-agentcore
 
 ## Step 2: Connect AgentCore Runtime to Hindsight
 
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — free tier, no self-hosting required.
+
 ```python
 import os
 from hindsight_agentcore import configure
@@ -53,6 +55,8 @@ configure(
     api_key=os.environ["HINDSIGHT_API_KEY"],
 )
 ```
+
+If you'd rather self-host on AWS (ECS/EKS with RDS PostgreSQL + pgvector), set `hindsight_api_url` to your in-VPC Hindsight endpoint.
 
 ## Step 3: Wire memory into your runtime
 

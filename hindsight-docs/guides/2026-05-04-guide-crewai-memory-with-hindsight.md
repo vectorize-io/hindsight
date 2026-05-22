@@ -44,17 +44,20 @@ pip install hindsight-crewai
 
 ## Step 2: Connect CrewAI to Hindsight
 
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — free tier, no self-hosting required.
+
 ```python
 from hindsight_crewai import configure
 
 configure(
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key="hsk_...",  # or set HINDSIGHT_API_KEY env var
     budget="mid",
     max_tokens=4096,
 )
 ```
 
-If you use [Hindsight Cloud](https://hindsight.vectorize.io), swap the API URL for `https://api.hindsight.vectorize.io` and include your API key.
+If you're self-hosting Hindsight locally instead, swap the API URL for `http://localhost:8888` and drop the `api_key`.
 
 ## Step 3: Wire memory into your runtime
 

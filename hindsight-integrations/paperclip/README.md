@@ -20,26 +20,25 @@ Then configure in **Settings → Plugins → Hindsight Memory**.
 
 ## Prerequisites
 
-Either:
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — sign up free, get an API key, and skip the self-hosting setup entirely.
+
+**Self-hosting alternative** — run Hindsight locally:
 
 ```bash
-# Self-hosted (runs locally)
 pip install hindsight-all
 export HINDSIGHT_API_LLM_API_KEY=your-openai-key
 hindsight-api
 ```
 
-Or [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — no self-hosting required.
-
 ## Configuration
 
-| Field                | Default                 | Description                                                    |
-| -------------------- | ----------------------- | -------------------------------------------------------------- |
-| `hindsightApiUrl`    | `http://localhost:8888` | Hindsight server URL                                           |
-| `hindsightApiKeyRef` | —                       | Paperclip secret name holding Hindsight Cloud API key          |
-| `bankGranularity`    | `["company", "agent"]`  | Memory isolation: per company+agent, per company, or per agent |
-| `recallBudget`       | `mid`                   | `low` = fastest, `mid` = balanced, `high` = most thorough      |
-| `autoRetain`         | `true`                  | Automatically retain run output after every run                |
+| Field                | Default                              | Description                                                                       |
+| -------------------- | ------------------------------------ | --------------------------------------------------------------------------------- |
+| `hindsightApiUrl`    | `https://api.hindsight.vectorize.io` | Hindsight server URL (Cloud default; use `http://localhost:8888` for self-hosted) |
+| `hindsightApiKeyRef` | —                                    | Paperclip secret name holding Hindsight Cloud API key                             |
+| `bankGranularity`    | `["company", "agent"]`               | Memory isolation: per company+agent, per company, or per agent                    |
+| `recallBudget`       | `mid`                                | `low` = fastest, `mid` = balanced, `high` = most thorough                         |
+| `autoRetain`         | `true`                               | Automatically retain run output after every run                                   |
 
 ## Bank ID Format
 
