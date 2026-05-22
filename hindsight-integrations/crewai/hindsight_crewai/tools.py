@@ -15,7 +15,7 @@ from crewai.tools import BaseTool
 from pydantic import Field, PrivateAttr
 
 from ._compat import call_sync
-from .config import get_config
+from .config import DEFAULT_HINDSIGHT_API_URL, get_config
 from .errors import HindsightError
 
 logger = logging.getLogger(__name__)
@@ -76,7 +76,7 @@ class HindsightReflectTool(BaseTool):
             from hindsight_client import Hindsight
 
             config = get_config()
-            api_url = self.hindsight_api_url or (config.hindsight_api_url if config else "http://localhost:8888")
+            api_url = self.hindsight_api_url or (config.hindsight_api_url if config else DEFAULT_HINDSIGHT_API_URL)
             api_key = self.api_key or (config.api_key if config else None)
 
             client = Hindsight(
