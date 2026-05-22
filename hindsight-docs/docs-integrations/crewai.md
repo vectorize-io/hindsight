@@ -26,12 +26,19 @@ pip install hindsight-crewai
 
 ## Quick Start
 
+:::tip Recommended: Hindsight Cloud
+[Sign up free](https://ui.hindsight.vectorize.io/signup) and grab an API key — no self-hosting required.
+:::
+
 ```python
 from hindsight_crewai import configure, HindsightStorage
 from crewai.memory.external.external_memory import ExternalMemory
 from crewai import Agent, Crew, Task
 
-configure(hindsight_api_url="http://localhost:8888")
+configure(
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key="hsk_...",  # or set HINDSIGHT_API_KEY env var
+)
 
 crew = Crew(
     agents=[Agent(role="Researcher", goal="Find information", backstory="...")],
@@ -49,6 +56,16 @@ That's it. CrewAI will automatically:
 - **Store task outputs** to Hindsight after each task completes
 
 Memories persist across crew runs, so your crew learns over time.
+
+### Self-hosting (local development)
+
+If you're running Hindsight locally with `./scripts/dev/start-api.sh`, swap the URL:
+
+```python
+configure(hindsight_api_url="http://localhost:8888")
+```
+
+See the [installation guide](/developer/installation) for self-hosting setup.
 
 ## How It Works
 
@@ -68,7 +85,7 @@ CrewAI calls `search()` automatically at the start of each task and `save()` aft
 from hindsight_crewai import configure
 
 configure(
-    hindsight_api_url="http://localhost:8888",  # Hindsight API URL
+    hindsight_api_url="https://api.hindsight.vectorize.io",  # Hindsight Cloud (default)
     api_key="your-api-key",                     # Or set HINDSIGHT_API_KEY env var
     budget="mid",                               # Recall budget: "low", "mid", "high"
     max_tokens=4096,                            # Max tokens for recall results
@@ -161,7 +178,10 @@ from hindsight_crewai import configure, HindsightStorage, HindsightReflectTool
 from crewai.memory.external.external_memory import ExternalMemory
 from crewai import Agent, Crew, Task
 
-configure(hindsight_api_url="http://localhost:8888")
+configure(
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key="hsk_...",
+)
 
 storage = HindsightStorage(
     bank_id="research-crew",
