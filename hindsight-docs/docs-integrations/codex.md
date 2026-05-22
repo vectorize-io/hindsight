@@ -12,11 +12,15 @@ Persistent memory for [Codex CLI](https://github.com/openai/codex) using [Hindsi
 
 ## Quick Start
 
+:::tip Recommended: Hindsight Cloud
+[Sign up free](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key — no self-hosting, no local daemon to manage.
+:::
+
 ```bash
 curl -fsSL https://hindsight.vectorize.io/get-codex | bash
 ```
 
-The installer will guide you through choosing local or cloud mode and configuring your connection. Once installed, start a new Codex session — memory is live.
+The installer will guide you through choosing Cloud or local-daemon mode and configuring your connection. Once installed, start a new Codex session — memory is live.
 
 To uninstall:
 
