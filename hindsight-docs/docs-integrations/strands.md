@@ -23,13 +23,18 @@ pip install hindsight-strands
 
 ## Quick Start
 
+:::tip Recommended: Hindsight Cloud
+[Sign up free](https://ui.hindsight.vectorize.io/signup) and grab an API key — no self-hosting required.
+:::
+
 ```python
 from strands import Agent
 from hindsight_strands import create_hindsight_tools
 
 tools = create_hindsight_tools(
     bank_id="user-123",
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key="hsk_...",  # or set HINDSIGHT_API_KEY env var
 )
 
 agent = Agent(tools=tools)
@@ -43,6 +48,19 @@ The agent now has three tools it can call:
 - **`hindsight_recall`** — Search long-term memory for relevant facts
 - **`hindsight_reflect`** — Synthesize a reasoned answer from memories
 
+### Self-hosting (local development)
+
+If you're running Hindsight locally with `./scripts/dev/start-api.sh`, swap the URL:
+
+```python
+tools = create_hindsight_tools(
+    bank_id="user-123",
+    hindsight_api_url="http://localhost:8888",
+)
+```
+
+See the [installation guide](/developer/installation) for self-hosting setup.
+
 ## With Memory Instructions
 
 Pre-recall relevant memories and inject them into the system prompt:
@@ -52,12 +70,14 @@ from hindsight_strands import create_hindsight_tools, memory_instructions
 
 tools = create_hindsight_tools(
     bank_id="user-123",
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key="hsk_...",
 )
 
 memories = memory_instructions(
     bank_id="user-123",
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key="hsk_...",
 )
 
 agent = Agent(
@@ -81,7 +101,7 @@ from hindsight_strands import create_hindsight_tools, memory_instructions
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    client = Hindsight(base_url="http://localhost:8888", api_key="test-key")
+    client = Hindsight(base_url="https://api.hindsight.vectorize.io", api_key="hsk_...")
     app.state.hindsight_client = client
     try:
         yield
@@ -111,7 +131,8 @@ Include only the tools you need:
 ```python
 tools = create_hindsight_tools(
     bank_id="user-123",
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key="hsk_...",
     enable_retain=True,
     enable_recall=True,
     enable_reflect=False,  # Omit reflect
@@ -178,7 +199,7 @@ tools = create_hindsight_tools(bank_id="user-123")
 
 | Parameter | Default | Description |
 |---|---|---|
-| `hindsight_api_url` | Production API | Hindsight API URL |
+| `hindsight_api_url` | Hindsight Cloud (`https://api.hindsight.vectorize.io`) | Hindsight API URL |
 | `api_key` | `HINDSIGHT_API_KEY` env | API key for authentication |
 | `budget` | `"mid"` | Default recall budget level |
 | `max_tokens` | `4096` | Default max tokens for recall |

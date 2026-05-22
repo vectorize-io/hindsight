@@ -10,7 +10,8 @@ Basic usage::
 
     tools = create_hindsight_tools(
         bank_id="user-123",
-        hindsight_api_url="http://localhost:8888",
+        hindsight_api_url="https://api.hindsight.vectorize.io",
+        api_key="hsk_...",
     )
 
     agent = CodeAgent(

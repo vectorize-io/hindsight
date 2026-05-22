@@ -8,13 +8,16 @@ Persistent long-term memory for [Pipecat](https://github.com/pipecat-ai/pipecat)
 pip install hindsight-pipecat
 ```
 
+> ✨ **Recommended: [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** — free tier, no self-hosting required. Sign up and grab an API key in under a minute.
+
 ```python
 from pipecat.pipeline.pipeline import Pipeline
 from hindsight_pipecat import HindsightMemoryService
 
 memory = HindsightMemoryService(
     bank_id="user-123",
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key="hsk_...",  # or set HINDSIGHT_API_KEY env var
 )
 
 pipeline = Pipeline([
@@ -29,15 +32,18 @@ pipeline = Pipeline([
 ])
 ```
 
-Or with [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup):
+### Self-hosting (local development)
+
+If you're running Hindsight locally with `./scripts/dev/start-api.sh`, point at your local server instead:
 
 ```python
 memory = HindsightMemoryService(
     bank_id="user-123",
-    hindsight_api_url="https://api.hindsight.vectorize.io",
-    api_key="hsk_your_token_here",
+    hindsight_api_url="http://localhost:8888",
 )
 ```
+
+See the [Hindsight installation guide](https://hindsight.vectorize.io/developer/installation) for self-hosting setup.
 
 ## How It Works
 
@@ -92,7 +98,7 @@ HindsightMemoryService(
 from hindsight_pipecat import configure
 
 configure(
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",  # Hindsight Cloud (default)
     api_key="hsk_...",
     recall_budget="mid",
 )

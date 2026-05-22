@@ -28,6 +28,10 @@ After install, the **Hindsight** plugin appears under **Tools** in the workflow 
 
 ## Setup
 
+:::tip Recommended: Hindsight Cloud
+[Sign up free](https://ui.hindsight.vectorize.io/signup) and grab an API key — no self-hosting required.
+:::
+
 1. **Sign up** at [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) (free tier) or [self-host](/developer/installation)
 2. **Get an API key** from the Hindsight dashboard
 3. **In Dify**, open the Hindsight plugin and add credentials:
