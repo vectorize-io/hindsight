@@ -194,11 +194,29 @@ A few considerations:
 
 ---
 
+## Advanced: Seeding a Structured Mental Model
+
+Organic extraction from sessions is the primary way Hindsight builds codebase knowledge. But you can front-load context explicitly — useful when starting on an existing codebase, or when critical conventions should be in the bank before the first session runs.
+
+Hindsight exposes two operations via the SDK and API outside of Hermes, feeding the same memory bank Hermes draws from:
+
+**Ingesting existing docs.** Upload architecture notes, ADRs, or conventions files. Hindsight runs fact extraction on the content and stores the results as memories in the bank. Once ingested, those facts are available to Hermes on the next session — no waiting for organic extraction to catch up.
+
+**Creating a mental model page.** Define a synthesized, auto-updating summary built from a source query — "What are the coding conventions for this project?" Hindsight synthesizes the answer from all ingested and session-extracted knowledge and keeps it current as new facts arrive. Mental models are checked first during reflect calls, before individual observations and raw facts — the pre-computed answer is returned without re-deriving it.
+
+The combination of ingested project docs and session-extracted facts gives Hermes a complete picture from two angles: what was deliberately documented, and what was discovered through use.
+
+That's also what makes autonomous coding agents tractable. An agent with rich, current mental models — conventions, architecture, known fragile areas — has enough structured context to make decisions and drive changes without a human briefing it at the start of every task. Persistent session memory is how you get to that baseline.
+
+See the [Hindsight knowledge pages docs](https://hindsight.vectorize.io/developer/api/knowledge-pages) for the full API reference.
+
+---
+
 ## The Longer You Use It, the Less You Explain
 
 Hermes with Hindsight is the only coding workflow where context accumulates across sessions. Every session adds to what it knows about your codebase. Other tools reset. This one doesn't.
 
-The value compounds with use. Session one, Hermes knows nothing about your project. Session five, it knows the stack and conventions. Session 30, it knows the project's history, its fragile areas, the decisions that shaped its current shape. At that point you've stopped explaining those things — not because you skipped the context, but because you never needed to provide it again.
+The value compounds with use. Session one, Hermes knows nothing about your project. Session five, it knows the stack and conventions. Session 30, it knows the project's history, its fragile areas, the decisions that shaped its current shape. At that point you've stopped explaining those things — not because you skipped the context, but because you never needed to provide it again. And once that mental model is rich enough, you're not just talking to a coding assistant. You're working alongside an agent that knows the codebase as well as you do.
 
 Set it up with `hermes memory setup`, or start with the [Hindsight integration docs](https://hindsight.vectorize.io/sdks/integrations/hermes).
 
