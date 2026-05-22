@@ -172,8 +172,9 @@ class ConfigResolver:
                     # Normalize keys (handle both env var format and Python field format)
                     normalized = normalize_config_dict(config_data)
 
-                    # Only return overrides for configurable fields
-                    return {k: v for k, v in normalized.items() if k in self._configurable_fields}
+                    # Only return active overrides for configurable fields. JSON null is a tombstone
+                    # for "Server Default" in the bank-config UI and should not override defaults.
+                    return {k: v for k, v in normalized.items() if k in self._configurable_fields and v is not None}
         except Exception as e:
             logger.error(f"Failed to load bank config for {bank_id}: {e}")
 
