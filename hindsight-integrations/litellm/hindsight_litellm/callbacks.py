@@ -703,7 +703,7 @@ class HindsightCallback(CustomLogger):
         # Get effective settings (kwargs override defaults)
         settings = self._get_effective_settings(kwargs)
         if not settings.bank_id:
-            raise ValueError(
+            raise HindsightError(
                 "No bank_id configured. Either call set_defaults(bank_id=...) "
                 "or pass hindsight_bank_id=... to the completion call."
             )
@@ -762,7 +762,7 @@ class HindsightCallback(CustomLogger):
         # Get effective settings (kwargs override defaults)
         settings = self._get_effective_settings(kwargs)
         if not settings.bank_id:
-            raise ValueError(
+            raise HindsightError(
                 "No bank_id configured. Either call set_defaults(bank_id=...) "
                 "or pass hindsight_bank_id=... to the completion call."
             )

@@ -118,6 +118,7 @@ from .config import (
     HindsightConfig,
     HindsightDefaults,
     MemoryInjectionMode,
+    _restore_config,
     configure,
     get_config,
     get_defaults,
@@ -152,10 +153,14 @@ __version__ = "0.1.0"
 
 # Track whether we've registered with LiteLLM
 _enabled = False
+_enabled_lock = threading.Lock()
 
 # Store original functions for restoration
 _original_completion = None
 _original_acompletion = None
+
+# Lock protecting _last_injection_debug writes
+_debug_lock = threading.Lock()
 
 
 @dataclass
@@ -254,7 +259,7 @@ def _inject_memories(
         return messages
 
     if not bank_id_override and (not defaults or not defaults.bank_id):
-        raise ValueError(
+        raise HindsightError(
             "No bank_id configured. Either call set_defaults(bank_id=...) "
             "or pass hindsight_bank_id=... to the completion call."
         )
@@ -262,9 +267,11 @@ def _inject_memories(
     if not messages:
         return messages
 
-    # Use custom_query if provided, otherwise fall back to the last user message
+    # Resolve query: custom_query arg > defaults.query > last user message
     if custom_query:
         user_query = custom_query
+    elif defaults and defaults.query:
+        user_query = defaults.query
     else:
         user_query = None
         for msg in reversed(messages):
@@ -447,23 +454,41 @@ def _inject_memories(
                 "The following information from memory may be relevant:\n\n" + "\n".join(memory_lines)
             )
 
-        # Inject into messages
+        # Inject into messages based on injection_mode
         updated_messages = list(messages)
+        injection_mode = defaults.injection_mode if defaults else MemoryInjectionMode.SYSTEM_MESSAGE
 
-        # Find existing system message or create new one
-        found_system = False
-        for i, msg in enumerate(updated_messages):
-            if msg.get("role") == "system":
-                existing_content = msg.get("content", "")
-                updated_messages[i] = {
-                    **msg,
-                    "content": f"{existing_content}\n\n{memory_context}",
-                }
-                found_system = True
-                break
+        if injection_mode == MemoryInjectionMode.PREPEND_USER:
+            # Prepend memory context to the last user message
+            for i in range(len(updated_messages) - 1, -1, -1):
+                if updated_messages[i].get("role") == "user":
+                    existing_content = updated_messages[i].get("content", "")
+                    if isinstance(existing_content, str):
+                        updated_messages[i] = {
+                            **updated_messages[i],
+                            "content": f"{memory_context}\n\n{existing_content}",
+                        }
+                    elif isinstance(existing_content, list):
+                        updated_messages[i] = {
+                            **updated_messages[i],
+                            "content": [{"type": "text", "text": memory_context}] + existing_content,
+                        }
+                    break
+        else:
+            # SYSTEM_MESSAGE mode (default): add to/create system message
+            found_system = False
+            for i, msg in enumerate(updated_messages):
+                if msg.get("role") == "system":
+                    existing_content = msg.get("content", "")
+                    updated_messages[i] = {
+                        **msg,
+                        "content": f"{existing_content}\n\n{memory_context}",
+                    }
+                    found_system = True
+                    break
 
-        if not found_system:
-            updated_messages.insert(0, {"role": "system", "content": memory_context})
+            if not found_system:
+                updated_messages.insert(0, {"role": "system", "content": memory_context})
 
         # Store debug info when verbose
         if config.verbose:
@@ -664,28 +689,30 @@ def enable() -> None:
     """
     global _enabled, _original_completion, _original_acompletion
 
-    if _enabled:
-        return  # Already enabled
+    with _enabled_lock:
+        if _enabled:
+            return  # Already enabled
 
-    config = get_config()
-    defaults = get_defaults()
+        config = get_config()
+        defaults = get_defaults()
 
-    if not config:
-        raise RuntimeError("Hindsight not configured. Call configure() before enable().")
+        if not config:
+            raise RuntimeError("Hindsight not configured. Call configure() before enable().")
 
-    if not defaults or not defaults.bank_id:
-        raise RuntimeError("Hindsight bank_id not set. Call set_defaults(bank_id=...) before enable().")
+        if not defaults or not defaults.bank_id:
+            raise RuntimeError("Hindsight bank_id not set. Call set_defaults(bank_id=...) before enable().")
 
-    # Store original functions and monkeypatch for memory injection + storage
-    _original_completion = litellm.completion
-    _original_acompletion = litellm.acompletion
-    litellm.completion = _wrapped_completion
-    litellm.acompletion = _wrapped_acompletion
+        # Store original functions and monkeypatch for memory injection + storage
+        _original_completion = litellm.completion
+        _original_acompletion = litellm.acompletion
+        litellm.completion = _wrapped_completion
+        litellm.acompletion = _wrapped_acompletion
 
-    _enabled = True
+        _enabled = True
 
-    if config.verbose:
-        print(f"Hindsight memory enabled for bank: {defaults.bank_id}")
+    if get_config() and get_config().verbose:
+        defaults = get_defaults()
+        print(f"Hindsight memory enabled for bank: {defaults.bank_id if defaults else 'unknown'}")
 
 
 def disable() -> None:
@@ -700,21 +727,22 @@ def disable() -> None:
     """
     global _enabled, _original_completion, _original_acompletion
 
-    if not _enabled:
-        return  # Already disabled
+    with _enabled_lock:
+        if not _enabled:
+            return  # Already disabled
 
-    # Restore original functions
-    if _original_completion is not None:
-        litellm.completion = _original_completion
-        _original_completion = None
-    if _original_acompletion is not None:
-        litellm.acompletion = _original_acompletion
-        _original_acompletion = None
+        # Restore original functions
+        if _original_completion is not None:
+            litellm.completion = _original_completion
+            _original_completion = None
+        if _original_acompletion is not None:
+            litellm.acompletion = _original_acompletion
+            _original_acompletion = None
 
-    # Close cached HTTP client to avoid "Unclosed client session" warnings
-    _close_client()
+        # Close cached HTTP client to avoid "Unclosed client session" warnings
+        _close_client()
 
-    _enabled = False
+        _enabled = False
 
     config = get_config()
     if config and config.verbose:
@@ -1485,36 +1513,12 @@ def hindsight_memory(
         enable()
         yield
     finally:
-        # Restore previous state
+        # Atomically restore previous state, bypassing all side effects (warnings,
+        # bank creation, validation) that configure/set_defaults would trigger.
         disable()
-        if previous_config:
-            configure(
-                hindsight_api_url=previous_config.hindsight_api_url,
-                api_key=previous_config.api_key,
-                store_conversations=previous_config.store_conversations,
-                inject_memories=previous_config.inject_memories,
-                injection_mode=previous_config.injection_mode,
-                excluded_models=previous_config.excluded_models,
-                verbose=previous_config.verbose,
-            )
-        if previous_defaults:
-            set_defaults(
-                bank_id=previous_defaults.bank_id,
-                session_id=previous_defaults.session_id,
-                document_id=previous_defaults.document_id,
-                budget=previous_defaults.budget,
-                fact_types=previous_defaults.fact_types,
-                max_memories=previous_defaults.max_memories,
-                max_memory_tokens=previous_defaults.max_memory_tokens,
-                use_reflect=previous_defaults.use_reflect,
-                reflect_include_facts=previous_defaults.reflect_include_facts,
-                include_entities=previous_defaults.include_entities,
-                trace=previous_defaults.trace,
-            )
-            if was_enabled:
-                enable()
-        else:
-            reset_config()
+        _restore_config(previous_config)
+        if was_enabled and previous_config is not None:
+            enable()
 
 
 __all__ = [

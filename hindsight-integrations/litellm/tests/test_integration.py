@@ -13,6 +13,7 @@ from hindsight_litellm import (
     get_config,
     is_configured,
     reset_config,
+    hindsight_memory,
     MemoryInjectionMode,
 )
 from hindsight_litellm.callbacks import HindsightCallback
@@ -82,9 +83,9 @@ class TestConfiguration:
         assert defaults.document_id == "doc-123"
 
     def test_is_configured_with_defaults(self):
-        """Test is_configured returns True with default bank_id."""
-        configure()  # Uses default bank_id="default"
-        assert is_configured() is True
+        """configure() alone (no bank_id) leaves is_configured() False."""
+        configure()
+        assert is_configured() is False
 
     def test_is_configured_with_bank_id_in_defaults(self):
         """Test is_configured returns True with bank_id in defaults."""
@@ -125,12 +126,11 @@ class TestEnableDisable:
         with pytest.raises(RuntimeError, match="not configured"):
             enable()
 
-    def test_enable_with_default_bank_id_works(self):
-        """Test enable works with default bank_id (no explicit bank_id required)."""
+    def test_enable_without_bank_id_raises(self):
+        """enable() raises RuntimeError when no bank_id has been set."""
         configure(hindsight_api_url="http://localhost:8888")
-        # Should work - configure() provides default bank_id="default"
-        enable()
-        assert is_enabled() is True
+        with pytest.raises(RuntimeError, match="bank_id"):
+            enable()
 
     def test_enable_sets_enabled_flag(self):
         """Test enable sets the enabled flag."""
@@ -1200,3 +1200,342 @@ class TestHindsightMemoryNewParams:
         with hindsight_memory(bank_id="test-agent"):
             config = get_config()
             assert config.hindsight_api_url == DEFAULT_HINDSIGHT_API_URL
+
+
+class TestValidation:
+    """Tests for input validation in configure() and set_defaults()."""
+
+    def setup_method(self):
+        reset_config()
+
+    def teardown_method(self):
+        cleanup()
+
+    def test_configure_invalid_budget_raises(self):
+        """configure() raises ValueError for invalid budget."""
+        with pytest.raises(ValueError, match="budget"):
+            configure(budget="extreme")
+
+    def test_set_defaults_invalid_budget_raises(self):
+        """set_defaults() raises ValueError for invalid budget."""
+        configure(hindsight_api_url="http://localhost:8888")
+        with pytest.raises(ValueError, match="budget"):
+            set_defaults(bank_id="test", budget="extreme")
+
+    def test_configure_invalid_recall_tags_match_raises(self):
+        """configure() raises ValueError for invalid recall_tags_match."""
+        with pytest.raises(ValueError, match="recall_tags_match"):
+            configure(recall_tags_match="fuzzy")
+
+    def test_set_defaults_invalid_recall_tags_match_raises(self):
+        """set_defaults() raises ValueError for invalid recall_tags_match."""
+        configure(hindsight_api_url="http://localhost:8888")
+        with pytest.raises(ValueError, match="recall_tags_match"):
+            set_defaults(bank_id="test", recall_tags_match="fuzzy")
+
+    def test_configure_valid_budgets_accepted(self):
+        """configure() accepts all valid budget values."""
+        for budget in ("low", "mid", "high"):
+            configure(hindsight_api_url="http://localhost:8888", budget=budget)
+            assert get_config().default_settings.budget == budget
+
+    def test_configure_valid_tags_match_accepted(self):
+        """configure() accepts all valid recall_tags_match values."""
+        for match in ("any", "all", "any_strict", "all_strict"):
+            configure(hindsight_api_url="http://localhost:8888", recall_tags_match=match)
+            assert get_config().default_settings.recall_tags_match == match
+
+    def test_configure_document_id_emits_deprecation_warning(self):
+        """configure() with document_id emits DeprecationWarning."""
+        with pytest.warns(DeprecationWarning, match="document_id"):
+            configure(hindsight_api_url="http://localhost:8888", document_id="doc-123")
+
+    def test_set_defaults_document_id_emits_deprecation_warning(self):
+        """set_defaults() with document_id emits DeprecationWarning."""
+        configure(hindsight_api_url="http://localhost:8888")
+        with pytest.warns(DeprecationWarning, match="document_id"):
+            set_defaults(bank_id="test", document_id="doc-123")
+
+
+class TestInjectionMode:
+    """Tests for injection_mode in _inject_memories()."""
+
+    def setup_method(self):
+        reset_config()
+
+    def teardown_method(self):
+        cleanup()
+
+    def test_system_message_injection_appends_to_existing_system(self):
+        """SYSTEM_MESSAGE mode appends memories to an existing system message."""
+        from unittest.mock import MagicMock, patch
+        from hindsight_litellm import _inject_memories
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="test", injection_mode=MemoryInjectionMode.SYSTEM_MESSAGE)
+
+        mock_result = MagicMock()
+        mock_result.text = "User likes Rust"
+        mock_result.type = "world"
+
+        mock_client = MagicMock()
+        mock_client.recall.return_value = [mock_result]
+
+        messages = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "What do I like?"},
+        ]
+
+        with patch("hindsight_litellm._get_client", return_value=mock_client):
+            result = _inject_memories(messages)
+
+        assert result[0]["role"] == "system"
+        assert "You are helpful." in result[0]["content"]
+        assert "Rust" in result[0]["content"]
+
+    def test_system_message_injection_creates_system_when_absent(self):
+        """SYSTEM_MESSAGE mode creates a new system message when none exists."""
+        from unittest.mock import MagicMock, patch
+        from hindsight_litellm import _inject_memories
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="test", injection_mode=MemoryInjectionMode.SYSTEM_MESSAGE)
+
+        mock_result = MagicMock()
+        mock_result.text = "User likes Python"
+        mock_result.type = "world"
+
+        mock_client = MagicMock()
+        mock_client.recall.return_value = [mock_result]
+
+        messages = [{"role": "user", "content": "Hello"}]
+
+        with patch("hindsight_litellm._get_client", return_value=mock_client):
+            result = _inject_memories(messages)
+
+        assert result[0]["role"] == "system"
+        assert "Python" in result[0]["content"]
+
+    def test_prepend_user_injection_prepends_to_last_user_message(self):
+        """PREPEND_USER mode prepends memories to the last user message."""
+        from unittest.mock import MagicMock, patch
+        from hindsight_litellm import _inject_memories
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="test", injection_mode=MemoryInjectionMode.PREPEND_USER)
+
+        mock_result = MagicMock()
+        mock_result.text = "User likes Go"
+        mock_result.type = "world"
+
+        mock_client = MagicMock()
+        mock_client.recall.return_value = [mock_result]
+
+        messages = [{"role": "user", "content": "What do I like?"}]
+
+        with patch("hindsight_litellm._get_client", return_value=mock_client):
+            result = _inject_memories(messages)
+
+        # No system message should be created
+        assert all(m["role"] != "system" for m in result)
+        user_msg = next(m for m in result if m["role"] == "user")
+        content = user_msg["content"]
+        assert "Go" in content
+        assert "What do I like?" in content
+        # Memory context should come before user text
+        assert content.index("Go") < content.index("What do I like?")
+
+    def test_prepend_user_does_not_touch_system_message(self):
+        """PREPEND_USER mode leaves existing system message untouched."""
+        from unittest.mock import MagicMock, patch
+        from hindsight_litellm import _inject_memories
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="test", injection_mode=MemoryInjectionMode.PREPEND_USER)
+
+        mock_result = MagicMock()
+        mock_result.text = "User likes TypeScript"
+        mock_result.type = "world"
+
+        mock_client = MagicMock()
+        mock_client.recall.return_value = [mock_result]
+
+        messages = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Hello"},
+        ]
+
+        with patch("hindsight_litellm._get_client", return_value=mock_client):
+            result = _inject_memories(messages)
+
+        system_msg = next(m for m in result if m["role"] == "system")
+        assert system_msg["content"] == "You are helpful."
+        assert "TypeScript" not in system_msg["content"]
+
+
+class TestQueryField:
+    """Tests for the query field in HindsightCallSettings."""
+
+    def setup_method(self):
+        reset_config()
+
+    def teardown_method(self):
+        cleanup()
+
+    def test_defaults_query_used_when_no_custom_query(self):
+        """defaults.query is used as recall query when no hindsight_query kwarg given."""
+        from unittest.mock import MagicMock, patch
+        from hindsight_litellm import _inject_memories
+        from hindsight_litellm.config import HindsightCallSettings
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="test")
+
+        # Manually set query on defaults
+        import hindsight_litellm.config as cfg
+        cfg._global_config.default_settings.query = "favorite language"
+
+        mock_result = MagicMock()
+        mock_result.text = "User likes Rust"
+        mock_result.type = "world"
+
+        mock_client = MagicMock()
+        mock_client.recall.return_value = [mock_result]
+
+        messages = [{"role": "user", "content": "Tell me something"}]
+
+        with patch("hindsight_litellm._get_client", return_value=mock_client):
+            _inject_memories(messages)
+
+        call_kwargs = mock_client.recall.call_args[1]
+        assert call_kwargs["query"] == "favorite language"
+
+    def test_custom_query_overrides_defaults_query(self):
+        """custom_query parameter overrides defaults.query."""
+        from unittest.mock import MagicMock, patch
+        from hindsight_litellm import _inject_memories
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="test")
+
+        import hindsight_litellm.config as cfg
+        cfg._global_config.default_settings.query = "default query"
+
+        mock_client = MagicMock()
+        mock_client.recall.return_value = []
+
+        messages = [{"role": "user", "content": "Hello"}]
+
+        with patch("hindsight_litellm._get_client", return_value=mock_client):
+            _inject_memories(messages, custom_query="override query")
+
+        call_kwargs = mock_client.recall.call_args[1]
+        assert call_kwargs["query"] == "override query"
+
+
+class TestHindsightErrorConsistency:
+    """Tests that HindsightError (not ValueError) is raised for config errors."""
+
+    def setup_method(self):
+        reset_config()
+
+    def teardown_method(self):
+        cleanup()
+
+    def test_inject_memories_raises_hindsight_error_when_no_bank_id(self):
+        """_inject_memories raises HindsightError (not ValueError) when bank_id missing."""
+        from hindsight_litellm import HindsightError, _inject_memories
+        from hindsight_litellm.callbacks import HindsightError as CallbackHindsightError
+
+        configure(hindsight_api_url="http://localhost:8888")
+        # No bank_id set
+
+        messages = [{"role": "user", "content": "Hello"}]
+
+        with pytest.raises(HindsightError):
+            _inject_memories(messages)
+
+    def test_callback_log_pre_api_call_raises_hindsight_error_when_no_bank_id(self):
+        """HindsightCallback.log_pre_api_call raises HindsightError (not ValueError)."""
+        from hindsight_litellm.callbacks import HindsightCallback, HindsightError
+
+        configure(hindsight_api_url="http://localhost:8888")
+        # No bank_id set
+
+        callback = HindsightCallback()
+        messages = [{"role": "user", "content": "Hello"}]
+
+        with pytest.raises(HindsightError):
+            callback.log_pre_api_call("gpt-4o-mini", messages, {})
+
+
+class TestContextManagerFullRestore:
+    """Tests that hindsight_memory() restores ALL settings on exit."""
+
+    def setup_method(self):
+        cleanup()
+
+    def teardown_method(self):
+        cleanup()
+
+    def test_restores_sync_storage(self):
+        """hindsight_memory() restores sync_storage after exit."""
+        configure(hindsight_api_url="http://localhost:8888", sync_storage=True)
+        set_defaults(bank_id="original")
+
+        with hindsight_memory(bank_id="temp", hindsight_api_url="http://localhost:8888"):
+            assert get_config().sync_storage is False  # default inside context
+
+        assert get_config().sync_storage is True  # restored
+
+    def test_restores_tags(self):
+        """hindsight_memory() restores tags after exit."""
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="original", tags=["env:prod"])
+
+        with hindsight_memory(bank_id="temp", hindsight_api_url="http://localhost:8888", tags=["env:test"]):
+            assert get_defaults().tags == ["env:test"]
+
+        assert get_defaults().tags == ["env:prod"]
+
+    def test_restores_recall_tags(self):
+        """hindsight_memory() restores recall_tags after exit."""
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="original", recall_tags=["user:alice"], recall_tags_match="any_strict")
+
+        with hindsight_memory(bank_id="temp", hindsight_api_url="http://localhost:8888"):
+            assert get_defaults().recall_tags is None
+
+        assert get_defaults().recall_tags == ["user:alice"]
+        assert get_defaults().recall_tags_match == "any_strict"
+
+    def test_restores_reflect_context(self):
+        """hindsight_memory() restores reflect_context after exit."""
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="original", reflect_context="Be concise.")
+
+        with hindsight_memory(bank_id="temp", hindsight_api_url="http://localhost:8888"):
+            assert get_defaults().reflect_context is None
+
+        assert get_defaults().reflect_context == "Be concise."
+
+    def test_restores_to_none_when_no_prior_config(self):
+        """hindsight_memory() resets config to None if none was set before."""
+        assert get_config() is None
+
+        with hindsight_memory(bank_id="temp"):
+            assert get_config() is not None
+
+        assert get_config() is None
+
+    def test_re_enables_if_was_enabled_before(self):
+        """hindsight_memory() re-enables if integration was enabled before entering."""
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="original")
+        enable()
+        assert is_enabled() is True
+
+        with hindsight_memory(bank_id="temp", hindsight_api_url="http://localhost:8888"):
+            assert is_enabled() is True
+
+        assert is_enabled() is True  # still enabled after context
