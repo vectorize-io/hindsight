@@ -20,6 +20,8 @@ Three Codex hooks keep memory in sync automatically:
 
 ## Installation
 
+> ✨ **Recommended: [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** — free tier, no self-hosting required. Skip the local daemon entirely.
+
 ```bash
 curl -fsSL https://hindsight.vectorize.io/get-codex | bash
 ```
@@ -49,7 +51,9 @@ For personal overrides (stable across updates), create `~/.hindsight/codex.json`
 }
 ```
 
-### Hindsight Cloud
+### Hindsight Cloud (recommended)
+
+> ✨ Sign up free at [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — no self-hosting, no LLM API key, no daemon to manage.
 
 ```json
 {
@@ -58,9 +62,9 @@ For personal overrides (stable across updates), create `~/.hindsight/codex.json`
 }
 ```
 
-### Local daemon (hindsight-embed)
+### Self-hosting: local daemon (`hindsight-embed`)
 
-Set an LLM API key and Hindsight will start the local server automatically:
+If you'd rather run Hindsight locally, leave `hindsightApiUrl` empty and set an LLM API key — Hindsight will start the local server automatically:
 
 ```bash
 export OPENAI_API_KEY=sk-your-key

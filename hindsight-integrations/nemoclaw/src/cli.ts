@@ -10,11 +10,11 @@ Usage:
 
 Required options:
   --sandbox <name>       NemoClaw sandbox name (e.g. my-assistant)
-  --api-url <url>        Hindsight Cloud API URL (https://api.hindsight.vectorize.io)
   --api-token <token>    Hindsight API key from https://ui.hindsight.vectorize.io
   --bank-prefix <prefix> Bank ID prefix (memories go to <prefix>-openclaw)
 
 Optional options:
+  --api-url <url>        Hindsight API URL (default: https://api.hindsight.vectorize.io)
   --skip-policy          Skip the openshell policy update
   --skip-plugin-install  Skip openclaw plugins install
   --dry-run              Print what would be changed without executing
@@ -23,7 +23,6 @@ Optional options:
 Example:
   hindsight-nemoclaw setup \\
     --sandbox my-assistant \\
-    --api-url https://api.hindsight.vectorize.io \\
     --api-token hsk_abc123 \\
     --bank-prefix my-sandbox
 `);
@@ -49,13 +48,12 @@ function parseArgs(argv: string[]): CliArgs | null {
   };
 
   const sandbox = get("--sandbox");
-  const apiUrl = get("--api-url");
+  const apiUrl = get("--api-url") ?? "https://api.hindsight.vectorize.io";
   const apiToken = get("--api-token");
   const bankPrefix = get("--bank-prefix");
 
   const missing: string[] = [];
   if (!sandbox) missing.push("--sandbox");
-  if (!apiUrl) missing.push("--api-url");
   if (!apiToken) missing.push("--api-token");
   if (!bankPrefix) missing.push("--bank-prefix");
 

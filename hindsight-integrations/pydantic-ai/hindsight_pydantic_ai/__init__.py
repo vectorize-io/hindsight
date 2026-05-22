@@ -9,7 +9,7 @@ Basic usage::
     from hindsight_pydantic_ai import create_hindsight_tools, memory_instructions
     from pydantic_ai import Agent
 
-    client = Hindsight(base_url="http://localhost:8888")
+    client = Hindsight(base_url="https://api.hindsight.vectorize.io", api_key="hsk_...")
 
     agent = Agent(
         "openai:gpt-4o",
