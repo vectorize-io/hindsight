@@ -257,9 +257,7 @@ def memory_instructions(
     effective_budget = budget if budget is not None else (config.budget if config else "mid")
     effective_max_tokens = max_tokens if max_tokens is not None else (config.max_tokens if config else 4096)
     effective_tags = tags if tags is not None else (config.recall_tags if config else None)
-    effective_tags_match = (
-        tags_match if tags_match is not None else (config.recall_tags_match if config else "any")
-    )
+    effective_tags_match = tags_match if tags_match is not None else (config.recall_tags_match if config else "any")
 
     async def _instructions(*args: Any, **kwargs: Any) -> str:
         """Recall memories and format as instructions text."""
