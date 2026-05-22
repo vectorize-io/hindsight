@@ -31,7 +31,7 @@ This guide covers the quick-start path, the HTTP and process adapter patterns, b
 Before you start, make sure you have:
 
 - A Paperclip agent already running through the heartbeat model
-- A reachable Hindsight backend, either self-hosted or [Hindsight Cloud](https://hindsight.vectorize.io)
+- A Hindsight backend: [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) (recommended — free tier, no infrastructure to run) or [self-hosted](https://hindsight.vectorize.io/developer/installation)
 - Stable identifiers for `companyId` and `agentId`
 
 The identifier design matters. Paperclip's default isolation pattern works well because it maps cleanly to a multi-tenant setup.

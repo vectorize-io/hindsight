@@ -96,7 +96,8 @@ class HindsightTools(Toolkit):
             model=OpenAIChat(id="gpt-4o-mini"),
             tools=[HindsightTools(
                 bank_id="user-123",
-                hindsight_api_url="http://localhost:8888",
+                hindsight_api_url="https://api.hindsight.vectorize.io",
+                api_key="hsk_...",
             )],
         )
         agent.print_response("Remember that I prefer dark mode")

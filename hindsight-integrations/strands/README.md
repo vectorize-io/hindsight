@@ -17,13 +17,16 @@ pip install hindsight-strands
 
 ## Quick Start
 
+> ✨ **Recommended: [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** — free tier, no self-hosting required. Sign up and grab an API key in under a minute.
+
 ```python
 from strands import Agent
 from hindsight_strands import create_hindsight_tools
 
 tools = create_hindsight_tools(
     bank_id="user-123",
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key="hsk_...",  # or set HINDSIGHT_API_KEY env var
 )
 
 agent = Agent(tools=tools)
@@ -38,6 +41,19 @@ The agent now has three tools it can call:
 - **`hindsight_recall`** — Search long-term memory for relevant facts
 - **`hindsight_reflect`** — Synthesize a reasoned answer from memories
 
+### Self-hosting (local development)
+
+If you're running Hindsight locally with `./scripts/dev/start-api.sh`, point at your local server instead:
+
+```python
+tools = create_hindsight_tools(
+    bank_id="user-123",
+    hindsight_api_url="http://localhost:8888",
+)
+```
+
+See the [Hindsight installation guide](https://hindsight.vectorize.io/developer/installation) for self-hosting setup.
+
 ## With Memory Instructions
 
 Pre-recall relevant memories and inject them into the system prompt:
@@ -47,12 +63,14 @@ from hindsight_strands import create_hindsight_tools, memory_instructions
 
 tools = create_hindsight_tools(
     bank_id="user-123",
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key="hsk_...",
 )
 
 memories = memory_instructions(
     bank_id="user-123",
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key="hsk_...",
 )
 
 agent = Agent(
