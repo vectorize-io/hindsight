@@ -5,6 +5,7 @@ Tests config resolution hierarchy (global → tenant → bank),
 key normalization, API endpoints, validation, and caching.
 """
 
+import json
 import os
 
 import pytest
@@ -35,6 +36,33 @@ class MockTenantExtension(TenantExtension):
     async def get_tenant_config(self, context):
         """Return mock tenant config."""
         return self.tenant_config
+
+
+class FakeBankConfigBackend:
+    """Minimal backend for ConfigResolver bank-config tests."""
+
+    def __init__(self):
+        self.config: dict[str, object] = {}
+
+    def acquire(self):
+        return FakeBankConfigConnection(self)
+
+
+class FakeBankConfigConnection:
+    def __init__(self, backend: FakeBankConfigBackend):
+        self.backend = backend
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    async def fetchrow(self, query, bank_id):
+        return {"config": self.backend.config}
+
+    async def execute(self, query, updates_json, bank_id):
+        self.backend.config.update(json.loads(updates_json))
 
 
 @pytest.mark.asyncio
@@ -167,6 +195,46 @@ async def test_config_hierarchy_resolution(memory, request_context):
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_bank_config_null_consolidation_overrides_use_server_defaults():
+    """JSON null bank overrides should behave like Server Default.
+
+    Regression test for #1619: the dashboard can send null for observation
+    config fields. Those nulls must not flow into consolidation as None.
+    """
+    bank_id = "test-null-consolidation-config-bank"
+    fields = (
+        "consolidation_llm_batch_size",
+        "consolidation_source_facts_max_tokens",
+        "consolidation_source_facts_max_tokens_per_observation",
+        "max_observations_per_scope",
+    )
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+    explicit_overrides = {
+        "consolidation_llm_batch_size": 7,
+        "consolidation_source_facts_max_tokens": 2048,
+        "consolidation_source_facts_max_tokens_per_observation": 256,
+        "max_observations_per_scope": 3,
+    }
+
+    await resolver.update_bank_config(bank_id, explicit_overrides)
+    config = await resolver.resolve_full_config(bank_id)
+    for field_name, expected in explicit_overrides.items():
+        assert getattr(config, field_name) == expected
+
+    await resolver.update_bank_config(bank_id, {field_name: None for field_name in fields})
+
+    resolved_config = await resolver.resolve_full_config(bank_id)
+    global_config = resolver._global_config
+    for field_name in fields:
+        assert getattr(resolved_config, field_name) == getattr(global_config, field_name)
+        assert getattr(resolved_config, field_name) is not None
+
+    bank_overrides = await resolver._load_bank_config(bank_id)
+    for field_name in fields:
+        assert field_name not in bank_overrides
 
 
 @pytest.mark.asyncio

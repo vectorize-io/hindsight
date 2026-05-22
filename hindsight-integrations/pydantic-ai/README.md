@@ -18,12 +18,14 @@ pip install hindsight-pydantic-ai
 
 ## Quick Start
 
+> ✨ **Recommended: [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** — free tier, no self-hosting required. Sign up and grab an API key in under a minute.
+
 ```python
 from hindsight_client import Hindsight
 from hindsight_pydantic_ai import create_hindsight_tools, memory_instructions
 from pydantic_ai import Agent
 
-client = Hindsight(base_url="http://localhost:8888")
+client = Hindsight(base_url="https://api.hindsight.vectorize.io", api_key="hsk_...")
 
 agent = Agent(
     "openai:gpt-4o",
@@ -42,6 +44,16 @@ The agent now has three tools it can call:
 - **`hindsight_reflect`** — Synthesize a reasoned answer from memories
 
 The `memory_instructions` callable automatically recalls relevant memories and injects them into the system prompt on every run.
+
+### Self-hosting (local development)
+
+If you're running Hindsight locally with `./scripts/dev/start-api.sh`, point at your local server instead:
+
+```python
+client = Hindsight(base_url="http://localhost:8888")
+```
+
+See the [Hindsight installation guide](https://hindsight.vectorize.io/developer/installation) for self-hosting setup.
 
 ## Tools Only (No Auto-Injection)
 
@@ -87,7 +99,7 @@ Instead of passing a client to every call, configure once:
 from hindsight_pydantic_ai import configure, create_hindsight_tools
 
 configure(
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",  # Hindsight Cloud (default)
     api_key="your-api-key",       # Or set HINDSIGHT_API_KEY env var
     budget="mid",                  # Recall budget: low/mid/high
     max_tokens=4096,               # Max tokens for recall results
@@ -170,7 +182,7 @@ instructions_fn = memory_instructions(
 
 | Parameter | Default | Description |
 |---|---|---|
-| `hindsight_api_url` | Production API | Hindsight API URL |
+| `hindsight_api_url` | Hindsight Cloud (`https://api.hindsight.vectorize.io`) | Hindsight API URL |
 | `api_key` | `HINDSIGHT_API_KEY` env | API key for authentication |
 | `budget` | `"mid"` | Default recall budget level |
 | `max_tokens` | `4096` | Default max tokens for recall |

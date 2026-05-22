@@ -35,6 +35,10 @@ Restart n8n; the **Hindsight** node appears in the node panel.
 
 ## Setup
 
+:::tip Recommended: Hindsight Cloud
+[Sign up free](https://ui.hindsight.vectorize.io/signup) and grab an API key — no self-hosting required.
+:::
+
 1. **Sign up** at [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) (free tier) or [self-host](/developer/installation)
 2. **Get an API key** from the Hindsight dashboard
 3. **In n8n**, create a new **Hindsight API** credential with your API URL (defaults to Hindsight Cloud) and the `hsk_...` key

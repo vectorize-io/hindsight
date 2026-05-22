@@ -31,8 +31,8 @@ const manifest: PaperclipPluginManifestV1 = {
         type: "string",
         title: "Hindsight API URL",
         description:
-          "Base URL of your Hindsight instance. Use http://localhost:8888 for self-hosted.",
-        default: "http://localhost:8888",
+          "Base URL of your Hindsight instance. Defaults to Hindsight Cloud. Use http://localhost:8888 for self-hosted.",
+        default: "https://api.hindsight.vectorize.io",
       },
       hindsightApiKeyRef: {
         type: "string",
