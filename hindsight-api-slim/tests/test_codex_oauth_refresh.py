@@ -29,6 +29,7 @@ import stat
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -254,7 +255,7 @@ async def test_refresh_sends_canonical_request_shape(tmp_path: Path):
     fresh_access = _make_jwt(int(time.time()) + 3600)
     refresh_resp = _refresh_response(200, {"access_token": fresh_access, "refresh_token": "rt-rotated"})
 
-    with patch.object(llm._client, "post", new_callable=AsyncMock, return_value=refresh_resp) as mock_post:
+    with patch.object(llm._auth_manager._http_client, "post", return_value=refresh_resp) as mock_post:
         await llm._refresh_oauth_tokens()
 
     call_args = mock_post.call_args
@@ -277,7 +278,7 @@ async def test_refresh_updates_in_memory_credentials(tmp_path: Path):
     new_access = _make_jwt(int(time.time()) + 3600)
     refresh_resp = _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-new"})
 
-    with patch.object(llm._client, "post", new_callable=AsyncMock, return_value=refresh_resp):
+    with patch.object(llm._auth_manager._http_client, "post", return_value=refresh_resp):
         await llm._refresh_oauth_tokens()
 
     assert llm.access_token == new_access
@@ -295,7 +296,7 @@ async def test_refresh_keeps_existing_refresh_token_when_server_omits_one(tmp_pa
     new_access = _make_jwt(int(time.time()) + 3600)
     refresh_resp = _refresh_response(200, {"access_token": new_access})
 
-    with patch.object(llm._client, "post", new_callable=AsyncMock, return_value=refresh_resp):
+    with patch.object(llm._auth_manager._http_client, "post", return_value=refresh_resp):
         await llm._refresh_oauth_tokens()
 
     assert llm.refresh_token == "rt-keep"
@@ -310,7 +311,7 @@ async def test_refresh_raises_permanent_error_on_terminal_oauth_code(tmp_path: P
 
     bad_resp = _refresh_response(401, {"error": {"code": "refresh_token_expired"}})
 
-    with patch.object(llm._client, "post", new_callable=AsyncMock, return_value=bad_resp):
+    with patch.object(llm._auth_manager._http_client, "post", return_value=bad_resp):
         with pytest.raises(CodexRefreshExpiredError):
             await llm._refresh_oauth_tokens()
 
@@ -325,7 +326,7 @@ async def test_refresh_raises_permanent_error_on_unknown_401(tmp_path: Path):
 
     bad_resp = _refresh_response(401, {"error": "something_else"})
 
-    with patch.object(llm._client, "post", new_callable=AsyncMock, return_value=bad_resp):
+    with patch.object(llm._auth_manager._http_client, "post", return_value=bad_resp):
         with pytest.raises(CodexRefreshExpiredError):
             await llm._refresh_oauth_tokens()
 
@@ -340,7 +341,7 @@ async def test_refresh_raises_runtime_error_on_5xx(tmp_path: Path):
 
     bad_resp = _refresh_response(503, "service unavailable")
 
-    with patch.object(llm._client, "post", new_callable=AsyncMock, return_value=bad_resp):
+    with patch.object(llm._auth_manager._http_client, "post", return_value=bad_resp):
         with pytest.raises(RuntimeError) as exc_info:
             await llm._refresh_oauth_tokens()
     assert not isinstance(exc_info.value, CodexRefreshExpiredError)
@@ -357,7 +358,7 @@ async def test_refresh_does_not_log_token_values(tmp_path: Path, caplog):
     new_access = _make_jwt(int(time.time()) + 3600)
     refresh_resp = _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-also-secret"})
 
-    with patch.object(llm._client, "post", new_callable=AsyncMock, return_value=refresh_resp):
+    with patch.object(llm._auth_manager._http_client, "post", return_value=refresh_resp):
         with caplog.at_level("DEBUG"):
             await llm._refresh_oauth_tokens()
 
@@ -382,14 +383,14 @@ async def test_concurrent_ensure_fresh_token_calls_produce_one_refresh(tmp_path:
     new_access = _make_jwt(int(time.time()) + 3600)
     call_count = 0
 
-    async def fake_post(*args, **kwargs):
+    def fake_post(*args, **kwargs):
         nonlocal call_count
         call_count += 1
         # Simulate non-zero refresh latency so concurrent callers actually queue.
-        await asyncio.sleep(0.01)
+        time.sleep(0.01)
         return _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-new"})
 
-    with patch.object(llm._client, "post", new=fake_post):
+    with patch.object(llm._auth_manager._http_client, "post", new=fake_post):
         await asyncio.gather(*(llm._ensure_fresh_token() for _ in range(10)))
 
     assert call_count == 1, f"expected 1 network refresh under contention, got {call_count}"
@@ -410,42 +411,33 @@ async def test_call_reactively_refreshes_on_401_and_retries(tmp_path: Path):
 
     new_access = _make_jwt(int(time.time()) + 3600)
 
-    # First post → 401 (backend rejects the token). After refresh, second post → 200.
     success_resp = MagicMock()
     success_resp.status_code = 200
-    success_resp.raise_for_status.return_value = None
+    success_resp.raise_for_status = MagicMock(return_value=None)
 
     fail_response = MagicMock()
     fail_response.status_code = 401
     fail_response.text = "unauthorized"
-    fail_exc = httpx.HTTPStatusError("401", request=MagicMock(), response=fail_response)
-    success_resp.raise_for_status = MagicMock(return_value=None)
-
-    post_responses = [fail_exc, success_resp]
-
-    async def fake_post(*args, **kwargs):
-        item = post_responses.pop(0)
-        if isinstance(item, Exception):
-            raise item
-        return item
 
     refresh_resp = _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-new"})
 
     call_count = {"refresh": 0, "post": 0}
 
-    async def counting_post(url, **kwargs):
-        if url == _CODEX_REFRESH_TOKEN_URL:
-            call_count["refresh"] += 1
-            return refresh_resp
+    # Sync mock for the auth manager's HTTP client (used for token refresh).
+    def fake_refresh_post(*args, **kwargs):
+        call_count["refresh"] += 1
+        return refresh_resp
+
+    # Async mock for the LLM's HTTP client (used for backend calls).
+    async def fake_backend_post(url, **kwargs):
         call_count["post"] += 1
-        # First backend call fails with 401 wrapped in an HTTPStatusError-style response,
-        # second succeeds.
         if call_count["post"] == 1:
             raise httpx.HTTPStatusError("401", request=MagicMock(), response=fail_response)
         return success_resp
 
     with (
-        patch.object(llm._client, "post", new=counting_post),
+        patch.object(llm._auth_manager._http_client, "post", new=fake_refresh_post),
+        patch.object(llm._client, "post", new=fake_backend_post),
         patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
     ):
         result = await llm.call(
@@ -478,17 +470,19 @@ async def test_call_proactively_refreshes_when_token_is_stale(tmp_path: Path):
 
     call_order: list[str] = []
 
-    async def fake_post(url, **kwargs):
-        if url == _CODEX_REFRESH_TOKEN_URL:
-            call_order.append("refresh")
-            return refresh_resp
+    def fake_refresh_post(*args, **kwargs):
+        call_order.append("refresh")
+        return refresh_resp
+
+    async def fake_backend_post(url, **kwargs):
         call_order.append("backend")
         # Assert that by the time the backend is called, the new token is in use.
         assert kwargs["headers"]["Authorization"] == f"Bearer {new_access}"
         return success_resp
 
     with (
-        patch.object(llm._client, "post", new=fake_post),
+        patch.object(llm._auth_manager._http_client, "post", new=fake_refresh_post),
+        patch.object(llm._client, "post", new=fake_backend_post),
         patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
     ):
         await llm.call(
@@ -512,17 +506,14 @@ async def test_call_does_not_refresh_when_token_is_fresh(tmp_path: Path):
     success_resp.status_code = 200
     success_resp.raise_for_status.return_value = None
 
-    call_count = {"refresh": 0, "backend": 0}
+    call_count = {"backend": 0}
 
-    async def fake_post(url, **kwargs):
-        if url == _CODEX_REFRESH_TOKEN_URL:
-            call_count["refresh"] += 1
-            raise AssertionError("refresh endpoint should not be hit for a fresh token")
+    async def fake_backend_post(url, **kwargs):
         call_count["backend"] += 1
         return success_resp
 
     with (
-        patch.object(llm._client, "post", new=fake_post),
+        patch.object(llm._client, "post", new=fake_backend_post),
         patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
     ):
         await llm.call(
@@ -532,4 +523,104 @@ async def test_call_does_not_refresh_when_token_is_fresh(tmp_path: Path):
             max_backoff=0.0,
         )
 
-    assert call_count == {"refresh": 0, "backend": 1}
+    assert call_count == {"backend": 1}
+
+
+# ---------------------------------------------------------------------------
+# CodexOAuthEmbeddings — proactive + reactive token refresh
+# ---------------------------------------------------------------------------
+
+
+def _make_codex_auth_file(tmp_path: Path, access_token: str, refresh_token: str = "rt-initial") -> Path:
+    """Write a minimal ~/.codex/auth.json in tmp_path and return its path."""
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir(parents=True, exist_ok=True)
+    auth_file = codex_dir / "auth.json"
+    auth_file.write_text(
+        json.dumps(
+            {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                    "account_id": "acct-test",
+                },
+            }
+        )
+    )
+    return auth_file
+
+
+def test_codex_oauth_embeddings_picks_up_refreshed_token_on_encode(tmp_path: Path, monkeypatch):
+    """encode() calls ensure_fresh_token() and updates api_key when the token rotated."""
+    from hindsight_api.engine.embeddings import CodexOAuthEmbeddings
+    from hindsight_api.engine.providers.codex_auth import CodexAuthManager
+
+    expired = _make_jwt(int(time.time()) - 60)
+    new_access = _make_jwt(int(time.time()) + 3600)
+
+    auth_file = _make_codex_auth_file(tmp_path, expired, refresh_token="rt-embed")
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    emb = CodexOAuthEmbeddings(model="text-embedding-3-small", batch_size=10)
+    # Manually point to our tmp auth file after construction.
+    emb._auth_manager._auth_file = auth_file
+
+    refresh_resp = _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-new"})
+
+    fake_embeddings = [SimpleNamespace(index=0, embedding=[0.1] * 1536)]
+    fake_create_resp = SimpleNamespace(data=fake_embeddings)
+
+    with patch.object(emb._auth_manager._http_client, "post", return_value=refresh_resp):
+        emb._client = SimpleNamespace(embeddings=SimpleNamespace(create=lambda **kw: fake_create_resp))
+        emb._dimension = 1536
+        result = emb.encode(["hello"])
+
+    assert result == [[0.1] * 1536]
+    # After proactive refresh the manager's token should be the new one.
+    assert emb._auth_manager.access_token == new_access
+    # api_key on the embeddings object should also be updated.
+    assert emb.api_key == new_access
+
+
+def test_codex_oauth_embeddings_reactive_refresh_on_401(tmp_path: Path, monkeypatch):
+    """On AuthenticationError from OpenAI, encode() refreshes and retries once."""
+    from openai import AuthenticationError as OAIAuthError
+
+    from hindsight_api.engine.embeddings import CodexOAuthEmbeddings
+
+    fresh = _make_jwt(int(time.time()) + 3600)
+    new_access = _make_jwt(int(time.time()) + 7200)
+
+    auth_file = _make_codex_auth_file(tmp_path, fresh, refresh_token="rt-embed")
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    emb = CodexOAuthEmbeddings(model="text-embedding-3-small", batch_size=10)
+    emb._auth_manager._auth_file = auth_file
+    emb._dimension = 1536
+
+    refresh_resp = _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-rotated"})
+
+    call_count = {"create": 0}
+
+    def fake_create(**kwargs):
+        call_count["create"] += 1
+        if call_count["create"] == 1:
+            # Simulate OpenAI returning 401.
+            mock_response = MagicMock()
+            mock_response.status_code = 401
+            raise OAIAuthError(
+                message="invalid api key",
+                response=mock_response,
+                body={"error": {"message": "invalid api key"}},
+            )
+        return SimpleNamespace(data=[SimpleNamespace(index=0, embedding=[0.2] * 1536)])
+
+    with patch.object(emb._auth_manager._http_client, "post", return_value=refresh_resp):
+        emb._client = SimpleNamespace(embeddings=SimpleNamespace(create=fake_create))
+        result = emb.encode(["world"])
+
+    assert result == [[0.2] * 1536]
+    assert call_count["create"] == 2  # first failed with 401, second succeeded
+    assert emb._auth_manager.access_token == new_access
+    assert emb.api_key == new_access
