@@ -1,7 +1,7 @@
 ---
 title: "Building a Hermes Coding Assistant That Remembers Your Codebase"
 authors: [benfrank241]
-date: 2026-05-22
+date: 2026-05-25
 tags: [hermes, coding, memory, agents, tutorial, hindsight]
 description: "Hermes Agent with Hindsight remembers your codebase across sessions, conventions, past bugs, architectural decisions. Setup in 2 minutes."
 image: /img/blog/hermes-coding-assistant-codebase-memory.png
