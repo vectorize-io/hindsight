@@ -156,7 +156,9 @@ def recall(
     target_fact_types = fact_types or (defaults.fact_types if defaults else None)
     target_budget = budget or (defaults.budget if defaults else "mid")
     target_max_tokens = max_tokens or (defaults.max_memory_tokens if defaults else 4096)
-    target_include_entities = include_entities if include_entities is not None else (defaults.include_entities if defaults else True)
+    target_include_entities = (
+        include_entities if include_entities is not None else (defaults.include_entities if defaults else True)
+    )
     target_trace = trace if trace is not None else (defaults.trace if defaults else False)
     target_recall_tags = recall_tags or (defaults.recall_tags if defaults else None)
     target_recall_tags_match = recall_tags_match or (defaults.recall_tags_match if defaults else "any")

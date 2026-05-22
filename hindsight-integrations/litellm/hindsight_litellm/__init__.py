@@ -591,7 +591,9 @@ def _wrapped_completion(*args, **kwargs):
         final_messages = kwargs.get("messages", messages)
         if final_messages:
             if _is_streaming_response(response):
-                return _LiteLLMStreamWrapper(response, final_messages, model or "unknown", bank_id_override=bank_id_override)
+                return _LiteLLMStreamWrapper(
+                    response, final_messages, model or "unknown", bank_id_override=bank_id_override
+                )
             _store_conversation(final_messages, response, model or "unknown", bank_id_override=bank_id_override)
 
     return response
@@ -642,7 +644,9 @@ async def _wrapped_acompletion(*args, **kwargs):
         final_messages = kwargs.get("messages", messages)
         if final_messages:
             if _is_streaming_response(response):
-                return _LiteLLMAsyncStreamWrapper(response, final_messages, model or "unknown", bank_id_override=bank_id_override)
+                return _LiteLLMAsyncStreamWrapper(
+                    response, final_messages, model or "unknown", bank_id_override=bank_id_override
+                )
             _store_conversation(final_messages, response, model or "unknown", bank_id_override=bank_id_override)
 
     return response
@@ -1132,9 +1136,7 @@ def _store_conversation_from_text(conversation_text: str, model: str, bank_id_ov
             content_to_store = conversation_text
             effective_doc_id = defaults.effective_document_id if defaults else None
             if effective_doc_id:
-                existing_content = _get_existing_document_content(
-                    effective_bank_id, effective_doc_id, config.verbose
-                )
+                existing_content = _get_existing_document_content(effective_bank_id, effective_doc_id, config.verbose)
                 if existing_content:
                     content_to_store = f"{existing_content}\n\n{conversation_text}"
 
@@ -1203,9 +1205,7 @@ def _store_conversation(
         try:
             content_to_store = conversation_text
             if effective_doc_id:
-                existing_content = _get_existing_document_content(
-                    effective_bank_id, effective_doc_id, config.verbose
-                )
+                existing_content = _get_existing_document_content(effective_bank_id, effective_doc_id, config.verbose)
                 if existing_content:
                     content_to_store = f"{existing_content}\n\n{conversation_text}"
                     if config.verbose:
@@ -1326,7 +1326,9 @@ def completion(*args, **kwargs):
         final_messages = kwargs.get("messages", messages)
         if final_messages:
             if _is_streaming_response(response):
-                return _LiteLLMStreamWrapper(response, final_messages, model or "unknown", bank_id_override=bank_id_override)
+                return _LiteLLMStreamWrapper(
+                    response, final_messages, model or "unknown", bank_id_override=bank_id_override
+                )
             _store_conversation(final_messages, response, model or "unknown", bank_id_override=bank_id_override)
 
     return response
@@ -1406,7 +1408,9 @@ async def acompletion(*args, **kwargs):
         final_messages = kwargs.get("messages", messages)
         if final_messages:
             if _is_streaming_response(response):
-                return _LiteLLMAsyncStreamWrapper(response, final_messages, model or "unknown", bank_id_override=bank_id_override)
+                return _LiteLLMAsyncStreamWrapper(
+                    response, final_messages, model or "unknown", bank_id_override=bank_id_override
+                )
             _store_conversation(final_messages, response, model or "unknown", bank_id_override=bank_id_override)
 
     return response
