@@ -126,8 +126,62 @@ def test_token_is_stale_false_when_exp_unparseable():
 
 
 # ---------------------------------------------------------------------------
-# refresh_token loading
+# auth-file loading
 # ---------------------------------------------------------------------------
+
+
+def test_load_codex_auth_supports_wrapped_openai_codex_provider_shape(tmp_path: Path, monkeypatch):
+    """Hermes-style shared auth stores wrap Codex credentials under providers.openai-codex."""
+    auth_dir = tmp_path / ".codex"
+    auth_dir.mkdir()
+    access = _make_jwt(int(time.time()) + 3600)
+    (auth_dir / "auth.json").write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "openai-codex": {
+                        "auth_mode": "chatgpt",
+                        "tokens": {
+                            "access_token": access,
+                            "refresh_token": "rt-wrapped",
+                            "account_id": "acct-wrapped",
+                        },
+                    }
+                }
+            }
+        )
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    llm = CodexLLM(
+        provider="openai-codex",
+        api_key="ignored",
+        base_url="https://chatgpt.com/backend-api",
+        model="gpt-5.4-mini",
+    )
+
+    assert llm.access_token == access
+    assert llm.refresh_token == "rt-wrapped"
+    assert llm.account_id == "acct-wrapped"
+
+
+def test_init_does_not_log_codex_account_id(caplog):
+    account_id = "acct-DO-NOT-LEAK"
+    access = _make_jwt(int(time.time()) + 3600)
+    with (
+        patch.object(CodexLLM, "_load_codex_auth", return_value=(access, account_id)),
+        patch.object(CodexLLM, "_load_codex_refresh_token", return_value="rt"),
+    ):
+        with caplog.at_level("INFO"):
+            CodexLLM(
+                provider="openai-codex",
+                api_key="ignored",
+                base_url="https://chatgpt.com/backend-api",
+                model="gpt-5.4-mini",
+            )
+
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert account_id not in log_text
 
 
 def test_refresh_token_loaded_from_auth_file(tmp_path: Path):
@@ -224,6 +278,39 @@ def test_persist_auth_atomic_does_not_leak_tempfile_on_success(tmp_path: Path):
     # No sibling tempfile should remain — atomic rename consumed it.
     siblings = [p.name for p in tmp_path.iterdir()]
     assert siblings == ["auth.json"], f"unexpected leftover files: {siblings}"
+
+
+def test_persist_auth_atomic_updates_wrapped_provider_shape(tmp_path: Path):
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "openai-codex": {
+                        "auth_mode": "chatgpt",
+                        "tokens": {
+                            "access_token": "old",
+                            "refresh_token": "rt-old",
+                            "account_id": "acct-keep",
+                        },
+                        "last_refresh": "2026-01-01T00:00:00Z",
+                    }
+                }
+            }
+        )
+    )
+
+    llm = _build_llm()
+    llm._auth_file = auth_file
+    llm._persist_auth_atomic({"access_token": "new", "refresh_token": "rt-new"})
+
+    written = json.loads(auth_file.read_text())
+    provider = written["providers"]["openai-codex"]
+    assert provider["tokens"]["access_token"] == "new"
+    assert provider["tokens"]["refresh_token"] == "rt-new"
+    assert provider["tokens"]["account_id"] == "acct-keep"
+    assert provider["last_refresh"] != "2026-01-01T00:00:00Z"
+    assert "tokens" not in written
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +485,124 @@ async def test_concurrent_ensure_fresh_token_calls_produce_one_refresh(tmp_path:
 # ---------------------------------------------------------------------------
 # Reactive 401 retry on the request path
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_call_reloads_rotated_auth_file_on_401_without_refresh_request(tmp_path: Path):
+    """If another process already rotated auth.json, adopt it and retry before refreshing."""
+    old_access = _make_jwt(int(time.time()) + 3600)
+    new_access = _make_jwt(int(time.time()) + 7200)
+    llm = _build_llm(refresh_token="rt-old", access_token=old_access)
+    llm._auth_file = tmp_path / "auth.json"
+    llm._auth_file.write_text(
+        json.dumps(
+            {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": new_access,
+                    "refresh_token": "rt-new",
+                    "account_id": "acct-new",
+                },
+            }
+        )
+    )
+
+    fail_response = MagicMock()
+    fail_response.status_code = 401
+    fail_response.text = "unauthorized"
+    success_resp = MagicMock()
+    success_resp.status_code = 200
+    success_resp.raise_for_status.return_value = None
+
+    backend_authorizations: list[str] = []
+    call_count = {"backend": 0, "refresh": 0}
+
+    async def fake_post(url, **kwargs):
+        if url == _CODEX_REFRESH_TOKEN_URL:
+            call_count["refresh"] += 1
+            raise AssertionError("should reload auth.json instead of calling the refresh endpoint")
+        call_count["backend"] += 1
+        backend_authorizations.append(kwargs["headers"]["Authorization"])
+        if call_count["backend"] == 1:
+            raise httpx.HTTPStatusError("401", request=MagicMock(), response=fail_response)
+        return success_resp
+
+    with (
+        patch.object(llm._client, "post", new=fake_post),
+        patch.object(llm, "_parse_sse_stream", new_callable=AsyncMock, return_value="ok"),
+    ):
+        result = await llm.call(
+            messages=[{"role": "user", "content": "ping"}],
+            max_retries=0,
+            initial_backoff=0.0,
+            max_backoff=0.0,
+        )
+
+    assert result == "ok"
+    assert call_count == {"backend": 2, "refresh": 0}
+    assert backend_authorizations == [f"Bearer {old_access}", f"Bearer {new_access}"]
+    assert llm.access_token == new_access
+    assert llm.refresh_token == "rt-new"
+    assert llm.account_id == "acct-new"
+
+
+@pytest.mark.asyncio
+async def test_call_with_tools_reloads_rotated_auth_file_on_401_without_refresh_request(tmp_path: Path):
+    old_access = _make_jwt(int(time.time()) + 3600)
+    new_access = _make_jwt(int(time.time()) + 7200)
+    llm = _build_llm(refresh_token="rt-old", access_token=old_access)
+    llm._auth_file = tmp_path / "auth.json"
+    llm._auth_file.write_text(
+        json.dumps(
+            {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": new_access,
+                    "refresh_token": "rt-new",
+                    "account_id": "acct-new",
+                },
+            }
+        )
+    )
+
+    fail_response = MagicMock()
+    fail_response.status_code = 401
+    fail_response.text = "unauthorized"
+    success_resp = MagicMock()
+    success_resp.status_code = 200
+    success_resp.raise_for_status.return_value = None
+
+    backend_authorizations: list[str] = []
+    call_count = {"backend": 0, "refresh": 0}
+
+    async def fake_post(url, **kwargs):
+        if url == _CODEX_REFRESH_TOKEN_URL:
+            call_count["refresh"] += 1
+            raise AssertionError("should reload auth.json instead of calling the refresh endpoint")
+        call_count["backend"] += 1
+        backend_authorizations.append(kwargs["headers"]["Authorization"])
+        if call_count["backend"] == 1:
+            return fail_response
+        return success_resp
+
+    with (
+        patch.object(llm._client, "post", new=fake_post),
+        patch.object(llm, "_parse_sse_tool_stream", new_callable=AsyncMock, return_value=("ok", [])),
+    ):
+        result = await llm.call_with_tools(
+            messages=[{"role": "user", "content": "ping"}],
+            tools=[],
+            max_retries=0,
+            initial_backoff=0.0,
+            max_backoff=0.0,
+        )
+
+    assert result.content == "ok"
+    assert call_count == {"backend": 2, "refresh": 0}
+    assert backend_authorizations == [f"Bearer {old_access}", f"Bearer {new_access}"]
+    assert llm.access_token == new_access
+    assert llm.refresh_token == "rt-new"
+    assert llm.account_id == "acct-new"
 
 
 @pytest.mark.asyncio

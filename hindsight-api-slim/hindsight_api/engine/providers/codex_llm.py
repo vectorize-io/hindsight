@@ -23,6 +23,7 @@ import os
 import tempfile
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -66,6 +67,21 @@ class CodexRefreshExpiredError(RuntimeError):
     """
 
 
+@dataclass(frozen=True)
+class CodexAuthCredentials:
+    """Credentials parsed from Codex auth.json.
+
+    ``auth.json`` can be either the native Codex CLI shape or a shared auth
+    store that nests Codex credentials under ``providers.openai-codex``. Keep
+    the parsed state named so refresh/reload code does not pass anonymous
+    multi-item tuples around internally.
+    """
+
+    access_token: str
+    account_id: str | None
+    refresh_token: str | None
+
+
 class CodexLLM(LLMInterface):
     """
     LLM provider using OpenAI Codex OAuth authentication.
@@ -99,7 +115,7 @@ class CodexLLM(LLMInterface):
         try:
             self.access_token, self.account_id = self._load_codex_auth()
             self.refresh_token = self._load_codex_refresh_token()
-            logger.info(f"Loaded Codex OAuth credentials for account: {self.account_id}")
+            logger.info("Loaded Codex OAuth credentials")
         except Exception as e:
             raise RuntimeError(
                 f"Failed to load Codex OAuth credentials from ~/.codex/auth.json: {e}\n\n"
@@ -125,7 +141,49 @@ class CodexLLM(LLMInterface):
         # HTTP client for SSE streaming
         self._client = httpx.AsyncClient(timeout=120.0)
 
-    def _load_codex_auth(self) -> tuple[str, str]:
+    def _auth_payload_from_document(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Return the Codex credential object from native or shared auth-store JSON."""
+        providers = data.get("providers")
+        if data.get("auth_mode") is None and isinstance(providers, dict):
+            provider_data = providers.get("openai-codex")
+            if isinstance(provider_data, dict):
+                return provider_data
+        return data
+
+    def _read_codex_auth_credentials(self, require_access_token: bool = True) -> CodexAuthCredentials:
+        """Read Codex OAuth credentials from ``self._auth_file``."""
+        if not self._auth_file.exists():
+            raise FileNotFoundError(
+                f"Codex auth file not found: {self._auth_file}\nRun 'codex auth login' to authenticate with ChatGPT Plus/Pro."
+            )
+
+        with open(self._auth_file) as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("Codex auth file must contain a JSON object")
+
+        auth_data = self._auth_payload_from_document(data)
+        auth_mode = auth_data.get("auth_mode")
+        if auth_mode != "chatgpt":
+            raise ValueError(f"Expected auth_mode='chatgpt', got: {auth_mode}")
+
+        tokens = auth_data.get("tokens", {})
+        if not isinstance(tokens, dict):
+            raise ValueError("Expected tokens to be a JSON object")
+        access_token = tokens.get("access_token")
+        account_id = tokens.get("account_id")
+        refresh_token = tokens.get("refresh_token")
+
+        if require_access_token and not access_token:
+            raise ValueError("No access_token found in Codex auth file. Run 'codex auth login' again.")
+
+        return CodexAuthCredentials(
+            access_token=str(access_token or ""),
+            account_id=str(account_id) if account_id else None,
+            refresh_token=str(refresh_token) if refresh_token else None,
+        )
+
+    def _load_codex_auth(self) -> tuple[str, str | None]:
         """
         Load OAuth credentials from ~/.codex/auth.json.
 
@@ -136,29 +194,8 @@ class CodexLLM(LLMInterface):
             FileNotFoundError: If auth file doesn't exist.
             ValueError: If auth file is invalid.
         """
-        auth_file = Path.home() / ".codex" / "auth.json"
-
-        if not auth_file.exists():
-            raise FileNotFoundError(
-                f"Codex auth file not found: {auth_file}\nRun 'codex auth login' to authenticate with ChatGPT Plus/Pro."
-            )
-
-        with open(auth_file) as f:
-            data = json.load(f)
-
-        # Validate auth structure
-        auth_mode = data.get("auth_mode")
-        if auth_mode != "chatgpt":
-            raise ValueError(f"Expected auth_mode='chatgpt', got: {auth_mode}")
-
-        tokens = data.get("tokens", {})
-        access_token = tokens.get("access_token")
-        account_id = tokens.get("account_id")
-
-        if not access_token:
-            raise ValueError("No access_token found in Codex auth file. Run 'codex auth login' again.")
-
-        return access_token, account_id
+        credentials = self._read_codex_auth_credentials(require_access_token=True)
+        return credentials.access_token, credentials.account_id
 
     def _load_codex_refresh_token(self) -> str | None:
         """Load ``tokens.refresh_token`` from ``~/.codex/auth.json``.
@@ -170,15 +207,35 @@ class CodexLLM(LLMInterface):
         of raising only on missing ``access_token``.
         """
         try:
-            with open(self._auth_file) as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
+            return self._read_codex_auth_credentials(require_access_token=False).refresh_token
+        except (OSError, ValueError, json.JSONDecodeError) as e:
             logger.warning(
                 f"Codex auth file unreadable when loading refresh_token: {type(e).__name__}. "
                 "Token refresh will not be available; the access_token in memory will be used until it expires."
             )
             return None
-        return data.get("tokens", {}).get("refresh_token")
+
+    def _reload_auth_file_if_token_rotated(self, token_before_lock: str) -> bool:
+        """Adopt a token that another process already rotated into auth.json.
+
+        Long-running services may keep an access_token in memory while Codex CLI
+        or another Hindsight process refreshes the shared auth file. On a backend
+        401, reload the file before spending the cached refresh_token; otherwise
+        we can fail with refresh_token_reused even though fresh credentials are
+        already on disk.
+        """
+        try:
+            credentials = self._read_codex_auth_credentials(require_access_token=True)
+        except (OSError, ValueError, json.JSONDecodeError) as e:
+            logger.debug(f"Codex auth file reload skipped after auth error: {type(e).__name__}")
+            return False
+        if credentials.access_token == token_before_lock:
+            return False
+        self.access_token = credentials.access_token
+        self.account_id = credentials.account_id
+        self.refresh_token = credentials.refresh_token
+        logger.info("Reloaded Codex OAuth credentials from auth.json")
+        return True
 
     @staticmethod
     def _decode_jwt_exp_unixtime(token: str) -> int | None:
@@ -244,18 +301,20 @@ class CodexLLM(LLMInterface):
             # someone has hand-edited it into a non-object shape, fall back
             # to the minimal default rather than crashing the refresh path.
             current = loaded if isinstance(loaded, dict) else {"auth_mode": "chatgpt", "tokens": {}}
+            auth_data = self._auth_payload_from_document(current)
         except (OSError, json.JSONDecodeError):
             # If the file became unreadable between our last read and now,
             # construct a minimal shape rather than refusing to persist.
             current = {"auth_mode": "chatgpt", "tokens": {}}
+            auth_data = current
 
-        existing_tokens = current.get("tokens")
+        existing_tokens = auth_data.get("tokens")
         tokens: dict[str, Any] = existing_tokens if isinstance(existing_tokens, dict) else {}
         for key in ("access_token", "refresh_token", "id_token", "account_id"):
             if key in updated_tokens and updated_tokens[key] is not None:
                 tokens[key] = updated_tokens[key]
-        current["tokens"] = tokens
-        current["last_refresh"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        auth_data["tokens"] = tokens
+        auth_data["last_refresh"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
         # Write to a sibling tempfile so the rename is same-filesystem.
         parent = self._auth_file.parent
@@ -305,14 +364,20 @@ class CodexLLM(LLMInterface):
         token_before_lock = self.access_token
         async with self._auth_lock:
             if force:
-                # Reactive: skip only if another coroutine already rotated
-                # the token while we were waiting on the lock.
+                # Reactive: skip if another coroutine already rotated the
+                # token while we were waiting. If memory is still stale, re-read
+                # auth.json before spending refresh_token because another
+                # process may have already rotated the shared auth file.
                 if self.access_token != token_before_lock:
+                    return
+                if self._reload_auth_file_if_token_rotated(token_before_lock):
                     return
             else:
                 # Proactive: skip if the token is no longer stale (the
                 # canonical "another coroutine refreshed first" check).
                 if not self._token_is_stale():
+                    return
+                if self._reload_auth_file_if_token_rotated(token_before_lock) and not self._token_is_stale():
                     return
 
             if not self.refresh_token:
@@ -444,6 +509,18 @@ class CodexLLM(LLMInterface):
                 # handling paths keep working.
                 raise
 
+    def _build_codex_headers(self) -> dict[str, str]:
+        """Build request headers from the current in-memory Codex credentials."""
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+            "Origin": "https://chatgpt.com",
+        }
+        if self.account_id:
+            headers["OpenAI-Account-ID"] = self.account_id
+        return headers
+
     def _map_reasoning_effort(self, effort: str) -> str:
         """
         Map standard reasoning effort to Codex reasoning summary format.
@@ -491,7 +568,7 @@ class CodexLLM(LLMInterface):
     async def verify_connection(self) -> None:
         """Verify Codex connection by making a simple test call."""
         try:
-            logger.info(f"Verifying Codex LLM: model={self.model}, account={self.account_id}...")
+            logger.info(f"Verifying Codex LLM: model={self.model}...")
             await self.call(
                 messages=[{"role": "user", "content": "Say 'ok'"}],
                 max_completion_tokens=10,
@@ -578,13 +655,7 @@ class CodexLLM(LLMInterface):
             "prompt_cache_key": str(uuid.uuid4()),
         }
 
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json",
-            "OpenAI-Account-ID": self.account_id,
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-            "Origin": "https://chatgpt.com",
-        }
+        headers = self._build_codex_headers()
 
         url = f"{self.base_url}/codex/responses"
         last_exception = None
@@ -701,7 +772,7 @@ class CodexLLM(LLMInterface):
                             # token and retry without consuming a normal-retry
                             # budget slot — this is a dedicated auth-recovery
                             # attempt that shouldn't compete with backoff.
-                            headers["Authorization"] = f"Bearer {self.access_token}"
+                            headers = self._build_codex_headers()
                             logger.info("Codex auth refreshed after auth error; retrying request once")
                             continue
                         except CodexRefreshExpiredError as refresh_err:
@@ -909,13 +980,7 @@ class CodexLLM(LLMInterface):
             "prompt_cache_key": str(uuid.uuid4()),
         }
 
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json",
-            "OpenAI-Account-ID": self.account_id,
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-            "Origin": "https://chatgpt.com",
-        }
+        headers = self._build_codex_headers()
 
         url = f"{self.base_url}/codex/responses"
 
@@ -938,7 +1003,7 @@ class CodexLLM(LLMInterface):
                         reason=f"reactive (HTTP {response.status_code} from codex backend in call_with_tools)",
                         force=True,
                     )
-                    headers["Authorization"] = f"Bearer {self.access_token}"
+                    headers = self._build_codex_headers()
                     logger.info("Codex auth refreshed after auth error; retrying tool-call request once")
                     response = await self._client.post(url, json=payload, headers=headers, timeout=120.0)
                 except CodexRefreshExpiredError as refresh_err:
