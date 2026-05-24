@@ -110,9 +110,15 @@ class CodexLLM(LLMInterface):
                 "Or use a different provider (openai, anthropic, gemini) with API keys."
             ) from e
 
-        # Use ChatGPT backend API endpoint
-        if not self.base_url:
+        # Use ChatGPT backend API endpoint. Codex auth is tied to
+        # chatgpt.com/backend-api, not the OpenAI-compatible base URL used by
+        # other providers. Deployments often set a global LLM_BASE_URL for an
+        # OpenAI-compatible proxy; ignore that inherited value unless the user
+        # explicitly provides a Codex backend URL.
+        if not self.base_url or self.base_url.rstrip("/").endswith("/v1"):
             self.base_url = "https://chatgpt.com/backend-api"
+        else:
+            self.base_url = self.base_url.rstrip("/")
 
         # Normalize model name (strip openai/ prefix if present)
         if self.model.startswith("openai/"):
