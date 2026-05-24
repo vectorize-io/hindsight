@@ -118,6 +118,13 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `statelessSessionPatterns` | `[]`                           | Session key glob patterns for read-only sessions — retain is always skipped; recall is skipped when `skipStatelessSessions` is `true` (e.g. `["agent:*:subagent:**", "agent:*:heartbeat:**"]`)                                                                                                              |
 | `skipStatelessSessions`    | `true`                         | When `true`, sessions matching `statelessSessionPatterns` also skip recall. Set to `false` to allow recall but still skip retain.                                                                                                                                                                           |
 | `debugPerfTiming`          | `false`                        | Emit one info-level perf line per `before_prompt_build` (recall path) and `agent_end` (retain path) so you can spot whether latency is in the plugin or upstream. Off by default. Format: `perf: <hook> hook_total=Xms <hook-specific fields>`. Safe in production — uses the existing logger.              |
+| `enableKnowledgeTools`     | `false`                        | Register `agent_knowledge_*` tools for explicit agent-driven lookup, reflection, ingest, and knowledge-page management. Set automatically by the self-driving-agents CLI.                                                                                                                                   |
+
+### Manual Knowledge Tools
+
+When `enableKnowledgeTools` is enabled, the plugin registers explicit `agent_knowledge_*` tools in addition to automatic recall. Use `agent_knowledge_recall` for ordinary memory lookup. Use `agent_knowledge_reflect` only for deliberate synthesis, retrospectives, or long-term preference/pattern questions; it retrieves memories and then calls the configured Reflect LLM to generate an answer.
+
+`agent_knowledge_reflect` uses conservative defaults: `budget: "low"`, `max_tokens: 1024`, and `fact_types: ["world", "experience", "observation"]`. Production deployments should also set a finite bank-level `reflect_source_facts_max_tokens` value, such as `4096` or `8192`, rather than leaving reflection source facts unlimited.
 
 ### Session pattern filtering
 

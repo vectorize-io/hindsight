@@ -52,6 +52,7 @@ export const TOOL_NAMES = [
   "agent_knowledge_update_page",
   "agent_knowledge_delete_page",
   "agent_knowledge_recall",
+  "agent_knowledge_reflect",
   "agent_knowledge_ingest",
 ] as const;
 
@@ -223,6 +224,75 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
           maxTokens,
         });
         return ok(result);
+      },
+    },
+    {
+      name: "agent_knowledge_reflect",
+      label: "Reflect on memories",
+      description:
+        "Generate a concise answer using the memory bank. Use for deliberate synthesis, retrospectives, or long-term preference/pattern questions; use agent_knowledge_recall for ordinary lookup.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Question or synthesis prompt" },
+          budget: {
+            type: "string",
+            enum: ["low", "mid", "high"],
+            description: "Retrieval/reasoning budget (default low)",
+          },
+          max_tokens: {
+            type: "number",
+            description: "Maximum output tokens for the generated answer (default 1024)",
+          },
+          fact_types: {
+            type: "array",
+            items: { type: "string", enum: ["world", "experience", "observation"] },
+            description: "Memory types to use. Defaults to world, experience, and observation.",
+          },
+          include_facts: {
+            type: "boolean",
+            description: "Include supporting facts/evidence in the tool result (default false)",
+          },
+          exclude_mental_models: {
+            type: "boolean",
+            description:
+              "Exclude stored knowledge pages/mental models from reflection (default false)",
+          },
+        },
+        required: ["query"],
+      },
+      async execute(params: Record<string, unknown>) {
+        const factTypesParam = params.fact_types;
+        const factTypes = Array.isArray(factTypesParam)
+          ? factTypesParam.filter(
+              (t): t is "world" | "experience" | "observation" =>
+                t === "world" || t === "experience" || t === "observation"
+            )
+          : (["world", "experience", "observation"] as const);
+        const maxTokens = Math.max(1, Math.floor(Number(params.max_tokens ?? 1024)));
+        const budget =
+          params.budget === "mid" || params.budget === "high" || params.budget === "low"
+            ? (params.budget as "low" | "mid" | "high")
+            : "low";
+        const resp = await sdk.reflect({
+          client: lowLevel,
+          path: { bank_id: bankId },
+          body: {
+            query: params.query as string,
+            budget,
+            max_tokens: maxTokens,
+            fact_types: [...factTypes],
+            include: params.include_facts === true ? { facts: {} } : undefined,
+            exclude_mental_models:
+              typeof params.exclude_mental_models === "boolean"
+                ? params.exclude_mental_models
+                : undefined,
+          },
+        });
+        if (resp.error) {
+          throw new Error(`agent_knowledge_reflect failed: ${JSON.stringify(resp.error)}`);
+        }
+        return ok(resp.data);
       },
     },
     {
