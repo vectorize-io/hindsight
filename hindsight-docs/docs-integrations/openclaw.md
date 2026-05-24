@@ -84,7 +84,9 @@ The plugin will automatically capture conversations after each turn and inject r
 
 **Auto-Capture:** Every conversation is automatically stored after each turn. Facts, entities, and relationships are extracted in the background.
 
-**Auto-Recall:** Before each agent response, relevant memories are automatically injected into the context (up to 1024 tokens). The agent uses past context without needing to call tools.
+**Auto-Recall:** Before each agent response, relevant memories are automatically injected into the context (up to 1024 tokens by default). The agent uses past context without needing to call tools.
+
+**Manual Recall Tools:** When `enableKnowledgeTools` is enabled, the plugin also exposes `agent_knowledge_recall` for explicit lookups. Its `max_tokens` parameter controls the recall response token budget; automatic injection uses `recallMaxTokens` and optionally `recallTopK` for a post-response count cap.
 
 **Feedback Loop Prevention:** The plugin automatically strips injected memory tags (`<hindsight_memories>`) before storing conversations. This prevents recalled memories from being re-extracted as new facts, which would cause exponential memory growth and duplicate entries.
 
@@ -141,7 +143,10 @@ Optional settings in `~/.openclaw/openclaw.json`:
 - `recallRoles` - Which message roles to include when composing the contextual recall query (default: `["user", "assistant"]`).
 - `retainEveryNTurns` - Retain every Nth turn (default: `1` = every turn). Values > 1 enable chunked retention.
 - `retainOverlapTurns` - Extra prior turns included when chunked retention fires (default: `0`).
+- `enableKnowledgeTools` - Register `agent_knowledge_*` tools for explicit agent-driven lookup and knowledge-page management (default: `false`).
 - `debug` - Enable debug logging (default: `false`).
+
+When using `agent_knowledge_recall` manually, pass `max_tokens` to control how much memory text the recall response may contain. Do not use `max_results` for this tool; OpenClaw auto-recall uses `recallTopK` when you need a count cap for automatically injected memories.
 
 ### Memory Isolation
 
