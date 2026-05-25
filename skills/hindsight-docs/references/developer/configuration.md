@@ -611,7 +611,7 @@ Google's `gemini-embedding-001` produces 3072 dimensions natively but supports c
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
+| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `alibaba`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MODEL` | Model for local provider | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT` | Max concurrent local reranking (prevents CPU thrashing under load) | `4` |
 | `HINDSIGHT_API_RERANKER_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
@@ -641,6 +641,8 @@ Google's `gemini-embedding-001` produces 3072 dimensions natively but supports c
 | `HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY` | SiliconFlow API key for reranking | - |
 | `HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL` | SiliconFlow rerank model (e.g., `BAAI/bge-reranker-v2-m3`) | `BAAI/bge-reranker-v2-m3` |
 | `HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL` | Base URL for the SiliconFlow `/rerank` endpoint | `https://api.siliconflow.cn/v1` |
+| `HINDSIGHT_API_RERANKER_ALIBABA_API_KEY` | Alibaba Cloud DashScope API key for reranking | - |
+| `HINDSIGHT_API_RERANKER_ALIBABA_MODEL` | DashScope rerank model | `qwen3-rerank` |
 | `HINDSIGHT_API_RERANKER_GOOGLE_PROJECT_ID` | Google Cloud project ID for Discovery Engine reranking (falls back to `HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID`) | - |
 | `HINDSIGHT_API_RERANKER_GOOGLE_MODEL` | Google Discovery Engine ranking model | `semantic-ranker-default-004` |
 | `HINDSIGHT_API_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY` | Path to service account JSON key (falls back to `HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY`). If unset, uses ADC. | - |
@@ -703,6 +705,11 @@ export HINDSIGHT_API_RERANKER_PROVIDER=siliconflow
 export HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY=your-api-key
 export HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL=BAAI/bge-reranker-v2-m3
 # export HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1  # default
+
+# Alibaba Cloud DashScope - qwen3-rerank via Cohere-compatible /reranks endpoint
+export HINDSIGHT_API_RERANKER_PROVIDER=alibaba
+export HINDSIGHT_API_RERANKER_ALIBABA_API_KEY=your-dashscope-api-key  # or set DASHSCOPE_API_KEY
+export HINDSIGHT_API_RERANKER_ALIBABA_MODEL=qwen3-rerank  # default, can omit
 
 # LiteLLM proxy - unified gateway for multiple reranking providers (requires running LiteLLM proxy server)
 export HINDSIGHT_API_RERANKER_PROVIDER=litellm

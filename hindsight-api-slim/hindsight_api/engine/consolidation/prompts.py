@@ -1,5 +1,7 @@
 """Prompts for the consolidation engine."""
 
+from hindsight_api.engine.prompt_utils import escape_for_prompt
+
 # Default mission when no bank-specific mission is set
 _DEFAULT_MISSION = "Track every detail: names, numbers, dates, places, and relationships. Prefer specifics over abstractions, never generalise."
 
@@ -90,11 +92,11 @@ def build_batch_consolidation_prompt(
     The mission defines *what* to track (customisable per bank).
     Processing rules and output format are always present regardless of mission.
     """
-    mission = observations_mission or _DEFAULT_MISSION
+    mission = escape_for_prompt(observations_mission or _DEFAULT_MISSION)
 
     capacity_section = ""
     if observation_capacity_note:
-        capacity_section = f"\n\n## CAPACITY CONSTRAINT\n{observation_capacity_note}"
+        capacity_section = f"\n\n## CAPACITY CONSTRAINT\n{escape_for_prompt(observation_capacity_note)}"
 
     return (
         "You are a memory consolidation system. Synthesize facts into observations "

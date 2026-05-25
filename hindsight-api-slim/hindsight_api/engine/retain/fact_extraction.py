@@ -888,13 +888,16 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     extract_causal_links = config.retain_extract_causal_links
 
     # Build retain_mission section if set - injected before the mode-specific guidelines
+    # Escape braces so user-supplied text survives str.format() on the prompt template.
+    from hindsight_api.engine.prompt_utils import escape_for_prompt
+
     retain_mission = getattr(config, "retain_mission", None)
     if retain_mission:
         retain_mission_section = (
             f"══════════════════════════════════════════════════════════════════════════\n"
             f"FOCUS — What to retain for this bank\n"
             f"══════════════════════════════════════════════════════════════════════════\n\n"
-            f"{retain_mission}\n\n"
+            f"{escape_for_prompt(retain_mission)}\n\n"
         )
     else:
         retain_mission_section = ""
@@ -910,7 +913,7 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
             base_prompt = CUSTOM_FACT_EXTRACTION_PROMPT
             prompt = base_prompt.format(
                 retain_mission_section=retain_mission_section,
-                custom_instructions=config.retain_custom_instructions,
+                custom_instructions=escape_for_prompt(config.retain_custom_instructions),
             )
     elif extraction_mode == "verbose":
         prompt = VERBOSE_FACT_EXTRACTION_PROMPT.format(
