@@ -2188,6 +2188,19 @@ class OperationResponse(BaseModel):
     )
 
 
+class ConsolidationRequest(BaseModel):
+    """Request model for consolidation trigger endpoint."""
+
+    observation_scopes: list[list[str]] | None = Field(
+        default=None,
+        description=(
+            "Optional list of tag scopes to consolidate. Each scope is a list of tags. "
+            "Only unconsolidated memories whose tags contain all tags in at least one scope "
+            "will be processed. If omitted, all unconsolidated memories are processed."
+        ),
+    )
+
+
 class ConsolidationResponse(BaseModel):
     """Response model for consolidation trigger endpoint."""
 
@@ -5506,11 +5519,20 @@ def _register_routes(app: FastAPI):
         operation_id="trigger_consolidation",
         tags=["Banks"],
     )
-    @audited("consolidation", request_param=None)
-    async def api_trigger_consolidation(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
+    @audited("consolidation")
+    async def api_trigger_consolidation(
+        bank_id: str,
+        request: ConsolidationRequest | None = None,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
         """Trigger consolidation for a bank (async)."""
         try:
-            result = await app.state.memory.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+            observation_scopes = request.observation_scopes if request else None
+            result = await app.state.memory.submit_async_consolidation(
+                bank_id=bank_id,
+                request_context=request_context,
+                observation_scopes=observation_scopes,
+            )
             return ConsolidationResponse(
                 operation_id=result["operation_id"],
                 deduplicated=result.get("deduplicated", False),

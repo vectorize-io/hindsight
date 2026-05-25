@@ -1148,6 +1148,7 @@ class MemoryEngine(MemoryEngineInterface):
             bank_id=bank_id,
             request_context=internal_context,
             operation_id=task_dict.get("operation_id"),
+            observation_scopes=task_dict.get("observation_scopes"),
         )
 
         logger.info(f"[CONSOLIDATION] bank={bank_id} completed: {result.get('memories_processed', 0)} processed")
@@ -2624,7 +2625,7 @@ class MemoryEngine(MemoryEngineInterface):
         # Trigger consolidation as a tracked async operation if enabled
         # Resolve bank-specific config to check if observations are enabled for this bank
         config = await self._config_resolver.resolve_full_config(bank_id, request_context)
-        if config.enable_observations:
+        if config.enable_observations and config.enable_auto_consolidation:
             try:
                 await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
             except Exception as e:
@@ -4126,10 +4127,12 @@ class MemoryEngine(MemoryEngineInterface):
                 }
 
         if invalidated_obs > 0:
-            try:
-                await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
-            except Exception as e:
-                logger.warning(f"Failed to submit consolidation after document deletion for bank {bank_id}: {e}")
+            config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+            if config.enable_auto_consolidation:
+                try:
+                    await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+                except Exception as e:
+                    logger.warning(f"Failed to submit consolidation after document deletion for bank {bank_id}: {e}")
 
         return result
 
@@ -4281,10 +4284,12 @@ class MemoryEngine(MemoryEngineInterface):
                             )
 
         if invalidated_obs > 0:
-            try:
-                await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
-            except Exception as e:
-                logger.warning(f"Failed to submit consolidation after document update for bank {bank_id}: {e}")
+            config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+            if config.enable_auto_consolidation:
+                try:
+                    await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+                except Exception as e:
+                    logger.warning(f"Failed to submit consolidation after document update for bank {bank_id}: {e}")
 
         return True
 
@@ -4357,14 +4362,17 @@ class MemoryEngine(MemoryEngineInterface):
                 }
 
         if bank_id_for_consolidation:
-            try:
-                await self.submit_async_consolidation(
-                    bank_id=bank_id_for_consolidation, request_context=request_context
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to submit consolidation after memory deletion for bank {bank_id_for_consolidation}: {e}"
-                )
+            config = await self._config_resolver.resolve_full_config(bank_id_for_consolidation, request_context)
+            if config.enable_auto_consolidation:
+                try:
+                    await self.submit_async_consolidation(
+                        bank_id=bank_id_for_consolidation, request_context=request_context
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to submit consolidation after memory deletion"
+                        f" for bank {bank_id_for_consolidation}: {e}"
+                    )
 
         return result
 
@@ -4490,10 +4498,12 @@ class MemoryEngine(MemoryEngineInterface):
                 await bank_utils.drop_bank_vector_indexes(conn, bank_internal_id, ops=self._backend.ops)
 
         if invalidated_obs > 0:
-            try:
-                await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
-            except Exception as e:
-                logger.warning(f"Failed to submit consolidation after bank deletion for bank {bank_id}: {e}")
+            config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+            if config.enable_auto_consolidation:
+                try:
+                    await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+                except Exception as e:
+                    logger.warning(f"Failed to submit consolidation after bank deletion for bank {bank_id}: {e}")
 
         return result
 
@@ -4656,7 +4666,9 @@ class MemoryEngine(MemoryEngineInterface):
                     )
 
         if deleted_count > 0:
-            await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+            config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+            if config.enable_auto_consolidation:
+                await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
 
         return {"deleted_count": deleted_count}
 
@@ -9706,6 +9718,7 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         *,
         request_context: "RequestContext",
+        observation_scopes: list[list[str]] | None = None,
     ) -> dict[str, Any]:
         """Submit a consolidation operation to run asynchronously.
 
@@ -9715,6 +9728,8 @@ class MemoryEngine(MemoryEngineInterface):
         Args:
             bank_id: Bank identifier
             request_context: Request context for authentication
+            observation_scopes: Optional list of tag scopes to consolidate. When provided,
+                only unconsolidated memories matching at least one scope are processed.
 
         Returns:
             Dict with operation_id
@@ -9736,13 +9751,19 @@ class MemoryEngine(MemoryEngineInterface):
             task_payload["_tenant_id"] = request_context.tenant_id
         if request_context.api_key_id:
             task_payload["_api_key_id"] = request_context.api_key_id
+        if observation_scopes is not None:
+            task_payload["observation_scopes"] = observation_scopes
+
+        # Skip bank-level deduplication when scoped — the caller wants a
+        # targeted run that should not be merged into a pending full-bank sweep.
+        dedupe = observation_scopes is None
 
         return await self._submit_async_operation(
             bank_id=bank_id,
             operation_type="consolidation",
             task_type="consolidation",
             task_payload=task_payload,
-            dedupe_by_bank=True,
+            dedupe_by_bank=dedupe,
         )
 
     async def submit_async_refresh_mental_model(

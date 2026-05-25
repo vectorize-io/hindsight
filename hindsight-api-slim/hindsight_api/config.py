@@ -365,6 +365,7 @@ ENV_FILE_DELETE_AFTER_RETAIN = "HINDSIGHT_API_FILE_DELETE_AFTER_RETAIN"
 
 # Observations settings (consolidated knowledge from facts)
 ENV_ENABLE_OBSERVATIONS = "HINDSIGHT_API_ENABLE_OBSERVATIONS"
+ENV_ENABLE_AUTO_CONSOLIDATION = "HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION"
 ENV_CONSOLIDATION_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE"
 ENV_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = "HINDSIGHT_API_CONSOLIDATION_MAX_MEMORIES_PER_ROUND"
 ENV_CONSOLIDATION_LLM_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE"
@@ -622,6 +623,7 @@ DEFAULT_FILE_DELETE_AFTER_RETAIN = True  # Delete file bytes after retain (saves
 
 # Observations defaults (consolidated knowledge from facts)
 DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
+DEFAULT_ENABLE_AUTO_CONSOLIDATION = True  # Auto-consolidation after retain enabled by default
 DEFAULT_ENABLE_OBSERVATION_HISTORY = True  # Observation history tracking enabled by default
 DEFAULT_ENABLE_MENTAL_MODEL_HISTORY = True  # Mental model history tracking enabled by default
 # Each history entry snapshots previous_content + previous_reflect_response. Without
@@ -1095,6 +1097,7 @@ class HindsightConfig:
 
     # Observations settings (consolidated knowledge from facts)
     enable_observations: bool
+    enable_auto_consolidation: bool
     enable_observation_history: bool
     enable_mental_model_history: bool
     mental_model_history_max_entries: int
@@ -1255,6 +1258,7 @@ class HindsightConfig:
         "entities_allow_free_form",
         # Consolidation settings
         "enable_observations",
+        "enable_auto_consolidation",
         "consolidation_llm_batch_size",
         "consolidation_max_memories_per_round",
         "consolidation_source_facts_max_tokens",
@@ -1763,6 +1767,10 @@ class HindsightConfig:
             == "true",
             # Observations settings (consolidated knowledge from facts)
             enable_observations=os.getenv(ENV_ENABLE_OBSERVATIONS, str(DEFAULT_ENABLE_OBSERVATIONS)).lower() == "true",
+            enable_auto_consolidation=os.getenv(
+                ENV_ENABLE_AUTO_CONSOLIDATION, str(DEFAULT_ENABLE_AUTO_CONSOLIDATION)
+            ).lower()
+            == "true",
             enable_observation_history=os.getenv(
                 ENV_ENABLE_OBSERVATION_HISTORY, str(DEFAULT_ENABLE_OBSERVATION_HISTORY)
             ).lower()

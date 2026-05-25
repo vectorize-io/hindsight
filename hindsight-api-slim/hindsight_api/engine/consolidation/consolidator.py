@@ -230,6 +230,7 @@ async def run_consolidation_job(
     bank_id: str,
     request_context: "RequestContext",
     operation_id: str | None = None,
+    observation_scopes: list[list[str]] | None = None,
 ) -> dict[str, Any]:
     """
     Run consolidation job for a bank.
@@ -240,6 +241,10 @@ async def run_consolidation_job(
         memory_engine: MemoryEngine instance
         bank_id: Bank identifier
         request_context: Request context for authentication
+        operation_id: Optional operation ID for tracking
+        observation_scopes: Optional list of tag scopes. When provided, only
+            unconsolidated memories whose tags contain all tags in at least one
+            scope are processed.
 
     Returns:
         Dict with consolidation results
@@ -281,6 +286,18 @@ async def run_consolidation_job(
 
         perf.record_timing("fetch_bank", time.time() - t0)
 
+        # Build optional scope filter clause.  When observation_scopes is provided,
+        # only process memories whose tags contain all tags in at least one scope.
+        scope_clause = ""
+        scope_params: list[Any] = [bank_id]
+        if observation_scopes:
+            or_parts: list[str] = []
+            for scope_tags in observation_scopes:
+                idx = len(scope_params) + 1
+                or_parts.append(f"tags @> ${idx}::varchar[]")
+                scope_params.append(scope_tags)
+            scope_clause = " AND (" + " OR ".join(or_parts) + ")"
+
         # Count total unconsolidated memories for progress logging
         total_count = await conn.fetchval(
             f"""
@@ -290,8 +307,9 @@ async def run_consolidation_job(
               AND consolidated_at IS NULL
               AND consolidation_failed_at IS NULL
               AND fact_type IN ('experience', 'world')
+              {scope_clause}
             """,
-            bank_id,
+            *scope_params,
         )
 
     if total_count == 0:
@@ -330,6 +348,9 @@ async def run_consolidation_job(
         # Fetch next batch of unconsolidated memories
         async with acquire_with_retry(pool) as conn:
             t0 = time.time()
+            # scope_params[0] is bank_id; append fetch_limit after scope params
+            fetch_params = list(scope_params) + [fetch_limit]
+            limit_idx = len(fetch_params)
             memories = await conn.fetch(
                 f"""
                 SELECT id, text, fact_type, occurred_start, occurred_end, event_date, tags, mentioned_at,
@@ -339,11 +360,11 @@ async def run_consolidation_job(
                   AND consolidated_at IS NULL
                   AND consolidation_failed_at IS NULL
                   AND fact_type IN ('experience', 'world')
+                  {scope_clause}
                 ORDER BY created_at ASC
-                LIMIT $2
+                LIMIT ${limit_idx}
                 """,
-                bank_id,
-                fetch_limit,
+                *fetch_params,
             )
             perf.record_timing("fetch_memories", time.time() - t0)
 
@@ -583,7 +604,11 @@ async def run_consolidation_job(
             f" ~{remaining} remaining. Re-queuing consolidation."
         )
         try:
-            await memory_engine.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+            await memory_engine.submit_async_consolidation(
+                bank_id=bank_id,
+                request_context=request_context,
+                observation_scopes=observation_scopes,
+            )
         except Exception as e:
             logger.warning(f"[CONSOLIDATION] bank={bank_id} failed to re-queue consolidation: {e}")
 

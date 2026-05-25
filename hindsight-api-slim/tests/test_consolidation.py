@@ -2903,3 +2903,228 @@ async def test_max_observations_unlimited_default(memory: MemoryEngine, request_
             memory._consolidation_llm_config = original_llm
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_targeted_consolidation_filters_by_scopes(memory: MemoryEngine, request_context):
+    """Consolidation with observation_scopes only processes memories matching those scopes."""
+    bank_id = f"test-targeted-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    wrapper, mock_llm = _make_mock_llm_one_obs_per_fact()
+    original_llm = memory._consolidation_llm_config
+    memory._consolidation_llm_config = wrapper
+
+    try:
+        # Insert memories with different tag scopes
+        async with memory._pool.acquire() as conn:
+            await _insert_memories_with_tags(conn, bank_id, ["Alice likes hiking."], tags=["user:alice"])
+            await _insert_memories_with_tags(conn, bank_id, ["Bob likes swimming."], tags=["user:bob"])
+            await _insert_memories_with_tags(conn, bank_id, ["Charlie likes yoga."], tags=["user:charlie"])
+
+        # Run consolidation targeting only user:alice
+        result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+            observation_scopes=[["user:alice"]],
+        )
+
+        assert result["memories_processed"] == 1
+        assert result["observations_created"] == 1
+
+        # Verify only alice's memory was consolidated
+        async with memory._pool.acquire() as conn:
+            alice_obs = await _count_observations_for_scope(conn, bank_id, ["user:alice"])
+            assert alice_obs == 1
+
+            # Bob and Charlie should still be unconsolidated
+            unconsolidated = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM memory_units
+                WHERE bank_id = $1
+                  AND consolidated_at IS NULL
+                  AND fact_type IN ('experience', 'world')
+                """,
+                bank_id,
+            )
+            assert unconsolidated == 2
+
+        # Now consolidate bob
+        result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+            observation_scopes=[["user:bob"]],
+        )
+        assert result["memories_processed"] == 1
+
+        # Charlie still unconsolidated
+        async with memory._pool.acquire() as conn:
+            unconsolidated = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM memory_units
+                WHERE bank_id = $1
+                  AND consolidated_at IS NULL
+                  AND fact_type IN ('experience', 'world')
+                """,
+                bank_id,
+            )
+            assert unconsolidated == 1
+    finally:
+        memory._consolidation_llm_config = original_llm
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_targeted_consolidation_multiple_scopes(memory: MemoryEngine, request_context):
+    """Consolidation with multiple observation_scopes matches memories in any scope."""
+    bank_id = f"test-targeted-multi-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    wrapper, mock_llm = _make_mock_llm_one_obs_per_fact()
+    original_llm = memory._consolidation_llm_config
+    memory._consolidation_llm_config = wrapper
+
+    try:
+        async with memory._pool.acquire() as conn:
+            await _insert_memories_with_tags(conn, bank_id, ["Alice likes hiking."], tags=["user:alice"])
+            await _insert_memories_with_tags(conn, bank_id, ["Bob likes swimming."], tags=["user:bob"])
+            await _insert_memories_with_tags(conn, bank_id, ["Charlie likes yoga."], tags=["user:charlie"])
+
+        # Consolidate alice and charlie in one call
+        result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+            observation_scopes=[["user:alice"], ["user:charlie"]],
+        )
+
+        assert result["memories_processed"] == 2
+        assert result["observations_created"] == 2
+
+        # Bob still unconsolidated
+        async with memory._pool.acquire() as conn:
+            unconsolidated = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM memory_units
+                WHERE bank_id = $1
+                  AND consolidated_at IS NULL
+                  AND fact_type IN ('experience', 'world')
+                """,
+                bank_id,
+            )
+            assert unconsolidated == 1
+    finally:
+        memory._consolidation_llm_config = original_llm
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_targeted_consolidation_no_scopes_processes_all(memory: MemoryEngine, request_context):
+    """Consolidation without observation_scopes processes all unconsolidated memories (backward compat)."""
+    bank_id = f"test-targeted-all-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    wrapper, mock_llm = _make_mock_llm_one_obs_per_fact()
+    original_llm = memory._consolidation_llm_config
+    memory._consolidation_llm_config = wrapper
+
+    try:
+        async with memory._pool.acquire() as conn:
+            await _insert_memories_with_tags(conn, bank_id, ["Alice likes hiking."], tags=["user:alice"])
+            await _insert_memories_with_tags(conn, bank_id, ["Bob likes swimming."], tags=["user:bob"])
+
+        # No scopes — processes everything
+        result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+        )
+
+        assert result["memories_processed"] == 2
+        assert result["observations_created"] == 2
+    finally:
+        memory._consolidation_llm_config = original_llm
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_targeted_consolidation_contains_semantics(memory: MemoryEngine, request_context):
+    """Scope ["user:alice"] matches memories tagged ["user:alice", "team:eng"] (contains)."""
+    bank_id = f"test-targeted-contains-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    wrapper, mock_llm = _make_mock_llm_one_obs_per_fact()
+    original_llm = memory._consolidation_llm_config
+    memory._consolidation_llm_config = wrapper
+
+    try:
+        async with memory._pool.acquire() as conn:
+            # Memory with two tags
+            await _insert_memories_with_tags(
+                conn, bank_id, ["Alice works on infra."], tags=["user:alice", "team:eng"]
+            )
+            await _insert_memories_with_tags(conn, bank_id, ["Bob likes swimming."], tags=["user:bob"])
+
+        # Scope is ["user:alice"] — should match the multi-tag memory
+        result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+            observation_scopes=[["user:alice"]],
+        )
+
+        assert result["memories_processed"] == 1
+        assert result["observations_created"] == 1
+    finally:
+        memory._consolidation_llm_config = original_llm
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_enable_auto_consolidation_flag(memory: MemoryEngine, request_context):
+    """When enable_auto_consolidation is False, retain does not trigger consolidation."""
+    bank_id = f"test-auto-consol-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    raw = _get_raw_config()
+    fake_config = type(raw)(
+        **{
+            **{f: getattr(raw, f) for f in raw.__dataclass_fields__},
+            "enable_auto_consolidation": False,
+        }
+    )
+
+    original_global_config = memory._config_resolver._global_config
+    memory._config_resolver._global_config = fake_config
+
+    try:
+        # Retain a memory — auto consolidation should NOT run
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Peter loves hiking in the mountains every weekend.",
+            request_context=request_context,
+        )
+
+        # Check that memories are NOT consolidated
+        async with memory._pool.acquire() as conn:
+            unconsolidated = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM memory_units
+                WHERE bank_id = $1
+                  AND consolidated_at IS NULL
+                  AND fact_type IN ('experience', 'world')
+                """,
+                bank_id,
+            )
+            assert unconsolidated > 0, "Memories should remain unconsolidated when auto consolidation is disabled"
+
+            observations = await conn.fetchval(
+                "SELECT COUNT(*) FROM memory_units WHERE bank_id = $1 AND fact_type = 'observation'",
+                bank_id,
+            )
+            assert observations == 0, "No observations should be created when auto consolidation is disabled"
+    finally:
+        memory._config_resolver._global_config = original_global_config
+        await memory.delete_bank(bank_id, request_context=request_context)
