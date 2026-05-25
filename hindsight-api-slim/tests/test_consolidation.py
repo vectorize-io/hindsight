@@ -1658,6 +1658,14 @@ class TestHierarchicalRetrieval:
 class TestMentalModelRefreshAfterConsolidation:
     """Test that mental models with refresh_after_consolidation trigger are refreshed after consolidation."""
 
+    # The full chain (retain → consolidation → refresh) makes several real LLM
+    # calls. Under parallel test load these can hit provider rate limits;
+    # `retain_batch_async` swallows consolidation errors (non-critical for
+    # retain) so a rate-limited consolidation leaves last_refreshed_at
+    # unchanged and the assertion fails. Rerun on transient flakes — the
+    # contract under test is the steady-state refresh trigger, not LLM
+    # availability.
+    @pytest.mark.flaky(reruns=2, reruns_delay=5)
     @pytest.mark.asyncio
     async def test_mental_model_with_trigger_is_refreshed_after_consolidation(
         self, memory: MemoryEngine, request_context

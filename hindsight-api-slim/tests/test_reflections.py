@@ -401,6 +401,12 @@ class TestRecallWithObservationsAndMentalModels:
 class TestReflectUsesMentalModels:
     """Test that reflect searches and uses mental models when available."""
 
+    # Reflect doesn't pin a tool-call temperature, so weaker models in the
+    # acceptance matrix (e.g. gemini-2.5-flash-lite) occasionally pick `recall`
+    # or `search_observations` instead of `search_mental_models`. Rerun a
+    # couple of times before declaring a regression — the contract we care
+    # about (MM-aware tool gets invoked) holds in the steady state.
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
     @pytest.mark.hs_llm_mat
     @pytest.mark.asyncio
     async def test_reflect_searches_mental_models_when_available(self, memory: MemoryEngine, request_context):
