@@ -1697,9 +1697,7 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
     elif provider == "alibaba":
         api_key = config.reranker_alibaba_api_key
         if not api_key:
-            raise ValueError(
-                f"{ENV_RERANKER_ALIBABA_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'alibaba'"
-            )
+            raise ValueError(f"{ENV_RERANKER_ALIBABA_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'alibaba'")
         return AlibabaCloudCrossEncoder(
             api_key=api_key,
             model=config.reranker_alibaba_model,
