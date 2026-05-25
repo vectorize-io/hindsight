@@ -883,6 +883,16 @@ async def _process_memory_batch(
     for update in llm_result.updates:
         source_mems = [mem_by_id[fid] for fid in update.source_fact_ids if fid in mem_by_id]
         if not source_mems:
+            # The LLM returned source_fact_ids that don't match any memory UUID in
+            # this batch. Common cause: model hallucinated IDs, changed UUID format
+            # (e.g. no dashes / uppercase), or referenced IDs from previous batches.
+            unknown_ids = [fid for fid in update.source_fact_ids if fid not in mem_by_id]
+            logger.warning(
+                f"[CONSOLIDATION] bank={bank_id} rejected update for observation "
+                f"{update.observation_id}: none of source_fact_ids {update.source_fact_ids!r} "
+                f"matched a memory in this batch (unknown: {unknown_ids!r}, "
+                f"batch_ids={list(mem_by_id)[:5]}...)"
+            )
             continue
         # Security: the observation must have been recalled for at least one of the source facts
         if not any(update.observation_id in per_fact_obs_ids.get(str(m["id"]), set()) for m in source_mems):
@@ -912,6 +922,12 @@ async def _process_memory_batch(
     for create in llm_result.creates:
         source_mems = [mem_by_id[fid] for fid in create.source_fact_ids if fid in mem_by_id]
         if not source_mems:
+            unknown_ids = [fid for fid in create.source_fact_ids if fid not in mem_by_id]
+            logger.warning(
+                f"[CONSOLIDATION] bank={bank_id} rejected create '{create.text[:80]}': "
+                f"none of source_fact_ids {create.source_fact_ids!r} matched a memory in this batch "
+                f"(unknown: {unknown_ids!r}, batch_ids={list(mem_by_id)[:5]}...)"
+            )
             continue
         agg = _aggregate_source_fields(source_mems, tags=fact_tags)
         await _execute_create_action(

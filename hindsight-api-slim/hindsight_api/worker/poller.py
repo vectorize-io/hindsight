@@ -735,9 +735,18 @@ class WorkerPoller:
         """
         Recover tasks that were assigned to this worker but not completed.
 
-        This handles the case where a worker crashes while processing tasks.
-        On startup, we reset any tasks stuck in 'processing' for this worker_id
-        back to 'pending' so they can be picked up again.
+        Two recovery passes are run on every startup:
+
+        Pass 1 — own tasks: reset any 'processing' row whose worker_id matches
+        this worker.  This handles the common crash/restart case.
+
+        Pass 2 — orphaned tasks: reset 'processing' rows from *any* worker that
+        have been stuck for longer than STALE_TASK_THRESHOLD_S.  This handles
+        the case where the previous worker process exited with a different
+        worker_id (e.g. container replaced, binary updated), leaving rows that
+        Pass 1 would never touch.  Without this pass, the bank-serialisation
+        logic in claim_tasks permanently blocks new consolidation for the same
+        bank because it finds a 'processing' row and skips the bank.
 
         Also recovers batch API operations that were in-flight.
 
@@ -746,6 +755,9 @@ class WorkerPoller:
         Returns:
             Number of tasks recovered
         """
+        # Tasks stuck in processing for longer than this are considered orphaned.
+        STALE_TASK_THRESHOLD_S = 7200  # 2 hours
+
         schemas = await self._get_schemas()
         total_count = 0
 
@@ -757,8 +769,8 @@ class WorkerPoller:
                 batch_count = await self._recover_batch_operations(schema)
                 total_count += batch_count
 
-                # Then reset normal worker tasks
                 async with self._backend.acquire() as conn:
+                    # Pass 1: reset tasks that belong to this worker (crashed/restarted).
                     result = await conn.execute(
                         f"""
                         UPDATE {table}
@@ -767,10 +779,32 @@ class WorkerPoller:
                         """,
                         self._worker_id,
                     )
+                    own_count = int(result.split()[-1]) if result else 0
 
-                # Parse "UPDATE N" to get count
-                count = int(result.split()[-1]) if result else 0
-                total_count += count
+                    # Pass 2: reset orphaned tasks from *any* worker that have been
+                    # stuck in processing beyond the stale threshold.  These were
+                    # abandoned by a dead worker with a different worker_id and can
+                    # never be recovered by Pass 1.
+                    result2 = await conn.execute(
+                        f"""
+                        UPDATE {table}
+                        SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
+                        WHERE status = 'processing'
+                          AND worker_id != $1
+                          AND result_metadata->>'batch_id' IS NULL
+                          AND (claimed_at IS NULL OR claimed_at < now() - interval '{STALE_TASK_THRESHOLD_S} seconds')
+                        """,
+                        self._worker_id,
+                    )
+                    stale_count = int(result2.split()[-1]) if result2 else 0
+
+                total_count += own_count + stale_count
+                if stale_count > 0:
+                    schema_display = f'"{schema}"' if schema else "default"
+                    logger.warning(
+                        f"Worker {self._worker_id} reset {stale_count} orphaned processing tasks "
+                        f"(stuck >{STALE_TASK_THRESHOLD_S}s from other workers) in schema {schema_display}"
+                    )
             except Exception as e:
                 # Format schema for logging: custom schemas in quotes, None as-is
                 schema_display = f'"{schema}"' if schema else str(schema)

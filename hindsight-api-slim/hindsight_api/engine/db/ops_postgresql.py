@@ -775,10 +775,18 @@ class PostgreSQLOps(DataAccessOps):
                 continue
 
             if op_type == "consolidation":
+                # Only exclude banks with a *recent*, actively-claimed processing task.
+                # claimed_at IS NULL means the row was never actually claimed (worker
+                # crashed before setting it, or it pre-dates the column) — treat it as
+                # orphaned.  Tasks stuck for > 2 hours are also treated as orphaned.
+                # recover_own_tasks() handles cleanup at startup; this guard prevents
+                # indefinite blocking between restarts.
                 busy_banks = await conn.fetch(
                     f"""
                     SELECT DISTINCT bank_id FROM {table}
                     WHERE operation_type = 'consolidation' AND status = 'processing'
+                      AND claimed_at IS NOT NULL
+                      AND claimed_at > now() - interval '2 hours'
                     """,
                 )
                 busy_bank_ids = [r["bank_id"] for r in busy_banks]
@@ -880,10 +888,13 @@ class PostgreSQLOps(DataAccessOps):
 
             # 2b. Consolidation tasks (with bank-serialization)
             if remaining_shared > 0:
+                # Same guard as Phase 1: only banks with a recent, non-NULL claimed_at are busy.
                 busy_banks_2 = await conn.fetch(
                     f"""
                     SELECT DISTINCT bank_id FROM {table}
                     WHERE operation_type = 'consolidation' AND status = 'processing'
+                      AND claimed_at IS NOT NULL
+                      AND claimed_at > now() - interval '2 hours'
                     """,
                 )
                 busy_bank_ids_2 = [r["bank_id"] for r in busy_banks_2]

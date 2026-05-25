@@ -1709,14 +1709,28 @@ class MemoryEngine(MemoryEngineInterface):
             backend = await self._get_backend()
             async with acquire_with_retry(backend) as conn:
                 async with conn.transaction():
+                    # Merge consolidation stats into result_metadata so items_count
+                    # and observation counters are visible in the operations list.
+                    items_count = result.get("memories_processed", 0) if result else 0
+                    extra_meta = json.dumps(
+                        {
+                            "items_count": items_count,
+                            "observations_created": result.get("observations_created", 0) if result else 0,
+                            "observations_updated": result.get("observations_updated", 0) if result else 0,
+                            "observations_deleted": result.get("observations_deleted", 0) if result else 0,
+                        },
+                        default=_json_default,
+                    )
                     row = await conn.fetchrow(
                         f"""
                         UPDATE {fq_table("async_operations")}
-                        SET status = 'completed', updated_at = NOW(), completed_at = NOW()
+                        SET status = 'completed', updated_at = NOW(), completed_at = NOW(),
+                            result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $2::jsonb
                         WHERE operation_id = $1
                         RETURNING operation_id
                         """,
                         uuid.UUID(operation_id),
+                        extra_meta,
                     )
                     if row is None:
                         logger.info(
@@ -7034,7 +7048,9 @@ class MemoryEngine(MemoryEngineInterface):
                 f"""
                 SELECT
                     MAX(consolidated_at) as last_consolidated_at,
-                    COUNT(*) FILTER (WHERE consolidated_at IS NULL AND fact_type IN ('experience', 'world')) as pending,
+                    COUNT(*) FILTER (WHERE consolidated_at IS NULL
+                                      AND consolidation_failed_at IS NULL
+                                      AND fact_type IN ('experience', 'world')) as pending,
                     COUNT(*) FILTER (WHERE consolidation_failed_at IS NOT NULL AND fact_type IN ('experience', 'world')) as failed
                 FROM {fq_table("memory_units")}
                 WHERE bank_id = $1
@@ -9040,7 +9056,7 @@ class MemoryEngine(MemoryEngineInterface):
         async with acquire_with_retry(backend) as conn:
             # Check if operation exists, belongs to this bank, and is in a cancellable state
             result = await conn.fetchrow(
-                f"SELECT bank_id, status FROM {fq_table('async_operations')} WHERE operation_id = $1 AND bank_id = $2",
+                f"SELECT bank_id, status, claimed_at FROM {fq_table('async_operations')} WHERE operation_id = $1 AND bank_id = $2",
                 op_uuid,
                 bank_id,
             )
@@ -9048,13 +9064,32 @@ class MemoryEngine(MemoryEngineInterface):
             if not result:
                 raise ValueError(f"Operation {operation_id} not found for bank {bank_id}")
 
-            if result["status"] != "pending":
+            status = result["status"]
+            if status not in ("pending", "processing"):
                 from hindsight_api.extensions import OperationValidationError
 
                 raise OperationValidationError(
-                    f"Operation {operation_id} cannot be cancelled: status is '{result['status']}', only 'pending' operations can be cancelled",
+                    f"Operation {operation_id} cannot be cancelled: status is '{status}', "
+                    "only 'pending' or 'processing' (after 5 minutes) operations can be cancelled",
                     409,
                 )
+
+            if status == "processing":
+                from hindsight_api.extensions import OperationValidationError
+
+                # Allow cancellation of processing tasks only if they have been running
+                # for at least 5 minutes — avoids races with tasks that just started.
+                # _check_op_alive() in run_consolidation_job detects the 'cancelled' status
+                # at each batch checkpoint and stops early.
+                claimed_at = result["claimed_at"]
+                if claimed_at is not None:
+                    age_seconds = (datetime.now(UTC) - claimed_at).total_seconds()
+                    if age_seconds < 300:
+                        raise OperationValidationError(
+                            f"Operation {operation_id} has been 'processing' for only {int(age_seconds)}s; "
+                            "wait at least 5 minutes before cancelling a running operation",
+                            409,
+                        )
 
             # Mark the operation as cancelled
             await conn.execute(

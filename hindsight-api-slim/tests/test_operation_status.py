@@ -7,8 +7,9 @@ Regression tests:
 - Cancel used to delete the operation row; now it sets status to 'cancelled'.
 - Retry now accepts both 'failed' and 'cancelled' operations.
 """
+
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -41,17 +42,24 @@ async def _ensure_bank(pool, bank_id: str) -> None:
     )
 
 
-async def _insert_operation(pool, bank_id: str, status: str) -> str:
+async def _insert_operation(
+    pool,
+    bank_id: str,
+    status: str,
+    *,
+    claimed_at: datetime | None = None,
+) -> str:
     """Insert a test operation with the given status and return its ID."""
     op_id = uuid.uuid4()
     await pool.execute(
         """
-        INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
-        VALUES ($1, $2, 'retain', $3, '{"test": true}'::jsonb)
+        INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, claimed_at)
+        VALUES ($1, $2, 'retain', $3, '{"test": true}'::jsonb, $4)
         """,
         op_id,
         bank_id,
         status,
+        claimed_at,
     )
     return str(op_id)
 
@@ -124,9 +132,7 @@ async def test_get_operation_returns_processing_status(api_client, memory, test_
 
     processing_id = await _insert_operation(pool, test_bank_id, "processing")
 
-    response = await api_client.get(
-        f"/v1/default/banks/{test_bank_id}/operations/{processing_id}"
-    )
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{processing_id}")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "processing"
@@ -154,9 +160,7 @@ async def test_all_statuses_returned_correctly(api_client, memory, test_bank_id)
 
     # Verify get endpoint for each
     for status, op_id in ids.items():
-        response = await api_client.get(
-            f"/v1/default/banks/{test_bank_id}/operations/{op_id}"
-        )
+        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
         assert response.status_code == 200
         assert response.json()["status"] == status, f"Get: expected {status} for {op_id}"
 
@@ -170,16 +174,12 @@ async def test_cancel_sets_cancelled_status(api_client, memory, test_bank_id):
     op_id = await _insert_operation(pool, test_bank_id, "pending")
 
     # Cancel the operation
-    response = await api_client.delete(
-        f"/v1/default/banks/{test_bank_id}/operations/{op_id}"
-    )
+    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
     assert response.status_code == 200
     assert response.json()["success"] is True
 
     # Verify the operation still exists with 'cancelled' status
-    response = await api_client.get(
-        f"/v1/default/banks/{test_bank_id}/operations/{op_id}"
-    )
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
     assert response.status_code == 200
     assert response.json()["status"] == "cancelled"
 
@@ -203,16 +203,12 @@ async def test_retry_cancelled_operation(api_client, memory, test_bank_id):
     op_id = await _insert_operation(pool, test_bank_id, "cancelled")
 
     # Retry the cancelled operation
-    response = await api_client.post(
-        f"/v1/default/banks/{test_bank_id}/operations/{op_id}/retry"
-    )
+    response = await api_client.post(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/retry")
     assert response.status_code == 200
     assert response.json()["success"] is True
 
     # Verify the operation is now pending
-    response = await api_client.get(
-        f"/v1/default/banks/{test_bank_id}/operations/{op_id}"
-    )
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
     assert response.status_code == 200
     assert response.json()["status"] == "pending"
 
@@ -225,21 +221,54 @@ async def test_retry_rejects_non_retriable_statuses(api_client, memory, test_ban
 
     for status in ("pending", "processing", "completed"):
         op_id = await _insert_operation(pool, test_bank_id, status)
-        response = await api_client.post(
-            f"/v1/default/banks/{test_bank_id}/operations/{op_id}/retry"
-        )
+        response = await api_client.post(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/retry")
         assert response.status_code == 409, f"Expected 409 for {status}, got {response.status_code}"
 
 
 @pytest.mark.asyncio
-async def test_cancel_rejects_non_pending_operations(api_client, memory, test_bank_id):
-    """DELETE /operations/{id} should only cancel pending operations."""
+async def test_cancel_rejects_terminal_and_recent_processing_operations(api_client, memory, test_bank_id):
+    """DELETE /operations/{id} should reject completed/failed and recently-claimed processing ops."""
     pool = memory._pool
     await _ensure_bank(pool, test_bank_id)
 
-    for status in ("processing", "completed", "failed"):
+    # Terminal statuses always get 409
+    for status in ("completed", "failed"):
         op_id = await _insert_operation(pool, test_bank_id, status)
-        response = await api_client.delete(
-            f"/v1/default/banks/{test_bank_id}/operations/{op_id}"
-        )
+        response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
         assert response.status_code == 409, f"Expected 409 for {status}, got {response.status_code}"
+
+    # Processing with claimed_at < 5 min ago → 409 (too recent to force-cancel)
+    recent_claimed = datetime.now(UTC) - timedelta(minutes=1)
+    op_id = await _insert_operation(pool, test_bank_id, "processing", claimed_at=recent_claimed)
+    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
+    assert response.status_code == 409, "Expected 409 for recently-claimed processing op"
+
+
+@pytest.mark.asyncio
+async def test_cancel_allows_stale_processing_operations(api_client, memory, test_bank_id):
+    """DELETE /operations/{id} should succeed for processing ops claimed more than 5 minutes ago."""
+    pool = memory._pool
+    await _ensure_bank(pool, test_bank_id)
+
+    stale_claimed = datetime.now(UTC) - timedelta(minutes=10)
+    op_id = await _insert_operation(pool, test_bank_id, "processing", claimed_at=stale_claimed)
+
+    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+    # Verify status is now cancelled
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_rejects_processing_with_null_claimed_at(api_client, memory, test_bank_id):
+    """A processing op with NULL claimed_at is not yet claimed; cancel should be rejected (age=0s)."""
+    pool = memory._pool
+    await _ensure_bank(pool, test_bank_id)
+
+    op_id = await _insert_operation(pool, test_bank_id, "processing", claimed_at=None)
+    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
+    assert response.status_code == 409

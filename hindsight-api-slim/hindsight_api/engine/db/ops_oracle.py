@@ -731,11 +731,15 @@ class OracleOps(DataAccessOps):
                 continue
 
             if op_type == "consolidation":
-                # Two-step: find busy banks first, then claim excluding them
+                # Two-step: find busy banks first, then claim excluding them.
+                # claimed_at IS NULL means the row was never actually claimed — treat as
+                # orphaned.  Tasks stuck for > 2 hours are also orphaned.
                 busy_banks = await conn.fetch(
                     f"""
                     SELECT DISTINCT bank_id FROM {table}
                     WHERE operation_type = 'consolidation' AND status = 'processing'
+                      AND claimed_at IS NOT NULL
+                      AND claimed_at > SYSDATE - 2/24
                     """,
                 )
                 busy_bank_ids = [r["bank_id"] for r in busy_banks]
@@ -837,10 +841,13 @@ class OracleOps(DataAccessOps):
 
             # 2b. Consolidation tasks (with bank-serialization)
             if remaining_shared > 0:
+                # Same guard as Phase 1: only banks with a recent, non-NULL claimed_at are busy.
                 busy_banks_2 = await conn.fetch(
                     f"""
                     SELECT DISTINCT bank_id FROM {table}
                     WHERE operation_type = 'consolidation' AND status = 'processing'
+                      AND claimed_at IS NOT NULL
+                      AND claimed_at > SYSDATE - 2/24
                     """,
                 )
                 busy_bank_ids_2 = [r["bank_id"] for r in busy_banks_2]
