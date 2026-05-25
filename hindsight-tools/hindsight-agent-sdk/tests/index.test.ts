@@ -142,7 +142,7 @@ describe("createKnowledgeTools", () => {
     expect(JSON.parse(result.content[0].text)).toEqual({ success: true });
   });
 
-  it("recall sends POST with query", async () => {
+  it("recall sends POST with query and default fact types", async () => {
     mockFetch.mockReturnValueOnce(mockResponse({ results: [{ text: "found" }] }));
 
     const tool = tools.find((t) => t.name === "agent_knowledge_recall")!;
@@ -152,6 +152,32 @@ describe("createKnowledgeTools", () => {
     const opts = getOpts(mockFetch.mock.calls[0]);
     expect(url).toContain("/v1/default/banks/test-bank/memories/recall");
     expect(opts.method).toBe("POST");
+    const body = await getBody(mockFetch.mock.calls[0]);
+    expect(body.query).toBe("what happened?");
+    expect(body.types).toEqual(["world", "experience"]);
+  });
+
+  it("recall can explicitly include observation fact types", async () => {
+    mockFetch.mockReturnValueOnce(mockResponse({ results: [{ text: "rule" }] }));
+
+    const tool = tools.find((t) => t.name === "agent_knowledge_recall")!;
+    await tool.execute({
+      query: "stable rules",
+      fact_types: ["world", "experience", "observation"],
+    });
+
+    const body = await getBody(mockFetch.mock.calls[0]);
+    expect(body.types).toEqual(["world", "experience", "observation"]);
+  });
+
+  it("recall accepts types as an alias for fact_types", async () => {
+    mockFetch.mockReturnValueOnce(mockResponse({ results: [{ text: "rule" }] }));
+
+    const tool = tools.find((t) => t.name === "agent_knowledge_recall")!;
+    await tool.execute({ query: "stable rules", types: ["observation"] });
+
+    const body = await getBody(mockFetch.mock.calls[0]);
+    expect(body.types).toEqual(["observation"]);
   });
 
   it("reflect sends POST with conservative defaults", async () => {

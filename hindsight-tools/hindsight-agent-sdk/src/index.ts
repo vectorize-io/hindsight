@@ -38,6 +38,12 @@ export interface CreateKnowledgeToolsOptions {
 
 // ── Constants ──────────────────────────────────────────
 
+const FACT_TYPES = ["world", "experience", "observation"] as const;
+type FactType = (typeof FACT_TYPES)[number];
+
+const DEFAULT_RECALL_FACT_TYPES = ["world", "experience"] as const satisfies readonly FactType[];
+const DEFAULT_REFLECT_FACT_TYPES = FACT_TYPES;
+
 const PAGE_DEFAULTS = {
   mode: "delta" as const,
   refresh_after_consolidation: true,
@@ -62,6 +68,26 @@ export type KnowledgeToolName = (typeof TOOL_NAMES)[number];
 
 function ok(data: unknown): KnowledgeToolResult {
   return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+}
+
+function normalizeFactTypes(input: unknown, defaultTypes: readonly FactType[]): FactType[] {
+  if (input === undefined || input === null) return [...defaultTypes];
+
+  const raw = Array.isArray(input)
+    ? input
+    : typeof input === "string"
+      ? input.split(/[\s,]+/).filter(Boolean)
+      : [];
+
+  const normalized = raw.filter(
+    (t): t is FactType => typeof t === "string" && (FACT_TYPES as readonly string[]).includes(t)
+  );
+
+  if (normalized.length !== raw.length || normalized.length === 0) {
+    throw new Error(`Invalid fact_types/types. Expected one or more of: ${FACT_TYPES.join(", ")}`);
+  }
+
+  return [...new Set(normalized)];
 }
 
 // ── Factory ────────────────────────────────────────────
@@ -212,6 +238,17 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
         properties: {
           query: { type: "string", description: "What to search for" },
           max_tokens: { type: "number", description: "Token budget for results (default 1024)" },
+          fact_types: {
+            type: "array",
+            items: { type: "string", enum: ["world", "experience", "observation"] },
+            description:
+              "Memory types to recall. Defaults to world and experience. Include observation for consolidated knowledge pages/rules/preferences.",
+          },
+          types: {
+            type: "array",
+            items: { type: "string", enum: ["world", "experience", "observation"] },
+            description: "Alias for fact_types.",
+          },
         },
         required: ["query"],
       },
@@ -220,8 +257,13 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
           (params.max_tokens as number | undefined) ??
           (params.max_results as number | undefined) ??
           1024;
+        const types = normalizeFactTypes(
+          params.fact_types ?? params.types,
+          DEFAULT_RECALL_FACT_TYPES
+        );
         const result = await client.recall(bankId, params.query as string, {
           maxTokens,
+          types,
         });
         return ok(result);
       },
@@ -262,13 +304,7 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
         required: ["query"],
       },
       async execute(params: Record<string, unknown>) {
-        const factTypesParam = params.fact_types;
-        const factTypes = Array.isArray(factTypesParam)
-          ? factTypesParam.filter(
-              (t): t is "world" | "experience" | "observation" =>
-                t === "world" || t === "experience" || t === "observation"
-            )
-          : (["world", "experience", "observation"] as const);
+        const factTypes = normalizeFactTypes(params.fact_types, DEFAULT_REFLECT_FACT_TYPES);
         const maxTokens = Math.max(1, Math.floor(Number(params.max_tokens ?? 1024)));
         const budget =
           params.budget === "mid" || params.budget === "high" || params.budget === "low"
