@@ -9,6 +9,7 @@ import os
 import re
 import time
 import uuid
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
@@ -27,9 +28,12 @@ except ImportError:
 from ..config import (
     DEFAULT_LLM_MAX_CONCURRENT,
     DEFAULT_LLM_TIMEOUT,
+    ENV_CONSOLIDATION_LLM_MAX_CONCURRENT,
     ENV_LLM_GROQ_SERVICE_TIER,
     ENV_LLM_MAX_CONCURRENT,
     ENV_LLM_TIMEOUT,
+    ENV_REFLECT_LLM_MAX_CONCURRENT,
+    ENV_RETAIN_LLM_MAX_CONCURRENT,
 )
 from ..metrics import get_metrics_collector
 from .response_models import TokenUsage
@@ -42,10 +46,72 @@ logger = logging.getLogger(__name__)
 # Disable httpx logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-# Global semaphore to limit concurrent LLM requests across all instances
-# Set HINDSIGHT_API_LLM_MAX_CONCURRENT=1 for local LLMs (LM Studio, Ollama)
+# Global semaphore to limit concurrent LLM requests across all instances.
+# Set HINDSIGHT_API_LLM_MAX_CONCURRENT=1 for local LLMs (LM Studio, Ollama).
 _llm_max_concurrent = int(os.getenv(ENV_LLM_MAX_CONCURRENT, str(DEFAULT_LLM_MAX_CONCURRENT)))
 _global_llm_semaphore = asyncio.Semaphore(_llm_max_concurrent)
+
+
+def _build_per_op_semaphores() -> dict[str, asyncio.Semaphore]:
+    """Build the per-operation semaphore registry from env vars.
+
+    Each per-op cap is composed with — not a substitute for — the global cap:
+    a call that matches a configured operation must acquire both its per-op
+    semaphore and the global semaphore. This lets operators reserve headroom
+    in the global pool by capping individual operations (e.g. cap retain at 2
+    of 4 global slots so the live chat path always has 2 slots available).
+
+    Operations without a configured env var are absent from the registry and
+    therefore only constrained by the global cap.
+    """
+    semaphores: dict[str, asyncio.Semaphore] = {}
+    for op, env_var in (
+        ("retain", ENV_RETAIN_LLM_MAX_CONCURRENT),
+        ("reflect", ENV_REFLECT_LLM_MAX_CONCURRENT),
+        ("consolidation", ENV_CONSOLIDATION_LLM_MAX_CONCURRENT),
+    ):
+        raw = os.getenv(env_var)
+        if raw is None or raw == "":
+            continue
+        value = int(raw)
+        if value <= 0:
+            raise ValueError(f"{env_var} must be a positive integer, got {raw!r}")
+        semaphores[op] = asyncio.Semaphore(value)
+    return semaphores
+
+
+_per_op_llm_semaphores: dict[str, asyncio.Semaphore] = _build_per_op_semaphores()
+
+
+def _scope_to_operation(scope: str) -> str | None:
+    """Map a call scope to its per-operation concurrency bucket.
+
+    Returns None for scopes that don't belong to a tracked operation
+    (verification probes, bank_mission, memory_think, mental_model_delta_ops),
+    which then run under the global cap only.
+    """
+    if scope.startswith("retain"):
+        return "retain"
+    if scope.startswith("reflect"):
+        return "reflect"
+    if scope.startswith("consolidation"):
+        return "consolidation"
+    return None
+
+
+def _semaphores_for_scope(scope: str) -> list[asyncio.Semaphore]:
+    """Return the semaphores a call with the given scope must acquire.
+
+    Always includes the global semaphore; includes the per-op semaphore when
+    one is configured for the scope's operation bucket.
+    """
+    op = _scope_to_operation(scope)
+    per_op = _per_op_llm_semaphores.get(op) if op is not None else None
+    if per_op is None:
+        return [_global_llm_semaphore]
+    # Per-op acquired first so contention queues on the narrower cap before
+    # holding a global slot.
+    return [per_op, _global_llm_semaphore]
 
 
 def sanitize_llm_output(text: str | None) -> str | None:
@@ -629,7 +695,10 @@ class LLMProvider:
         structured = "+structured" if response_format is not None else ""
         set_stage(f"llm.{self.provider}.{scope}{structured}")
 
-        async with _global_llm_semaphore:
+        async with AsyncExitStack() as stack:
+            for sem in _semaphores_for_scope(scope):
+                await stack.enter_async_context(sem)
+
             # Delegate to provider implementation
             result = await self._provider_impl.call(
                 messages=messages,
@@ -654,7 +723,7 @@ class LLMProvider:
                     # Sync the mock calls from provider implementation to wrapper
                     self._mock_calls = self._provider_impl.get_mock_calls()
 
-            return result
+        return result
 
     async def call_with_tools(
         self,
@@ -689,7 +758,10 @@ class LLMProvider:
 
         set_stage(f"llm.{self.provider}.{scope}+tools")
 
-        async with _global_llm_semaphore:
+        async with AsyncExitStack() as stack:
+            for sem in _semaphores_for_scope(scope):
+                await stack.enter_async_context(sem)
+
             # Delegate to provider implementation
             result = await self._provider_impl.call_with_tools(
                 messages=messages,
@@ -712,7 +784,7 @@ class LLMProvider:
                     # Sync the mock calls from provider implementation to wrapper
                     self._mock_calls = self._provider_impl.get_mock_calls()
 
-            return result
+        return result
 
     def set_response_callback(self, fn: Any) -> None:
         """Set a callback invoked on each call() instead of the fixed mock response."""

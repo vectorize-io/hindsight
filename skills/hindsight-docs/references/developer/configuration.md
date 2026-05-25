@@ -385,7 +385,7 @@ Different memory operations have different requirements. **Retain** (fact extrac
 | `HINDSIGHT_API_RETAIN_LLM_API_KEY` | API key for retain LLM | Falls back to `HINDSIGHT_API_LLM_API_KEY` |
 | `HINDSIGHT_API_RETAIN_LLM_MODEL` | Model for retain operations | Falls back to `HINDSIGHT_API_LLM_MODEL` |
 | `HINDSIGHT_API_RETAIN_LLM_BASE_URL` | Base URL for retain LLM | Falls back to `HINDSIGHT_API_LLM_BASE_URL` |
-| `HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT` | Max concurrent requests for retain | Falls back to `HINDSIGHT_API_LLM_MAX_CONCURRENT` |
+| `HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT` | Extra cap on concurrent retain LLM requests, composed with the global cap. Unset → only the global cap applies. | Unset |
 | `HINDSIGHT_API_RETAIN_LLM_MAX_RETRIES` | Max retries for retain | Falls back to `HINDSIGHT_API_LLM_MAX_RETRIES` |
 | `HINDSIGHT_API_RETAIN_LLM_INITIAL_BACKOFF` | Initial backoff for retain retries (seconds) | Falls back to `HINDSIGHT_API_LLM_INITIAL_BACKOFF` |
 | `HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF` | Max backoff cap for retain retries (seconds) | Falls back to `HINDSIGHT_API_LLM_MAX_BACKOFF` |
@@ -394,7 +394,7 @@ Different memory operations have different requirements. **Retain** (fact extrac
 | `HINDSIGHT_API_REFLECT_LLM_API_KEY` | API key for reflect LLM | Falls back to `HINDSIGHT_API_LLM_API_KEY` |
 | `HINDSIGHT_API_REFLECT_LLM_MODEL` | Model for reflect operations | Falls back to `HINDSIGHT_API_LLM_MODEL` |
 | `HINDSIGHT_API_REFLECT_LLM_BASE_URL` | Base URL for reflect LLM | Falls back to `HINDSIGHT_API_LLM_BASE_URL` |
-| `HINDSIGHT_API_REFLECT_LLM_MAX_CONCURRENT` | Max concurrent requests for reflect | Falls back to `HINDSIGHT_API_LLM_MAX_CONCURRENT` |
+| `HINDSIGHT_API_REFLECT_LLM_MAX_CONCURRENT` | Extra cap on concurrent reflect LLM requests, composed with the global cap. Unset → only the global cap applies. | Unset |
 | `HINDSIGHT_API_REFLECT_LLM_MAX_RETRIES` | Max retries for reflect | Falls back to `HINDSIGHT_API_LLM_MAX_RETRIES` |
 | `HINDSIGHT_API_REFLECT_LLM_INITIAL_BACKOFF` | Initial backoff for reflect retries (seconds) | Falls back to `HINDSIGHT_API_LLM_INITIAL_BACKOFF` |
 | `HINDSIGHT_API_REFLECT_LLM_MAX_BACKOFF` | Max backoff cap for reflect retries (seconds) | Falls back to `HINDSIGHT_API_LLM_MAX_BACKOFF` |
@@ -403,7 +403,7 @@ Different memory operations have different requirements. **Retain** (fact extrac
 | `HINDSIGHT_API_CONSOLIDATION_LLM_API_KEY` | API key for consolidation LLM | Falls back to `HINDSIGHT_API_LLM_API_KEY` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_MODEL` | Model for consolidation operations | Falls back to `HINDSIGHT_API_LLM_MODEL` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_BASE_URL` | Base URL for consolidation LLM | Falls back to `HINDSIGHT_API_LLM_BASE_URL` |
-| `HINDSIGHT_API_CONSOLIDATION_LLM_MAX_CONCURRENT` | Max concurrent requests for consolidation | Falls back to `HINDSIGHT_API_LLM_MAX_CONCURRENT` |
+| `HINDSIGHT_API_CONSOLIDATION_LLM_MAX_CONCURRENT` | Extra cap on concurrent consolidation LLM requests, composed with the global cap. Unset → only the global cap applies. | Unset |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_MAX_RETRIES` | Max retries for consolidation | Falls back to `HINDSIGHT_API_LLM_MAX_RETRIES` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_INITIAL_BACKOFF` | Initial backoff for consolidation retries (seconds) | Falls back to `HINDSIGHT_API_LLM_INITIAL_BACKOFF` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_MAX_BACKOFF` | Max backoff cap for consolidation retries (seconds) | Falls back to `HINDSIGHT_API_LLM_MAX_BACKOFF` |
@@ -450,6 +450,17 @@ export HINDSIGHT_API_RETAIN_LLM_MAX_RETRIES=3
 export HINDSIGHT_API_RETAIN_LLM_INITIAL_BACKOFF=2.0  # Start at 2s instead of 1s
 export HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF=120.0    # Cap at 2min instead of 1min
 ```
+
+:::note Per-operation concurrency composes with the global cap
+`HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT`, `HINDSIGHT_API_REFLECT_LLM_MAX_CONCURRENT`, and
+`HINDSIGHT_API_CONSOLIDATION_LLM_MAX_CONCURRENT` add an extra cap that applies *on top of*
+`HINDSIGHT_API_LLM_MAX_CONCURRENT`. A retain call counts against both the retain cap and the
+global cap; a reflect call without a per-op cap is bounded only by the global cap.
+
+To reserve headroom for live chat/reflect on a rate-limited provider, cap retain and
+consolidation below the global value — e.g. global=4, retain=1, consolidation=1 leaves
+two slots that retain/consolidation cannot consume.
+:::
 
 ### Embeddings
 
