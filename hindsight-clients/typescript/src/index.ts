@@ -835,6 +835,23 @@ export class HindsightClient {
   }
 
   /**
+   * Clear a mental model's content so the next refresh performs a full re-synthesis.
+   */
+  async clearMentalModel(
+    bankId: string,
+    mentalModelId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<MentalModelResponse> {
+    const response = await sdk.clearMentalModel({
+      client: this.client,
+      path: { bank_id: bankId, mental_model_id: mentalModelId },
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "clearMentalModel");
+  }
+
+  /**
    * Update a mental model's metadata.
    */
   async updateMentalModel(

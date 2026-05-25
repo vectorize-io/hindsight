@@ -125,6 +125,16 @@ func main() {
 	fmt.Printf("Refresh operation ID: %s\n", refreshResult.GetOperationId())
 	// [/docs:refresh-mental-model]
 
+	// [docs:clear-mental-model]
+	// Clear a mental model's content, then refresh for a full re-synthesis
+	client.MentalModelsAPI.ClearMentalModel(ctx, mmBankID, mentalModelID).Execute()
+
+	// Trigger a fresh full rebuild
+	fullRefreshResult, _, _ := client.MentalModelsAPI.RefreshMentalModel(ctx, mmBankID, mentalModelID).Execute()
+
+	fmt.Printf("Full refresh operation ID: %s\n", fullRefreshResult.GetOperationId())
+	// [/docs:clear-mental-model]
+
 	// [docs:update-mental-model]
 	// Update a mental model's metadata
 	newName := "Updated Team Communication Preferences"

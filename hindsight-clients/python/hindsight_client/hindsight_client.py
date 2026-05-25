@@ -1048,6 +1048,19 @@ class Hindsight:
         """
         return _run_async(self._mental_models_api.refresh_mental_model(bank_id, mental_model_id, _request_timeout=self._timeout))
 
+    def clear_mental_model(self, bank_id: str, mental_model_id: str):
+        """
+        Clear a mental model's content so the next refresh performs a full re-synthesis.
+
+        Args:
+            bank_id: The memory bank ID
+            mental_model_id: The mental model ID
+
+        Returns:
+            MentalModelResponse with cleared content
+        """
+        return _run_async(self._mental_models_api.clear_mental_model(bank_id, mental_model_id, _request_timeout=self._timeout))
+
     def update_mental_model(
         self,
         bank_id: str,
