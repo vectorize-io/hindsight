@@ -83,6 +83,33 @@ class ValidationResult:
 
 
 @dataclass
+class PrecheckContext:
+    """Context for a pre-body-parse precheck on an operation.
+
+    Unlike :class:`RetainContext` / :class:`RecallContext` / etc., this
+    context is constructed *before* the request body is deserialised. It
+    therefore intentionally carries only the cheap, already-resolved
+    pieces of request state:
+
+    - ``operation``: a short string identifying the route, e.g. ``"retain"``,
+      ``"recall"``, ``"reflect"``, ``"files_retain"``, ``"mental_model_create"``,
+      ``"mental_model_refresh"``.
+    - ``bank_id``: parsed from the URL path.
+    - ``request_context``: the authenticated :class:`RequestContext` (tenant
+      already resolved by the tenant extension).
+
+    Implementations should keep precheck cheap and side-effect-free. The
+    full per-request validators (``validate_retain`` / ``validate_recall``
+    / ``validate_reflect``) still run after the body is parsed and remain
+    the source of truth for the precise per-call cost / quota arithmetic.
+    """
+
+    operation: str
+    bank_id: str
+    request_context: "RequestContext"
+
+
+@dataclass
 class RetainContext:
     """Context for a retain operation validation (pre-operation).
 
@@ -406,6 +433,42 @@ class OperationValidatorExtension(Extension, ABC):
         - retain, recall, reflect (core memory operations)
         - consolidate (mental models consolidation)
     """
+
+    # =========================================================================
+    # Pre-body-parse hook (optional - default no-op)
+    # =========================================================================
+
+    async def precheck(self, ctx: PrecheckContext) -> ValidationResult:
+        """
+        Cheap pre-body-parse check, called before the request body is read.
+
+        FastAPI resolves ``Depends`` callables before deserialising the route
+        body; routes that wire ``precheck`` as a dependency therefore short
+        -circuit here without ever materialising the JSON payload in memory.
+        That makes this the right hook for "should this caller be allowed to
+        spend resources on this request at all" decisions — e.g. a balance
+        is exhausted, a key is revoked, or a tenant is rate-limited.
+
+        Implementations should:
+        - Be cheap: prefer cached lookups, avoid heavy DB queries.
+        - Use only data on ``ctx`` (operation name + bank_id + request_context);
+          the body is not yet available.
+        - Be conservative on errors: prefer ``ValidationResult.accept()`` so
+          a transient lookup failure doesn't turn into a request rejection.
+          The post-body ``validate_*`` hooks still run and remain the source
+          of truth for the precise per-call cost check.
+
+        Default implementation accepts everything. Override to opt in.
+
+        Args:
+            ctx: Pre-body context with operation name, bank_id, and
+                request_context (tenant already resolved).
+
+        Returns:
+            ValidationResult indicating whether the request may proceed to
+            body parsing and the post-parse validators.
+        """
+        return ValidationResult.accept()
 
     # =========================================================================
     # Pre-operation validation hooks (abstract - must be implemented)

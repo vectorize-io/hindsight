@@ -888,13 +888,16 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     extract_causal_links = config.retain_extract_causal_links
 
     # Build retain_mission section if set - injected before the mode-specific guidelines
+    # Escape braces so user-supplied text survives str.format() on the prompt template.
+    from hindsight_api.engine.prompt_utils import escape_for_prompt
+
     retain_mission = getattr(config, "retain_mission", None)
     if retain_mission:
         retain_mission_section = (
             f"══════════════════════════════════════════════════════════════════════════\n"
             f"FOCUS — What to retain for this bank\n"
             f"══════════════════════════════════════════════════════════════════════════\n\n"
-            f"{retain_mission}\n\n"
+            f"{escape_for_prompt(retain_mission)}\n\n"
         )
     else:
         retain_mission_section = ""
@@ -910,7 +913,7 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
             base_prompt = CUSTOM_FACT_EXTRACTION_PROMPT
             prompt = base_prompt.format(
                 retain_mission_section=retain_mission_section,
-                custom_instructions=config.retain_custom_instructions,
+                custom_instructions=escape_for_prompt(config.retain_custom_instructions),
             )
     elif extraction_mode == "verbose":
         prompt = VERBOSE_FACT_EXTRACTION_PROMPT.format(
@@ -1662,8 +1665,11 @@ async def extract_facts_from_contents_batch_api(
 
     # Check if provider supports batch API
     if not await llm_config._provider_impl.supports_batch_api():
-        logger.warning(f"Batch API not supported for provider {llm_config.provider}, falling back to sync mode")
-        return await extract_facts_from_contents(contents, llm_config, agent_name, config, pool, operation_id, schema)
+        raise RuntimeError(
+            f"retain_batch_enabled=True but provider '{llm_config.provider}' does not "
+            f"support the batch API. This should have been caught at startup — check "
+            f"HINDSIGHT_API_RETAIN_BATCH_ENABLED and your LLM provider configuration."
+        )
 
     # Check if we're resuming an existing batch (crash recovery)
     batch_id = None

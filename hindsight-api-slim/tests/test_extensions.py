@@ -13,6 +13,7 @@ from hindsight_api.extensions import (
     HttpExtension,
     OperationValidationError,
     OperationValidatorExtension,
+    PrecheckContext,
     RecallContext,
     RecallResult,
     ReflectContext,
@@ -814,3 +815,264 @@ class TestHttpExtensionIntegration:
         # Banks list endpoint should work
         response = client.get("/v1/default/banks")
         assert response.status_code in (200, 500)  # May fail if DB not ready
+
+
+# ============================================================================
+# Precheck (pre-body-parse) tests
+# ============================================================================
+#
+# The precheck() hook is wired as a FastAPI Depends on the billable POST
+# routes. FastAPI resolves dependencies before deserialising the route's body
+# parameter, so a rejecting precheck never causes the request body to be read
+# or materialised in memory. The test below uses a Pydantic model_validator
+# that records every parse to assert that body parsing never runs on the
+# rejection path.
+
+
+class RecordingPrecheckValidator(OperationValidatorExtension):
+    """Validator that records every precheck call and can be configured to reject.
+
+    Used to drive the FastAPI dependency that runs precheck() before body parse.
+    The validate_* hooks below are required-abstract no-ops so the class is
+    instantiable; the tests here only exercise precheck.
+    """
+
+    def __init__(self, *, reject: bool = False, status_code: int = 402,
+                 reason: str = "rejected by precheck") -> None:
+        super().__init__(config={})
+        self.reject = reject
+        self.status_code = status_code
+        self.reason = reason
+        self.precheck_calls: list[PrecheckContext] = []
+
+    async def precheck(self, ctx: PrecheckContext) -> ValidationResult:
+        self.precheck_calls.append(ctx)
+        if self.reject:
+            return ValidationResult.reject(self.reason, status_code=self.status_code)
+        return ValidationResult.accept()
+
+    async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def validate_recall(self, ctx: RecallContext) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def validate_reflect(self, ctx: ReflectContext) -> ValidationResult:
+        return ValidationResult.accept()
+
+
+class TestPrecheckDefault:
+    """The base OperationValidatorExtension.precheck is a no-op accept."""
+
+    @pytest.mark.asyncio
+    async def test_default_precheck_accepts(self):
+        validator = RecordingPrecheckValidator(reject=False)
+        # Bypass our override by calling the base implementation directly.
+        ctx = PrecheckContext(
+            operation="retain",
+            bank_id="bank-x",
+            request_context=RequestContext(),
+        )
+        result = await OperationValidatorExtension.precheck(validator, ctx)
+        assert result.allowed is True
+        assert result.reason is None
+
+
+class TestPrecheckHttpWiring:
+    """precheck() is wired as a FastAPI Depends on the billable POST routes.
+
+    These tests do NOT use the heavy ``memory`` fixture (which requires a
+    running pg0 + migrations). Instead they construct a minimal FastAPI
+    app that mirrors the same Depends ordering used in
+    ``hindsight_api.api.http`` (a ``Depends(precheck_for(...))`` resolved
+    before the Pydantic body parameter), so the contract under test —
+    "rejection happens before body parse" — can be exercised in isolation.
+
+    The critical assertion in test_precheck_rejection_skips_body_parse is
+    that a rejection response is returned without the request body being
+    deserialised by Pydantic — i.e. the body parser was never invoked on
+    the rejection path.
+    """
+
+    @staticmethod
+    def _build_app(validator):
+        """Mirror the precheck wiring from ``hindsight_api.api.http`` in a
+        standalone FastAPI app."""
+        from fastapi import Depends, FastAPI, HTTPException
+        from pydantic import BaseModel, model_validator
+
+        from hindsight_api.extensions import PrecheckContext
+        from hindsight_api.models import RequestContext
+
+        body_parses: list[str] = []
+
+        class _RetainBody(BaseModel):
+            items: list
+
+            @model_validator(mode="before")
+            @classmethod
+            def _record(cls, v):
+                body_parses.append("retain")
+                return v
+
+        class _RecallBody(BaseModel):
+            query: str
+
+            @model_validator(mode="before")
+            @classmethod
+            def _record(cls, v):
+                body_parses.append("recall")
+                return v
+
+        class _ReflectBody(BaseModel):
+            query: str
+
+            @model_validator(mode="before")
+            @classmethod
+            def _record(cls, v):
+                body_parses.append("reflect")
+                return v
+
+        async def _request_context() -> RequestContext:
+            return RequestContext()
+
+        def _precheck_for(operation: str):
+            async def _dep(
+                bank_id: str,
+                request_context: RequestContext = Depends(_request_context),
+            ) -> None:
+                ctx = PrecheckContext(
+                    operation=operation,
+                    bank_id=bank_id,
+                    request_context=request_context,
+                )
+                result = await validator.precheck(ctx)
+                if not result.allowed:
+                    raise HTTPException(
+                        status_code=result.status_code,
+                        detail=result.reason or "Operation not allowed",
+                    )
+
+            return _dep
+
+        app = FastAPI()
+
+        @app.post("/v1/default/banks/{bank_id}/memories")
+        async def retain(
+            bank_id: str,
+            body: _RetainBody,
+            _: None = Depends(_precheck_for("retain")),
+        ):
+            return {"ok": True, "bank_id": bank_id, "n": len(body.items)}
+
+        @app.post("/v1/default/banks/{bank_id}/memories/recall")
+        async def recall(
+            bank_id: str,
+            body: _RecallBody,
+            _: None = Depends(_precheck_for("recall")),
+        ):
+            return {"ok": True}
+
+        @app.post("/v1/default/banks/{bank_id}/reflect")
+        async def reflect(
+            bank_id: str,
+            body: _ReflectBody,
+            _: None = Depends(_precheck_for("reflect")),
+        ):
+            return {"ok": True}
+
+        @app.get("/v1/default/banks/{bank_id}/memories/list")
+        async def list_memories(bank_id: str):
+            return {"ok": True}
+
+        return app, body_parses
+
+    def test_precheck_accept_lets_request_through_to_body_parse(self):
+        validator = RecordingPrecheckValidator(reject=False)
+        app, body_parses = self._build_app(validator)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/v1/default/banks/precheck-bank/memories",
+            json={"items": [{"content": "x"}]},
+        )
+        assert resp.status_code == 200
+        assert len(validator.precheck_calls) == 1
+        assert validator.precheck_calls[0].operation == "retain"
+        assert validator.precheck_calls[0].bank_id == "precheck-bank"
+        assert body_parses == ["retain"]
+
+    def test_precheck_rejection_returns_status_and_reason(self):
+        validator = RecordingPrecheckValidator(
+            reject=True, status_code=402, reason="Insufficient credits"
+        )
+        app, _ = self._build_app(validator)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/v1/default/banks/precheck-bank/memories",
+            json={"items": [{"content": "x"}]},
+        )
+        assert resp.status_code == 402
+        assert resp.json()["detail"] == "Insufficient credits"
+
+    def test_precheck_rejection_skips_body_parse(self):
+        """The critical assertion: rejection happens before Pydantic
+        deserialises the body. We send an oversized body and verify the
+        body-parse counter never incremented.
+        """
+        validator = RecordingPrecheckValidator(
+            reject=True, status_code=402, reason="rejected by precheck"
+        )
+        app, body_parses = self._build_app(validator)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/v1/default/banks/precheck-bank/memories",
+            json={"items": [{"content": "x" * 100_000} for _ in range(50)]},
+        )
+        assert resp.status_code == 402
+        assert "rejected by precheck" in resp.json()["detail"]
+        assert body_parses == [], (
+            "request body was deserialised despite a rejecting precheck — "
+            "the Depends-before-body-parse contract is broken"
+        )
+
+    def test_precheck_rejection_skips_body_parse_for_recall(self):
+        validator = RecordingPrecheckValidator(
+            reject=True, status_code=402, reason="rejected"
+        )
+        app, body_parses = self._build_app(validator)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/v1/default/banks/precheck-bank/memories/recall",
+            json={"query": "x" * 100_000},
+        )
+        assert resp.status_code == 402
+        assert validator.precheck_calls[-1].operation == "recall"
+        assert body_parses == []
+
+    def test_precheck_rejection_skips_body_parse_for_reflect(self):
+        validator = RecordingPrecheckValidator(
+            reject=True, status_code=402, reason="rejected"
+        )
+        app, body_parses = self._build_app(validator)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/v1/default/banks/precheck-bank/reflect",
+            json={"query": "x" * 100_000},
+        )
+        assert resp.status_code == 402
+        assert validator.precheck_calls[-1].operation == "reflect"
+        assert body_parses == []
+
+    def test_precheck_does_not_run_on_get(self):
+        validator = RecordingPrecheckValidator(reject=True)
+        app, _ = self._build_app(validator)
+        client = TestClient(app)
+
+        resp = client.get("/v1/default/banks/precheck-bank/memories/list")
+        assert resp.status_code == 200
+        assert len(validator.precheck_calls) == 0

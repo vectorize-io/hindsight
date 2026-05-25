@@ -279,6 +279,10 @@ ENV_RERANKER_SILICONFLOW_API_KEY = "HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY"
 ENV_RERANKER_SILICONFLOW_MODEL = "HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL"
 ENV_RERANKER_SILICONFLOW_BASE_URL = "HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL"
 
+# Alibaba Cloud DashScope configuration (reranker only)
+ENV_RERANKER_ALIBABA_API_KEY = "HINDSIGHT_API_RERANKER_ALIBABA_API_KEY"
+ENV_RERANKER_ALIBABA_MODEL = "HINDSIGHT_API_RERANKER_ALIBABA_MODEL"
+
 # Google Discovery Engine reranker configuration
 ENV_RERANKER_GOOGLE_MODEL = "HINDSIGHT_API_RERANKER_GOOGLE_MODEL"
 ENV_RERANKER_GOOGLE_PROJECT_ID = "HINDSIGHT_API_RERANKER_GOOGLE_PROJECT_ID"
@@ -375,6 +379,7 @@ ENV_OBSERVATIONS_MISSION = "HINDSIGHT_API_OBSERVATIONS_MISSION"
 ENV_MAX_OBSERVATIONS_PER_SCOPE = "HINDSIGHT_API_MAX_OBSERVATIONS_PER_SCOPE"
 ENV_ENABLE_OBSERVATION_HISTORY = "HINDSIGHT_API_ENABLE_OBSERVATION_HISTORY"
 ENV_ENABLE_MENTAL_MODEL_HISTORY = "HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY"
+ENV_MENTAL_MODEL_HISTORY_MAX_ENTRIES = "HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES"
 
 # Webhook configuration (global, static - server-level only)
 ENV_WEBHOOK_URL = "HINDSIGHT_API_WEBHOOK_URL"
@@ -548,6 +553,8 @@ DEFAULT_RERANKER_ZEROENTROPY_MODEL = "zerank-2"
 DEFAULT_RERANKER_SILICONFLOW_MODEL = "BAAI/bge-reranker-v2-m3"
 DEFAULT_RERANKER_SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
 
+DEFAULT_RERANKER_ALIBABA_MODEL = "qwen3-rerank"
+
 DEFAULT_RERANKER_GOOGLE_MODEL = "semantic-ranker-default-004"
 
 # Vector extension (pgvector, vchord, pgvectorscale, or AlloyDB ScaNN)
@@ -617,6 +624,12 @@ DEFAULT_FILE_DELETE_AFTER_RETAIN = True  # Delete file bytes after retain (saves
 DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
 DEFAULT_ENABLE_OBSERVATION_HISTORY = True  # Observation history tracking enabled by default
 DEFAULT_ENABLE_MENTAL_MODEL_HISTORY = True  # Mental model history tracking enabled by default
+# Each history entry snapshots previous_content + previous_reflect_response. Without
+# a cap, sustained mental-model refresh load grows the jsonb array unboundedly until
+# it crosses Postgres's hard 256MB jsonb limit and subsequent UPDATEs fail with
+# SQLSTATE 54000. 50 keeps the array well under 100MB even with large reflect
+# responses, while preserving enough recent history for meaningful audit / rollback.
+DEFAULT_MENTAL_MODEL_HISTORY_MAX_ENTRIES = 50
 DEFAULT_CONSOLIDATION_MAX_ATTEMPTS = 3  # Outer retry attempts for consolidation LLM batch calls
 DEFAULT_CONSOLIDATION_BATCH_SIZE = 50  # Memories to load per batch (internal memory optimization)
 DEFAULT_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = (
@@ -1013,6 +1026,8 @@ class HindsightConfig:
     reranker_siliconflow_api_key: str | None
     reranker_siliconflow_model: str
     reranker_siliconflow_base_url: str
+    reranker_alibaba_api_key: str | None
+    reranker_alibaba_model: str
     reranker_google_model: str
     reranker_google_project_id: str | None
     reranker_google_service_account_key: str | None
@@ -1082,6 +1097,7 @@ class HindsightConfig:
     enable_observations: bool
     enable_observation_history: bool
     enable_mental_model_history: bool
+    mental_model_history_max_entries: int
     consolidation_batch_size: int
     consolidation_max_memories_per_round: int
     consolidation_llm_batch_size: int
@@ -1649,6 +1665,9 @@ class HindsightConfig:
             reranker_siliconflow_base_url=os.getenv(
                 ENV_RERANKER_SILICONFLOW_BASE_URL, DEFAULT_RERANKER_SILICONFLOW_BASE_URL
             ),
+            # Alibaba Cloud DashScope reranker
+            reranker_alibaba_api_key=os.getenv(ENV_RERANKER_ALIBABA_API_KEY),
+            reranker_alibaba_model=os.getenv(ENV_RERANKER_ALIBABA_MODEL, DEFAULT_RERANKER_ALIBABA_MODEL),
             # Google Discovery Engine reranker (with fallback to LLM Vertex AI keys)
             reranker_google_model=os.getenv(ENV_RERANKER_GOOGLE_MODEL, DEFAULT_RERANKER_GOOGLE_MODEL),
             reranker_google_project_id=os.getenv(ENV_RERANKER_GOOGLE_PROJECT_ID)
@@ -1752,6 +1771,12 @@ class HindsightConfig:
                 ENV_ENABLE_MENTAL_MODEL_HISTORY, str(DEFAULT_ENABLE_MENTAL_MODEL_HISTORY)
             ).lower()
             == "true",
+            mental_model_history_max_entries=int(
+                os.getenv(
+                    ENV_MENTAL_MODEL_HISTORY_MAX_ENTRIES,
+                    str(DEFAULT_MENTAL_MODEL_HISTORY_MAX_ENTRIES),
+                )
+            ),
             consolidation_batch_size=int(
                 os.getenv(ENV_CONSOLIDATION_BATCH_SIZE, str(DEFAULT_CONSOLIDATION_BATCH_SIZE))
             ),

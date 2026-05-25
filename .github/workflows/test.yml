@@ -734,6 +734,9 @@ jobs:
         rm -rf node_modules/lightningcss node_modules/@tailwindcss
         npm install lightningcss @tailwindcss/postcss @tailwindcss/node
 
+    - name: Test Control Plane
+      run: npm test --workspace=hindsight-control-plane
+
     - name: Build Control Plane
       run: npm run build --workspace=hindsight-control-plane
 
@@ -934,6 +937,22 @@ jobs:
 
     - name: Lint Helm chart
       run: helm lint helm/hindsight
+
+  test-standalone-start-script:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.docker == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Run standalone start script tests
+      run: bash docker/standalone/test-start-all.sh
 
   build-docker-images:
     needs: [detect-changes]
@@ -3200,6 +3219,9 @@ jobs:
         rm -rf node_modules/lightningcss node_modules/@tailwindcss
         npm install lightningcss @tailwindcss/postcss @tailwindcss/node
 
+    - name: Test Control Plane
+      run: npm test --workspace=hindsight-control-plane
+
     - name: Build Control Plane
       run: npm run build --workspace=hindsight-control-plane
 
@@ -3651,6 +3673,7 @@ jobs:
       - build-docs
       - test-rust-cli
       - lint-helm-chart
+      - test-standalone-start-script
       - build-docker-images
       - test-api
       - test-api-oracle

@@ -1894,3 +1894,354 @@ def test_duplicate_entity_strings_deduplicated():
 
     texts = [e.text for e in validated]
     assert texts == ["person:name:Alice"]  # only once
+
+
+# ─── GH-1558: multivalue tag entities missing from unit_entities ────────────
+
+
+def test_inject_label_tags_multivalue_all_tags_added():
+    """GH-1558 reproducer (unit-level): all multivalue entities with tag=True end up in tags."""
+    from unittest.mock import MagicMock
+
+    from hindsight_api.engine.retain.fact_extraction import _inject_label_tags
+    from hindsight_api.engine.retain.types import ExtractedFact
+
+    config = MagicMock()
+    config.entity_labels = [
+        {
+            "key": "use",
+            "type": "multi-values",
+            "tag": True,
+            "values": [
+                {"value": "use-001"},
+                {"value": "use-002"},
+                {"value": "use-003"},
+            ],
+        },
+    ]
+
+    fact = ExtractedFact(
+        fact_text="System references use-001 and use-002",
+        fact_type="world",
+        entities=["use:use-001", "use:use-002"],
+        tags=[],
+    )
+    _inject_label_tags([fact], config)
+
+    # Both label entities should be present in tags
+    assert "use:use-001" in fact.tags
+    assert "use:use-002" in fact.tags
+    assert len(fact.tags) == 2
+
+
+@pytest.mark.asyncio
+async def test_retain_multivalue_tag_entities_all_stored(memory, request_context):
+    """
+    GH-1558 reproducer (integration): retain content referencing multiple values
+    of a multi-values entity label with tag=True.
+
+    Verify that ALL multivalue entities appear in BOTH:
+    - memory_units.tags (the tags column)
+    - unit_entities table (the entity links)
+
+    The original bug: tags are added correctly, but unit_entities only stores
+    a subset (typically the first entity).
+    """
+    from hindsight_api.engine.memory_engine import fq_table
+
+    bank_id = f"test-1558-multivalue-tag-{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        # Configure entity labels matching the bug report scenario:
+        # - multi-values type
+        # - tag=True
+        # - entities_allow_free_form=False
+        await memory._config_resolver.update_bank_config(
+            bank_id=bank_id,
+            updates={
+                "entity_labels": [
+                    {
+                        "key": "use",
+                        "description": "Use case identifier for this section",
+                        "type": "multi-values",
+                        "tag": True,
+                        "values": [
+                            {"value": "use-001", "description": "First use case"},
+                            {"value": "use-002", "description": "Second use case"},
+                            {"value": "use-003", "description": "Third use case"},
+                        ],
+                    }
+                ],
+                "entities_allow_free_form": False,
+                "retain_extraction_mode": "verbose",
+            },
+            context=request_context,
+        )
+
+        # Content that explicitly references multiple use case identifiers
+        # in a way that a single fact should capture both
+        unit_ids = await memory.retain_async(
+            bank_id=bank_id,
+            content=(
+                "## System Integration Notes (use-001, use-002)\n\n"
+                "This section covers both use-001 and use-002 use cases. "
+                "The integration between use-001 (authentication flow) and "
+                "use-002 (authorization flow) requires careful coordination. "
+                "Both use-001 and use-002 must be tested together."
+            ),
+            request_context=request_context,
+        )
+
+        assert len(unit_ids) > 0, "Should have extracted at least one fact"
+
+        async with memory._pool.acquire() as conn:
+            # Check entities in unit_entities table
+            entity_rows = await conn.fetch(
+                f"""
+                SELECT e.canonical_name
+                FROM {fq_table("unit_entities")} ue
+                JOIN {fq_table("entities")} e ON e.id = ue.entity_id
+                WHERE ue.unit_id = ANY($1::uuid[])
+                """,
+                [u for u in unit_ids],
+            )
+            entity_names = {r["canonical_name"].lower() for r in entity_rows}
+
+            # Check tags on memory_units
+            tag_rows = await conn.fetch(
+                f"""
+                SELECT id, tags
+                FROM {fq_table("memory_units")}
+                WHERE id = ANY($1::uuid[])
+                """,
+                [u for u in unit_ids],
+            )
+            all_tags = set()
+            for row in tag_rows:
+                if row["tags"]:
+                    all_tags.update(t.lower() for t in row["tags"])
+
+        # Filter to use:* entities/tags
+        use_entities = {n for n in entity_names if n.startswith("use:")}
+        use_tags = {t for t in all_tags if t.startswith("use:")}
+
+        # The core assertion from GH-1558: tags and entities should match
+        # Tags show both but entities only show a subset → BUG
+        assert len(use_tags) >= 2, (
+            f"Expected at least 2 use:* tags. Got: {use_tags}"
+        )
+        assert len(use_entities) >= 2, (
+            f"GH-1558 BUG: Expected at least 2 use:* entities in unit_entities, "
+            f"but only got {len(use_entities)}: {use_entities}. "
+            f"Tags correctly show: {use_tags}"
+        )
+        # Every tag should also be an entity
+        missing_entities = use_tags - use_entities
+        assert len(missing_entities) == 0, (
+            f"GH-1558 BUG: Tags {use_tags} were added but entities are missing: {missing_entities}. "
+            f"Entities found: {use_entities}"
+        )
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_retain_multivalue_tag_entities_second_retain(memory, request_context):
+    """
+    GH-1558 reproducer (second retain): entity resolution with existing entities.
+
+    On a second retain, entity resolution tries to match new entity names against
+    existing entities in the bank. With very similar names like "use:use-001" and
+    "use:use-002", the SequenceMatcher similarity is ~0.91 which combined with
+    temporal proximity could exceed the 0.6 merge threshold, causing both to
+    resolve to the same entity ID.
+    """
+    from hindsight_api.engine.memory_engine import fq_table
+
+    bank_id = f"test-1558-second-{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        await memory._config_resolver.update_bank_config(
+            bank_id=bank_id,
+            updates={
+                "entity_labels": [
+                    {
+                        "key": "use",
+                        "description": "Use case identifier",
+                        "type": "multi-values",
+                        "tag": True,
+                        "values": [
+                            {"value": "use-001", "description": "First use case"},
+                            {"value": "use-002", "description": "Second use case"},
+                        ],
+                    }
+                ],
+                "entities_allow_free_form": False,
+                "retain_extraction_mode": "verbose",
+            },
+            context=request_context,
+        )
+
+        # First retain: creates entities in the bank
+        await memory.retain_async(
+            bank_id=bank_id,
+            content=(
+                "## Authentication Flow (use-001)\n\n"
+                "The authentication flow use-001 handles user login via OAuth2."
+            ),
+            request_context=request_context,
+        )
+
+        # Second retain: references BOTH use-001 and use-002
+        # Entity resolution now has existing entities to match against
+        unit_ids_2 = await memory.retain_async(
+            bank_id=bank_id,
+            content=(
+                "## Integration Notes (use-001, use-002)\n\n"
+                "This section covers the integration between use-001 (authentication) "
+                "and use-002 (authorization). Both use-001 and use-002 are required."
+            ),
+            request_context=request_context,
+        )
+
+        assert len(unit_ids_2) > 0
+
+        async with memory._pool.acquire() as conn:
+            entity_rows = await conn.fetch(
+                f"""
+                SELECT e.canonical_name
+                FROM {fq_table("unit_entities")} ue
+                JOIN {fq_table("entities")} e ON e.id = ue.entity_id
+                WHERE ue.unit_id = ANY($1::uuid[])
+                """,
+                [u for u in unit_ids_2],
+            )
+            entity_names = {r["canonical_name"].lower() for r in entity_rows}
+
+            tag_rows = await conn.fetch(
+                f"""
+                SELECT id, tags
+                FROM {fq_table("memory_units")}
+                WHERE id = ANY($1::uuid[])
+                """,
+                [u for u in unit_ids_2],
+            )
+            all_tags = set()
+            for row in tag_rows:
+                if row["tags"]:
+                    all_tags.update(t.lower() for t in row["tags"])
+
+        use_entities = {n for n in entity_names if n.startswith("use:")}
+        use_tags = {t for t in all_tags if t.startswith("use:")}
+
+        assert len(use_tags) >= 2, (
+            f"Expected at least 2 use:* tags on second retain. Got: {use_tags}"
+        )
+        assert len(use_entities) >= 2, (
+            f"GH-1558 BUG: On second retain, expected at least 2 use:* entities "
+            f"but only got {len(use_entities)}: {use_entities}. "
+            f"Tags correctly show: {use_tags}. "
+            f"Entity resolution may be merging similar names."
+        )
+        missing = use_tags - use_entities
+        assert len(missing) == 0, (
+            f"GH-1558 BUG: Tags present but entities missing after second retain: {missing}"
+        )
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_entity_resolution_does_not_merge_distinct_label_values(memory, request_context):
+    """
+    GH-1558 reproducer (deterministic): directly test that entity resolution
+    keeps distinct label values separate even when their names are very similar.
+
+    "use:use-001" and "use:use-002" have SequenceMatcher similarity of ~0.91.
+    With the 0.6 merge threshold and temporal/co-occurrence boosts, the resolver
+    might incorrectly merge them into a single entity.
+    """
+    from hindsight_api.engine.memory_engine import fq_table
+    from hindsight_api.engine.retain.entity_processing import resolve_entities
+    from hindsight_api.engine.retain.types import EntityRef, ProcessedFact
+
+    bank_id = f"test-1558-resolve-{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        # First, insert a "use:use-001" entity into the bank so that
+        # entity resolution has an existing entity to match against
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                f"""
+                INSERT INTO {fq_table("entities")} (bank_id, canonical_name, first_seen, last_seen, mention_count)
+                VALUES ($1, $2, now(), now(), 1)
+                ON CONFLICT DO NOTHING
+                """,
+                bank_id,
+                "use:use-001",
+            )
+
+        # Now resolve entities for a fact that has BOTH use:use-001 and use:use-002
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        facts = [
+            ProcessedFact(
+                fact_text="Integration between use-001 and use-002",
+                fact_type="world",
+                embedding=[0.0] * 384,
+                occurred_start=now,
+                occurred_end=None,
+                mentioned_at=now,
+                context="",
+                metadata={},
+                entities=[
+                    EntityRef(name="use:use-001"),
+                    EntityRef(name="use:use-002"),
+                ],
+                content_index=0,
+                tags=["use:use-001", "use:use-002"],
+            )
+        ]
+
+        # Use placeholder unit IDs
+        placeholder_unit_ids = [str(uuid.uuid4())]
+
+        entity_labels = [
+            {
+                "key": "use",
+                "description": "Use case identifier",
+                "type": "multi-values",
+                "tag": True,
+                "values": [
+                    {"value": "use-001"},
+                    {"value": "use-002"},
+                ],
+            }
+        ]
+
+        async with memory._pool.acquire() as conn:
+            resolved_entity_ids, entity_to_unit, unit_to_entity_ids = await resolve_entities(
+                entity_resolver=memory.entity_resolver,
+                conn=conn,
+                bank_id=bank_id,
+                unit_ids=placeholder_unit_ids,
+                facts=facts,
+                entity_labels=entity_labels,
+            )
+
+        # We should get 2 DISTINCT entity IDs, not the same ID twice
+        assert len(resolved_entity_ids) == 2, (
+            f"Expected 2 resolved entity IDs, got {len(resolved_entity_ids)}"
+        )
+        unique_ids = set(resolved_entity_ids)
+        assert len(unique_ids) == 2, (
+            f"GH-1558 BUG: Entity resolution merged 'use:use-001' and 'use:use-002' "
+            f"into the same entity ID. Got IDs: {resolved_entity_ids}. "
+            f"These are distinct label values and must NOT be merged."
+        )
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)

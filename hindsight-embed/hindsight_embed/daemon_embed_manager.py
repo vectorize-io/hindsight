@@ -546,6 +546,8 @@ class DaemonEmbedManager(EmbedManager):
 
     def _find_ui_command(self) -> list[str]:
         """Find the command to run the control plane UI."""
+        import shutil
+
         # Check if we're in development mode (monorepo)
         dev_cp_path = Path(__file__).parent.parent.parent / "hindsight-control-plane"
         cli_js = dev_cp_path / "bin" / "cli.js"
@@ -559,7 +561,13 @@ class DaemonEmbedManager(EmbedManager):
         # `npx` prompts before installing missing packages on first run unless `-y` is set.
         # The UI starts in the background with stdout/stderr redirected to a log file, so an
         # interactive prompt would be invisible to users and the health-check loop would time out.
-        return ["npx", "-y", f"@vectorize-io/hindsight-control-plane@{cp_version}"]
+        # On Windows, detached processes may not inherit the parent's PATH, so resolve the
+        # absolute path to npx to avoid "Command not found" errors.
+        npx_path = shutil.which("npx")
+        if npx_path is None:
+            # Fallback to bare command so the FileNotFoundError handler can report it cleanly
+            return ["npx", "-y", f"@vectorize-io/hindsight-control-plane@{cp_version}"]
+        return [npx_path, "-y", f"@vectorize-io/hindsight-control-plane@{cp_version}"]
 
     def get_ui_url(self, profile: str, ui_port: int | None = None, hostname: str | None = None) -> str:
         """Get the URL for the UI serving this profile."""

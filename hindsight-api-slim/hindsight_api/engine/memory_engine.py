@@ -52,6 +52,7 @@ from .sql import SQLDialect, create_sql_dialect
 # Context variable for current schema (async-safe, per-task isolation)
 # Note: default is None, actual default comes from config via get_current_schema()
 _current_schema: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_schema", default=None)
+MENTAL_MODEL_PENDING_CONTENT = "Generating content..."
 
 
 def get_current_schema() -> str:
@@ -224,6 +225,30 @@ def _is_oracledb_integrity_error(e: Exception) -> bool:
     except ImportError:
         return False
     return isinstance(e, oracledb.IntegrityError)
+
+
+def _is_invalid_embedding_dimension_error(e: Exception) -> bool:
+    """Return True for deterministic embedding-dimension failures.
+
+    These errors come from either PR #1670's preflight validation
+    ("embedding 0 has dimension 0; expected 384") or from pgvector itself
+    ("different vector dimensions 384 and 0"). Retrying the same poisoned
+    embedding response only burns worker slots; a fresh retain request or a
+    fixed embedding backend is required.
+    """
+    message = str(e).lower()
+    return "different vector dimensions" in message or (
+        "embedding" in message and "dimension" in message and "expected" in message
+    )
+
+
+def _is_non_retryable_task_error(e: Exception) -> bool:
+    """Classify deterministic task failures that should skip worker retry."""
+    return (
+        isinstance(e, asyncpg.exceptions.IntegrityConstraintViolationError)
+        or _is_oracledb_integrity_error(e)
+        or _is_invalid_embedding_dimension_error(e)
+    )
 
 
 class Budget(str, Enum):
@@ -1236,17 +1261,11 @@ class MemoryEngine(MemoryEngineInterface):
                     logger.error(f"Not retrying task {task_type} (non-retryable), marking as failed")
                     if operation_id:
                         await self._mark_operation_failed(operation_id, str(e), error_traceback)
-                elif isinstance(e, asyncpg.exceptions.IntegrityConstraintViolationError) or (
-                    _is_oracledb_integrity_error(e)
-                ):
-                    # Non-retryable: deterministic integrity violations (PG or Oracle)
-                    # (UniqueViolationError, ForeignKeyViolationError, CheckViolationError,
-                    # NotNullViolationError, ExclusionViolationError / ORA-00001, ORA-02291, etc.)
-                    # will never succeed on retry — the offending row state is already committed.
-                    # Retrying just burns worker capacity. See vectorize-io/hindsight#980.
-                    logger.error(
-                        f"Not retrying task {task_type} (integrity violation, deterministic): {type(e).__name__}"
-                    )
+                elif _is_non_retryable_task_error(e):
+                    # Non-retryable: deterministic task failures (integrity violations,
+                    # invalid embedding dimensions, etc.) will not succeed by rerunning
+                    # the same payload. Retrying just burns worker capacity.
+                    logger.error(f"Not retrying task {task_type} (deterministic failure): {type(e).__name__}")
                     if task_type == "consolidation" and operation_id:
                         await self._fire_consolidation_webhook(
                             bank_id=task_dict.get("bank_id", ""),
@@ -1833,6 +1852,22 @@ class MemoryEngine(MemoryEngineInterface):
                             "until the provider is available.",
                             config_name,
                             e,
+                        )
+
+                # Validate batch API compatibility: if retain_batch_enabled is set,
+                # the retain LLM provider must actually support the batch API.
+                # Otherwise the server would silently fall back to sync mode on
+                # every retain, which is confusing and wastes a config knob.
+                config = get_config()
+                if config.retain_batch_enabled:
+                    supports_batch = await self._retain_llm_config._provider_impl.supports_batch_api()
+                    if not supports_batch:
+                        raise RuntimeError(
+                            f"Configuration error: HINDSIGHT_API_RETAIN_BATCH_ENABLED=true "
+                            f"but the retain LLM provider '{self._retain_llm_config.provider}' "
+                            f"does not support the batch API. Either switch to a provider "
+                            f"that supports batch operations (e.g. 'openai', 'groq') or "
+                            f"set HINDSIGHT_API_RETAIN_BATCH_ENABLED=false."
                         )
 
         # Build list of initialization tasks
@@ -7596,7 +7631,8 @@ class MemoryEngine(MemoryEngineInterface):
             # stub out the DB don't hit an unexpected pool access).
             use_delta = False
             stored_structured_content: dict[str, Any] | None = None
-            if refresh_mode == "delta" and current_content:
+            has_delta_baseline = bool(current_content) and current_content != MENTAL_MODEL_PENDING_CONTENT
+            if refresh_mode == "delta" and has_delta_baseline:
                 backend = await self._get_backend()
                 async with acquire_with_retry(backend) as conn:
                     tracking_row = await conn.fetchrow(
@@ -7978,20 +8014,54 @@ class MemoryEngine(MemoryEngineInterface):
                 params.append(content)
                 param_idx += 1
                 updates.append("last_refreshed_at = NOW()")
-                # Record history entry with the previous content
+                # Record history entry with the previous content.
+                #
+                # Cap the array to the most recent N entries at write time
+                # (see HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES).
+                #
+                # Each entry stores only the slim slice of previous_reflect_response
+                # that consumers actually read: `based_on` (the fact references that
+                # backed that version). The full reflect_response can be hundreds of
+                # KB once `text`, fact bodies, scoring, and embeddings are included;
+                # storing the full payload made each UPDATE rewrite ~10-20 MB of TOAST
+                # per refresh, which prevented HOT updates and accumulated dead
+                # tuples faster than autovacuum could reclaim them. The slim shape
+                # keeps per-row size in the ~hundreds-of-KB range, which fits in a
+                # single heap page and re-enables HOT updates.
                 if get_config().enable_mental_model_history:
+                    slim_reflect_response: dict[str, Any] | None = None
+                    if previous_reflect_response is not None:
+                        based_on = previous_reflect_response.get("based_on")
+                        if based_on is not None:
+                            slim_reflect_response = {"based_on": based_on}
                     history_entry = json.dumps(
                         [
                             {
                                 "previous_content": previous_content,
-                                "previous_reflect_response": previous_reflect_response,
+                                "previous_reflect_response": slim_reflect_response,
                                 "changed_at": datetime.now(timezone.utc).isoformat(),
                             }
                         ]
                     )
-                    updates.append(f"history = COALESCE(history, '[]'::jsonb) || ${param_idx}::jsonb")
-                    params.append(history_entry)
+                    max_entries = get_config().mental_model_history_max_entries
+                    history_param_idx = param_idx
                     param_idx += 1
+                    max_entries_param_idx = param_idx
+                    param_idx += 1
+                    updates.append(
+                        "history = ("
+                        "  SELECT COALESCE(jsonb_agg(elem ORDER BY idx), '[]'::jsonb) "
+                        "  FROM jsonb_array_elements("
+                        f"    COALESCE(history, '[]'::jsonb) || ${history_param_idx}::jsonb"
+                        "  ) WITH ORDINALITY a(elem, idx) "
+                        "  WHERE idx > GREATEST("
+                        "    jsonb_array_length(COALESCE(history, '[]'::jsonb)) + 1"
+                        f"    - ${max_entries_param_idx}, 0"
+                        "  )"
+                        ")"
+                    )
+                    params.append(history_entry)
+                    params.append(max_entries)
                 # Also update embedding (convert to string for asyncpg vector type)
                 embedding_text = f"{name or ''} {content}"
                 embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [embedding_text])

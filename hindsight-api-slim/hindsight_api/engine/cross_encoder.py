@@ -17,6 +17,7 @@ import httpx
 
 from ..config import (
     DEFAULT_LITELLM_API_BASE,
+    DEFAULT_RERANKER_ALIBABA_MODEL,
     DEFAULT_RERANKER_COHERE_MODEL,
     DEFAULT_RERANKER_FLASHRANK_CACHE_DIR,
     DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA,
@@ -37,6 +38,7 @@ from ..config import (
     DEFAULT_RERANKER_TEI_HTTP_TIMEOUT,
     DEFAULT_RERANKER_TEI_MAX_CONCURRENT,
     DEFAULT_RERANKER_ZEROENTROPY_MODEL,
+    ENV_RERANKER_ALIBABA_API_KEY,
     ENV_RERANKER_COHERE_API_KEY,
     ENV_RERANKER_COHERE_MODEL,
     ENV_RERANKER_FLASHRANK_CACHE_DIR,
@@ -546,12 +548,14 @@ class _CohereCompatibleRerankClient:
         rerank_url: str,
         timeout: float = 60.0,
         include_top_n: bool = True,
+        include_return_documents: bool = False,
     ):
         self.api_key = api_key
         self.model = model
         self.rerank_url = rerank_url
         self.timeout = timeout
         self.include_top_n = include_top_n
+        self.include_return_documents = include_return_documents
         self._async_client: httpx.AsyncClient | None = None
 
     async def initialize(self) -> None:
@@ -1534,6 +1538,48 @@ class GoogleCrossEncoder(CrossEncoderModel):
         return await loop.run_in_executor(None, self._predict_sync, pairs)
 
 
+class AlibabaCloudCrossEncoder(CrossEncoderModel):
+    """
+    Alibaba Cloud DashScope text reranking API.
+
+    Uses the Cohere-compatible /reranks endpoint, which is the standard interface
+    for qwen3-rerank. Authentication via HINDSIGHT_API_RERANKER_ALIBABA_API_KEY
+    (or DASHSCOPE_API_KEY as a fallback).
+    See: https://help.aliyun.com/zh/model-studio/text-rerank-api
+    """
+
+    RERANK_URL = "https://dashscope.aliyuncs.com/compatible-api/v1/reranks"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_RERANKER_ALIBABA_MODEL,
+        timeout: float = 60.0,
+    ):
+        self.model = model
+        self._client = _CohereCompatibleRerankClient(
+            api_key=api_key,
+            model=model,
+            rerank_url=self.RERANK_URL,
+            timeout=timeout,
+            include_return_documents=False,
+        )
+
+    @property
+    def provider_name(self) -> str:
+        return "alibaba"
+
+    async def initialize(self) -> None:
+        if self._client._async_client is not None:
+            return
+        logger.info(f"Reranker: initializing Alibaba Cloud provider with model {self.model}")
+        await self._client.initialize()
+        logger.info("Reranker: Alibaba Cloud provider initialized")
+
+    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        return await self._client.predict(pairs)
+
+
 def create_cross_encoder_from_env() -> CrossEncoderModel:
     """
     Create a CrossEncoderModel instance based on configuration.
@@ -1648,11 +1694,19 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             model=config.reranker_google_model,
             service_account_key=config.reranker_google_service_account_key,
         )
+    elif provider == "alibaba":
+        api_key = config.reranker_alibaba_api_key
+        if not api_key:
+            raise ValueError(f"{ENV_RERANKER_ALIBABA_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'alibaba'")
+        return AlibabaCloudCrossEncoder(
+            api_key=api_key,
+            model=config.reranker_alibaba_model,
+        )
     elif provider == "rrf":
         return RRFPassthroughCrossEncoder()
     elif provider == "jina-mlx":
         return JinaMLXCrossEncoder()
     else:
         raise ValueError(
-            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'google', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
+            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'alibaba', 'google', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
         )

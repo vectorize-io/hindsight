@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const ACCESS_KEY_COOKIE = "hindsight_cp_access";
+import { ACCESS_KEY_COOKIE, verifySessionToken } from "@/lib/auth/session";
 
 // Routes that don't require authentication
 const PUBLIC_PATTERNS = [
@@ -16,7 +16,7 @@ const PUBLIC_PATTERNS = [
   "/static",
 ];
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const accessKey = process.env.HINDSIGHT_CP_ACCESS_KEY;
 
   // If no access key is configured, skip auth entirely
@@ -33,8 +33,8 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Check for the session cookie
-  const isAuthenticated = request.cookies.has(ACCESS_KEY_COOKIE);
+  const sessionCookie = request.cookies.get(ACCESS_KEY_COOKIE)?.value;
+  const isAuthenticated = await verifySessionToken(sessionCookie, accessKey);
 
   if (!isAuthenticated) {
     // For API routes, return 401 JSON instead of redirecting to HTML login page

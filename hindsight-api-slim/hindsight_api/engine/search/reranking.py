@@ -212,16 +212,47 @@ class CrossEncoderReranker:
         # Get cross-encoder scores
         scores = await self.cross_encoder.predict(pairs)
 
-        # Normalize scores using sigmoid to [0, 1] range
-        # Cross-encoder returns logits which can be negative
-        import math
-
+        # Normalize scores to [0, 1] range.
+        # Local models return logits (any real number) — sigmoid is appropriate.
+        # External API rerankers (SiliconFlow, Cohere, etc.) return pre-normalized
+        # relevance_score in [0, 1] with very small absolute values. Applying
+        # sigmoid to these compresses everything to ~0.5, destroying the ranking
+        # signal and making recency the sole sorting factor. We detect the score range
+        # and choose the appropriate normalization.
         import numpy as np
 
-        def sigmoid(x):
+        def _sigmoid(x: float) -> float:
             return 1 / (1 + np.exp(-x))
 
-        normalized_scores = [sigmoid(score) for score in scores]
+        def _rank_normalize_with_ties(score_list: list[float]) -> list[float]:
+            """Rank-based normalization that assigns equal ranks to equal scores."""
+            n = len(score_list)
+            if n <= 1:
+                return [1.0] * n
+            indexed = sorted(enumerate(score_list), key=lambda x: x[1], reverse=True)
+            result = [0.0] * n
+            i = 0
+            while i < n:
+                j = i
+                while j < n and indexed[j][1] == indexed[i][1]:
+                    j += 1
+                # Average rank for tied scores
+                avg_rank = (i + j - 1) / 2.0
+                norm = 1.0 - (avg_rank / (n - 1))
+                for k in range(i, j):
+                    result[indexed[k][0]] = norm
+                i = j
+            return result
+
+        if scores and min(scores) >= 0.0 and max(scores) <= 1.0:
+            # Scores are already in [0, 1] (e.g. SiliconFlow, Cohere relevance_score).
+            # Use rank-based normalization to preserve relative ordering without
+            # depending on absolute score magnitudes.
+            normalized_scores = _rank_normalize_with_ties(scores)
+        else:
+            # Scores are logits (e.g. local sentence-transformers models).
+            # Sigmoid maps (-inf, +inf) to (0, 1).
+            normalized_scores = [_sigmoid(score) for score in scores]
 
         # Create ScoredResult objects with cross-encoder scores
         scored_results = []

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const ACCESS_KEY_COOKIE = "hindsight_cp_access";
+import {
+  ACCESS_KEY_COOKIE,
+  SESSION_MAX_AGE_SECONDS,
+  createSessionToken,
+  sessionCookieOptions,
+} from "@/lib/auth/session";
 
 export async function POST(request: NextRequest) {
   const accessKey = process.env.HINDSIGHT_CP_ACCESS_KEY;
@@ -28,15 +33,11 @@ export async function POST(request: NextRequest) {
 
   const response = NextResponse.json({ success: true });
 
-  // Set HttpOnly, Secure, SameSite cookie
   response.cookies.set({
     name: ACCESS_KEY_COOKIE,
-    value: "authenticated",
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 24, // 24 hours
+    value: await createSessionToken(accessKey),
+    ...sessionCookieOptions(request),
+    maxAge: SESSION_MAX_AGE_SECONDS,
   });
 
   return response;

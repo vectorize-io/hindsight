@@ -55,8 +55,8 @@ describe("createKnowledgeTools", () => {
     });
   });
 
-  it("returns all 7 tools", () => {
-    expect(tools).toHaveLength(7);
+  it("returns all 8 tools", () => {
+    expect(tools).toHaveLength(8);
     const names = tools.map((t) => t.name);
     expect(names).toEqual([...TOOL_NAMES]);
   });
@@ -142,7 +142,7 @@ describe("createKnowledgeTools", () => {
     expect(JSON.parse(result.content[0].text)).toEqual({ success: true });
   });
 
-  it("recall sends POST with query", async () => {
+  it("recall sends POST with query and default fact types", async () => {
     mockFetch.mockReturnValueOnce(mockResponse({ results: [{ text: "found" }] }));
 
     const tool = tools.find((t) => t.name === "agent_knowledge_recall")!;
@@ -152,6 +152,70 @@ describe("createKnowledgeTools", () => {
     const opts = getOpts(mockFetch.mock.calls[0]);
     expect(url).toContain("/v1/default/banks/test-bank/memories/recall");
     expect(opts.method).toBe("POST");
+    const body = await getBody(mockFetch.mock.calls[0]);
+    expect(body.query).toBe("what happened?");
+    expect(body.types).toEqual(["world", "experience"]);
+  });
+
+  it("recall can explicitly include observation fact types", async () => {
+    mockFetch.mockReturnValueOnce(mockResponse({ results: [{ text: "rule" }] }));
+
+    const tool = tools.find((t) => t.name === "agent_knowledge_recall")!;
+    await tool.execute({
+      query: "stable rules",
+      fact_types: ["world", "experience", "observation"],
+    });
+
+    const body = await getBody(mockFetch.mock.calls[0]);
+    expect(body.types).toEqual(["world", "experience", "observation"]);
+  });
+
+  it("recall accepts types as an alias for fact_types", async () => {
+    mockFetch.mockReturnValueOnce(mockResponse({ results: [{ text: "rule" }] }));
+
+    const tool = tools.find((t) => t.name === "agent_knowledge_recall")!;
+    await tool.execute({ query: "stable rules", types: ["observation"] });
+
+    const body = await getBody(mockFetch.mock.calls[0]);
+    expect(body.types).toEqual(["observation"]);
+  });
+
+  it("reflect sends POST with conservative defaults", async () => {
+    mockFetch.mockReturnValueOnce(mockResponse({ text: "answer" }));
+
+    const tool = tools.find((t) => t.name === "agent_knowledge_reflect")!;
+    await tool.execute({ query: "what patterns matter?" });
+
+    const url = getUrl(mockFetch.mock.calls[0]);
+    const opts = getOpts(mockFetch.mock.calls[0]);
+    expect(url).toContain("/v1/default/banks/test-bank/reflect");
+    expect(opts.method).toBe("POST");
+    const body = await getBody(mockFetch.mock.calls[0]);
+    expect(body.query).toBe("what patterns matter?");
+    expect(body.budget).toBe("low");
+    expect(body.max_tokens).toBe(1024);
+    expect(body.fact_types).toEqual(["world", "experience", "observation"]);
+  });
+
+  it("reflect can include facts and override options", async () => {
+    mockFetch.mockReturnValueOnce(mockResponse({ text: "answer", based_on: { memories: [] } }));
+
+    const tool = tools.find((t) => t.name === "agent_knowledge_reflect")!;
+    await tool.execute({
+      query: "summarize",
+      budget: "mid",
+      max_tokens: 512,
+      fact_types: ["observation"],
+      include_facts: true,
+      exclude_mental_models: true,
+    });
+
+    const body = await getBody(mockFetch.mock.calls[0]);
+    expect(body.budget).toBe("mid");
+    expect(body.max_tokens).toBe(512);
+    expect(body.fact_types).toEqual(["observation"]);
+    expect(body.include).toEqual({ facts: {} });
+    expect(body.exclude_mental_models).toBe(true);
   });
 
   it("ingest sends POST with content and document_id", async () => {
@@ -173,14 +237,15 @@ describe("createKnowledgeTools", () => {
       apiUrl: "http://localhost:9077",
       bankId: "test-bank",
     });
-    expect(noAuthTools).toHaveLength(7);
+    expect(noAuthTools).toHaveLength(8);
   });
 });
 
 describe("TOOL_NAMES", () => {
-  it("exports all 7 tool names", () => {
-    expect(TOOL_NAMES).toHaveLength(7);
+  it("exports all 8 tool names", () => {
+    expect(TOOL_NAMES).toHaveLength(8);
     expect(TOOL_NAMES).toContain("agent_knowledge_list_pages");
+    expect(TOOL_NAMES).toContain("agent_knowledge_reflect");
     expect(TOOL_NAMES).toContain("agent_knowledge_ingest");
   });
 });

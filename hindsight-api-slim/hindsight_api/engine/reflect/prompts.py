@@ -515,7 +515,9 @@ CRITICAL: This is a NON-CONVERSATIONAL system. NEVER ask follow-up questions, of
 
 def build_final_system_prompt(mission: str | None = None) -> str:
     """Build the final synthesis system prompt, using mission as role when set."""
-    role_section = mission.strip() if mission else _DEFAULT_FINAL_ROLE
+    from hindsight_api.engine.prompt_utils import escape_for_prompt
+
+    role_section = escape_for_prompt(mission.strip()) if mission else _DEFAULT_FINAL_ROLE
     return _FINAL_SYSTEM_PROMPT_BASE.format(role_section=role_section)
 
 

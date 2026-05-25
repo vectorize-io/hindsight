@@ -696,7 +696,16 @@ class TestMentalModelHistory:
     async def test_history_snapshots_previous_reflect_response(
         self, memory: MemoryEngine, request_context
     ):
-        """Each history entry snapshots the reflect_response that produced previous_content."""
+        """Each history entry stores only the slim {based_on: ...} slice of
+        previous_reflect_response.
+
+        Rationale: the only consumer of `previous_reflect_response` in history
+        is the control-plane UI's "based_on diff" view. Storing the full reflect
+        response (including `text`, fact bodies, scoring) made each UPDATE
+        rewrite ~10-20 MB of TOAST per refresh and prevented HOT updates. The
+        slim shape keeps row size bounded so HOT updates apply and dead tuples
+        self-clean inline.
+        """
         bank_id = f"test-mm-history-reflect-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
@@ -728,12 +737,67 @@ class TestMentalModelHistory:
 
         history = await memory.get_mental_model_history(bank_id, mm["id"], request_context=request_context)
         assert len(history) == 2
-        # Most recent first: replacing v2 snapshotted rr_v1 (the reflect that produced v2).
+        # Most recent first: replacing v2 snapshotted rr_v1's based_on (the only slice
+        # the UI consumes). The bulky `text` and `mental_models` fields are dropped.
         assert history[0]["previous_content"] == "v2"
-        assert history[0]["previous_reflect_response"] == rr_v1
+        assert history[0]["previous_reflect_response"] == {"based_on": rr_v1["based_on"]}
         # The first update replaced v1, which had no reflect_response stored yet.
         assert history[1]["previous_content"] == "v1"
         assert history[1]["previous_reflect_response"] is None
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_history_snapshots_omit_reflect_response_when_based_on_missing(
+        self, memory: MemoryEngine, request_context
+    ):
+        """If a reflect_response has no `based_on` (older snapshots, malformed
+        payloads), the slim path stores None rather than an empty shell."""
+        bank_id = f"test-mm-history-no-based-on-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Test Model",
+            source_query="What is the test?",
+            content="v1",
+            request_context=request_context,
+        )
+
+        # reflect_response with no based_on field — will become the "previous"
+        # reflect_response when v3 is written, producing slim None.
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            content="v2",
+            reflect_response={"text": "v1", "mental_models": []},
+            request_context=request_context,
+        )
+        # reflect_response with based_on={} — will become the "previous"
+        # reflect_response when v4 is written, producing slim {"based_on": {}}.
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            content="v3",
+            reflect_response={"text": "v2", "based_on": {}},
+            request_context=request_context,
+        )
+        # One more update so that the based_on={} reflect_response becomes
+        # the *previous* state captured in a history entry.
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            content="v4",
+            request_context=request_context,
+        )
+
+        history = await memory.get_mental_model_history(bank_id, mm["id"], request_context=request_context)
+        assert len(history) == 3
+        # Most recent: v3→v4, previous rr had based_on={} → stored as {"based_on": {}}
+        assert history[0]["previous_reflect_response"] == {"based_on": {}}
+        # Second: v2→v3, previous rr had no based_on field → stored as None
+        assert history[1]["previous_reflect_response"] is None
+        # Third: v1→v2, no reflect_response on the row yet → stored as None
+        assert history[2]["previous_reflect_response"] is None
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -805,6 +869,48 @@ class TestMentalModelHistory:
             bank_id, "nonexistent-id", request_context=request_context
         )
         assert result is None
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_history_capped_to_max_entries(self, memory: MemoryEngine, request_context, monkeypatch):
+        """History array is trimmed to the most recent N entries on each write.
+
+        Without a cap, sustained updates grow the jsonb array unboundedly and
+        eventually cross Postgres's 256MB jsonb hard limit, after which any
+        further UPDATE fails with SQLSTATE 54000 and the row is stuck.
+        """
+        from hindsight_api.config import clear_config_cache
+
+        monkeypatch.setenv("HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES", "3")
+        clear_config_cache()
+
+        bank_id = f"test-mm-history-cap-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Test Model",
+            source_query="What is the test?",
+            content="v1",
+            request_context=request_context,
+        )
+
+        # 5 content updates → 5 history entries appended → trimmed to last 3
+        for i in range(2, 7):
+            await memory.update_mental_model(
+                bank_id=bank_id,
+                mental_model_id=mm["id"],
+                content=f"v{i}",
+                request_context=request_context,
+            )
+
+        history = await memory.get_mental_model_history(bank_id, mm["id"], request_context=request_context)
+        # Most recent first ordering (per test_history_ordered_most_recent_first):
+        # the trimmed window keeps the newest 3 — v5, v4, v3 — and drops v2, v1.
+        assert len(history) == 3
+        assert history[0]["previous_content"] == "v5"
+        assert history[1]["previous_content"] == "v4"
+        assert history[2]["previous_content"] == "v3"
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
