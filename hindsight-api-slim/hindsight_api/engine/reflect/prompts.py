@@ -98,6 +98,7 @@ def build_system_prompt_for_tools(
     context: str | None = None,
     directives: list[dict[str, Any]] | None = None,
     has_mental_models: bool = False,
+    include_observations: bool = True,
     budget: str | None = None,
 ) -> str:
     """
@@ -108,11 +109,17 @@ def build_system_prompt_for_tools(
     2. search_observations - Consolidated knowledge with freshness
     3. recall - Raw facts as ground truth
 
+    The retrieval-strategy and workflow sections are built to match the tools
+    actually exposed to the LLM — mentioning a tool the agent has disabled
+    causes weaker LLMs to either hallucinate the call (rejected by the agent)
+    or give up with "I cannot find any information…" (see #1724).
+
     Args:
         bank_profile: Bank profile with name and mission
         context: Optional additional context
         directives: Optional list of directive mental models to inject as hard rules
         has_mental_models: Whether the bank has any mental models (skip if not)
+        include_observations: Whether search_observations is in the tool list.
         budget: Search depth budget - "low", "mid", or "high". Controls exploration thoroughness.
     """
     name = bank_profile.get("name", "Assistant")
@@ -165,49 +172,86 @@ def build_system_prompt_for_tools(
         ]
     )
 
-    # Build retrieval levels based on what's available
+    # Assemble the retrieval-level blocks for whatever tools are exposed.
+    # MM and Observations bodies are unconditional; recall's fallback wording
+    # adapts to which upstream tools precede it (telling the LLM to fall back
+    # to a tool that isn't in its list is the bug at the root of #1724).
+    levels: list[tuple[str, list[str]]] = []
     if has_mental_models:
-        parts.extend(
+        levels.append(
+            (
+                "MENTAL MODELS (search_mental_models)",
+                [
+                    "- User-curated summaries about specific topics",
+                    "- HIGHEST quality - manually created and maintained",
+                    "- If a relevant mental model exists and is FRESH, it may fully answer the question",
+                    "- Check `is_stale` field - if stale, also verify with lower levels",
+                ],
+            )
+        )
+    if include_observations:
+        levels.append(
+            (
+                "OBSERVATIONS (search_observations)",
+                [
+                    "- Auto-consolidated knowledge from memories",
+                    "- Check `is_stale` field - if stale, ALSO use recall() to verify",
+                    "- Good for understanding patterns and summaries",
+                ],
+            )
+        )
+    recall_body = ["- Individual memories (world facts and experiences)"]
+    if has_mental_models and include_observations:
+        recall_body.extend(
             [
-                "You have access to THREE levels of knowledge. Use them in this order:",
-                "",
-                "### 1. MENTAL MODELS (search_mental_models) - Try First",
-                "- User-curated summaries about specific topics",
-                "- HIGHEST quality - manually created and maintained",
-                "- If a relevant mental model exists and is FRESH, it may fully answer the question",
-                "- Check `is_stale` field - if stale, also verify with lower levels",
-                "",
-                "### 2. OBSERVATIONS (search_observations) - Second Priority",
-                "- Auto-consolidated knowledge from memories",
-                "- Check `is_stale` field - if stale, ALSO use recall() to verify",
-                "- Good for understanding patterns and summaries",
-                "",
-                "### 3. RAW FACTS (recall) - Ground Truth",
-                "- Individual memories (world facts and experiences)",
                 "- Use when: no mental models/observations exist, they're stale, or you need specific details",
                 "- MANDATORY: If search_mental_models and search_observations both return 0 results, you MUST call recall() before giving up",
                 "- This is the source of truth that other levels are built from",
-                "",
             ]
         )
-    else:
-        parts.extend(
+    elif has_mental_models:
+        recall_body.extend(
             [
-                "You have access to TWO levels of knowledge. Use them in this order:",
-                "",
-                "### 1. OBSERVATIONS (search_observations) - Try First",
-                "- Auto-consolidated knowledge from memories",
-                "- Check `is_stale` field - if stale, ALSO use recall() to verify",
-                "- Good for understanding patterns and summaries",
-                "",
-                "### 2. RAW FACTS (recall) - Ground Truth",
-                "- Individual memories (world facts and experiences)",
+                "- Use when: no mental model exists, it's stale, or you need specific details",
+                "- MANDATORY: If search_mental_models returns 0 results, you MUST call recall() before giving up",
+                "- This is the source of truth that mental models are built from",
+            ]
+        )
+    elif include_observations:
+        recall_body.extend(
+            [
                 "- Use when: no observations exist, they're stale, or you need specific details",
                 "- MANDATORY: If search_observations returns 0 results or count=0, you MUST call recall() before giving up",
                 "- This is the source of truth that observations are built from",
-                "",
             ]
         )
+    else:
+        recall_body.extend(
+            [
+                "- MANDATORY: Call recall() to gather facts before giving up",
+                "- This is the source of truth.",
+            ]
+        )
+    levels.append(("RAW FACTS (recall) - Ground Truth", recall_body))
+
+    # Position-dependent suffix for upstream tools; recall already carries its
+    # fixed "- Ground Truth" suffix in the header text.
+    suffixes = [""] * len(levels)
+    if len(levels) >= 2:
+        suffixes[0] = " - Try First"
+    if len(levels) == 3:
+        suffixes[1] = " - Second Priority"
+
+    if len(levels) == 1:
+        parts.append("You have access to ONE level of knowledge:")
+    else:
+        word = "TWO" if len(levels) == 2 else "THREE"
+        parts.append(f"You have access to {word} levels of knowledge. Use them in this order:")
+    parts.append("")
+    for idx, ((header, body), suffix) in enumerate(zip(levels, suffixes), 1):
+        parts.append(f"### {idx}. {header}{suffix}")
+        parts.extend(body)
+        parts.append("")
 
     parts.extend(
         [
@@ -267,25 +311,28 @@ def build_system_prompt_for_tools(
 
     parts.append("## Workflow")
 
+    steps: list[str] = []
     if has_mental_models:
-        parts.extend(
-            [
-                "1. First, try search_mental_models() - check if a curated summary exists",
-                "2. If no mental model or it's stale, try search_observations() for consolidated knowledge",
-                "3. If observations are stale OR you need specific details, use recall() for raw facts",
-                "4. Use expand() if you need more context on specific memories",
-                "5. When ready, call done() with your answer and supporting IDs",
-            ]
+        steps.append("First, try search_mental_models() - check if a curated summary exists")
+    if include_observations:
+        if has_mental_models:
+            steps.append("If no mental model or it's stale, try search_observations() for consolidated knowledge")
+        else:
+            steps.append("First, try search_observations() - check for consolidated knowledge")
+    # Recall step phrasing varies with whichever upstream tool(s) precede it.
+    if include_observations:
+        steps.append(
+            "If observations are stale OR you need specific details, use recall() for raw facts"
+            if has_mental_models
+            else "If search_observations returns 0 results OR observations are stale, you MUST call recall() for raw facts"
         )
+    elif has_mental_models:
+        steps.append("If no mental model or it's stale, use recall() for raw facts")
     else:
-        parts.extend(
-            [
-                "1. First, try search_observations() - check for consolidated knowledge",
-                "2. If search_observations returns 0 results OR observations are stale, you MUST call recall() for raw facts",
-                "3. Use expand() if you need more context on specific memories",
-                "4. When ready, call done() with your answer and supporting IDs",
-            ]
-        )
+        steps.append("Call recall() to gather raw facts")
+    steps.append("Use expand() if you need more context on specific memories")
+    steps.append("When ready, call done() with your answer and supporting IDs")
+    parts.extend(f"{idx}. {step}" for idx, step in enumerate(steps, 1))
 
     parts.extend(
         [

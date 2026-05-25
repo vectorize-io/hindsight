@@ -369,7 +369,12 @@ async def run_reflect_agent(
 
     # Build initial messages (directives are injected into system prompt at START and END)
     system_prompt = build_system_prompt_for_tools(
-        bank_profile, context, directives=directives, has_mental_models=has_mental_models, budget=budget
+        bank_profile,
+        context,
+        directives=directives,
+        has_mental_models=has_mental_models,
+        include_observations=include_observations,
+        budget=budget,
     )
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
