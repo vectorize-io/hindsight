@@ -62,6 +62,43 @@ from ..config import (
 logger = logging.getLogger(__name__)
 
 
+def _resolve_malloc_trim():
+    """Return a callable that asks glibc to release freed heap pages to the OS.
+
+    Local CPU rerankers (FlashRank/ONNX, SentenceTransformers/torch) allocate
+    large transient numpy/tensor buffers per call. On Linux glibc, those pages
+    are freed at the Python level but kept by the allocator as a high-water
+    mark — RSS grows monotonically across many recalls (see issue #1717).
+    Calling `malloc_trim(0)` after each batch returns those pages to the OS.
+
+    Resolved once at import; returns a no-op on non-glibc platforms (macOS,
+    musl, Windows) where the call is unavailable or unnecessary.
+    """
+    import sys
+
+    if sys.platform != "linux":
+        return lambda: None
+
+    import ctypes
+    import ctypes.util
+
+    libc_path = ctypes.util.find_library("c")
+    if libc_path is None:
+        return lambda: None
+    try:
+        libc = ctypes.CDLL(libc_path)
+        trim = libc.malloc_trim
+    except (OSError, AttributeError):
+        # Not glibc (musl has no malloc_trim) or libc lookup failed.
+        return lambda: None
+    trim.argtypes = [ctypes.c_size_t]
+    trim.restype = ctypes.c_int
+    return lambda: trim(0)
+
+
+_malloc_trim = _resolve_malloc_trim()
+
+
 class CrossEncoderModel(ABC):
     """
     Abstract base class for cross-encoder reranking.
@@ -268,25 +305,28 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         """
         import numpy as np
 
-        if self.bucket_batching and len(pairs) > 1:
-            # Sort pairs by approximate token length to create homogeneous batches.
-            # This eliminates padding waste — short pairs aren't padded to the length
-            # of the longest pair in the batch. Quality-identical by construction.
-            lengths = [len(pairs[i][0]) + len(pairs[i][1]) for i in range(len(pairs))]
-            sorted_indices = sorted(range(len(pairs)), key=lambda i: lengths[i])
-            sorted_pairs = [pairs[i] for i in sorted_indices]
+        try:
+            if self.bucket_batching and len(pairs) > 1:
+                # Sort pairs by approximate token length to create homogeneous batches.
+                # This eliminates padding waste — short pairs aren't padded to the length
+                # of the longest pair in the batch. Quality-identical by construction.
+                lengths = [len(pairs[i][0]) + len(pairs[i][1]) for i in range(len(pairs))]
+                sorted_indices = sorted(range(len(pairs)), key=lambda i: lengths[i])
+                sorted_pairs = [pairs[i] for i in sorted_indices]
 
-            sorted_scores = self._model.predict(sorted_pairs, batch_size=self.batch_size, show_progress_bar=False)
-            sorted_scores = sorted_scores.tolist() if hasattr(sorted_scores, "tolist") else list(sorted_scores)
+                sorted_scores = self._model.predict(sorted_pairs, batch_size=self.batch_size, show_progress_bar=False)
+                sorted_scores = sorted_scores.tolist() if hasattr(sorted_scores, "tolist") else list(sorted_scores)
 
-            # Restore original order
-            scores = [0.0] * len(pairs)
-            for new_pos, orig_idx in enumerate(sorted_indices):
-                scores[orig_idx] = sorted_scores[new_pos]
-            return scores
+                # Restore original order
+                scores = [0.0] * len(pairs)
+                for new_pos, orig_idx in enumerate(sorted_indices):
+                    scores[orig_idx] = sorted_scores[new_pos]
+                return scores
 
-        scores = self._model.predict(pairs, batch_size=self.batch_size, show_progress_bar=False)
-        return scores.tolist() if hasattr(scores, "tolist") else list(scores)
+            scores = self._model.predict(pairs, batch_size=self.batch_size, show_progress_bar=False)
+            return scores.tolist() if hasattr(scores, "tolist") else list(scores)
+        finally:
+            _malloc_trim()
 
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
@@ -966,32 +1006,35 @@ class FlashRankCrossEncoder(CrossEncoderModel):
         if not pairs:
             return []
 
-        # Group pairs by query
-        query_groups: dict[str, list[tuple[int, str]]] = {}
-        for idx, (query, text) in enumerate(pairs):
-            if query not in query_groups:
-                query_groups[query] = []
-            query_groups[query].append((idx, text))
+        try:
+            # Group pairs by query
+            query_groups: dict[str, list[tuple[int, str]]] = {}
+            for idx, (query, text) in enumerate(pairs):
+                if query not in query_groups:
+                    query_groups[query] = []
+                query_groups[query].append((idx, text))
 
-        all_scores = [0.0] * len(pairs)
+            all_scores = [0.0] * len(pairs)
 
-        for query, indexed_texts in query_groups.items():
-            # Build passages list for FlashRank
-            passages = [{"id": i, "text": text} for i, (_, text) in enumerate(indexed_texts)]
-            global_indices = [idx for idx, _ in indexed_texts]
+            for query, indexed_texts in query_groups.items():
+                # Build passages list for FlashRank
+                passages = [{"id": i, "text": text} for i, (_, text) in enumerate(indexed_texts)]
+                global_indices = [idx for idx, _ in indexed_texts]
 
-            # Create rerank request
-            request = RerankRequest(query=query, passages=passages)
-            results = self._ranker.rerank(request)
+                # Create rerank request
+                request = RerankRequest(query=query, passages=passages)
+                results = self._ranker.rerank(request)
 
-            # Map scores back to original positions
-            for result in results:
-                local_idx = result["id"]
-                score = result["score"]
-                global_idx = global_indices[local_idx]
-                all_scores[global_idx] = score
+                # Map scores back to original positions
+                for result in results:
+                    local_idx = result["id"]
+                    score = result["score"]
+                    global_idx = global_indices[local_idx]
+                    all_scores[global_idx] = score
 
-        return all_scores
+            return all_scores
+        finally:
+            _malloc_trim()
 
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
