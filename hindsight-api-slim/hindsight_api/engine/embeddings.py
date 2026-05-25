@@ -30,7 +30,6 @@ from ..config import (
     DEFAULT_LITELLM_API_BASE,
     ENV_EMBEDDINGS_COHERE_API_KEY,
     ENV_EMBEDDINGS_GEMINI_API_KEY,
-    ENV_EMBEDDINGS_LITELLM_SDK_API_KEY,
     ENV_EMBEDDINGS_LOCAL_FORCE_CPU,
     ENV_EMBEDDINGS_LOCAL_MODEL,
     ENV_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE,
@@ -766,7 +765,7 @@ class LiteLLMSDKEmbeddings(Embeddings):
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None = None,
         model: str = DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL,
         api_base: str | None = None,
         output_dimensions: int | None = None,
@@ -778,7 +777,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
         Initialize LiteLLM SDK embeddings client.
 
         Args:
-            api_key: API key for the embedding provider
+            api_key: API key for the embedding provider (optional — omit for
+                     providers that use ambient credentials, e.g. AWS Bedrock with IAM)
             model: Model name with provider prefix (e.g., "cohere/embed-english-v3.0")
             api_base: Custom base URL for API (optional)
             output_dimensions: Optional output embedding dimensions (provider-dependent)
@@ -828,8 +828,9 @@ class LiteLLMSDKEmbeddings(Embeddings):
             embed_kwargs = {
                 "model": self.model,
                 "input": ["test"],
-                "api_key": self.api_key,
             }
+            if self.api_key:
+                embed_kwargs["api_key"] = self.api_key
             if self.encoding_format:
                 embed_kwargs["encoding_format"] = self.encoding_format
             if self.api_base:
@@ -880,8 +881,9 @@ class LiteLLMSDKEmbeddings(Embeddings):
                 embed_kwargs = {
                     "model": self.model,
                     "input": batch,
-                    "api_key": self.api_key,
                 }
+                if self.api_key:
+                    embed_kwargs["api_key"] = self.api_key
                 if self.encoding_format:
                     embed_kwargs["encoding_format"] = self.encoding_format
                 if self.api_base:
@@ -1171,13 +1173,8 @@ def create_embeddings_from_env() -> Embeddings:
             model=config.embeddings_litellm_model,
         )
     elif provider == "litellm-sdk":
-        api_key = config.embeddings_litellm_sdk_api_key
-        if not api_key:
-            raise ValueError(
-                f"{ENV_EMBEDDINGS_LITELLM_SDK_API_KEY} is required when {ENV_EMBEDDINGS_PROVIDER} is 'litellm-sdk'"
-            )
         return LiteLLMSDKEmbeddings(
-            api_key=api_key,
+            api_key=config.embeddings_litellm_sdk_api_key or None,
             model=config.embeddings_litellm_sdk_model,
             api_base=config.embeddings_litellm_sdk_api_base,
             output_dimensions=config.embeddings_litellm_sdk_output_dimensions,

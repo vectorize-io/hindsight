@@ -14,11 +14,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from hindsight_api.config import (
-    ENV_EMBEDDINGS_LITELLM_SDK_API_KEY,
-    ENV_EMBEDDINGS_LITELLM_SDK_MODEL,
-    ENV_EMBEDDINGS_PROVIDER,
-)
 from hindsight_api.engine.embeddings import LiteLLMSDKEmbeddings, create_embeddings_from_env
 
 
@@ -86,6 +81,41 @@ class TestLiteLLMSDKEmbeddings:
                 api_key="test_key",
                 encoding_format="float",
             )
+
+    async def test_initialization_without_api_key(self, mock_litellm):
+        """Test initialization without api_key (e.g. AWS Bedrock with IAM auth)."""
+        with patch("builtins.__import__", side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args)):
+            emb = LiteLLMSDKEmbeddings(
+                model="bedrock/amazon.titan-embed-text-v2:0",
+                batch_size=100,
+                timeout=60.0,
+            )
+
+            await emb.initialize()
+
+            assert emb._litellm is not None
+            assert emb._dimension == 768
+
+            call_kwargs = mock_litellm.aembedding.call_args.kwargs
+            assert "api_key" not in call_kwargs
+
+    async def test_encode_without_api_key(self, mock_litellm):
+        """Test encode omits api_key when not set (IAM/ambient credentials)."""
+        emb = LiteLLMSDKEmbeddings(
+            model="bedrock/amazon.titan-embed-text-v2:0",
+        )
+        emb._litellm = mock_litellm
+        emb._dimension = 768
+
+        mock_litellm.embedding.return_value.data = [
+            {"embedding": [0.5] * 768, "index": 0},
+        ]
+
+        result = emb.encode(["Hello world"])
+
+        assert len(result) == 1
+        call_kwargs = mock_litellm.embedding.call_args.kwargs
+        assert "api_key" not in call_kwargs
 
     async def test_initialization_missing_package(self):
         """Test initialization fails gracefully when litellm is not installed."""
@@ -477,17 +507,20 @@ class TestLiteLLMSDKEmbeddingsFactory:
             assert embeddings.api_key == "test_key"
             assert embeddings.model == "cohere/embed-english-v3.0"
 
-    def test_create_from_env_missing_api_key(self, monkeypatch):
-        """Test that missing API key raises error."""
-        # Mock get_config() with missing API key
+    def test_create_from_env_without_api_key(self, monkeypatch):
+        """Test that litellm-sdk works without an API key (e.g. AWS Bedrock with IAM)."""
         mock_config = MagicMock()
         mock_config.embeddings_provider = "litellm-sdk"
-        mock_config.embeddings_litellm_sdk_api_key = None  # Missing key
-        mock_config.embeddings_litellm_sdk_model = "cohere/embed-english-v3.0"
+        mock_config.embeddings_litellm_sdk_api_key = None
+        mock_config.embeddings_litellm_sdk_model = "bedrock/amazon.titan-embed-text-v2:0"
+        mock_config.embeddings_litellm_sdk_api_base = None
 
         with patch("hindsight_api.config.get_config", return_value=mock_config):
-            with pytest.raises(ValueError, match=ENV_EMBEDDINGS_LITELLM_SDK_API_KEY):
-                create_embeddings_from_env()
+            embeddings = create_embeddings_from_env()
+
+            assert isinstance(embeddings, LiteLLMSDKEmbeddings)
+            assert embeddings.api_key is None
+            assert embeddings.model == "bedrock/amazon.titan-embed-text-v2:0"
 
     def test_create_from_env_with_api_base(self, monkeypatch):
         """Test creating embeddings with custom API base."""
