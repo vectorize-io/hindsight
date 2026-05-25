@@ -218,12 +218,12 @@ Hermes with Hindsight is the only coding workflow where context accumulates acro
 
 The value compounds with use. Session one, Hermes knows nothing about your project. Session five, it knows the stack and conventions. Session 30, it knows the project's history, its fragile areas, the decisions that shaped its current shape. At that point you've stopped explaining those things, not because you skipped the context, but because you never needed to provide it again. And once that mental model is rich enough, you're not just talking to a coding assistant. You're working alongside an agent that knows the codebase as well as you do.
 
-Set it up with `hermes memory setup`, or start with the [Hindsight integration docs](https://hindsight. vectorize. io/sdks/integrations/hermes).
+Set it up with `hermes memory setup`, or start with the [Hindsight integration docs](https://hindsight.vectorize.io/sdks/integrations/hermes).
 
 ---
 
 **Further reading:**
-- [What Is Agent Memory?](/what-is-agent-memory), foundational concepts behind how AI agents retain context
+- [What Is Agent Memory?](https://vectorize.io/what-is-agent-memory/), foundational concepts behind how AI agents retain context
 - [Hindsight Is Now a Native Memory Provider in Hermes Agent](/blog/2026/04/06/hermes-native-memory-provider), setup guide, memory modes, and config reference
 - [Adding Persistent Memory to Codex with Hindsight](/blog/2026/04/08/adding-memory-to-codex-with-hindsight), the same pattern applied to OpenAI Codex
-- [Best AI Agent Memory Systems in 2026](/articles/best-ai-agent-memory-systems), comparison of all major agent memory frameworks
+- [Best AI Agent Memory Systems in 2026](https://vectorize.io/articles/best-ai-agent-memory-systems/), comparison of all major agent memory frameworks
