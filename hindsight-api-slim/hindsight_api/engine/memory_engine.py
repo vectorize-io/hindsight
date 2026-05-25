@@ -227,6 +227,90 @@ def _is_oracledb_integrity_error(e: Exception) -> bool:
     return isinstance(e, oracledb.IntegrityError)
 
 
+@dataclass
+class _SubBatchSplit:
+    """Result of packing retain contents into sub-batches.
+
+    ``sub_batches[i]`` is a list of RetainContentDict items that should
+    be processed together. ``origin_indices[i]`` lists the indices into
+    the original ``contents`` list that contributed items to
+    ``sub_batches[i]``; callers that present per-input results to the
+    user (such as ``retain_batch_async``) use this mapping to merge
+    results belonging to the same original content back together when
+    an oversized item was chunked across multiple sub-batches.
+    """
+
+    sub_batches: list[list[RetainContentDict]]
+    origin_indices: list[list[int]]
+
+
+def _split_contents_into_sub_batches(
+    contents: list[RetainContentDict],
+    tokens_per_batch: int,
+) -> _SubBatchSplit:
+    """Pack retain contents into sub-batches whose combined token count
+    stays at or below ``tokens_per_batch``.
+
+    Any single item that already exceeds the budget is chunked via
+    ``fact_extraction.chunk_text`` (paragraph/sentence aware, or
+    conversation-turn aware for JSON arrays) and each chunk becomes its
+    own single-item sub-batch. Without this, an oversized single item
+    would pass through as a ``1/1`` sub-batch holding the entire
+    payload — which contradicts the splitter's log and lets the
+    orchestrator OOM under realistic memory limits (see issue #1571).
+    """
+    from .retain import fact_extraction
+
+    # chunk_text takes a char budget; cl100k_base averages ~3-4 chars
+    # per token on natural-language input. Use 3x for headroom so a
+    # chunk's token count is comfortably under tokens_per_batch even
+    # when content tokenizes denser than average (code, JSON).
+    char_budget = max(tokens_per_batch * 3, 1)
+
+    sub_batches: list[list[RetainContentDict]] = []
+    origin_indices: list[list[int]] = []
+    current_batch: list[RetainContentDict] = []
+    current_batch_origins: list[int] = []
+    current_batch_tokens = 0
+
+    def _flush() -> None:
+        nonlocal current_batch, current_batch_origins, current_batch_tokens
+        if current_batch:
+            sub_batches.append(current_batch)
+            origin_indices.append(current_batch_origins)
+            current_batch = []
+            current_batch_origins = []
+            current_batch_tokens = 0
+
+    for original_idx, item in enumerate(contents):
+        content_str = item.get("content", "") or ""
+        item_tokens = count_tokens(content_str)
+
+        if item_tokens > tokens_per_batch:
+            # Oversized single item: flush anything in flight, then
+            # chunk the content and emit each chunk as its own
+            # single-item sub-batch. The sub-batches share the
+            # original item's document_id and metadata so the
+            # orchestrator's first-batch document tracking still
+            # cascade-deletes the prior document version on slice 1.
+            _flush()
+            chunks = fact_extraction.chunk_text(content_str, char_budget)
+            for chunk in chunks:
+                chunk_item = cast(RetainContentDict, {**item, "content": chunk})
+                sub_batches.append([chunk_item])
+                origin_indices.append([original_idx])
+            continue
+
+        if current_batch and current_batch_tokens + item_tokens > tokens_per_batch:
+            _flush()
+        current_batch.append(item)
+        current_batch_origins.append(original_idx)
+        current_batch_tokens += item_tokens
+
+    _flush()
+    return _SubBatchSplit(sub_batches=sub_batches, origin_indices=origin_indices)
+
+
 def _is_invalid_embedding_dimension_error(e: Exception) -> bool:
     """Return True for deterministic embedding-dimension failures.
 
@@ -2432,40 +2516,36 @@ class MemoryEngine(MemoryEngineInterface):
                 f"Large batch detected ({total_tokens:,} tokens from {len(contents)} items). Splitting into sub-batches of ~{tokens_per_batch:,} tokens each..."
             )
 
-            sub_batches = []
-            current_batch = []
-            current_batch_tokens = 0
+            split = _split_contents_into_sub_batches(contents, tokens_per_batch)
+            sub_batches = split.sub_batches
+            origin_indices = split.origin_indices
 
-            for item in contents:
-                item_tokens = count_tokens(item.get("content", ""))
+            sub_batch_sizes = [len(b) for b in sub_batches]
+            # Keep the per-sub-batch sizes log compact when an oversize
+            # single item gets chunked into many [1]-sized sub-batches.
+            if len(sub_batches) <= 20:
+                logger.info(f"Split into {len(sub_batches)} sub-batches: {sub_batch_sizes} items each")
+            else:
+                logger.info(
+                    f"Split into {len(sub_batches)} sub-batches "
+                    f"(items per sub-batch: min={min(sub_batch_sizes)}, "
+                    f"max={max(sub_batch_sizes)}, total={sum(sub_batch_sizes)})"
+                )
 
-                # If adding this item would exceed the limit, start a new batch
-                # (unless current batch is empty - then we must include it even if it's large)
-                if current_batch and current_batch_tokens + item_tokens > tokens_per_batch:
-                    sub_batches.append(current_batch)
-                    current_batch = [item]
-                    current_batch_tokens = item_tokens
-                else:
-                    current_batch.append(item)
-                    current_batch_tokens += item_tokens
-
-            # Add the last batch
-            if current_batch:
-                sub_batches.append(current_batch)
-
-            logger.info(f"Split into {len(sub_batches)} sub-batches: {[len(b) for b in sub_batches]} items each")
-
-            # Process each sub-batch
-            all_results = []
-            for i, sub_batch in enumerate(sub_batches, 1):
+            # Preserve the public contract: one result list per input
+            # content. When an oversize single item is chunked across
+            # multiple sub-batches, unit_ids from every chunk get
+            # appended back into that input's result slot.
+            per_input_results: list[list[str]] = [[] for _ in contents]
+            for i, (sub_batch, sub_origins) in enumerate(zip(sub_batches, origin_indices), 1):
                 # Checkpoint: abort if the operation was deleted (bank was deleted) between sub-batches.
                 if operation_id and not await self._check_op_alive(operation_id):
                     logger.info(
                         f"[BATCH_RETAIN] bank={bank_id} operation {operation_id} cancelled (bank deleted), stopping after {i - 1}/{len(sub_batches)} sub-batches"
                     )
                     if return_usage:
-                        return all_results, total_usage
-                    return all_results
+                        return per_input_results, total_usage
+                    return per_input_results
 
                 sub_batch_tokens = sum(count_tokens(item.get("content", "")) for item in sub_batch)
                 logger.info(
@@ -2486,7 +2566,12 @@ class MemoryEngine(MemoryEngineInterface):
                     # webhook delivery row is committed atomically with the final retain data.
                     outbox_callback=outbox_callback if i == len(sub_batches) else None,
                 )
-                all_results.extend(sub_results)
+                # sub_results aligns 1:1 with sub_batch items; map each
+                # back to its source input via origin_indices so callers
+                # iterating with ``zip(contents, results)`` still align.
+                for sub_idx, origin_idx in enumerate(sub_origins):
+                    if sub_idx < len(sub_results):
+                        per_input_results[origin_idx].extend(sub_results[sub_idx])
                 total_usage = total_usage + sub_usage
                 if total_processed_content_tokens is None or sub_processed is None:
                     total_processed_content_tokens = None
@@ -2495,9 +2580,9 @@ class MemoryEngine(MemoryEngineInterface):
 
             total_time = time.time() - start_time
             logger.info(
-                f"RETAIN_BATCH_ASYNC (chunked) COMPLETE: {len(all_results)} results from {len(contents)} contents in {total_time:.3f}s"
+                f"RETAIN_BATCH_ASYNC (chunked) COMPLETE: {len(per_input_results)} results from {len(contents)} contents in {total_time:.3f}s"
             )
-            result = all_results
+            result = per_input_results
         else:
             # Small batch - use internal method directly
             result, total_usage, total_processed_content_tokens = await self._retain_batch_async_internal(
@@ -9313,34 +9398,30 @@ class MemoryEngine(MemoryEngineInterface):
         config = get_config()
         tokens_per_batch = config.retain_batch_tokens
 
-        # Split into sub-batches based on token count
-        sub_batches = []
-        current_batch = []
-        current_batch_tokens = 0
-
-        for item in contents:
-            item_tokens = count_tokens(item.get("content", ""))
-
-            # If adding this item would exceed the limit, start a new batch
-            # (unless current batch is empty - then we must include it even if it's large)
-            if current_batch and current_batch_tokens + item_tokens > tokens_per_batch:
-                sub_batches.append(current_batch)
-                current_batch = [item]
-                current_batch_tokens = item_tokens
-            else:
-                current_batch.append(item)
-                current_batch_tokens += item_tokens
-
-        # Add the last batch
-        if current_batch:
-            sub_batches.append(current_batch)
+        # Split into sub-batches based on token count. Oversized single
+        # items get chunked into per-chunk sub-batches by the helper
+        # (see issue #1571). origin_indices is unused here because
+        # submit_async_retain returns only the parent operation_id, not
+        # per-input results.
+        sub_batches = _split_contents_into_sub_batches(
+            cast(list[RetainContentDict], contents), tokens_per_batch
+        ).sub_batches
 
         # Log splitting info if we actually split
         if len(sub_batches) > 1:
-            logger.info(
-                f"Large async retain batch ({total_tokens:,} tokens from {len(contents)} items). "
-                f"Split into {len(sub_batches)} sub-batches: {[len(b) for b in sub_batches]} items each"
-            )
+            sub_batch_sizes = [len(b) for b in sub_batches]
+            if len(sub_batches) <= 20:
+                logger.info(
+                    f"Large async retain batch ({total_tokens:,} tokens from {len(contents)} items). "
+                    f"Split into {len(sub_batches)} sub-batches: {sub_batch_sizes} items each"
+                )
+            else:
+                logger.info(
+                    f"Large async retain batch ({total_tokens:,} tokens from {len(contents)} items). "
+                    f"Split into {len(sub_batches)} sub-batches "
+                    f"(items per sub-batch: min={min(sub_batch_sizes)}, "
+                    f"max={max(sub_batch_sizes)}, total={sum(sub_batch_sizes)})"
+                )
 
         # Always create parent operation (even for single batch - simpler, more reliable code path)
         import uuid
