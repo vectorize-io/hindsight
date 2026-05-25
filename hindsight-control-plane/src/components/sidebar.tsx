@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { useTranslation } from "react-i18next";
 
 type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
 
@@ -24,6 +25,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
+  const { t } = useTranslation();
   const { currentBank } = useBank();
   const [isCollapsed, setIsCollapsed] = useState(true);
 
@@ -32,12 +34,12 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
   }
 
   const navItems = [
-    { id: "data" as NavItem, label: "Memories", icon: Database },
-    { id: "recall" as NavItem, label: "Recall", icon: Search },
-    { id: "reflect" as NavItem, label: "Reflect", icon: Sparkles },
-    { id: "documents" as NavItem, label: "Documents", icon: FileText },
-    { id: "entities" as NavItem, label: "Entities", icon: Users },
-    { id: "profile" as NavItem, label: "Bank Configuration", icon: Settings },
+    { id: "data" as NavItem, label: t("navigation.memories"), icon: Database },
+    { id: "recall" as NavItem, label: t("navigation.recall"), icon: Search },
+    { id: "reflect" as NavItem, label: t("navigation.reflect"), icon: Sparkles },
+    { id: "documents" as NavItem, label: t("navigation.documents"), icon: FileText },
+    { id: "entities" as NavItem, label: t("navigation.entities"), icon: Users },
+    { id: "profile" as NavItem, label: t("navigation.bankConfiguration"), icon: Settings },
   ];
 
   return (
@@ -93,14 +95,14 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
             "w-full flex items-center gap-3 px-4 py-2 rounded-lg text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors",
             isCollapsed && "justify-center px-0"
           )}
-          title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={isCollapsed ? t("navigation.expandSidebar") : t("navigation.collapseSidebar")}
         >
           {isCollapsed ? (
             <ChevronRight className="w-5 h-5" />
           ) : (
             <>
               <ChevronLeft className="w-5 h-5" />
-              <span>Collapse</span>
+              <span>{t("navigation.collapse")}</span>
             </>
           )}
         </button>

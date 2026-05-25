@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import { BankSelector } from "@/components/bank-selector";
 import { useBank } from "@/lib/bank-context";
 import { bankRoute } from "@/lib/bank-url";
+import { useTranslation } from "react-i18next";
 
 export default function DashboardPage() {
+  const { t } = useTranslation();
   const router = useRouter();
   const { currentBank } = useBank();
 
@@ -24,10 +26,10 @@ export default function DashboardPage() {
 
         <div className="flex items-center justify-center h-[calc(100vh-80px)] bg-muted/20">
           <div className="text-center p-10 bg-card rounded-lg border-2 border-border shadow-lg max-w-md">
-            <h3 className="text-2xl font-bold mb-3 text-card-foreground">Welcome to Hindsight</h3>
-            <p className="text-muted-foreground">
-              Select a memory bank from the dropdown above to get started.
-            </p>
+            <h3 className="text-2xl font-bold mb-3 text-card-foreground">
+              {t("dashboard.welcomeTitle")}
+            </h3>
+            <p className="text-muted-foreground">{t("dashboard.selectBank")}</p>
           </div>
         </div>
       </div>

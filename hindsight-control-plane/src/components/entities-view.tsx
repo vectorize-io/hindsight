@@ -11,6 +11,7 @@ import {
   ChevronsRight,
   List,
   ScatterChart,
+  X,
 } from "lucide-react";
 import {
   Table,
@@ -22,6 +23,7 @@ import {
 } from "@/components/ui/table";
 import { Constellation } from "./constellation";
 import { convertHindsightGraphData, GraphNode } from "./graph-2d";
+import { useTranslation } from "react-i18next";
 
 type EntityGraphResponse = Awaited<ReturnType<typeof client.getEntityGraph>>;
 
@@ -41,6 +43,7 @@ type ViewMode = "relations" | "list";
 const ITEMS_PER_PAGE = 50;
 
 export function EntitiesView() {
+  const { t } = useTranslation();
   const { currentBank } = useBank();
   const [entities, setEntities] = useState<Entity[]>([]);
   const [loading, setLoading] = useState(false);
@@ -205,7 +208,7 @@ export function EntitiesView() {
   );
 
   const formatDate = (dateStr?: string) => {
-    if (!dateStr) return "N/A";
+    if (!dateStr) return t("entities.notAvailable");
     return new Date(dateStr).toLocaleDateString();
   };
 
@@ -223,7 +226,7 @@ export function EntitiesView() {
             }`}
           >
             <ScatterChart className="w-4 h-4" />
-            Relations
+            {t("entities.relations")}
           </button>
           <button
             onClick={() => setViewMode("list")}
@@ -234,7 +237,7 @@ export function EntitiesView() {
             }`}
           >
             <List className="w-4 h-4" />
-            List
+            {t("entities.list")}
           </button>
         </div>
       </div>
@@ -245,7 +248,7 @@ export function EntitiesView() {
             <div className="flex items-center justify-center py-20">
               <div className="text-center">
                 <div className="text-4xl mb-2">...</div>
-                <div className="text-sm text-muted-foreground">Loading entity graph...</div>
+                <div className="text-sm text-muted-foreground">{t("entities.loadingGraph")}</div>
               </div>
             </div>
           ) : constellationData.nodes.length > 0 ? (
@@ -255,7 +258,7 @@ export function EntitiesView() {
               onNodeClick={handleConstellationNodeClick}
               nodeSizeFn={nodeSizeFn}
               nodeHeatFn={recencyLookup ? nodeHeatFn : undefined}
-              heatLegendLabel={recencyLookup ? "recency · last co-occurrence" : undefined}
+              heatLegendLabel={recencyLookup ? t("entities.recencyLegend") : undefined}
               heatLegendEndpoints={
                 recencyLookup
                   ? [
@@ -270,9 +273,9 @@ export function EntitiesView() {
           ) : (
             <div className="flex items-center justify-center py-20">
               <div className="text-center">
-                <div className="text-sm text-muted-foreground">No entity co-occurrences yet</div>
+                <div className="text-sm text-muted-foreground">{t("entities.noCooccurrences")}</div>
                 <div className="text-xs text-muted-foreground mt-1">
-                  Two entities co-occur when they appear in the same memory.
+                  {t("entities.cooccurrenceDescription")}
                 </div>
               </div>
             </div>
@@ -287,22 +290,22 @@ export function EntitiesView() {
             <div className="flex items-center justify-center py-20">
               <div className="text-center">
                 <div className="text-4xl mb-2">...</div>
-                <div className="text-sm text-muted-foreground">Loading entities...</div>
+                <div className="text-sm text-muted-foreground">{t("entities.loadingEntities")}</div>
               </div>
             </div>
           ) : entities.length > 0 ? (
             <>
               <div className="mb-4 text-sm text-muted-foreground">
-                {total} {total === 1 ? "entity" : "entities"}
+                {t("entities.count", { count: total })}
               </div>
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Mentions</TableHead>
-                      <TableHead>First Seen</TableHead>
-                      <TableHead>Last Seen</TableHead>
+                      <TableHead>{t("entities.columns.name")}</TableHead>
+                      <TableHead>{t("entities.columns.mentions")}</TableHead>
+                      <TableHead>{t("entities.columns.firstSeen")}</TableHead>
+                      <TableHead>{t("entities.columns.lastSeen")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -336,7 +339,11 @@ export function EntitiesView() {
               {totalPages > 1 && (
                 <div className="flex items-center justify-between mt-3 pt-3 border-t">
                   <div className="text-xs text-muted-foreground">
-                    {offset + 1}-{Math.min(offset + ITEMS_PER_PAGE, total)} of {total}
+                    {t("entities.paginationRange", {
+                      start: offset + 1,
+                      end: Math.min(offset + ITEMS_PER_PAGE, total),
+                      total,
+                    })}
                   </div>
                   <div className="flex items-center gap-1">
                     <Button
@@ -358,7 +365,7 @@ export function EntitiesView() {
                       <ChevronLeft className="h-3 w-3" />
                     </Button>
                     <span className="text-xs px-2">
-                      {currentPage} / {totalPages}
+                      {t("entities.paginationPage", { current: currentPage, total: totalPages })}
                     </span>
                     <Button
                       variant="outline"
@@ -386,9 +393,9 @@ export function EntitiesView() {
             <div className="flex items-center justify-center py-20">
               <div className="text-center">
                 <div className="text-4xl mb-2">...</div>
-                <div className="text-sm text-muted-foreground">No entities found</div>
+                <div className="text-sm text-muted-foreground">{t("entities.noEntities")}</div>
                 <div className="text-xs text-muted-foreground mt-1">
-                  Entities are extracted from facts when memories are added.
+                  {t("entities.noEntitiesDescription")}
                 </div>
               </div>
             </div>
@@ -406,15 +413,16 @@ export function EntitiesView() {
                 <h3 className="text-xl font-bold text-card-foreground">
                   {selectedEntity.canonical_name}
                 </h3>
-                <p className="text-sm text-muted-foreground mt-1">Entity details</p>
+                <p className="text-sm text-muted-foreground mt-1">{t("entities.entityDetails")}</p>
               </div>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setSelectedEntity(null)}
                 className="h-8 w-8 p-0"
+                aria-label={t("common.actions.close")}
               >
-                <span className="text-lg">x</span>
+                <X className="h-4 w-4" />
               </Button>
             </div>
 
@@ -423,7 +431,7 @@ export function EntitiesView() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="p-4 bg-muted/50 rounded-lg">
                   <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-                    Mentions
+                    {t("entities.columns.mentions")}
                   </div>
                   <div className="text-lg font-semibold text-card-foreground">
                     {selectedEntity.mention_count}
@@ -431,7 +439,7 @@ export function EntitiesView() {
                 </div>
                 <div className="p-4 bg-muted/50 rounded-lg">
                   <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-                    First Seen
+                    {t("entities.columns.firstSeen")}
                   </div>
                   <div className="text-sm font-medium text-card-foreground">
                     {formatDate(selectedEntity.first_seen)}
@@ -442,7 +450,7 @@ export function EntitiesView() {
               {/* ID */}
               <div className="p-4 bg-muted/50 rounded-lg">
                 <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-                  Entity ID
+                  {t("entities.entityId")}
                 </div>
                 <code className="text-xs font-mono break-all text-muted-foreground">
                   {selectedEntity.id}

@@ -54,7 +54,8 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import type { BankInfo } from "@/lib/bank-context";
+import { LanguageSelector } from "@/components/language-selector";
+import { useTranslation } from "react-i18next";
 
 function formatCompact(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
@@ -83,9 +84,10 @@ function formatTimeAgo(isoDate: string): string {
 }
 
 function BankSelectorInner() {
+  const { t } = useTranslation();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { currentBank, setCurrentBank, banks, bankInfos, banksLoading, loadBanks } = useBank();
+  const { currentBank, setCurrentBank, bankInfos, banksLoading, loadBanks } = useBank();
   const { theme, toggleTheme } = useTheme();
   const { features } = useFeatures();
   const [open, setOpen] = React.useState(false);
@@ -482,22 +484,24 @@ function BankSelectorInner() {
               aria-expanded={open}
               className="w-[250px] justify-between font-bold border-2 border-primary hover:bg-accent"
             >
-              <span className="truncate">{currentBank || "Select a memory bank..."}</span>
+              <span className="truncate">{currentBank || t("bankSelector.placeholder")}</span>
               <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-[420px] p-0" align="start">
             <Command>
-              {sortedBanks.length > 0 && <CommandInput placeholder="Search memory banks..." />}
+              {sortedBanks.length > 0 && (
+                <CommandInput placeholder={t("bankSelector.searchPlaceholder")} />
+              )}
               <CommandList>
                 <CommandEmpty>
                   {banksLoading ? (
                     <div className="flex items-center justify-center gap-2 py-2">
                       <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                      <span>Loading banks...</span>
+                      <span>{t("bankSelector.loadingBanks")}</span>
                     </div>
                   ) : (
-                    "No memory banks yet."
+                    t("bankSelector.empty")
                   )}
                 </CommandEmpty>
                 <CommandGroup>
@@ -546,7 +550,9 @@ function BankSelectorInner() {
                                 </span>
                               </>
                             ) : (
-                              <span className="italic text-muted-foreground/40">empty</span>
+                              <span className="italic text-muted-foreground/40">
+                                {t("bankSelector.emptyBank")}
+                              </span>
                             )}
                           </span>
                         </div>
@@ -594,6 +600,12 @@ function BankSelectorInner() {
         <div className="flex-1" />
 
         {/* GitHub Link */}
+        <LanguageSelector />
+
+        {/* Separator */}
+        <div className="h-8 w-px bg-border" />
+
+        {/* GitHub Link */}
         <a
           href="https://github.com/vectorize-io/hindsight"
           target="_blank"
@@ -602,7 +614,7 @@ function BankSelectorInner() {
           title="View on GitHub"
         >
           <Github className="h-5 w-5" />
-          <span className="text-sm font-medium">GitHub</span>
+          <span className="text-sm font-medium">{t("common.github")}</span>
         </a>
 
         {/* Separator */}

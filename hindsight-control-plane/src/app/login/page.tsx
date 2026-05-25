@@ -6,8 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import Image from "next/image";
+import { useTranslation } from "react-i18next";
 
 function LoginForm() {
+  const { t } = useTranslation();
   const [key, setKey] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -41,10 +43,10 @@ function LoginForm() {
         router.refresh();
       } else {
         const data = await res.json().catch(() => null);
-        setError(data?.error || "Invalid access key");
+        setError(data?.error || t("login.invalidAccessKey"));
       }
     } catch {
-      setError("Failed to connect to server");
+      setError(t("login.connectionFailed"));
     } finally {
       setLoading(false);
     }
@@ -62,7 +64,7 @@ function LoginForm() {
             className="mx-auto"
             unoptimized
           />
-          <CardDescription>Enter your access key to continue</CardDescription>
+          <CardDescription>{t("login.description")}</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -70,7 +72,7 @@ function LoginForm() {
               <Input
                 id="access-key"
                 type="password"
-                placeholder="Enter access key"
+                placeholder={t("login.placeholder")}
                 value={key}
                 onChange={(e) => setKey(e.target.value)}
                 autoComplete="off"
@@ -80,7 +82,7 @@ function LoginForm() {
             {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
             <Button type="submit" className="w-full" disabled={loading || !key}>
-              {loading ? "Signing in..." : "Sign In"}
+              {loading ? t("login.signingIn") : t("login.signIn")}
             </Button>
           </form>
         </CardContent>

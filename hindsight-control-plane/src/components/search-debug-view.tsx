@@ -15,7 +15,6 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FactType, FactTypeFilter } from "@/components/fact-type-filter";
-import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Search,
@@ -33,12 +32,14 @@ import {
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { MemoryDetailPanel } from "./memory-detail-panel";
+import { useTranslation } from "react-i18next";
 
 type Budget = "low" | "mid" | "high";
 type TagsMatch = "any" | "all" | "any_strict" | "all_strict";
 type ViewMode = "results" | "trace" | "json";
 
 export function SearchDebugView() {
+  const { t } = useTranslation();
   const { currentBank } = useBank();
 
   // Query state
@@ -100,8 +101,8 @@ export function SearchDebugView() {
 
   const runSearch = async () => {
     if (!currentBank) {
-      toast.error("Validation error", {
-        description: "Please select a memory bank first",
+      toast.error(t("common.validationError"), {
+        description: t("recall.validationSelectBank"),
       });
       return;
     }
@@ -112,8 +113,8 @@ export function SearchDebugView() {
 
     // Must select at least one type
     if (factTypes.length === 0) {
-      toast.error("Validation error", {
-        description: "Please select at least one type (World, Experience, or Observations)",
+      toast.error(t("common.validationError"), {
+        description: t("recall.validationSelectType"),
       });
       return;
     }
@@ -162,8 +163,8 @@ export function SearchDebugView() {
       <Card className="border-dashed">
         <CardContent className="flex flex-col items-center justify-center py-16">
           <Database className="h-12 w-12 text-muted-foreground mb-4" />
-          <h3 className="text-xl font-semibold mb-2">No Bank Selected</h3>
-          <p className="text-muted-foreground">Select a memory bank to start recalling.</p>
+          <h3 className="text-xl font-semibold mb-2">{t("common.states.noBankSelected")}</h3>
+          <p className="text-muted-foreground">{t("recall.noBankDescription")}</p>
         </CardContent>
       </Card>
     );
@@ -181,19 +182,23 @@ export function SearchDebugView() {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="What would you like to recall?"
+                placeholder={t("recall.queryPlaceholder")}
                 className="pl-10 h-12 text-lg"
                 onKeyDown={(e) => e.key === "Enter" && runSearch()}
               />
             </div>
             <Button onClick={runSearch} disabled={loading || !query} className="h-12 px-8">
-              {loading ? "Searching..." : "Recall"}
+              {loading ? t("recall.searching") : t("recall.search")}
             </Button>
           </div>
 
           {/* Filters */}
           <div className="flex flex-wrap items-center gap-6 mt-4 pt-4 border-t">
-            <FactTypeFilter value={factTypes} onChange={setFactTypes} label="Types:" />
+            <FactTypeFilter
+              value={factTypes}
+              onChange={setFactTypes}
+              label={t("common.filters.types")}
+            />
 
             <div className="h-6 w-px bg-border" />
 
@@ -205,16 +210,16 @@ export function SearchDebugView() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="low">Low</SelectItem>
-                  <SelectItem value="mid">Mid</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
+                  <SelectItem value="low">{t("common.filters.budgetOptions.low")}</SelectItem>
+                  <SelectItem value="mid">{t("common.filters.budgetOptions.mid")}</SelectItem>
+                  <SelectItem value="high">{t("common.filters.budgetOptions.high")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
             {/* Max Tokens */}
             <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Tokens:</span>
+              <span className="text-sm text-muted-foreground">{t("common.filters.tokens")}</span>
               <Input
                 type="number"
                 value={maxTokens}
@@ -231,7 +236,7 @@ export function SearchDebugView() {
                 value={queryDate}
                 onChange={(e) => setQueryDate(e.target.value)}
                 className="h-8"
-                placeholder="Query date"
+                placeholder={t("common.filters.queryDate")}
               />
             </div>
 
@@ -245,7 +250,7 @@ export function SearchDebugView() {
                   onCheckedChange={(c) => setIncludeChunks(c as boolean)}
                 />
                 <FileText className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm">Chunks</span>
+                <span className="text-sm">{t("recall.includeChunks")}</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <Checkbox
@@ -253,7 +258,7 @@ export function SearchDebugView() {
                   onCheckedChange={(c) => setIncludeEntities(c as boolean)}
                 />
                 <Users className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm">Entities</span>
+                <span className="text-sm">{t("recall.includeEntities")}</span>
               </label>
             </div>
           </div>
@@ -266,7 +271,7 @@ export function SearchDebugView() {
                 type="text"
                 value={tags}
                 onChange={(e) => setTags(e.target.value)}
-                placeholder="Filter by tags (comma-separated)"
+                placeholder={t("common.filters.tagsPlaceholder")}
                 className="h-8"
               />
             </div>
@@ -275,10 +280,14 @@ export function SearchDebugView() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="any">Any (incl. untagged)</SelectItem>
-                <SelectItem value="all">All (incl. untagged)</SelectItem>
-                <SelectItem value="any_strict">Any (strict)</SelectItem>
-                <SelectItem value="all_strict">All (strict)</SelectItem>
+                <SelectItem value="any">{t("common.filters.tagsMatch.any")}</SelectItem>
+                <SelectItem value="all">{t("common.filters.tagsMatch.all")}</SelectItem>
+                <SelectItem value="any_strict">
+                  {t("common.filters.tagsMatch.anyStrict")}
+                </SelectItem>
+                <SelectItem value="all_strict">
+                  {t("common.filters.tagsMatch.allStrict")}
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -290,7 +299,7 @@ export function SearchDebugView() {
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-4" />
-            <p className="text-muted-foreground">Searching memories...</p>
+            <p className="text-muted-foreground">{t("recall.searchingMemories")}</p>
           </CardContent>
         </Card>
       )}
@@ -301,17 +310,17 @@ export function SearchDebugView() {
           {trace?.summary && (
             <div className="flex items-center gap-6 text-sm">
               <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">Results:</span>
+                <span className="text-muted-foreground">{t("recall.resultsLabel")}</span>
                 <span className="font-semibold">{results.length}</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">Duration:</span>
+                <span className="text-muted-foreground">{t("recall.durationLabel")}</span>
                 <span className="font-semibold">
                   {trace.summary.total_duration_seconds?.toFixed(2)}s
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">Nodes visited:</span>
+                <span className="text-muted-foreground">{t("recall.nodesVisitedLabel")}</span>
                 <span className="font-semibold">{trace.summary.total_nodes_visited}</span>
               </div>
 
@@ -329,7 +338,7 @@ export function SearchDebugView() {
                         : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
-                    {mode === "results" ? "Results" : mode === "trace" ? "Trace" : "JSON"}
+                    {t(`recall.viewModes.${mode}`)}
                   </button>
                 ))}
               </div>
@@ -345,7 +354,7 @@ export function SearchDebugView() {
                   <CardHeader className="py-3">
                     <CardTitle className="text-base flex items-center gap-2">
                       <Database className="h-4 w-4 text-orange-500" />
-                      <span>Observations</span>
+                      <span>{t("dataTabs.observations")}</span>
                       <span className="text-xs text-muted-foreground">({observations.length})</span>
                     </CardTitle>
                   </CardHeader>
@@ -375,7 +384,7 @@ export function SearchDebugView() {
                   <Card>
                     <CardContent className="flex flex-col items-center justify-center py-12">
                       <Search className="h-12 w-12 text-muted-foreground mb-4" />
-                      <p className="text-muted-foreground">No memories found for this query.</p>
+                      <p className="text-muted-foreground">{t("recall.noMemoriesForQuery")}</p>
                     </CardContent>
                   </Card>
                 ) : (
@@ -412,7 +421,9 @@ export function SearchDebugView() {
                             </div>
                             <div className="flex-shrink-0 text-right">
                               <div className="text-sm font-semibold">{(score ?? 0).toFixed(3)}</div>
-                              <div className="text-xs text-muted-foreground">score</div>
+                              <div className="text-xs text-muted-foreground">
+                                {t("recall.scoreLabel")}
+                              </div>
                             </div>
                             <ChevronRight className="h-5 w-5 text-muted-foreground flex-shrink-0" />
                           </div>
@@ -445,7 +456,7 @@ export function SearchDebugView() {
                     <div>
                       <div className="text-xs font-medium text-muted-foreground mb-3 flex items-center gap-2">
                         <div className="flex-1 h-px bg-border" />
-                        <span>PARALLEL RETRIEVAL</span>
+                        <span>{t("recall.parallelRetrieval")}</span>
                         <div className="flex-1 h-px bg-border" />
                       </div>
 
@@ -735,7 +746,9 @@ export function SearchDebugView() {
                             </div>
                             <div className="flex-1">
                               <div className="flex items-center gap-2">
-                                <span className="font-semibold text-foreground">RRF Fusion</span>
+                                <span className="font-semibold text-foreground">
+                                  {t("recall.rrfFusion")}
+                                </span>
                                 <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">
                                   merge
                                 </span>
@@ -953,7 +966,9 @@ export function SearchDebugView() {
                     </div>
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-semibold text-foreground">Final Results</span>
+                        <span className="font-semibold text-foreground">
+                          {t("recall.finalResults")}
+                        </span>
                         <span className="text-xs px-2 py-0.5 rounded bg-primary/20 text-primary">
                           output
                         </span>
@@ -973,7 +988,7 @@ export function SearchDebugView() {
           {viewMode === "json" && (
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg">Raw Response</CardTitle>
+                <CardTitle className="text-lg">{t("recall.rawResponse")}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="bg-muted p-4 rounded-lg overflow-auto max-h-[600px]">
@@ -1000,10 +1015,9 @@ export function SearchDebugView() {
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-16">
             <Search className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">Ready to Recall</h3>
+            <h3 className="text-lg font-semibold mb-2">{t("recall.readyTitle")}</h3>
             <p className="text-muted-foreground text-center max-w-md">
-              Enter a query above to search through your memories. Use filters to narrow down by
-              fact type, budget, and more.
+              {t("recall.readyDescription")}
             </p>
           </CardContent>
         </Card>
