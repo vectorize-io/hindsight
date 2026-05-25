@@ -763,7 +763,8 @@ class TestMentalModelHistory:
             request_context=request_context,
         )
 
-        # reflect_response with no based_on field
+        # reflect_response with no based_on field — will become the "previous"
+        # reflect_response when v3 is written, producing slim None.
         await memory.update_mental_model(
             bank_id=bank_id,
             mental_model_id=mm["id"],
@@ -771,6 +772,8 @@ class TestMentalModelHistory:
             reflect_response={"text": "v1", "mental_models": []},
             request_context=request_context,
         )
+        # reflect_response with based_on={} — will become the "previous"
+        # reflect_response when v4 is written, producing slim {"based_on": {}}.
         await memory.update_mental_model(
             bank_id=bank_id,
             mental_model_id=mm["id"],
@@ -778,12 +781,23 @@ class TestMentalModelHistory:
             reflect_response={"text": "v2", "based_on": {}},
             request_context=request_context,
         )
+        # One more update so that the based_on={} reflect_response becomes
+        # the *previous* state captured in a history entry.
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            content="v4",
+            request_context=request_context,
+        )
 
         history = await memory.get_mental_model_history(bank_id, mm["id"], request_context=request_context)
-        # First (most recent): had based_on={} → stored as {"based_on": {}}
+        assert len(history) == 3
+        # Most recent: v3→v4, previous rr had based_on={} → stored as {"based_on": {}}
         assert history[0]["previous_reflect_response"] == {"based_on": {}}
-        # Second: had no based_on field → stored as None
+        # Second: v2→v3, previous rr had no based_on field → stored as None
         assert history[1]["previous_reflect_response"] is None
+        # Third: v1→v2, no reflect_response on the row yet → stored as None
+        assert history[2]["previous_reflect_response"] is None
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

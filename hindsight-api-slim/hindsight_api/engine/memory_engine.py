@@ -8008,20 +8008,24 @@ class MemoryEngine(MemoryEngineInterface):
                         ]
                     )
                     max_entries = get_config().mental_model_history_max_entries
+                    history_param_idx = param_idx
+                    param_idx += 1
+                    max_entries_param_idx = param_idx
+                    param_idx += 1
                     updates.append(
                         "history = ("
                         "  SELECT COALESCE(jsonb_agg(elem ORDER BY idx), '[]'::jsonb) "
                         "  FROM jsonb_array_elements("
-                        f"    COALESCE(history, '[]'::jsonb) || ${param_idx}::jsonb"
+                        f"    COALESCE(history, '[]'::jsonb) || ${history_param_idx}::jsonb"
                         "  ) WITH ORDINALITY a(elem, idx) "
                         "  WHERE idx > GREATEST("
                         "    jsonb_array_length(COALESCE(history, '[]'::jsonb)) + 1"
-                        f"    - {max_entries}, 0"
+                        f"    - ${max_entries_param_idx}, 0"
                         "  )"
                         ")"
                     )
                     params.append(history_entry)
-                    param_idx += 1
+                    params.append(max_entries)
                 # Also update embedding (convert to string for asyncpg vector type)
                 embedding_text = f"{name or ''} {content}"
                 embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [embedding_text])
