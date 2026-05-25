@@ -246,6 +246,48 @@ class QuotaAwareValidator(OperationValidatorExtension):
 `validate_recall` or `validate_reflect` in synchronous HTTP request
 paths — there is no queue to defer to and it will surface as a 500.
 
+#### Pre-body-parse precheck
+
+`OperationValidatorExtension` also exposes an optional `precheck` hook that runs
+**before the request body is parsed**. FastAPI resolves `Depends` callables
+ahead of body deserialisation, so a `precheck` wired onto the billable POST
+routes (retain, recall, reflect, files retain, mental-model create + refresh)
+can short-circuit a request without ever materialising the JSON payload in
+memory. Use it for "should this caller be allowed to spend resources on this
+request at all" decisions — an exhausted balance, a revoked key, or a
+rate-limited tenant.
+
+The hook receives a `PrecheckContext`, which carries only the cheap,
+already-resolved request state (the body is not yet available):
+
+- `operation`: a short route identifier, e.g. `"retain"`, `"recall"`,
+  `"reflect"`, `"files_retain"`, `"mental_model_create"`,
+  `"mental_model_refresh"`.
+- `bank_id`: parsed from the URL path.
+- `request_context`: the authenticated `RequestContext` (tenant already
+  resolved by the tenant extension).
+
+```python
+from hindsight_api.extensions import (
+    OperationValidatorExtension,
+    PrecheckContext,
+    ValidationResult,
+)
+
+
+class QuotaAwareValidator(OperationValidatorExtension):
+    async def precheck(self, ctx: PrecheckContext) -> ValidationResult:
+        if await self._balance_exhausted(ctx.bank_id):
+            return ValidationResult.reject("balance exhausted")
+        return ValidationResult.accept()
+```
+
+Keep `precheck` cheap (prefer cached lookups) and conservative on errors —
+prefer `ValidationResult.accept()` so a transient lookup failure does not turn
+into a request rejection. The default implementation accepts everything, so the
+hook is opt-in; the post-body `validate_*` hooks still run and remain the source
+of truth for the precise per-call cost / quota arithmetic.
+
 ### Example: Custom MCPExtension
 
 ```python
