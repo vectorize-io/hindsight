@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi.middleware.gzip import GZipMiddleware
 
 from hindsight_api.engine.audit import AuditEntry, AuditLogger
 from hindsight_api.extensions import AuthenticationError
@@ -2727,6 +2728,8 @@ def create_app(
     # This is required for mounted sub-applications where lifespan may not fire
     app.state.memory = memory
     app.state.audit_logger = memory.audit_logger
+
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     # ---------------------------------------------------------------------------
     # Patch OpenAPI schema: align ValidationError with Pydantic v2 error format

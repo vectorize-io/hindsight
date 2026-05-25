@@ -513,6 +513,7 @@ Reranks initial search results to improve precision.
 | `cohere` | Cohere rerank API | Production, high quality |
 | `zeroentropy` | ZeroEntropy rerank API (zerank-2) | Production, state-of-the-art accuracy |
 | `siliconflow` | SiliconFlow rerank API (Cohere-compatible `/rerank` endpoint) | Users in China or anyone on SiliconFlow's platform |
+| `alibaba` | Alibaba Cloud DashScope rerank API (qwen3-rerank) | Users on Alibaba Cloud / DashScope |
 | `tei` | HuggingFace Text Embeddings Inference | Production, self-hosted |
 | `flashrank` | FlashRank (lightweight, fast) | Resource-constrained environments |
 | `litellm` | LiteLLM proxy (unified gateway) | Multi-provider setups |
@@ -549,6 +550,14 @@ SiliconFlow hosts a range of open-weight rerankers behind a Cohere-compatible `/
 |-------|----------|
 | `BAAI/bge-reranker-v2-m3` | Multilingual, strong default |
 | `Qwen/Qwen3-Reranker-8B` | Larger, higher accuracy |
+
+### Alibaba Cloud Models
+
+Alibaba Cloud DashScope exposes `qwen3-rerank` via a Cohere-compatible `/reranks` endpoint:
+
+| Model | Use Case |
+|-------|----------|
+| `qwen3-rerank` | 100+ languages, default |
 
 ### LiteLLM Supported Providers
 
@@ -594,6 +603,11 @@ export HINDSIGHT_API_RERANKER_ZEROENTROPY_MODEL=zerank-2  # default, can omit
 export HINDSIGHT_API_RERANKER_PROVIDER=siliconflow
 export HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY=your-api-key
 export HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL=BAAI/bge-reranker-v2-m3  # default, can omit
+
+# Alibaba Cloud DashScope (qwen3-rerank)
+export HINDSIGHT_API_RERANKER_PROVIDER=alibaba
+export HINDSIGHT_API_RERANKER_ALIBABA_API_KEY=your-dashscope-api-key
+export HINDSIGHT_API_RERANKER_ALIBABA_MODEL=qwen3-rerank  # default, can omit
 
 # TEI (self-hosted)
 export HINDSIGHT_API_RERANKER_PROVIDER=tei
