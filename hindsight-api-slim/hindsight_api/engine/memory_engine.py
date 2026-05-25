@@ -227,6 +227,30 @@ def _is_oracledb_integrity_error(e: Exception) -> bool:
     return isinstance(e, oracledb.IntegrityError)
 
 
+def _is_invalid_embedding_dimension_error(e: Exception) -> bool:
+    """Return True for deterministic embedding-dimension failures.
+
+    These errors come from either PR #1670's preflight validation
+    ("embedding 0 has dimension 0; expected 384") or from pgvector itself
+    ("different vector dimensions 384 and 0"). Retrying the same poisoned
+    embedding response only burns worker slots; a fresh retain request or a
+    fixed embedding backend is required.
+    """
+    message = str(e).lower()
+    return "different vector dimensions" in message or (
+        "embedding" in message and "dimension" in message and "expected" in message
+    )
+
+
+def _is_non_retryable_task_error(e: Exception) -> bool:
+    """Classify deterministic task failures that should skip worker retry."""
+    return (
+        isinstance(e, asyncpg.exceptions.IntegrityConstraintViolationError)
+        or _is_oracledb_integrity_error(e)
+        or _is_invalid_embedding_dimension_error(e)
+    )
+
+
 class Budget(str, Enum):
     """Budget levels for recall/reflect operations."""
 
@@ -1237,17 +1261,11 @@ class MemoryEngine(MemoryEngineInterface):
                     logger.error(f"Not retrying task {task_type} (non-retryable), marking as failed")
                     if operation_id:
                         await self._mark_operation_failed(operation_id, str(e), error_traceback)
-                elif isinstance(e, asyncpg.exceptions.IntegrityConstraintViolationError) or (
-                    _is_oracledb_integrity_error(e)
-                ):
-                    # Non-retryable: deterministic integrity violations (PG or Oracle)
-                    # (UniqueViolationError, ForeignKeyViolationError, CheckViolationError,
-                    # NotNullViolationError, ExclusionViolationError / ORA-00001, ORA-02291, etc.)
-                    # will never succeed on retry — the offending row state is already committed.
-                    # Retrying just burns worker capacity. See vectorize-io/hindsight#980.
-                    logger.error(
-                        f"Not retrying task {task_type} (integrity violation, deterministic): {type(e).__name__}"
-                    )
+                elif _is_non_retryable_task_error(e):
+                    # Non-retryable: deterministic task failures (integrity violations,
+                    # invalid embedding dimensions, etc.) will not succeed by rerunning
+                    # the same payload. Retrying just burns worker capacity.
+                    logger.error(f"Not retrying task {task_type} (deterministic failure): {type(e).__name__}")
                     if task_type == "consolidation" and operation_id:
                         await self._fire_consolidation_webhook(
                             bank_id=task_dict.get("bank_id", ""),
