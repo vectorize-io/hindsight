@@ -202,7 +202,7 @@ Hindsight exposes two operations via the SDK and API outside of Hermes, feeding 
 
 **Ingesting existing docs.** Upload architecture notes, ADRs, or conventions files. Hindsight runs fact extraction on the content and stores the results as memories in the bank. Once ingested, those facts are available to Hermes on the next session, no waiting for organic extraction to catch up.
 
-**Creating a mental model page.** Define a synthesized, auto-updating summary built from a source query, "What are the coding conventions for this project?" Hindsight synthesizes the answer from all ingested and session-extracted knowledge and keeps it current as new facts arrive. Mental models are checked first during reflect calls, before individual observations and raw facts, the pre-computed answer is returned without re-deriving it.
+**Creating a mental model.** Define a curated summary built from a source query, "What are the coding conventions for this project?" Hindsight runs a reflect operation, synthesizes the answer from all ingested and session-extracted knowledge, and saves the result. Set `refresh_after_consolidation` to true and the model re-derives itself as new facts arrive. Mental models are checked first during reflect calls, before individual observations and raw facts, so the pre-computed answer is returned without re-deriving it on the fly.
 
 The combination of ingested project docs and session-extracted facts gives Hermes a complete picture from two angles: what was deliberately documented, and what was discovered through use.
 
