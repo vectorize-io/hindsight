@@ -1,13 +1,13 @@
 "use client";
 
 import * as React from "react";
-import i18next from "i18next";
+import { createInstance, type i18n as I18nInstance } from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import {
   defaultLocale,
   isSupportedLocale,
+  languageCookieName,
   languageStorageKey,
-  resolveSupportedLocale,
   resources,
   supportedLocales,
   type SupportedLocale,
@@ -20,21 +20,17 @@ interface LocaleContextValue {
 }
 
 const LocaleContext = React.createContext<LocaleContextValue | undefined>(undefined);
-const localeHydrationDelayMs = 750;
+const languageCookieMaxAgeSeconds = 60 * 60 * 24 * 365;
 
-function ensureI18nInitialized() {
-  if (i18next.isInitialized) {
-    if (i18next.language !== defaultLocale) {
-      void i18next.changeLanguage(defaultLocale);
-    }
-    return;
-  }
+function createI18n(initialLocale: SupportedLocale): I18nInstance {
+  const instance = createInstance();
 
-  void i18next.use(initReactI18next).init({
+  void instance.use(initReactI18next).init({
     resources,
-    lng: defaultLocale,
+    lng: initialLocale,
     fallbackLng: defaultLocale,
     supportedLngs: supportedLocales.map((locale) => locale.code),
+    initAsync: false,
     interpolation: {
       escapeValue: false,
     },
@@ -42,15 +38,7 @@ function ensureI18nInitialized() {
       useSuspense: false,
     },
   });
-}
-
-function readPreferredLocale(): SupportedLocale {
-  if (typeof window === "undefined") return defaultLocale;
-
-  const storedLocale = window.localStorage.getItem(languageStorageKey);
-  if (isSupportedLocale(storedLocale)) return storedLocale;
-
-  return resolveSupportedLocale([...(window.navigator.languages ?? []), window.navigator.language]);
+  return instance;
 }
 
 function writeDocumentLocale(locale: SupportedLocale) {
@@ -58,59 +46,43 @@ function writeDocumentLocale(locale: SupportedLocale) {
   document.documentElement.lang = locale;
 }
 
-ensureI18nInitialized();
+function writeStoredLocale(locale: SupportedLocale) {
+  if (typeof window === "undefined") return;
 
-export function I18nProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocaleState] = React.useState<SupportedLocale>(defaultLocale);
+  try {
+    window.localStorage.setItem(languageStorageKey, locale);
+  } catch {
+    // Storage may be unavailable in private browsing or locked-down environments.
+  }
+}
 
-  const setLocale = React.useCallback((nextLocale: SupportedLocale) => {
-    setLocaleState(nextLocale);
-    writeDocumentLocale(nextLocale);
+function writeLocaleCookie(locale: SupportedLocale) {
+  if (typeof document === "undefined") return;
+  document.cookie = `${languageCookieName}=${encodeURIComponent(
+    locale
+  )}; Path=/; Max-Age=${languageCookieMaxAgeSeconds}; SameSite=Lax`;
+}
 
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(languageStorageKey, nextLocale);
-    }
+interface I18nProviderProps {
+  children: React.ReactNode;
+  initialLocale: SupportedLocale;
+}
 
-    void i18next.changeLanguage(nextLocale);
-  }, []);
+export function I18nProvider({ children, initialLocale }: I18nProviderProps) {
+  const [i18n] = React.useState(() => createI18n(initialLocale));
+  const [locale, setLocaleState] = React.useState<SupportedLocale>(initialLocale);
 
-  React.useEffect(() => {
-    let cancelled = false;
-    let timeoutId: number | undefined;
-    let frameId: number | undefined;
-    let secondFrameId: number | undefined;
+  const setLocale = React.useCallback(
+    (nextLocale: SupportedLocale) => {
+      setLocaleState(nextLocale);
+      writeDocumentLocale(nextLocale);
+      writeStoredLocale(nextLocale);
+      writeLocaleCookie(nextLocale);
 
-    const applyPreferredLocale = () => {
-      // Keep the first client pass aligned with SSR output before applying
-      // local/browser preferences, otherwise late-hydrating client components
-      // can see translated text before React has attached to the English HTML.
-      timeoutId = window.setTimeout(() => {
-        if (!cancelled) {
-          setLocale(readPreferredLocale());
-        }
-      }, localeHydrationDelayMs);
-    };
-
-    const scheduleAfterFrame = () => {
-      frameId = window.requestAnimationFrame(() => {
-        secondFrameId = window.requestAnimationFrame(applyPreferredLocale);
-      });
-    };
-
-    if (document.readyState === "complete") {
-      scheduleAfterFrame();
-    } else {
-      window.addEventListener("load", scheduleAfterFrame, { once: true });
-    }
-
-    return () => {
-      cancelled = true;
-      window.removeEventListener("load", scheduleAfterFrame);
-      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
-      if (frameId !== undefined) window.cancelAnimationFrame(frameId);
-      if (secondFrameId !== undefined) window.cancelAnimationFrame(secondFrameId);
-    };
-  }, [setLocale]);
+      void i18n.changeLanguage(nextLocale);
+    },
+    [i18n]
+  );
 
   React.useEffect(() => {
     const handleLanguageChanged = (language: string) => {
@@ -119,11 +91,11 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
       writeDocumentLocale(nextLocale);
     };
 
-    i18next.on("languageChanged", handleLanguageChanged);
+    i18n.on("languageChanged", handleLanguageChanged);
     return () => {
-      i18next.off("languageChanged", handleLanguageChanged);
+      i18n.off("languageChanged", handleLanguageChanged);
     };
-  }, []);
+  }, [i18n]);
 
   const value = React.useMemo(
     () => ({
@@ -136,7 +108,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <LocaleContext.Provider value={value}>
-      <I18nextProvider i18n={i18next}>{children}</I18nextProvider>
+      <I18nextProvider i18n={i18n}>{children}</I18nextProvider>
     </LocaleContext.Provider>
   );
 }

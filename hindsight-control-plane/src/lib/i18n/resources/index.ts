@@ -2,6 +2,7 @@ import en from "./en";
 import zhCN from "./zh-CN";
 
 export const defaultLocale = "en";
+export const languageCookieName = "hindsight_cp_locale";
 export const languageStorageKey = "hindsight_cp_locale";
 
 export const supportedLocales = [
@@ -56,4 +57,27 @@ export function resolveSupportedLocale(values: Array<string | null | undefined>)
   }
 
   return defaultLocale;
+}
+
+export function parseAcceptLanguage(header: string | null | undefined): string[] {
+  if (!header) return [];
+
+  return header
+    .split(",")
+    .map((entry) => {
+      const [locale = "", ...params] = entry.trim().split(";");
+      const quality = params.reduce((currentQuality, param) => {
+        const [key, value] = param.trim().split("=");
+        const nextQuality = Number.parseFloat(value ?? "");
+        return key === "q" && Number.isFinite(nextQuality) ? nextQuality : currentQuality;
+      }, 1);
+
+      return {
+        locale: locale.trim(),
+        quality,
+      };
+    })
+    .filter(({ locale, quality }) => locale.length > 0 && quality > 0)
+    .sort((left, right) => right.quality - left.quality)
+    .map(({ locale }) => locale);
 }

@@ -68,23 +68,24 @@ function toIsoTimestamp(value: string): string {
   return value.includes("T") ? value : `${value}T00:00:00`;
 }
 
-function formatTimeAgo(isoDate: string): string {
+function formatTimeAgo(isoDate: string, locale: string): string {
+  const formatter = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
   const diff = Date.now() - new Date(isoDate).getTime();
   const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return "just now";
+  if (seconds < 60) return formatter.format(0, "second");
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return formatter.format(-minutes, "minute");
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return formatter.format(-hours, "hour");
   const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
+  if (days < 30) return formatter.format(-days, "day");
   const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo ago`;
-  return `${Math.floor(months / 12)}y ago`;
+  if (months < 12) return formatter.format(-months, "month");
+  return formatter.format(-Math.floor(months / 12), "year");
 }
 
 function BankSelectorInner() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { currentBank, setCurrentBank, bankInfos, banksLoading, loadBanks } = useBank();
@@ -545,7 +546,7 @@ function BankSelectorInner() {
                                 {formatCompact(bank.fact_count)}
                                 <span className="ml-1.5 text-muted-foreground/40">
                                   {bank.last_document_at
-                                    ? formatTimeAgo(bank.last_document_at)
+                                    ? formatTimeAgo(bank.last_document_at, i18n.language)
                                     : ""}
                                 </span>
                               </>
@@ -571,7 +572,7 @@ function BankSelectorInner() {
                   }}
                 >
                   <Plus className="h-4 w-4" />
-                  <span>Create new bank</span>
+                  <span>{t("bankSelector.createNewBank")}</span>
                 </button>
               </div>
             </Command>
@@ -588,18 +589,18 @@ function BankSelectorInner() {
             size="sm"
             className="h-9 gap-1.5"
             onClick={() => setDocDialogOpen(true)}
-            title="Add document to current bank"
+            title={t("bankSelector.addDocumentTitle")}
             data-add-document
           >
             <Plus className="h-4 w-4" />
-            <span>Add Document</span>
+            <span>{t("bankSelector.addDocument")}</span>
           </Button>
         )}
 
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* GitHub Link */}
+        {/* Language Selector */}
         <LanguageSelector />
 
         {/* Separator */}

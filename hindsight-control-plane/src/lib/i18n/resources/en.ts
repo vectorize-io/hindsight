@@ -71,6 +71,9 @@ const en = {
     selectBank: "Select a memory bank from the dropdown above to get started.",
   },
   bankSelector: {
+    addDocument: "Add Document",
+    addDocumentTitle: "Add document to current bank",
+    createNewBank: "Create new bank",
     placeholder: "Select a memory bank...",
     searchPlaceholder: "Search memory banks...",
     loadingBanks: "Loading banks...",

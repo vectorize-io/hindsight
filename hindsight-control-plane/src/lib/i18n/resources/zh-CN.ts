@@ -73,6 +73,9 @@ const zhCN: typeof en = {
     selectBank: "请从上方下拉菜单选择一个记忆库开始使用。",
   },
   bankSelector: {
+    addDocument: "添加文档",
+    addDocumentTitle: "向当前记忆库添加文档",
+    createNewBank: "创建新记忆库",
     placeholder: "选择记忆库...",
     searchPlaceholder: "搜索记忆库...",
     loadingBanks: "正在加载记忆库...",
