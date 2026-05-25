@@ -4335,6 +4335,46 @@ export type RefreshMentalModelResponses = {
 export type RefreshMentalModelResponse =
   RefreshMentalModelResponses[keyof RefreshMentalModelResponses];
 
+export type ClearMentalModelData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Mental Model Id
+     */
+    mental_model_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear";
+};
+
+export type ClearMentalModelErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ClearMentalModelError = ClearMentalModelErrors[keyof ClearMentalModelErrors];
+
+export type ClearMentalModelResponses = {
+  /**
+   * Successful Response
+   */
+  200: MentalModelResponse;
+};
+
+export type ClearMentalModelResponse = ClearMentalModelResponses[keyof ClearMentalModelResponses];
+
 export type ListDirectivesData = {
   body?: never;
   headers?: {

@@ -3971,6 +3971,48 @@ def _register_routes(app: FastAPI):
             )
             raise HTTPException(status_code=500, detail=str(e))
 
+    @app.post(
+        "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear",
+        response_model=MentalModelResponse,
+        summary="Clear mental model content",
+        description=(
+            "Clear a mental model's content so the next refresh performs a full re-synthesis. "
+            "This is useful for delta-mode models that have accumulated drift over many "
+            "incremental refreshes. After clearing, call the /refresh endpoint to trigger "
+            "a clean full rebuild."
+        ),
+        operation_id="clear_mental_model",
+        tags=["Mental Models"],
+    )
+    @audited("clear_mental_model", request_param=None)
+    async def api_clear_mental_model(
+        bank_id: str,
+        mental_model_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Clear a mental model's content."""
+        try:
+            mental_model = await app.state.memory.clear_mental_model(
+                bank_id=bank_id,
+                mental_model_id=mental_model_id,
+                request_context=request_context,
+            )
+            if mental_model is None:
+                raise HTTPException(status_code=404, detail=f"Mental model '{mental_model_id}' not found")
+            return MentalModelResponse(**mental_model)
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(
+                f"Error in POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear: {error_detail}"
+            )
+            raise HTTPException(status_code=500, detail=str(e))
+
     @app.patch(
         "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}",
         response_model=MentalModelResponse,

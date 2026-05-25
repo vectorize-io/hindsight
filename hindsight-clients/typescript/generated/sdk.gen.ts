@@ -23,6 +23,9 @@ import type {
   ClearMemoryObservationsData,
   ClearMemoryObservationsErrors,
   ClearMemoryObservationsResponses,
+  ClearMentalModelData,
+  ClearMentalModelErrors,
+  ClearMentalModelResponses,
   ClearObservationsData,
   ClearObservationsErrors,
   ClearObservationsResponses,
@@ -562,6 +565,19 @@ export const refreshMentalModel = <ThrowOnError extends boolean = false>(
     RefreshMentalModelErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh", ...options });
+
+/**
+ * Clear mental model content
+ *
+ * Clear a mental model's content so the next refresh performs a full re-synthesis. This is useful for delta-mode models that have accumulated drift over many incremental refreshes. After clearing, call the /refresh endpoint to trigger a clean full rebuild.
+ */
+export const clearMentalModel = <ThrowOnError extends boolean = false>(
+  options: Options<ClearMentalModelData, ThrowOnError>
+) =>
+  (options.client ?? client).post<ClearMentalModelResponses, ClearMentalModelErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear",
+    ...options,
+  });
 
 /**
  * List directives

@@ -1838,3 +1838,51 @@ class TestMentalModelTriggerSchema:
 
         with pytest.raises(ValidationError):
             MentalModelTrigger(tag_groups=[{"invalid_key": "bad"}])
+
+
+class TestClearMentalModel:
+    """Test clear_mental_model resets content so next refresh is full."""
+
+    async def test_clear_resets_content(self, memory: MemoryEngine, request_context):
+        """Clear sets content to empty string and nulls structured/tracking fields."""
+        bank_id = f"test-mm-clear-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Test Model",
+            source_query="What do we know?",
+            content="Some existing content",
+            request_context=request_context,
+        )
+        assert mm["content"] == "Some existing content"
+
+        cleared = await memory.clear_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            request_context=request_context,
+        )
+        assert cleared is not None
+        assert cleared["content"] == ""
+        assert cleared["id"] == mm["id"]
+        assert cleared["name"] == "Test Model"
+
+        # Re-fetch to confirm persistence
+        fetched = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
+        assert fetched["content"] == ""
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_clear_nonexistent_returns_none(self, memory: MemoryEngine, request_context):
+        """Clearing a non-existent mental model returns None."""
+        bank_id = f"test-mm-clear-none-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        result = await memory.clear_mental_model(
+            bank_id=bank_id,
+            mental_model_id="nonexistent-id",
+            request_context=request_context,
+        )
+        assert result is None
+
+        await memory.delete_bank(bank_id, request_context=request_context)

@@ -44,6 +44,7 @@ _ALL_TOOLS: frozenset[str] = frozenset(
         "update_mental_model",
         "delete_mental_model",
         "refresh_mental_model",
+        "clear_mental_model",
         "list_directives",
         "create_directive",
         "delete_directive",
@@ -221,6 +222,7 @@ def register_mcp_tools(
         "update_mental_model",
         "delete_mental_model",
         "refresh_mental_model",
+        "clear_mental_model",
         "list_directives",
         "create_directive",
         "delete_directive",
@@ -276,6 +278,9 @@ def register_mcp_tools(
 
     if "refresh_mental_model" in tools_to_register:
         _register_refresh_mental_model(mcp, memory, config)
+
+    if "clear_mental_model" in tools_to_register:
+        _register_clear_mental_model(mcp, memory, config)
 
     # Directive tools
     if "list_directives" in tools_to_register:
@@ -438,6 +443,7 @@ _AUDITABLE_MCP_TOOLS: frozenset[str] = frozenset(
         "update_mental_model",
         "delete_mental_model",
         "refresh_mental_model",
+        "clear_mental_model",
         "create_directive",
         "delete_directive",
         "delete_document",
@@ -1770,6 +1776,98 @@ def _register_refresh_mental_model(mcp: FastMCP, memory: MemoryEngine, config: M
                 return {"error": str(e)}
             except Exception as e:
                 logger.error(f"Error refreshing mental model: {e}", exc_info=True)
+                return {"error": str(e)}
+
+
+def _register_clear_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the clear_mental_model tool."""
+
+    if config.include_bank_id_param:
+
+        @mcp.tool()
+        async def clear_mental_model(
+            mental_model_id: str,
+            bank_id: str | None = None,
+        ) -> str:
+            """
+            Clear a mental model's content so the next refresh performs a full re-synthesis.
+
+            This is useful for delta-mode models that have accumulated drift over many
+            incremental refreshes. After clearing, call refresh_mental_model to trigger
+            a clean full rebuild.
+
+            Args:
+                mental_model_id: The ID of the mental model to clear
+                bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
+            """
+            try:
+                target_bank = bank_id or config.bank_id_resolver()
+                if target_bank is None:
+                    return '{"error": "No bank_id configured"}'
+
+                result = await memory.clear_mental_model(
+                    bank_id=target_bank,
+                    mental_model_id=mental_model_id,
+                    request_context=_get_request_context(config),
+                )
+                if result is None:
+                    return json.dumps({"error": f"Mental model '{mental_model_id}' not found"})
+                return json.dumps(
+                    {
+                        "mental_model_id": result["id"],
+                        "status": "cleared",
+                        "message": f"Mental model '{mental_model_id}' content cleared. Call refresh_mental_model to rebuild.",
+                    }
+                )
+            except OperationValidationError as e:
+                logger.warning(f"Operation rejected: {e}")
+                return json.dumps({"error": str(e)})
+            except ValueError as e:
+                return json.dumps({"error": str(e)})
+            except Exception as e:
+                logger.error(f"Error clearing mental model: {e}", exc_info=True)
+                return f'{{"error": "{e}"}}'
+
+    else:
+
+        @mcp.tool()
+        async def clear_mental_model(
+            mental_model_id: str,
+        ) -> dict:
+            """
+            Clear a mental model's content so the next refresh performs a full re-synthesis.
+
+            This is useful for delta-mode models that have accumulated drift over many
+            incremental refreshes. After clearing, call refresh_mental_model to trigger
+            a clean full rebuild.
+
+            Args:
+                mental_model_id: The ID of the mental model to clear
+            """
+            try:
+                target_bank = config.bank_id_resolver()
+                if target_bank is None:
+                    return {"error": "No bank_id configured"}
+
+                result = await memory.clear_mental_model(
+                    bank_id=target_bank,
+                    mental_model_id=mental_model_id,
+                    request_context=_get_request_context(config),
+                )
+                if result is None:
+                    return {"error": f"Mental model '{mental_model_id}' not found"}
+                return {
+                    "mental_model_id": result["id"],
+                    "status": "cleared",
+                    "message": f"Mental model '{mental_model_id}' content cleared. Call refresh_mental_model to rebuild.",
+                }
+            except OperationValidationError as e:
+                logger.warning(f"Operation rejected: {e}")
+                return {"error": str(e)}
+            except ValueError as e:
+                return {"error": str(e)}
+            except Exception as e:
+                logger.error(f"Error clearing mental model: {e}", exc_info=True)
                 return {"error": str(e)}
 
 

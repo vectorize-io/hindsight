@@ -8121,6 +8121,54 @@ class MemoryEngine(MemoryEngineInterface):
 
             return self._row_to_mental_model(row) if row else None
 
+    async def clear_mental_model(
+        self,
+        bank_id: str,
+        mental_model_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any] | None:
+        """Clear a mental model's content so the next refresh performs a full re-synthesis.
+
+        Resets content to an empty string and clears structured_content and
+        last_refreshed_source_query.  This is useful for delta-mode models that
+        have accumulated drift — after clearing, a normal /refresh will fall
+        back to full mode because there is no delta baseline.
+
+        Args:
+            bank_id: Bank identifier
+            mental_model_id: Mental model UUID
+            request_context: Request context for authentication
+
+        Returns:
+            Updated mental model dict or None if not found
+        """
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext
+
+            ctx = BankWriteContext(bank_id=bank_id, operation="clear_mental_model", request_context=request_context)
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        backend = await self._get_backend()
+
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"""
+                UPDATE {fq_table("mental_models")}
+                SET content = '',
+                    structured_content = NULL,
+                    last_refreshed_source_query = NULL
+                WHERE bank_id = $1 AND id = $2
+                RETURNING id, bank_id, name, source_query, content, tags,
+                          last_refreshed_at, created_at, reflect_response,
+                          max_tokens, trigger, structured_content
+                """,
+                bank_id,
+                mental_model_id,
+            )
+
+        return self._row_to_mental_model(row) if row else None
+
     async def delete_mental_model(
         self,
         bank_id: str,

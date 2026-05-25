@@ -107,6 +107,7 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
             "update_mental_model",
             "delete_mental_model",
             "refresh_mental_model",
+            "clear_mental_model",
             "list_directives",
             "create_directive",
             "delete_directive",
