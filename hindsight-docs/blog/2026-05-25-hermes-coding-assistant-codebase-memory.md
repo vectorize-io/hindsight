@@ -208,7 +208,7 @@ The combination of ingested project docs and session-extracted facts gives Herme
 
 That's also what makes autonomous coding agents tractable. An agent with rich, current mental models, conventions, architecture, known fragile areas, has enough structured context to make decisions and drive changes without a human briefing it at the start of every task. Persistent session memory is how you get to that baseline.
 
-See the [Hindsight knowledge pages docs](https://hindsight. vectorize. io/developer/api/knowledge-pages) for the full API reference.
+See the [Hindsight knowledge pages docs](https://hindsight.vectorize.io/developer/api/knowledge-pages) for the full API reference.
 
 ---
 
