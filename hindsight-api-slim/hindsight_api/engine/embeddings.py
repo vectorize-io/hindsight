@@ -9,15 +9,19 @@ The database schema is automatically adjusted to match the model's dimension.
 Configuration via environment variables - see hindsight_api.config for all env var names.
 """
 
+import base64
 import json
 import logging
 import os
+import struct
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Literal, cast
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 import httpx
+from pydantic import BaseModel
 
 from ..config import (
     DEFAULT_EMBEDDINGS_COHERE_MODEL,
@@ -29,6 +33,12 @@ from ..config import (
     DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE,
     DEFAULT_EMBEDDINGS_OPENAI_MODEL,
     DEFAULT_EMBEDDINGS_PROVIDER,
+    DEFAULT_EMBEDDINGS_ZEROENTROPY_BASE_URL,
+    DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE,
+    DEFAULT_EMBEDDINGS_ZEROENTROPY_DIMENSIONS,
+    DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT,
+    DEFAULT_EMBEDDINGS_ZEROENTROPY_LATENCY,
+    DEFAULT_EMBEDDINGS_ZEROENTROPY_MODEL,
     DEFAULT_LITELLM_API_BASE,
     ENV_EMBEDDINGS_COHERE_API_KEY,
     ENV_EMBEDDINGS_GEMINI_API_KEY,
@@ -40,10 +50,43 @@ from ..config import (
     ENV_EMBEDDINGS_OPENAI_MODEL,
     ENV_EMBEDDINGS_PROVIDER,
     ENV_EMBEDDINGS_TEI_URL,
+    ENV_EMBEDDINGS_ZEROENTROPY_API_KEY,
+    ENV_EMBEDDINGS_ZEROENTROPY_DIMENSIONS,
+    ENV_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT,
     ENV_LLM_API_KEY,
 )
 
 logger = logging.getLogger(__name__)
+
+
+ZeroEntropyInputType = Literal["document", "query"]
+ZeroEntropyLatency = Literal["fast", "slow"]
+ZeroEntropyEncodingFormat = Literal["float", "base64"]
+
+
+class _ZeroEntropyEmbedRequest(BaseModel):
+    """Typed request body for ZeroEntropy's non-OpenAI-compatible embed endpoint."""
+
+    model: str
+    input: list[str]
+    input_type: ZeroEntropyInputType
+    dimensions: int
+    encoding_format: ZeroEntropyEncodingFormat = "float"
+    latency: ZeroEntropyLatency | None = None
+
+
+class _ZeroEntropyEmbedResult(BaseModel):
+    embedding: list[float] | str
+
+
+class _ZeroEntropyEmbedUsage(BaseModel):
+    total_bytes: int | None = None
+    total_tokens: int | None = None
+
+
+class _ZeroEntropyEmbedResponse(BaseModel):
+    results: list[_ZeroEntropyEmbedResult]
+    usage: _ZeroEntropyEmbedUsage | None = None
 
 
 class Embeddings(ABC):
@@ -88,6 +131,14 @@ class Embeddings(ABC):
             List of embedding vectors (each is a list of floats)
         """
         pass
+
+    def encode_query(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for query text. Providers without asymmetric embeddings use encode()."""
+        return self.encode(texts)
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for stored document text. Providers without asymmetric embeddings use encode()."""
+        return self.encode(texts)
 
 
 class LocalSTEmbeddings(Embeddings):
@@ -695,6 +746,157 @@ class CohereEmbeddings(Embeddings):
         return all_embeddings
 
 
+class ZeroEntropyEmbeddings(Embeddings):
+    """
+    ZeroEntropy embeddings implementation using the zembed API.
+
+    ZeroEntropy's embeddings endpoint is not OpenAI-compatible: it lives at
+    /v1/models/embed and requires provider-specific parameters such as
+    input_type. Hindsight stores document-side vectors and uses query-side
+    vectors during recall, so this provider exposes explicit encode_documents()
+    and encode_query() helpers while keeping encode() as document-side default.
+    """
+
+    VALID_DIMENSIONS = frozenset({2560, 1280, 640, 320, 160, 80, 40})
+    VALID_ENCODING_FORMATS = frozenset({"float", "base64"})
+    VALID_LATENCIES = frozenset({"fast", "slow"})
+    DEFAULT_BASE_URL = DEFAULT_EMBEDDINGS_ZEROENTROPY_BASE_URL
+    EMBED_PATH = "/v1/models/embed"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_EMBEDDINGS_ZEROENTROPY_MODEL,
+        base_url: str = DEFAULT_EMBEDDINGS_ZEROENTROPY_BASE_URL,
+        dimensions: int = DEFAULT_EMBEDDINGS_ZEROENTROPY_DIMENSIONS,
+        batch_size: int = DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE,
+        encoding_format: str = DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT,
+        latency: str | None = DEFAULT_EMBEDDINGS_ZEROENTROPY_LATENCY,
+        timeout: float = 60.0,
+    ):
+        if dimensions not in self.VALID_DIMENSIONS:
+            valid = ", ".join(str(dim) for dim in sorted(self.VALID_DIMENSIONS, reverse=True))
+            raise ValueError(f"{ENV_EMBEDDINGS_ZEROENTROPY_DIMENSIONS} must be one of {valid}, got {dimensions}")
+        if batch_size < 1:
+            raise ValueError("ZeroEntropy embeddings batch_size must be >= 1")
+        if encoding_format not in self.VALID_ENCODING_FORMATS:
+            valid_formats = ", ".join(sorted(self.VALID_ENCODING_FORMATS))
+            raise ValueError(
+                f"{ENV_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT} must be one of {valid_formats}, got {encoding_format!r}"
+            )
+        if latency is not None and latency not in self.VALID_LATENCIES:
+            valid_latencies = ", ".join(sorted(self.VALID_LATENCIES))
+            raise ValueError(f"ZeroEntropy embeddings latency must be one of {valid_latencies}, got {latency!r}")
+
+        self.api_key = api_key
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self.dimensions = dimensions
+        self.batch_size = batch_size
+        self.encoding_format = cast(ZeroEntropyEncodingFormat, encoding_format)
+        self.latency = cast(ZeroEntropyLatency | None, latency)
+        self.timeout = timeout
+        self._client: httpx.Client | None = None
+        self._dimension: int | None = None
+
+    @property
+    def provider_name(self) -> str:
+        return "zeroentropy"
+
+    @property
+    def dimension(self) -> int:
+        if self._dimension is None:
+            raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+        return self._dimension
+
+    async def initialize(self) -> None:
+        """Initialize the ZeroEntropy HTTP client."""
+        if self._client is not None:
+            return
+
+        logger.info(
+            f"Embeddings: initializing ZeroEntropy provider with model {self.model} "
+            f"(dim: {self.dimensions}, batch_size={self.batch_size})"
+        )
+        self._client = httpx.Client(
+            timeout=self.timeout,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        # zembed-1 dimensions are explicit Matryoshka truncation steps. Avoid a
+        # startup probe so boot does not burn quota or require a throwaway input.
+        self._dimension = self.dimensions
+        logger.info(f"Embeddings: ZeroEntropy provider initialized (model: {self.model}, dim: {self._dimension})")
+
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        """Generate document-side embeddings for backwards-compatible callers."""
+        return self.encode_documents(texts)
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        """Generate document-side embeddings for retained content."""
+        return self._encode_with_input_type(texts, "document")
+
+    def encode_query(self, texts: list[str]) -> list[list[float]]:
+        """Generate query-side embeddings for recall/search queries."""
+        return self._encode_with_input_type(texts, "query")
+
+    def _encode_with_input_type(self, texts: list[str], input_type: ZeroEntropyInputType) -> list[list[float]]:
+        if self._client is None:
+            raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+
+        if not texts:
+            return []
+
+        all_embeddings: list[list[float]] = []
+        embed_url = self._embed_url()
+
+        for i in range(0, len(texts), self.batch_size):
+            batch = texts[i : i + self.batch_size]
+            request = _ZeroEntropyEmbedRequest(
+                model=self.model,
+                input=batch,
+                input_type=input_type,
+                dimensions=self.dimensions,
+                encoding_format=self.encoding_format,
+                latency=self.latency,
+            )
+
+            try:
+                response = self._client.post(embed_url, json=request.model_dump(exclude_none=True))
+                response.raise_for_status()
+            except httpx.HTTPError as e:
+                raise RuntimeError(f"ZeroEntropy embedding request failed: {e}") from e
+
+            parsed = _ZeroEntropyEmbedResponse.model_validate(response.json())
+            if len(parsed.results) != len(batch):
+                raise RuntimeError(
+                    f"ZeroEntropy returned {len(parsed.results)} embeddings for {len(batch)} input texts; "
+                    "expected exact 1:1 alignment"
+                )
+            all_embeddings.extend(self._parse_embedding(result.embedding) for result in parsed.results)
+
+        return all_embeddings
+
+    def _embed_url(self) -> str:
+        if self.base_url.endswith(self.EMBED_PATH):
+            return self.base_url
+        if self.base_url.endswith("/v1"):
+            return f"{self.base_url}/models/embed"
+        return f"{self.base_url}{self.EMBED_PATH}"
+
+    @staticmethod
+    def _parse_embedding(embedding: list[float] | str) -> list[float]:
+        if not isinstance(embedding, str):
+            return embedding
+
+        raw = base64.b64decode(embedding)
+        if len(raw) % 4 != 0:
+            raise RuntimeError("ZeroEntropy returned invalid base64 embedding length")
+        return list(struct.unpack(f"<{len(raw) // 4}f", raw))
+
+
 class LiteLLMEmbeddings(Embeddings):
     """
     LiteLLM embeddings implementation using LiteLLM proxy's /embeddings endpoint.
@@ -1227,6 +1429,22 @@ def create_embeddings_from_env() -> Embeddings:
             base_url="https://openrouter.ai/api/v1",
             batch_size=config.embeddings_openai_batch_size,
         )
+    elif provider == "zeroentropy":
+        api_key = config.embeddings_zeroentropy_api_key
+        if not api_key:
+            raise ValueError(
+                f"{ENV_EMBEDDINGS_ZEROENTROPY_API_KEY} or ZEROENTROPY_API_KEY is required "
+                f"when {ENV_EMBEDDINGS_PROVIDER} is 'zeroentropy'"
+            )
+        return ZeroEntropyEmbeddings(
+            api_key=api_key,
+            model=config.embeddings_zeroentropy_model,
+            base_url=config.embeddings_zeroentropy_base_url or DEFAULT_EMBEDDINGS_ZEROENTROPY_BASE_URL,
+            dimensions=config.embeddings_zeroentropy_dimensions,
+            batch_size=config.embeddings_zeroentropy_batch_size,
+            encoding_format=config.embeddings_zeroentropy_encoding_format,
+            latency=config.embeddings_zeroentropy_latency,
+        )
     elif provider == "cohere":
         api_key = config.embeddings_cohere_api_key
         if not api_key:
@@ -1275,5 +1493,5 @@ def create_embeddings_from_env() -> Embeddings:
         raise ValueError(
             f"Unknown embeddings provider: {provider}. "
             f"Supported: 'local', 'tei', 'openai', 'openai-codex', 'openrouter', 'cohere', 'google', "
-            f"'litellm', 'litellm-sdk'"
+            f"'zeroentropy', 'litellm', 'litellm-sdk'"
         )

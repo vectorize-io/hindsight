@@ -454,7 +454,7 @@ two slots that retain/consolidation cannot consume.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `tei`, `openai`, `openai-codex`, `openrouter`, `cohere`, `google`, `litellm`, or `litellm-sdk` | `local` |
+| `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `tei`, `openai`, `openai-codex`, `openrouter`, `cohere`, `google`, `zeroentropy`, `litellm`, or `litellm-sdk` | `local` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL` | Model for local provider | `BAAI/bge-small-en-v1.5` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU` | Force CPU mode for local embeddings (avoids MPS/XPC issues on macOS) | `false` |
@@ -470,6 +470,13 @@ two slots that retain/consolidation cannot consume.
 | `HINDSIGHT_API_EMBEDDINGS_COHERE_MODEL` | Cohere embedding model | `embed-english-v3.0` |
 | `HINDSIGHT_API_EMBEDDINGS_COHERE_BASE_URL` | Custom base URL for Cohere-compatible API (e.g., Azure-hosted) | - |
 | `HINDSIGHT_API_EMBEDDINGS_COHERE_OUTPUT_DIMENSIONS` | Output embedding dimensions for Cohere (e.g., `256`, `512`, `1024`). When set, overrides the model's default dimension. | - |
+| `HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY` | ZeroEntropy API key for zembed-1 embeddings | - |
+| `HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_MODEL` | ZeroEntropy embedding model | `zembed-1` |
+| `HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_BASE_URL` | ZeroEntropy API base URL. Use `https://eu-api.zeroentropy.dev` for EU routing. | `https://api.zeroentropy.dev` |
+| `HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_DIMENSIONS` | zembed-1 output dimensions: `2560`, `1280`, `640`, `320`, `160`, `80`, or `40`. Hindsight defaults to `1280` to stay under pgvector HNSW's 2000-dimension limit. | `1280` |
+| `HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT` | Response encoding: `float` or `base64`. Hindsight decodes either format to float vectors before storage. | `float` |
+| `HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_LATENCY` | Optional ZeroEntropy latency mode: `fast` or `slow`. Unset lets ZeroEntropy auto-select. | - |
+| `HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE` | Max inputs per ZeroEntropy `/v1/models/embed` call | `100` |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_API_BASE` | LiteLLM proxy base URL for embeddings | `http://localhost:4000` |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_API_KEY` | LiteLLM proxy API key for embeddings (optional, depends on proxy config) | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_MODEL` | LiteLLM embedding model (use provider prefix, e.g., `cohere/embed-english-v3.0`) | `text-embedding-3-small` |
@@ -485,6 +492,8 @@ two slots that retain/consolidation cannot consume.
 | `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_PROJECT_ID` | Vertex AI project ID for embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_REGION` | Vertex AI region for embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_REGION`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_SERVICE_ACCOUNT_KEY` | Service account key for Vertex AI embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY`) | - |
+
+Embedding provider selection, credentials, base URLs, model choices, dimensions, encoding format, batch sizes, and latency modes are static server-level settings. They are not hierarchical per-bank overrides.
 
 #### Common Pitfall: Provider-Specific Embedding Env Var Names
 
@@ -559,6 +568,14 @@ export HINDSIGHT_API_EMBEDDINGS_COHERE_API_KEY=your-azure-api-key
 export HINDSIGHT_API_EMBEDDINGS_COHERE_MODEL=embed-english-v3.0
 export HINDSIGHT_API_EMBEDDINGS_COHERE_BASE_URL=https://your-azure-cohere-endpoint.com
 
+# ZeroEntropy - zembed-1 embeddings
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=zeroentropy
+export HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY=your-zeroentropy-api-key
+export HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_MODEL=zembed-1
+export HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_DIMENSIONS=1280  # supported: 2560, 1280, 640, 320, 160, 80, 40
+# export HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT=base64  # optional
+# export HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_LATENCY=fast  # or slow; unset lets ZeroEntropy auto-select
+
 # LiteLLM proxy - unified gateway for multiple providers
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=litellm
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_API_BASE=http://localhost:4000
@@ -598,6 +615,8 @@ export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL=cohere/embed-english-v3.0
 Hindsight automatically detects the embedding dimension from the model at startup and adjusts the database schema accordingly. The default model (`BAAI/bge-small-en-v1.5`) produces 384-dimensional vectors, while OpenAI models produce 1536 or 3072 dimensions.
 
 For `litellm-sdk`, if you set `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS`, startup uses that output size when the underlying provider supports LiteLLM's `dimensions` parameter (otherwise behavior is unchanged). The same dimension-change rules below apply.
+
+For `zeroentropy`, zembed-1 supports `2560`, `1280`, `640`, `320`, `160`, `80`, and `40` dimensions. ZeroEntropy's API default is `2560`; Hindsight defaults to `1280` so the provider works with the default pgvector HNSW index. Use `2560` with a vector extension that supports higher-dimensional indexes, such as DiskANN/pgvectorscale or ScaNN.
 
 :::warning Dimension Changes
 Once memories are stored, you cannot change the embedding dimension without losing data. If you need to switch to a model with different dimensions:

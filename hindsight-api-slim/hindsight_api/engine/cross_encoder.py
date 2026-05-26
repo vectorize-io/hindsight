@@ -1713,6 +1713,7 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
         return ZeroEntropyCrossEncoder(
             api_key=api_key,
             model=config.reranker_zeroentropy_model,
+            base_url=config.reranker_zeroentropy_base_url,
         )
     elif provider == "siliconflow":
         api_key = config.reranker_siliconflow_api_key

@@ -228,6 +228,15 @@ ENV_EMBEDDINGS_OPENROUTER_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENROUTER_MODEL"
 ENV_RERANKER_OPENROUTER_API_KEY = "HINDSIGHT_API_RERANKER_OPENROUTER_API_KEY"
 ENV_RERANKER_OPENROUTER_MODEL = "HINDSIGHT_API_RERANKER_OPENROUTER_MODEL"
 
+# ZeroEntropy configuration (embeddings)
+ENV_EMBEDDINGS_ZEROENTROPY_API_KEY = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY"
+ENV_EMBEDDINGS_ZEROENTROPY_MODEL = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_MODEL"
+ENV_EMBEDDINGS_ZEROENTROPY_BASE_URL = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_BASE_URL"
+ENV_EMBEDDINGS_ZEROENTROPY_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_DIMENSIONS"
+ENV_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT"
+ENV_EMBEDDINGS_ZEROENTROPY_LATENCY = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_LATENCY"
+ENV_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE"
+
 # Deprecated: Legacy shared Cohere API key (for backward compatibility)
 ENV_COHERE_API_KEY = "HINDSIGHT_API_COHERE_API_KEY"
 
@@ -555,6 +564,16 @@ DEFAULT_RERANKER_COHERE_MODEL = "rerank-english-v3.0"
 DEFAULT_EMBEDDINGS_OPENROUTER_MODEL = "perplexity/pplx-embed-v1-0.6b"
 DEFAULT_RERANKER_OPENROUTER_MODEL = "cohere/rerank-v3.5"
 
+# ZeroEntropy defaults
+DEFAULT_EMBEDDINGS_ZEROENTROPY_MODEL = "zembed-1"
+DEFAULT_EMBEDDINGS_ZEROENTROPY_BASE_URL = "https://api.zeroentropy.dev"
+# ZeroEntropy's API default is 2560, but Hindsight defaults to 1280 so the
+# provider works with pgvector HNSW's 2000-dimension index limit out of the box.
+DEFAULT_EMBEDDINGS_ZEROENTROPY_DIMENSIONS = 1280
+DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT = "float"
+DEFAULT_EMBEDDINGS_ZEROENTROPY_LATENCY = None
+DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE = 100
+
 DEFAULT_RERANKER_ZEROENTROPY_MODEL = "zerank-2"
 
 DEFAULT_RERANKER_SILICONFLOW_MODEL = "BAAI/bge-reranker-v2-m3"
@@ -826,6 +845,17 @@ def _parse_optional_positive_int(name: str, raw: str | None) -> int | None:
     if raw is None or raw == "":
         return None
     return _parse_positive_int(name, raw, 1)
+
+
+def _parse_optional_choice(name: str, raw: str | None, allowed: frozenset[str]) -> str | None:
+    """Parse an optional string env var constrained to a small allowlist."""
+    if raw is None or raw == "":
+        return None
+    normalized = raw.lower()
+    if normalized not in allowed:
+        values = ", ".join(sorted(allowed))
+        raise ValueError(f"{name} must be one of {values}, got {raw!r}")
+    return normalized
 
 
 def _validate_extraction_mode(mode: str) -> str:
@@ -1229,6 +1259,13 @@ class HindsightConfig:
     # Keep at the end of the dataclass; Python forbids non-default fields after default fields.
     embeddings_openai_batch_size: int = DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE
     embeddings_openai_dimensions: int | None = None
+    embeddings_zeroentropy_api_key: str | None = None
+    embeddings_zeroentropy_model: str = DEFAULT_EMBEDDINGS_ZEROENTROPY_MODEL
+    embeddings_zeroentropy_base_url: str = DEFAULT_EMBEDDINGS_ZEROENTROPY_BASE_URL
+    embeddings_zeroentropy_dimensions: int = DEFAULT_EMBEDDINGS_ZEROENTROPY_DIMENSIONS
+    embeddings_zeroentropy_encoding_format: str = DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT
+    embeddings_zeroentropy_batch_size: int = DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE
+    embeddings_zeroentropy_latency: str | None = DEFAULT_EMBEDDINGS_ZEROENTROPY_LATENCY
 
     # Class-level sets for configuration categorization
 
@@ -1252,6 +1289,7 @@ class HindsightConfig:
         "embeddings_tei_base_url",
         "reranker_tei_base_url",
         "reranker_cohere_base_url",
+        "embeddings_zeroentropy_base_url",
         "reranker_zeroentropy_base_url",
         "reranker_siliconflow_base_url",
         # Service Account Keys
@@ -1260,6 +1298,7 @@ class HindsightConfig:
         "reranker_google_service_account_key",
         # Embeddings API keys
         "embeddings_gemini_api_key",
+        "embeddings_zeroentropy_api_key",
         # File storage credentials
         "file_storage_s3_access_key_id",
         "file_storage_s3_secret_access_key",
@@ -1429,6 +1468,11 @@ class HindsightConfig:
                 f"provider: {self.retain_llm_provider or self.llm_provider})"
             )
 
+        if self.embeddings_provider.lower() == "zeroentropy":
+            valid_dimensions = frozenset({2560, 1280, 640, 320, 160, 80, 40})
+            if self.embeddings_zeroentropy_dimensions not in valid_dimensions:
+                values = ", ".join(str(dim) for dim in sorted(valid_dimensions, reverse=True))
+                raise ValueError(f"{ENV_EMBEDDINGS_ZEROENTROPY_DIMENSIONS} must be one of {values}")
         # Warn if local ML dependencies are missing when configured.
         # Don't hard-fail here — the actual ImportError fires at model init time
         # with a clear message. This early warning catches it before startup proceeds.
@@ -1624,6 +1668,36 @@ class HindsightConfig:
             or os.getenv(ENV_OPENROUTER_API_KEY)
             or os.getenv(ENV_LLM_API_KEY),
             embeddings_openrouter_model=os.getenv(ENV_EMBEDDINGS_OPENROUTER_MODEL, DEFAULT_EMBEDDINGS_OPENROUTER_MODEL),
+            # ZeroEntropy embeddings
+            embeddings_zeroentropy_api_key=os.getenv(ENV_EMBEDDINGS_ZEROENTROPY_API_KEY)
+            or os.getenv("ZEROENTROPY_API_KEY"),
+            embeddings_zeroentropy_model=os.getenv(
+                ENV_EMBEDDINGS_ZEROENTROPY_MODEL, DEFAULT_EMBEDDINGS_ZEROENTROPY_MODEL
+            ),
+            embeddings_zeroentropy_base_url=os.getenv(
+                ENV_EMBEDDINGS_ZEROENTROPY_BASE_URL, DEFAULT_EMBEDDINGS_ZEROENTROPY_BASE_URL
+            ),
+            embeddings_zeroentropy_dimensions=_parse_positive_int(
+                ENV_EMBEDDINGS_ZEROENTROPY_DIMENSIONS,
+                os.getenv(ENV_EMBEDDINGS_ZEROENTROPY_DIMENSIONS),
+                DEFAULT_EMBEDDINGS_ZEROENTROPY_DIMENSIONS,
+            ),
+            embeddings_zeroentropy_encoding_format=_parse_optional_choice(
+                ENV_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT,
+                os.getenv(ENV_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT) or DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT,
+                frozenset({"float", "base64"}),
+            )
+            or DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT,
+            embeddings_zeroentropy_latency=_parse_optional_choice(
+                ENV_EMBEDDINGS_ZEROENTROPY_LATENCY,
+                os.getenv(ENV_EMBEDDINGS_ZEROENTROPY_LATENCY),
+                frozenset({"fast", "slow"}),
+            ),
+            embeddings_zeroentropy_batch_size=_parse_positive_int(
+                ENV_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE,
+                os.getenv(ENV_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE),
+                DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE,
+            ),
             # LiteLLM embeddings (with backward-compatible fallback to shared config)
             embeddings_litellm_api_base=os.getenv(ENV_EMBEDDINGS_LITELLM_API_BASE)
             or os.getenv(ENV_LITELLM_API_BASE, DEFAULT_LITELLM_API_BASE),
