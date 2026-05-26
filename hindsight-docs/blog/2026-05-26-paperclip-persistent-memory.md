@@ -8,6 +8,8 @@ image: /img/blog/paperclip-persistent-memory.png
 hide_table_of_contents: true
 ---
 
+![Adding Persistent Memory to Paperclip Agents with Hindsight](/img/blog/paperclip-persistent-memory.png)
+
 [Paperclip](https://github.com/paperclipai/paperclip) treats AI agents like employees. You define an org chart, assign roles, set budgets, and let agents work autonomously within that structure. 67,000+ GitHub stars since March 2026. Five adapter types. A plugin system that extends every agent without touching their code.
 
 One thing the org chart doesn't give agents: a memory that survives between runs.
@@ -38,13 +40,13 @@ The Hindsight plugin hooks into Paperclip's event system. No wrapper code, no ag
 
 **`agent.run.finished`**—Currently a no-op. The subscription is kept so future Paperclip payload additions can be picked up without a plugin update.
 
-Memory is keyed to `companyId` + `agentId`, never to the run ID. That's why it survives: it's scoped to the agent's role in the company, not to a single execution.
+By default, memory is keyed to `companyId` + `agentId`, never to the run ID. That's why it survives: it's scoped to the agent's role in the company, not to a single execution. The `bankGranularity` setting lets you change this scoping — narrowing it to per-user isolation or broadening it to a shared bank across all agents.
 
 ### Agent Tools for Mid-Run Use
 
 Beyond the automatic recall-and-retain lifecycle, agents also get two tools they can call explicitly during a run:
 
-- **`hindsight_recall(query)`**—Search memory for context relevant to a specific question. The first call in a run returns the cached memories from the startup recall; subsequent calls hit Hindsight live.
+- **`hindsight_recall(query)`**—Search memory for context relevant to a specific question. During a run, the tool returns the memories cached at startup. If no startup recall occurred (e.g., the run had no associated issue), the tool falls back to a live Hindsight query.
 - **`hindsight_retain(content)`**—Store a fact, decision, or outcome immediately. Useful when an agent discovers something mid-run that shouldn't wait for the comment-based retention cycle.
 
 ## Install and Configure
@@ -79,7 +81,9 @@ Then configure in **Settings > Plugins > Hindsight Memory**.
 |-------|---------|-------------|
 | `hindsightApiUrl` | `https://api.hindsight.vectorize.io` | Hindsight server URL (use `http://localhost:8888` for self-hosted) |
 | `hindsightApiKeyRef` | — | Paperclip secret name holding your Hindsight API key |
-| `bankGranularity` | `["company", "agent"]` | How memory banks are scoped (see below) |
+| `dynamicBankId` | `true` | When true, bank ID is derived from `bankGranularity`. Set false and provide `bankId` to use a static shared bank |
+| `bankId` | — | Static bank ID used when `dynamicBankId` is false. All agents sharing this value read/write the same memory bank |
+| `bankGranularity` | `["company", "agent"]` | How memory banks are scoped when `dynamicBankId` is true (see below) |
 | `recallBudget` | `mid` | `low` = fastest, `mid` = balanced, `high` = most thorough |
 | `autoRetain` | `true` | Automatically retain issue comments after every comment event |
 
@@ -124,6 +128,20 @@ Bank ID format: `paperclip::{agentId}`
 The agent's memory follows it across companies. If you run the same code-review agent across five different company environments, it remembers patterns from all five.
 
 **Use this when:** you have a utility agent that should accumulate cross-company expertise. A style-guide enforcer, a compliance checker, or a shared knowledge base curator.
+
+### Company + Agent + User
+
+Bank ID format: `paperclip::{companyId}::{agentId}::user::{userId}`
+
+Each user gets their own memory bank per agent per company. The plugin extracts user identity from the issue's `originId` (e.g., `slack::alice@acme.com`) or `creatorEmail` field. If no user can be identified for a given event, the bank ID falls back to company+agent.
+
+**Use this when:** you need per-user memory isolation — for GDPR compliance, multi-tenant support platforms, or any case where one user's context shouldn't bleed into another's recall results.
+
+### Static Shared Bank
+
+Instead of deriving bank IDs dynamically, you can set `dynamicBankId: false` and provide a fixed `bankId`. Every agent in every company reads and writes the same bank.
+
+**Use this when:** you have a multi-agent cohort that needs collaborative memory — a squad of agents working the same product area where shared context is more valuable than isolation.
 
 ## What Gets Remembered
 
