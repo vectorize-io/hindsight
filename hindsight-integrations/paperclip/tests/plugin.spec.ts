@@ -93,6 +93,64 @@ describe("bank ID derivation", () => {
       deriveBankId({ companyId: "co-1", agentId: "ag-1" }, { bankGranularity: ["agent"] })
     ).toBe("paperclip::ag-1");
   });
+
+  it("company + agent + user", async () => {
+    const { deriveBankId } = await import("../src/bank.js");
+    expect(
+      deriveBankId(
+        { companyId: "co-1", agentId: "ag-1", userId: "alice@acme.com" },
+        { bankGranularity: ["company", "agent", "user"] }
+      )
+    ).toBe("paperclip::co-1::ag-1::user::alice@acme.com");
+  });
+
+  it("user granularity without userId falls back to company+agent", async () => {
+    const { deriveBankId } = await import("../src/bank.js");
+    expect(
+      deriveBankId(
+        { companyId: "co-1", agentId: "ag-1" },
+        { bankGranularity: ["company", "agent", "user"] }
+      )
+    ).toBe("paperclip::co-1::ag-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractUserFromIssue
+// ---------------------------------------------------------------------------
+
+describe("extractUserFromIssue", () => {
+  it("extracts email from originId", async () => {
+    const { extractUserFromIssue } = await import("../src/bank.js");
+    expect(extractUserFromIssue({ originId: "slack::alice@acme.com" })).toBe("alice@acme.com");
+  });
+
+  it("prefers creatorEmail over originId", async () => {
+    const { extractUserFromIssue } = await import("../src/bank.js");
+    expect(
+      extractUserFromIssue({
+        creatorEmail: "bob@acme.com",
+        originId: "slack::alice@acme.com",
+      })
+    ).toBe("bob@acme.com");
+  });
+
+  it("returns undefined when no email found", async () => {
+    const { extractUserFromIssue } = await import("../src/bank.js");
+    expect(extractUserFromIssue({ originId: "slack::channel-123" })).toBeUndefined();
+  });
+
+  it("returns undefined when issue has no originId or creatorEmail", async () => {
+    const { extractUserFromIssue } = await import("../src/bank.js");
+    expect(extractUserFromIssue({})).toBeUndefined();
+  });
+
+  it("handles multi-segment originId", async () => {
+    const { extractUserFromIssue } = await import("../src/bank.js");
+    expect(
+      extractUserFromIssue({ originId: "zendesk::org-42::ticket-7::user@corp.io" })
+    ).toBe("user@corp.io");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -142,6 +200,42 @@ describe("agent.run.started", () => {
       stateKey: "recalled-memories",
     });
     expect(state).toContain("TypeScript");
+  });
+
+  it("uses user-scoped bank ID when bankGranularity includes 'user'", async () => {
+    const harness = buildHarness({
+      ...DEFAULT_CONFIG,
+      bankGranularity: ["company", "agent", "user"],
+    });
+    await setupPlugin(harness);
+    const issue = await seedIssue(harness, {
+      companyId: "co-1",
+      title: "Fix user-specific bug",
+      description: "Details here",
+    });
+    // Simulate originId with user email (set via harness internals)
+    (issue as Record<string, unknown>).originId = "slack::alice@acme.com";
+
+    await harness.emit(
+      "agent.run.started",
+      { agentId: "ag-1", runId: "run-user-1", issueId: issue.id },
+      { companyId: "co-1" }
+    );
+
+    const recallCall = fetchMock.mock.calls.find(([url]: [string]) => url.includes("recall"));
+    expect(recallCall).toBeDefined();
+    // Bank ID should include user segment
+    expect(recallCall?.[0]).toContain(
+      encodeURIComponent("paperclip::co-1::ag-1::user::alice@acme.com")
+    );
+
+    // Verify userId was cached in state for tool calls
+    const cachedUserId = harness.getState({
+      scopeKind: "run",
+      scopeId: "run-user-1",
+      stateKey: "user-id",
+    });
+    expect(cachedUserId).toBe("alice@acme.com");
   });
 
   it("skips recall when no issueId is provided", async () => {
