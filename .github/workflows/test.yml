@@ -1342,8 +1342,8 @@ jobs:
         conn = oracledb.connect(user='system', password='oracle', dsn='localhost:1521/FREEPDB1')
         cursor = conn.cursor()
         cursor.execute(\"\"\"
-            CREATE TABLESPACE hindsight_ts
-            DATAFILE 'hindsight_ts.dbf' SIZE 1G AUTOEXTEND ON NEXT 200M MAXSIZE UNLIMITED
+            CREATE BIGFILE TABLESPACE hindsight_ts
+            DATAFILE 'hindsight_ts.dbf' SIZE 2G AUTOEXTEND ON NEXT 500M MAXSIZE UNLIMITED
             EXTENT MANAGEMENT LOCAL
             SEGMENT SPACE MANAGEMENT AUTO
         \"\"\")
@@ -1696,8 +1696,8 @@ jobs:
         conn = oracledb.connect(user='system', password='oracle', dsn='localhost:1521/FREEPDB1')
         cursor = conn.cursor()
         cursor.execute(\"\"\"
-            CREATE TABLESPACE hindsight_ts
-            DATAFILE 'hindsight_ts.dbf' SIZE 1G AUTOEXTEND ON NEXT 200M MAXSIZE UNLIMITED
+            CREATE BIGFILE TABLESPACE hindsight_ts
+            DATAFILE 'hindsight_ts.dbf' SIZE 2G AUTOEXTEND ON NEXT 500M MAXSIZE UNLIMITED
             EXTENT MANAGEMENT LOCAL
             SEGMENT SPACE MANAGEMENT AUTO
         \"\"\")
@@ -1855,8 +1855,8 @@ jobs:
         conn = oracledb.connect(user='system', password='oracle', dsn='localhost:1521/FREEPDB1')
         cursor = conn.cursor()
         cursor.execute(\"\"\"
-            CREATE TABLESPACE hindsight_ts
-            DATAFILE 'hindsight_ts.dbf' SIZE 1G AUTOEXTEND ON NEXT 200M MAXSIZE UNLIMITED
+            CREATE BIGFILE TABLESPACE hindsight_ts
+            DATAFILE 'hindsight_ts.dbf' SIZE 2G AUTOEXTEND ON NEXT 500M MAXSIZE UNLIMITED
             EXTENT MANAGEMENT LOCAL
             SEGMENT SPACE MANAGEMENT AUTO
         \"\"\")
