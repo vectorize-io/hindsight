@@ -143,6 +143,5 @@ def build_batch_consolidation_prompt(
         f"{_PROCESSING_RULES}\n\n"
         f"{_INPUT_SECTION}\n\n"
         f"{_DECISION_GUIDE}\n\n"
-        f"{_OUTPUT_SECTION}"
-        + output_language_directive(llm_output_language)
+        f"{_OUTPUT_SECTION}" + output_language_directive(llm_output_language)
     )
