@@ -177,7 +177,13 @@ By default, entity labels are extracted **alongside** regular named entities (pe
 
 ### enable_observations {#observations-configuration}
 
-Toggles automatic observation consolidation on or off. Defaults to `true` when the observations feature is enabled on the server.
+Toggles observation consolidation on or off. When `false`, no consolidation runs for this bank — neither automatic nor manual. Defaults to `true` when the observations feature is enabled on the server.
+
+### enable_auto_consolidation
+
+Controls whether consolidation runs automatically after retain, delete, and update operations. When `false`, consolidation only runs when explicitly triggered via the [consolidate endpoint](/developer/observations#trigger-consolidation). Defaults to `true`.
+
+This is useful when you want full control over consolidation timing — for example, batching many retains before consolidating, or running [targeted consolidation](/developer/observations#targeted-consolidation) for specific scopes only.
 
 ### observations_mission
 
