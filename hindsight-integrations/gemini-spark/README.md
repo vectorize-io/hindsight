@@ -15,9 +15,9 @@ loop. The only third-party extension surface is MCP:
 
 | Capability | Spark support |
 |---|---|
-| Hook-based auto-recall (prepend context to prompt) | Not available — Spark's prompt assembly is private. The agent calls `hindsight_recall` when its planner judges it useful. |
-| Hook-based auto-retain (save transcripts on turn end) | Not available — third parties don't see Spark's transcripts. The agent calls `hindsight_retain` when it learns something worth keeping. |
-| MCP tools (`hindsight_recall`, `hindsight_retain`, etc.) | Yes — Spark calls Hindsight's MCP tools via its built-in MCP client. |
+| Hook-based auto-recall (prepend context to prompt) | Not available — Spark's prompt assembly is private. The agent calls `recall` when its planner judges it useful. |
+| Hook-based auto-retain (save transcripts on turn end) | Not available — third parties don't see Spark's transcripts. The agent calls `retain` when it learns something worth keeping. |
+| MCP tools (`recall`, `retain`, etc.) | Yes — Spark calls Hindsight's MCP tools via its built-in MCP client. |
 
 ## Architecture
 
@@ -81,9 +81,9 @@ URL.
 
 Prompt Spark with something that should trigger memory tools:
 
-- "What were my open API decisions from last week?" → `hindsight_recall`
+- "What were my open API decisions from last week?" → `recall`
 - "Remember that I prefer TypeScript strict mode for new projects." →
-  `hindsight_retain`
+  `retain`
 
 ## Example configs
 

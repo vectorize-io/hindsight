@@ -46,8 +46,12 @@ class TestManifestYAML:
 
     def test_description_mentions_recall_and_retain(self, manifest: dict) -> None:
         desc = manifest["tools"]["mcp_servers"][0]["description"]
-        assert "hindsight_recall" in desc
-        assert "hindsight_retain" in desc
+        assert "recall" in desc
+        assert "retain" in desc
+
+    def test_endpoint_path_is_mcp(self, manifest: dict) -> None:
+        endpoint = manifest["tools"]["mcp_servers"][0]["endpoint"]
+        assert endpoint.endswith("/mcp")
 
 
 class TestMCPConfigJSON:
