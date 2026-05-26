@@ -1251,6 +1251,44 @@ def _build_observations_for_llm(
     return obs_list
 
 
+def _dedupe_updates(updates: list[_UpdateAction], *, batch_label: str) -> list[_UpdateAction]:
+    """Collapse `updates` that target the same `observation_id`.
+
+    LLMs occasionally emit several update entries for one observation in a
+    single response (one per facet drawn from the same fact). Without
+    deduplication the downstream loop would issue separate DB writes for each
+    and the last write would silently overwrite the earlier ones. We keep the
+    last text (the LLM's most recent attempt) and union all contributing
+    `source_fact_ids`, then warn so the misbehavior is visible in logs.
+    """
+    if len(updates) < 2:
+        return list(updates)
+
+    by_id: dict[str, _UpdateAction] = {}
+    collisions = 0
+    for upd in updates:
+        existing = by_id.get(upd.observation_id)
+        if existing is None:
+            by_id[upd.observation_id] = upd
+            continue
+        collisions += 1
+        merged_ids = list(dict.fromkeys([*existing.source_fact_ids, *upd.source_fact_ids]))
+        by_id[upd.observation_id] = _UpdateAction(
+            text=upd.text,
+            observation_id=upd.observation_id,
+            source_fact_ids=merged_ids,
+        )
+
+    if collisions:
+        logger.warning(
+            f"[CONSOLIDATION] {batch_label}: LLM emitted {collisions} duplicate update(s) targeting "
+            f"the same observation_id ({len(updates)} updates -> {len(by_id)} after dedup). "
+            "Kept the last text and unioned source_fact_ids."
+        )
+
+    return list(by_id.values())
+
+
 async def _consolidate_batch_with_llm(
     llm_config: Any,
     memories: list[dict[str, Any]],
@@ -1344,9 +1382,10 @@ async def _consolidate_batch_with_llm(
                         f"(max_observations_per_scope={max_observations_per_scope})"
                     )
                     creates = creates[:remaining_observation_slots]
+            updates = _dedupe_updates(response.updates, batch_label=batch_label)
             return _BatchLLMResult(
                 creates=creates,
-                updates=response.updates,
+                updates=updates,
                 deletes=response.deletes,
                 obs_count=len(union_observations),
                 prompt_chars=len(prompt),

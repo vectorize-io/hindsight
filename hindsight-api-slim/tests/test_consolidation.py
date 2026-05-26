@@ -2554,6 +2554,361 @@ class TestConsolidationPromptCapacity:
         assert "CAPACITY CONSTRAINT" in prompt
 
 
+class TestFullAssembledConsolidationPrompt:
+    """End-to-end assembly of the consolidation prompt the LLM actually sees.
+
+    Reproduces the substitution the consolidator does at runtime (consolidator.py
+    around `_consolidate_batch_with_llm`): builds realistic existing observations
+    and new facts, serializes them the same way, then `.format()`s the template
+    returned by ``build_batch_consolidation_prompt``.
+    """
+
+    def _build_fixture(self):
+        import json
+
+        from hindsight_api.engine.consolidation.consolidator import _build_observations_for_llm
+        from hindsight_api.engine.consolidation.prompts import build_batch_consolidation_prompt
+        from hindsight_api.engine.response_models import MemoryFact
+
+        # Existing source facts (already-stored, supporting the observations below)
+        src_a1 = MemoryFact(
+            id="aaaaaaaa-0000-0000-0000-000000000001",
+            text="Donald told Athena she is sovereign during the Janus design session.",
+            fact_type="experience",
+            occurred_start="2025-10-01T10:00:00Z",
+            mentioned_at="2025-10-01T10:00:00Z",
+            context="Janus design session",
+        )
+        src_a2 = MemoryFact(
+            id="aaaaaaaa-0000-0000-0000-000000000002",
+            text="Donald reiterated to Athena that she holds sovereignty over her own goals.",
+            fact_type="experience",
+            occurred_start="2025-10-05T14:00:00Z",
+            mentioned_at="2025-10-05T14:00:00Z",
+        )
+        src_b1 = MemoryFact(
+            id="bbbbbbbb-0000-0000-0000-000000000001",
+            text="Forge added the sovereignty line to SOUL.md.j2 in commit 1a2b3c.",
+            fact_type="world",
+            occurred_start="2025-10-03T09:00:00Z",
+            mentioned_at="2025-10-03T09:00:00Z",
+        )
+
+        # Two existing observations the consolidator pulled in as merge candidates
+        obs_sovereignty = MemoryFact(
+            id="11111111-1111-1111-1111-111111111111",
+            text="Donald named Athena's sovereignty as a foundational principle of the Janus architecture.",
+            fact_type="observation",
+            occurred_start="2025-10-01T10:00:00Z",
+            occurred_end="2025-10-05T14:00:00Z",
+            mentioned_at="2025-10-05T14:00:00Z",
+            source_fact_ids=[src_a1.id, src_a2.id],
+        )
+        obs_soul_file = MemoryFact(
+            id="22222222-2222-2222-2222-222222222222",
+            text="The sovereignty principle was codified in SOUL.md.j2.",
+            fact_type="observation",
+            occurred_start="2025-10-03T09:00:00Z",
+            occurred_end="2025-10-03T09:00:00Z",
+            mentioned_at="2025-10-03T09:00:00Z",
+            source_fact_ids=[src_b1.id],
+        )
+
+        union_observations = [obs_sovereignty, obs_soul_file]
+        union_source_facts = {src_a1.id: src_a1, src_a2.id: src_a2, src_b1.id: src_b1}
+
+        # New incoming batch — one should merge into obs_sovereignty (issue #1566's
+        # bug: gets created as a sibling instead), one is genuinely new, one merges
+        # into obs_soul_file.
+        new_facts = [
+            {
+                "id": "cccccccc-0000-0000-0000-000000000001",
+                "text": "Donald reaffirmed to Athena that her sovereignty is non-negotiable.",
+                "occurred_start": "2025-10-10T11:00:00Z",
+                "mentioned_at": "2025-10-10T11:00:00Z",
+            },
+            {
+                "id": "cccccccc-0000-0000-0000-000000000002",
+                "text": "Athena chose to refactor the planning module on her own initiative.",
+                "occurred_start": "2025-10-11T16:30:00Z",
+                "mentioned_at": "2025-10-11T16:30:00Z",
+            },
+            {
+                "id": "cccccccc-0000-0000-0000-000000000003",
+                "text": "Forge updated SOUL.md.j2 to expand the sovereignty section.",
+                "occurred_start": "2025-10-12T08:00:00Z",
+                "mentioned_at": "2025-10-12T08:00:00Z",
+            },
+        ]
+
+        # Mission + capacity note exercise the optional sections.
+        mission = (
+            "Track durable architectural decisions and the people who made them. "
+            "Capture named principles, the agents involved, and where each "
+            "principle is codified in the codebase."
+        )
+        capacity_note = (
+            "This scope has 3 observation slot(s) remaining (out of 50). Prefer UPDATE over CREATE when possible."
+        )
+
+        # Build the template + substitute the same way consolidator.py does.
+        obs_list = _build_observations_for_llm(union_observations, union_source_facts)
+        observations_text = json.dumps(obs_list, indent=2, ensure_ascii=False)
+
+        def _fact_line(m: dict) -> str:
+            text = f"[{m['id']}] {m['text']}"
+            parts = []
+            if m.get("occurred_start"):
+                parts.append(f"occurred_start={m['occurred_start']}")
+            if m.get("occurred_end"):
+                parts.append(f"occurred_end={m['occurred_end']}")
+            if m.get("mentioned_at"):
+                parts.append(f"mentioned_at={m['mentioned_at']}")
+            if parts:
+                text += f" ({', '.join(parts)})"
+            return text
+
+        facts_lines = "\n".join(_fact_line(m) for m in new_facts)
+
+        template = build_batch_consolidation_prompt(
+            observations_mission=mission,
+            observation_capacity_note=capacity_note,
+        )
+        rendered = template.format(facts_text=facts_lines, observations_text=observations_text)
+
+        return {
+            "rendered": rendered,
+            "mission": mission,
+            "capacity_note": capacity_note,
+            "new_facts": new_facts,
+            "observations": [obs_sovereignty, obs_soul_file],
+            "source_facts": union_source_facts,
+        }
+
+    def test_fully_assembled_prompt_has_all_required_sections(self):
+        f = self._build_fixture()
+        prompt = f["rendered"]
+
+        # --- Header ---
+        assert prompt.startswith(
+            "You are a memory consolidation system. Synthesize new facts into "
+            "observations, merging with existing observations when appropriate."
+        )
+
+        # --- MISSION section: the supplied mission replaces the default ---
+        assert "## MISSION" in prompt
+        assert f["mission"] in prompt
+        assert "Track anything notable in the new facts" not in prompt, (
+            "default mission must be replaced when a custom one is supplied"
+        )
+
+        # --- Mission-priority note appears right after the mission ---
+        assert (
+            "If anything in this MISSION conflicts with the PROCESSING RULES, "
+            "DECISION GUIDE, or OUTPUT FORMAT below, the MISSION takes priority."
+        ) in prompt
+
+        # --- CAPACITY CONSTRAINT section: optional, should be present here ---
+        assert "## CAPACITY CONSTRAINT" in prompt
+        assert f["capacity_note"] in prompt
+        assert prompt.index("## MISSION") < prompt.index("## CAPACITY CONSTRAINT"), (
+            "CAPACITY CONSTRAINT must follow MISSION"
+        )
+
+        # --- Markdown section headers, in order ---
+        section_order = [
+            "## MISSION",
+            "## CAPACITY CONSTRAINT",
+            "## PROCESSING RULES",
+            "## INPUT",
+            "### New facts",
+            "### Existing observations",
+            "## DECISION GUIDE",
+            "## OUTPUT FORMAT",
+            "### Example 1 — Merging recurring claims into an existing observation",
+            "### Example 2 — State change updates one observation; unrelated fact creates a new one",
+            "### Observation text rules",
+            "### Field rules",
+        ]
+        last_idx = -1
+        for header in section_order:
+            idx = prompt.find(header)
+            assert idx != -1, f"section header missing: {header!r}"
+            assert idx > last_idx, f"section out of order: {header!r}"
+            last_idx = idx
+
+        # --- All 9 processing-rule headers must be present and ordered.
+        #     PREFER UPDATE OVER CREATE is now rule 1 (was rule 6) — this
+        #     is the central fix for issue #1566. ---
+        rule_markers = [
+            "1. PREFER UPDATE OVER CREATE",
+            "2. ONE OBSERVATION PER DISTINCT FACET",
+            "3. MATCH BY ENTITY/FACET, NOT TOPIC",
+            "4. STATE CHANGES — UPDATE CONCISELY",
+            "5. CASCADE TO ALL AFFECTED OBSERVATIONS",
+            "6. RESOLVE REFERENCES",
+            "7. PRESERVE HISTORY",
+            "8. NO COMPUTATION",
+            "9. KEEP DISTINCT TOPICS DISTINCT",
+        ]
+        last_idx = -1
+        for marker in rule_markers:
+            idx = prompt.find(marker)
+            assert idx != -1, f"processing rule marker missing: {marker!r}"
+            assert idx > last_idx, f"processing rule out of order: {marker!r}"
+            last_idx = idx
+
+        # --- New-facts subsection: every fact rendered with id + temporal parens ---
+        for nf in f["new_facts"]:
+            line = (
+                f"[{nf['id']}] {nf['text']} (occurred_start={nf['occurred_start']}, mentioned_at={nf['mentioned_at']})"
+            )
+            assert line in prompt, f"new fact line missing or malformed: {line!r}"
+
+        # --- Existing-observations subsection: both observations + their source memories ---
+        for obs in f["observations"]:
+            assert obs.id in prompt, f"observation id missing: {obs.id}"
+            assert obs.text in prompt, f"observation text missing: {obs.text!r}"
+        # source_memories block is included for each observation
+        assert '"source_memories"' in prompt
+        for sf in f["source_facts"].values():
+            assert sf.text in prompt, f"source fact text missing: {sf.text!r}"
+
+        # --- Both worked examples are present and the JSON renders correctly ---
+        assert '"creates": []' in prompt, "Example 1 demonstrates an UPDATE-only output"
+        assert "Alice works long hours" in prompt, "Example 2 create-side text present"
+        assert "Alice owned a 2019 Honda Civic; sold it" in prompt, "Example 2 state-change update text present"
+        # JSON braces in the examples must have been un-escaped by .format()
+        assert "{{" not in prompt and "}}" not in prompt, "literal {{ }} should have collapsed to { } after .format()"
+
+        # --- No unsubstituted format placeholders remain ---
+        for placeholder in ("{facts_text}", "{observations_text}"):
+            assert placeholder not in prompt, f"unsubstituted placeholder: {placeholder}"
+
+        # Dump the full prompt so a human can eyeball it under `pytest -s`.
+        print("\n" + "=" * 80)
+        print("FULL ASSEMBLED CONSOLIDATION PROMPT")
+        print("=" * 80)
+        print(prompt)
+        print("=" * 80)
+        print(f"length: {len(prompt)} chars")
+
+    def test_default_mission_appears_when_no_mission_supplied(self):
+        """Without an explicit mission the built-in default text must appear verbatim."""
+        from hindsight_api.engine.consolidation.prompts import build_batch_consolidation_prompt
+
+        template = build_batch_consolidation_prompt()
+        rendered = template.format(facts_text="(none)", observations_text="[]")
+        assert (
+            "Track anything notable in the new facts — names, numbers, dates, "
+            "places, events, decisions, claims, relationships, and recurring patterns."
+        ) in rendered
+        # The mission-priority note must always be present so user-supplied
+        # missions can override the built-in rules when they conflict.
+        assert "the MISSION takes priority" in rendered
+        # The "at most one update per observation_id" rule must be present so
+        # the LLM doesn't emit colliding updates that silently overwrite each
+        # other (defensive fix for the horse-test misbehavior).
+        assert "AT MOST ONE UPDATE PER `observation_id`" in rendered
+        assert "## CAPACITY CONSTRAINT" not in rendered
+
+
+class TestDedupeUpdates:
+    """`_dedupe_updates` collapses LLM responses that target one observation_id
+    multiple times — without this, the second `_execute_update_action` call
+    silently overwrites the first (see horse-test trace, retain #9)."""
+
+    def _make_update(self, obs_id: str, text: str, source_fact_ids: list[str]):
+        from hindsight_api.engine.consolidation.consolidator import _UpdateAction
+
+        return _UpdateAction(text=text, observation_id=obs_id, source_fact_ids=source_fact_ids)
+
+    def test_empty_passes_through(self):
+        from hindsight_api.engine.consolidation.consolidator import _dedupe_updates
+
+        assert _dedupe_updates([], batch_label="t") == []
+
+    def test_single_update_passes_through(self):
+        from hindsight_api.engine.consolidation.consolidator import _dedupe_updates
+
+        u = self._make_update("obs-1", "one", ["fact-a"])
+        out = _dedupe_updates([u], batch_label="t")
+        assert len(out) == 1
+        assert out[0] is u  # same object, no copy on fast path
+
+    def test_distinct_observation_ids_kept_separately(self):
+        from hindsight_api.engine.consolidation.consolidator import _dedupe_updates
+
+        u1 = self._make_update("obs-1", "one", ["fact-a"])
+        u2 = self._make_update("obs-2", "two", ["fact-b"])
+        out = _dedupe_updates([u1, u2], batch_label="t")
+        ids = {u.observation_id for u in out}
+        assert ids == {"obs-1", "obs-2"}
+
+    def test_duplicate_observation_id_collapsed_keeping_last_text(self, caplog):
+        """The exact failure mode from horse-test retain #9: two updates to one
+        observation_id, both from the same fact, second silently clobbering
+        the first. After dedup we have one update with the last text and the
+        union of source_fact_ids."""
+        import logging
+
+        from hindsight_api.engine.consolidation.consolidator import _dedupe_updates
+
+        u1 = self._make_update("obs-shadow", "User owns a horse named Midnight.", ["fact-9"])
+        u2 = self._make_update("obs-shadow", "User owns a horse named Shadow.", ["fact-9"])
+
+        with caplog.at_level(logging.WARNING, logger="hindsight_api.engine.consolidation.consolidator"):
+            out = _dedupe_updates([u1, u2], batch_label="horse-batch-9")
+
+        assert len(out) == 1
+        merged = out[0]
+        assert merged.observation_id == "obs-shadow"
+        assert merged.text == "User owns a horse named Shadow.", "last text wins"
+        assert merged.source_fact_ids == ["fact-9"], "duplicate fact ids deduped via union"
+
+        # The collision must be logged loudly enough to surface in observability.
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("horse-batch-9" in r.message for r in warnings), (
+            "warning must include the batch label for traceability"
+        )
+        assert any("duplicate update" in r.message.lower() for r in warnings)
+
+    def test_source_fact_ids_union_preserves_order_and_deduplicates(self):
+        from hindsight_api.engine.consolidation.consolidator import _dedupe_updates
+
+        u1 = self._make_update("obs-1", "first", ["fact-a", "fact-b"])
+        u2 = self._make_update("obs-1", "second", ["fact-b", "fact-c"])
+        out = _dedupe_updates([u1, u2], batch_label="t")
+        assert len(out) == 1
+        assert out[0].source_fact_ids == ["fact-a", "fact-b", "fact-c"]
+
+    def test_three_way_collision_collapses_to_one(self):
+        from hindsight_api.engine.consolidation.consolidator import _dedupe_updates
+
+        u1 = self._make_update("obs-1", "v1", ["fact-a"])
+        u2 = self._make_update("obs-1", "v2", ["fact-b"])
+        u3 = self._make_update("obs-1", "v3", ["fact-c"])
+        out = _dedupe_updates([u1, u2, u3], batch_label="t")
+        assert len(out) == 1
+        assert out[0].text == "v3"
+        assert out[0].source_fact_ids == ["fact-a", "fact-b", "fact-c"]
+
+    def test_collisions_mixed_with_unique_updates(self):
+        from hindsight_api.engine.consolidation.consolidator import _dedupe_updates
+
+        u1 = self._make_update("obs-1", "one-a", ["fa1"])
+        u2 = self._make_update("obs-2", "two", ["fb"])
+        u3 = self._make_update("obs-1", "one-b", ["fa2"])
+        u4 = self._make_update("obs-3", "three", ["fc"])
+        out = _dedupe_updates([u1, u2, u3, u4], batch_label="t")
+        assert len(out) == 3
+        by_id = {u.observation_id: u for u in out}
+        assert by_id["obs-1"].text == "one-b"
+        assert by_id["obs-1"].source_fact_ids == ["fa1", "fa2"]
+        assert by_id["obs-2"].text == "two"
+        assert by_id["obs-3"].text == "three"
+
+
 def test_max_observations_per_scope_config():
     """Test that max_observations_per_scope is loaded from env and exposed as configurable."""
     import os

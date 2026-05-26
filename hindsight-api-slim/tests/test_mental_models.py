@@ -654,6 +654,113 @@ class TestDirectivesPromptInjection:
         critical_rules_pos = prompt.find("## CRITICAL RULES")
         assert directives_pos < critical_rules_pos
 
+    def test_system_prompt_includes_temporal_reasoning(self):
+        """The reflect system prompt must teach the LLM how to interpret the
+        temporal fields (`mentioned_at`, `occurred_start`, `occurred_end`)
+        that ride along on every recall / search_observations result. Without
+        this guidance the LLM ignores the timestamps and picks conflicting
+        facts on surface cues (e.g. a baked-in 'When:' label) — see the
+        horse-test where it picked an older count over a newer one.
+        """
+        from hindsight_api.engine.reflect.prompts import build_system_prompt_for_tools
+
+        prompt = build_system_prompt_for_tools(
+            bank_profile={"name": "Test Bank", "mission": "Test mission"},
+        )
+
+        assert "## Temporal Reasoning" in prompt
+        # Names of the actual JSON fields the LLM will see
+        assert "`mentioned_at`" in prompt
+        assert "`occurred_start`" in prompt
+        assert "`occurred_end`" in prompt
+        # Core supersession rule
+        assert "LATEST `mentioned_at` is authoritative" in prompt
+        assert "SUPERSEDE" in prompt
+        # Goes before the retrieval strategy so the LLM has the interpretation
+        # rules in hand before it starts calling tools.
+        assert prompt.find("## Temporal Reasoning") < prompt.find("## HIERARCHICAL RETRIEVAL STRATEGY")
+
+    def test_system_prompt_includes_conflicts_and_ambiguity(self):
+        """The reflect system prompt must give the LLM explicit permission to
+        say 'this is ambiguous' instead of fabricating a confident answer when
+        the data is internally inconsistent in ways the temporal rule does
+        not resolve. Without this the LLM smooths over conflicts in prose.
+        """
+        from hindsight_api.engine.reflect.prompts import build_system_prompt_for_tools
+
+        prompt = build_system_prompt_for_tools(
+            bank_profile={"name": "Test Bank", "mission": "Test mission"},
+        )
+
+        assert "## Conflicts and Ambiguity" in prompt
+        # The two-case distinction (resolvable vs unresolvable) must be present
+        # so the LLM knows when to apply the temporal rule vs when to surface
+        # the conflict instead.
+        assert "RESOLVABLE conflict" in prompt
+        assert "UNRESOLVABLE ambiguity" in prompt
+        # Explicit permission to acknowledge ambiguity is the whole point of
+        # this section — guard the language that gives it.
+        assert "SAY SO" in prompt
+        assert "Acknowledging ambiguity is a successful answer" in prompt
+        # Anti-confabulation guard: don't pick / average / smooth over.
+        assert "Do NOT pick a value arbitrarily" in prompt
+        # Sequencing: ambiguity rules must come AFTER temporal (so the LLM
+        # first tries the resolution rule, then falls back to acknowledgment)
+        # and BEFORE the retrieval strategy.
+        assert prompt.find("## Temporal Reasoning") < prompt.find("## Conflicts and Ambiguity")
+        assert prompt.find("## Conflicts and Ambiguity") < prompt.find("## HIERARCHICAL RETRIEVAL STRATEGY")
+
+    def test_system_prompt_includes_showing_your_reasoning(self):
+        """The prompt must require the LLM to show step-by-step reasoning for
+        conflict-resolution / event-application answers, so the reader (and
+        we) can audit the temporal rule + arithmetic. Without this the LLM
+        commits to wrong answers confidently with no traceable derivation
+        (e.g. silently double-counting an event that pre-dates the latest
+        count statement)."""
+        from hindsight_api.engine.reflect.prompts import build_system_prompt_for_tools
+
+        prompt = build_system_prompt_for_tools(
+            bank_profile={"name": "Test Bank", "mission": "Test mission"},
+        )
+
+        assert "## Showing Your Reasoning" in prompt
+        # The mandatory reasoning steps must all be referenced — these
+        # are the scaffolding that prevents double-counting and unjustified
+        # answers.
+        assert "List the relevant facts in `mentioned_at` order" in prompt
+        assert "Identify the authoritative fact" in prompt
+        assert "List candidate events to apply on top" in prompt
+        # Step 4 is the forcing function that prevents the double-count bug
+        # we saw in horse run #1 — the LLM must explicitly compare each
+        # candidate event's date against the authoritative date.
+        assert "Sanity-check each candidate event against the authoritative date" in prompt
+        assert "single most common mistake" in prompt
+        assert "Show the arithmetic or derivation explicitly" in prompt
+        # The escape hatch back to ambiguity acknowledgement must be present.
+        assert "UNRESOLVABLE ambiguity per the section above" in prompt
+        # Sequence: comes AFTER Conflicts so the LLM already has the
+        # ambiguity escape hatch in hand, BEFORE retrieval so it shapes
+        # what the agent looks for.
+        assert prompt.find("## Conflicts and Ambiguity") < prompt.find("## Showing Your Reasoning")
+        assert prompt.find("## Showing Your Reasoning") < prompt.find("## HIERARCHICAL RETRIEVAL STRATEGY")
+
+    def test_how_to_reason_no_longer_pushes_unconditional_best_answer(self):
+        """The original 'use what IS stated to give the best answer' bullet
+        was nudging the LLM to fabricate confidence under conflict. The
+        updated bullet must pair best-effort with uncertainty-surfacing.
+        """
+        from hindsight_api.engine.reflect.prompts import build_system_prompt_for_tools
+
+        prompt = build_system_prompt_for_tools(
+            bank_profile={"name": "Test Bank", "mission": "Test mission"},
+        )
+
+        # The unconditional original phrasing must be gone.
+        assert "use what IS stated to give the best answer" not in prompt
+        # The new phrasing pairs best-effort with explicit uncertainty.
+        assert "best-effort answer AND surface any uncertainty" in prompt
+        assert "never invent confidence the data doesn't support" in prompt
+
 
 class TestMentalModelHistory:
     """Test mental model history persistence."""

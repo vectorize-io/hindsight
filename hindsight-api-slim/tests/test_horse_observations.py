@@ -7,6 +7,7 @@ how observations track the evolving state over time, with full prompt debugging.
 import json
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -182,6 +183,16 @@ async def test_horse_farm_observation_history(memory: MemoryEngine, request_cont
         "I am sad to report that Shadow has died.",
     ]
 
+    # Space mentioned_at one week apart per retain so the temporal supersession
+    # rule the reflect prompt teaches the LLM has meaningful signal to work
+    # with. Without an explicit event_date, retains land at utcnow() and end
+    # up 2-5 seconds apart in wall clock time — close enough that the LLM
+    # can't reliably rank "5 horses" (later) over "1 horse" (earlier) because
+    # the gap looks like noise. One-week spacing models a user narrating their
+    # farm over time.
+    base_time = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    event_dates = [base_time + timedelta(weeks=i) for i in range(len(messages))]
+
     # Monkey-patch to intercept consolidation LLM calls
     _original_consolidate = consolidator_mod._consolidate_batch_with_llm
 
@@ -194,7 +205,7 @@ async def test_horse_farm_observation_history(memory: MemoryEngine, request_cont
     try:
         for i, content in enumerate(messages):
             print(f"\n{'='*80}")
-            print(f"RETAIN #{i+1}: {content}")
+            print(f"RETAIN #{i+1} ({event_dates[i].date()}): {content}")
             print(f"{'='*80}")
 
             log_start = len(_debug_log)
@@ -202,6 +213,7 @@ async def test_horse_farm_observation_history(memory: MemoryEngine, request_cont
             await memory.retain_async(
                 bank_id=bank_id,
                 content=content,
+                event_date=event_dates[i],
                 request_context=request_context,
             )
             await memory.wait_for_background_tasks()
