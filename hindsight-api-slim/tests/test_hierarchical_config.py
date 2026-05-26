@@ -124,9 +124,10 @@ async def test_hierarchical_fields_categorization():
     assert "llm_gemini_safety_settings" in configurable
     assert "mcp_enabled_tools" in configurable
     assert "retain_chunk_batch_size" in configurable
+    assert "enable_auto_consolidation" in configurable
 
     # Verify count is correct
-    assert len(configurable) == 35
+    assert len(configurable) == 36
 
     # Verify credential fields (NEVER exposed)
     assert "llm_api_key" in credentials
