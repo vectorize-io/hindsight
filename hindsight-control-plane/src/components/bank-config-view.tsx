@@ -141,6 +141,7 @@ const MCP_TOOL_GROUPS: { label: string; tools: string[] }[] = [
       "update_mental_model",
       "delete_mental_model",
       "refresh_mental_model",
+      "clear_mental_model",
     ],
   },
   { label: "Directives", tools: ["list_directives", "create_directive", "delete_directive"] },

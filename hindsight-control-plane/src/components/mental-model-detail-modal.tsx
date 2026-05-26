@@ -22,6 +22,7 @@ import {
   ChevronLeft,
   ChevronRight,
   MoreVertical,
+  Eraser,
   Pencil,
   RefreshCw,
   Trash2,
@@ -570,6 +571,7 @@ interface MentalModelDetailModalProps {
   onClose: () => void;
   onEdit?: (m: MentalModel) => void;
   onDelete?: (m: MentalModel) => void;
+  onClear?: (m: MentalModel) => void;
   onRefreshed?: (m: MentalModel) => void;
   initialTab?: "content" | "configuration" | "history";
 }
@@ -579,6 +581,7 @@ export function MentalModelDetailModal({
   onClose,
   onEdit,
   onDelete,
+  onClear,
   onRefreshed,
   initialTab = "content",
 }: MentalModelDetailModalProps) {
@@ -786,6 +789,12 @@ export function MentalModelDetailModal({
                       <RefreshCw className="h-4 w-4 mr-2" />
                       Refresh Manually
                     </DropdownMenuItem>
+                    {onClear && (
+                      <DropdownMenuItem onClick={() => onClear(mentalModel)}>
+                        <Eraser className="h-4 w-4 mr-2" />
+                        Clear Content
+                      </DropdownMenuItem>
+                    )}
                     {onDelete && (
                       <>
                         <DropdownMenuSeparator />

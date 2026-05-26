@@ -43,6 +43,7 @@ import {
   Sparkles,
   Loader2,
   Trash2,
+  Eraser,
   RefreshCw,
   ChevronLeft,
   ChevronRight,
@@ -124,6 +125,11 @@ export function MentalModelsView() {
     name: string;
   } | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [clearTarget, setClearTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const [clearing, setClearing] = useState(false);
 
   // Tag filtering happens server-side; only the search text is applied locally.
   const filteredMentalModels = mentalModels.filter((m) => {
@@ -199,6 +205,23 @@ export function MentalModelsView() {
       // Error toast is shown automatically by the API client interceptor
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleClear = async () => {
+    if (!currentBank || !clearTarget) return;
+
+    setClearing(true);
+    try {
+      const updated = await client.clearMentalModel(currentBank, clearTarget.id);
+      setMentalModels((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+      if (selectedMentalModel?.id === updated.id) setSelectedMentalModel(updated);
+      toast.success("Mental model content cleared");
+      setClearTarget(null);
+    } catch {
+      // Error toast handled by API client interceptor
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -355,6 +378,9 @@ export function MentalModelsView() {
                                 setShowUpdateDialog(true);
                               }}
                               onRefresh={handleRowRefresh}
+                              onClear={(target) =>
+                                setClearTarget({ id: target.id, name: target.name })
+                              }
                               onDelete={(target) =>
                                 setDeleteTarget({ id: target.id, name: target.name })
                               }
@@ -415,6 +441,7 @@ export function MentalModelsView() {
                     setShowUpdateDialog(true);
                   }}
                   onRefresh={handleRowRefresh}
+                  onClear={(target) => setClearTarget({ id: target.id, name: target.name })}
                   onDelete={(target) => setDeleteTarget({ id: target.id, name: target.name })}
                 />
               )}
@@ -519,10 +546,33 @@ export function MentalModelsView() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <AlertDialog open={!!clearTarget} onOpenChange={(open) => !open && setClearTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear Mental Model Content</AlertDialogTitle>
+            <AlertDialogDescription>
+              Clear the content of{" "}
+              <span className="font-semibold">&quot;{clearTarget?.name}&quot;</span>?
+              <br />
+              <br />
+              The next refresh will re-synthesize content from scratch.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-row justify-end space-x-2">
+            <AlertDialogCancel className="mt-0">Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleClear} disabled={clearing}>
+              {clearing ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+              Clear
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <MentalModelDetailModal
         mentalModelId={selectedMentalModel?.id ?? null}
         onClose={() => setSelectedMentalModel(null)}
         onDelete={(m) => setDeleteTarget({ id: m.id, name: m.name })}
+        onClear={(m) => setClearTarget({ id: m.id, name: m.name })}
         onEdit={(m) => {
           setMentalModelToUpdate(m);
           setShowUpdateDialog(true);
@@ -558,6 +608,7 @@ function RowActionsMenu({
   refreshing,
   onEdit,
   onRefresh,
+  onClear,
   onDelete,
   triggerClassName,
 }: {
@@ -565,6 +616,7 @@ function RowActionsMenu({
   refreshing: boolean;
   onEdit: (m: MentalModel) => void;
   onRefresh: (m: MentalModel) => void;
+  onClear: (m: MentalModel) => void;
   onDelete: (m: MentalModel) => void;
   triggerClassName?: string;
 }) {
@@ -589,6 +641,10 @@ function RowActionsMenu({
         <DropdownMenuItem onClick={() => onRefresh(m)} disabled={refreshing}>
           <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
           Refresh Manually
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onClear(m)}>
+          <Eraser className="h-4 w-4 mr-2" />
+          Clear Content
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
@@ -1425,6 +1481,7 @@ function FilesView({
   refreshingIds,
   onEdit,
   onRefresh,
+  onClear,
   onDelete,
 }: {
   mentalModels: MentalModel[];
@@ -1434,6 +1491,7 @@ function FilesView({
   refreshingIds: Set<string>;
   onEdit: (m: MentalModel) => void;
   onRefresh: (m: MentalModel) => void;
+  onClear: (m: MentalModel) => void;
   onDelete: (m: MentalModel) => void;
 }) {
   const effectiveId =
@@ -1526,6 +1584,7 @@ function FilesView({
                     refreshing={refreshingIds.has(selected.id)}
                     onEdit={onEdit}
                     onRefresh={onRefresh}
+                    onClear={onClear}
                     onDelete={onDelete}
                   />
                 </div>
