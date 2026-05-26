@@ -1069,9 +1069,11 @@ export HINDSIGHT_API_FILE_STORAGE_TYPE=native
 |----------|-------------|---------|
 | `HINDSIGHT_API_FILE_STORAGE_S3_BUCKET` | S3 bucket name | - |
 | `HINDSIGHT_API_FILE_STORAGE_S3_REGION` | AWS region | - |
-| `HINDSIGHT_API_FILE_STORAGE_S3_ENDPOINT` | Custom endpoint URL (for S3-compatible stores like MinIO, Cloudflare R2) | AWS default |
+| `HINDSIGHT_API_FILE_STORAGE_S3_ENDPOINT` | Custom endpoint URL (for S3-compatible stores like MinIO, Cloudflare R2, Tigris) | AWS default |
 | `HINDSIGHT_API_FILE_STORAGE_S3_ACCESS_KEY_ID` | AWS access key ID | - |
 | `HINDSIGHT_API_FILE_STORAGE_S3_SECRET_ACCESS_KEY` | AWS secret access key | - |
+
+For S3-compatible providers that don't expose AWS-style regions (MinIO, Cloudflare R2, Tigris), set `HINDSIGHT_API_FILE_STORAGE_S3_REGION=auto`. The value is required for SigV4 request signing but is ignored by the service.
 
 ```bash
 # AWS S3
@@ -1084,9 +1086,18 @@ export HINDSIGHT_API_FILE_STORAGE_S3_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPx
 # S3-compatible (MinIO, Cloudflare R2, etc.)
 export HINDSIGHT_API_FILE_STORAGE_TYPE=s3
 export HINDSIGHT_API_FILE_STORAGE_S3_BUCKET=my-bucket
+export HINDSIGHT_API_FILE_STORAGE_S3_REGION=auto
 export HINDSIGHT_API_FILE_STORAGE_S3_ENDPOINT=https://your-minio.example.com
 export HINDSIGHT_API_FILE_STORAGE_S3_ACCESS_KEY_ID=minioadmin
 export HINDSIGHT_API_FILE_STORAGE_S3_SECRET_ACCESS_KEY=minioadmin
+
+# Tigris (S3-compatible, single global endpoint)
+export HINDSIGHT_API_FILE_STORAGE_TYPE=s3
+export HINDSIGHT_API_FILE_STORAGE_S3_BUCKET=my-hindsight-bucket
+export HINDSIGHT_API_FILE_STORAGE_S3_REGION=auto
+export HINDSIGHT_API_FILE_STORAGE_S3_ENDPOINT=https://t3.storage.dev
+export HINDSIGHT_API_FILE_STORAGE_S3_ACCESS_KEY_ID=tid_your_access_key
+export HINDSIGHT_API_FILE_STORAGE_S3_SECRET_ACCESS_KEY=tsec_your_secret_key
 ```
 
 #### Google Cloud Storage
