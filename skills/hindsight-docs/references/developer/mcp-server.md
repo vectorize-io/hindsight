@@ -295,6 +295,16 @@ Re-generate a mental model's content from the latest memories. Runs asynchronous
 
 ---
 
+### clear_mental_model
+
+Clear a mental model's content while keeping its definition. After clearing, call `refresh_mental_model` to rebuild it from the latest memories.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `mental_model_id` | string | Yes | The ID of the mental model to clear |
+
+---
+
 ### list_banks (multi-bank mode only)
 
 List all available memory banks.
