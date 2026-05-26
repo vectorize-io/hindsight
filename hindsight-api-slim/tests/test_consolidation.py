@@ -380,12 +380,36 @@ class TestConsolidationIntegration:
                 f"Expected multiple observations for different people, got {len(observations)}"
             )
 
-            # No single observation should mention multiple different people
-            # (This is a structural check - each observation should be focused)
+            # Fast structural check first: no single observation should name more
+            # than one of {John, Mary, Bob}.  This catches the obvious failure mode
+            # cheaply without paying for a judge call per observation.
             for obs in observations:
                 text = obs["text"].lower()
-                people_mentioned = sum([1 for name in ["john", "mary", "bob"] if name in text])
+                people_mentioned = sum(1 for name in ["john", "mary", "bob"] if name in text)
                 assert people_mentioned <= 1, f"Observation should not merge different people: {obs['text']}"
+
+            all_obs_text = " | ".join(obs["text"] for obs in observations)
+
+        # Semantic backup: catch the case where the LLM merges facts about different
+        # people using pronouns or referent shifts that bypass the proper-noun check
+        # (e.g. an observation that says "They each live in different cities and one
+        # works at Google").
+        from tests.llm_judge import assert_meets_criteria
+
+        await assert_meets_criteria(
+            response=all_obs_text,
+            criteria=(
+                "Each observation is focused on a single individual's fact. No observation "
+                "blends or conflates facts about multiple different people (John, Mary, and Bob "
+                "should each have their own observations, not a combined one)."
+            ),
+            context=(
+                "Three independent facts were stored: 'John lives in New York.', "
+                "'Mary lives in Boston.', and 'Bob works at Google.' These should produce "
+                "separate observations — they are unrelated."
+            ),
+            msg=f"Observations should not conflate distinct people. Got: {[obs['text'] for obs in observations]}",
+        )
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -454,19 +478,27 @@ class TestConsolidationIntegration:
             # The key is that the contradiction is tracked, not ignored.
             assert len(observations) >= 1, "Should have at least one observation after contradiction"
 
-            all_texts = " ".join(obs["text"].lower() for obs in observations)
+            all_texts = " | ".join(obs["text"] for obs in observations)
             all_source_ids = []
             for obs in observations:
                 all_source_ids.extend(obs["source_memory_ids"] or [])
-            # At least one observation should reference the contradiction
-            # (either via text content or by having multiple source memories)
-            has_contradiction_awareness = (
-                ("hate" in all_texts or "hates" in all_texts)
-                or ("used to" in all_texts or "now" in all_texts or "but" in all_texts)
-                or len(all_source_ids) > 1
-            )
-            assert has_contradiction_awareness, (
-                f"Observations should reflect the contradiction. Got: {[obs['text'] for obs in observations]}"
+
+        # Either the observations reference both sentiments (via text content) or the
+        # consolidation linked both source memories together. The judge evaluates the
+        # text path semantically — without it, paraphrases like "no longer enjoys" or
+        # "switched away from" would fail a literal substring check.
+        if len(all_source_ids) <= 1:
+            from tests.llm_judge import assert_meets_criteria
+
+            await assert_meets_criteria(
+                response=all_texts,
+                criteria=(
+                    "The observation(s) reflect that Alex's feelings about pizza changed — either by "
+                    "mentioning both states (loved/hated), using temporal language (used to, now, "
+                    "but, no longer, switched, changed), or otherwise capturing the contradiction."
+                ),
+                context="Source facts: 'Alex loves pizza.' followed by 'Alex hates pizza.'",
+                msg=f"Observations should track the contradiction. Got: {[obs['text'] for obs in observations]}",
             )
 
         # Cleanup
