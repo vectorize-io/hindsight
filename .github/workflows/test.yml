@@ -189,7 +189,7 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
 
@@ -676,7 +676,7 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -843,7 +843,7 @@ jobs:
         retention-days: 1
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -1081,7 +1081,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -1179,7 +1179,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -1304,7 +1304,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -1377,7 +1377,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -1488,7 +1488,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -1658,7 +1658,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -1817,7 +1817,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -1934,7 +1934,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -2088,7 +2088,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -2203,7 +2203,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -2317,7 +2317,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -2447,7 +2447,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -2539,7 +2539,7 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -2575,7 +2575,7 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -2612,7 +2612,7 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -2645,7 +2645,7 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -2681,7 +2681,7 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -2717,7 +2717,7 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -2753,7 +2753,7 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -2789,7 +2789,7 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -2825,7 +2825,7 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -2875,7 +2875,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -2942,7 +2942,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -3018,7 +3018,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> "$GITHUB_ENV"
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -3190,7 +3190,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -3304,7 +3304,7 @@ jobs:
         cp target/release/hindsight /usr/local/bin/hindsight
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -3429,7 +3429,7 @@ jobs:
       run: git fetch --tags
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -3493,7 +3493,7 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
 
@@ -3578,7 +3578,7 @@ jobs:
         fetch-depth: 0  # Fetch full git history to access base branch
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
 
@@ -3630,7 +3630,7 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
 

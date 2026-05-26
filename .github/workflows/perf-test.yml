@@ -51,7 +51,7 @@ jobs:
         ref: ${{ inputs.ref || github.ref }}
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false
@@ -136,7 +136,7 @@ jobs:
         echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
         prune-cache: false

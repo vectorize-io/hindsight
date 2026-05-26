@@ -27,7 +27,7 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: package-lock.json
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v8.1.0
       - run: npm ci --workspace=hindsight-docs
       - run: uv run generate-llms-full
       - run: npm run build --workspace=hindsight-docs

@@ -41,7 +41,7 @@ jobs:
 
     - name: Install uv
       if: steps.type.outputs.type == 'python'
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v8.1.0
       with:
         enable-cache: true
 
