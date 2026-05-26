@@ -50,10 +50,18 @@ _INDEX_TYPE_KEYWORDS = {
 # Per-backend ANN search-time tuning GUCs. Each entry is a tuple of
 # (guc_name, value) pairs the caller can apply with SET or SET LOCAL.
 #
-# - pgvector exposes hnsw.ef_search.
+# - pgvector exposes hnsw.ef_search. The 60 / 200 pair is unchanged from the
+#   pre-dispatcher code (internal benchmarks tuned around our embedding count
+#   and recall floor; see the link_utils / pool init call sites for the
+#   latency-vs-recall framing).
 # - vchord exposes vchordrq.probes (no default; see VectorChord issue #392)
-#   and vchordrq.epsilon (default 1.9). We only set probes for now and leave
-#   epsilon at its default; lowering it further is a separate trade-off.
+#   and vchordrq.epsilon (default 1.9). probes = 10 / 30 are starting
+#   defaults pending a workload-specific sweep — vchordrq's recall curve
+#   shape differs from HNSW's, so the pgvector numbers don't translate
+#   directly. Revisit with a per-cluster benchmark once we have production
+#   recall data; until then these are deliberately conservative on the
+#   high-recall path. We leave epsilon at its default; tightening it is a
+#   separate trade-off.
 # - pgvectorscale / pg_diskann / scann do not expose an equivalent per-statement
 #   knob in the engine today, so the dispatcher returns no statements for them.
 _ANN_TUNING_LOW_LATENCY: dict[str, tuple[tuple[str, str], ...]] = {

@@ -2057,7 +2057,11 @@ class MemoryEngine(MemoryEngineInterface):
             for guc, value in ann_search_tuning_settings(configured_vector_extension(), kind="high_recall"):
                 try:
                     await conn.execute(f"SET {guc} = {value}")
-                except Exception:
+                except asyncpg.exceptions.PostgresError:
+                    # Defensive net for env mis-config (e.g. extension configured
+                    # for vchord but the cluster only has pgvector). Narrow to
+                    # PostgresError so genuine bugs in the pool/conn layer surface
+                    # instead of being silently logged at debug level.
                     logger.debug("Could not set %s — extension may not support it", guc)
 
             # Server-side safety net for runaway queries. Migrations use a

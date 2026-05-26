@@ -38,6 +38,12 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _pg_schema_prefix() -> str:
+    """Schema-qualifier for raw SQL on PG (multi-tenant search_path)."""
+    schema = context.config.get_main_option("target_schema")
+    return f'"{schema}".' if schema else ""
+
+
 def _rebuild_vchordrq_indexes(old_ops: str, new_ops: str) -> None:
     """Rebuild vchordrq indexes using ``old_ops`` so they use ``new_ops``.
 
@@ -47,19 +53,27 @@ def _rebuild_vchordrq_indexes(old_ops: str, new_ops: str) -> None:
     cannot run inside a transaction.
     """
     bind = op.get_bind()
-    schema = context.config.get_main_option("target_schema") or "public"
+    # `or None` collapses both unset and explicit empty-string Alembic options
+    # into NULL so the COALESCE below falls back to current_schema() in either
+    # case. Without it, an empty-string option would filter on `schemaname = ''`
+    # and skip every real schema.
+    target_schema = context.config.get_main_option("target_schema") or None
+    prefix = _pg_schema_prefix()
 
     rows = bind.execute(
         text(
             "SELECT indexname, indexdef FROM pg_indexes "
-            "WHERE schemaname = :schema "
+            "WHERE schemaname = COALESCE(:target_schema, current_schema()) "
             "AND indexdef ILIKE '%vchordrq%' "
             "AND indexdef ILIKE :ops_like"
         ),
-        {"schema": schema, "ops_like": f"%{old_ops}%"},
+        {"target_schema": target_schema, "ops_like": f"%{old_ops}%"},
     ).fetchall()
 
     for idx_name, indexdef in rows:
+        # pg_get_indexdef() emits the canonical form `CREATE INDEX <name> ON …`,
+        # so <name> is the first textual occurrence — both substitutions below
+        # rely on that.
         new_def = indexdef.replace(old_ops, new_ops, 1)
         temp_name = f"{idx_name}__opclass_swap"
         new_def = new_def.replace(idx_name, temp_name, 1)
@@ -69,9 +83,51 @@ def _rebuild_vchordrq_indexes(old_ops: str, new_ops: str) -> None:
             new_def,
             count=1,
         )
+
+        # CREATE INDEX CONCURRENTLY can leave the partial index as INVALID if a
+        # previous run errored (disk pressure, lock conflict, signal). Without
+        # this drop the CONCURRENTLY IF NOT EXISTS below would skip creation,
+        # then we'd drop the original and rename the broken index into its
+        # place — silently restoring the seq-scan bug this migration fixes.
+        op.execute(f'DROP INDEX IF EXISTS {prefix}"{temp_name}"')
         op.execute(new_def)
-        op.execute(f'DROP INDEX IF EXISTS "{schema}"."{idx_name}"')
-        op.execute(f'ALTER INDEX "{schema}"."{temp_name}" RENAME TO "{idx_name}"')
+
+        # Even on a clean run CONCURRENTLY can finish with indisvalid = false
+        # (e.g. constraint violation during the second build scan). Refuse to
+        # promote in that case so we never alias an INVALID index over a working
+        # one.
+        is_valid = bind.execute(
+            text(
+                "SELECT i.indisvalid "
+                "FROM pg_class c "
+                "JOIN pg_index i ON c.oid = i.indexrelid "
+                "JOIN pg_namespace n ON c.relnamespace = n.oid "
+                "WHERE c.relname = :name "
+                "  AND n.nspname = COALESCE(:target_schema, current_schema())"
+            ),
+            {"name": temp_name, "target_schema": target_schema},
+        ).scalar()
+        if not is_valid:
+            raise RuntimeError(
+                f"vchordrq index rebuild produced an INVALID index ({temp_name}); "
+                "drop it manually and re-run the migration."
+            )
+
+        # DROP + RENAME atomically. A crash between the two would leave
+        # `temp_name` as a valid orphan and the canonical name missing —
+        # next run's `pg_indexes` filter (looking for vector_l2_ops) wouldn't
+        # find anything to recover from, so the index would stay gone. PG
+        # runs the DO block in its own server-side transaction, so either
+        # both succeed or both roll back.
+        op.execute(
+            f"""
+            DO $$
+            BEGIN
+                DROP INDEX IF EXISTS {prefix}"{idx_name}";
+                ALTER INDEX {prefix}"{temp_name}" RENAME TO "{idx_name}";
+            END $$;
+            """
+        )
 
 
 def _pg_upgrade() -> None:
