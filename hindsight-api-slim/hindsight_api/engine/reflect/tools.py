@@ -23,6 +23,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _prune_nulls(d: dict[str, Any]) -> dict[str, Any]:
+    """Drop keys whose value is None or an empty collection (``""``, ``[]``, ``{}``).
+
+    Reflect tools dump ``MemoryFact`` / ``ObservationResult`` via ``model_dump()``,
+    which emits every field including the many that are typically null or empty
+    (``context``, ``occurred_start``, ``metadata``, ``tags``, etc.). Stripping
+    these before serializing to JSON for the LLM cuts token cost and removes
+    fields that aren't telling the model anything.
+
+    Callers that need the *presence* of a specific field as a signal (e.g.
+    ``source_fact_ids`` for drill-down) must ensure the value is non-empty —
+    pass the upstream flag that populates it (e.g. ``source_facts_max_tokens``
+    > 0 on ``tool_search_observations``) rather than relying on Pydantic
+    emitting ``None``.
+    """
+    return {k: v for k, v in d.items() if v is not None and v != "" and v != [] and v != {}}
+
+
 def _document_metadata_from_retain_params(retain_params: Any) -> dict[str, Any] | None:
     """Return document metadata stored under retain_params.metadata."""
     if isinstance(retain_params, str):
@@ -214,8 +232,8 @@ async def tool_search_observations(
     return {
         "query": query,
         "count": len(result.results),
-        "observations": [m.model_dump() for m in result.results],
-        "source_facts": {k: v.model_dump() for k, v in (result.source_facts or {}).items()},
+        "observations": [_prune_nulls(m.model_dump()) for m in result.results],
+        "source_facts": {k: _prune_nulls(v.model_dump()) for k, v in (result.source_facts or {}).items()},
         "is_stale": is_stale,
         "freshness": freshness,
     }
@@ -282,8 +300,8 @@ async def tool_recall(
 
     return {
         "query": query,
-        "memories": [m.model_dump() for m in result.results],
-        "chunks": {k: v.model_dump() for k, v in (result.chunks or {}).items()},
+        "memories": [_prune_nulls(m.model_dump()) for m in result.results],
+        "chunks": {k: _prune_nulls(v.model_dump()) for k, v in (result.chunks or {}).items()},
     }
 
 

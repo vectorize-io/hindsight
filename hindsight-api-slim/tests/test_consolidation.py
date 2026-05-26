@@ -1278,17 +1278,22 @@ class TestObservationDrillDown:
             request_context=request_context,
         )
 
-        # Search for observations
+        # Search for observations. Pass ``source_facts_max_tokens`` so the
+        # response actually carries ``source_fact_ids`` on each observation —
+        # without that flag the field is left empty (Pydantic ``None``) and
+        # then stripped by the tool's null-pruning, so the drill-down assertion
+        # below would have nothing to operate on.
         result = await tool_search_observations(
             memory_engine=memory,
             bank_id=bank_id,
             query="Sarah TechCorp",
             request_context=request_context,
+            source_facts_max_tokens=5000,
         )
 
         assert result["count"] > 0, "Expected at least one observation"
 
-        # Verify source_fact_ids is present (MemoryFact field name for source memories)
+        # Verify source_fact_ids is present and non-empty so drill-down can run.
         obs = result["observations"][0]
         assert "source_fact_ids" in obs, "Observation should have source_fact_ids"
 
