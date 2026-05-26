@@ -264,11 +264,17 @@ async def test_cancel_allows_stale_processing_operations(api_client, memory, tes
 
 
 @pytest.mark.asyncio
-async def test_cancel_rejects_processing_with_null_claimed_at(api_client, memory, test_bank_id):
-    """A processing op with NULL claimed_at is not yet claimed; cancel should be rejected (age=0s)."""
+async def test_cancel_allows_processing_with_null_claimed_at(api_client, memory, test_bank_id):
+    """A processing op with NULL claimed_at was never claimed by a worker; cancel should succeed (200)."""
     pool = memory._pool
     await _ensure_bank(pool, test_bank_id)
 
     op_id = await _insert_operation(pool, test_bank_id, "processing", claimed_at=None)
     response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
-    assert response.status_code == 409
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+    # Verify status is now cancelled
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
