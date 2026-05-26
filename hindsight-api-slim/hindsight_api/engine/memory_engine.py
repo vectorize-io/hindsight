@@ -6996,10 +6996,8 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id,
             )
 
-            # Link stats — filter on ml.bank_id (indexed) instead of joining through mu.bank_id.
-            # With the idx_memory_links_bank_link_type index this turns a full-table hash join
-            # into an indexed scan + PK lookups.  link_counts and link_counts_by_fact_type are
-            # derived in Python from the breakdown.
+            # Link stats — filter on ml.bank_id directly instead of joining through mu.bank_id.
+            # link_counts and link_counts_by_fact_type are derived in Python from the breakdown.
             link_breakdown_stats = await conn.fetch(
                 f"""
                 SELECT mu.fact_type, ml.link_type, COUNT(*) as count
