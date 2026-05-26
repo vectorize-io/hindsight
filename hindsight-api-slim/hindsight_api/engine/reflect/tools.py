@@ -23,18 +23,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _prune_nulls(d: dict[str, Any]) -> dict[str, Any]:
-    """Drop keys whose value is None or empty (None / "" / [] / {}).
-
-    Reflect tools dump MemoryFact / ObservationResult via ``model_dump()``, which
-    emits every field including the many that are typically null (``context``,
-    ``occurred_start``, ``metadata``, ``tags``, ``source_fact_ids`` for raw
-    facts, etc.). Stripping these before serializing to JSON for the LLM cuts
-    token cost and removes fields that aren't telling the model anything.
-    """
-    return {k: v for k, v in d.items() if v is not None and v != "" and v != [] and v != {}}
-
-
 def _document_metadata_from_retain_params(retain_params: Any) -> dict[str, Any] | None:
     """Return document metadata stored under retain_params.metadata."""
     if isinstance(retain_params, str):
@@ -223,14 +211,11 @@ async def tool_search_observations(
     else:
         freshness = "stale"
 
-    observations = [_prune_nulls(m.model_dump()) for m in result.results]
-    source_facts = {k: _prune_nulls(v.model_dump()) for k, v in (result.source_facts or {}).items()}
-
     return {
         "query": query,
         "count": len(result.results),
-        "observations": observations,
-        "source_facts": source_facts,
+        "observations": [m.model_dump() for m in result.results],
+        "source_facts": {k: v.model_dump() for k, v in (result.source_facts or {}).items()},
         "is_stale": is_stale,
         "freshness": freshness,
     }
@@ -295,13 +280,10 @@ async def tool_recall(
         max_chunk_tokens=max_chunk_tokens,
     )
 
-    memories = [_prune_nulls(m.model_dump()) for m in result.results]
-    chunks = {k: _prune_nulls(v.model_dump()) for k, v in (result.chunks or {}).items()}
-
     return {
         "query": query,
-        "memories": memories,
-        "chunks": chunks,
+        "memories": [m.model_dump() for m in result.results],
+        "chunks": {k: v.model_dump() for k, v in (result.chunks or {}).items()},
     }
 
 
