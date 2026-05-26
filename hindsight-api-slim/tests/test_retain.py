@@ -1655,6 +1655,46 @@ async def test_entity_links_creation(memory, request_context):
 
 
 @pytest.mark.asyncio
+async def test_graph_entity_edges_cover_all_visible_units(memory, request_context):
+    """
+    Regression test: when a hot entity is shared by more than the per-entity
+    cap (default 10) visible units, every visible unit mentioning that entity
+    must still appear in at least one entity edge. The previous implementation
+    capped the per-entity list to the first 10 units before pairing, leaving
+    units #11+ without any entity edges in /graph.
+    """
+    bank_id = f"test_graph_entity_coverage_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        # 15 facts all mentioning the same person — more than max_neighbors_per_unit=10.
+        contents = [
+            {"content": f"Alice completed task #{i} in the authentication module.", "context": "sprint log"}
+            for i in range(15)
+        ]
+        retained_lists = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=contents,
+            request_context=request_context,
+        )
+        retained_unit_ids = {str(uid) for sublist in retained_lists for uid in sublist}
+        assert len(retained_unit_ids) >= 15, f"Expected >=15 units, got {len(retained_unit_ids)}"
+
+        graph = await memory.get_graph_data(bank_id=bank_id, request_context=request_context)
+        entity_edges = [edge["data"] for edge in graph["edges"] if edge["data"].get("linkType") == "entity"]
+        assert entity_edges, "Graph should have entity edges for facts sharing an entity"
+
+        units_in_entity_edges = {edge["source"] for edge in entity_edges} | {edge["target"] for edge in entity_edges}
+        missing = retained_unit_ids - units_in_entity_edges
+        assert not missing, (
+            f"{len(missing)}/{len(retained_unit_ids)} retained units have no entity edges in /graph. "
+            f"The per-entity edge cap must not exclude units beyond the first N from pairing."
+        )
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_people_name_extraction(memory, request_context):
     """
     Test that people names are correctly extracted as entities.

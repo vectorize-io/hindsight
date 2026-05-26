@@ -5043,9 +5043,11 @@ class MemoryEngine(MemoryEngineInterface):
         observation_units = [unit for unit in units if unit["fact_type"] == "observation"]
 
         # Entity links: pair any visible units that share at least one entity.
-        # Cap per entity to bound hot entities (e.g. one entity in 500 visible units
-        # would otherwise produce ~125k edges by itself).
-        max_units_per_entity = 10
+        # Each unit links to up to max_neighbors_per_unit subsequent units in the
+        # per-entity list, so every unit that shares an entity with another visible
+        # unit gets edges (matches the historical writer cap, which was per-unit).
+        # Bounds total edges to ~N * cap per entity instead of N² for hot entities.
+        max_neighbors_per_unit = 10
         entity_to_units_visible: dict[str, list] = {}
         for unit_id in unit_ids:
             for entity_name in entity_map.get(unit_id, []):
@@ -5062,9 +5064,14 @@ class MemoryEngine(MemoryEngineInterface):
         seen_inferred: set[tuple] = set()
 
         for entity_name, ent_unit_ids in entity_to_units_visible.items():
-            capped = ent_unit_ids[:max_units_per_entity]
-            for i, unit_a in enumerate(capped):
-                for unit_b in capped[i + 1 :]:
+            n = len(ent_unit_ids)
+            for i, unit_a in enumerate(ent_unit_ids):
+                # Sliding window: link unit_a to its next max_neighbors_per_unit
+                # in the list. Each pair is also "incoming" for the later unit,
+                # so every unit ends up with up to ~2*max_neighbors_per_unit edges
+                # for this entity (its successors + its predecessors via their pairs).
+                for j in range(i + 1, min(i + 1 + max_neighbors_per_unit, n)):
+                    unit_b = ent_unit_ids[j]
                     pair = (min(str(unit_a), str(unit_b)), max(str(unit_a), str(unit_b)), "entity", entity_name)
                     if pair not in seen_inferred:
                         seen_inferred.add(pair)
