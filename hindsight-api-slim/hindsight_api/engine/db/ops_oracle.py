@@ -271,9 +271,9 @@ class OracleOps(DataAccessOps):
         ue_table: str,
         bank_id: str,
     ) -> int:
-        # Oracle doesn't return a rowcount on DELETE the same way as asyncpg.
-        # Use SQL%ROWCOUNT via an anonymous block, or count up-front. Counting
-        # up-front keeps the read shape symmetric with PG.
+        # The Oracle DatabaseConnection wrapper reshapes ``cursor.rowcount`` into
+        # the same ``"DELETE N"`` status string asyncpg returns, so the same
+        # ``int(deleted.split()[-1])`` parsing works on both dialects.
         deleted = await conn.execute(
             f"""
             DELETE FROM {entities_table}
