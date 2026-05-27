@@ -22,8 +22,8 @@ export async function GET(
   if (!res.ok)
     return NextResponse.json(
       localizeApiErrorPayload(request, {
-        error: data.detail || "Failed",
-        errorKey: "api.errors.generic.failed",
+        error: data.detail || "Failed to fetch webhook deliveries",
+        errorKey: "api.errors.webhooks.deliveries",
       }),
       { status: res.status }
     );

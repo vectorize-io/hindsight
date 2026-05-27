@@ -11,8 +11,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
   if (!res.ok)
     return NextResponse.json(
       localizeApiErrorPayload(request, {
-        error: data.detail || "Failed",
-        errorKey: "api.errors.generic.failed",
+        error: data.detail || "Failed to list webhooks",
+        errorKey: "api.errors.webhooks.list",
       }),
       { status: res.status }
     );
@@ -31,8 +31,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ ban
   if (!res.ok)
     return NextResponse.json(
       localizeApiErrorPayload(request, {
-        error: data.detail || "Failed",
-        errorKey: "api.errors.generic.failed",
+        error: data.detail || "Failed to create webhook",
+        errorKey: "api.errors.webhooks.create",
       }),
       { status: res.status }
     );

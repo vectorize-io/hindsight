@@ -19,7 +19,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const requestData = JSON.parse(requestJson);
+    let requestData: { bank_id?: string };
+    try {
+      requestData = JSON.parse(requestJson);
+    } catch {
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "Invalid request body",
+          errorKey: "api.errors.auth.invalidRequestBody",
+        }),
+        { status: 400 }
+      );
+    }
+
     const bankId = requestData.bank_id;
 
     if (!bankId) {

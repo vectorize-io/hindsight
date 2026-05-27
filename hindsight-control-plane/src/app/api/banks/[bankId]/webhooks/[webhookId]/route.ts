@@ -17,8 +17,8 @@ export async function PATCH(
   if (!res.ok)
     return NextResponse.json(
       localizeApiErrorPayload(request, {
-        error: data.detail || "Failed",
-        errorKey: "api.errors.generic.failed",
+        error: data.detail || "Failed to update webhook",
+        errorKey: "api.errors.webhooks.update",
       }),
       { status: res.status }
     );
@@ -38,8 +38,8 @@ export async function DELETE(
   if (!res.ok)
     return NextResponse.json(
       localizeApiErrorPayload(request, {
-        error: data.detail || "Failed",
-        errorKey: "api.errors.generic.failed",
+        error: data.detail || "Failed to delete webhook",
+        errorKey: "api.errors.webhooks.delete",
       }),
       { status: res.status }
     );
