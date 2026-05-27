@@ -34,6 +34,10 @@ class HindsightSuperagentConfig:
     redact_model: str | None = None
     redact_entities: list[str] | None = None
     redact_rewrite: bool = False
+    # Cap on concurrent Superagent redact calls during batch operations
+    # (retain_batch, redact-on-recall).  Keeps wide batches from stampeding
+    # the provider's rate limit.
+    redact_concurrency: int = 5
     enable_guard_on_retain: bool = True
     enable_guard_on_recall: bool = True
     enable_guard_on_reflect: bool = True
@@ -42,6 +46,10 @@ class HindsightSuperagentConfig:
     # call: N results → N redact round-trips.  Opt in when read-path PII
     # leakage matters more than recall latency.
     enable_redact_on_recall: bool = False
+    # Same rationale — reflect synthesises one string but the caller may not
+    # expect a hidden redact call on it.  Opt in when reflect outputs are
+    # routed to surfaces where the original PII shouldn't leak.
+    enable_redact_on_reflect: bool = False
     enable_fallback: bool = False
     fallback_timeout: float = 5.0
     verbose: bool = False
@@ -63,11 +71,13 @@ def configure(
     redact_model: str | None = None,
     redact_entities: list[str] | None = None,
     redact_rewrite: bool = False,
+    redact_concurrency: int = 5,
     enable_guard_on_retain: bool = True,
     enable_guard_on_recall: bool = True,
     enable_guard_on_reflect: bool = True,
     enable_redact_on_retain: bool = True,
     enable_redact_on_recall: bool = False,
+    enable_redact_on_reflect: bool = False,
     enable_fallback: bool = False,
     fallback_timeout: float = 5.0,
     verbose: bool = False,
@@ -91,11 +101,13 @@ def configure(
         redact_model=redact_model,
         redact_entities=redact_entities,
         redact_rewrite=redact_rewrite,
+        redact_concurrency=redact_concurrency,
         enable_guard_on_retain=enable_guard_on_retain,
         enable_guard_on_recall=enable_guard_on_recall,
         enable_guard_on_reflect=enable_guard_on_reflect,
         enable_redact_on_retain=enable_redact_on_retain,
         enable_redact_on_recall=enable_redact_on_recall,
+        enable_redact_on_reflect=enable_redact_on_reflect,
         enable_fallback=enable_fallback,
         fallback_timeout=fallback_timeout,
         verbose=verbose,

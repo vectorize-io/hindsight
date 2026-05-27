@@ -47,7 +47,40 @@ asyncio.run(main())
 ```
 Content → Guard (block injection) → Redact (strip PII) → Hindsight Retain
 Query   → Guard (block injection) → Hindsight Recall/Reflect
+            [optional, off by default: Redact recall results / reflect text]
 ```
+
+## Batch Ingestion
+
+Use `retain_batch` for bulk storage. Guard and Redact run per item under
+`redact_concurrency` (default 5):
+
+```python
+await safe.retain_batch([
+    {"content": "John's email is john@acme.com"},
+    {"content": "Phone: 555-1234", "context": "contacts"},
+    {"content": "Address: 1 Main St", "tags": ["scope:user"]},
+])
+```
+
+If Guard blocks any item, `GuardBlockedError` propagates and the entire
+batch is aborted before any item is stored — matching the per-call retain
+semantics.
+
+## Lifecycle
+
+`SafeHindsight` owns the underlying Hindsight client (and lazy-constructed
+`SafetyClient`) when no explicit instance is passed in. Long-lived services
+should release them on shutdown via `aclose()` or the async context manager:
+
+```python
+async with SafeHindsight(bank_id="user-123", ...) as safe:
+    await safe.retain("...")
+# clients closed automatically on exit
+```
+
+Clients passed in via `hindsight_client=` or `safety_client=` are not closed
+on shutdown — the caller retains ownership.
 
 ## Handling Blocked Inputs
 
@@ -123,7 +156,7 @@ safe = SafeHindsight(bank_id="user-123")
 | `safety_client` | `None` | Pre-configured Superagent SafetyClient |
 | `hindsight_api_url` | `https://api.hindsight.vectorize.io` | Hindsight API URL |
 | `api_key` | `None` | Hindsight API key (for Hindsight Cloud) |
-| `superagent_api_key` | *required* | Superagent API key (or `SUPERAGENT_API_KEY` env). Get one at [superagent.sh](https://www.superagent.sh) |
+| `superagent_api_key` | env / config | Superagent API key (or `SUPERAGENT_API_KEY` env). Required at the first guard/redact call — `SafeHindsight()` itself constructs lazily, so callers who disable every `enable_*` flag don't need it. Get one at [superagent.sh](https://www.superagent.sh) |
 | `budget` | `"mid"` | Recall/reflect budget (low/mid/high) |
 | `max_tokens` | `4096` | Max tokens for recall results |
 | `tags` | `[]` | Tags applied when storing memories |
@@ -133,10 +166,13 @@ safe = SafeHindsight(bank_id="user-123")
 | `redact_model` | `None` | Redact model (required if redact enabled) |
 | `redact_entities` | `None` | Override default PII entity list |
 | `redact_rewrite` | `False` | Contextual rewrite vs. placeholder markers |
+| `redact_concurrency` | `5` | Cap on parallel Superagent redact calls during batch ops (`retain_batch`, `enable_redact_on_recall`). Bounds rate-limit exposure on wide recalls. |
 | `enable_guard_on_retain` | `True` | Guard content before retain |
 | `enable_guard_on_recall` | `True` | Guard queries before recall |
 | `enable_guard_on_reflect` | `True` | Guard queries before reflect |
 | `enable_redact_on_retain` | `True` | Redact PII before retain |
+| `enable_redact_on_recall` | `False` | Redact each recall result's text before returning. Off by default because every result triggers its own redact call. Opt in for read-path PII safety. |
+| `enable_redact_on_reflect` | `False` | Redact reflect's synthesised text before returning. Off by default — reflect outputs are one string but redact still adds a call. Opt in for surfaces where the original PII shouldn't leak. |
 
 ### `configure()`
 

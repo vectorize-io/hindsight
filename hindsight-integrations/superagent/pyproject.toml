@@ -30,8 +30,10 @@ classifiers = [
 ]
 
 dependencies = [
-    "safety-agent>=0.1.5",
-    "hindsight-client>=0.4.0",
+    # Upper-bounded because safety-agent is pre-1.0 and may break the
+    # SafetyClient / create_client / response model APIs in a minor release.
+    "safety-agent>=0.1.5,<0.2.0",
+    "hindsight-client>=0.4.0,<1.0",
 ]
 
 [project.urls]

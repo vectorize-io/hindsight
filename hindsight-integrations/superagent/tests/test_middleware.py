@@ -621,3 +621,359 @@ class TestLazySafetyClient:
         # Already resolved — the explicit client wins, _get_safety returns it.
         assert safe._safety is safety
         assert safe._get_safety() is safety
+
+
+class TestSafetyConfigSnapshot:
+    """Lazy safety resolution must snapshot global config at __init__, not at
+    first-use, so a later configure() doesn't silently change behaviour."""
+
+    def setup_method(self) -> None:
+        reset_config()
+
+    def teardown_method(self) -> None:
+        reset_config()
+
+    def test_snapshot_taken_at_init_not_at_first_use(self) -> None:
+        configure(superagent_api_key="key-A")
+        hindsight = _mock_hindsight_client()
+        safe = SafeHindsight(bank_id="test", hindsight_client=hindsight)
+        # Reconfigure AFTER construction — must not affect this instance.
+        configure(superagent_api_key="key-B")
+        assert safe._safety_snapshot["api_key"] == "key-A"
+
+    def test_constructor_arg_overrides_global_config_snapshot(self) -> None:
+        configure(superagent_api_key="from-global")
+        hindsight = _mock_hindsight_client()
+        safe = SafeHindsight(
+            bank_id="test", hindsight_client=hindsight, superagent_api_key="from-arg"
+        )
+        assert safe._safety_snapshot["api_key"] == "from-arg"
+
+
+class TestRedactConcurrencyCap:
+    """Redact-on-recall must bound concurrency so wide recalls don't stampede."""
+
+    def setup_method(self) -> None:
+        reset_config()
+
+    def teardown_method(self) -> None:
+        reset_config()
+
+    @pytest.mark.asyncio
+    async def test_redact_concurrency_default_caps_inflight(self) -> None:
+        """No more than `redact_concurrency` redact calls in flight at once."""
+        hindsight = _mock_hindsight_client()
+        recall_response = _mock_recall_response([f"text-{i}" for i in range(20)])
+        hindsight.arecall = AsyncMock(return_value=recall_response)
+
+        inflight = 0
+        peak = 0
+        gate = pytest.importorskip("asyncio").Event()
+
+        async def slow_redact(**kwargs):
+            nonlocal inflight, peak
+            inflight += 1
+            peak = max(peak, inflight)
+            try:
+                # Yield so other concurrent tasks can advance and the
+                # semaphore's bound is observably enforced.
+                await pytest.importorskip("asyncio").sleep(0.01)
+            finally:
+                inflight -= 1
+            r = MagicMock()
+            r.redacted = "redacted"
+            r.findings = []
+            return r
+
+        safety = _mock_safety_client()
+        safety.redact = AsyncMock(side_effect=slow_redact)
+        safe = SafeHindsight(
+            bank_id="test-bank",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4.1-nano",
+            redact_concurrency=3,  # cap
+            enable_redact_on_recall=True,
+            enable_guard_on_recall=False,
+        )
+
+        await safe.recall("anything")
+        assert peak <= 3, f"Peak inflight was {peak}, expected ≤ 3"
+        assert safety.redact.await_count == 20  # all still ran
+        # Suppress unused-event lint
+        _ = gate
+
+
+class TestRedactOnReflect:
+    """`enable_redact_on_reflect` runs the reflect response text through Redact."""
+
+    def setup_method(self) -> None:
+        reset_config()
+
+    def teardown_method(self) -> None:
+        reset_config()
+
+    @pytest.mark.asyncio
+    async def test_redact_applied_to_reflect_text_when_enabled(self) -> None:
+        hindsight = _mock_hindsight_client()
+        reflect_response = MagicMock()
+        reflect_response.text = "John's SSN is 123-45-6789"
+        hindsight.areflect = AsyncMock(return_value=reflect_response)
+        safety = _mock_safety_client(redacted_text="[REDACTED]")
+        safe = SafeHindsight(
+            bank_id="test-bank",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4.1-nano",
+            enable_redact_on_reflect=True,
+            enable_guard_on_reflect=False,
+        )
+
+        result = await safe.reflect("tell me about John")
+
+        safety.redact.assert_awaited_once()
+        assert result.text == "[REDACTED]"
+
+    @pytest.mark.asyncio
+    async def test_reflect_redact_off_by_default(self) -> None:
+        hindsight = _mock_hindsight_client()
+        reflect_response = MagicMock()
+        reflect_response.text = "original synthesis"
+        hindsight.areflect = AsyncMock(return_value=reflect_response)
+        safety = _mock_safety_client(redacted_text="[SHOULD NOT BE USED]")
+        safe = SafeHindsight(
+            bank_id="test-bank",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            enable_guard_on_reflect=False,
+        )
+
+        result = await safe.reflect("anything")
+
+        safety.redact.assert_not_awaited()
+        assert result.text == "original synthesis"
+
+
+class TestRetainBatch:
+    """SafeHindsight.retain_batch wraps Hindsight.aretain_batch with safety checks."""
+
+    def setup_method(self) -> None:
+        reset_config()
+
+    def teardown_method(self) -> None:
+        reset_config()
+
+    @pytest.mark.asyncio
+    async def test_batch_applies_guard_and_redact_to_each_item(self) -> None:
+        hindsight = _mock_hindsight_client()
+        hindsight.aretain_batch = AsyncMock(return_value=None)
+        safety = _mock_safety_client(redacted_text="REDACTED")
+        safe = SafeHindsight(
+            bank_id="test-bank",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4.1-nano",
+        )
+
+        items = [
+            {"content": "John's email is john@x.com"},
+            {"content": "Phone: 555-1234", "context": "contacts"},
+            {"content": "Address: 1 Main", "tags": ["scope:user"]},
+        ]
+        await safe.retain_batch(items)
+
+        assert safety.guard.await_count == 3
+        assert safety.redact.await_count == 3
+        hindsight.aretain_batch.assert_awaited_once()
+        call_kwargs = hindsight.aretain_batch.call_args.kwargs
+        assert call_kwargs["bank_id"] == "test-bank"
+        sent_items = call_kwargs["items"]
+        assert len(sent_items) == 3
+        for item in sent_items:
+            assert item["content"] == "REDACTED"
+        # Per-item context / tags preserved
+        assert sent_items[1]["context"] == "contacts"
+        assert sent_items[2]["tags"] == ["scope:user"]
+
+    @pytest.mark.asyncio
+    async def test_batch_blocked_by_guard_aborts_whole_batch(self) -> None:
+        hindsight = _mock_hindsight_client()
+        hindsight.aretain_batch = AsyncMock(return_value=None)
+        safety = _mock_safety_client(
+            guard_classification="block",
+            guard_reasoning="bad",
+            guard_violation_types=["prompt_injection"],
+        )
+        safe = SafeHindsight(
+            bank_id="test-bank",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4.1-nano",
+        )
+
+        with pytest.raises(GuardBlockedError):
+            await safe.retain_batch([{"content": "x"}, {"content": "y"}])
+
+        hindsight.aretain_batch.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_batch_empty_is_noop(self) -> None:
+        hindsight = _mock_hindsight_client()
+        hindsight.aretain_batch = AsyncMock(return_value=None)
+        safety = _mock_safety_client()
+        safe = SafeHindsight(
+            bank_id="test-bank",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4.1-nano",
+        )
+
+        await safe.retain_batch([])
+
+        hindsight.aretain_batch.assert_not_awaited()
+        safety.guard.assert_not_awaited()
+        safety.redact.assert_not_awaited()
+
+
+class TestLifecycle:
+    """aclose / __aenter__ / __aexit__ close owned clients."""
+
+    def setup_method(self) -> None:
+        reset_config()
+
+    def teardown_method(self) -> None:
+        reset_config()
+
+    @pytest.mark.asyncio
+    async def test_aclose_closes_owned_hindsight(self) -> None:
+        hindsight = _mock_hindsight_client()
+        hindsight.aclose = AsyncMock()
+        with patch("hindsight_superagent._client.Hindsight", return_value=hindsight):
+            safe = SafeHindsight(
+                bank_id="test",
+                hindsight_api_url="http://localhost:8888",
+                enable_guard_on_retain=False,
+                enable_guard_on_recall=False,
+                enable_guard_on_reflect=False,
+                enable_redact_on_retain=False,
+            )
+        await safe.aclose()
+        hindsight.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_aclose_does_not_close_caller_owned_hindsight(self) -> None:
+        hindsight = _mock_hindsight_client()
+        hindsight.aclose = AsyncMock()
+        safe = SafeHindsight(
+            bank_id="test",
+            hindsight_client=hindsight,  # caller-owned
+            enable_guard_on_retain=False,
+            enable_guard_on_recall=False,
+            enable_guard_on_reflect=False,
+            enable_redact_on_retain=False,
+        )
+        await safe.aclose()
+        hindsight.aclose.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_aclose_is_idempotent(self) -> None:
+        hindsight = _mock_hindsight_client()
+        hindsight.aclose = AsyncMock()
+        with patch("hindsight_superagent._client.Hindsight", return_value=hindsight):
+            safe = SafeHindsight(
+                bank_id="test",
+                hindsight_api_url="http://localhost:8888",
+                enable_guard_on_retain=False,
+                enable_guard_on_recall=False,
+                enable_guard_on_reflect=False,
+                enable_redact_on_retain=False,
+            )
+        await safe.aclose()
+        await safe.aclose()
+        assert hindsight.aclose.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_async_context_manager_closes(self) -> None:
+        hindsight = _mock_hindsight_client()
+        hindsight.aclose = AsyncMock()
+        with patch("hindsight_superagent._client.Hindsight", return_value=hindsight):
+            async with SafeHindsight(
+                bank_id="test",
+                hindsight_api_url="http://localhost:8888",
+                enable_guard_on_retain=False,
+                enable_guard_on_recall=False,
+                enable_guard_on_reflect=False,
+                enable_redact_on_retain=False,
+            ) as safe:
+                assert safe._bank_id == "test"
+        hindsight.aclose.assert_awaited_once()
+
+
+class TestTagMergeOrder:
+    """Tag merge should preserve order (dict.fromkeys, not set())."""
+
+    def setup_method(self) -> None:
+        reset_config()
+
+    def teardown_method(self) -> None:
+        reset_config()
+
+    @pytest.mark.asyncio
+    async def test_tag_order_preserved_when_merging(self) -> None:
+        hindsight = _mock_hindsight_client()
+        safety = _mock_safety_client(redacted_text="c")
+        safe = SafeHindsight(
+            bank_id="test-bank",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4.1-nano",
+            tags=["default:a", "default:b"],
+        )
+
+        # Per-call tags should come first, then default tags, deduped.
+        await safe.retain("c", tags=["call:1", "default:a"])
+
+        sent = hindsight.aretain.call_args.kwargs["tags"]
+        # Order: call:1, default:a, default:b (default:a deduped from later
+        # default list).  set() would have scrambled this.
+        assert sent == ["call:1", "default:a", "default:b"]
+
+
+class TestEnvFallback:
+    """HINDSIGHT_API_KEY env var must be honoured even without a configure() call."""
+
+    def setup_method(self) -> None:
+        reset_config()
+
+    def teardown_method(self) -> None:
+        reset_config()
+
+    def test_env_key_picked_up_without_configure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("HINDSIGHT_API_KEY", "sk-from-env")
+        with patch("hindsight_superagent._client.Hindsight") as mock_h:
+            mock_h.return_value = _mock_hindsight_client()
+            SafeHindsight(
+                bank_id="test",
+                hindsight_api_url="http://localhost:8888",
+                enable_guard_on_retain=False,
+                enable_guard_on_recall=False,
+                enable_guard_on_reflect=False,
+                enable_redact_on_retain=False,
+            )
+            call_kwargs = mock_h.call_args.kwargs
+            assert call_kwargs.get("api_key") == "sk-from-env"
+
+    def test_explicit_arg_beats_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("HINDSIGHT_API_KEY", "sk-from-env")
+        with patch("hindsight_superagent._client.Hindsight") as mock_h:
+            mock_h.return_value = _mock_hindsight_client()
+            SafeHindsight(
+                bank_id="test",
+                hindsight_api_url="http://localhost:8888",
+                api_key="sk-explicit",
+                enable_guard_on_retain=False,
+                enable_guard_on_recall=False,
+                enable_guard_on_reflect=False,
+                enable_redact_on_retain=False,
+            )
+            assert mock_h.call_args.kwargs.get("api_key") == "sk-explicit"
