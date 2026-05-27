@@ -72,7 +72,7 @@ No single search method handles all these well. Hindsight solves this with **TEM
 | `vchord` | `vchord_bm25` extension | No |
 | `pg_textsearch` | Timescale `pg_textsearch` extension | No |
 | `pgroonga` | PGroonga (Groonga) full-text extension, `TokenBigram` polyglot tokenizer | No |
-| `pg_search` | ParadeDB `pg_search` extension | Yes |
+| `pg_search` | ParadeDB `pg_search` extension, configurable tokenizer (e.g. `jieba`, `chinese_compatible`, `ngram`) via `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER` | Yes |
 
 If you need true BM25 ranking on a horizontally scaled Postgres (Citus) cluster,
 `pg_search` is the only option. See the [`pg_search` docker-compose example](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/pg_search).
