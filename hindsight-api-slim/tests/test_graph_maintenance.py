@@ -98,13 +98,18 @@ async def _link_unit_entity(conn, unit_id: uuid.UUID, entity_id: uuid.UUID) -> N
 
 
 async def _insert_cooccurrence(conn, entity_a: uuid.UUID, entity_b: uuid.UUID, count: int = 1) -> None:
+    # entity_cooccurrence_order_check enforces entity_id_1 < entity_id_2 (canonical
+    # ordering avoids storing (A,B) and (B,A) as two rows). Sort before insert so
+    # callers don't have to care about argument order. Python uuid.UUID compares
+    # by .int, matching PostgreSQL's binary uuid ordering.
+    first, second = sorted([entity_a, entity_b])
     await conn.execute(
         """
         INSERT INTO entity_cooccurrences (entity_id_1, entity_id_2, cooccurrence_count, last_cooccurred)
         VALUES ($1, $2, $3, NOW())
         """,
-        entity_a,
-        entity_b,
+        first,
+        second,
         count,
     )
 
