@@ -11,10 +11,10 @@ Basic usage with tools (LangChain or LangGraph)::
 
     from hindsight_langgraph import create_hindsight_tools
 
-    # Uses Hindsight Cloud by default (set HINDSIGHT_API_KEY env var)
+    # Uses the default API URL (set HINDSIGHT_API_KEY env var to authenticate)
     tools = create_hindsight_tools(bank_id="user-123")
 
-    # Or connect to a self-hosted instance:
+    # Or point at a different instance:
     # tools = create_hindsight_tools(bank_id="user-123", hindsight_api_url="http://localhost:8888")
 
     # Bind tools to your model
