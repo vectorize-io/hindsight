@@ -547,6 +547,19 @@ def _inject_memories(
                 pass
 
 
+def _is_model_excluded(model: Optional[str], config) -> bool:
+    """Return True if the model matches any configured excluded_models glob."""
+    if not model or not config or not config.excluded_models:
+        return False
+    import fnmatch as _fnmatch
+
+    model_lower = model.lower()
+    for pattern in config.excluded_models:
+        if _fnmatch.fnmatch(model_lower, pattern.lower()):
+            return True
+    return False
+
+
 def _wrapped_completion(*args, **kwargs):
     """Wrapper for litellm.completion that handles memory injection and storage.
 
@@ -570,6 +583,9 @@ def _wrapped_completion(*args, **kwargs):
     model = kwargs.get("model")
     if model is None and len(args) > 0:
         model = args[0]
+
+    if _is_model_excluded(model, config):
+        return _original_completion(*args, **kwargs)
 
     # Step 1: Inject memories (raises HindsightError on failure)
     if config and config.inject_memories and messages:
@@ -623,6 +639,9 @@ async def _wrapped_acompletion(*args, **kwargs):
     model = kwargs.get("model")
     if model is None and len(args) > 0:
         model = args[0]
+
+    if _is_model_excluded(model, config):
+        return await _original_acompletion(*args, **kwargs)
 
     # Step 1: Inject memories (raises HindsightError on failure)
     if config and config.inject_memories and messages:
@@ -706,6 +725,28 @@ def enable() -> None:
 
         if not defaults or not defaults.bank_id:
             raise RuntimeError("Hindsight bank_id not set. Call set_defaults(bank_id=...) before enable().")
+
+        # Guard against the double-injection footgun: if any HindsightCallback
+        # is already registered in litellm.callbacks, the request would flow
+        # through both the monkeypatch AND the callback, injecting memories
+        # twice.  Warn loudly so the user fixes their setup.
+        try:
+            registered = [cb for cb in (getattr(litellm, "callbacks", []) or [])
+                          if isinstance(cb, HindsightCallback)]
+            if registered:
+                import warnings as _warnings
+
+                _warnings.warn(
+                    "enable() detected an existing HindsightCallback in "
+                    "litellm.callbacks. enable() and HindsightCallback are "
+                    "mutually exclusive — memories will be injected twice. "
+                    "Remove the callback from litellm.callbacks before "
+                    "calling enable().",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+        except Exception:
+            pass
 
         # Store original functions and monkeypatch for memory injection + storage
         _original_completion = litellm.completion

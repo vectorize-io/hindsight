@@ -1604,3 +1604,142 @@ class TestSetBankMission:
         with patch("hindsight_client.Hindsight", return_value=mock_client):
             with pytest.raises(HindsightError, match="server unavailable"):
                 set_bank_mission("a mission")
+
+
+class TestEnableDualInjectionGuard:
+    """enable() warns if a HindsightCallback is already registered."""
+
+    def setup_method(self):
+        cleanup()
+
+    def teardown_method(self):
+        cleanup()
+
+    def test_warns_when_callback_already_registered(self):
+        import litellm
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="agent-7")
+
+        cb = HindsightCallback()
+        original = list(getattr(litellm, "callbacks", []) or [])
+        litellm.callbacks = original + [cb]
+
+        try:
+            with pytest.warns(RuntimeWarning, match="HindsightCallback"):
+                enable()
+        finally:
+            disable()
+            litellm.callbacks = original
+
+    def test_no_warning_without_callback(self):
+        import warnings as _warnings
+
+        configure(hindsight_api_url="http://localhost:8888")
+        set_defaults(bank_id="agent-7")
+
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("error", RuntimeWarning)
+            enable()  # should not raise
+        disable()
+
+
+class TestExcludedModelsInEnablePath:
+    """excluded_models patterns are honored by the enable() monkeypatch path."""
+
+    def setup_method(self):
+        cleanup()
+
+    def teardown_method(self):
+        cleanup()
+
+    def test_excluded_model_bypasses_injection(self):
+        """A model matching excluded_models should bypass the wrapped path."""
+        from unittest.mock import patch
+
+        from hindsight_litellm import _wrapped_completion
+
+        configure(
+            hindsight_api_url="http://localhost:8888",
+            excluded_models=["gpt-3.5*"],
+        )
+        set_defaults(bank_id="agent-7")
+        enable()
+
+        try:
+            with patch("hindsight_litellm._original_completion") as orig:
+                with patch("hindsight_litellm._inject_memories") as inj:
+                    orig.return_value = "ok"
+                    _wrapped_completion(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": "hi"}],
+                    )
+                    inj.assert_not_called()
+                    orig.assert_called_once()
+        finally:
+            disable()
+
+    def test_non_excluded_model_still_injects(self):
+        """A model not matching excluded_models should run the normal flow."""
+        from unittest.mock import patch
+
+        from hindsight_litellm import _wrapped_completion
+
+        configure(
+            hindsight_api_url="http://localhost:8888",
+            excluded_models=["gpt-3.5*"],
+            store_conversations=False,  # avoid the storage path in this unit test
+        )
+        set_defaults(bank_id="agent-7")
+        enable()
+
+        try:
+            with patch("hindsight_litellm._original_completion") as orig:
+                with patch("hindsight_litellm._inject_memories") as inj:
+                    inj.return_value = [{"role": "user", "content": "hi"}]
+                    orig.return_value = "ok"
+                    _wrapped_completion(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "user", "content": "hi"}],
+                    )
+                    inj.assert_called_once()
+        finally:
+            disable()
+
+
+class TestDedupLRU:
+    """Dedup cache uses true LRU eviction and is thread-safe."""
+
+    def test_oldest_hash_evicted_first(self):
+        callback = HindsightCallback()
+        callback._max_hash_cache = 3
+
+        # Fill the cache
+        callback._is_duplicate("a")
+        callback._is_duplicate("b")
+        callback._is_duplicate("c")
+        # All three present
+        assert "a" in callback._recent_hashes
+        assert "b" in callback._recent_hashes
+        assert "c" in callback._recent_hashes
+
+        # Add a fourth — oldest ("a") should be evicted
+        callback._is_duplicate("d")
+        assert "a" not in callback._recent_hashes
+        assert "d" in callback._recent_hashes
+
+    def test_touch_on_hit_protects_from_eviction(self):
+        callback = HindsightCallback()
+        callback._max_hash_cache = 3
+
+        callback._is_duplicate("a")
+        callback._is_duplicate("b")
+        callback._is_duplicate("c")
+
+        # Touch "a" — now "b" should be the oldest
+        callback._is_duplicate("a")
+
+        # Add new entry — "b" should be evicted, not "a"
+        callback._is_duplicate("d")
+        assert "a" in callback._recent_hashes
+        assert "b" not in callback._recent_hashes
