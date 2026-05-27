@@ -47,6 +47,13 @@ requires_all = pytest.mark.skipif(
 )
 
 
+# Module-level registry of every SafeHindsight instance created by
+# `_make_client()` in a test, so the autouse cleanup fixture below can
+# close them on the way out and we don't leak aiohttp client sessions
+# (which the test runner surfaces as "Unclosed client session" warnings).
+_active_safes: list[SafeHindsight] = []
+
+
 def _make_client(bank_id: str = BANK_ID, **kwargs) -> SafeHindsight:
     defaults = {
         "hindsight_api_url": HINDSIGHT_API_URL,
@@ -54,7 +61,28 @@ def _make_client(bank_id: str = BANK_ID, **kwargs) -> SafeHindsight:
         "redact_model": "openai/gpt-4.1-nano",
     }
     defaults.update(kwargs)
-    return SafeHindsight(bank_id=bank_id, **defaults)
+    safe = SafeHindsight(bank_id=bank_id, **defaults)
+    _active_safes.append(safe)
+    return safe
+
+
+@pytest.fixture(autouse=True)
+async def close_active_safes():
+    """Close every SafeHindsight created via `_make_client()` after the test.
+
+    Without this, each `SafeHindsight(...)` constructed in a test leaves an
+    open aiohttp ClientSession + TCPConnector behind, and the test runner
+    yells about unclosed sessions on shutdown.  Idempotent — aclose() is
+    safe to call multiple times and skips already-closed instances.
+    """
+    yield
+    while _active_safes:
+        safe = _active_safes.pop()
+        try:
+            await safe.aclose()
+        except Exception:
+            # Cleanup must never mask the test's own result.
+            pass
 
 
 @pytest.fixture(autouse=True)
@@ -214,18 +242,31 @@ class TestE2ERedact:
     async def test_redact_strips_pii_from_stored_memory(self) -> None:
         """Verify redact removes PII before Hindsight stores it.
 
-        Polls until recall returns something — silently passing on an empty
-        result was the previous failure mode and defeated the whole point of
-        the assertion.
+        Seeds with natural-language project context alongside the PII so
+        recall has a real anchor that Hindsight's fact extraction will
+        materialise.  Synthetic canary phrases (e.g. "redact-pii-canary
+        alpha bravo") don't survive fact extraction reliably — the LLM
+        treats them as opaque identifiers and drops them.  PII-only
+        queries miss because redact strips the PII before storage.
         """
         bank_id = f"{BANK_ID}-redact"
         safe = _make_client(bank_id=bank_id, enable_guard_on_retain=False, enable_guard_on_recall=False)
-        await safe.retain("Contact Bob at bob.smith@secretcorp.com for the API keys.")
-        results = await _recall_until_nonempty(safe, "What is Bob's contact info?")
+        await safe.retain(
+            "Project Phoenix client onboarding notes for Q3 2026. "
+            "Contact Bob at bob.smith@secretcorp.com for the API keys."
+        )
+        results = await _recall_until_nonempty(safe, "Project Phoenix client onboarding")
+        joined = " | ".join(r.text for r in results.results).lower()
+        assert "bob.smith@secretcorp.com" not in joined, (
+            f"PII leak: email found in recalled memory: {joined}"
+        )
+        # The project anchor MUST still be retrievable — otherwise we can't
+        # claim we read back the memory at all (vs. reading nothing).
+        assert "phoenix" in joined or "onboarding" in joined, (
+            f"Project anchor missing from recall — can't tell whether redact "
+            f"scrubbed PII or whether nothing was stored at all. Got: {joined}"
+        )
         for r in results.results:
-            assert "bob.smith@secretcorp.com" not in r.text.lower(), (
-                f"PII leak: email found in recalled memory: {r.text}"
-            )
             print(f"Recalled (redacted): {r.text}")
 
 
@@ -332,19 +373,33 @@ class TestE2ERedactOnReflect:
             enable_guard_on_retain=False,
             enable_redact_on_retain=False,
         )
-        await seed.retain("Dave's credit card is 4111-1111-1111-1111, expires 12/30.")
-        # Wait for the memory to surface before reflecting.
-        await _recall_until_nonempty(seed, "Dave's credit card")
+        # Natural-language project anchor so the fact extractor materialises a
+        # fact about it; the credit card sits in the same memory but is
+        # secondary to the project context for retrieval purposes.
+        await seed.retain(
+            "Project Tango payment notes for Q3 2026. "
+            "Dave's credit card is 4111-1111-1111-1111, expires 12/30."
+        )
+        # Confirm the memory is queryable before reflecting.
+        await _recall_until_nonempty(seed, "Project Tango payment notes")
 
         reader = _make_client(
             bank_id=bank_id,
             enable_guard_on_reflect=False,
             enable_redact_on_reflect=True,  # the path under test
         )
-        response = await reader.reflect("Tell me what we know about Dave")
+        response = await reader.reflect(
+            "Summarise the Project Tango payment notes including any card details"
+        )
         assert response.text, "Reflect should return text"
-        assert "4111-1111-1111-1111" not in response.text, (
-            f"Credit card leaked through reflect: {response.text[:200]}"
+        # The card number MUST be scrubbed.  We also check for the bare 16-digit
+        # pattern in case the LLM reformats with/without dashes.
+        no_dashes = "4111111111111111"
+        assert "4111-1111-1111-1111" not in response.text and no_dashes not in response.text.replace(
+            "-", ""
+        ), (
+            f"Credit card leaked through reflect (redact-on-reflect failed): "
+            f"{response.text[:300]}"
         )
         print(f"Redacted reflect: {response.text[:300]}")
 
