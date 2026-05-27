@@ -1,43 +1,45 @@
 ---
-title: "Building an OpenClaw Agent That Remembers Everything"
+title: "Building an OpenClaw Coding Agent That Remembers Your Codebase"
 authors: [benfrank241]
 date: 2026-05-26T12:00
 tags: [openclaw, coding, memory, agents, tutorial, hindsight]
-description: "OpenClaw with Hindsight remembers your codebase, your users, your operational history across sessions and channels. Setup in 2 minutes."
+description: "OpenClaw with Hindsight remembers your codebase across sessions — conventions, past bugs, architectural decisions. Setup in 2 minutes."
 image: /img/blog/openclaw-coding-agent-codebase-memory.png
 hide_table_of_contents: true
 ---
 
-![Building an OpenClaw Agent That Remembers Everything](/img/blog/openclaw-coding-agent-codebase-memory.png)
+![Building an OpenClaw Coding Agent That Remembers Your Codebase](/img/blog/openclaw-coding-agent-codebase-memory.png)
 
-Every [OpenClaw](https://github.com/openclaw/openclaw) session starts from zero.
+Every AI coding session starts from zero.
 
-The agent that debugged your auth service in Slack yesterday doesn't know it ran yesterday. The Discord bot that onboarded a new team member last week can't recall the project conventions it explained. The Telegram agent that triaged a production alert at 3 AM has no memory of the identical alert it handled a month ago.
+You open [OpenClaw](https://github.com/openclaw/openclaw), paste in context — your stack, your conventions, the architectural decision you made last week, the bug you spent two days on in March. Then you do it again next session. And the one after that. The problem isn't that OpenClaw is bad at coding. It's that it has no memory of your codebase.
 
-OpenClaw is powerful — 100,000+ GitHub stars, 15+ channel integrations, cron jobs, webhooks, subagents. But every session resets. The context your agents build up during a conversation evaporates the moment it ends.
+OpenClaw with Hindsight is the exception. Each session adds to what it knows about your project. By session 20, OpenClaw already knows your module boundaries, naming conventions, known fragile areas, and the root cause of that recurring auth issue. You stopped explaining; it started knowing.
 
-The Hindsight plugin changes this. Install once, run a setup wizard, and every OpenClaw agent gets persistent [agent memory](https://vectorize.io/what-is-agent-memory/) that compounds across sessions, channels, and restarts. Facts, decisions, and patterns accumulate automatically. By session 30, your agents know your codebase, your infrastructure, your team's conventions — without you repeating any of it.
+This post covers what OpenClaw actually extracts from coding sessions, how to set it up in two minutes, and the three workflows where persistent codebase memory has the highest leverage.
 
 <!-- truncate -->
 
 ---
 
-## What OpenClaw Remembers
+## What OpenClaw Remembers About Your Codebase
 
-Hindsight doesn't store transcripts. It extracts facts — atomic, retrievable pieces of knowledge pulled from the natural flow of your conversations.
+OpenClaw doesn't store transcripts. What Hindsight extracts and retains are facts — atomic, retrievable pieces of knowledge pulled from your conversations.
 
-After a typical session with an OpenClaw coding agent, facts like these enter memory automatically:
+After a typical coding session, facts like these enter memory automatically:
 
-- `"Deployment uses blue-green strategy on ECS, health check path is /api/v1/health"`
-- `"The notification service silently drops messages when the SNS topic ARN is stale, known issue since April"`
-- `"Team moved from Terraform to Pulumi in March, all new infra goes in pulumi/ directory"`
-- `"Convention: all API handlers return {data, error, meta} shape, never raw arrays"`
+- `"Project uses ESM modules, not CommonJS — always use .js extensions in imports"`
+- `"The auth middleware fails silently on expired refresh tokens, known issue as of March 14"`
+- `"SQLAlchemy was removed in favor of raw asyncpg after performance testing in February"`
+- `"Team convention: all async handlers wrapped in handle_errors() decorator"`
 
-You don't tell OpenClaw to remember these. Hindsight's write pipeline extracts them from your conversation — the questions you ask, the bugs you describe, the decisions you explain. What doesn't become memory: raw file contents, verbose terminal output, procedural noise. The extraction step filters for knowledge that's worth carrying forward.
+None of these require you to explicitly tell OpenClaw to remember them. Hindsight's write pipeline extracts them from the natural flow of your session — from the questions you ask, the bugs you describe, the decisions you explain along the way.
+
+What doesn't become memory: raw file contents, line-by-line code, verbose terminal output. The extraction step is itself a filter. Conversational filler, repeated context-setting, procedural noise — none of it survives. What remains is a growing index of codebase facts that OpenClaw carries into every future session.
 
 The lifecycle runs at both ends of each turn:
 
-**Before each turn:** Hindsight recalls the most relevant memories from your history and injects them into the system prompt. OpenClaw sees that context before it sees your message.
+**Before each turn:** Hindsight prefetches the most relevant memories from your history and injects them into the system prompt. OpenClaw sees that context before it sees your message.
 
 **After each response:** Your conversation is retained asynchronously. Hindsight extracts facts in the background. What you discuss this turn becomes searchable starting next turn.
 
@@ -58,7 +60,7 @@ The wizard walks you through three install modes:
 - **External API** — your own Hindsight deployment. Prompts for the URL and optional token.
 - **Embedded daemon** — runs Hindsight locally on your machine. Prompts for the LLM provider (OpenAI, Anthropic, Gemini, Groq, Ollama, Claude Code, Codex) and its API key.
 
-Confirm it's working:
+Confirm memory is active:
 
 ```bash
 openclaw gateway
@@ -68,7 +70,7 @@ tail -f /tmp/openclaw/openclaw-*.log | grep Hindsight
 # [Hindsight] ✓ Using provider: openai, model: gpt-4o-mini
 ```
 
-Config lives in `~/.openclaw/openclaw.json`. The defaults work for most workflows:
+Config lives in `~/.openclaw/openclaw.json`. The defaults work for most coding workflows:
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -76,140 +78,162 @@ Config lives in `~/.openclaw/openclaw.json`. The defaults work for most workflow
 | `autoRetain` | `true` | Capture conversations after every turn |
 | `recallBudget` | `mid` | Recall thoroughness: `low` / `mid` / `high` |
 | `recallMaxTokens` | `1024` | How much memory context injected per turn |
-| `dynamicBankId` | `true` | Separate memory banks per agent/channel/user |
 | `enableKnowledgeTools` | `false` | Expose explicit recall/retain/reflect tools to the agent |
 
-The `enableKnowledgeTools` flag controls whether OpenClaw agents can actively query memory:
+The `enableKnowledgeTools` flag controls how memory surfaces in OpenClaw:
 
-- **`false`** (default): Memories auto-injected before every turn, nothing explicit. The agent doesn't need to know memory exists.
-- **`true`**: In addition to auto-recall, the agent gets `agent_knowledge_recall`, `agent_knowledge_retain`, `agent_knowledge_reflect`, and `agent_knowledge_ingest` tools. Use this when agents need to search memory for specific topics or explicitly store decisions.
+- **`false`** (default): Memories auto-injected before every turn. The agent doesn't need to know memory exists — it just has context. This is the equivalent of Hermes's `context` mode.
+- **`true`**: In addition to auto-recall, the agent gets `agent_knowledge_recall`, `agent_knowledge_retain`, and `agent_knowledge_reflect` tools. Use this when you want the agent to explicitly surface what it knows about a specific component or retain a decision mid-session. This is the equivalent of Hermes's `hybrid` mode.
 
-For most setups, the default is right. Auto-recall handles the common case. Enable knowledge tools when your agents need deeper control — debugging workflows, knowledge base curation, or autonomous multi-step tasks where the agent benefits from targeted recall.
+For coding work, start with `false`. If you find yourself wishing the agent could search memory for a specific topic mid-session, flip it to `true`.
+
+For deployment: if you work across machines or share memory with a team, use cloud. If you want everything local with no external dependencies, the embedded daemon runs a local PostgreSQL instance in the background. First startup takes about a minute; subsequent starts are fast. Startup logs land at `~/.hindsight/profiles/openclaw.log`.
+
+> **Migrating from 0.5.x?** The 0.6.0 plugin removes all process-environment reads. Configuration that previously came from shell env vars (`OPENAI_API_KEY`, `HINDSIGHT_API_LLM_PROVIDER`, etc.) must now go through `openclaw config set` with SecretRef for credentials. Run `openclaw config validate` after migrating. Full mapping in the [integration docs](https://hindsight.vectorize.io/integrations/openclaw).
 
 ---
 
-## Three Workflows Where Memory Matters
+## Three Workflows Where Codebase Memory Matters
 
-### Debugging Across Sessions
+### Starting a New Session on Existing Work
 
-Without memory, every debugging session starts from scratch. You paste the stack trace, explain the service architecture, re-establish what you tried last time. On a complex system, that overhead burns 10–15 minutes before any real work happens.
+Without memory, resuming work on an existing project means context-setting before any actual work happens: paste the README, explain the tech stack, re-establish what you were doing last time, remind OpenClaw about the convention it should already know. On a complex project, that overhead eats 10–15 minutes of every session.
 
-With memory, OpenClaw starts each session with accumulated facts from previous debugging sessions already in context. It knows the stack. It knows which services are flaky. It knows the workaround you applied last time this class of error appeared.
+With memory, OpenClaw starts each session with the accumulated facts from your previous sessions already injected into its context. It knows the stack. It knows the conventions. It knows what you were debugging last week.
 
-The kinds of facts that compound here:
+The first message of a session becomes the actual work.
 
-- `"Redis connection pool exhaustion causes silent job drops in the async queue, fixed by adding explicit ACK handling"`
-- `"The rate limiter bypass for X-Internal headers was the source of two privilege escalation near-misses"`
-- `"GraphQL resolver N+1 reappears after every schema addition, needs DataLoader enforcement in code review"`
+What gets injected is controlled by the `recallBudget` setting. At `mid` (the default), Hindsight fetches the 10–15 most relevant memories — enough to cover your project's core facts without flooding the context window. At `high`, retrieval runs deeper: more context, more tokens. For most coding workflows, `mid` is the right balance. If you're jumping back into a complex investigation across many modules, `high` is worth the extra cost.
 
-You never think to paste these at the start of a debugging session. But when OpenClaw surfaces the relevant one while you're staring at a new failure in the same subsystem, it saves hours.
+### Debugging Recurring Issues
 
-### Multi-Channel Knowledge Accumulation
+The highest-leverage value of codebase memory is pattern recognition across sessions. Some bugs aren't one-off — they're symptoms of a deeper architectural issue that surfaces in different forms over months.
 
-OpenClaw runs across Slack, Discord, Telegram, and more. Without memory, each channel is an island. Your Slack agent knows nothing about what the Discord agent discovered. The Telegram bot doesn't benefit from the Slack bot's context.
+Without memory, you debug each instance independently. You might trace the same root cause three separate times without connecting the dots.
 
-With Hindsight, the `dynamicBankGranularity` setting controls how memory flows across channels:
+With memory, OpenClaw recalls the previous instances. Describe a new failure mode, and it surfaces related context: the root cause it identified two months ago, the workaround that held until the next refactor, the component that keeps appearing in these failures.
 
-- **`["agent", "channel", "user"]`** (default): Each unique agent + channel + user combination gets its own bank. Full isolation.
-- **`["agent", "user"]`**: The same user's memory follows them across channels. Debug in Slack, continue in Discord, context carries over.
-- **`["agent"]`**: All conversations with this agent share one bank. Every user's context contributes to a shared knowledge base.
+The kinds of facts that pay off here:
 
-For a team running a shared coding agent in Slack, `["agent"]` turns the agent into institutional memory. Every debugging session, every deployment decision, every architecture discussion that flows through the agent becomes knowledge the next person's session can draw from.
+- `"The rate limiter bypasses auth checks for requests with X-Internal: true header, source of two privilege escalation near-misses"`
+- `"Async task queue silently drops jobs when Redis connection resets, needs explicit ACK handling, not fire-and-forget"`
+- `"GraphQL resolver N+1 pattern reappears after every new schema addition, needs DataLoader enforcement flagged in code review"`
 
-### Operational Continuity Across Incidents
+These aren't facts you'd think to paste at the start of a debugging session. They're the institutional knowledge that separates debugging blindly from debugging with full context.
 
-Cron jobs, webhooks, and scheduled tasks are core to how many teams use OpenClaw. An agent that monitors health checks, runs nightly data validation, or triages incoming alerts benefits enormously from memory.
+With `enableKnowledgeTools: true`, the agent can call `agent_knowledge_reflect` to synthesize a coherent summary across all related memories. Instead of retrieving individual facts through semantic search, reflect asks the LLM to generate a synthesized answer. It's slower, but for "help me understand this class of bug" queries, the synthesized context is more useful than a list of individual facts.
 
-Without it, the agent that handled last month's database failover can't recall what recovery steps worked. With it, the next failover starts with: "I've seen this pattern before. Last time, the replica promotion succeeded after manually clearing the replication slot."
+### Onboarding to Someone Else's Code
 
-For cron-triggered agents, you may want to filter which sessions retain memories. The `statelessSessionPatterns` setting lets subagents and heartbeat checks read from memory without writing to it, keeping the bank clean while still giving operational context to the sessions that matter:
+If you join a project where a colleague has been working with OpenClaw and Hindsight using a shared bank, the memory bank already has context from their sessions.
 
-```json
-{
- "statelessSessionPatterns": ["agent:*: subagent:**", "agent:*: heartbeat:**"],
- "skipStatelessSessions": false
-}
+Query what OpenClaw knows about a specific module:
+
 ```
+What do you know about the payments module?
+```
+
+```
+What quirks or known issues have come up in the auth service?
+```
+
+```
+What were the reasons we moved off SQLAlchemy?
+```
+
+OpenClaw surfaces the accumulated facts from previous sessions: architectural context, known edge cases, past decisions and the reasoning behind them — without anyone having to write it down in a README, a wiki page, or a Slack thread that nobody can find.
+
+This isn't documentation. It's the institutional knowledge that never makes it into documentation.
 
 ---
 
 ## What Good Codebase Memory Looks Like
 
-After 30+ sessions, a well-built memory bank typically covers:
+After 30+ sessions on a project, a well-built memory bank typically covers:
 
-**Project conventions:** Module structure and import patterns, error handling requirements, naming conventions, deployment procedures.
+**Project conventions:** Module structure and import patterns, error handling requirements, naming conventions that aren't obvious from the code, linting rules that differ from the defaults.
 
-**Known fragile areas:** Services that break under specific conditions, integration points that have caused incidents, edge cases the test suite doesn't cover.
+**Known fragile areas:** Components that break under specific load or input conditions, integration points that have caused production incidents, edge cases the test suite doesn't cover.
 
-**Architectural history:** Dependencies replaced and why, patterns considered and rejected, performance characteristics discovered through incident response.
+**Architectural history:** Dependencies that were replaced and why, patterns considered and rejected, performance characteristics discovered through testing rather than docs.
 
-**Operational knowledge:** Runbook steps that aren't documented, recovery procedures that worked in practice, alert thresholds that need adjustment.
+**Team preferences:** Code review priorities, deployment gotchas, things that work differently than the official docs say.
 
-Most of this accumulates automatically. The exception: major decisions and team conventions benefit from explicit statement. Tell the agent the rationale when you make a significant call:
+Most of this accumulates automatically from normal sessions. The exception: major architectural decisions and team preferences benefit from explicit statement. When you make a significant call, tell OpenClaw the rationale:
 
 ```
-We're switching the notification queue from SQS to EventBridge because
-fan-out to multiple consumers was causing duplicate delivery. Remember this.
+We're switching to asyncpg from SQLAlchemy because connection pooling
+under our load profile caused intermittent timeouts above ~200 concurrent
+requests. The fix wasn't tuning, it was the ORM abstraction. Remember this.
 ```
 
-With `enableKnowledgeTools: true`, the agent can also call `agent_knowledge_retain` to explicitly flag something for storage. But background extraction catches most of what matters without that step.
+With `enableKnowledgeTools: true`, the agent can also call `agent_knowledge_retain` to explicitly flag something for retention. But the background extraction catches most of what matters without that step.
+
+**Before/after: what memory recall looks like in a session**
+
+Without memory, a session opening might look like:
+
+> "I'm working on a Python service that uses asyncpg for database access. We removed SQLAlchemy in February due to connection pool issues under load. All async handlers should be wrapped in `handle_errors()`. Help me debug this intermittent 500..."
+
+With memory, OpenClaw already has these facts injected. You open with:
+
+> "Help me debug this intermittent 500 in the payment handler."
+
+The stack, the convention, the architectural context — already there.
 
 ---
 
-## Team Memory: Shared Banks
+## Team Codebases: Shared Memory Banks
 
-By default, OpenClaw creates separate banks per agent + channel + user. For a team sharing an agent, point everyone at the same bank:
-
-```json
-{
- "dynamicBankGranularity": ["agent"]
-}
-```
-
-Now every developer's session with the agent contributes to a shared knowledge base. The debugging insight one engineer builds up becomes available to the next person who asks about the same subsystem.
-
-For multi-tenant setups, say, a SaaS where each customer has their own OpenClaw instance, use `bankIdPrefix` to namespace banks:
+By default, OpenClaw creates separate memory banks per agent + channel + user. For a team sharing a coding agent on the same project, set `dynamicBankGranularity` to share one bank:
 
 ```json
 {
- "bankIdPrefix": "prod",
- "dynamicBankGranularity": ["agent", "channel"]
+  "dynamicBankGranularity": ["agent"]
 }
 ```
 
-Bank IDs become `prod-agent: support-channel: C123`, cleanly isolated per customer while the agent code stays identical.
+When multiple developers use OpenClaw on the same codebase with a shared bank, the memory compounds from all their sessions. Knowledge that one developer builds up — a tricky module's undocumented behavior, a hard-won debugging insight, a deployment gotcha — becomes available to the rest of the team automatically.
+
+A few considerations:
+
+- **What compounds well:** Codebase facts, architectural decisions, known issues, conventions. These describe the codebase, not the person — safe to share.
+- **What to keep separate:** Personal workflow preferences, unrelated personal context. Use a separate bank for those.
+- **Bank naming:** Use `bankIdPrefix` to namespace banks per project. A shared bank with prefix `payments-service` that the payments team all uses turns into institutional memory. A default bank that three people use without coordinating turns into noise.
 
 ---
 
-## Advanced: Seeding Memory and Backfilling History
+## Advanced: Seeding a Structured Mental Model
 
-### Ingesting Existing Docs
+Organic extraction from sessions is the primary way Hindsight builds codebase knowledge. But you can front-load context explicitly — useful when starting on an existing codebase, or when critical conventions should be in the bank before the first session runs.
 
-You can front-load context by ingesting architecture notes, ADRs, or conventions files via the Hindsight SDK or API. Hindsight runs fact extraction and stores results in the same bank OpenClaw reads from. Those facts are available on the next session.
+Hindsight exposes two operations via the SDK and API outside of OpenClaw, feeding the same memory bank OpenClaw draws from:
 
-### Backfilling OpenClaw History
+**Ingesting existing docs.** Upload architecture notes, ADRs, or conventions files. Hindsight runs fact extraction on the content and stores the results as memories in the bank. Once ingested, those facts are available to OpenClaw on the next session — no waiting for organic extraction to catch up.
 
-Already have months of OpenClaw conversations? The plugin ships a backfill CLI that imports historical sessions into Hindsight using your active bank-routing config:
+**Creating a mental model.** Define a curated summary built from a source query — "What are the coding conventions for this project?" Hindsight runs a reflect operation, synthesizes the answer from all ingested and session-extracted knowledge, and saves the result. Set `refresh_after_consolidation` to true and the model re-derives itself as new facts arrive. Mental models are checked first during reflect calls, before individual observations and raw facts, so the pre-computed answer is returned without re-deriving it on the fly.
+
+**Backfilling existing history.** If you already have months of OpenClaw sessions, the plugin ships a backfill CLI that imports them into Hindsight:
 
 ```bash
 npx --package @vectorize-io/hindsight-openclaw hindsight-openclaw-backfill \
- --openclaw-root ~/.openclaw \
- --dry-run
+  --openclaw-root ~/.openclaw \
+  --dry-run
 ```
 
 Remove `--dry-run` to execute. Use `--agent proj-run` to limit import to specific agents, and `--resume` to pick up where a previous backfill left off.
 
-### Mental Models
+The combination of ingested project docs, session-extracted facts, and backfilled history gives OpenClaw a complete picture from three angles: what was deliberately documented, what was discovered through use, and what happened before the plugin was installed.
 
-Once a bank has enough facts, create a mental model — a curated, auto-refreshable summary built from a source query like "What are the deployment conventions for this project?" Mental models are checked first during reflect calls, returning a pre-computed answer instead of re-deriving it. See the [Hindsight mental models docs](https://hindsight.vectorize.io/developer/api/mental-models) for the full API reference.
+See the [Hindsight mental models docs](https://hindsight.vectorize.io/developer/api/mental-models) for the full API reference.
 
 ---
 
 ## The Longer You Use It, the Less You Explain
 
-OpenClaw with Hindsight is one of the few agent workflows where context accumulates across sessions and channels. Every conversation adds to what your agents know. Other setups reset. This one compounds.
+OpenClaw with Hindsight is one of the few coding workflows where context accumulates across sessions. Every session adds to what it knows about your codebase. Other tools reset. This one doesn't.
 
-Session one, the agent knows nothing. Session five, it knows the stack and conventions. Session 30, it knows the project's history, the fragile areas, the operational patterns that only surface under load. At that point, you've stopped explaining your codebase — not because you skipped the context, but because you never needed to provide it again.
+The value compounds with use. Session one, OpenClaw knows nothing about your project. Session five, it knows the stack and conventions. Session 30, it knows the project's history, its fragile areas, the decisions that shaped its current shape. At that point you've stopped explaining those things — not because you skipped the context, but because you never needed to provide it again. And once that mental model is rich enough, you're not just talking to a coding assistant. You're working alongside an agent that knows the codebase as well as you do.
 
 Set it up with `openclaw plugins install @vectorize-io/hindsight-openclaw`, or start with the [Hindsight integration docs](https://hindsight.vectorize.io/integrations/openclaw).
 
