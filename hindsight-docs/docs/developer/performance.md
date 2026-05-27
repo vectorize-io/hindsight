@@ -84,6 +84,26 @@ Factors affecting throughput:
 - Database write performance
 - Available CPU/memory resources
 
+### Concurrency with Local LLM Backends
+
+When pointing Hindsight at a **local LLM server** (llama.cpp, vLLM, LM Studio) with a small fixed slot pool, the default `HINDSIGHT_API_LLM_MAX_CONCURRENT=32` will saturate the server and starve any other client sharing the endpoint.
+
+Lower the limit to match the server's capacity:
+
+```bash
+export HINDSIGHT_API_LLM_MAX_CONCURRENT=2
+```
+
+A value of `2` lets retain and consolidation run concurrently without blocking each other. If the endpoint is shared with other clients (other applications, agents, or workflows hitting the same llama-server / vLLM / LM Studio instance), reserve slots for them by lowering further — leave at least one slot free per shared client.
+
+**Symptom of saturation:** other clients sharing the endpoint appear to "hang" or queue indefinitely while Hindsight occupies all slots with retain/recall/consolidation calls. Verify with:
+
+```bash
+# llama.cpp default port is 8080; adjust if your server uses a different port
+curl -s http://127.0.0.1:8080/slots | jq '.[] | {id, is_processing, n_decoded}'
+ss -tnp 'dst :8080'   # count connections per client PID
+```
+
 ---
 
 ## Recall Performance
