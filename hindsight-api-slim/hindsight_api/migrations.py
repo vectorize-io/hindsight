@@ -27,6 +27,7 @@ from alembic.config import Config
 from alembic.script.revision import ResolutionError
 from sqlalchemy import Connection, create_engine, text
 
+from ._pg_search import normalize_pg_search_tokenizer, pg_search_bm25_columns
 from ._vector_index import (
     bootstrap_extension,
     detect_vector_extension,
@@ -803,6 +804,7 @@ def ensure_text_search_extension(
     database_url: str,
     text_search_extension: str = "native",
     schema: str | None = None,
+    pg_search_tokenizer: str | None = None,
 ) -> None:
     """
     Ensure the text search columns and indexes match the configured extension.
@@ -816,13 +818,17 @@ def ensure_text_search_extension(
     Args:
         database_url: SQLAlchemy database URL
         text_search_extension: Configured text search extension — one of
-            "native", "vchord", "pg_textsearch", or "pgroonga"
+            "native", "vchord", "pg_textsearch", "pgroonga", or "pg_search"
         schema: Target PostgreSQL schema name (None for public)
+        pg_search_tokenizer: Optional ParadeDB tokenizer to apply to pg_search
+            BM25 text fields when indexes are created. Empty keeps the
+            ParadeDB default.
 
     Raises:
         RuntimeError: If extension mismatch with existing data
     """
     schema_name = schema or "public"
+    pg_search_tokenizer = normalize_pg_search_tokenizer(pg_search_tokenizer)
 
     engine = create_engine(to_libpq_url(database_url))
     with engine.connect() as conn:
@@ -1076,9 +1082,17 @@ def ensure_text_search_extension(
                 # ParadeDB BM25 index over the table's primary key and text columns.
                 # Column list mirrors what the initial / text_signals migrations create.
                 if table_name == "memory_units":
-                    bm25_cols = "id, text, context, text_signals"
+                    bm25_cols = pg_search_bm25_columns(
+                        "id",
+                        ("text", "context", "text_signals"),
+                        pg_search_tokenizer,
+                    )
                 else:  # reflections
-                    bm25_cols = "id, name, content"
+                    bm25_cols = pg_search_bm25_columns(
+                        "id",
+                        ("name", "content"),
+                        pg_search_tokenizer,
+                    )
 
                 logger.info(f"Creating ParadeDB BM25 index on {table_name}")
                 conn.execute(

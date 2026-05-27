@@ -2074,7 +2074,10 @@ class MemoryEngine(MemoryEngineInterface):
                         schema = tenant.schema
                         if schema:
                             ensure_text_search_extension(
-                                self.db_url, text_search_extension=config.text_search_extension, schema=schema
+                                self.db_url,
+                                text_search_extension=config.text_search_extension,
+                                pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
+                                schema=schema,
                             )
 
         logger.info(f"Connecting to database at {mask_network_location(self.db_url)}")

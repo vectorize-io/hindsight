@@ -16,6 +16,11 @@ from collections.abc import Sequence
 from alembic import context, op
 from sqlalchemy import text
 
+from hindsight_api._pg_search import (
+    PG_SEARCH_TOKENIZER_ENV,
+    normalize_pg_search_tokenizer,
+    pg_search_bm25_columns,
+)
 from hindsight_api.alembic._dialect import run_for_dialect
 
 # revision identifiers, used by Alembic.
@@ -154,6 +159,10 @@ def _detect_text_search_extension() -> str:
         )
 
 
+def _pg_search_tokenizer() -> str:
+    return normalize_pg_search_tokenizer(os.getenv(PG_SEARCH_TOKENIZER_ENV))
+
+
 def _pg_upgrade() -> None:
     """Create learnings and pinned_reflections tables."""
     schema = _get_schema_prefix()
@@ -224,12 +233,13 @@ def _pg_upgrade() -> None:
     elif text_search_ext == "pg_search":
         # ParadeDB pg_search: dummy TEXT column; BM25 index is built directly over (id, text)
         # with key_field='id' (matches the table's primary key).
+        bm25_cols = pg_search_bm25_columns("id", ("text",), _pg_search_tokenizer())
         op.execute(f"""
             ALTER TABLE {schema}learnings ADD COLUMN search_vector TEXT
         """)
         op.execute(f"""
             CREATE INDEX idx_learnings_text_search ON {schema}learnings
-            USING bm25 (id, text)
+            USING bm25 ({bm25_cols})
             WITH (key_field='id')
         """)
     else:  # native
@@ -299,12 +309,13 @@ def _pg_upgrade() -> None:
     elif text_search_ext == "pg_search":
         # ParadeDB pg_search: dummy TEXT column; BM25 index over (id, name, content)
         # with key_field='id'.
+        bm25_cols = pg_search_bm25_columns("id", ("name", "content"), _pg_search_tokenizer())
         op.execute(f"""
             ALTER TABLE {schema}pinned_reflections ADD COLUMN search_vector TEXT
         """)
         op.execute(f"""
             CREATE INDEX idx_pinned_reflections_text_search ON {schema}pinned_reflections
-            USING bm25 (id, name, content)
+            USING bm25 ({bm25_cols})
             WITH (key_field='id')
         """)
     else:  # native

@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from dotenv import find_dotenv, load_dotenv
 
+from ._pg_search import normalize_pg_search_tokenizer
 from ._vector_index import validate_extension
 from .utils import mask_network_location
 
@@ -302,6 +303,7 @@ ENV_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY = "HINDSIGHT_API_RERANKER_GOOGLE_SERVICE
 ENV_VECTOR_EXTENSION = "HINDSIGHT_API_VECTOR_EXTENSION"
 ENV_TEXT_SEARCH_EXTENSION = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION"
 ENV_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE"
+ENV_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER"
 ENV_LLM_OUTPUT_LANGUAGE = "HINDSIGHT_API_LLM_OUTPUT_LANGUAGE"
 
 ENV_HOST = "HINDSIGHT_API_HOST"
@@ -595,6 +597,7 @@ DEFAULT_TEXT_SEARCH_EXTENSION = "native"  # Options: "native", "vchord", "pg_tex
 # tokenizers (vchord: llmlingua2, pg_textsearch: hardcoded english,
 # pgroonga: TokenBigram polyglot, pg_search: per-field Tantivy tokenizer).
 DEFAULT_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE = "english"
+DEFAULT_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER = ""
 
 # LiteLLM defaults
 DEFAULT_LITELLM_API_BASE = "http://localhost:4000"
@@ -946,6 +949,9 @@ class HindsightConfig:
     # uses TokenBigram, vchord uses llmlingua2, pg_textsearch hardcodes english,
     # pg_search uses Tantivy per-field tokenizers.
     text_search_extension_native_language: str
+    # ParadeDB pg_search tokenizer used when building BM25 indexes. Empty keeps
+    # ParadeDB's default tokenizer.
+    text_search_extension_pg_search_tokenizer: str
     # When set, every LLM-generated artifact (retain facts, consolidation
     # observations, reflect responses) is forced into this language regardless
     # of the source content. Unset preserves source language.
@@ -1444,6 +1450,10 @@ class HindsightConfig:
                 f"'french', 'simple', 'zhparser'."
             )
 
+        self.text_search_extension_pg_search_tokenizer = normalize_pg_search_tokenizer(
+            self.text_search_extension_pg_search_tokenizer
+        )
+
         # When LLM provider is "none", force chunks-only mode and disable LLM-dependent features
         if self.llm_provider == "none":
             self.retain_extraction_mode = "chunks"
@@ -1529,6 +1539,10 @@ class HindsightConfig:
                 ENV_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE,
                 DEFAULT_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE,
             ).lower(),
+            text_search_extension_pg_search_tokenizer=os.getenv(
+                ENV_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER,
+                DEFAULT_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER,
+            ),
             llm_output_language=(os.getenv(ENV_LLM_OUTPUT_LANGUAGE) or None),
             # LLM
             llm_provider=llm_provider,

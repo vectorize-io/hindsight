@@ -15,6 +15,11 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
+from hindsight_api._pg_search import (
+    PG_SEARCH_TOKENIZER_ENV,
+    normalize_pg_search_tokenizer,
+    pg_search_bm25_columns,
+)
 from hindsight_api.alembic._dialect import run_for_dialect
 
 # revision identifiers, used by Alembic.
@@ -149,6 +154,10 @@ def _detect_text_search_extension() -> str:
             f"Invalid HINDSIGHT_API_TEXT_SEARCH_EXTENSION: {text_search_extension}. "
             "Must be 'native', 'vchord', 'pg_textsearch', 'pgroonga', or 'pg_search'"
         )
+
+
+def _pg_search_tokenizer() -> str:
+    return normalize_pg_search_tokenizer(os.getenv(PG_SEARCH_TOKENIZER_ENV))
 
 
 def _pg_upgrade() -> None:
@@ -376,11 +385,14 @@ def _pg_upgrade() -> None:
     elif text_search_ext == "pg_search":
         # ParadeDB pg_search BM25 index on (id, text, context). The key_field
         # reloption is required and must match the table's primary key column.
-        op.execute("""
+        bm25_cols = pg_search_bm25_columns("id", ("text", "context"), _pg_search_tokenizer())
+        op.execute(
+            """
             CREATE INDEX idx_memory_units_text_search ON memory_units
-            USING bm25 (id, text, context)
+            USING bm25 ({bm25_cols})
             WITH (key_field='id')
-        """)
+        """.format(bm25_cols=bm25_cols)
+        )
     else:  # native
         # Native PostgreSQL GIN index
         op.execute("""

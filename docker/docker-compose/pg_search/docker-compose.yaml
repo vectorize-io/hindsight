@@ -15,6 +15,8 @@ name: hindsight
 # - HINDSIGHT_VERSION: Hindsight application version (default: latest)
 # - HINDSIGHT_DB_USER: PostgreSQL user (default: hindsight_user)
 # - HINDSIGHT_DB_NAME: PostgreSQL database name (default: hindsight_db)
+# - HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER: ParadeDB pg_search
+#   tokenizer for new BM25 indexes (default: empty, uses ParadeDB default)
 
 services:
   db:
@@ -78,6 +80,7 @@ services:
       # Vector and Text Search Extensions
       HINDSIGHT_API_VECTOR_EXTENSION: pgvector
       HINDSIGHT_API_TEXT_SEARCH_EXTENSION: pg_search
+      HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER: ${HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER:-}
 
     depends_on:
       - db
