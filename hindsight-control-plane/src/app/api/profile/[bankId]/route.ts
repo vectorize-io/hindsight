@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { sdk, lowLevelClient } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
 
@@ -11,7 +12,7 @@ export async function GET(
     client: lowLevelClient,
     path: { bank_id: bankId },
   });
-  return respondWithSdk(response, "Failed to fetch bank profile");
+  return respondWithSdk(response, "Failed to fetch bank profile", { request });
 }
 
 export async function PUT(
@@ -23,7 +24,13 @@ export async function PUT(
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Invalid JSON body",
+        errorKey: "api.errors.auth.invalidRequestBody",
+      }),
+      { status: 400 }
+    );
   }
 
   const response = await sdk.createOrUpdateBank({
@@ -31,5 +38,5 @@ export async function PUT(
     path: { bank_id: bankId },
     body: body,
   });
-  return respondWithSdk(response, "Failed to update bank profile");
+  return respondWithSdk(response, "Failed to update bank profile", { request });
 }

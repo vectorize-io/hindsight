@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function POST(
@@ -10,7 +11,10 @@ export async function POST(
 
     if (!bankId || !mentalModelId) {
       return NextResponse.json(
-        { error: "bank_id and mental_model_id are required" },
+        localizeApiErrorPayload(request, {
+          error: "bank_id and mental_model_id are required",
+          errorKey: "api.errors.validation.bankAndMentalModelIdRequired",
+        }),
         { status: 400 }
       );
     }
@@ -24,7 +28,10 @@ export async function POST(
       const errorText = await response.text();
       console.error("API error clearing mental model:", errorText);
       return NextResponse.json(
-        { error: errorText || "Failed to clear mental model" },
+        localizeApiErrorPayload(request, {
+          error: errorText || "Failed to clear mental model",
+          errorKey: "api.errors.mentalModels.clear",
+        }),
         { status: response.status }
       );
     }
@@ -33,6 +40,12 @@ export async function POST(
     return NextResponse.json(data, { status: 200 });
   } catch (error) {
     console.error("Error clearing mental model:", error);
-    return NextResponse.json({ error: "Failed to clear mental model" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to clear mental model",
+        errorKey: "api.errors.mentalModels.clear",
+      }),
+      { status: 500 }
+    );
   }
 }

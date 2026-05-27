@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
@@ -9,7 +10,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
     const tagsMatch = searchParams.get("tags_match");
 
     if (!bankId) {
-      return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "bank_id is required",
+          errorKey: "api.errors.validation.bankIdRequired",
+        }),
+        { status: 400 }
+      );
     }
 
     const queryParams = new URLSearchParams();
@@ -30,7 +37,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
       const errorText = await response.text();
       console.error("API error listing mental models:", errorText);
       return NextResponse.json(
-        { error: "Failed to list mental models" },
+        localizeApiErrorPayload(request, {
+          error: "Failed to list mental models",
+          errorKey: "api.errors.mentalModels.list",
+        }),
         { status: response.status }
       );
     }
@@ -39,7 +49,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
     return NextResponse.json(data, { status: 200 });
   } catch (error) {
     console.error("Error listing mental models:", error);
-    return NextResponse.json({ error: "Failed to list mental models" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to list mental models",
+        errorKey: "api.errors.mentalModels.list",
+      }),
+      { status: 500 }
+    );
   }
 }
 
@@ -48,7 +64,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ ban
     const { bankId } = await params;
 
     if (!bankId) {
-      return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "bank_id is required",
+          errorKey: "api.errors.validation.bankIdRequired",
+        }),
+        { status: 400 }
+      );
     }
 
     const body = await request.json();
@@ -63,7 +85,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ ban
       const errorText = await response.text();
       console.error("API error creating mental model:", errorText);
       return NextResponse.json(
-        { error: errorText || "Failed to create mental model" },
+        localizeApiErrorPayload(request, {
+          error: errorText || "Failed to create mental model",
+          errorKey: "api.errors.mentalModels.create",
+        }),
         { status: response.status }
       );
     }
@@ -73,6 +98,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ ban
     return NextResponse.json(data, { status: 202 });
   } catch (error) {
     console.error("Error creating mental model:", error);
-    return NextResponse.json({ error: "Failed to create mental model" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to create mental model",
+        errorKey: "api.errors.mentalModels.create",
+      }),
+      { status: 500 }
+    );
   }
 }

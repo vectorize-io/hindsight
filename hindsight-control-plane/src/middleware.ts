@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import createIntlMiddleware from "next-intl/middleware";
 
 import { ACCESS_KEY_COOKIE, verifySessionToken } from "@/lib/auth/session";
@@ -50,7 +51,13 @@ export async function middleware(request: NextRequest) {
     const isAuthenticated = await verifySessionToken(sessionCookie, accessKey);
 
     if (!isAuthenticated) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "Unauthorized",
+          errorKey: "api.errors.auth.unauthorized",
+        }),
+        { status: 401 }
+      );
     }
 
     return NextResponse.next();

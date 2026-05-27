@@ -11,5 +11,5 @@ export async function GET(
     client: lowLevelClient,
     path: { chunk_id: chunkId },
   });
-  return respondWithSdk(response, "Failed to fetch chunk");
+  return respondWithSdk(response, "Failed to fetch chunk", { request });
 }

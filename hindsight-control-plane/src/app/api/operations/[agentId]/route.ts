@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { sdk, lowLevelClient } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
 
@@ -19,7 +20,7 @@ export async function GET(
     path: { bank_id: agentId },
     query: { status, type, limit, offset, exclude_parents: excludeParents },
   });
-  return respondWithSdk(response, "Failed to fetch operations");
+  return respondWithSdk(response, "Failed to fetch operations", { request });
 }
 
 export async function DELETE(
@@ -31,12 +32,18 @@ export async function DELETE(
   const operationId = searchParams.get("operation_id");
 
   if (!operationId) {
-    return NextResponse.json({ error: "operation_id is required" }, { status: 400 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "operation_id is required",
+        errorKey: "api.errors.validation.operationIdRequired",
+      }),
+      { status: 400 }
+    );
   }
 
   const response = await sdk.cancelOperation({
     client: lowLevelClient,
     path: { bank_id: agentId, operation_id: operationId },
   });
-  return respondWithSdk(response, "Failed to cancel operation");
+  return respondWithSdk(response, "Failed to cancel operation", { request });
 }

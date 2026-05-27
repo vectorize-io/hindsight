@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(
@@ -10,7 +11,10 @@ export async function GET(
 
     if (!bankId || !mentalModelId) {
       return NextResponse.json(
-        { error: "bank_id and mental_model_id are required" },
+        localizeApiErrorPayload(request, {
+          error: "bank_id and mental_model_id are required",
+          errorKey: "api.errors.validation.bankAndMentalModelIdRequired",
+        }),
         { status: 400 }
       );
     }
@@ -24,7 +28,10 @@ export async function GET(
       const errorText = await response.text();
       console.error("API error getting mental model:", errorText);
       return NextResponse.json(
-        { error: "Failed to get mental model" },
+        localizeApiErrorPayload(request, {
+          error: "Failed to get mental model",
+          errorKey: "api.errors.mentalModels.fetch",
+        }),
         { status: response.status }
       );
     }
@@ -33,7 +40,13 @@ export async function GET(
     return NextResponse.json(data, { status: 200 });
   } catch (error) {
     console.error("Error getting mental model:", error);
-    return NextResponse.json({ error: "Failed to get mental model" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to get mental model",
+        errorKey: "api.errors.mentalModels.fetch",
+      }),
+      { status: 500 }
+    );
   }
 }
 
@@ -46,7 +59,10 @@ export async function PATCH(
 
     if (!bankId || !mentalModelId) {
       return NextResponse.json(
-        { error: "bank_id and mental_model_id are required" },
+        localizeApiErrorPayload(request, {
+          error: "bank_id and mental_model_id are required",
+          errorKey: "api.errors.validation.bankAndMentalModelIdRequired",
+        }),
         { status: 400 }
       );
     }
@@ -66,7 +82,10 @@ export async function PATCH(
       const errorText = await response.text();
       console.error("API error updating mental model:", errorText);
       return NextResponse.json(
-        { error: errorText || "Failed to update mental model" },
+        localizeApiErrorPayload(request, {
+          error: errorText || "Failed to update mental model",
+          errorKey: "api.errors.mentalModels.update",
+        }),
         { status: response.status }
       );
     }
@@ -75,7 +94,13 @@ export async function PATCH(
     return NextResponse.json(data, { status: 200 });
   } catch (error) {
     console.error("Error updating mental model:", error);
-    return NextResponse.json({ error: "Failed to update mental model" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to update mental model",
+        errorKey: "api.errors.mentalModels.update",
+      }),
+      { status: 500 }
+    );
   }
 }
 
@@ -88,7 +113,10 @@ export async function DELETE(
 
     if (!bankId || !mentalModelId) {
       return NextResponse.json(
-        { error: "bank_id and mental_model_id are required" },
+        localizeApiErrorPayload(request, {
+          error: "bank_id and mental_model_id are required",
+          errorKey: "api.errors.validation.bankAndMentalModelIdRequired",
+        }),
         { status: 400 }
       );
     }
@@ -102,7 +130,10 @@ export async function DELETE(
       const errorText = await response.text();
       console.error("API error deleting mental model:", errorText);
       return NextResponse.json(
-        { error: errorText || "Failed to delete mental model" },
+        localizeApiErrorPayload(request, {
+          error: errorText || "Failed to delete mental model",
+          errorKey: "api.errors.mentalModels.delete",
+        }),
         { status: response.status }
       );
     }
@@ -110,6 +141,12 @@ export async function DELETE(
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error) {
     console.error("Error deleting mental model:", error);
-    return NextResponse.json({ error: "Failed to delete mental model" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to delete mental model",
+        errorKey: "api.errors.mentalModels.delete",
+      }),
+      { status: 500 }
+    );
   }
 }

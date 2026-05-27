@@ -11,5 +11,5 @@ export async function GET(
     client: lowLevelClient,
     path: { bank_id: agentId },
   });
-  return respondWithSdk(response, "Failed to fetch stats");
+  return respondWithSdk(response, "Failed to fetch stats", { request });
 }

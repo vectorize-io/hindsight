@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function POST(
@@ -11,7 +12,13 @@ export async function POST(
     const bankId = searchParams.get("bank_id");
 
     if (!bankId) {
-      return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "bank_id is required",
+          errorKey: "api.errors.validation.bankIdRequired",
+        }),
+        { status: 400 }
+      );
     }
 
     const response = await fetch(
@@ -31,6 +38,12 @@ export async function POST(
     return NextResponse.json(data, { status: 200 });
   } catch (error) {
     console.error("Error reprocessing document:", error);
-    return NextResponse.json({ error: "Failed to reprocess document" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to reprocess document",
+        errorKey: "api.errors.documents.reprocess",
+      }),
+      { status: 500 }
+    );
   }
 }

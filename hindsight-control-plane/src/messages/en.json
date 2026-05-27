@@ -1303,5 +1303,137 @@
     "signingIn": "Signing in...",
     "invalidKey": "Invalid access key",
     "connectFailed": "Failed to connect to server"
+  },
+  "api": {
+    "errors": {
+      "auth": {
+        "accessKeyNotConfigured": "Access key not configured",
+        "invalidRequestBody": "Invalid request body",
+        "invalidAccessKey": "Invalid access key",
+        "unauthorized": "Unauthorized"
+      },
+      "validation": {
+        "bankIdRequired": "bank_id is required",
+        "bankAndDirectiveIdRequired": "bank_id and directive_id are required",
+        "bankAndMentalModelIdRequired": "bank_id and mental_model_id are required",
+        "bankAndModelIdRequired": "bank_id and model_id are required",
+        "operationIdRequired": "operation_id is required",
+        "missingRequestData": "Missing request data",
+        "missingBankId": "Missing bank_id"
+      },
+      "generic": {
+        "failed": "Failed",
+        "unsupportedIndividualMemoryDelete": "Individual memory unit deletion is not yet supported. Use clear all memories instead."
+      },
+      "banks": {
+        "fetch": "Failed to fetch banks",
+        "fetchFromApi": "Failed to fetch banks from API",
+        "create": "Failed to create bank",
+        "update": "Failed to update bank",
+        "delete": "Failed to delete bank",
+        "exportTemplate": "Failed to export bank template",
+        "importTemplate": "Failed to import bank template"
+      },
+      "bankConfig": {
+        "fetch": "Failed to fetch bank config",
+        "update": "Failed to update bank config",
+        "reset": "Failed to reset bank config"
+      },
+      "bankProfile": {
+        "fetch": "Failed to fetch bank profile",
+        "update": "Failed to update bank profile"
+      },
+      "memories": {
+        "list": "Failed to list memory units",
+        "fetch": "Failed to fetch memory",
+        "notFound": "Memory not found",
+        "retain": "Failed to batch retain",
+        "retainAsync": "Failed to batch retain async",
+        "history": "Failed to fetch observation history"
+      },
+      "documents": {
+        "fetchList": "Failed to fetch documents",
+        "fetch": "Failed to fetch document",
+        "updateTags": "Failed to update document tags",
+        "delete": "Failed to delete document",
+        "chunks": "Failed to fetch document chunks",
+        "reprocess": "Failed to reprocess document"
+      },
+      "files": {
+        "upload": "Failed to upload files"
+      },
+      "chunks": {
+        "fetch": "Failed to fetch chunk"
+      },
+      "entities": {
+        "list": "Failed to list entities",
+        "fetch": "Failed to get entity",
+        "graph": "Failed to fetch entity graph",
+        "regenerateObservations": "Failed to regenerate entity observations"
+      },
+      "graph": {
+        "fetch": "Failed to fetch graph data"
+      },
+      "mentalModels": {
+        "list": "Failed to list mental models",
+        "fetch": "Failed to get mental model",
+        "create": "Failed to create mental model",
+        "update": "Failed to update mental model",
+        "delete": "Failed to delete mental model",
+        "refresh": "Failed to refresh mental model",
+        "history": "Failed to fetch mental model history",
+        "notFound": "Mental model not found",
+        "clear": "Failed to clear mental model"
+      },
+      "observations": {
+        "list": "Failed to list observations",
+        "clear": "Failed to clear observations",
+        "fetch": "Failed to get observation"
+      },
+      "directives": {
+        "list": "Failed to list directives",
+        "fetch": "Failed to get directive",
+        "create": "Failed to create directive",
+        "update": "Failed to update directive",
+        "delete": "Failed to delete directive"
+      },
+      "operations": {
+        "fetch": "Failed to fetch operations",
+        "cancel": "Failed to cancel operation",
+        "status": "Failed to get operation status",
+        "retry": "Failed to retry operation"
+      },
+      "auditLogs": {
+        "list": "Failed to list audit logs",
+        "stats": "Failed to get audit log stats"
+      },
+      "tags": {
+        "list": "Failed to list tags"
+      },
+      "consolidation": {
+        "trigger": "Failed to trigger consolidation",
+        "recover": "Failed to recover consolidation"
+      },
+      "recall": {
+        "failed": "Failed to recall"
+      },
+      "reflect": {
+        "failed": "Failed to reflect"
+      },
+      "stats": {
+        "fetch": "Failed to fetch stats",
+        "memoriesTimeseries": "Failed to fetch memories timeseries"
+      },
+      "version": {
+        "fetch": "Failed to get version"
+      },
+      "webhooks": {
+        "list": "Failed to list webhooks",
+        "create": "Failed to create webhook",
+        "update": "Failed to update webhook",
+        "delete": "Failed to delete webhook",
+        "deliveries": "Failed to fetch webhook deliveries"
+      }
+    }
   }
 }

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { sdk, lowLevelClient } from "@/lib/hindsight-client";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const response = await sdk.getVersion({
       client: lowLevelClient,
@@ -9,7 +10,13 @@ export async function GET() {
 
     if (response.error) {
       console.error("API error getting version:", response.error);
-      return NextResponse.json({ error: "Failed to get version" }, { status: 500 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "Failed to get version",
+          errorKey: "api.errors.version.fetch",
+        }),
+        { status: 500 }
+      );
     }
 
     const data = response.data as Record<string, unknown>;
@@ -20,6 +27,12 @@ export async function GET() {
     return NextResponse.json(data, { status: 200 });
   } catch (error) {
     console.error("Error getting version:", error);
-    return NextResponse.json({ error: "Failed to get version" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to get version",
+        errorKey: "api.errors.version.fetch",
+      }),
+      { status: 500 }
+    );
   }
 }

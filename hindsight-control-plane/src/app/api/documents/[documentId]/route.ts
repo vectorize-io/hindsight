@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { sdk, lowLevelClient, dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
 
@@ -11,14 +12,20 @@ export async function GET(
   const bankId = searchParams.get("bank_id");
 
   if (!bankId) {
-    return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "bank_id is required",
+        errorKey: "api.errors.validation.bankIdRequired",
+      }),
+      { status: 400 }
+    );
   }
 
   const response = await sdk.getDocument({
     client: lowLevelClient,
     path: { bank_id: bankId, document_id: documentId },
   });
-  return respondWithSdk(response, "Failed to fetch document");
+  return respondWithSdk(response, "Failed to fetch document", { request });
 }
 
 export async function PATCH(
@@ -31,7 +38,13 @@ export async function PATCH(
     const bankId = searchParams.get("bank_id");
 
     if (!bankId) {
-      return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "bank_id is required",
+          errorKey: "api.errors.validation.bankIdRequired",
+        }),
+        { status: 400 }
+      );
     }
 
     const body = await request.json();
@@ -53,7 +66,13 @@ export async function PATCH(
     return NextResponse.json(data, { status: 200 });
   } catch (error) {
     console.error("Error updating document tags:", error);
-    return NextResponse.json({ error: "Failed to update document tags" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to update document tags",
+        errorKey: "api.errors.documents.updateTags",
+      }),
+      { status: 500 }
+    );
   }
 }
 
@@ -66,12 +85,18 @@ export async function DELETE(
   const bankId = searchParams.get("bank_id");
 
   if (!bankId) {
-    return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "bank_id is required",
+        errorKey: "api.errors.validation.bankIdRequired",
+      }),
+      { status: 400 }
+    );
   }
 
   const response = await sdk.deleteDocument({
     client: lowLevelClient,
     path: { bank_id: bankId, document_id: documentId },
   });
-  return respondWithSdk(response, "Failed to delete document");
+  return respondWithSdk(response, "Failed to delete document", { request });
 }

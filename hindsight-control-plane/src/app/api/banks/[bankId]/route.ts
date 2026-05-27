@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { sdk, lowLevelClient } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
 
@@ -8,11 +9,23 @@ export async function PUT(request: Request, { params }: { params: Promise<{ bank
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Invalid JSON body",
+        errorKey: "api.errors.auth.invalidRequestBody",
+      }),
+      { status: 400 }
+    );
   }
 
   if (!bankId) {
-    return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "bank_id is required",
+        errorKey: "api.errors.validation.bankIdRequired",
+      }),
+      { status: 400 }
+    );
   }
 
   const response = await sdk.createOrUpdateBank({
@@ -24,7 +37,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ bank
       disposition: body.disposition,
     },
   });
-  return respondWithSdk(response, "Failed to update bank");
+  return respondWithSdk(response, "Failed to update bank", { request });
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
@@ -33,11 +46,23 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ba
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Invalid JSON body",
+        errorKey: "api.errors.auth.invalidRequestBody",
+      }),
+      { status: 400 }
+    );
   }
 
   if (!bankId) {
-    return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "bank_id is required",
+        errorKey: "api.errors.validation.bankIdRequired",
+      }),
+      { status: 400 }
+    );
   }
 
   const response = await sdk.updateBank({
@@ -49,7 +74,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ba
       disposition: body.disposition,
     },
   });
-  return respondWithSdk(response, "Failed to update bank");
+  return respondWithSdk(response, "Failed to update bank", { request });
 }
 
 export async function DELETE(
@@ -59,12 +84,18 @@ export async function DELETE(
   const { bankId } = await params;
 
   if (!bankId) {
-    return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "bank_id is required",
+        errorKey: "api.errors.validation.bankIdRequired",
+      }),
+      { status: 400 }
+    );
   }
 
   const response = await sdk.deleteBank({
     client: lowLevelClient,
     path: { bank_id: bankId },
   });
-  return respondWithSdk(response, "Failed to delete bank");
+  return respondWithSdk(response, "Failed to delete bank", { request });
 }
