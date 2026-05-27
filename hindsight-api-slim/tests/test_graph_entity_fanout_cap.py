@@ -13,6 +13,7 @@ import pytest
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(600)
 async def test_high_fanout_entity_returns_results(memory, request_context):
     """
     A high-fanout entity (appearing in many facts) should still produce

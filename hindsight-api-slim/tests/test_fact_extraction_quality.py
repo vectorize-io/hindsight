@@ -771,7 +771,10 @@ great time! Every time I see it, I can't help but smile.
         )
 
         assert len(facts) > 0, "Should extract at least one fact"
-        all_facts_text = " ".join(f.fact for f in facts)
+        # Format as a numbered list — f.fact embeds pipe-separated metadata
+        # ("| When: ... | Involving: ...") and a plain space-join produces one
+        # confusing run-on string that weaker judge models misread.
+        facts_listing = "\n".join(f"Fact {i + 1}: {f.fact}" for i, f in enumerate(facts))
 
         # The extraction must capture the key information from the conversation.
         # The judge tolerates wording variation — "passed away" / "lost a friend" /
@@ -779,12 +782,12 @@ great time! Every time I see it, I can't help but smile.
         from tests.llm_judge import assert_meets_criteria
 
         await assert_meets_criteria(
-            response=all_facts_text,
+            response=facts_listing,
             criteria=(
-                "The extracted facts capture EITHER (a) that Deborah lost a friend named Karlie, "
-                "OR (b) both that Deborah lost a friend last week AND that Karlie was someone "
-                "Deborah hiked with last summer. Either is acceptable — the test verifies key "
-                "information is preserved, ideally with Karlie identified as the lost friend."
+                "The numbered list of facts captures EITHER (a) that Deborah lost a friend named "
+                "Karlie, OR (b) both that Deborah lost a friend last week AND that Karlie was "
+                "someone Deborah hiked with last summer. Either is acceptable — the test verifies "
+                "key information is preserved, ideally with Karlie identified as the lost friend."
             ),
             context=(
                 "Deborah told Jolene she lost a friend last week and finds comfort in the garden. "
