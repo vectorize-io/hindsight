@@ -192,6 +192,10 @@ def create_retain_node(
     via Hindsight retain. It should be placed after the LLM response
     node in your graph.
 
+    Only ``HumanMessage`` and ``AIMessage`` text content is retained;
+    ``ToolMessage`` / ``FunctionMessage`` content is intentionally
+    skipped to avoid storing tool wire-protocol noise as memories.
+
     Args:
         bank_id: Static Hindsight memory bank ID.
         client: Pre-configured Hindsight client.

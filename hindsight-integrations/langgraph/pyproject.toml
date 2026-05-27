@@ -1,7 +1,7 @@
 [project]
 name = "hindsight-langgraph"
 version = "0.1.2"
-description = "LangGraph integration for Hindsight - persistent memory tools, nodes, and store for AI agents"
+description = "LangGraph integration for Hindsight - persistent memory tools, nodes, and memory instructions for AI agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

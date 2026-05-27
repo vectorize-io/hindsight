@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Optional
 
 from hindsight_client import Hindsight
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 
 from ._client import resolve_client
 from .config import get_config
@@ -45,7 +45,7 @@ def create_hindsight_tools(
     include_retain: bool = True,
     include_recall: bool = True,
     include_reflect: bool = True,
-) -> list:
+) -> list[BaseTool]:
     """Create Hindsight memory tools for a LangGraph agent.
 
     Returns a list of LangChain tool instances compatible with LangGraph's
@@ -239,6 +239,12 @@ def memory_instructions(
 
     Returns:
         An async callable that returns instructions with memories appended.
+        On Hindsight error (network failure, etc.), logs the failure and
+        returns ``base_instructions`` unchanged so the LLM call can proceed.
+        This differs from the recall/retain nodes, which raise
+        ``HindsightError`` — ``memory_instructions`` is intended for the
+        prompt-construction path where a failure should degrade silently
+        rather than break the request.
 
     Example::
 

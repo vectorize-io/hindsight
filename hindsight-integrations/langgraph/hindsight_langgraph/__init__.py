@@ -68,7 +68,12 @@ def __getattr__(name: str):
     raise AttributeError(f"module 'hindsight_langgraph' has no attribute {name!r}")
 
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import version as _version
+
+    __version__ = _version("hindsight-langgraph")
+except Exception:
+    __version__ = "0.0.0+unknown"
 
 __all__ = [
     "configure",
