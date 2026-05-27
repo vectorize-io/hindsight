@@ -13,6 +13,7 @@ import asyncio
 import contextvars
 import json
 import logging
+import os
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -29,6 +30,10 @@ from ..config import (
     DEFAULT_RECALL_INCLUDE_CHUNKS,
     DEFAULT_RECALL_MAX_TOKENS,
     DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS,
+    DEFAULT_WORKER_MAX_RETRIES,
+    DEFAULT_WORKER_TASK_RETRY_BACKOFF_SECONDS,
+    ENV_WORKER_MAX_RETRIES,
+    ENV_WORKER_TASK_RETRY_BACKOFF_SECONDS,
     get_config,
 )
 from ..db_url import to_libpq_url
@@ -1421,10 +1426,23 @@ class MemoryEngine(MemoryEngineInterface):
                             error_message=str(e),
                             schema=schema,
                         )
-                    # Retryable: use RetryTaskAt if under the retry limit, else re-raise (poller marks failed)
+                    # Retryable: use RetryTaskAt if under the retry limit, else re-raise (poller marks failed).
+                    # Retry count and backoff are read from env on each call (not cached) so operators can
+                    # tune them at runtime without restarting workers — useful when a known provider outage
+                    # exceeds the default 3 x 60s = 4-minute total window.
                     retry_count = task_dict.get("_retry_count", 0)
-                    if retry_count < 3:
-                        raise RetryTaskAt(retry_at=datetime.now(UTC) + timedelta(seconds=60), message=str(e))
+                    max_retries = int(os.getenv(ENV_WORKER_MAX_RETRIES, str(DEFAULT_WORKER_MAX_RETRIES)))
+                    backoff_seconds = int(
+                        os.getenv(
+                            ENV_WORKER_TASK_RETRY_BACKOFF_SECONDS,
+                            str(DEFAULT_WORKER_TASK_RETRY_BACKOFF_SECONDS),
+                        )
+                    )
+                    if retry_count < max_retries:
+                        raise RetryTaskAt(
+                            retry_at=datetime.now(UTC) + timedelta(seconds=backoff_seconds),
+                            message=str(e),
+                        )
                     raise
 
     async def _fire_consolidation_webhook(
