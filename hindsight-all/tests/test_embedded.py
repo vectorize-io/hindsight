@@ -386,7 +386,7 @@ def test_embedded_ui_flag(llm_config):
 
         # Verify UI is reachable and reports connected dataplane
         ui_url = client.ui_url
-        assert ui_url, "ui_url should be set"
+        assert isinstance(ui_url, str) and ui_url, "ui_url should be a non-empty string"
 
         health_url = f"{ui_url}/api/health"
         with urllib.request.urlopen(health_url, timeout=10) as resp:
