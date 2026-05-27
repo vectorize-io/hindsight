@@ -175,6 +175,17 @@ else
     print_warn "File $TYPESCRIPT_CLIENT_PKG not found, skipping"
 fi
 
+# Refresh root package-lock.json so workspace versions match the bumped
+# package.json files. Without this, `npm ci` in CI fails with
+# "Missing @vectorize-io/hindsight-client@<old-version> from lock file"
+# and the npm-publish + docs-deploy jobs break.
+print_info "Refreshing root package-lock.json to match bumped workspace versions..."
+if npm install --ignore-scripts --no-audit --no-fund > /dev/null 2>&1; then
+    print_info "✓ package-lock.json refreshed"
+else
+    print_warn "npm install failed; package-lock.json may be stale"
+fi
+
 # Update documentation version (creates new version or syncs to existing)
 print_info "Updating documentation for version $VERSION..."
 if [ -f "scripts/update-docs-version.sh" ]; then

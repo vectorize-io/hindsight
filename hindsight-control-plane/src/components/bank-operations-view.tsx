@@ -98,6 +98,7 @@ const OPERATION_TYPE_OPTIONS = [
   { value: "refresh_mental_model", label: "Mental Model Refresh" },
   { value: "file_convert_retain", label: "File Convert & Retain" },
   { value: "webhook_delivery", label: "Webhook Delivery" },
+  { value: "graph_maintenance", label: "Graph Maintenance" },
 ];
 
 export function BankOperationsView() {
