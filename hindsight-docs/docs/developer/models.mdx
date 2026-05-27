@@ -394,6 +394,8 @@ Converts text into dense vector representations for semantic similarity search.
 |----------|-------------|----------|
 | `local` | SentenceTransformers (default) | Development, low latency |
 | `openai` | OpenAI embeddings API | Production, high quality |
+| `openai-codex` | OpenAI embeddings via Codex OAuth (ChatGPT Plus/Pro, no API key) | Existing ChatGPT/Codex subscribers |
+| `openrouter` | OpenRouter embeddings (OpenAI-compatible gateway) | Multi-provider setups |
 | `cohere` | Cohere embeddings API | Production, multilingual |
 | `google` | Google embeddings (Gemini API or Vertex AI) | Production, multilingual, high quality |
 | `tei` | HuggingFace Text Embeddings Inference | Production, self-hosted |
