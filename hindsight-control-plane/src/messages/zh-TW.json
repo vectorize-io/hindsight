@@ -142,7 +142,7 @@
     "deleteBankPrompt": "確定要刪除記憶庫 <bankName></bankName> 嗎？",
     "deleteBankWarning": "此操作無法還原。所有記憶、實體、文件和記憶庫設定檔都將被永久刪除。",
     "resetConfigPrompt": "確定要重設 <bankName></bankName> 的設定嗎？",
-    "resetConfigDetailedWarning": "所有 retain、observation 和 reflect 設定覆寫將被清除。此操作無法撤銷。",
+    "resetConfigDetailedWarning": "所有 retain、observations 和 reflect 的設定覆寫都會被清除。此操作無法還原。",
     "clearObservationsPrompt": "確定要清除 <bankName></bankName> 的所有觀察嗎？",
     "clearObservationsDetailedWarning": "所有觀察記憶將被永久刪除。此操作無法撤銷。",
     "observationsNotEnabled": "觀察未啟用",

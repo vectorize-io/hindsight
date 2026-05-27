@@ -39,11 +39,11 @@ export async function GET(
     const data = await response.json();
     return NextResponse.json(data, { status: 200 });
   } catch (error) {
-    console.error("Error getting mental model:", error);
+    console.error("Error getting observation:", error);
     return NextResponse.json(
       localizeApiErrorPayload(request, {
-        error: "Failed to get mental model",
-        errorKey: "api.errors.mentalModels.fetch",
+        error: "Failed to get observation",
+        errorKey: "api.errors.observations.fetch",
       }),
       { status: 500 }
     );
