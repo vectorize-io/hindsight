@@ -431,6 +431,9 @@ ENV_WORKER_ENABLED = "HINDSIGHT_API_WORKER_ENABLED"
 ENV_WORKER_ID = "HINDSIGHT_API_WORKER_ID"
 ENV_WORKER_POLL_INTERVAL_MS = "HINDSIGHT_API_WORKER_POLL_INTERVAL_MS"
 ENV_WORKER_MAX_RETRIES = "HINDSIGHT_API_WORKER_MAX_RETRIES"
+ENV_WORKER_PENDING_CONSOLIDATION_SCAN_INTERVAL_SECONDS = (
+    "HINDSIGHT_API_WORKER_PENDING_CONSOLIDATION_SCAN_INTERVAL_SECONDS"
+)
 ENV_WORKER_HTTP_PORT = "HINDSIGHT_API_WORKER_HTTP_PORT"
 ENV_WORKER_MAX_SLOTS = "HINDSIGHT_API_WORKER_MAX_SLOTS"
 
@@ -702,6 +705,10 @@ DEFAULT_WORKER_ENABLED = True  # API runs worker by default (standalone mode)
 DEFAULT_WORKER_ID = None  # Will use hostname if not specified
 DEFAULT_WORKER_POLL_INTERVAL_MS = 500  # Poll database every 500ms
 DEFAULT_WORKER_MAX_RETRIES = 3  # Max retries before marking task failed
+# Periodic scan that re-queues consolidation for banks with unconsolidated
+# memory_units (a backstop for cases where the retain-side trigger chain breaks).
+# 0 = disabled (preserves existing behavior); typical opt-in value 300 (5 min).
+DEFAULT_WORKER_PENDING_CONSOLIDATION_SCAN_INTERVAL_SECONDS = 0
 DEFAULT_WORKER_HTTP_PORT = 8889  # HTTP port for worker metrics/health
 DEFAULT_WORKER_MAX_SLOTS = 10  # Total concurrent tasks per worker
 DEFAULT_RETAIN_MAX_CONCURRENT = 4  # Max concurrent retain DB phases (HNSW reads + writes). Limits I/O contention.
@@ -1234,6 +1241,7 @@ class HindsightConfig:
     worker_id: str | None
     worker_poll_interval_ms: int
     worker_max_retries: int
+    worker_pending_consolidation_scan_interval_seconds: int
     worker_http_port: int
     worker_max_slots: int
     worker_slot_reservations: dict[str, int]
@@ -1971,6 +1979,12 @@ class HindsightConfig:
             worker_id=os.getenv(ENV_WORKER_ID) or DEFAULT_WORKER_ID,
             worker_poll_interval_ms=int(os.getenv(ENV_WORKER_POLL_INTERVAL_MS, str(DEFAULT_WORKER_POLL_INTERVAL_MS))),
             worker_max_retries=int(os.getenv(ENV_WORKER_MAX_RETRIES, str(DEFAULT_WORKER_MAX_RETRIES))),
+            worker_pending_consolidation_scan_interval_seconds=int(
+                os.getenv(
+                    ENV_WORKER_PENDING_CONSOLIDATION_SCAN_INTERVAL_SECONDS,
+                    str(DEFAULT_WORKER_PENDING_CONSOLIDATION_SCAN_INTERVAL_SECONDS),
+                )
+            ),
             worker_http_port=int(os.getenv(ENV_WORKER_HTTP_PORT, str(DEFAULT_WORKER_HTTP_PORT))),
             worker_max_slots=int(os.getenv(ENV_WORKER_MAX_SLOTS, str(DEFAULT_WORKER_MAX_SLOTS))),
             worker_slot_reservations={

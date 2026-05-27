@@ -20,6 +20,7 @@ from collections.abc import Callable
 
 from ..config import get_config
 from ..engine.task_backend import WorkerTaskBackend
+from .pending_consolidation_scanner import PendingConsolidationScanner
 from .poller import WorkerPoller
 
 # Filter deprecation warnings from third-party libraries
@@ -247,6 +248,16 @@ def main():
         from hindsight_api.config import DEFAULT_DATABASE_SCHEMA
 
         schema = None if config.database_schema == DEFAULT_DATABASE_SCHEMA else config.database_schema
+        # When no tenant extension is loaded, construct a DefaultTenantExtension
+        # once here so the poller and the scanner share the same instance and
+        # see the same schema set. Previously the poller did this internally,
+        # which left the scanner with no clean way to obtain it.
+        if tenant_extension is None:
+            from ..extensions.builtin.tenant import DefaultTenantExtension
+
+            te_config = {"schema": schema} if schema else {}
+            tenant_extension = DefaultTenantExtension(config=te_config)
+
         poller = WorkerPoller(
             backend=memory._backend,
             worker_id=args.worker_id,
@@ -256,6 +267,16 @@ def main():
             tenant_extension=tenant_extension,
             max_slots=config.worker_max_slots,
             slot_reservations=config.worker_slot_reservations,
+        )
+
+        # Optional periodic backstop that re-queues consolidation for banks with
+        # unconsolidated memory_units that the event-driven trigger chain missed.
+        # Default interval is 0 (disabled); set HINDSIGHT_API_WORKER_PENDING_CONSOLIDATION_SCAN_INTERVAL_SECONDS
+        # to a positive number to enable.
+        pending_consolidation_scanner = PendingConsolidationScanner(
+            memory=memory,
+            tenant_extension=tenant_extension,
+            interval_seconds=config.worker_pending_consolidation_scan_interval_seconds,
         )
 
         # Create the HTTP app for metrics/health
@@ -306,11 +327,17 @@ def main():
         )
         server = uvicorn.Server(uvicorn_config)
 
-        # Run the poller and HTTP server concurrently
+        # Run the poller, HTTP server, and optional pending-consolidation scanner concurrently
         poller_task = asyncio.create_task(poller.run())
         http_task = asyncio.create_task(server.serve())
+        scanner_task = asyncio.create_task(pending_consolidation_scanner.run())
 
         print(f"Worker started. Metrics available at http://{args.http_host}:{args.http_port}/metrics")
+        if pending_consolidation_scanner.enabled:
+            print(
+                f"Pending-consolidation scanner enabled "
+                f"(interval={config.worker_pending_consolidation_scan_interval_seconds}s)"
+            )
 
         # Wait for shutdown signal
         try:
@@ -321,6 +348,17 @@ def main():
         # Graceful shutdown
         print("Shutting down HTTP server...")
         server.should_exit = True
+
+        print("Stopping pending-consolidation scanner...")
+        pending_consolidation_scanner.shutdown()
+        try:
+            await asyncio.wait_for(scanner_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            scanner_task.cancel()
+            try:
+                await scanner_task
+            except asyncio.CancelledError:
+                pass
 
         print("Waiting for poller to finish...")
         await poller.shutdown_graceful(timeout=30.0)
