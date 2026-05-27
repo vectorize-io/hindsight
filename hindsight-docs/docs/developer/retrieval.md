@@ -63,7 +63,7 @@ No single search method handles all these well. Hindsight solves this with **TEM
 
 **Why it matters:** Ensures you never miss results that mention specific names or terms, even if they're semantically distant from your query.
 
-**Backends:** Hindsight ships four pluggable BM25 backends, selected via
+**Backends:** Hindsight ships five pluggable BM25 backends, selected via
 `HINDSIGHT_API_TEXT_SEARCH_EXTENSION`:
 
 | Backend | What it uses | Citus-compatible? |
@@ -71,6 +71,7 @@ No single search method handles all these well. Hindsight solves this with **TEM
 | `native` | PostgreSQL `tsvector` + `ts_rank_cd` (TF-IDF, not true BM25) | Yes |
 | `vchord` | `vchord_bm25` extension | No |
 | `pg_textsearch` | Timescale `pg_textsearch` extension | No |
+| `pgroonga` | PGroonga (Groonga) full-text extension, `TokenBigram` polyglot tokenizer | No |
 | `pg_search` | ParadeDB `pg_search` extension | Yes |
 
 If you need true BM25 ranking on a horizontally scaled Postgres (Citus) cluster,
