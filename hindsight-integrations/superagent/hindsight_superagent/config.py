@@ -38,6 +38,10 @@ class HindsightSuperagentConfig:
     enable_guard_on_recall: bool = True
     enable_guard_on_reflect: bool = True
     enable_redact_on_retain: bool = True
+    # Disabled by default because every recall result triggers its own redact
+    # call: N results → N redact round-trips.  Opt in when read-path PII
+    # leakage matters more than recall latency.
+    enable_redact_on_recall: bool = False
     enable_fallback: bool = False
     fallback_timeout: float = 5.0
     verbose: bool = False
@@ -63,6 +67,7 @@ def configure(
     enable_guard_on_recall: bool = True,
     enable_guard_on_reflect: bool = True,
     enable_redact_on_retain: bool = True,
+    enable_redact_on_recall: bool = False,
     enable_fallback: bool = False,
     fallback_timeout: float = 5.0,
     verbose: bool = False,
@@ -90,6 +95,7 @@ def configure(
         enable_guard_on_recall=enable_guard_on_recall,
         enable_guard_on_reflect=enable_guard_on_reflect,
         enable_redact_on_retain=enable_redact_on_retain,
+        enable_redact_on_recall=enable_redact_on_recall,
         enable_fallback=enable_fallback,
         fallback_timeout=fallback_timeout,
         verbose=verbose,

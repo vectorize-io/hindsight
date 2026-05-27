@@ -493,3 +493,131 @@ class TestConfigureFallthrough:
         assert safe._max_tokens == 4096
         assert safe._enable_guard_on_retain is True
         assert safe._enable_redact_on_retain is True
+        # Redact-on-recall defaults off — see config.py comment for rationale.
+        assert safe._enable_redact_on_recall is False
+
+
+class TestRedactOnRecall:
+    """`enable_redact_on_recall` rewrites each result's text via Redact."""
+
+    def setup_method(self) -> None:
+        reset_config()
+
+    def teardown_method(self) -> None:
+        reset_config()
+
+    @pytest.mark.asyncio
+    async def test_redact_applied_to_each_result_when_enabled(self) -> None:
+        hindsight = _mock_hindsight_client()
+        recall_response = _mock_recall_response(
+            ["John's email is john@acme.com", "Phone: 555-1234"]
+        )
+        hindsight.arecall = AsyncMock(return_value=recall_response)
+        safety = _mock_safety_client(redacted_text="[REDACTED]")
+        safe = SafeHindsight(
+            bank_id="test-bank",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4.1-nano",
+            enable_redact_on_recall=True,
+            enable_guard_on_recall=False,
+        )
+
+        result = await safe.recall("anything")
+
+        # One redact call per result text.
+        assert safety.redact.await_count == 2
+        for r in result.results:
+            assert r.text == "[REDACTED]"
+
+    @pytest.mark.asyncio
+    async def test_redact_skipped_by_default(self) -> None:
+        hindsight = _mock_hindsight_client()
+        recall_response = _mock_recall_response(["original text"])
+        hindsight.arecall = AsyncMock(return_value=recall_response)
+        safety = _mock_safety_client(redacted_text="[SHOULD NOT BE USED]")
+        safe = SafeHindsight(
+            bank_id="test-bank",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            enable_guard_on_recall=False,
+        )
+
+        result = await safe.recall("anything")
+
+        safety.redact.assert_not_awaited()
+        assert result.results[0].text == "original text"
+
+    @pytest.mark.asyncio
+    async def test_redact_recall_with_no_results_is_noop(self) -> None:
+        hindsight = _mock_hindsight_client()
+        recall_response = _mock_recall_response([])  # empty
+        hindsight.arecall = AsyncMock(return_value=recall_response)
+        safety = _mock_safety_client()
+        safe = SafeHindsight(
+            bank_id="test-bank",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4.1-nano",
+            enable_redact_on_recall=True,
+            enable_guard_on_recall=False,
+        )
+
+        result = await safe.recall("anything")
+
+        safety.redact.assert_not_awaited()
+        assert result.results == []
+
+
+class TestLazySafetyClient:
+    """SafeHindsight should not require a SafetyClient at construction when
+    every guard/redact flag is off — useful for tests and for callers who
+    want SafeHindsight as a uniform wrapper without paying for Superagent."""
+
+    def setup_method(self) -> None:
+        reset_config()
+
+    def teardown_method(self) -> None:
+        reset_config()
+
+    def test_construction_with_no_safety_key_succeeds(self) -> None:
+        # No safety_client, no superagent_api_key, no env var — must still
+        # construct because lazy resolution defers the requirement until
+        # the first guard/redact call.
+        hindsight = _mock_hindsight_client()
+        safe = SafeHindsight(
+            bank_id="test",
+            hindsight_client=hindsight,
+            enable_guard_on_retain=False,
+            enable_guard_on_recall=False,
+            enable_guard_on_reflect=False,
+            enable_redact_on_retain=False,
+        )
+        assert safe._safety is None
+
+    @pytest.mark.asyncio
+    async def test_unsafe_path_does_not_resolve_safety_client(self) -> None:
+        hindsight = _mock_hindsight_client()
+        hindsight.aretain = AsyncMock(return_value=None)
+        safe = SafeHindsight(
+            bank_id="test",
+            hindsight_client=hindsight,
+            enable_guard_on_retain=False,
+            enable_redact_on_retain=False,
+        )
+        # Retain with all safety off — should never need the safety client.
+        await safe.retain("hello world")
+        assert safe._safety is None  # never resolved
+
+    @pytest.mark.asyncio
+    async def test_explicit_safety_client_used_directly(self) -> None:
+        hindsight = _mock_hindsight_client()
+        safety = _mock_safety_client()
+        safe = SafeHindsight(
+            bank_id="test",
+            hindsight_client=hindsight,
+            safety_client=safety,
+        )
+        # Already resolved — the explicit client wins, _get_safety returns it.
+        assert safe._safety is safety
+        assert safe._get_safety() is safety

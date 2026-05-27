@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -61,12 +62,19 @@ class SafeHindsight:
         enable_guard_on_recall: bool | None = None,
         enable_guard_on_reflect: bool | None = None,
         enable_redact_on_retain: bool | None = None,
+        enable_redact_on_recall: bool | None = None,
         enable_fallback: bool | None = None,
         fallback_timeout: float | None = None,
     ) -> None:
         self._bank_id = bank_id
         self._hindsight = resolve_hindsight_client(hindsight_client, hindsight_api_url, api_key)
-        self._safety = resolve_safety_client(safety_client, superagent_api_key, enable_fallback, fallback_timeout)
+
+        # The Superagent SafetyClient is resolved lazily on first guard/redact
+        # call.  This lets callers who disable every safety hook (e.g. via the
+        # enable_*_on_* flags) construct a SafeHindsight without a Superagent
+        # API key.  Explicit `safety_client` instance still wins.
+        self._safety: SafetyClient | None = safety_client
+        self._safety_resolve_args = (superagent_api_key, enable_fallback, fallback_timeout)
 
         config = get_config()
         self._budget = budget or (config.budget if config else "mid")
@@ -100,13 +108,25 @@ class SafeHindsight:
             if enable_redact_on_retain is not None
             else (config.enable_redact_on_retain if config else True)
         )
+        self._enable_redact_on_recall = (
+            enable_redact_on_recall
+            if enable_redact_on_recall is not None
+            else (config.enable_redact_on_recall if config else False)
+        )
+
+    def _get_safety(self) -> SafetyClient:
+        """Return the SafetyClient, resolving it on first access."""
+        if self._safety is None:
+            superagent_api_key, enable_fallback, fallback_timeout = self._safety_resolve_args
+            self._safety = resolve_safety_client(None, superagent_api_key, enable_fallback, fallback_timeout)
+        return self._safety
 
     async def _guard(self, text: str) -> None:
         """Run Superagent Guard on text. Raises GuardBlockedError if blocked."""
         guard_kwargs: dict[str, Any] = {"input": text}
         if self._guard_model:
             guard_kwargs["model"] = self._guard_model
-        result = await self._safety.guard(**guard_kwargs)
+        result = await self._get_safety().guard(**guard_kwargs)
         if result.classification == "block":
             raise GuardBlockedError(
                 reasoning=result.reasoning,
@@ -125,9 +145,9 @@ class SafeHindsight:
         }
         if self._redact_entities:
             redact_kwargs["entities"] = self._redact_entities
-        result = await self._safety.redact(**redact_kwargs)
+        result = await self._get_safety().redact(**redact_kwargs)
         if result.findings:
-            logger.info("Redacted %d PII entities before retain", len(result.findings))
+            logger.info("Redacted %d PII entities", len(result.findings))
         return result.redacted
 
     async def retain(
@@ -193,7 +213,7 @@ class SafeHindsight:
         tags: list[str] | None = None,
         tags_match: TagsMatch | None = None,
     ) -> RecallResponse:
-        """Search memory after guarding the query.
+        """Search memory after guarding the query, optionally redacting results.
 
         Args:
             query: Search query.
@@ -203,7 +223,11 @@ class SafeHindsight:
             tags_match: Tag matching mode.
 
         Returns:
-            Recall response with results.
+            Recall response with results.  When `enable_redact_on_recall` is
+            set (off by default — every result triggers its own redact call),
+            each result's text field is passed through Redact before being
+            returned, so PII stored from earlier sessions or other sources
+            doesn't leak back to the caller.
 
         Raises:
             GuardBlockedError: If query is blocked by Guard.
@@ -224,7 +248,19 @@ class SafeHindsight:
                 recall_kwargs["tags"] = effective_tags
                 recall_kwargs["tags_match"] = tags_match or self._recall_tags_match
 
-            return await self._hindsight.arecall(**recall_kwargs)
+            response = await self._hindsight.arecall(**recall_kwargs)
+
+            if self._enable_redact_on_recall and response.results:
+                # Redact each result's text in parallel.  N results → N redact
+                # calls; for very wide recalls this can be a meaningful tax,
+                # which is the documented trade-off for redact-on-read safety.
+                redacted_texts = await asyncio.gather(
+                    *(self._redact(result.text) for result in response.results)
+                )
+                for result, redacted_text in zip(response.results, redacted_texts):
+                    result.text = redacted_text
+
+            return response
         except (GuardBlockedError, HindsightError):
             raise
         except Exception as e:
