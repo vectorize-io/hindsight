@@ -317,7 +317,7 @@ Linear decay over 365 days from the memory's occurrence date:
 recency = clamp(1.0 - days_ago / 365, 0.1, 1.0)
 ```
 
-A memory from today has recency 1.0 (+10% boost). A memory from 6 months ago has recency ~0.5 (neutral). A memory older than a year has recency 0.1 (-8% penalty). Memories without dates get 0.5 (neutral — no boost or penalty).
+A memory from the query timestamp has recency 1.0 (+10% boost). A memory from 6 months before the query timestamp has recency ~0.5 (neutral). A memory more than a year before the query timestamp has recency 0.1 (-8% penalty). If no `query_timestamp` is provided, the server's current time is used. Memories without dates get 0.5 (neutral — no boost or penalty).
 
 #### Temporal proximity signal
 
