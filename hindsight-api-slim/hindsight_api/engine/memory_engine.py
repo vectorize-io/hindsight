@@ -5377,17 +5377,18 @@ class MemoryEngine(MemoryEngineInterface):
                 *query_params,
             )
 
-            # Get entity information for these units
+            # Get entity information for these units. _entity_rows_for_units_sql
+            # resolves both direct unit_entities rows and the
+            # observation→source_memory_ids inheritance fallback in a single
+            # query, so observations carry their source memories' entities in
+            # the list response rather than coming back with entities=""
+            # (which made consumers like agent UIs unable to show entity badges
+            # on consolidated observation rows). Mirrors the behavior the
+            # recall path (around line 3856) and get_memory_unit already use.
             if units:
                 unit_ids = [row["id"] for row in units]
                 unit_entities = await conn.fetch(
-                    f"""
-                    SELECT ue.unit_id, e.canonical_name
-                    FROM {fq_table("unit_entities")} ue
-                    JOIN {fq_table("entities")} e ON ue.entity_id = e.id
-                    WHERE ue.unit_id = ANY($1::uuid[])
-                    ORDER BY ue.unit_id
-                """,
+                    self._entity_rows_for_units_sql(unit_ids_placeholder=1),
                     unit_ids,
                 )
             else:
