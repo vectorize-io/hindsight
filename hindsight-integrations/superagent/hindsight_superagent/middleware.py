@@ -28,6 +28,7 @@ _BATCH_PASSTHROUGH_KEYS = (
     "entities",
     "observation_scopes",
     "strategy",
+    "update_mode",
 )
 
 GuardCallback = Callable[[str, Any], Awaitable[None] | None]
@@ -186,7 +187,9 @@ class SafeHindsight:
         Invokes the optional `on_guard(scope, result)` callback regardless of
         the verdict so callers can observe non-block decisions (allows,
         flags, near-misses) for logging or analytics without changing the
-        core control flow.
+        core control flow.  Exceptions raised by the callback are caught and
+        logged at WARNING — observability failures must never take down the
+        memory operation being observed.
         """
         guard_kwargs: dict[str, Any] = {"input": text}
         if self._guard_model:
@@ -194,9 +197,17 @@ class SafeHindsight:
         result = await self._get_safety().guard(**guard_kwargs)
 
         if self._on_guard is not None:
-            cb_result = self._on_guard(scope, result)
-            if asyncio.iscoroutine(cb_result):
-                await cb_result
+            try:
+                cb_result = self._on_guard(scope, result)
+                if asyncio.iscoroutine(cb_result):
+                    await cb_result
+            except Exception as cb_exc:  # noqa: BLE001 — observability must not crash the op
+                logger.warning(
+                    "on_guard callback raised %s for scope=%r: %s",
+                    type(cb_exc).__name__,
+                    scope,
+                    cb_exc,
+                )
 
         if result.classification == "block":
             raise GuardBlockedError(
@@ -303,15 +314,16 @@ class SafeHindsight:
         *,
         document_id: str | None = None,
         document_tags: list[str] | None = None,
+        retain_async: bool = False,
     ) -> str:
         """Store a batch of memories, applying safety checks to each item.
 
         Each item is a dict matching the shape accepted by
         `Hindsight.aretain_batch` — `content` (required) plus any of
         `timestamp`, `context`, `metadata`, `document_id`, `entities`,
-        `observation_scopes`, `strategy`, `tags`.  Tags merge with the
-        instance's default tags (preserving order, deduped); every other
-        field is passed through verbatim.
+        `observation_scopes`, `strategy`, `update_mode`, `tags`.  Tags merge
+        with the instance's default tags (preserving order, deduped); every
+        other field is passed through verbatim.
 
         Guard and Redact run per-item under the configured concurrency cap
         (`safety_concurrency`); if any item's guard blocks, `GuardBlockedError`
@@ -325,6 +337,11 @@ class SafeHindsight:
                 that don't have their own.
             document_tags: Optional list of tags applied to all items in
                 this batch (merged with per-item tags by Hindsight).
+            retain_async: If True, Hindsight processes the batch
+                asynchronously in the background after the safety pipeline
+                has completed.  Guard + Redact still run synchronously
+                before the call returns — this only defers the underlying
+                store.  Defaults to False to match Hindsight's default.
 
         Returns:
             Status message.
@@ -369,6 +386,8 @@ class SafeHindsight:
                 batch_kwargs["document_id"] = document_id
             if document_tags is not None:
                 batch_kwargs["document_tags"] = document_tags
+            if retain_async:
+                batch_kwargs["retain_async"] = True
 
             await self._hindsight.aretain_batch(**batch_kwargs)
             return "Memory stored successfully."

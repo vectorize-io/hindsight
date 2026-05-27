@@ -1175,3 +1175,132 @@ class TestRetainBatchFieldPassthrough:
         call_kwargs = hindsight.aretain_batch.call_args.kwargs
         assert call_kwargs["document_id"] == "batch-doc"
         assert call_kwargs["document_tags"] == ["env:prod"]
+
+    @pytest.mark.asyncio
+    async def test_passes_update_mode_per_item(self) -> None:
+        """update_mode is a per-item passthrough — aretain_batch reads it from each dict."""
+        hindsight = _mock_hindsight_client()
+        hindsight.aretain_batch = AsyncMock(return_value=None)
+        safety = _mock_safety_client(redacted_text="r")
+        safe = SafeHindsight(
+            bank_id="t",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4.1-nano",
+        )
+        items = [
+            {"content": "x", "update_mode": "replace"},
+            {"content": "y", "update_mode": "append"},
+        ]
+        await safe.retain_batch(items)
+        sent = hindsight.aretain_batch.call_args.kwargs["items"]
+        assert sent[0]["update_mode"] == "replace"
+        assert sent[1]["update_mode"] == "append"
+
+    @pytest.mark.asyncio
+    async def test_retain_async_top_level_kwarg(self) -> None:
+        """retain_async=True is forwarded to aretain_batch for background processing."""
+        hindsight = _mock_hindsight_client()
+        hindsight.aretain_batch = AsyncMock(return_value=None)
+        safety = _mock_safety_client(redacted_text="r")
+        safe = SafeHindsight(
+            bank_id="t",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4.1-nano",
+        )
+        await safe.retain_batch([{"content": "x"}], retain_async=True)
+        assert hindsight.aretain_batch.call_args.kwargs["retain_async"] is True
+
+    @pytest.mark.asyncio
+    async def test_retain_async_default_not_forwarded(self) -> None:
+        """When retain_async=False (default), don't forward the kwarg — let the client default win."""
+        hindsight = _mock_hindsight_client()
+        hindsight.aretain_batch = AsyncMock(return_value=None)
+        safety = _mock_safety_client(redacted_text="r")
+        safe = SafeHindsight(
+            bank_id="t",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4.1-nano",
+        )
+        await safe.retain_batch([{"content": "x"}])
+        assert "retain_async" not in hindsight.aretain_batch.call_args.kwargs
+
+
+class TestOnGuardErrorContainment:
+    """Exceptions raised inside on_guard must not fail the underlying memory op.
+
+    The callback is documented as observability and must never change the
+    control flow of retain / recall / reflect.  A sloppy logger crashing
+    should at most log a warning, not propagate.
+    """
+
+    def setup_method(self) -> None:
+        reset_config()
+
+    def teardown_method(self) -> None:
+        reset_config()
+
+    @pytest.mark.asyncio
+    async def test_sync_callback_exception_does_not_fail_retain(self, caplog: pytest.LogCaptureFixture) -> None:
+        def boom(scope: str, result) -> None:
+            raise RuntimeError("downstream metrics endpoint is down")
+
+        hindsight = _mock_hindsight_client()
+        safety = _mock_safety_client()
+        safe = SafeHindsight(
+            bank_id="t",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4.1-nano",
+            on_guard=boom,
+        )
+        with caplog.at_level(logging.WARNING):
+            result = await safe.retain("hello")
+        assert result == "Memory stored successfully."
+        # The warning surfaced the callback failure for the operator.
+        assert any(
+            "on_guard callback raised" in record.message for record in caplog.records
+        ), f"Expected warning log; got: {[r.message for r in caplog.records]}"
+
+    @pytest.mark.asyncio
+    async def test_async_callback_exception_does_not_fail_recall(self, caplog: pytest.LogCaptureFixture) -> None:
+        async def boom(scope: str, result) -> None:
+            raise RuntimeError("async logger blew up")
+
+        hindsight = _mock_hindsight_client()
+        recall_response = _mock_recall_response(["a", "b"])
+        hindsight.arecall = AsyncMock(return_value=recall_response)
+        safety = _mock_safety_client()
+        safe = SafeHindsight(
+            bank_id="t",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            on_guard=boom,
+        )
+        with caplog.at_level(logging.WARNING):
+            result = await safe.recall("anything")
+        assert len(result.results) == 2
+        assert any("on_guard callback raised" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_callback_exception_does_not_suppress_block(self) -> None:
+        """If the callback raises AND Guard says block, the block still raises."""
+        def boom(scope: str, result) -> None:
+            raise RuntimeError("ignored")
+
+        hindsight = _mock_hindsight_client()
+        safety = _mock_safety_client(
+            guard_classification="block",
+            guard_reasoning="bad",
+            guard_violation_types=["x"],
+        )
+        safe = SafeHindsight(
+            bank_id="t",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            on_guard=boom,
+        )
+        with pytest.raises(GuardBlockedError):
+            await safe.recall("anything")
