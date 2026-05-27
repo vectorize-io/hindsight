@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from hindsight_client import Hindsight
 from hindsight_client_api.models.recall_response import RecallResponse
@@ -16,6 +16,29 @@ from .config import Budget, TagsMatch, get_config
 from .errors import GuardBlockedError, HindsightError
 
 logger = logging.getLogger(__name__)
+
+# Per-item keys passed straight through from a retain_batch caller's dict to
+# Hindsight.aretain_batch.  `content` is mandatory (handled separately).  Tags
+# are merged with default tags, so they're handled separately too.
+_BATCH_PASSTHROUGH_KEYS = (
+    "timestamp",
+    "context",
+    "metadata",
+    "document_id",
+    "entities",
+    "observation_scopes",
+    "strategy",
+)
+
+GuardCallback = Callable[[str, Any], Awaitable[None] | None]
+"""Optional callable: `on_guard(scope, result)`.
+
+`scope` is one of "retain", "recall", "reflect", "retain_batch".  `result` is
+the Superagent guard response (with `.classification`, `.reasoning`,
+`.violation_types`, `.cwe_codes`).  Called for every guard verdict including
+passes — callers use it for observability, near-miss logging, or analytics
+without changing the core flow.  May be sync or async.
+"""
 
 
 def _kw(value: Any, config_value: Any, fallback: Any) -> Any:
@@ -75,7 +98,7 @@ class SafeHindsight:
         redact_model: str | None = None,
         redact_entities: list[str] | None = None,
         redact_rewrite: bool | None = None,
-        redact_concurrency: int | None = None,
+        safety_concurrency: int | None = None,
         enable_guard_on_retain: bool | None = None,
         enable_guard_on_recall: bool | None = None,
         enable_guard_on_reflect: bool | None = None,
@@ -84,9 +107,11 @@ class SafeHindsight:
         enable_redact_on_reflect: bool | None = None,
         enable_fallback: bool | None = None,
         fallback_timeout: float | None = None,
+        on_guard: GuardCallback | None = None,
     ) -> None:
         self._bank_id = bank_id
         self._hindsight = resolve_hindsight_client(hindsight_client, hindsight_api_url, api_key)
+        self._on_guard = on_guard
 
         # Snapshot the safety client config eagerly so a later configure()
         # call can't silently change what the lazy-constructed client looks
@@ -115,11 +140,18 @@ class SafeHindsight:
         self._redact_model = _kw(redact_model, config.redact_model if config else None, None)
         self._redact_entities = _kw(redact_entities, config.redact_entities if config else None, None)
         self._redact_rewrite = _kw(redact_rewrite, config.redact_rewrite if config else None, False)
-        self._redact_concurrency = _kw(
-            redact_concurrency,
-            getattr(config, "redact_concurrency", None) if config else None,
+        self._safety_concurrency = _kw(
+            safety_concurrency,
+            getattr(config, "safety_concurrency", None) if config else None,
             5,
         )
+        if not isinstance(self._safety_concurrency, int) or self._safety_concurrency < 1:
+            # asyncio.Semaphore(0) never admits work, so 0 (or anything <1)
+            # would deadlock _redact_many and the guard-batching path in
+            # retain_batch.  Fail fast at construction.
+            raise ValueError(
+                f"safety_concurrency must be a positive int, got {self._safety_concurrency!r}"
+            )
         self._enable_guard_on_retain = _kw(
             enable_guard_on_retain, config.enable_guard_on_retain if config else None, True
         )
@@ -148,12 +180,24 @@ class SafeHindsight:
             self._safety = build_safety_client(self._safety_snapshot)
         return self._safety
 
-    async def _guard(self, text: str) -> None:
-        """Run Superagent Guard on text. Raises GuardBlockedError if blocked."""
+    async def _guard(self, text: str, *, scope: str) -> None:
+        """Run Superagent Guard on text. Raises GuardBlockedError if blocked.
+
+        Invokes the optional `on_guard(scope, result)` callback regardless of
+        the verdict so callers can observe non-block decisions (allows,
+        flags, near-misses) for logging or analytics without changing the
+        core control flow.
+        """
         guard_kwargs: dict[str, Any] = {"input": text}
         if self._guard_model:
             guard_kwargs["model"] = self._guard_model
         result = await self._get_safety().guard(**guard_kwargs)
+
+        if self._on_guard is not None:
+            cb_result = self._on_guard(scope, result)
+            if asyncio.iscoroutine(cb_result):
+                await cb_result
+
         if result.classification == "block":
             raise GuardBlockedError(
                 reasoning=result.reasoning,
@@ -187,7 +231,7 @@ class SafeHindsight:
         """
         if not texts:
             return []
-        semaphore = asyncio.Semaphore(self._redact_concurrency)
+        semaphore = asyncio.Semaphore(self._safety_concurrency)
 
         async def _one(t: str) -> str:
             async with semaphore:
@@ -227,7 +271,7 @@ class SafeHindsight:
         """
         try:
             if self._enable_guard_on_retain:
-                await self._guard(content)
+                await self._guard(content, scope="retain")
 
             safe_content = content
             if self._enable_redact_on_retain:
@@ -256,17 +300,31 @@ class SafeHindsight:
     async def retain_batch(
         self,
         items: list[dict[str, Any]],
+        *,
+        document_id: str | None = None,
+        document_tags: list[str] | None = None,
     ) -> str:
         """Store a batch of memories, applying safety checks to each item.
 
-        Each item is a dict with at least `content` and optionally `context`,
-        `tags`, `timestamp`.  Guard and Redact run per-item under the
-        configured concurrency cap; if any item's guard blocks, that item's
-        error propagates and the whole batch aborts (matching the per-call
-        semantics of `retain`).
+        Each item is a dict matching the shape accepted by
+        `Hindsight.aretain_batch` — `content` (required) plus any of
+        `timestamp`, `context`, `metadata`, `document_id`, `entities`,
+        `observation_scopes`, `strategy`, `tags`.  Tags merge with the
+        instance's default tags (preserving order, deduped); every other
+        field is passed through verbatim.
+
+        Guard and Redact run per-item under the configured concurrency cap
+        (`safety_concurrency`); if any item's guard blocks, `GuardBlockedError`
+        propagates and the whole batch aborts before any item is stored —
+        matching the per-call semantics of `retain`.
 
         Args:
-            items: List of dicts shaped like {"content": ..., "context": ...}.
+            items: List of memory items.  Each dict needs `content`; other
+                keys are optional and forwarded to `aretain_batch`.
+            document_id: Optional batch-level document ID applied to items
+                that don't have their own.
+            document_tags: Optional list of tags applied to all items in
+                this batch (merged with per-item tags by Hindsight).
 
         Returns:
             Status message.
@@ -281,11 +339,11 @@ class SafeHindsight:
             contents = [item["content"] for item in items]
 
             if self._enable_guard_on_retain:
-                semaphore = asyncio.Semaphore(self._redact_concurrency)
+                semaphore = asyncio.Semaphore(self._safety_concurrency)
 
                 async def _one_guard(t: str) -> None:
                     async with semaphore:
-                        await self._guard(t)
+                        await self._guard(t, scope="retain_batch")
 
                 await asyncio.gather(*(_one_guard(c) for c in contents))
 
@@ -300,13 +358,19 @@ class SafeHindsight:
                 effective_tags = self._merge_tags(src.get("tags"))
                 if effective_tags:
                     entry["tags"] = effective_tags
-                if src.get("context") is not None:
-                    entry["context"] = src["context"]
-                if src.get("timestamp") is not None:
-                    entry["timestamp"] = src["timestamp"]
+                # Pass through every other supported field verbatim.
+                for key in _BATCH_PASSTHROUGH_KEYS:
+                    if src.get(key) is not None:
+                        entry[key] = src[key]
                 batch_items.append(entry)
 
-            await self._hindsight.aretain_batch(bank_id=self._bank_id, items=batch_items)
+            batch_kwargs: dict[str, Any] = {"bank_id": self._bank_id, "items": batch_items}
+            if document_id is not None:
+                batch_kwargs["document_id"] = document_id
+            if document_tags is not None:
+                batch_kwargs["document_tags"] = document_tags
+
+            await self._hindsight.aretain_batch(**batch_kwargs)
             return "Memory stored successfully."
         except (GuardBlockedError, HindsightError):
             raise
@@ -335,7 +399,7 @@ class SafeHindsight:
         Returns:
             Recall response with results.  When `enable_redact_on_recall` is
             set (off by default — every result triggers its own redact call,
-            bounded by `redact_concurrency`), each result's text field is
+            bounded by `safety_concurrency`), each result's text field is
             passed through Redact before being returned, so PII stored from
             earlier sessions or other sources doesn't leak back to the caller.
 
@@ -345,7 +409,7 @@ class SafeHindsight:
         """
         try:
             if self._enable_guard_on_recall:
-                await self._guard(query)
+                await self._guard(query, scope="recall")
 
             recall_kwargs: dict[str, Any] = {
                 "bank_id": self._bank_id,
@@ -400,7 +464,7 @@ class SafeHindsight:
         """
         try:
             if self._enable_guard_on_reflect:
-                await self._guard(query)
+                await self._guard(query, scope="reflect")
 
             reflect_kwargs: dict[str, Any] = {
                 "bank_id": self._bank_id,

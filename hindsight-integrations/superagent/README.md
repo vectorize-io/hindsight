@@ -53,7 +53,7 @@ Query   → Guard (block injection) → Hindsight Recall/Reflect
 ## Batch Ingestion
 
 Use `retain_batch` for bulk storage. Guard and Redact run per item under
-`redact_concurrency` (default 5):
+`safety_concurrency` (default 5):
 
 ```python
 await safe.retain_batch([
@@ -166,7 +166,8 @@ safe = SafeHindsight(bank_id="user-123")
 | `redact_model` | `None` | Redact model (required if redact enabled) |
 | `redact_entities` | `None` | Override default PII entity list |
 | `redact_rewrite` | `False` | Contextual rewrite vs. placeholder markers |
-| `redact_concurrency` | `5` | Cap on parallel Superagent redact calls during batch ops (`retain_batch`, `enable_redact_on_recall`). Bounds rate-limit exposure on wide recalls. |
+| `safety_concurrency` | `5` | Cap on parallel Superagent guard/redact calls during batch ops (`retain_batch`, `enable_redact_on_recall`). Bounds rate-limit exposure on wide recalls. Must be ≥ 1. |
+| `on_guard` | `None` | Optional `callable(scope, guard_result)` invoked for every guard verdict (pass or block) for observability. May be sync or async. |
 | `enable_guard_on_retain` | `True` | Guard content before retain |
 | `enable_guard_on_recall` | `True` | Guard queries before recall |
 | `enable_guard_on_reflect` | `True` | Guard queries before reflect |
@@ -199,8 +200,8 @@ If you don't set `guard_model` and the default hosted model is unavailable, guar
 ## Requirements
 
 - Python >= 3.10
-- safety-agent >= 0.1.5
-- hindsight-client >= 0.4.0
+- safety-agent >= 0.1.5, < 0.2.0
+- hindsight-client >= 0.4.0, < 1.0
 - A running Hindsight API server or [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) account
 - A Superagent API key (`SUPERAGENT_API_KEY` env var)
 - An OpenAI API key (`OPENAI_API_KEY` env var) for guard and redact models — or another [supported LLM provider](https://docs.superagent.sh/sdk)

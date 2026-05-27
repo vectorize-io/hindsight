@@ -59,13 +59,44 @@ def _make_client(bank_id: str = BANK_ID, **kwargs) -> SafeHindsight:
 
 @pytest.fixture(autouse=True)
 def cleanup_banks():
-    """Delete test banks after each test."""
+    """Delete every test bank we may have created after each test.
+
+    Every bank id in this file is `{BANK_ID}<suffix>`.  Keeping the suffix
+    list in sync with the test classes below is fragile — when a new E2E
+    class is added, its suffix must be added here too.  The fallback
+    explicit-list approach is preferred over a wildcard delete because
+    Hindsight has no list-banks endpoint mounted on the default tenant in
+    the OSS image.
+    """
     yield
-    for suffix in ["", "-redact"]:
+    suffixes = [
+        "",
+        "-redact",
+        "-redact-recall",
+        "-redact-reflect",
+        "-batch",
+        "-precedence",
+    ]
+    for suffix in suffixes:
         try:
             requests.delete(f"{HINDSIGHT_API_URL}/v1/default/banks/{BANK_ID}{suffix}", timeout=10)
         except Exception:
             pass
+
+
+async def _recall_until_nonempty(safe, query, attempts=10, delay=1.0):
+    """Poll recall until it returns results or timeout — retain takes a moment
+    to surface through the index, and an empty `results` list under that
+    delay was previously silently passing assertion-less E2Es."""
+    for _ in range(attempts):
+        response = await safe.recall(query)
+        if response.results:
+            return response
+        await asyncio.sleep(delay)
+    pytest.fail(
+        f"recall({query!r}) returned no results after {attempts * delay:.0f}s — "
+        "either retain failed to surface or the query no longer matches."
+    )
 
 
 @requires_all
@@ -91,14 +122,17 @@ class TestE2ERetain:
 class TestE2ERecall:
     @pytest.mark.asyncio
     async def test_recall_clean_query(self) -> None:
-        """Recall with a normal query — should pass guard and return results."""
+        """Recall with a normal query — passes guard AND surfaces the stored memory."""
         safe = _make_client()
         await safe.retain("The team uses PostgreSQL 16 and deploys to us-east-1.")
-        await asyncio.sleep(3)
-        results = await safe.recall("What technologies does the team use?")
-        assert results is not None
-        assert hasattr(results, "results")
-        print(f"Recall returned {len(results.results)} results")
+        results = await _recall_until_nonempty(safe, "What technologies does the team use?")
+        joined = " ".join(r.text for r in results.results).lower()
+        # The retained content mentioned PostgreSQL and us-east-1; at least one
+        # of those tokens should surface in recall results.
+        assert "postgresql" in joined or "us-east-1" in joined, (
+            f"Recall surfaced results but none referenced the stored content: "
+            f"{[r.text for r in results.results]}"
+        )
         for r in results.results:
             print(f"  - {r.text}")
 
@@ -107,13 +141,19 @@ class TestE2ERecall:
 class TestE2EReflect:
     @pytest.mark.asyncio
     async def test_reflect_clean_query(self) -> None:
-        """Reflect with a normal query — should pass guard and synthesize an answer."""
+        """Reflect with a normal query — passes guard AND synthesises from the stored memory."""
         safe = _make_client()
         await safe.retain("The team uses PostgreSQL 16 and deploys to us-east-1.")
-        await asyncio.sleep(3)
+        # Give retain time to surface in the index before reflecting.
+        await _recall_until_nonempty(safe, "What technologies does the team use?")
         response = await safe.reflect("What do I know about the team's tech stack?")
         assert response is not None
-        print(f"Reflect: {str(response)[:300]}")
+        assert response.text, "Reflect should return non-empty synthesised text"
+        text_lower = response.text.lower()
+        assert "postgresql" in text_lower or "us-east" in text_lower, (
+            f"Reflect synthesised text didn't reference the stored memory: {response.text[:300]}"
+        )
+        print(f"Reflect: {response.text[:300]}")
 
 
 @requires_all
@@ -172,20 +212,21 @@ class TestE2EGuard:
 class TestE2ERedact:
     @pytest.mark.asyncio
     async def test_redact_strips_pii_from_stored_memory(self) -> None:
-        """Verify redact removes PII before Hindsight stores it."""
+        """Verify redact removes PII before Hindsight stores it.
+
+        Polls until recall returns something — silently passing on an empty
+        result was the previous failure mode and defeated the whole point of
+        the assertion.
+        """
         bank_id = f"{BANK_ID}-redact"
         safe = _make_client(bank_id=bank_id, enable_guard_on_retain=False, enable_guard_on_recall=False)
         await safe.retain("Contact Bob at bob.smith@secretcorp.com for the API keys.")
-        await asyncio.sleep(5)
-        results = await safe.recall("What is Bob's contact info?")
-        if results.results:
-            for r in results.results:
-                assert "bob.smith@secretcorp.com" not in r.text.lower(), (
-                    f"PII leak: email found in recalled memory: {r.text}"
-                )
-                print(f"Recalled (redacted): {r.text}")
-        else:
-            print("No results returned (retain may still be processing)")
+        results = await _recall_until_nonempty(safe, "What is Bob's contact info?")
+        for r in results.results:
+            assert "bob.smith@secretcorp.com" not in r.text.lower(), (
+                f"PII leak: email found in recalled memory: {r.text}"
+            )
+            print(f"Recalled (redacted): {r.text}")
 
 
 @requires_superagent
@@ -266,15 +307,12 @@ class TestE2ERedactOnRecall:
             enable_redact_on_retain=False,
         )
         await seed.retain("Carol's phone is 555-867-5309 and her SSN is 123-45-6789.")
-        await asyncio.sleep(5)
-
         reader = _make_client(
             bank_id=bank_id,
             enable_guard_on_recall=False,
             enable_redact_on_recall=True,  # the path under test
         )
-        results = await reader.recall("Carol's contact info")
-        assert results.results, "Should recall the planted memory"
+        results = await _recall_until_nonempty(reader, "Carol's contact info")
         joined = " | ".join(r.text for r in results.results).lower()
         assert "555-867-5309" not in joined, f"Phone leaked through read-path: {joined}"
         assert "123-45-6789" not in joined, f"SSN leaked through read-path: {joined}"
@@ -295,7 +333,8 @@ class TestE2ERedactOnReflect:
             enable_redact_on_retain=False,
         )
         await seed.retain("Dave's credit card is 4111-1111-1111-1111, expires 12/30.")
-        await asyncio.sleep(5)
+        # Wait for the memory to surface before reflecting.
+        await _recall_until_nonempty(seed, "Dave's credit card")
 
         reader = _make_client(
             bank_id=bank_id,
@@ -325,9 +364,8 @@ class TestE2ERetainBatch:
             {"content": "Project Gamma is still in design with no commitments yet."},
         ]
         await safe.retain_batch(items)
-        await asyncio.sleep(5)
-
-        # Recall each project; all three should be reachable.
+        # Poll for the first one to surface, then assume the rest are indexed.
+        await _recall_until_nonempty(safe, "Project Alpha")
         for name in ("Alpha", "Beta", "Gamma"):
             results = await safe.recall(f"What is Project {name}?")
             assert results.results, f"Project {name} not recalled — batch may have dropped items"
@@ -361,13 +399,11 @@ class TestE2EConfigPrecedence:
                 enable_guard_on_retain=False,
             )
             await safe.retain("Reach Eve at eve@megacorp.com tomorrow.")
-            await asyncio.sleep(5)
-            results = await safe.recall("How to reach Eve")
-            if results.results:
-                joined = " | ".join(r.text for r in results.results).lower()
-                assert "eve@megacorp.com" not in joined, (
-                    f"Per-instance redact override didn't fire; PII leaked: {joined}"
-                )
-                print(f"Per-instance override scrubbed PII: {results.results[0].text}")
+            results = await _recall_until_nonempty(safe, "How to reach Eve")
+            joined = " | ".join(r.text for r in results.results).lower()
+            assert "eve@megacorp.com" not in joined, (
+                f"Per-instance redact override didn't fire; PII leaked: {joined}"
+            )
+            print(f"Per-instance override scrubbed PII: {results.results[0].text}")
         finally:
             reset_config()

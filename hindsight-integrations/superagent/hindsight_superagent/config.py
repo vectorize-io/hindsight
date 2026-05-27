@@ -34,10 +34,11 @@ class HindsightSuperagentConfig:
     redact_model: str | None = None
     redact_entities: list[str] | None = None
     redact_rewrite: bool = False
-    # Cap on concurrent Superagent redact calls during batch operations
+    # Cap on concurrent Superagent guard/redact calls during batch operations
     # (retain_batch, redact-on-recall).  Keeps wide batches from stampeding
-    # the provider's rate limit.
-    redact_concurrency: int = 5
+    # the provider's rate limit.  Must be >= 1; 0 would deadlock the
+    # asyncio.Semaphore that enforces it.
+    safety_concurrency: int = 5
     enable_guard_on_retain: bool = True
     enable_guard_on_recall: bool = True
     enable_guard_on_reflect: bool = True
@@ -71,7 +72,7 @@ def configure(
     redact_model: str | None = None,
     redact_entities: list[str] | None = None,
     redact_rewrite: bool = False,
-    redact_concurrency: int = 5,
+    safety_concurrency: int = 5,
     enable_guard_on_retain: bool = True,
     enable_guard_on_recall: bool = True,
     enable_guard_on_reflect: bool = True,
@@ -84,6 +85,10 @@ def configure(
 ) -> HindsightSuperagentConfig:
     """Configure Hindsight + Superagent connection and default settings."""
     global _global_config
+    if not isinstance(safety_concurrency, int) or safety_concurrency < 1:
+        raise ValueError(
+            f"safety_concurrency must be a positive int, got {safety_concurrency!r}"
+        )
     resolved_url = hindsight_api_url or DEFAULT_HINDSIGHT_API_URL
     resolved_key = api_key or os.environ.get(HINDSIGHT_API_KEY_ENV)
     resolved_sa_key = superagent_api_key or os.environ.get(SUPERAGENT_API_KEY_ENV)
@@ -101,7 +106,7 @@ def configure(
         redact_model=redact_model,
         redact_entities=redact_entities,
         redact_rewrite=redact_rewrite,
-        redact_concurrency=redact_concurrency,
+        safety_concurrency=safety_concurrency,
         enable_guard_on_retain=enable_guard_on_retain,
         enable_guard_on_recall=enable_guard_on_recall,
         enable_guard_on_reflect=enable_guard_on_reflect,

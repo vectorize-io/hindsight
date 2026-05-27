@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -660,15 +661,14 @@ class TestRedactConcurrencyCap:
         reset_config()
 
     @pytest.mark.asyncio
-    async def test_redact_concurrency_default_caps_inflight(self) -> None:
-        """No more than `redact_concurrency` redact calls in flight at once."""
+    async def test_safety_concurrency_default_caps_inflight(self) -> None:
+        """No more than `safety_concurrency` redact calls in flight at once."""
         hindsight = _mock_hindsight_client()
         recall_response = _mock_recall_response([f"text-{i}" for i in range(20)])
         hindsight.arecall = AsyncMock(return_value=recall_response)
 
         inflight = 0
         peak = 0
-        gate = pytest.importorskip("asyncio").Event()
 
         async def slow_redact(**kwargs):
             nonlocal inflight, peak
@@ -677,7 +677,7 @@ class TestRedactConcurrencyCap:
             try:
                 # Yield so other concurrent tasks can advance and the
                 # semaphore's bound is observably enforced.
-                await pytest.importorskip("asyncio").sleep(0.01)
+                await asyncio.sleep(0.01)
             finally:
                 inflight -= 1
             r = MagicMock()
@@ -692,7 +692,7 @@ class TestRedactConcurrencyCap:
             hindsight_client=hindsight,
             safety_client=safety,
             redact_model="openai/gpt-4.1-nano",
-            redact_concurrency=3,  # cap
+            safety_concurrency=3,  # cap
             enable_redact_on_recall=True,
             enable_guard_on_recall=False,
         )
@@ -700,8 +700,6 @@ class TestRedactConcurrencyCap:
         await safe.recall("anything")
         assert peak <= 3, f"Peak inflight was {peak}, expected ≤ 3"
         assert safety.redact.await_count == 20  # all still ran
-        # Suppress unused-event lint
-        _ = gate
 
 
 class TestRedactOnReflect:
@@ -977,3 +975,203 @@ class TestEnvFallback:
                 enable_redact_on_retain=False,
             )
             assert mock_h.call_args.kwargs.get("api_key") == "sk-explicit"
+
+
+class TestSafetyConcurrencyValidation:
+    """`safety_concurrency` must be a positive int — 0 would deadlock the Semaphore."""
+
+    def setup_method(self) -> None:
+        reset_config()
+
+    def teardown_method(self) -> None:
+        reset_config()
+
+    def test_zero_raises(self) -> None:
+        with pytest.raises(ValueError, match="safety_concurrency must be a positive int"):
+            SafeHindsight(
+                bank_id="t",
+                hindsight_client=_mock_hindsight_client(),
+                safety_client=_mock_safety_client(),
+                safety_concurrency=0,
+            )
+
+    def test_negative_raises(self) -> None:
+        with pytest.raises(ValueError, match="safety_concurrency must be a positive int"):
+            SafeHindsight(
+                bank_id="t",
+                hindsight_client=_mock_hindsight_client(),
+                safety_client=_mock_safety_client(),
+                safety_concurrency=-1,
+            )
+
+    def test_configure_rejects_zero(self) -> None:
+        with pytest.raises(ValueError, match="safety_concurrency must be a positive int"):
+            configure(safety_concurrency=0)
+
+    def test_one_is_allowed(self) -> None:
+        # Edge of valid range — must not raise.
+        safe = SafeHindsight(
+            bank_id="t",
+            hindsight_client=_mock_hindsight_client(),
+            safety_client=_mock_safety_client(),
+            safety_concurrency=1,
+        )
+        assert safe._safety_concurrency == 1
+
+
+class TestOnGuardCallback:
+    """`on_guard(scope, result)` is invoked for every guard verdict."""
+
+    def setup_method(self) -> None:
+        reset_config()
+
+    def teardown_method(self) -> None:
+        reset_config()
+
+    @pytest.mark.asyncio
+    async def test_callback_fires_on_pass(self) -> None:
+        captured: list[tuple[str, str]] = []
+
+        def on_guard(scope: str, result) -> None:
+            captured.append((scope, result.classification))
+
+        hindsight = _mock_hindsight_client()
+        safety = _mock_safety_client()  # pass by default
+        safe = SafeHindsight(
+            bank_id="t",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4.1-nano",
+            on_guard=on_guard,
+        )
+        await safe.retain("hello")
+        assert captured == [("retain", "pass")]
+
+    @pytest.mark.asyncio
+    async def test_callback_fires_on_block_before_raise(self) -> None:
+        captured: list[tuple[str, str]] = []
+
+        def on_guard(scope: str, result) -> None:
+            captured.append((scope, result.classification))
+
+        hindsight = _mock_hindsight_client()
+        safety = _mock_safety_client(
+            guard_classification="block",
+            guard_reasoning="blocked",
+            guard_violation_types=["x"],
+        )
+        safe = SafeHindsight(
+            bank_id="t",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            on_guard=on_guard,
+        )
+        with pytest.raises(GuardBlockedError):
+            await safe.recall("anything")
+        # Callback ran with the block verdict — observability is preserved
+        # even when the guard ultimately raises.
+        assert captured == [("recall", "block")]
+
+    @pytest.mark.asyncio
+    async def test_async_callback_is_awaited(self) -> None:
+        captured: list[str] = []
+
+        async def on_guard(scope: str, result) -> None:
+            await asyncio.sleep(0)
+            captured.append(scope)
+
+        hindsight = _mock_hindsight_client()
+        safety = _mock_safety_client()
+        safe = SafeHindsight(
+            bank_id="t",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            on_guard=on_guard,
+        )
+        await safe.reflect("anything")
+        assert captured == ["reflect"]
+
+    @pytest.mark.asyncio
+    async def test_scope_label_distinguishes_retain_batch(self) -> None:
+        captured: list[str] = []
+
+        def on_guard(scope: str, result) -> None:
+            captured.append(scope)
+
+        hindsight = _mock_hindsight_client()
+        hindsight.aretain_batch = AsyncMock(return_value=None)
+        safety = _mock_safety_client(redacted_text="r")
+        safe = SafeHindsight(
+            bank_id="t",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4.1-nano",
+            on_guard=on_guard,
+        )
+        await safe.retain_batch([{"content": "a"}, {"content": "b"}])
+        assert captured == ["retain_batch", "retain_batch"]
+
+
+class TestRetainBatchFieldPassthrough:
+    """retain_batch must forward the full set of fields Hindsight.aretain_batch supports."""
+
+    def setup_method(self) -> None:
+        reset_config()
+
+    def teardown_method(self) -> None:
+        reset_config()
+
+    @pytest.mark.asyncio
+    async def test_passes_metadata_document_id_entities_observation_scopes_strategy(self) -> None:
+        hindsight = _mock_hindsight_client()
+        hindsight.aretain_batch = AsyncMock(return_value=None)
+        safety = _mock_safety_client(redacted_text="r")
+        safe = SafeHindsight(
+            bank_id="t",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4.1-nano",
+        )
+        items = [
+            {
+                "content": "x",
+                "metadata": {"k": "v"},
+                "document_id": "doc-1",
+                "entities": ["alice"],
+                "observation_scopes": "global",
+                "strategy": "named:my-strategy",
+                "context": "ctx",
+                "timestamp": "2026-01-01T00:00:00Z",
+            }
+        ]
+        await safe.retain_batch(items)
+
+        sent = hindsight.aretain_batch.call_args.kwargs["items"][0]
+        assert sent["content"] == "r"  # redacted
+        assert sent["metadata"] == {"k": "v"}
+        assert sent["document_id"] == "doc-1"
+        assert sent["entities"] == ["alice"]
+        assert sent["observation_scopes"] == "global"
+        assert sent["strategy"] == "named:my-strategy"
+        assert sent["context"] == "ctx"
+        assert sent["timestamp"] == "2026-01-01T00:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_top_level_document_id_and_document_tags_passed(self) -> None:
+        hindsight = _mock_hindsight_client()
+        hindsight.aretain_batch = AsyncMock(return_value=None)
+        safety = _mock_safety_client(redacted_text="r")
+        safe = SafeHindsight(
+            bank_id="t",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4.1-nano",
+        )
+        await safe.retain_batch(
+            [{"content": "x"}],
+            document_id="batch-doc",
+            document_tags=["env:prod"],
+        )
+        call_kwargs = hindsight.aretain_batch.call_args.kwargs
+        assert call_kwargs["document_id"] == "batch-doc"
+        assert call_kwargs["document_tags"] == ["env:prod"]
