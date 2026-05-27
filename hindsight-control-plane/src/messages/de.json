@@ -1307,132 +1307,132 @@
   "api": {
     "errors": {
       "auth": {
-        "accessKeyNotConfigured": "Access key not configured",
-        "invalidRequestBody": "Invalid request body",
-        "invalidAccessKey": "Invalid access key",
-        "unauthorized": "Unauthorized"
+        "accessKeyNotConfigured": "Zugriffsschlüssel ist nicht konfiguriert",
+        "invalidRequestBody": "Ungültiger Anfrageinhalt",
+        "invalidAccessKey": "Ungültiger Zugriffsschlüssel",
+        "unauthorized": "Nicht autorisiert"
       },
       "validation": {
-        "bankIdRequired": "bank_id is required",
-        "bankAndDirectiveIdRequired": "bank_id and directive_id are required",
-        "bankAndMentalModelIdRequired": "bank_id and mental_model_id are required",
-        "bankAndModelIdRequired": "bank_id and model_id are required",
-        "operationIdRequired": "operation_id is required",
-        "missingRequestData": "Missing request data",
-        "missingBankId": "Missing bank_id"
+        "bankIdRequired": "bank_id ist erforderlich",
+        "bankAndDirectiveIdRequired": "bank_id und directive_id sind erforderlich",
+        "bankAndMentalModelIdRequired": "bank_id und mental_model_id sind erforderlich",
+        "bankAndModelIdRequired": "bank_id und model_id sind erforderlich",
+        "operationIdRequired": "operation_id ist erforderlich",
+        "missingRequestData": "Anfragedaten fehlen",
+        "missingBankId": "bank_id fehlt"
       },
       "generic": {
-        "failed": "Failed",
-        "unsupportedIndividualMemoryDelete": "Individual memory unit deletion is not yet supported. Use clear all memories instead."
+        "failed": "Fehlgeschlagen",
+        "unsupportedIndividualMemoryDelete": "Das Löschen einzelner Speichereinheiten wird noch nicht unterstützt. Verwenden Sie stattdessen „Alle Erinnerungen löschen“."
       },
       "banks": {
-        "fetch": "Failed to fetch banks",
-        "fetchFromApi": "Failed to fetch banks from API",
-        "create": "Failed to create bank",
-        "update": "Failed to update bank",
-        "delete": "Failed to delete bank",
-        "exportTemplate": "Failed to export bank template",
-        "importTemplate": "Failed to import bank template"
+        "fetch": "Speicherbanken konnten nicht abgerufen werden",
+        "fetchFromApi": "Speicherbanken konnten nicht von der API abgerufen werden",
+        "create": "Speicherbank konnte nicht erstellt werden",
+        "update": "Speicherbank konnte nicht aktualisiert werden",
+        "delete": "Speicherbank konnte nicht gelöscht werden",
+        "exportTemplate": "Vorlage der Speicherbank konnte nicht exportiert werden",
+        "importTemplate": "Vorlage der Speicherbank konnte nicht importiert werden"
       },
       "bankConfig": {
-        "fetch": "Failed to fetch bank config",
-        "update": "Failed to update bank config",
-        "reset": "Failed to reset bank config"
+        "fetch": "Bankkonfiguration konnte nicht abgerufen werden",
+        "update": "Bankkonfiguration konnte nicht aktualisiert werden",
+        "reset": "Bankkonfiguration konnte nicht zurückgesetzt werden"
       },
       "bankProfile": {
-        "fetch": "Failed to fetch bank profile",
-        "update": "Failed to update bank profile"
+        "fetch": "Bankprofil konnte nicht abgerufen werden",
+        "update": "Bankprofil konnte nicht aktualisiert werden"
       },
       "memories": {
-        "list": "Failed to list memory units",
-        "fetch": "Failed to fetch memory",
-        "notFound": "Memory not found",
-        "retain": "Failed to batch retain",
-        "retainAsync": "Failed to batch retain async",
-        "history": "Failed to fetch observation history"
+        "list": "Speichereinheiten konnten nicht aufgelistet werden",
+        "fetch": "Erinnerung konnte nicht abgerufen werden",
+        "notFound": "Erinnerung nicht gefunden",
+        "retain": "Batch-Retain konnte nicht ausgeführt werden",
+        "retainAsync": "Asynchrones Batch-Retain konnte nicht ausgeführt werden",
+        "history": "Beobachtungsverlauf konnte nicht abgerufen werden"
       },
       "documents": {
-        "fetchList": "Failed to fetch documents",
-        "fetch": "Failed to fetch document",
-        "updateTags": "Failed to update document tags",
-        "delete": "Failed to delete document",
-        "chunks": "Failed to fetch document chunks",
-        "reprocess": "Failed to reprocess document"
+        "fetchList": "Dokumente konnten nicht abgerufen werden",
+        "fetch": "Dokument konnte nicht abgerufen werden",
+        "updateTags": "Dokument-Tags konnten nicht aktualisiert werden",
+        "delete": "Dokument konnte nicht gelöscht werden",
+        "chunks": "Dokument-Chunks konnten nicht abgerufen werden",
+        "reprocess": "Dokument konnte nicht erneut verarbeitet werden"
       },
       "files": {
-        "upload": "Failed to upload files"
+        "upload": "Dateien konnten nicht hochgeladen werden"
       },
       "chunks": {
-        "fetch": "Failed to fetch chunk"
+        "fetch": "Chunk konnte nicht abgerufen werden"
       },
       "entities": {
-        "list": "Failed to list entities",
-        "fetch": "Failed to get entity",
-        "graph": "Failed to fetch entity graph",
-        "regenerateObservations": "Failed to regenerate entity observations"
+        "list": "Entitäten konnten nicht aufgelistet werden",
+        "fetch": "Entität konnte nicht abgerufen werden",
+        "graph": "Entitätsgraph konnte nicht abgerufen werden",
+        "regenerateObservations": "Entitätsbeobachtungen konnten nicht neu generiert werden"
       },
       "graph": {
-        "fetch": "Failed to fetch graph data"
+        "fetch": "Graphdaten konnten nicht abgerufen werden"
       },
       "mentalModels": {
-        "list": "Failed to list mental models",
-        "fetch": "Failed to get mental model",
-        "create": "Failed to create mental model",
-        "update": "Failed to update mental model",
-        "delete": "Failed to delete mental model",
-        "refresh": "Failed to refresh mental model",
-        "history": "Failed to fetch mental model history",
-        "notFound": "Mental model not found",
-        "clear": "Failed to clear mental model"
+        "list": "Mentale Modelle konnten nicht aufgelistet werden",
+        "fetch": "Mentales Modell konnte nicht abgerufen werden",
+        "create": "Mentales Modell konnte nicht erstellt werden",
+        "update": "Mentales Modell konnte nicht aktualisiert werden",
+        "delete": "Mentales Modell konnte nicht gelöscht werden",
+        "refresh": "Mentales Modell konnte nicht aktualisiert werden",
+        "history": "Verlauf des mentalen Modells konnte nicht abgerufen werden",
+        "notFound": "Mentales Modell nicht gefunden",
+        "clear": "Mentales Modell konnte nicht geleert werden"
       },
       "observations": {
-        "list": "Failed to list observations",
-        "clear": "Failed to clear observations",
-        "fetch": "Failed to get observation"
+        "list": "Beobachtungen konnten nicht aufgelistet werden",
+        "clear": "Beobachtungen konnten nicht gelöscht werden",
+        "fetch": "Beobachtung konnte nicht abgerufen werden"
       },
       "directives": {
-        "list": "Failed to list directives",
-        "fetch": "Failed to get directive",
-        "create": "Failed to create directive",
-        "update": "Failed to update directive",
-        "delete": "Failed to delete directive"
+        "list": "Direktiven konnten nicht aufgelistet werden",
+        "fetch": "Direktive konnte nicht abgerufen werden",
+        "create": "Direktive konnte nicht erstellt werden",
+        "update": "Direktive konnte nicht aktualisiert werden",
+        "delete": "Direktive konnte nicht gelöscht werden"
       },
       "operations": {
-        "fetch": "Failed to fetch operations",
-        "cancel": "Failed to cancel operation",
-        "status": "Failed to get operation status",
-        "retry": "Failed to retry operation"
+        "fetch": "Operationen konnten nicht abgerufen werden",
+        "cancel": "Operation konnte nicht abgebrochen werden",
+        "status": "Operationsstatus konnte nicht abgerufen werden",
+        "retry": "Operation konnte nicht erneut versucht werden"
       },
       "auditLogs": {
-        "list": "Failed to list audit logs",
-        "stats": "Failed to get audit log stats"
+        "list": "Audit-Protokolle konnten nicht aufgelistet werden",
+        "stats": "Audit-Protokollstatistiken konnten nicht abgerufen werden"
       },
       "tags": {
-        "list": "Failed to list tags"
+        "list": "Tags konnten nicht aufgelistet werden"
       },
       "consolidation": {
-        "trigger": "Failed to trigger consolidation",
-        "recover": "Failed to recover consolidation"
+        "trigger": "Konsolidierung konnte nicht ausgelöst werden",
+        "recover": "Konsolidierung konnte nicht wiederhergestellt werden"
       },
       "recall": {
-        "failed": "Failed to recall"
+        "failed": "Recall konnte nicht ausgeführt werden"
       },
       "reflect": {
-        "failed": "Failed to reflect"
+        "failed": "Reflect konnte nicht ausgeführt werden"
       },
       "stats": {
-        "fetch": "Failed to fetch stats",
-        "memoriesTimeseries": "Failed to fetch memories timeseries"
+        "fetch": "Statistiken konnten nicht abgerufen werden",
+        "memoriesTimeseries": "Zeitreihe der Erinnerungen konnte nicht abgerufen werden"
       },
       "version": {
-        "fetch": "Failed to get version"
+        "fetch": "Version konnte nicht abgerufen werden"
       },
       "webhooks": {
-        "list": "Failed to list webhooks",
-        "create": "Failed to create webhook",
-        "update": "Failed to update webhook",
-        "delete": "Failed to delete webhook",
-        "deliveries": "Failed to fetch webhook deliveries"
+        "list": "Webhooks konnten nicht aufgelistet werden",
+        "create": "Webhook konnte nicht erstellt werden",
+        "update": "Webhook konnte nicht aktualisiert werden",
+        "delete": "Webhook konnte nicht gelöscht werden",
+        "deliveries": "Webhook-Zustellungen konnten nicht abgerufen werden"
       }
     }
   }

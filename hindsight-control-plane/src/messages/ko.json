@@ -1307,132 +1307,132 @@
   "api": {
     "errors": {
       "auth": {
-        "accessKeyNotConfigured": "Access key not configured",
-        "invalidRequestBody": "Invalid request body",
-        "invalidAccessKey": "Invalid access key",
-        "unauthorized": "Unauthorized"
+        "accessKeyNotConfigured": "액세스 키가 구성되지 않았습니다",
+        "invalidRequestBody": "요청 본문이 유효하지 않습니다",
+        "invalidAccessKey": "액세스 키가 유효하지 않습니다",
+        "unauthorized": "인증되지 않았습니다"
       },
       "validation": {
-        "bankIdRequired": "bank_id is required",
-        "bankAndDirectiveIdRequired": "bank_id and directive_id are required",
-        "bankAndMentalModelIdRequired": "bank_id and mental_model_id are required",
-        "bankAndModelIdRequired": "bank_id and model_id are required",
-        "operationIdRequired": "operation_id is required",
-        "missingRequestData": "Missing request data",
-        "missingBankId": "Missing bank_id"
+        "bankIdRequired": "bank_id는 필수입니다",
+        "bankAndDirectiveIdRequired": "bank_id와 directive_id는 필수입니다",
+        "bankAndMentalModelIdRequired": "bank_id와 mental_model_id는 필수입니다",
+        "bankAndModelIdRequired": "bank_id와 model_id는 필수입니다",
+        "operationIdRequired": "operation_id는 필수입니다",
+        "missingRequestData": "요청 데이터가 누락되었습니다",
+        "missingBankId": "bank_id가 누락되었습니다"
       },
       "generic": {
-        "failed": "Failed",
-        "unsupportedIndividualMemoryDelete": "Individual memory unit deletion is not yet supported. Use clear all memories instead."
+        "failed": "실패했습니다",
+        "unsupportedIndividualMemoryDelete": "개별 메모리 유닛 삭제는 아직 지원되지 않습니다. 대신 모든 메모리 지우기를 사용하세요."
       },
       "banks": {
-        "fetch": "Failed to fetch banks",
-        "fetchFromApi": "Failed to fetch banks from API",
-        "create": "Failed to create bank",
-        "update": "Failed to update bank",
-        "delete": "Failed to delete bank",
-        "exportTemplate": "Failed to export bank template",
-        "importTemplate": "Failed to import bank template"
+        "fetch": "메모리 뱅크를 가져오지 못했습니다",
+        "fetchFromApi": "API에서 메모리 뱅크를 가져오지 못했습니다",
+        "create": "메모리 뱅크를 생성하지 못했습니다",
+        "update": "메모리 뱅크를 업데이트하지 못했습니다",
+        "delete": "메모리 뱅크를 삭제하지 못했습니다",
+        "exportTemplate": "메모리 뱅크 템플릿을 내보내지 못했습니다",
+        "importTemplate": "메모리 뱅크 템플릿을 가져오지 못했습니다"
       },
       "bankConfig": {
-        "fetch": "Failed to fetch bank config",
-        "update": "Failed to update bank config",
-        "reset": "Failed to reset bank config"
+        "fetch": "뱅크 구성을 가져오지 못했습니다",
+        "update": "뱅크 구성을 업데이트하지 못했습니다",
+        "reset": "뱅크 구성을 재설정하지 못했습니다"
       },
       "bankProfile": {
-        "fetch": "Failed to fetch bank profile",
-        "update": "Failed to update bank profile"
+        "fetch": "뱅크 프로필을 가져오지 못했습니다",
+        "update": "뱅크 프로필을 업데이트하지 못했습니다"
       },
       "memories": {
-        "list": "Failed to list memory units",
-        "fetch": "Failed to fetch memory",
-        "notFound": "Memory not found",
-        "retain": "Failed to batch retain",
-        "retainAsync": "Failed to batch retain async",
-        "history": "Failed to fetch observation history"
+        "list": "메모리 유닛 목록을 가져오지 못했습니다",
+        "fetch": "메모리를 가져오지 못했습니다",
+        "notFound": "메모리를 찾을 수 없습니다",
+        "retain": "배치 Retain을 실행하지 못했습니다",
+        "retainAsync": "비동기 배치 Retain을 실행하지 못했습니다",
+        "history": "관찰 기록을 가져오지 못했습니다"
       },
       "documents": {
-        "fetchList": "Failed to fetch documents",
-        "fetch": "Failed to fetch document",
-        "updateTags": "Failed to update document tags",
-        "delete": "Failed to delete document",
-        "chunks": "Failed to fetch document chunks",
-        "reprocess": "Failed to reprocess document"
+        "fetchList": "문서를 가져오지 못했습니다",
+        "fetch": "문서를 가져오지 못했습니다",
+        "updateTags": "문서 태그를 업데이트하지 못했습니다",
+        "delete": "문서를 삭제하지 못했습니다",
+        "chunks": "문서 청크를 가져오지 못했습니다",
+        "reprocess": "문서를 다시 처리하지 못했습니다"
       },
       "files": {
-        "upload": "Failed to upload files"
+        "upload": "파일을 업로드하지 못했습니다"
       },
       "chunks": {
-        "fetch": "Failed to fetch chunk"
+        "fetch": "청크를 가져오지 못했습니다"
       },
       "entities": {
-        "list": "Failed to list entities",
-        "fetch": "Failed to get entity",
-        "graph": "Failed to fetch entity graph",
-        "regenerateObservations": "Failed to regenerate entity observations"
+        "list": "엔티티 목록을 가져오지 못했습니다",
+        "fetch": "엔티티를 가져오지 못했습니다",
+        "graph": "엔티티 그래프를 가져오지 못했습니다",
+        "regenerateObservations": "엔티티 관찰을 다시 생성하지 못했습니다"
       },
       "graph": {
-        "fetch": "Failed to fetch graph data"
+        "fetch": "그래프 데이터를 가져오지 못했습니다"
       },
       "mentalModels": {
-        "list": "Failed to list mental models",
-        "fetch": "Failed to get mental model",
-        "create": "Failed to create mental model",
-        "update": "Failed to update mental model",
-        "delete": "Failed to delete mental model",
-        "refresh": "Failed to refresh mental model",
-        "history": "Failed to fetch mental model history",
-        "notFound": "Mental model not found",
-        "clear": "Failed to clear mental model"
+        "list": "멘탈 모델 목록을 가져오지 못했습니다",
+        "fetch": "멘탈 모델을 가져오지 못했습니다",
+        "create": "멘탈 모델을 생성하지 못했습니다",
+        "update": "멘탈 모델을 업데이트하지 못했습니다",
+        "delete": "멘탈 모델을 삭제하지 못했습니다",
+        "refresh": "멘탈 모델을 새로 고치지 못했습니다",
+        "history": "멘탈 모델 기록을 가져오지 못했습니다",
+        "notFound": "멘탈 모델을 찾을 수 없습니다",
+        "clear": "멘탈 모델을 지우지 못했습니다"
       },
       "observations": {
-        "list": "Failed to list observations",
-        "clear": "Failed to clear observations",
-        "fetch": "Failed to get observation"
+        "list": "관찰 목록을 가져오지 못했습니다",
+        "clear": "관찰을 지우지 못했습니다",
+        "fetch": "관찰을 가져오지 못했습니다"
       },
       "directives": {
-        "list": "Failed to list directives",
-        "fetch": "Failed to get directive",
-        "create": "Failed to create directive",
-        "update": "Failed to update directive",
-        "delete": "Failed to delete directive"
+        "list": "지시문 목록을 가져오지 못했습니다",
+        "fetch": "지시문을 가져오지 못했습니다",
+        "create": "지시문을 생성하지 못했습니다",
+        "update": "지시문을 업데이트하지 못했습니다",
+        "delete": "지시문을 삭제하지 못했습니다"
       },
       "operations": {
-        "fetch": "Failed to fetch operations",
-        "cancel": "Failed to cancel operation",
-        "status": "Failed to get operation status",
-        "retry": "Failed to retry operation"
+        "fetch": "작업을 가져오지 못했습니다",
+        "cancel": "작업을 취소하지 못했습니다",
+        "status": "작업 상태를 가져오지 못했습니다",
+        "retry": "작업을 다시 시도하지 못했습니다"
       },
       "auditLogs": {
-        "list": "Failed to list audit logs",
-        "stats": "Failed to get audit log stats"
+        "list": "감사 로그 목록을 가져오지 못했습니다",
+        "stats": "감사 로그 통계를 가져오지 못했습니다"
       },
       "tags": {
-        "list": "Failed to list tags"
+        "list": "태그 목록을 가져오지 못했습니다"
       },
       "consolidation": {
-        "trigger": "Failed to trigger consolidation",
-        "recover": "Failed to recover consolidation"
+        "trigger": "통합을 시작하지 못했습니다",
+        "recover": "통합을 복구하지 못했습니다"
       },
       "recall": {
-        "failed": "Failed to recall"
+        "failed": "Recall을 실행하지 못했습니다"
       },
       "reflect": {
-        "failed": "Failed to reflect"
+        "failed": "Reflect를 실행하지 못했습니다"
       },
       "stats": {
-        "fetch": "Failed to fetch stats",
-        "memoriesTimeseries": "Failed to fetch memories timeseries"
+        "fetch": "통계를 가져오지 못했습니다",
+        "memoriesTimeseries": "메모리 시계열을 가져오지 못했습니다"
       },
       "version": {
-        "fetch": "Failed to get version"
+        "fetch": "버전을 가져오지 못했습니다"
       },
       "webhooks": {
-        "list": "Failed to list webhooks",
-        "create": "Failed to create webhook",
-        "update": "Failed to update webhook",
-        "delete": "Failed to delete webhook",
-        "deliveries": "Failed to fetch webhook deliveries"
+        "list": "Webhook 목록을 가져오지 못했습니다",
+        "create": "Webhook을 생성하지 못했습니다",
+        "update": "Webhook을 업데이트하지 못했습니다",
+        "delete": "Webhook을 삭제하지 못했습니다",
+        "deliveries": "Webhook 전달 내역을 가져오지 못했습니다"
       }
     }
   }

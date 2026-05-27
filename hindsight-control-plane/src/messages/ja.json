@@ -1307,132 +1307,132 @@
   "api": {
     "errors": {
       "auth": {
-        "accessKeyNotConfigured": "Access key not configured",
-        "invalidRequestBody": "Invalid request body",
-        "invalidAccessKey": "Invalid access key",
-        "unauthorized": "Unauthorized"
+        "accessKeyNotConfigured": "アクセスキーが設定されていません",
+        "invalidRequestBody": "リクエスト本文が無効です",
+        "invalidAccessKey": "アクセスキーが無効です",
+        "unauthorized": "認証されていません"
       },
       "validation": {
-        "bankIdRequired": "bank_id is required",
-        "bankAndDirectiveIdRequired": "bank_id and directive_id are required",
-        "bankAndMentalModelIdRequired": "bank_id and mental_model_id are required",
-        "bankAndModelIdRequired": "bank_id and model_id are required",
-        "operationIdRequired": "operation_id is required",
-        "missingRequestData": "Missing request data",
-        "missingBankId": "Missing bank_id"
+        "bankIdRequired": "bank_id は必須です",
+        "bankAndDirectiveIdRequired": "bank_id と directive_id は必須です",
+        "bankAndMentalModelIdRequired": "bank_id と mental_model_id は必須です",
+        "bankAndModelIdRequired": "bank_id と model_id は必須です",
+        "operationIdRequired": "operation_id は必須です",
+        "missingRequestData": "リクエストデータが不足しています",
+        "missingBankId": "bank_id がありません"
       },
       "generic": {
-        "failed": "Failed",
-        "unsupportedIndividualMemoryDelete": "Individual memory unit deletion is not yet supported. Use clear all memories instead."
+        "failed": "失敗しました",
+        "unsupportedIndividualMemoryDelete": "個別のメモリユニット削除はまだサポートされていません。代わりにすべてのメモリをクリアしてください。"
       },
       "banks": {
-        "fetch": "Failed to fetch banks",
-        "fetchFromApi": "Failed to fetch banks from API",
-        "create": "Failed to create bank",
-        "update": "Failed to update bank",
-        "delete": "Failed to delete bank",
-        "exportTemplate": "Failed to export bank template",
-        "importTemplate": "Failed to import bank template"
+        "fetch": "メモリバンクの取得に失敗しました",
+        "fetchFromApi": "APIからメモリバンクを取得できませんでした",
+        "create": "メモリバンクの作成に失敗しました",
+        "update": "メモリバンクの更新に失敗しました",
+        "delete": "メモリバンクの削除に失敗しました",
+        "exportTemplate": "メモリバンクテンプレートのエクスポートに失敗しました",
+        "importTemplate": "メモリバンクテンプレートのインポートに失敗しました"
       },
       "bankConfig": {
-        "fetch": "Failed to fetch bank config",
-        "update": "Failed to update bank config",
-        "reset": "Failed to reset bank config"
+        "fetch": "バンク設定の取得に失敗しました",
+        "update": "バンク設定の更新に失敗しました",
+        "reset": "バンク設定のリセットに失敗しました"
       },
       "bankProfile": {
-        "fetch": "Failed to fetch bank profile",
-        "update": "Failed to update bank profile"
+        "fetch": "バンクプロフィールの取得に失敗しました",
+        "update": "バンクプロフィールの更新に失敗しました"
       },
       "memories": {
-        "list": "Failed to list memory units",
-        "fetch": "Failed to fetch memory",
-        "notFound": "Memory not found",
-        "retain": "Failed to batch retain",
-        "retainAsync": "Failed to batch retain async",
-        "history": "Failed to fetch observation history"
+        "list": "メモリユニットの一覧取得に失敗しました",
+        "fetch": "メモリの取得に失敗しました",
+        "notFound": "メモリが見つかりません",
+        "retain": "バッチRetainに失敗しました",
+        "retainAsync": "非同期バッチRetainに失敗しました",
+        "history": "観察履歴の取得に失敗しました"
       },
       "documents": {
-        "fetchList": "Failed to fetch documents",
-        "fetch": "Failed to fetch document",
-        "updateTags": "Failed to update document tags",
-        "delete": "Failed to delete document",
-        "chunks": "Failed to fetch document chunks",
-        "reprocess": "Failed to reprocess document"
+        "fetchList": "ドキュメントの取得に失敗しました",
+        "fetch": "ドキュメントの取得に失敗しました",
+        "updateTags": "ドキュメントタグの更新に失敗しました",
+        "delete": "ドキュメントの削除に失敗しました",
+        "chunks": "ドキュメントチャンクの取得に失敗しました",
+        "reprocess": "ドキュメントの再処理に失敗しました"
       },
       "files": {
-        "upload": "Failed to upload files"
+        "upload": "ファイルのアップロードに失敗しました"
       },
       "chunks": {
-        "fetch": "Failed to fetch chunk"
+        "fetch": "チャンクの取得に失敗しました"
       },
       "entities": {
-        "list": "Failed to list entities",
-        "fetch": "Failed to get entity",
-        "graph": "Failed to fetch entity graph",
-        "regenerateObservations": "Failed to regenerate entity observations"
+        "list": "エンティティの一覧取得に失敗しました",
+        "fetch": "エンティティの取得に失敗しました",
+        "graph": "エンティティグラフの取得に失敗しました",
+        "regenerateObservations": "エンティティ観察の再生成に失敗しました"
       },
       "graph": {
-        "fetch": "Failed to fetch graph data"
+        "fetch": "グラフデータの取得に失敗しました"
       },
       "mentalModels": {
-        "list": "Failed to list mental models",
-        "fetch": "Failed to get mental model",
-        "create": "Failed to create mental model",
-        "update": "Failed to update mental model",
-        "delete": "Failed to delete mental model",
-        "refresh": "Failed to refresh mental model",
-        "history": "Failed to fetch mental model history",
-        "notFound": "Mental model not found",
-        "clear": "Failed to clear mental model"
+        "list": "メンタルモデルの一覧取得に失敗しました",
+        "fetch": "メンタルモデルの取得に失敗しました",
+        "create": "メンタルモデルの作成に失敗しました",
+        "update": "メンタルモデルの更新に失敗しました",
+        "delete": "メンタルモデルの削除に失敗しました",
+        "refresh": "メンタルモデルの更新に失敗しました",
+        "history": "メンタルモデル履歴の取得に失敗しました",
+        "notFound": "メンタルモデルが見つかりません",
+        "clear": "メンタルモデルのクリアに失敗しました"
       },
       "observations": {
-        "list": "Failed to list observations",
-        "clear": "Failed to clear observations",
-        "fetch": "Failed to get observation"
+        "list": "観察の一覧取得に失敗しました",
+        "clear": "観察のクリアに失敗しました",
+        "fetch": "観察の取得に失敗しました"
       },
       "directives": {
-        "list": "Failed to list directives",
-        "fetch": "Failed to get directive",
-        "create": "Failed to create directive",
-        "update": "Failed to update directive",
-        "delete": "Failed to delete directive"
+        "list": "ディレクティブの一覧取得に失敗しました",
+        "fetch": "ディレクティブの取得に失敗しました",
+        "create": "ディレクティブの作成に失敗しました",
+        "update": "ディレクティブの更新に失敗しました",
+        "delete": "ディレクティブの削除に失敗しました"
       },
       "operations": {
-        "fetch": "Failed to fetch operations",
-        "cancel": "Failed to cancel operation",
-        "status": "Failed to get operation status",
-        "retry": "Failed to retry operation"
+        "fetch": "オペレーションの取得に失敗しました",
+        "cancel": "オペレーションのキャンセルに失敗しました",
+        "status": "オペレーションステータスの取得に失敗しました",
+        "retry": "オペレーションの再試行に失敗しました"
       },
       "auditLogs": {
-        "list": "Failed to list audit logs",
-        "stats": "Failed to get audit log stats"
+        "list": "監査ログの一覧取得に失敗しました",
+        "stats": "監査ログ統計の取得に失敗しました"
       },
       "tags": {
-        "list": "Failed to list tags"
+        "list": "タグの一覧取得に失敗しました"
       },
       "consolidation": {
-        "trigger": "Failed to trigger consolidation",
-        "recover": "Failed to recover consolidation"
+        "trigger": "統合の開始に失敗しました",
+        "recover": "統合の復旧に失敗しました"
       },
       "recall": {
-        "failed": "Failed to recall"
+        "failed": "Recallの実行に失敗しました"
       },
       "reflect": {
-        "failed": "Failed to reflect"
+        "failed": "Reflectの実行に失敗しました"
       },
       "stats": {
-        "fetch": "Failed to fetch stats",
-        "memoriesTimeseries": "Failed to fetch memories timeseries"
+        "fetch": "統計の取得に失敗しました",
+        "memoriesTimeseries": "メモリ時系列の取得に失敗しました"
       },
       "version": {
-        "fetch": "Failed to get version"
+        "fetch": "バージョンの取得に失敗しました"
       },
       "webhooks": {
-        "list": "Failed to list webhooks",
-        "create": "Failed to create webhook",
-        "update": "Failed to update webhook",
-        "delete": "Failed to delete webhook",
-        "deliveries": "Failed to fetch webhook deliveries"
+        "list": "Webhookの一覧取得に失敗しました",
+        "create": "Webhookの作成に失敗しました",
+        "update": "Webhookの更新に失敗しました",
+        "delete": "Webhookの削除に失敗しました",
+        "deliveries": "Webhook配信の取得に失敗しました"
       }
     }
   }

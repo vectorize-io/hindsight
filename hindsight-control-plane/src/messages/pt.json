@@ -1307,132 +1307,132 @@
   "api": {
     "errors": {
       "auth": {
-        "accessKeyNotConfigured": "Access key not configured",
-        "invalidRequestBody": "Invalid request body",
-        "invalidAccessKey": "Invalid access key",
-        "unauthorized": "Unauthorized"
+        "accessKeyNotConfigured": "A chave de acesso não está configurada",
+        "invalidRequestBody": "O corpo da solicitação é inválido",
+        "invalidAccessKey": "A chave de acesso é inválida",
+        "unauthorized": "Não autorizado"
       },
       "validation": {
-        "bankIdRequired": "bank_id is required",
-        "bankAndDirectiveIdRequired": "bank_id and directive_id are required",
-        "bankAndMentalModelIdRequired": "bank_id and mental_model_id are required",
-        "bankAndModelIdRequired": "bank_id and model_id are required",
-        "operationIdRequired": "operation_id is required",
-        "missingRequestData": "Missing request data",
-        "missingBankId": "Missing bank_id"
+        "bankIdRequired": "bank_id é obrigatório",
+        "bankAndDirectiveIdRequired": "bank_id e directive_id são obrigatórios",
+        "bankAndMentalModelIdRequired": "bank_id e mental_model_id são obrigatórios",
+        "bankAndModelIdRequired": "bank_id e model_id são obrigatórios",
+        "operationIdRequired": "operation_id é obrigatório",
+        "missingRequestData": "Dados da solicitação ausentes",
+        "missingBankId": "bank_id ausente"
       },
       "generic": {
-        "failed": "Failed",
-        "unsupportedIndividualMemoryDelete": "Individual memory unit deletion is not yet supported. Use clear all memories instead."
+        "failed": "Falha",
+        "unsupportedIndividualMemoryDelete": "A exclusão de unidades de memória individuais ainda não é compatível. Use a opção para limpar todas as memórias."
       },
       "banks": {
-        "fetch": "Failed to fetch banks",
-        "fetchFromApi": "Failed to fetch banks from API",
-        "create": "Failed to create bank",
-        "update": "Failed to update bank",
-        "delete": "Failed to delete bank",
-        "exportTemplate": "Failed to export bank template",
-        "importTemplate": "Failed to import bank template"
+        "fetch": "Falha ao buscar bancos de memória",
+        "fetchFromApi": "Falha ao buscar bancos de memória na API",
+        "create": "Falha ao criar banco de memória",
+        "update": "Falha ao atualizar banco de memória",
+        "delete": "Falha ao excluir banco de memória",
+        "exportTemplate": "Falha ao exportar modelo do banco de memória",
+        "importTemplate": "Falha ao importar modelo do banco de memória"
       },
       "bankConfig": {
-        "fetch": "Failed to fetch bank config",
-        "update": "Failed to update bank config",
-        "reset": "Failed to reset bank config"
+        "fetch": "Falha ao buscar configuração do banco",
+        "update": "Falha ao atualizar configuração do banco",
+        "reset": "Falha ao redefinir configuração do banco"
       },
       "bankProfile": {
-        "fetch": "Failed to fetch bank profile",
-        "update": "Failed to update bank profile"
+        "fetch": "Falha ao buscar perfil do banco",
+        "update": "Falha ao atualizar perfil do banco"
       },
       "memories": {
-        "list": "Failed to list memory units",
-        "fetch": "Failed to fetch memory",
-        "notFound": "Memory not found",
-        "retain": "Failed to batch retain",
-        "retainAsync": "Failed to batch retain async",
-        "history": "Failed to fetch observation history"
+        "list": "Falha ao listar unidades de memória",
+        "fetch": "Falha ao buscar memória",
+        "notFound": "Memória não encontrada",
+        "retain": "Falha ao executar Retain em lote",
+        "retainAsync": "Falha ao executar Retain em lote assíncrono",
+        "history": "Falha ao buscar histórico de observações"
       },
       "documents": {
-        "fetchList": "Failed to fetch documents",
-        "fetch": "Failed to fetch document",
-        "updateTags": "Failed to update document tags",
-        "delete": "Failed to delete document",
-        "chunks": "Failed to fetch document chunks",
-        "reprocess": "Failed to reprocess document"
+        "fetchList": "Falha ao buscar documentos",
+        "fetch": "Falha ao buscar documento",
+        "updateTags": "Falha ao atualizar tags do documento",
+        "delete": "Falha ao excluir documento",
+        "chunks": "Falha ao buscar fragmentos do documento",
+        "reprocess": "Falha ao reprocessar documento"
       },
       "files": {
-        "upload": "Failed to upload files"
+        "upload": "Falha ao enviar arquivos"
       },
       "chunks": {
-        "fetch": "Failed to fetch chunk"
+        "fetch": "Falha ao buscar fragmento"
       },
       "entities": {
-        "list": "Failed to list entities",
-        "fetch": "Failed to get entity",
-        "graph": "Failed to fetch entity graph",
-        "regenerateObservations": "Failed to regenerate entity observations"
+        "list": "Falha ao listar entidades",
+        "fetch": "Falha ao buscar entidade",
+        "graph": "Falha ao buscar grafo de entidades",
+        "regenerateObservations": "Falha ao regenerar observações da entidade"
       },
       "graph": {
-        "fetch": "Failed to fetch graph data"
+        "fetch": "Falha ao buscar dados do grafo"
       },
       "mentalModels": {
-        "list": "Failed to list mental models",
-        "fetch": "Failed to get mental model",
-        "create": "Failed to create mental model",
-        "update": "Failed to update mental model",
-        "delete": "Failed to delete mental model",
-        "refresh": "Failed to refresh mental model",
-        "history": "Failed to fetch mental model history",
-        "notFound": "Mental model not found",
-        "clear": "Failed to clear mental model"
+        "list": "Falha ao listar modelos mentais",
+        "fetch": "Falha ao buscar modelo mental",
+        "create": "Falha ao criar modelo mental",
+        "update": "Falha ao atualizar modelo mental",
+        "delete": "Falha ao excluir modelo mental",
+        "refresh": "Falha ao atualizar modelo mental",
+        "history": "Falha ao buscar histórico do modelo mental",
+        "notFound": "Modelo mental não encontrado",
+        "clear": "Falha ao limpar modelo mental"
       },
       "observations": {
-        "list": "Failed to list observations",
-        "clear": "Failed to clear observations",
-        "fetch": "Failed to get observation"
+        "list": "Falha ao listar observações",
+        "clear": "Falha ao limpar observações",
+        "fetch": "Falha ao buscar observação"
       },
       "directives": {
-        "list": "Failed to list directives",
-        "fetch": "Failed to get directive",
-        "create": "Failed to create directive",
-        "update": "Failed to update directive",
-        "delete": "Failed to delete directive"
+        "list": "Falha ao listar diretivas",
+        "fetch": "Falha ao buscar diretiva",
+        "create": "Falha ao criar diretiva",
+        "update": "Falha ao atualizar diretiva",
+        "delete": "Falha ao excluir diretiva"
       },
       "operations": {
-        "fetch": "Failed to fetch operations",
-        "cancel": "Failed to cancel operation",
-        "status": "Failed to get operation status",
-        "retry": "Failed to retry operation"
+        "fetch": "Falha ao buscar operações",
+        "cancel": "Falha ao cancelar operação",
+        "status": "Falha ao buscar status da operação",
+        "retry": "Falha ao tentar operação novamente"
       },
       "auditLogs": {
-        "list": "Failed to list audit logs",
-        "stats": "Failed to get audit log stats"
+        "list": "Falha ao listar registros de auditoria",
+        "stats": "Falha ao buscar estatísticas dos registros de auditoria"
       },
       "tags": {
-        "list": "Failed to list tags"
+        "list": "Falha ao listar tags"
       },
       "consolidation": {
-        "trigger": "Failed to trigger consolidation",
-        "recover": "Failed to recover consolidation"
+        "trigger": "Falha ao iniciar consolidação",
+        "recover": "Falha ao recuperar consolidação"
       },
       "recall": {
-        "failed": "Failed to recall"
+        "failed": "Falha ao executar Recall"
       },
       "reflect": {
-        "failed": "Failed to reflect"
+        "failed": "Falha ao executar Reflect"
       },
       "stats": {
-        "fetch": "Failed to fetch stats",
-        "memoriesTimeseries": "Failed to fetch memories timeseries"
+        "fetch": "Falha ao buscar estatísticas",
+        "memoriesTimeseries": "Falha ao buscar série temporal de memórias"
       },
       "version": {
-        "fetch": "Failed to get version"
+        "fetch": "Falha ao buscar versão"
       },
       "webhooks": {
-        "list": "Failed to list webhooks",
-        "create": "Failed to create webhook",
-        "update": "Failed to update webhook",
-        "delete": "Failed to delete webhook",
-        "deliveries": "Failed to fetch webhook deliveries"
+        "list": "Falha ao listar webhooks",
+        "create": "Falha ao criar webhook",
+        "update": "Falha ao atualizar webhook",
+        "delete": "Falha ao excluir webhook",
+        "deliveries": "Falha ao buscar entregas do webhook"
       }
     }
   }
