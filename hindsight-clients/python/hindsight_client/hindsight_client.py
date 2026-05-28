@@ -392,7 +392,8 @@ class Hindsight:
             max_tokens: Maximum tokens in results (default: 4096)
             budget: Budget level for recall - "low", "mid", or "high" (default: "mid")
             trace: Enable trace output (default: False)
-            query_timestamp: Optional ISO format date string (e.g., '2023-05-30T23:40:00')
+            query_timestamp: Optional ISO format date string used as the query-time anchor for relative
+                temporal expressions and recency scoring (e.g., '2023-05-30T23:40:00')
             include_entities: Include entity observations in results (default: False)
             max_entity_tokens: Maximum tokens for entity observations (default: 500)
             include_chunks: Include raw text chunks in results (default: False)
@@ -841,7 +842,8 @@ class Hindsight:
             max_tokens: Maximum tokens in results (default: 4096)
             budget: Budget level for recall - "low", "mid", or "high" (default: "mid")
             trace: Enable trace output (default: False)
-            query_timestamp: Optional ISO format date string (e.g., '2023-05-30T23:40:00')
+            query_timestamp: Optional ISO format date string used as the query-time anchor for relative
+                temporal expressions and recency scoring (e.g., '2023-05-30T23:40:00')
             include_entities: Include entity observations in results (default: False)
             max_entity_tokens: Maximum tokens for entity observations (default: 500)
             include_chunks: Include raw text chunks in results (default: False)

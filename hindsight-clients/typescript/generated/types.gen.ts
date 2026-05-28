@@ -2329,7 +2329,7 @@ export type RecallRequest = {
   /**
    * Query Timestamp
    *
-   * ISO format date string (e.g., '2023-05-30T23:40:00')
+   * ISO format date string (e.g., '2023-05-30T23:40:00'). Used as the query-time anchor for relative temporal expressions and recency scoring.
    */
   query_timestamp?: string | null;
   /**

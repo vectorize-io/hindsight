@@ -396,6 +396,15 @@ def utcnow():
     return datetime.now(UTC)
 
 
+def _recall_scoring_now(question_date: datetime | None) -> datetime:
+    """Return the reference time for recall scoring boosts."""
+    if question_date is None:
+        return utcnow()
+    if question_date.tzinfo is None or question_date.utcoffset() is None:
+        return question_date.replace(tzinfo=UTC)
+    return question_date.astimezone(UTC)
+
+
 # Logger for memory system
 logger = logging.getLogger(__name__)
 
@@ -2890,7 +2899,7 @@ class MemoryEngine(MemoryEngineInterface):
                        Results are returned until token budget is reached, stopping before
                        including a fact that would exceed the limit
             enable_trace: Whether to return trace for debugging (deprecated)
-            question_date: Optional date when question was asked (for temporal filtering)
+            question_date: Optional date when question was asked (for temporal filtering and recency scoring)
             include_entities: Whether to include entity observations in the response
             max_entity_tokens: Maximum tokens for entity observations (default 500)
             include_chunks: Whether to include raw chunks in the response
@@ -3549,7 +3558,11 @@ class MemoryEngine(MemoryEngineInterface):
             if scored_results:
                 ce = reranker_instance.cross_encoder
                 is_passthrough = ce is not None and ce.provider_name == "rrf"
-                apply_combined_scoring(scored_results, now=utcnow(), is_passthrough_reranker=is_passthrough)
+                apply_combined_scoring(
+                    scored_results,
+                    now=_recall_scoring_now(question_date),
+                    is_passthrough_reranker=is_passthrough,
+                )
                 scored_results.sort(key=lambda x: x.weight, reverse=True)
                 log_buffer.append("  [4.6] Combined scoring: ce * recency_boost(0.2) * temporal_boost(0.2)")
 
