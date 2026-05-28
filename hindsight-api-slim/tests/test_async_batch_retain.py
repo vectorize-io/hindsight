@@ -846,7 +846,7 @@ async def test_submit_async_operation_leaves_claimable_row_when_submit_task_fail
 
 
 @pytest.mark.asyncio
-async def test_oversized_single_item_creates_one_child_not_many(memory, request_context):
+async def test_oversized_single_item_creates_one_child_not_many(memory, request_context, monkeypatch):
     """One oversized document → one child operation holding the un-chunked content."""
     from hindsight_api.config import get_config
     from hindsight_api.engine.memory_engine import count_tokens
@@ -854,6 +854,15 @@ async def test_oversized_single_item_creates_one_child_not_many(memory, request_
     bank_id = f"test_oversized_one_child_{uuid.uuid4().hex[:8]}"
     pool = await memory._get_pool()
     await _ensure_bank(pool, bank_id)
+
+    # No-op the worker dispatch: this is a structural assertion on the
+    # async_operations rows that submit_async_retain inserts (those rows are
+    # committed before submit_task is invoked), so we don't need the
+    # SyncTaskBackend to drive the slow LLM pipeline to completion.
+    async def noop_submit_task(_task_dict):
+        return None
+
+    monkeypatch.setattr(memory._task_backend, "submit_task", noop_submit_task)
 
     tokens_per_batch = get_config().retain_batch_tokens
     # Build content that comfortably exceeds the per-batch token budget.
@@ -934,16 +943,20 @@ async def test_oversized_single_item_drains_without_fk_violation(memory, request
     await _ensure_bank(pool, bank_id)
 
     tokens_per_batch = get_config().retain_batch_tokens
-    # Use natural-language sentences so the in-process splitter actually
-    # produces multiple chunks during worker execution (this is what
-    # exercises the is_first_batch=(i==1) sequencing inside retain_batch_async).
+    # Use natural-language sentences so the in-process splitter produces
+    # multiple chunks during worker execution (the path that exercises
+    # is_first_batch=(i==1) sequencing inside retain_batch_async).
+    # Size kept small (~1.2x budget → 2 sub-batches) so LLM extraction
+    # finishes within CI's 300s per-test timeout — locally this runs in
+    # ~25s but slower CI runners can take an order of magnitude longer.
     paragraph = (
         "Alice met Bob at the coffee shop in Paris. "
         "They discussed the new project deadline. "
         "Carol joined later with research notes from Berlin. "
         "The team agreed to ship the prototype by Friday. "
     )
-    big_content = paragraph * max(1, (tokens_per_batch * 3) // count_tokens(paragraph) + 1)
+    paragraph_tokens = count_tokens(paragraph)
+    big_content = paragraph * max(1, int(tokens_per_batch * 1.2) // paragraph_tokens + 1)
     document_id = f"doc-drain-{uuid.uuid4().hex[:8]}"
     assert count_tokens(big_content) > tokens_per_batch
 
@@ -1020,7 +1033,7 @@ async def test_oversized_single_item_drains_without_fk_violation(memory, request
 
 
 @pytest.mark.asyncio
-async def test_oversized_item_among_small_items_keeps_small_items_packed(memory, request_context):
+async def test_oversized_item_among_small_items_keeps_small_items_packed(memory, request_context, monkeypatch):
     """Mixed batch: small items pack together; oversized item isolates to its own child."""
     from hindsight_api.config import get_config
     from hindsight_api.engine.memory_engine import count_tokens
@@ -1028,6 +1041,12 @@ async def test_oversized_item_among_small_items_keeps_small_items_packed(memory,
     bank_id = f"test_mixed_pack_{uuid.uuid4().hex[:8]}"
     pool = await memory._get_pool()
     await _ensure_bank(pool, bank_id)
+
+    # Structural assertion on async_operations rows only — skip worker dispatch.
+    async def noop_submit_task(_task_dict):
+        return None
+
+    monkeypatch.setattr(memory._task_backend, "submit_task", noop_submit_task)
 
     tokens_per_batch = get_config().retain_batch_tokens
     big_unit = "The quick brown fox jumps over the lazy dog. " * 50
