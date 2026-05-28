@@ -2257,8 +2257,18 @@ ${memoriesFormatted}
       }
     });
 
-    // Hook signature: (event, ctx) where event has {messages, success, error?, durationMs?}
-    api.on("agent_end", async (event: any, ctx?: PluginHookAgentContext) => {
+    // Shared retain path for `agent_end` (per-turn cadence) and `session_end`
+    // (force-flush at session close, bypassing the cadence so short sessions
+    // and the un-retained tail of long sessions still land on disk). See #1726.
+    const runRetain = async (
+      event: any,
+      ctx: PluginHookAgentContext | undefined,
+      retainOptions: { force?: boolean; hookName: "agent_end" | "session_end" } = {
+        hookName: "agent_end",
+      }
+    ): Promise<void> => {
+      const force = retainOptions.force === true;
+      const hookName = retainOptions.hookName;
       // Optional perf instrumentation (#1406). Only emitted when an actual
       // retain RPC fires; the many early-return skip paths are not measured.
       const perfHookStart = pluginConfig.debugPerfTiming ? Date.now() : 0;
@@ -2350,9 +2360,12 @@ ${memoriesFormatted}
         }
 
         const bankId = deriveBankId(resolvedCtxForRetain, pluginConfig);
-        debug(`[Hindsight Hook] agent_end triggered - bank: ${bankId}`);
+        debug(`[Hindsight Hook] ${hookName} triggered - bank: ${bankId}`);
 
-        if (event.success === false) {
+        // `event.success === false` is a per-agent-end signal; session_end
+        // doesn't carry it and a failed last turn shouldn't block the final
+        // flush of preceding successful turns. (#1726)
+        if (!force && event.success === false) {
           debug("[Hindsight Hook] Agent run failed, skipping retention");
           return;
         }
@@ -2378,27 +2391,63 @@ ${memoriesFormatted}
 
         if (retainEveryN > 1) {
           const sessionTrackingKey = `${bankId}:${effectiveCtx?.sessionKey || "session"}`;
-          const turnCount = (turnCountBySession.get(sessionTrackingKey) || 0) + 1;
-          setCappedMapValue(turnCountBySession, sessionTrackingKey, turnCount);
-
-          if (turnCount % retainEveryN !== 0) {
-            const nextRetainAt = Math.ceil(turnCount / retainEveryN) * retainEveryN;
-            debug(
-              `[Hindsight Hook] Turn ${turnCount}/${retainEveryN}, skipping retain (next at turn ${nextRetainAt})`
-            );
-            return;
+          // session_end is a flush, not a turn — don't increment the counter.
+          const turnCount = force
+            ? turnCountBySession.get(sessionTrackingKey) || 0
+            : (turnCountBySession.get(sessionTrackingKey) || 0) + 1;
+          if (!force) {
+            setCappedMapValue(turnCountBySession, sessionTrackingKey, turnCount);
           }
 
-          // Sliding window in turns: N turns + configured overlap turns.
-          // We slice by actual turn boundaries (user-role messages), so this
-          // remains stable even when system/tool messages are present.
-          const overlapTurns = pluginConfig.retainOverlapTurns ?? 0;
-          const windowTurns = retainEveryN + overlapTurns;
-          messagesToRetain = sliceLastTurnsByUserBoundary(allMessages, windowTurns);
-          retainFullWindow = true;
-          debug(
-            `[Hindsight Hook] Turn ${turnCount}: chunked retain firing (window: ${windowTurns} turns, ${messagesToRetain.length} messages)`
-          );
+          const cadenceBoundary = turnCount > 0 && turnCount % retainEveryN === 0;
+          const unretainedTurns = turnCount % retainEveryN;
+
+          if (force) {
+            // session_end: only flush if there are un-retained turns since the
+            // last cadence boundary. The most recent agent_end either already
+            // retained (cadenceBoundary) or accumulated `unretainedTurns` turns
+            // that would otherwise be lost when the session closes. (#1726)
+            if (turnCount === 0 || cadenceBoundary) {
+              debug(
+                `[Hindsight Hook] session_end: nothing un-retained (turnCount=${turnCount}, retainEveryN=${retainEveryN}), skipping flush`
+              );
+              return;
+            }
+            const overlapTurns = pluginConfig.retainOverlapTurns ?? 0;
+            const windowTurns = unretainedTurns + overlapTurns;
+            messagesToRetain = sliceLastTurnsByUserBoundary(allMessages, windowTurns);
+            retainFullWindow = true;
+            // Reset so a subsequent session_end (if the host re-emits) doesn't
+            // re-retain the same window.
+            turnCountBySession.delete(sessionTrackingKey);
+            debug(
+              `[Hindsight Hook] session_end: forced flush of ${unretainedTurns} un-retained turns (window: ${windowTurns} turns, ${messagesToRetain.length} messages)`
+            );
+          } else {
+            if (!cadenceBoundary) {
+              const nextRetainAt = Math.ceil(turnCount / retainEveryN) * retainEveryN;
+              debug(
+                `[Hindsight Hook] Turn ${turnCount}/${retainEveryN}, skipping retain (next at turn ${nextRetainAt})`
+              );
+              return;
+            }
+
+            // Sliding window in turns: N turns + configured overlap turns.
+            // We slice by actual turn boundaries (user-role messages), so this
+            // remains stable even when system/tool messages are present.
+            const overlapTurns = pluginConfig.retainOverlapTurns ?? 0;
+            const windowTurns = retainEveryN + overlapTurns;
+            messagesToRetain = sliceLastTurnsByUserBoundary(allMessages, windowTurns);
+            retainFullWindow = true;
+            debug(
+              `[Hindsight Hook] Turn ${turnCount}: chunked retain firing (window: ${windowTurns} turns, ${messagesToRetain.length} messages)`
+            );
+          }
+        } else if (force) {
+          // retainEveryN === 1 means every agent_end already retained — the
+          // session_end flush would only duplicate work. (#1726)
+          debug("[Hindsight Hook] session_end: retainEveryNTurns=1, nothing to flush");
+          return;
         }
 
         const inlineRetainTags = normalizeRetainTags(
@@ -2515,7 +2564,7 @@ ${memoriesFormatted}
 
         if (pluginConfig.debugPerfTiming) {
           log.info(
-            formatHookPerf("agent_end", Date.now() - perfHookStart, {
+            formatHookPerf(hookName, Date.now() - perfHookStart, {
               retain: `${retainElapsedMs}ms`,
               outcome: retainOutcome,
               bank: bankId,
@@ -2526,6 +2575,18 @@ ${memoriesFormatted}
       } catch (error) {
         log.error("error retaining messages", error);
       }
+    };
+
+    // Hook signature: (event, ctx) where event has {messages, success, error?, durationMs?}
+    api.on("agent_end", async (event: any, ctx?: PluginHookAgentContext) => {
+      await runRetain(event, ctx, { hookName: "agent_end" });
+    });
+
+    // session_end fires once per OpenClaw session close. We force-flush so
+    // short conversations (fewer turns than `retainEveryNTurns`) and the
+    // un-retained tail of long conversations are not silently dropped. (#1726)
+    api.on("session_end", async (event: any, ctx?: PluginHookAgentContext) => {
+      await runRetain(event, ctx, { hookName: "session_end", force: true });
     });
     debug("[Hindsight] Hooks registered");
     log.info("agent hooks registered");
