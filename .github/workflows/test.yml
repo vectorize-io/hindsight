@@ -2940,7 +2940,9 @@ jobs:
 
     - name: Run tests
       working-directory: ./hindsight-integrations/litellm
-      run: uv run pytest tests -v
+      # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
+      # (requires_real_llm) needs live Hindsight + provider keys and runs separately.
+      run: uv run pytest tests -v -m "not requires_real_llm"
 
   test-pydantic-ai-integration:
     needs: [detect-changes]

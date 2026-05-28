@@ -60,6 +60,15 @@ requires_all = pytest.mark.skipif(
     reason=f"Requires reachable Hindsight at {HINDSIGHT_API_URL} and OPENAI_API_KEY",
 )
 
+# Every test in this file is a real-LLM / real-service test: it drives a live
+# Hindsight server (server-side fact extraction) and/or makes real provider
+# calls (OpenAI completions, etc.). Mark the whole module so it forms the
+# "real LLM" bucket — excluded from the deterministic PR-CI bucket via
+# `-m "not requires_real_llm"` and run on its own via `-m requires_real_llm`.
+# The skipif guards above still apply at runtime, so a missing key/server skips
+# gracefully within the bucket rather than failing.
+pytestmark = pytest.mark.requires_real_llm
+
 
 @pytest.fixture
 def bank_id():
