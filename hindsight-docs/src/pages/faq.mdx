@@ -379,6 +379,14 @@ Memory A → [pedagogy:scaffolding] → Memory B
 
 It links your experiences by finding different scrapbook pages that happen to share the exact same stickers.
 
+#### Does this graph structure help reduce hallucinations in my agent?
+
+Yes — by giving the consuming LLM better-grounded context to reason from. Three properties of the scrapbook model contribute directly:
+
+- **History is preserved, not collapsed.** The model sees time-bounded facts (Alice worked at Acme last year, Stark Industries now) rather than a contradictory present-tense edge that forces it to reconcile or guess.
+- **Connections come from real shared entities, not inference.** When recall surfaces two related memories, it's because they genuinely share an entity sticker — the link appears in the retrieved context, so the model doesn't have to invent one.
+- **Convergent evidence accumulates.** Multiple memories anchoring to the same entity reinforce each other instead of competing, giving the model corroborated claims rather than singular unsupported ones.
+
 ---
 
 ## Still have questions?
