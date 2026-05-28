@@ -86,9 +86,7 @@ def configure(
     """Configure Hindsight + Superagent connection and default settings."""
     global _global_config
     if not isinstance(safety_concurrency, int) or safety_concurrency < 1:
-        raise ValueError(
-            f"safety_concurrency must be a positive int, got {safety_concurrency!r}"
-        )
+        raise ValueError(f"safety_concurrency must be a positive int, got {safety_concurrency!r}")
     resolved_url = hindsight_api_url or DEFAULT_HINDSIGHT_API_URL
     resolved_key = api_key or os.environ.get(HINDSIGHT_API_KEY_ENV)
     resolved_sa_key = superagent_api_key or os.environ.get(SUPERAGENT_API_KEY_ENV)

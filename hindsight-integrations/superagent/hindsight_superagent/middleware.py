@@ -150,9 +150,7 @@ class SafeHindsight:
             # asyncio.Semaphore(0) never admits work, so 0 (or anything <1)
             # would deadlock _redact_many and the guard-batching path in
             # retain_batch.  Fail fast at construction.
-            raise ValueError(
-                f"safety_concurrency must be a positive int, got {self._safety_concurrency!r}"
-            )
+            raise ValueError(f"safety_concurrency must be a positive int, got {self._safety_concurrency!r}")
         self._enable_guard_on_retain = _kw(
             enable_guard_on_retain, config.enable_guard_on_retain if config else None, True
         )
@@ -439,9 +437,7 @@ class SafeHindsight:
             effective_tags = tags if tags is not None else self._recall_tags
             if effective_tags:
                 recall_kwargs["tags"] = effective_tags
-                recall_kwargs["tags_match"] = (
-                    tags_match if tags_match is not None else self._recall_tags_match
-                )
+                recall_kwargs["tags_match"] = tags_match if tags_match is not None else self._recall_tags_match
 
             response = await self._hindsight.arecall(**recall_kwargs)
 

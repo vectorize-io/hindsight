@@ -58,9 +58,7 @@ def snapshot_safety_config(
     """
     config = get_config()
     key = (
-        superagent_api_key
-        or (config.superagent_api_key if config else None)
-        or os.environ.get(SUPERAGENT_API_KEY_ENV)
+        superagent_api_key or (config.superagent_api_key if config else None) or os.environ.get(SUPERAGENT_API_KEY_ENV)
     )
     resolved_fallback = (
         enable_fallback if enable_fallback is not None else (config.enable_fallback if config else False)
@@ -100,6 +98,4 @@ def resolve_safety_client(
     """
     if safety_client is not None:
         return safety_client
-    return build_safety_client(
-        snapshot_safety_config(superagent_api_key, enable_fallback, fallback_timeout)
-    )
+    return build_safety_client(snapshot_safety_config(superagent_api_key, enable_fallback, fallback_timeout))
