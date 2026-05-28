@@ -14,6 +14,7 @@ from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional
 
+from ._async import ensure_loop, run_sync
 from .config import (
     DEFAULT_BANK_ID,
     DEFAULT_HINDSIGHT_API_URL,
@@ -26,7 +27,6 @@ from .config import (
 from .config import (
     _merge_call_settings as _merge_settings,
 )
-from ._async import ensure_loop, run_sync
 
 # Background thread support for async retain
 _retain_errors: List[Exception] = []
