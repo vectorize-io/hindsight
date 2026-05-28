@@ -66,6 +66,13 @@ requires_langgraph = pytest.mark.skipif(
     reason="langgraph not installed",
 )
 
+# Every test in this file drives a live Hindsight server (server-side fact
+# extraction powers the retain->recall roundtrip), so the whole module is the
+# "real LLM" bucket — excluded from the deterministic PR-CI bucket via
+# `-m "not requires_real_llm"` and run on its own via `-m requires_real_llm`.
+# The skipif guards above still apply at runtime.
+pytestmark = pytest.mark.requires_real_llm
+
 
 @pytest_asyncio.fixture
 async def live_client():
