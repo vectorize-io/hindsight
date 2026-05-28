@@ -8,7 +8,7 @@ from hindsight_api.engine.consolidation import consolidator
 class _ZeroLengthEmbeddings:
     dimension = 384
 
-    def encode(self, texts):
+    def encode_documents(self, texts):
         assert texts == ["Consolidated observation text."]
         return [[]]
 
