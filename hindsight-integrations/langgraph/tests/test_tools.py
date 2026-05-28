@@ -103,9 +103,28 @@ class TestCreateHindsightTools:
         )
         assert len(tools) == 0
 
-    def test_raises_without_client_or_config(self):
-        with pytest.raises(HindsightError, match="No Hindsight API URL"):
+    def test_defaults_to_cloud_without_config(self, monkeypatch):
+        """With no client, config, or explicit URL, defaults to the cloud URL."""
+        from hindsight_langgraph.config import DEFAULT_HINDSIGHT_API_URL
+
+        monkeypatch.delenv("HINDSIGHT_API_KEY", raising=False)
+        with patch("hindsight_langgraph._client.Hindsight") as mock_cls:
+            mock_cls.return_value = _mock_client()
+            tools = create_hindsight_tools(bank_id="test")
+            assert len(tools) == 3
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs["base_url"] == DEFAULT_HINDSIGHT_API_URL
+            # No key configured → none passed; it only fails at call time.
+            assert "api_key" not in call_kwargs
+
+    def test_reads_api_key_from_env_without_config(self, monkeypatch):
+        """HINDSIGHT_API_KEY is honoured even when configure() was never called."""
+        monkeypatch.setenv("HINDSIGHT_API_KEY", "sk-from-env")
+        with patch("hindsight_langgraph._client.Hindsight") as mock_cls:
+            mock_cls.return_value = _mock_client()
             create_hindsight_tools(bank_id="test")
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs["api_key"] == "sk-from-env"
 
     def test_falls_back_to_global_config(self):
         configure(hindsight_api_url="http://localhost:8888")
