@@ -106,6 +106,25 @@ _PROTECTED_TABLES = frozenset(
 # Enable runtime SQL validation (can be disabled in production for performance)
 _VALIDATE_SQL_SCHEMAS = True
 
+# Consolidation retry: indefinite retry with capped exponential backoff.
+# Transient upstream outages (LLM provider down, DB flapping, tenant-ext
+# blip) must eventually recover; the worker should keep trying rather than
+# silently dead-lettering a bank's consolidation backlog. Deterministic
+# failures (integrity violations, embedding dimension mismatches) are
+# filtered upstream by `_is_non_retryable_task_error` and never reach the
+# retry path. The dedup-by-bank guard prevents per-op retries from
+# multiplying when a peer consolidation is already pending for the bank.
+_CONSOLIDATION_RETRY_BACKOFF_BASE_SECONDS = 60
+_CONSOLIDATION_RETRY_BACKOFF_MAX_SECONDS = 1800  # 30 min cap
+
+
+def _consolidation_retry_backoff_seconds(retry_count: int) -> int:
+    """Capped exponential backoff: 60, 120, 240, 480, 960, 1800, 1800, …"""
+    return min(
+        _CONSOLIDATION_RETRY_BACKOFF_BASE_SECONDS * (2**retry_count),
+        _CONSOLIDATION_RETRY_BACKOFF_MAX_SECONDS,
+    )
+
 
 class UnqualifiedTableError(Exception):
     """Raised when SQL contains unqualified table references."""
@@ -1448,6 +1467,19 @@ class MemoryEngine(MemoryEngineInterface):
                                 f"this bank — skipping retry."
                             )
                             raise
+
+                        # Indefinite retry with capped exponential backoff.
+                        # Transient outages (LLM provider down, DB flapping) must
+                        # eventually recover; the alternative (cap after 3 retries
+                        # and mark failed) silently dead-letters the bank's backlog.
+                        # The dedup-by-bank guard above prevents this from causing
+                        # a retry storm when multiple ops exist for the same bank.
+                        retry_count = task_dict.get("_retry_count", 0)
+                        backoff = _consolidation_retry_backoff_seconds(retry_count)
+                        raise RetryTaskAt(
+                            retry_at=datetime.now(UTC) + timedelta(seconds=backoff),
+                            message=str(e),
+                        )
 
                     # Retryable: use RetryTaskAt if under the retry limit, else re-raise (poller marks failed)
                     retry_count = task_dict.get("_retry_count", 0)

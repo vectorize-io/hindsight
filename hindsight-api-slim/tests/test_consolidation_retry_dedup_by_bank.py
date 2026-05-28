@@ -1,24 +1,36 @@
 """
-Regression tests for the consolidation retry-storm guard.
+Regression tests for the consolidation retry path.
 
 When a consolidation task hits a transient error, the worker's generic retry
 path raises ``RetryTaskAt`` to re-queue the operation (memory_engine.py, see
-``execute_task``'s exception branch). During a long upstream outage, every
-retain on the same bank also enqueues a fresh consolidation op via
-``submit_async_consolidation``. Without dedup, each op then independently
-consumes its own retry budget, multiplying load on the broken dependency.
+``execute_task``'s exception branch). Two pieces of behaviour live there:
 
-The guard: if another consolidation op is already ``pending`` for the same
-bank when the retry decision is made, skip the retry and let the other op
-cover the work when it runs.
+1. **Dedup guard.** During a long upstream outage, every retain on the same
+   bank enqueues a fresh consolidation op via ``submit_async_consolidation``.
+   Without dedup, each op independently consumes its own retry budget,
+   multiplying load on the broken dependency. The guard: if another
+   consolidation op is already ``pending`` for the same bank when the retry
+   decision is made, skip the retry and let the other op cover the work.
+
+2. **Indefinite retry with capped exponential backoff** (60s, 120, 240, 480,
+   960, 1800-cap). Distinct from the generic 60s × 3 used by other task
+   types. Transient consolidation failures (LLM/DB outage) must eventually
+   recover; capping after a fixed number of attempts silently dead-letters
+   the bank's backlog. The dedup-by-bank guard above prevents a retry
+   storm when multiple ops exist for the same bank.
 """
 
 import json
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
 
+from hindsight_api.engine.memory_engine import (
+    _CONSOLIDATION_RETRY_BACKOFF_MAX_SECONDS,
+    _consolidation_retry_backoff_seconds,
+)
 from hindsight_api.worker.exceptions import RetryTaskAt
 
 
@@ -164,3 +176,92 @@ async def test_peer_only_dedups_when_same_bank(memory):
 
     await _cleanup(pool, bank_id_a, running_op_id)
     await _cleanup(pool, bank_id_b, unrelated_pending_op_id)
+
+
+def test_backoff_helper_schedule():
+    """
+    The backoff helper produces capped exponential growth:
+    60, 120, 240, 480, 960, then pinned at the 1800s cap.
+    """
+    assert _consolidation_retry_backoff_seconds(0) == 60
+    assert _consolidation_retry_backoff_seconds(1) == 120
+    assert _consolidation_retry_backoff_seconds(2) == 240
+    assert _consolidation_retry_backoff_seconds(3) == 480
+    assert _consolidation_retry_backoff_seconds(4) == 960
+    assert _consolidation_retry_backoff_seconds(5) == _CONSOLIDATION_RETRY_BACKOFF_MAX_SECONDS
+    # Cap holds at arbitrarily high attempt counts (we never give up).
+    assert _consolidation_retry_backoff_seconds(50) == _CONSOLIDATION_RETRY_BACKOFF_MAX_SECONDS
+    assert _consolidation_retry_backoff_seconds(1000) == _CONSOLIDATION_RETRY_BACKOFF_MAX_SECONDS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retry_count", [0, 1, 2, 5])
+async def test_backoff_matches_schedule_by_retry_count(memory, retry_count):
+    """
+    Each retry schedules `retry_at = now + backoff(retry_count)`. The tolerance
+    covers the few seconds between ``now()`` capture in the test and inside
+    the retry handler. Includes retry_count=5 to verify the cap branch.
+    """
+    bank_id = f"test-backoff-{uuid.uuid4().hex[:8]}"
+    op_id = uuid.uuid4()
+
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+    await _insert_consolidation_op(pool, bank_id, op_id, status="processing")
+
+    task_dict = {
+        "type": "consolidation",
+        "operation_id": str(op_id),
+        "bank_id": bank_id,
+        "_retry_count": retry_count,
+    }
+
+    expected_backoff = _consolidation_retry_backoff_seconds(retry_count)
+    before = datetime.now(UTC)
+    with patch.object(memory, "_handle_consolidation", side_effect=RuntimeError("transient")):
+        with pytest.raises(RetryTaskAt) as excinfo:
+            await memory.execute_task(task_dict)
+
+    delta = (excinfo.value.retry_at - before).total_seconds()
+    assert expected_backoff <= delta <= expected_backoff + 10, (
+        f"retry_count={retry_count}: expected backoff ~{expected_backoff}s, "
+        f"got delta={delta:.2f}s"
+    )
+
+    await _cleanup(pool, bank_id, op_id)
+
+
+@pytest.mark.asyncio
+async def test_retry_is_indefinite(memory):
+    """
+    Consolidation has no attempt cap — even at very high retry_count, a
+    transient failure still raises RetryTaskAt (capped at the max backoff).
+    Without this property, a long outage silently dead-letters the bank's
+    unconsolidated rows once the budget is exhausted.
+    """
+    bank_id = f"test-indefinite-{uuid.uuid4().hex[:8]}"
+    op_id = uuid.uuid4()
+
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+    await _insert_consolidation_op(pool, bank_id, op_id, status="processing")
+
+    task_dict = {
+        "type": "consolidation",
+        "operation_id": str(op_id),
+        "bank_id": bank_id,
+        "_retry_count": 100,  # well past any plausible attempt cap
+    }
+
+    before = datetime.now(UTC)
+    with patch.object(memory, "_handle_consolidation", side_effect=RuntimeError("still failing")):
+        with pytest.raises(RetryTaskAt) as excinfo:
+            await memory.execute_task(task_dict)
+
+    delta = (excinfo.value.retry_at - before).total_seconds()
+    cap = _CONSOLIDATION_RETRY_BACKOFF_MAX_SECONDS
+    assert cap <= delta <= cap + 10, (
+        f"At retry_count=100 expected backoff at cap (~{cap}s), got {delta:.2f}s"
+    )
+
+    await _cleanup(pool, bank_id, op_id)
