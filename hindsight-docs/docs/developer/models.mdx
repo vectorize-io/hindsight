@@ -40,6 +40,8 @@ See [Configuration](./configuration#llm-provider) for setup examples.
 :::tip Built-in llama.cpp (fully local, no API key)
 Set `HINDSIGHT_API_LLM_PROVIDER=llamacpp` to run a built-in llama.cpp server with no external dependencies. A Gemma 4 E2B GGUF model (~3.5 GB) is auto-downloaded on first run. Requires the `local-llm` extra: `pip install 'hindsight-api-slim[local-llm]'`.
 
+The published Docker image does not bundle `llama-cpp-python` (to keep the image small). For a runnable Docker setup that adds it on top, see [`docker/docker-compose/local-llm/`](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/local-llm).
+
 See [Configuration](./configuration#built-in-llamacpp) for all options.
 :::
 
