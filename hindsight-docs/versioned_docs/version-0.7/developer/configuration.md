@@ -171,6 +171,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_LLM_INITIAL_BACKOFF` | Initial retry backoff in seconds (exponential backoff) | `1.0` |
 | `HINDSIGHT_API_LLM_MAX_BACKOFF` | Max retry backoff cap in seconds | `60.0` |
 | `HINDSIGHT_API_LLM_TIMEOUT` | LLM request timeout in seconds | `120` |
+| `HINDSIGHT_API_LLM_REASONING_EFFORT` | Reasoning effort for providers/models that support it (for example `low`, `medium`, `high`, `xhigh`) | `low` |
 | `HINDSIGHT_API_LLM_GROQ_SERVICE_TIER` | Groq service tier: `on_demand`, `flex`, `auto` | `auto` |
 | `HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER` | OpenAI service tier: `flex` for 50% cost savings (OpenAI Flex Processing) | None (default) |
 | `HINDSIGHT_API_LLM_EXTRA_BODY` | JSON dict merged into `extra_body` for all OpenAI-compatible API calls. Useful for custom model servers (e.g., vLLM `chat_template_kwargs`). | `null` |

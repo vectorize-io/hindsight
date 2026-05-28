@@ -917,12 +917,14 @@ class LLMProvider:
         """Create provider from environment variables using config.py constants."""
         from ..config import (
             DEFAULT_LLM_PROVIDER,
+            DEFAULT_LLM_REASONING_EFFORT,
             ENV_LLM_API_KEY,
             ENV_LLM_BASE_URL,
             ENV_LLM_DEFAULT_HEADERS,
             ENV_LLM_EXTRA_BODY,
             ENV_LLM_MODEL,
             ENV_LLM_PROVIDER,
+            ENV_LLM_REASONING_EFFORT,
             _get_default_model_for_provider,
         )
 
@@ -946,7 +948,7 @@ class LLMProvider:
             api_key=api_key,
             base_url=base_url,
             model=model,
-            reasoning_effort="low",
+            reasoning_effort=os.getenv(ENV_LLM_REASONING_EFFORT, DEFAULT_LLM_REASONING_EFFORT),
             extra_body=extra_body,
             default_headers=default_headers,
         )

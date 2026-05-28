@@ -21,6 +21,7 @@ def setup_test_env():
         "HINDSIGHT_API_RETAIN_CHUNK_SIZE",
         "HINDSIGHT_API_LLM_PROVIDER",
         "HINDSIGHT_API_LLM_MODEL",
+        "HINDSIGHT_API_LLM_REASONING_EFFORT",
         "HINDSIGHT_API_DATABASE_URL",
         "HINDSIGHT_API_MIGRATION_DATABASE_URL",
     ]
@@ -355,3 +356,23 @@ def test_llm_output_language_empty_string_is_unset(monkeypatch):
 
     config = HindsightConfig.from_env()
     assert config.llm_output_language is None
+
+
+def test_llm_reasoning_effort_defaults_to_low(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.delenv("HINDSIGHT_API_LLM_REASONING_EFFORT", raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.llm_reasoning_effort == "low"
+
+
+def test_llm_reasoning_effort_loaded_from_env(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_REASONING_EFFORT", "xhigh")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.llm_reasoning_effort == "xhigh"
