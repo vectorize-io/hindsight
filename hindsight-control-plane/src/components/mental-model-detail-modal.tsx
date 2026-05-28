@@ -33,6 +33,28 @@ import { CompactMarkdown } from "./compact-markdown";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { DirectiveDetailModal } from "./directive-detail-modal";
 import { formatAbsoluteDateTime as formatDateTime, formatRelativeTime } from "@/lib/relative-time";
+import { useTheme } from "@/lib/theme-context";
+
+const DIFF_PALETTE = {
+  light: {
+    body: "#1a1a1a",
+    removedLineBg: "#ffeef0",
+    addedLineBg: "#e6ffec",
+    removedWordBg: "#fdb8c0",
+    removedWordText: "#67060c",
+    addedWordBg: "#acf2bc",
+    addedWordText: "#0a3622",
+  },
+  dark: {
+    body: "#e6edf3",
+    removedLineBg: "#3d1419",
+    addedLineBg: "#0d2818",
+    removedWordBg: "#7d2530",
+    removedWordText: "#ffd0d6",
+    addedWordBg: "#1a4d2c",
+    addedWordText: "#b8e6c1",
+  },
+} as const;
 
 type BasedOnFact = {
   id: string;
@@ -312,15 +334,25 @@ function diffLines(a: string, b: string): { left: AnnotatedLine[]; right: Annota
   return { left, right };
 }
 
-function renderSpans(spans: TokenSpan[], side: "left" | "right") {
+type DiffPalette = (typeof DIFF_PALETTE)[keyof typeof DIFF_PALETTE];
+
+function renderSpans(spans: TokenSpan[], side: "left" | "right", palette: DiffPalette) {
+  const removedStyle: React.CSSProperties = {
+    backgroundColor: palette.removedWordBg,
+    color: palette.removedWordText,
+    fontWeight: 600,
+    borderRadius: "2px",
+  };
+  const addedStyle: React.CSSProperties = {
+    backgroundColor: palette.addedWordBg,
+    color: palette.addedWordText,
+    fontWeight: 600,
+    borderRadius: "2px",
+  };
   return spans.map((s, i) => {
     if (s.type === "same") return <span key={i}>{s.text}</span>;
-    const cls =
-      side === "left"
-        ? "bg-red-500/25 text-red-800 dark:text-red-300 rounded-sm px-0.5"
-        : "bg-green-500/25 text-green-800 dark:text-green-300 rounded-sm px-0.5";
     return (
-      <span key={i} className={cls}>
+      <span key={i} style={side === "left" ? removedStyle : addedStyle}>
         {s.text}
       </span>
     );
@@ -329,40 +361,43 @@ function renderSpans(spans: TokenSpan[], side: "left" | "right") {
 
 function SideBySideDiff({ before, after }: { before: string; after: string }) {
   const t = useTranslations("mentalModelDetailModal");
+  const { theme } = useTheme();
+  const palette = DIFF_PALETTE[theme];
   const { left, right } = diffLines(before, after);
   const hasChanges = left.some((l) => l.type !== "same") || right.some((r) => r.type !== "same");
   if (!hasChanges)
     return <span className="text-sm text-muted-foreground italic">{t("unchanged")}</span>;
 
   return (
-    <div className="grid grid-cols-2 divide-x divide-border border border-border rounded-md overflow-hidden text-xs font-mono">
+    <div
+      className="grid grid-cols-2 divide-x divide-border border border-border rounded-md overflow-hidden text-[13px] font-mono"
+      style={{ color: palette.body }}
+    >
       <div>
-        <div className="px-3 py-1.5 bg-muted text-muted-foreground font-sans font-semibold text-xs uppercase tracking-wide border-b border-border">
+        <div className="px-3 py-1.5 bg-muted text-foreground font-sans font-semibold text-xs uppercase tracking-wide border-b border-border">
           {t("diffBefore")}
         </div>
         {left.map((line, idx) => (
           <div
             key={idx}
-            className={`px-3 py-0.5 whitespace-pre-wrap leading-5 min-h-[1.25rem] ${
-              line.type === "removed" ? "bg-red-500/5" : ""
-            }`}
+            className="px-3 py-0.5 whitespace-pre-wrap leading-5 min-h-[1.25rem]"
+            style={line.type === "removed" ? { backgroundColor: palette.removedLineBg } : undefined}
           >
-            {renderSpans(line.spans, "left")}
+            {renderSpans(line.spans, "left", palette)}
           </div>
         ))}
       </div>
       <div>
-        <div className="px-3 py-1.5 bg-muted text-muted-foreground font-sans font-semibold text-xs uppercase tracking-wide border-b border-border">
+        <div className="px-3 py-1.5 bg-muted text-foreground font-sans font-semibold text-xs uppercase tracking-wide border-b border-border">
           {t("diffAfter")}
         </div>
         {right.map((line, idx) => (
           <div
             key={idx}
-            className={`px-3 py-0.5 whitespace-pre-wrap leading-5 min-h-[1.25rem] ${
-              line.type === "added" ? "bg-green-500/5" : ""
-            }`}
+            className="px-3 py-0.5 whitespace-pre-wrap leading-5 min-h-[1.25rem]"
+            style={line.type === "added" ? { backgroundColor: palette.addedLineBg } : undefined}
           >
-            {renderSpans(line.spans, "right")}
+            {renderSpans(line.spans, "right", palette)}
           </div>
         ))}
       </div>
@@ -419,16 +454,16 @@ function BasedOnDiff({
       (factType !== "directives" && factType !== "mental-models" && !!onViewMemory);
     const rowCls =
       mode === "added"
-        ? "bg-green-500/10 border-l-2 border-green-500"
+        ? "bg-green-500/15 dark:bg-green-500/10 border-l-2 border-green-600 dark:border-green-500 text-green-950 dark:text-green-100"
         : mode === "removed"
-          ? "bg-red-500/10 border-l-2 border-red-500 text-muted-foreground line-through decoration-red-500/50"
+          ? "bg-red-500/15 dark:bg-red-500/10 border-l-2 border-red-600 dark:border-red-500 text-red-950 dark:text-red-200 line-through decoration-red-700/70 dark:decoration-red-400/70"
           : "";
     const marker = mode === "added" ? "+" : mode === "removed" ? "−" : " ";
     const markerCls =
       mode === "added"
-        ? "text-green-600 dark:text-green-400"
+        ? "text-green-700 dark:text-green-400"
         : mode === "removed"
-          ? "text-red-600 dark:text-red-400"
+          ? "text-red-700 dark:text-red-400"
           : "text-muted-foreground/40";
     return (
       <li key={`${mode}-${fact.id}`} className={`group flex items-start gap-2 px-3 py-2 ${rowCls}`}>
@@ -986,7 +1021,21 @@ function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
         />
         <Metadata label={t("labelName")} value={mentalModel.name} />
         {mentalModel.source_query && (
-          <Metadata label={t("labelSourceQuery")} value={mentalModel.source_query} />
+          <Metadata
+            label={t("labelSourceQuery")}
+            value={
+              <pre
+                className="text-sm font-mono text-foreground bg-muted/30 border border-border/60 rounded p-2 leading-6 m-0"
+                style={{
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)",
+                }}
+              >
+                {mentalModel.source_query}
+              </pre>
+            }
+          />
         )}
         <Metadata
           label={t("labelTags")}

@@ -819,7 +819,7 @@ function CreateMentalModelDialog({
             </TabsTrigger>
           </TabsList>
 
-          <div className="flex-1 overflow-y-auto mt-2 pr-1">
+          <div className="flex-1 overflow-y-auto mt-2 px-1.5">
             <TabsContent value="general" className="space-y-4 pt-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium text-foreground">{t("fieldId")}</label>
@@ -841,10 +841,12 @@ function CreateMentalModelDialog({
                 <label className="text-sm font-medium text-foreground">
                   {t("fieldSourceQuery")}
                 </label>
-                <Input
+                <Textarea
                   value={form.sourceQuery}
                   onChange={(e) => setForm({ ...form, sourceQuery: e.target.value })}
                   placeholder={t("fieldSourceQueryPlaceholder")}
+                  className="min-h-[140px] font-mono text-sm leading-6 whitespace-pre-wrap"
+                  spellCheck={false}
                 />
               </div>
               <div className="space-y-2">
@@ -1220,7 +1222,7 @@ function UpdateMentalModelDialog({
             </TabsTrigger>
           </TabsList>
 
-          <div className="flex-1 overflow-y-auto mt-2 pr-1">
+          <div className="flex-1 overflow-y-auto mt-2 px-1.5">
             <TabsContent value="general" className="space-y-4 pt-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium text-muted-foreground">{t("fieldId")}</label>
@@ -1238,10 +1240,12 @@ function UpdateMentalModelDialog({
                 <label className="text-sm font-medium text-foreground">
                   {t("fieldSourceQuery")}
                 </label>
-                <Input
+                <Textarea
                   value={form.sourceQuery}
                   onChange={(e) => setForm({ ...form, sourceQuery: e.target.value })}
                   placeholder={t("fieldSourceQueryPlaceholder")}
+                  className="min-h-[140px] font-mono text-sm leading-6 whitespace-pre-wrap"
+                  spellCheck={false}
                 />
               </div>
               <div className="space-y-2">
