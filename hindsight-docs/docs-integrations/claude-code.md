@@ -180,7 +180,7 @@ Auto-recall runs on every user prompt. It queries Hindsight for relevant memorie
 | `autoRecall` | `HINDSIGHT_AUTO_RECALL` | `true` | Master switch for auto-recall. Set to `false` to disable memory retrieval entirely. |
 | `recallBudget` | `HINDSIGHT_RECALL_BUDGET` | `"mid"` | Controls how hard Hindsight searches for memories. `"low"` = fast, fewer strategies; `"mid"` = balanced; `"high"` = thorough, slower. Affects latency directly. |
 | `recallMaxTokens` | `HINDSIGHT_RECALL_MAX_TOKENS` | `1024` | Maximum number of tokens in the recalled memory block. Lower values reduce context usage but may truncate relevant memories. |
-| `recallTypes` | — | `["world", "experience"]` | Which memory types to retrieve. `"world"` = general facts; `"experience"` = personal experiences; `"observation"` = raw observations. |
+| `recallTypes` | — | `["observation"]` | Which memory types to retrieve. `"world"` = general facts; `"experience"` = personal experiences; `"observation"` = consolidated, deduplicated beliefs built from multiple facts. Defaults to observations so the same answer doesn't surface multiple times when many raw memories say the same thing. |
 | `recallContextTurns` | `HINDSIGHT_RECALL_CONTEXT_TURNS` | `1` | How many prior conversation turns to include when composing the recall query. `1` = only the latest user message; higher values give more context but may dilute the query. |
 | `recallMaxQueryChars` | `HINDSIGHT_RECALL_MAX_QUERY_CHARS` | `800` | Maximum character length of the query sent to Hindsight. Longer queries are truncated. |
 | `recallRoles` | — | `["user", "assistant"]` | Which message roles to include when building the recall query from prior turns. |
