@@ -69,9 +69,7 @@ def install_rules(roo_dir: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Install Hindsight memory integration for Roo Code."
-    )
+    parser = argparse.ArgumentParser(description="Install Hindsight memory integration for Roo Code.")
     parser.add_argument(
         "--api-url",
         default=os.environ.get("HINDSIGHT_API_URL", DEFAULT_API_URL),
@@ -93,7 +91,7 @@ def main() -> None:
     project_dir = Path(args.project_dir).resolve()
     roo_dir = get_roo_dir(project_dir, args.global_install)
 
-    print(f"Installing Hindsight memory for Roo Code...")
+    print("Installing Hindsight memory for Roo Code...")
     print(f"  API URL : {args.api_url}")
     print(f"  Roo dir : {roo_dir}")
     print()
