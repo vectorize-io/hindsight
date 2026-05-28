@@ -13,7 +13,7 @@ DEFAULTS = {
     "autoRecall": True,
     "recallBudget": "mid",
     "recallMaxTokens": 1024,
-    "recallTypes": ["world", "experience"],
+    "recallTypes": ["observation"],
     "recallContextTurns": 1,
     "recallMaxQueryChars": 800,
     "recallRoles": ["user", "assistant"],

@@ -200,8 +200,8 @@
           "type": "string",
           "enum": ["world", "experience", "observation"]
         },
-        "description": "Memory types to recall. Defaults to ['world', 'experience'] — excludes verbose observation entries.",
-        "default": ["world", "experience"]
+        "description": "Memory types to recall. Defaults to ['observation'] — surfaces only the consolidated, deduplicated view; raw world/experience facts can drive the same answer multiple times when many memories say the same thing.",
+        "default": ["observation"]
       },
       "recallRoles": {
         "type": "array",
@@ -437,7 +437,7 @@
     },
     "recallTypes": {
       "label": "Recall Types",
-      "placeholder": "e.g. ['world', 'experience']"
+      "placeholder": "['observation'] (default)"
     },
     "recallRoles": {
       "label": "Recall Roles",

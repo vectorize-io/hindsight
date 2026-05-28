@@ -1482,7 +1482,7 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     retainToolCalls: config.retainToolCalls !== false,
     recallBudget: config.recallBudget || "mid",
     recallMaxTokens: config.recallMaxTokens || 1024,
-    recallTypes: Array.isArray(config.recallTypes) ? config.recallTypes : ["world", "experience"],
+    recallTypes: Array.isArray(config.recallTypes) ? config.recallTypes : ["observation"],
     recallRoles: Array.isArray(config.recallRoles) ? config.recallRoles : ["user", "assistant"],
     retainEveryNTurns:
       typeof config.retainEveryNTurns === "number" && config.retainEveryNTurns >= 1
