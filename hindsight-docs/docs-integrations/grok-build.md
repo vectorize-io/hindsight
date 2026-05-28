@@ -9,7 +9,7 @@ description: "Add long-term memory to Grok Build with Hindsight. Automatically c
 Biomimetic long-term memory for [Grok Build](https://x.ai/cli) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations and recalls relevant context across sessions — no changes to your workflow required.
 
 :::tip Powered by the Claude Code plugin
-Grok Build natively supports Claude Code plugins, including hooks, MCP servers, and skills. This integration uses the same [`hindsight-memory` plugin](/sdks/integrations/claude-code) that powers Claude Code — all features, configuration options, and knowledge tools are fully available in Grok Build.
+Grok Build natively reads Claude Code plugin format — hooks, MCP servers, skills, and marketplace metadata all work without modification. This integration uses the same [`hindsight-memory` plugin](/sdks/integrations/claude-code) that powers Claude Code. All features, configuration options, and knowledge tools are fully available in Grok Build.
 :::
 
 ## Quick Start
@@ -19,9 +19,8 @@ Grok Build natively supports Claude Code plugins, including hooks, MCP servers, 
 :::
 
 ```bash
-# 1. Add the Hindsight marketplace and install the plugin
-grok plugin marketplace add vectorize-io/hindsight
-grok plugin install hindsight-memory
+# 1. Install the plugin directly from the Hindsight repo
+grok plugin install vectorize-io/hindsight#hindsight-integrations/claude-code --trust
 
 # 2. Configure your connection
 mkdir -p ~/.hindsight
@@ -55,7 +54,6 @@ The plugin will auto-start a local `hindsight-embed` daemon.
 - **Auto-recall** — on every user prompt, queries Hindsight for relevant memories and injects them as context (invisible to the chat transcript, visible to Grok)
 - **Auto-retain** — after every response (or every N turns), extracts and retains conversation content for long-term storage
 - **Knowledge tools** — Grok can read, write, and search its own memory via MCP tools (`agent_knowledge_recall`, `agent_knowledge_ingest`, etc.)
-- **Subagent skill** — `/hindsight-memory:create-agent` scaffolds a subagent backed by an isolated memory bank
 - **Dynamic bank IDs** — per-agent, per-project, or per-session memory isolation
 - **Daemon management** — can auto-start/stop `hindsight-embed` locally or connect to an external Hindsight server
 
@@ -70,11 +68,10 @@ The plugin hooks into Grok Build's lifecycle events:
 | `retain.py` | `Stop` hook | **Auto-retain** — extract transcript, POST to Hindsight (async) |
 | `session_end.py` | `SessionEnd` hook | Cleanup — stop auto-managed daemon if started |
 | `mcp_server.py` | MCP server | Exposes `agent_knowledge_*` tools — list/get/create/update/delete pages, recall, ingest |
-| `create-agent` | Skill | Scaffolds a subagent file and seeds its memory bank |
 
 ## Configuration
 
-The plugin reads configuration from `~/.hindsight/claude-code.json` — the same file used by Claude Code. If you run both tools and want different settings for each, you can also create `~/.hindsight/grok-build.json` which takes precedence when running under Grok Build.
+The plugin reads configuration from `~/.hindsight/claude-code.json` — the same file used by Claude Code, regardless of which host (Grok Build or Claude Code) is running the plugin.
 
 **Loading order** (later entries win):
 1. Built-in defaults
@@ -82,28 +79,24 @@ The plugin reads configuration from `~/.hindsight/claude-code.json` — the same
 3. User config (`~/.hindsight/claude-code.json`)
 4. Environment variables (`HINDSIGHT_*`)
 
-For the full configuration reference — connection settings, LLM provider, memory bank, auto-recall, auto-retain, knowledge tools, subagents, and debug options — see the [Claude Code configuration docs](/sdks/integrations/claude-code#configuration).
+For the full configuration reference — connection settings, LLM provider, memory bank, auto-recall, auto-retain, knowledge tools, and debug options — see the [Claude Code configuration docs](/sdks/integrations/claude-code#configuration).
 
 ### Separating Grok Build and Claude Code memory
 
-If you use both Grok Build and Claude Code and want separate memory banks for each, override the agent name and retain context:
+Both tools share `~/.hindsight/claude-code.json`, so by default they share memory. If you want separate memory banks for each tool, override the agent name via environment variables in each tool's startup environment:
 
-```json
-{
-  "hindsightApiUrl": "https://api.hindsight.vectorize.io",
-  "hindsightApiToken": "YOUR_API_KEY",
-  "agentName": "grok-build",
-  "retainContext": "grok-build"
-}
+```bash
+# In your Grok Build shell session
+export HINDSIGHT_AGENT_NAME=grok-build
+export HINDSIGHT_BANK_ID=grok_build
+grok
 ```
 
-Save this to `~/.hindsight/claude-code.json` (applies to both tools) or create a separate `~/.hindsight/grok-build.json` (Grok Build only).
-
-With `dynamicBankId` enabled, changing `agentName` to `"grok-build"` produces bank IDs like `grok-build::myproject` instead of `claude-code::myproject`, fully isolating memory between the two tools.
+With `dynamicBankId` enabled in your config, this produces bank IDs like `grok-build::myproject` instead of `claude-code::myproject`, fully isolating memory between the two tools.
 
 ## Per-Project Memory
 
-To give each project its own isolated memory bank:
+To give each project its own isolated memory bank, set this in `~/.hindsight/claude-code.json`:
 
 ```json
 {
@@ -116,9 +109,9 @@ With this config, running Grok Build in `~/projects/api` and `~/projects/fronten
 
 ## Troubleshooting
 
-**Plugin not listed**: Run `grok inspect` and check the Plugins section for `hindsight-memory`. If missing, re-run `grok plugin install hindsight-memory`.
+**Plugin not listed**: Run `grok plugin list` to see installed plugins. If `hindsight-memory` is missing, re-run the install command.
 
-**Hooks not firing**: Check the Hooks section in `grok inspect` output for `hindsight-memory`. Enable `"debug": true` in your config to see `[Hindsight]` messages in stderr.
+**Hooks not firing**: Run `grok inspect` and check the Hooks section for `hindsight-memory`. Enable `"debug": true` in your config to see `[Hindsight]` messages in stderr.
 
 **No memories recalled**: Memories need at least one retain cycle before they're available. Complete a full session first (say something, exit, start a new session).
 
