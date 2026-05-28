@@ -314,6 +314,76 @@ class TestDirectiveTags:
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_list_directives_by_tag_groups(self, memory: MemoryEngine, request_context):
+        """Regression for #1829: list_directives must respect tag_groups.
+
+        Mirrors the OR-with-untagged scoping that tagged directives already
+        get with flat `tags`: untagged directives always apply, tagged
+        directives only when their tags satisfy the tag_groups expression.
+        """
+        from hindsight_api.engine.search.tags import TagGroupLeaf, TagGroupOr
+
+        bank_id = f"test-directive-tag-groups-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        await memory.create_directive(
+            bank_id=bank_id,
+            name="Untagged Rule",
+            content="Applies everywhere",
+            request_context=request_context,
+        )
+        await memory.create_directive(
+            bank_id=bank_id,
+            name="Hardware Rule",
+            content="Hardware-scoped rule",
+            tags=["hardware"],
+            request_context=request_context,
+        )
+        await memory.create_directive(
+            bank_id=bank_id,
+            name="Compliance Rule",
+            content="Compliance-scoped rule",
+            tags=["compliance"],
+            request_context=request_context,
+        )
+
+        # tag_groups = [hardware OR infrastructure] should admit untagged and Hardware,
+        # exclude Compliance.
+        scoped = await memory.list_directives(
+            bank_id=bank_id,
+            tag_groups=[
+                TagGroupOr(
+                    filters=[
+                        TagGroupLeaf(tags=["hardware"]),
+                        TagGroupLeaf(tags=["infrastructure"]),
+                    ]
+                )
+            ],
+            request_context=request_context,
+        )
+        names = {d["name"] for d in scoped}
+        assert names == {"Untagged Rule", "Hardware Rule"}, names
+
+        # Isolation mode with tag_groups still applies (only untagged + tag-matching).
+        isolated = await memory.list_directives(
+            bank_id=bank_id,
+            tag_groups=[TagGroupLeaf(tags=["hardware"])],
+            request_context=request_context,
+            isolation_mode=True,
+        )
+        assert {d["name"] for d in isolated} == {"Untagged Rule", "Hardware Rule"}
+
+        # Without any tag filter and isolation_mode=True, only untagged should come back —
+        # confirming this code path isn't accidentally short-circuited when tag_groups is empty.
+        untagged_only = await memory.list_directives(
+            bank_id=bank_id,
+            request_context=request_context,
+            isolation_mode=True,
+        )
+        assert {d["name"] for d in untagged_only} == {"Untagged Rule"}
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     async def test_list_all_directives_without_filter(self, memory: MemoryEngine, request_context):
         """Test that listing directives without tags returns ALL directives (both tagged and untagged)."""
         bank_id = f"test-directive-list-all-{uuid.uuid4().hex[:8]}"
