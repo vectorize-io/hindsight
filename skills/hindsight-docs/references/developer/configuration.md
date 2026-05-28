@@ -1175,7 +1175,7 @@ Observations are deduplicated, evidence-grounded knowledge consolidated from mul
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_ENABLE_OBSERVATIONS` | Enable observation consolidation | `true` |
-| `HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION` | Automatically trigger consolidation after retain, delete, and update operations. When `false`, consolidation only runs when explicitly triggered via the consolidate endpoint. Configurable per bank. | `true` |
+| `HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION` | Automatically trigger consolidation after retain, delete, and update operations. When `false`, consolidation only runs when explicitly triggered via the [consolidate endpoint](api/operations.md#consolidation). Configurable per bank. | `true` |
 | `HINDSIGHT_API_ENABLE_OBSERVATION_HISTORY` | Track history of changes to each observation (previous content + timestamp). Disable to reduce storage if audit trails are not needed. | `true` |
 | `HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS` | Outer retry attempts for the consolidation LLM batch call. Each attempt uses the inner retry budget (`HINDSIGHT_API_CONSOLIDATION_LLM_MAX_RETRIES`). Worst-case API calls per batch = `MAX_ATTEMPTS × (LLM_MAX_RETRIES + 1)`. | `3` |
 | `HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE` | Memories to load per batch (internal optimization) | `50` |
