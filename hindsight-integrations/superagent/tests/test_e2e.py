@@ -46,6 +46,13 @@ requires_all = pytest.mark.skipif(
     reason="Requires Hindsight + SUPERAGENT_API_KEY + OPENAI_API_KEY",
 )
 
+# Every test in this file makes real provider calls (Superagent Guard/Redact
+# models, OpenAI) and/or drives a live Hindsight server, so the whole module is
+# the "real LLM" bucket — excluded from the deterministic PR-CI bucket via
+# `-m "not requires_real_llm"` and run on its own via `-m requires_real_llm`.
+# The skipif guards above still apply at runtime.
+pytestmark = pytest.mark.requires_real_llm
+
 
 # Module-level registry of every SafeHindsight instance created by
 # `_make_client()` in a test, so the autouse cleanup fixture below can
