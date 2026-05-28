@@ -1869,3 +1869,60 @@ class TestWrapBankSetupOwnsLoop:
         with patch("hindsight_client.Hindsight") as mock_hs:
             wrap_openai(Mock(), hindsight_api_url="http://localhost:8888", bank_id="b")
         mock_hs.assert_not_called()
+
+
+class TestDeterministicInjectionFlow:
+    """Full hindsight_litellm.completion() inject flow, fully mocked.
+
+    The in-CI / no-keys analog of the live enable()/completion tests in
+    test_e2e.py: it spies on litellm.completion and mocks the Hindsight client's
+    recall, so the inject path (recall -> format -> inject into LLM messages) is
+    exercised deterministically. Deterministic bucket (no requires_real_llm).
+    """
+
+    def setup_method(self):
+        cleanup()
+
+    def teardown_method(self):
+        cleanup()
+
+    def test_completion_injects_recalled_memory_into_llm_messages(self):
+        import litellm
+        from unittest.mock import MagicMock, patch
+
+        import hindsight_litellm
+
+        configure(hindsight_api_url="http://localhost:8888", store_conversations=False)
+        set_defaults(bank_id="t")
+
+        # Mocked Hindsight client: recall() returns one canned memory.
+        mem = MagicMock()
+        mem.text = "The user's favorite language is Haskell"
+        mem.type = "world"
+        mock_client = MagicMock()
+        mock_client.recall.return_value = [mem]
+
+        captured = {}
+
+        def spy_completion(*args, **kwargs):
+            captured["messages"] = kwargs.get("messages")
+            resp = MagicMock()
+            choice = MagicMock()
+            choice.message.content = "ok"
+            resp.choices = [choice]
+            return resp
+
+        with (
+            patch("hindsight_litellm._get_client", return_value=mock_client),
+            patch.object(litellm, "completion", spy_completion),
+        ):
+            response = hindsight_litellm.completion(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": "What language do I prefer?"}],
+            )
+
+        assert response.choices[0].message.content == "ok"
+        mock_client.recall.assert_called_once()
+        assert captured["messages"], "litellm.completion received no messages"
+        joined = " ".join(str(m.get("content", "")) for m in captured["messages"]).lower()
+        assert "haskell" in joined, f"recalled memory not injected into LLM messages: {joined}"
