@@ -9,9 +9,12 @@ than typical embeddings-provider outages, so operators saw retain operations
 permanently failed when the provider returned transient errors for longer than
 ~4 minutes.
 
-These tests verify that both knobs are read from env on each retry decision and
-applied to the resulting `RetryTaskAt`. Reading on each call (rather than
-caching) lets operators tune the policy at runtime without restarting workers.
+These tests verify that both knobs are read from config (`worker_max_retries`
+and `worker_task_retry_backoff_seconds`) and applied to the resulting
+`RetryTaskAt`. Because config is cached for the process lifetime, each test
+patches the env var, then clears the config cache so the next `get_config()`
+re-reads it; the autouse fixture clears the cache around every test so a
+patched value can't leak into other tests.
 """
 
 import json
@@ -22,7 +25,17 @@ from unittest.mock import patch
 
 import pytest
 
+from hindsight_api.config import clear_config_cache
 from hindsight_api.worker.exceptions import RetryTaskAt
+
+
+@pytest.fixture(autouse=True)
+def _reset_config_cache():
+    """Clear the cached config before and after each test so env-var patches
+    in one test can't bleed into another via the process-wide cache."""
+    clear_config_cache()
+    yield
+    clear_config_cache()
 
 
 async def _ensure_bank(pool, bank_id: str) -> None:
@@ -78,6 +91,7 @@ async def test_retry_count_cap_honors_env_var(memory):
 
     transient = RuntimeError("transient embeddings outage")
     with patch.dict(os.environ, {"HINDSIGHT_API_WORKER_MAX_RETRIES": "5"}):
+        clear_config_cache()  # force get_config() to re-read the patched env
         with patch.object(memory, "_handle_batch_retain", side_effect=transient):
             with pytest.raises(RetryTaskAt):
                 await memory.execute_task(task_dict)
@@ -105,6 +119,7 @@ async def test_retry_stops_at_env_var_cap(memory):
 
     transient = RuntimeError("transient embeddings outage")
     with patch.dict(os.environ, {"HINDSIGHT_API_WORKER_MAX_RETRIES": "2"}):
+        clear_config_cache()  # force get_config() to re-read the patched env
         with patch.object(memory, "_handle_batch_retain", side_effect=transient):
             # Cap reached: re-raised as RuntimeError so the poller's _mark_failed path runs.
             # Must NOT be wrapped in RetryTaskAt.
@@ -138,6 +153,7 @@ async def test_retry_backoff_honors_env_var(memory):
         "HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS": custom_backoff,
     }
     with patch.dict(os.environ, env):
+        clear_config_cache()  # force get_config() to re-read the patched env
         with patch.object(memory, "_handle_batch_retain", side_effect=transient):
             before = datetime.now(UTC)
             with pytest.raises(RetryTaskAt) as exc_info:
@@ -183,6 +199,7 @@ async def test_defaults_preserve_existing_behavior(memory):
         k: os.environ.pop(k, None)
         for k in ("HINDSIGHT_API_WORKER_MAX_RETRIES", "HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS")
     }
+    clear_config_cache()  # force get_config() to re-read without the popped env vars
     try:
         with patch.object(memory, "_handle_batch_retain", side_effect=transient):
             before = datetime.now(UTC)

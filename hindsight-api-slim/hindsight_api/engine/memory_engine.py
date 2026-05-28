@@ -13,7 +13,6 @@ import asyncio
 import contextvars
 import json
 import logging
-import os
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -30,10 +29,6 @@ from ..config import (
     DEFAULT_RECALL_INCLUDE_CHUNKS,
     DEFAULT_RECALL_MAX_TOKENS,
     DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS,
-    DEFAULT_WORKER_MAX_RETRIES,
-    DEFAULT_WORKER_TASK_RETRY_BACKOFF_SECONDS,
-    ENV_WORKER_MAX_RETRIES,
-    ENV_WORKER_TASK_RETRY_BACKOFF_SECONDS,
     get_config,
 )
 from ..db_url import to_libpq_url
@@ -1427,20 +1422,14 @@ class MemoryEngine(MemoryEngineInterface):
                             schema=schema,
                         )
                     # Retryable: use RetryTaskAt if under the retry limit, else re-raise (poller marks failed).
-                    # Retry count and backoff are read from env on each call (not cached) so operators can
-                    # tune them at runtime without restarting workers — useful when a known provider outage
-                    # exceeds the default 3 x 60s = 4-minute total window.
+                    # Retry count and backoff come from config (HINDSIGHT_API_WORKER_MAX_RETRIES and
+                    # HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS). Defaults of 3 x 60s give a
+                    # 4-minute total window; operators expecting a longer provider outage can raise them.
+                    config = get_config()
                     retry_count = task_dict.get("_retry_count", 0)
-                    max_retries = int(os.getenv(ENV_WORKER_MAX_RETRIES, str(DEFAULT_WORKER_MAX_RETRIES)))
-                    backoff_seconds = int(
-                        os.getenv(
-                            ENV_WORKER_TASK_RETRY_BACKOFF_SECONDS,
-                            str(DEFAULT_WORKER_TASK_RETRY_BACKOFF_SECONDS),
-                        )
-                    )
-                    if retry_count < max_retries:
+                    if retry_count < config.worker_max_retries:
                         raise RetryTaskAt(
-                            retry_at=datetime.now(UTC) + timedelta(seconds=backoff_seconds),
+                            retry_at=datetime.now(UTC) + timedelta(seconds=config.worker_task_retry_backoff_seconds),
                             message=str(e),
                         )
                     raise
