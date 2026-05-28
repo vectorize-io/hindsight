@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
 import { client, AuditLogEntry, AuditStatsBucket } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -24,38 +25,46 @@ import {
 import { RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
 import { LineChart, Line, XAxis, Tooltip, ResponsiveContainer } from "recharts";
 
-const ACTION_OPTIONS = [
-  { value: "all", label: "All actions" },
-  { value: "retain", label: "Retain" },
-  { value: "recall", label: "Recall" },
-  { value: "reflect", label: "Reflect" },
-  { value: "create_bank", label: "Create Bank" },
-  { value: "update_bank", label: "Update Bank" },
-  { value: "delete_bank", label: "Delete Bank" },
-  { value: "clear_memories", label: "Clear Memories" },
-  { value: "consolidation", label: "Consolidation" },
-  { value: "batch_retain", label: "Batch Retain" },
-  { value: "create_mental_model", label: "Create Mental Model" },
-  { value: "refresh_mental_model", label: "Refresh Mental Model" },
-  { value: "delete_mental_model", label: "Delete Mental Model" },
-  { value: "create_directive", label: "Create Directive" },
-  { value: "delete_directive", label: "Delete Directive" },
-  { value: "file_convert_retain", label: "File Convert & Retain" },
-  { value: "webhook_delivery", label: "Webhook Delivery" },
-];
+type TranslateFn = (key: string) => string;
 
-const TRANSPORT_OPTIONS = [
-  { value: "all", label: "All transports" },
-  { value: "http", label: "HTTP" },
-  { value: "mcp", label: "MCP" },
-  { value: "system", label: "System" },
-];
+function getActionOptions(t: TranslateFn) {
+  return [
+    { value: "all", label: t("actionAll") },
+    { value: "retain", label: t("actionRetain") },
+    { value: "recall", label: t("actionRecall") },
+    { value: "reflect", label: t("actionReflect") },
+    { value: "create_bank", label: t("actionCreateBank") },
+    { value: "update_bank", label: t("actionUpdateBank") },
+    { value: "delete_bank", label: t("actionDeleteBank") },
+    { value: "clear_memories", label: t("actionClearMemories") },
+    { value: "consolidation", label: t("actionConsolidation") },
+    { value: "batch_retain", label: t("actionBatchRetain") },
+    { value: "create_mental_model", label: t("actionCreateMentalModel") },
+    { value: "refresh_mental_model", label: t("actionRefreshMentalModel") },
+    { value: "delete_mental_model", label: t("actionDeleteMentalModel") },
+    { value: "create_directive", label: t("actionCreateDirective") },
+    { value: "delete_directive", label: t("actionDeleteDirective") },
+    { value: "file_convert_retain", label: t("actionFileConvertRetain") },
+    { value: "webhook_delivery", label: t("actionWebhookDelivery") },
+  ];
+}
 
-const PERIOD_OPTIONS = [
-  { value: "1d", label: "Today" },
-  { value: "7d", label: "Last 7 days" },
-  { value: "30d", label: "Last 30 days" },
-];
+function getTransportOptions(t: TranslateFn) {
+  return [
+    { value: "all", label: t("transportAll") },
+    { value: "http", label: t("transportHttp") },
+    { value: "mcp", label: t("transportMcp") },
+    { value: "system", label: t("transportSystem") },
+  ];
+}
+
+function getPeriodOptions(t: TranslateFn) {
+  return [
+    { value: "1d", label: t("periodToday") },
+    { value: "7d", label: t("periodLast7Days") },
+    { value: "30d", label: t("periodLast30Days") },
+  ];
+}
 
 function formatDuration(startedAt: string | null, endedAt: string | null): string {
   if (!startedAt || !endedAt) return "—";
@@ -106,6 +115,9 @@ function TransportBadge({ transport }: { transport: string }) {
 // ---- Chart Section ----
 
 function AuditChart({ bankId }: { bankId: string }) {
+  const t = useTranslations("auditLogsView");
+  const actionOptions = getActionOptions(t);
+  const periodOptions = getPeriodOptions(t);
   const [period, setPeriod] = useState("7d");
   const [chartAction, setChartAction] = useState<string | null>(null);
   const [buckets, setBuckets] = useState<AuditStatsBucket[]>([]);
@@ -143,7 +155,7 @@ function AuditChart({ bankId }: { bankId: string }) {
   return (
     <Card>
       <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0 gap-3">
-        <CardTitle className="text-sm font-semibold">Request Volume</CardTitle>
+        <CardTitle className="text-sm font-semibold">{t("requestVolume")}</CardTitle>
         <div className="flex gap-2">
           <Select
             value={chartAction || "all"}
@@ -157,14 +169,14 @@ function AuditChart({ bankId }: { bankId: string }) {
               <SelectValue />
             </SelectTrigger>
             <SelectContent position="popper" className="max-h-[300px] overflow-y-auto">
-              {ACTION_OPTIONS.map((opt) => (
+              {actionOptions.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>
                   {opt.label}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-          {PERIOD_OPTIONS.map((opt) => (
+          {periodOptions.map((opt) => (
             <Button
               key={opt.value}
               variant={period === opt.value ? "default" : "outline"}
@@ -184,11 +196,11 @@ function AuditChart({ bankId }: { bankId: string }) {
         <div className="h-[120px]">
           {loading ? (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-              Loading...
+              {t("chartLoading")}
             </div>
           ) : chartData.length === 0 ? (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-              No data for this period
+              {t("chartNoData")}
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
@@ -229,6 +241,9 @@ function AuditChart({ bankId }: { bankId: string }) {
 // ---- Main Component ----
 
 export function AuditLogsView() {
+  const t = useTranslations("auditLogsView");
+  const actionOptions = getActionOptions(t);
+  const transportOptions = getTransportOptions(t);
   const { currentBank } = useBank();
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [total, setTotal] = useState(0);
@@ -333,10 +348,10 @@ export function AuditLogsView() {
       <div className="flex items-center gap-3 flex-wrap">
         <Select value={actionFilter || "all"} onValueChange={handleActionFilterChange}>
           <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="All actions" />
+            <SelectValue placeholder={t("actionAll")} />
           </SelectTrigger>
           <SelectContent position="popper" className="max-h-[300px] overflow-y-auto">
-            {ACTION_OPTIONS.map((opt) => (
+            {actionOptions.map((opt) => (
               <SelectItem key={opt.value} value={opt.value}>
                 {opt.label}
               </SelectItem>
@@ -346,10 +361,10 @@ export function AuditLogsView() {
 
         <Select value={transportFilter || "all"} onValueChange={handleTransportFilterChange}>
           <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="All transports" />
+            <SelectValue placeholder={t("transportAll")} />
           </SelectTrigger>
           <SelectContent position="popper" className="max-h-[300px] overflow-y-auto">
-            {TRANSPORT_OPTIONS.map((opt) => (
+            {transportOptions.map((opt) => (
               <SelectItem key={opt.value} value={opt.value}>
                 {opt.label}
               </SelectItem>
@@ -362,11 +377,11 @@ export function AuditLogsView() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent position="popper">
-            <SelectItem value="all">All time</SelectItem>
-            <SelectItem value="1h">Last hour</SelectItem>
-            <SelectItem value="1d">Last 24 hours</SelectItem>
-            <SelectItem value="7d">Last 7 days</SelectItem>
-            <SelectItem value="30d">Last 30 days</SelectItem>
+            <SelectItem value="all">{t("dateRangeAll")}</SelectItem>
+            <SelectItem value="1h">{t("dateRangeLastHour")}</SelectItem>
+            <SelectItem value="1d">{t("dateRangeLast24Hours")}</SelectItem>
+            <SelectItem value="7d">{t("dateRangeLast7Days")}</SelectItem>
+            <SelectItem value="30d">{t("dateRangeLast30Days")}</SelectItem>
           </SelectContent>
         </Select>
 
@@ -377,11 +392,11 @@ export function AuditLogsView() {
           disabled={loading}
         >
           <RefreshCw className={`w-4 h-4 mr-1 ${loading ? "animate-spin" : ""}`} />
-          Refresh
+          {t("refresh")}
         </Button>
 
         <span className="text-sm text-muted-foreground ml-auto">
-          {total} {total === 1 ? "entry" : "entries"}
+          {t("entryCount", { count: total })}
         </span>
       </div>
 
@@ -389,17 +404,17 @@ export function AuditLogsView() {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[200px]">Time</TableHead>
-            <TableHead>Action</TableHead>
-            <TableHead className="w-[100px]">Transport</TableHead>
-            <TableHead className="w-[100px]">Duration</TableHead>
+            <TableHead className="w-[200px]">{t("tableHeaderTime")}</TableHead>
+            <TableHead>{t("tableHeaderAction")}</TableHead>
+            <TableHead className="w-[100px]">{t("tableHeaderTransport")}</TableHead>
+            <TableHead className="w-[100px]">{t("tableHeaderDuration")}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {logs.length === 0 ? (
             <TableRow>
               <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                {loading ? "Loading..." : "No audit logs found"}
+                {loading ? t("tableLoading") : t("tableNoLogs")}
               </TableCell>
             </TableRow>
           ) : (
@@ -429,7 +444,7 @@ export function AuditLogsView() {
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">
-            Page {currentPage} of {totalPages}
+            {t("paginationPage", { current: currentPage, total: totalPages })}
           </span>
           <div className="flex gap-2">
             <Button
@@ -439,7 +454,7 @@ export function AuditLogsView() {
               disabled={offset === 0}
             >
               <ChevronLeft className="w-4 h-4 mr-1" />
-              Previous
+              {t("previous")}
             </Button>
             <Button
               variant="outline"
@@ -447,7 +462,7 @@ export function AuditLogsView() {
               onClick={() => handlePageChange(offset + limit)}
               disabled={offset + limit >= total}
             >
-              Next
+              {t("next")}
               <ChevronRight className="w-4 h-4 ml-1" />
             </Button>
           </div>
@@ -458,25 +473,27 @@ export function AuditLogsView() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Audit Log: {selectedLog?.action}</DialogTitle>
+            <DialogTitle>
+              {t("detailDialogTitle", { action: selectedLog?.action ?? "" })}
+            </DialogTitle>
           </DialogHeader>
           {selectedLog && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <span className="text-muted-foreground">Action:</span>{" "}
+                  <span className="text-muted-foreground">{t("detailAction")}</span>{" "}
                   <span className="font-medium">{selectedLog.action}</span>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">Transport:</span>{" "}
+                  <span className="text-muted-foreground">{t("detailTransport")}</span>{" "}
                   <TransportBadge transport={selectedLog.transport} />
                 </div>
                 <div>
-                  <span className="text-muted-foreground">Started:</span>{" "}
+                  <span className="text-muted-foreground">{t("detailStarted")}</span>{" "}
                   <span className="font-mono">{formatDateTime(selectedLog.started_at)}</span>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">Duration:</span>{" "}
+                  <span className="text-muted-foreground">{t("detailDuration")}</span>{" "}
                   <span className="font-mono">
                     {formatDuration(selectedLog.started_at, selectedLog.ended_at)}
                   </span>
@@ -485,7 +502,7 @@ export function AuditLogsView() {
 
               {selectedLog.request && (
                 <div>
-                  <h4 className="text-sm font-semibold mb-2">Request</h4>
+                  <h4 className="text-sm font-semibold mb-2">{t("detailRequest")}</h4>
                   <pre className="bg-muted p-3 rounded-md text-xs overflow-x-auto max-h-[200px] overflow-y-auto">
                     {JSON.stringify(selectedLog.request, null, 2)}
                   </pre>
@@ -494,7 +511,7 @@ export function AuditLogsView() {
 
               {selectedLog.response && (
                 <div>
-                  <h4 className="text-sm font-semibold mb-2">Response</h4>
+                  <h4 className="text-sm font-semibold mb-2">{t("detailResponse")}</h4>
                   <pre className="bg-muted p-3 rounded-md text-xs overflow-x-auto max-h-[200px] overflow-y-auto">
                     {JSON.stringify(selectedLog.response, null, 2)}
                   </pre>
@@ -503,7 +520,7 @@ export function AuditLogsView() {
 
               {selectedLog.metadata && Object.keys(selectedLog.metadata).length > 0 && (
                 <div>
-                  <h4 className="text-sm font-semibold mb-2">Metadata</h4>
+                  <h4 className="text-sm font-semibold mb-2">{t("detailMetadata")}</h4>
                   <pre className="bg-muted p-3 rounded-md text-xs overflow-x-auto">
                     {JSON.stringify(selectedLog.metadata, null, 2)}
                   </pre>

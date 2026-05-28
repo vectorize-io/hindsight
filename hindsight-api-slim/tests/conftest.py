@@ -413,21 +413,48 @@ def query_analyzer():
 @pytest_asyncio.fixture(scope="function")
 async def memory(pg0_db_url, embeddings, cross_encoder, query_analyzer):
     """
-    Provide a MemoryEngine instance for each test.
+    Provide a MemoryEngine instance using a mock LLM for deterministic tests.
 
-    Must be function-scoped because:
-    1. pytest-xdist runs tests in separate processes with different event loops
-    2. asyncpg pools are bound to the event loop that created them
-    3. Each test needs its own pool in its own event loop
+    The mock LLM returns canned facts derived from input text, allowing the
+    full retain → recall → reflect pipeline to work without real LLM calls.
+    This makes core tests fast, deterministic, and free from LLM flakiness.
 
-    Uses small pool sizes since tests run in parallel.
-    Uses pg0_db_url (a postgresql:// URL) directly, so MemoryEngine won't try to
-    manage pg0 lifecycle - that's handled by the session-scoped pg0_db_url fixture.
-    Migrations are disabled here since they're run once at session scope in pg0_db_url.
-    Uses SyncTaskBackend so async tasks execute immediately (no worker needed).
+    Tests that need real LLM output quality should use `memory_real_llm` instead.
     """
     mem = MemoryEngine(
-        db_url=pg0_db_url,  # Direct postgresql:// URL, not pg0://
+        db_url=pg0_db_url,
+        memory_llm_provider="mock",
+        memory_llm_api_key="",
+        memory_llm_model="mock",
+        embeddings=embeddings,
+        cross_encoder=cross_encoder,
+        query_analyzer=query_analyzer,
+        pool_min_size=1,
+        pool_max_size=5,
+        run_migrations=False,
+        task_backend=SyncTaskBackend(),
+    )
+    await mem.initialize()
+    yield mem
+    try:
+        if mem._pool and not mem._pool._closing:
+            await mem.close()
+    except Exception:
+        pass
+
+
+@pytest_asyncio.fixture(scope="function")
+async def memory_real_llm(pg0_db_url, embeddings, cross_encoder, query_analyzer):
+    """
+    Provide a MemoryEngine instance using a real LLM provider.
+
+    Use this fixture ONLY for tests that assert on LLM output quality
+    (fact extraction accuracy, language preservation, consolidation decisions, etc.).
+    These tests are non-deterministic and should be marked with @pytest.mark.hs_llm_core
+    (or @pytest.mark.hs_llm_mat for provider matrix acceptance tests).
+    """
+    mem = MemoryEngine(
+        db_url=pg0_db_url,
         memory_llm_provider=os.getenv("HINDSIGHT_API_LLM_PROVIDER", "groq"),
         memory_llm_api_key=os.getenv("HINDSIGHT_API_LLM_API_KEY"),
         memory_llm_model=os.getenv("HINDSIGHT_API_LLM_MODEL", "openai/gpt-oss-120b"),
@@ -437,8 +464,8 @@ async def memory(pg0_db_url, embeddings, cross_encoder, query_analyzer):
         query_analyzer=query_analyzer,
         pool_min_size=1,
         pool_max_size=5,
-        run_migrations=False,  # Migrations already run at session scope
-        task_backend=SyncTaskBackend(),  # Execute tasks immediately in tests
+        run_migrations=False,
+        task_backend=SyncTaskBackend(),
     )
     await mem.initialize()
     yield mem

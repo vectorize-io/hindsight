@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useState, useMemo } from "react";
+import { useTranslations } from "next-intl";
 import cytoscape from "cytoscape";
 
 import fcose from "cytoscape-fcose";
@@ -99,6 +100,7 @@ export function Graph2D({
   linkWidthFn,
   maxNodes,
 }: Graph2DProps) {
+  const t = useTranslations("graph2d");
   const [containerDiv, setContainerDiv] = useState<HTMLDivElement | null>(null);
   const cyRef = useRef<any>(null);
   const isInitializingRef = useRef(false);
@@ -594,7 +596,7 @@ export function Graph2D({
         <div className="absolute inset-0 flex items-center justify-center bg-background z-10">
           <div className="text-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4" />
-            <p className="text-sm text-muted-foreground">Loading graph...</p>
+            <p className="text-sm text-muted-foreground">{t("loading")}</p>
           </div>
         </div>
       )}
@@ -618,7 +620,7 @@ export function Graph2D({
       {!isLoading && graphData.nodes.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-center">
-            <p className="text-muted-foreground">No memories to display</p>
+            <p className="text-muted-foreground">{t("emptyState")}</p>
           </div>
         </div>
       )}
@@ -644,19 +646,20 @@ export function Graph2D({
               {(() => {
                 const type = hoveredLink.type || "semantic";
                 if (["causes", "caused_by", "enables", "prevents"].includes(type)) {
-                  return `Causal (${type.replace("_", " ")})`;
+                  return t("linkTypeCausal", { type: type.replace("_", " ") });
                 }
-                return `${type} link`;
+                return t("linkTypeGeneric", { type });
               })()}
             </div>
             {hoveredLink.entity && (
               <div className="text-xs opacity-80">
-                Entity: <span className="font-medium">{hoveredLink.entity}</span>
+                {t("linkTooltipEntity")} <span className="font-medium">{hoveredLink.entity}</span>
               </div>
             )}
             {hoveredLink.weight !== undefined && (
               <div className="text-xs opacity-80">
-                Weight: <span className="font-medium">{hoveredLink.weight.toFixed(3)}</span>
+                {t("linkTooltipWeight")}{" "}
+                <span className="font-medium">{hoveredLink.weight.toFixed(3)}</span>
               </div>
             )}
           </div>
@@ -665,7 +668,7 @@ export function Graph2D({
 
       {/* Controls hint */}
       <div className="absolute bottom-4 right-4 text-xs text-muted-foreground/60 z-20">
-        Drag to pan • Scroll to zoom • Double-click node to focus • Click background to reset
+        {t("controlsHint")}
       </div>
     </div>
   );

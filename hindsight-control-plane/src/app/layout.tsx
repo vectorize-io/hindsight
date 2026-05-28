@@ -1,9 +1,5 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { BankProvider } from "@/lib/bank-context";
-import { FeaturesProvider } from "@/lib/features-context";
-import { ThemeProvider } from "@/lib/theme-context";
-import { Toaster } from "@/components/ui/sonner";
 
 export const metadata: Metadata = {
   title: "Hindsight Control Plane",
@@ -18,16 +14,7 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  return (
-    <html lang="en" suppressHydrationWarning>
-      <body className="bg-background text-foreground">
-        <ThemeProvider>
-          <FeaturesProvider>
-            <BankProvider>{children}</BankProvider>
-          </FeaturesProvider>
-        </ThemeProvider>
-        <Toaster />
-      </body>
-    </html>
-  );
+  // The root layout is a minimal shell. Locale-aware content,
+  // providers, and <html lang> are handled in [locale]/layout.tsx.
+  return children;
 }

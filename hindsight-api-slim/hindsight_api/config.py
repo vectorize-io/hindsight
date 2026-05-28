@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from dotenv import find_dotenv, load_dotenv
 
+from ._pg_search import normalize_pg_search_tokenizer
 from ._vector_index import validate_extension
 from .utils import mask_network_location
 
@@ -228,6 +229,15 @@ ENV_EMBEDDINGS_OPENROUTER_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENROUTER_MODEL"
 ENV_RERANKER_OPENROUTER_API_KEY = "HINDSIGHT_API_RERANKER_OPENROUTER_API_KEY"
 ENV_RERANKER_OPENROUTER_MODEL = "HINDSIGHT_API_RERANKER_OPENROUTER_MODEL"
 
+# ZeroEntropy configuration (embeddings)
+ENV_EMBEDDINGS_ZEROENTROPY_API_KEY = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY"
+ENV_EMBEDDINGS_ZEROENTROPY_MODEL = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_MODEL"
+ENV_EMBEDDINGS_ZEROENTROPY_BASE_URL = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_BASE_URL"
+ENV_EMBEDDINGS_ZEROENTROPY_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_DIMENSIONS"
+ENV_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT"
+ENV_EMBEDDINGS_ZEROENTROPY_LATENCY = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_LATENCY"
+ENV_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE"
+
 # Deprecated: Legacy shared Cohere API key (for backward compatibility)
 ENV_COHERE_API_KEY = "HINDSIGHT_API_COHERE_API_KEY"
 
@@ -293,6 +303,7 @@ ENV_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY = "HINDSIGHT_API_RERANKER_GOOGLE_SERVICE
 ENV_VECTOR_EXTENSION = "HINDSIGHT_API_VECTOR_EXTENSION"
 ENV_TEXT_SEARCH_EXTENSION = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION"
 ENV_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE"
+ENV_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER"
 ENV_LLM_OUTPUT_LANGUAGE = "HINDSIGHT_API_LLM_OUTPUT_LANGUAGE"
 
 ENV_HOST = "HINDSIGHT_API_HOST"
@@ -302,6 +313,7 @@ ENV_LOG_LEVEL = "HINDSIGHT_API_LOG_LEVEL"
 ENV_LOG_FORMAT = "HINDSIGHT_API_LOG_FORMAT"
 ENV_LOG_JSON_FIELDS = "HINDSIGHT_API_LOG_JSON_FIELDS"
 ENV_WORKERS = "HINDSIGHT_API_WORKERS"
+ENV_ACCESS_LOG = "HINDSIGHT_API_ACCESS_LOG"
 ENV_MCP_ENABLED = "HINDSIGHT_API_MCP_ENABLED"
 ENV_MCP_ENABLED_TOOLS = "HINDSIGHT_API_MCP_ENABLED_TOOLS"
 ENV_MCP_STATELESS = "HINDSIGHT_API_MCP_STATELESS"
@@ -432,6 +444,7 @@ WORKER_SLOT_RESERVATION_TYPES: dict[str, tuple[str, int]] = {
     "retain": ("HINDSIGHT_API_WORKER_RETAIN_MAX_SLOTS", 0),
     "file_convert_retain": ("HINDSIGHT_API_WORKER_FILE_CONVERT_RETAIN_MAX_SLOTS", 0),
     "refresh_mental_model": ("HINDSIGHT_API_WORKER_REFRESH_MENTAL_MODEL_MAX_SLOTS", 0),
+    "graph_maintenance": ("HINDSIGHT_API_WORKER_GRAPH_MAINTENANCE_MAX_SLOTS", 0),
 }
 ENV_RETAIN_MAX_CONCURRENT = "HINDSIGHT_API_RETAIN_MAX_CONCURRENT"
 
@@ -554,6 +567,17 @@ DEFAULT_RERANKER_COHERE_MODEL = "rerank-english-v3.0"
 DEFAULT_EMBEDDINGS_OPENROUTER_MODEL = "perplexity/pplx-embed-v1-0.6b"
 DEFAULT_RERANKER_OPENROUTER_MODEL = "cohere/rerank-v3.5"
 
+# ZeroEntropy defaults
+DEFAULT_EMBEDDINGS_ZEROENTROPY_MODEL = "zembed-1"
+# Shared between embeddings (zembed-1) and reranker (zerank-*) — the host is the same.
+DEFAULT_ZEROENTROPY_BASE_URL = "https://api.zeroentropy.dev"
+# ZeroEntropy's API default is 2560, but Hindsight defaults to 1280 so the
+# provider works with pgvector HNSW's 2000-dimension index limit out of the box.
+DEFAULT_EMBEDDINGS_ZEROENTROPY_DIMENSIONS = 1280
+DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT = "float"
+DEFAULT_EMBEDDINGS_ZEROENTROPY_LATENCY = None
+DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE = 100
+
 DEFAULT_RERANKER_ZEROENTROPY_MODEL = "zerank-2"
 
 DEFAULT_RERANKER_SILICONFLOW_MODEL = "BAAI/bge-reranker-v2-m3"
@@ -566,14 +590,16 @@ DEFAULT_RERANKER_GOOGLE_MODEL = "semantic-ranker-default-004"
 # Vector extension (pgvector, vchord, pgvectorscale, or AlloyDB ScaNN)
 DEFAULT_VECTOR_EXTENSION = "pgvector"  # Options: "pgvector", "vchord", "pgvectorscale", "scann"
 
-# Text search extension (native PostgreSQL, vchord BM25, Timescale pg_textsearch, or pgroonga)
-DEFAULT_TEXT_SEARCH_EXTENSION = "native"  # Options: "native", "vchord", "pg_textsearch", "pgroonga"
+# Text search extension (native PostgreSQL, vchord BM25, Timescale pg_textsearch,
+# pgroonga, or ParadeDB pg_search)
+DEFAULT_TEXT_SEARCH_EXTENSION = "native"  # Options: "native", "vchord", "pg_textsearch", "pgroonga", "pg_search"
 
 # PostgreSQL text search dictionary used by the native tsvector backend. Only
 # affects text_search_extension == "native"; other backends use their own
 # tokenizers (vchord: llmlingua2, pg_textsearch: hardcoded english,
-# pgroonga: TokenBigram polyglot).
+# pgroonga: TokenBigram polyglot, pg_search: per-field Tantivy tokenizer).
 DEFAULT_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE = "english"
+DEFAULT_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER = ""
 
 # LiteLLM defaults
 DEFAULT_LITELLM_API_BASE = "http://localhost:4000"
@@ -592,6 +618,7 @@ DEFAULT_BASE_PATH = ""  # Empty string = root path
 DEFAULT_LOG_LEVEL = "info"
 DEFAULT_LOG_FORMAT = "text"  # Options: "text", "json"
 DEFAULT_WORKERS = 1
+DEFAULT_ACCESS_LOG = False
 DEFAULT_MCP_ENABLED = True
 DEFAULT_MCP_ENABLED_TOOLS: list[str] | None = None  # None = all tools enabled
 DEFAULT_MCP_STATELESS = False  # False = stateful (supports SSE/GET); True = stateless (POST-only)
@@ -825,6 +852,17 @@ def _parse_optional_positive_int(name: str, raw: str | None) -> int | None:
     return _parse_positive_int(name, raw, 1)
 
 
+def _parse_optional_choice(name: str, raw: str | None, allowed: frozenset[str]) -> str | None:
+    """Parse an optional string env var constrained to a small allowlist."""
+    if raw is None or raw == "":
+        return None
+    normalized = raw.lower()
+    if normalized not in allowed:
+        values = ", ".join(sorted(allowed))
+        raise ValueError(f"{name} must be one of {values}, got {raw!r}")
+    return normalized
+
+
 def _validate_extraction_mode(mode: str) -> str:
     """Validate and normalize extraction mode."""
     mode_lower = mode.lower()
@@ -907,11 +945,15 @@ class HindsightConfig:
     migration_database_url: str | None
     database_schema: str
     vector_extension: str  # "pgvector", "vchord", "pgvectorscale", or "scann"
-    text_search_extension: str  # "native", "vchord", "pg_textsearch", or "pgroonga"
+    text_search_extension: str  # "native", "vchord", "pg_textsearch", "pgroonga", or "pg_search"
     # PostgreSQL text search dictionary for the "native" backend (ignored by
     # other backends). Only the "native" backend reads this field; pgroonga
-    # uses TokenBigram, vchord uses llmlingua2, pg_textsearch hardcodes english.
+    # uses TokenBigram, vchord uses llmlingua2, pg_textsearch hardcodes english,
+    # pg_search uses Tantivy per-field tokenizers.
     text_search_extension_native_language: str
+    # ParadeDB pg_search tokenizer used when building BM25 indexes. Empty keeps
+    # ParadeDB's default tokenizer.
+    text_search_extension_pg_search_tokenizer: str
     # When set, every LLM-generated artifact (retain facts, consolidation
     # observations, reflect responses) is forced into this language regardless
     # of the source content. Unset preserves source language.
@@ -1225,6 +1267,13 @@ class HindsightConfig:
     # Keep at the end of the dataclass; Python forbids non-default fields after default fields.
     embeddings_openai_batch_size: int = DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE
     embeddings_openai_dimensions: int | None = None
+    embeddings_zeroentropy_api_key: str | None = None
+    embeddings_zeroentropy_model: str = DEFAULT_EMBEDDINGS_ZEROENTROPY_MODEL
+    embeddings_zeroentropy_base_url: str = DEFAULT_ZEROENTROPY_BASE_URL
+    embeddings_zeroentropy_dimensions: int = DEFAULT_EMBEDDINGS_ZEROENTROPY_DIMENSIONS
+    embeddings_zeroentropy_encoding_format: str = DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT
+    embeddings_zeroentropy_batch_size: int = DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE
+    embeddings_zeroentropy_latency: str | None = DEFAULT_EMBEDDINGS_ZEROENTROPY_LATENCY
 
     # Class-level sets for configuration categorization
 
@@ -1248,6 +1297,7 @@ class HindsightConfig:
         "embeddings_tei_base_url",
         "reranker_tei_base_url",
         "reranker_cohere_base_url",
+        "embeddings_zeroentropy_base_url",
         "reranker_zeroentropy_base_url",
         "reranker_siliconflow_base_url",
         # Service Account Keys
@@ -1256,6 +1306,7 @@ class HindsightConfig:
         "reranker_google_service_account_key",
         # Embeddings API keys
         "embeddings_gemini_api_key",
+        "embeddings_zeroentropy_api_key",
         # File storage credentials
         "file_storage_s3_access_key_id",
         "file_storage_s3_secret_access_key",
@@ -1381,7 +1432,7 @@ class HindsightConfig:
         validate_extension(self.vector_extension)
 
         # Validate text_search_extension
-        valid_text_search = ("native", "vchord", "pg_textsearch", "pgroonga")
+        valid_text_search = ("native", "vchord", "pg_textsearch", "pgroonga", "pg_search")
         if self.text_search_extension not in valid_text_search:
             raise ValueError(
                 f"Invalid text_search_extension: {self.text_search_extension}. Must be one of: {', '.join(valid_text_search)}"
@@ -1400,6 +1451,10 @@ class HindsightConfig:
                 f"(letters, digits, underscores; not starting with a digit). Examples: 'english', "
                 f"'french', 'simple', 'zhparser'."
             )
+
+        self.text_search_extension_pg_search_tokenizer = normalize_pg_search_tokenizer(
+            self.text_search_extension_pg_search_tokenizer
+        )
 
         # When LLM provider is "none", force chunks-only mode and disable LLM-dependent features
         if self.llm_provider == "none":
@@ -1481,6 +1536,10 @@ class HindsightConfig:
                 ENV_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE,
                 DEFAULT_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE,
             ).lower(),
+            text_search_extension_pg_search_tokenizer=os.getenv(
+                ENV_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER,
+                DEFAULT_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER,
+            ),
             llm_output_language=(os.getenv(ENV_LLM_OUTPUT_LANGUAGE) or None),
             # LLM
             llm_provider=llm_provider,
@@ -1620,6 +1679,36 @@ class HindsightConfig:
             or os.getenv(ENV_OPENROUTER_API_KEY)
             or os.getenv(ENV_LLM_API_KEY),
             embeddings_openrouter_model=os.getenv(ENV_EMBEDDINGS_OPENROUTER_MODEL, DEFAULT_EMBEDDINGS_OPENROUTER_MODEL),
+            # ZeroEntropy embeddings
+            embeddings_zeroentropy_api_key=os.getenv(ENV_EMBEDDINGS_ZEROENTROPY_API_KEY)
+            or os.getenv("ZEROENTROPY_API_KEY"),
+            embeddings_zeroentropy_model=os.getenv(
+                ENV_EMBEDDINGS_ZEROENTROPY_MODEL, DEFAULT_EMBEDDINGS_ZEROENTROPY_MODEL
+            ),
+            embeddings_zeroentropy_base_url=os.getenv(
+                ENV_EMBEDDINGS_ZEROENTROPY_BASE_URL, DEFAULT_ZEROENTROPY_BASE_URL
+            ),
+            embeddings_zeroentropy_dimensions=_parse_positive_int(
+                ENV_EMBEDDINGS_ZEROENTROPY_DIMENSIONS,
+                os.getenv(ENV_EMBEDDINGS_ZEROENTROPY_DIMENSIONS),
+                DEFAULT_EMBEDDINGS_ZEROENTROPY_DIMENSIONS,
+            ),
+            embeddings_zeroentropy_encoding_format=_parse_optional_choice(
+                ENV_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT,
+                os.getenv(ENV_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT),
+                frozenset({"float", "base64"}),
+            )
+            or DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT,
+            embeddings_zeroentropy_latency=_parse_optional_choice(
+                ENV_EMBEDDINGS_ZEROENTROPY_LATENCY,
+                os.getenv(ENV_EMBEDDINGS_ZEROENTROPY_LATENCY),
+                frozenset({"fast", "slow"}),
+            ),
+            embeddings_zeroentropy_batch_size=_parse_positive_int(
+                ENV_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE,
+                os.getenv(ENV_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE),
+                DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE,
+            ),
             # LiteLLM embeddings (with backward-compatible fallback to shared config)
             embeddings_litellm_api_base=os.getenv(ENV_EMBEDDINGS_LITELLM_API_BASE)
             or os.getenv(ENV_LITELLM_API_BASE, DEFAULT_LITELLM_API_BASE),

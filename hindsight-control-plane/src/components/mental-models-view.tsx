@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useTranslations } from "next-intl";
 import { client, type TagGroup, type TagsMatch } from "@/lib/api";
 import { formatAbsoluteDateTime, formatRelativeTime } from "@/lib/relative-time";
 import { CompactMarkdown } from "./compact-markdown";
@@ -43,6 +44,7 @@ import {
   Sparkles,
   Loader2,
   Trash2,
+  Eraser,
   RefreshCw,
   ChevronLeft,
   ChevronRight,
@@ -104,6 +106,7 @@ interface MentalModel {
 type ViewMode = "dashboard" | "files";
 
 export function MentalModelsView() {
+  const t = useTranslations("mentalModels");
   const { currentBank } = useBank();
   const [mentalModels, setMentalModels] = useState<MentalModel[]>([]);
   const [loading, setLoading] = useState(false);
@@ -124,6 +127,11 @@ export function MentalModelsView() {
     name: string;
   } | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [clearTarget, setClearTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const [clearing, setClearing] = useState(false);
 
   // Tag filtering happens server-side; only the search text is applied locally.
   const filteredMentalModels = mentalModels.filter((m) => {
@@ -170,11 +178,11 @@ export function MentalModelsView() {
         if (updated.last_refreshed_at !== originalAt) {
           setMentalModels((prev) => prev.map((x) => (x.id === m.id ? updated : x)));
           if (selectedMentalModel?.id === m.id) setSelectedMentalModel(updated);
-          toast.success("Mental model refreshed");
+          toast.success(t("toastRefreshed"));
           return;
         }
       }
-      toast.error("Refresh timeout");
+      toast.error(t("toastRefreshTimeout"));
     } catch {
       // Error toast handled by API client interceptor
     } finally {
@@ -199,6 +207,23 @@ export function MentalModelsView() {
       // Error toast is shown automatically by the API client interceptor
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleClear = async () => {
+    if (!currentBank || !clearTarget) return;
+
+    setClearing(true);
+    try {
+      const updated = await client.clearMentalModel(currentBank, clearTarget.id);
+      setMentalModels((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+      if (selectedMentalModel?.id === updated.id) setSelectedMentalModel(updated);
+      toast.success("Mental model content cleared");
+      setClearTarget(null);
+    } catch {
+      // Error toast handled by API client interceptor
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -227,7 +252,7 @@ export function MentalModelsView() {
     return (
       <Card>
         <CardContent className="p-10 text-center">
-          <p className="text-muted-foreground">Select a memory bank to view mental models.</p>
+          <p className="text-muted-foreground">{t("selectBankPrompt")}</p>
         </CardContent>
       </Card>
     );
@@ -244,7 +269,7 @@ export function MentalModelsView() {
       {loading ? (
         <div className="text-center py-12">
           <RefreshCw className="w-8 h-8 mx-auto mb-3 text-muted-foreground animate-spin" />
-          <p className="text-muted-foreground">Loading...</p>
+          <p className="text-muted-foreground">{t("loading")}</p>
         </div>
       ) : (
         <>
@@ -254,7 +279,7 @@ export function MentalModelsView() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Filter mental models by name, query, or content..."
+              placeholder={t("filterPlaceholder")}
               className="w-80 h-9"
             />
             <TagFilterInput
@@ -272,15 +297,18 @@ export function MentalModelsView() {
             />
             <Button onClick={() => setShowCreateMentalModel(true)} size="sm">
               <Plus className="w-4 h-4 mr-2" />
-              Add Mental Model
+              {t("addMentalModel")}
             </Button>
           </div>
 
           <div className="flex items-center justify-between mb-6">
             <div className="text-sm text-muted-foreground">
               {searchQuery || selectedTags.length > 0
-                ? `${filteredMentalModels.length} of ${mentalModels.length} mental models`
-                : `${mentalModels.length} mental model${mentalModels.length !== 1 ? "s" : ""}`}
+                ? t("countFiltered", {
+                    filtered: filteredMentalModels.length,
+                    total: mentalModels.length,
+                  })
+                : t("count", { count: mentalModels.length })}
             </div>
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2 bg-muted rounded-lg p-1">
@@ -293,7 +321,7 @@ export function MentalModelsView() {
                   }`}
                 >
                   <FolderOpen className="w-4 h-4" />
-                  List
+                  {t("viewList")}
                 </button>
                 <button
                   onClick={() => setViewMode("dashboard")}
@@ -304,7 +332,7 @@ export function MentalModelsView() {
                   }`}
                 >
                   <LayoutGrid className="w-4 h-4" />
-                  Dashboard
+                  {t("viewDashboard")}
                 </button>
               </div>
             </div>
@@ -342,8 +370,8 @@ export function MentalModelsView() {
                                   }`}
                                 >
                                   {m.trigger?.refresh_after_consolidation
-                                    ? "Auto Refresh"
-                                    : "Manual"}
+                                    ? t("badgeAutoRefresh")
+                                    : t("badgeManual")}
                                 </span>
                               </div>
                             </div>
@@ -355,6 +383,9 @@ export function MentalModelsView() {
                                 setShowUpdateDialog(true);
                               }}
                               onRefresh={handleRowRefresh}
+                              onClear={(target) =>
+                                setClearTarget({ id: target.id, name: target.name })
+                              }
                               onDelete={(target) =>
                                 setDeleteTarget({ id: target.id, name: target.name })
                               }
@@ -415,6 +446,7 @@ export function MentalModelsView() {
                     setShowUpdateDialog(true);
                   }}
                   onRefresh={handleRowRefresh}
+                  onClear={(target) => setClearTarget({ id: target.id, name: target.name })}
                   onDelete={(target) => setDeleteTarget({ id: target.id, name: target.name })}
                 />
               )}
@@ -474,9 +506,7 @@ export function MentalModelsView() {
             <div className="p-6 border border-dashed border-border rounded-lg text-center">
               <Sparkles className="w-6 h-6 mx-auto mb-2 text-muted-foreground" />
               <p className="text-sm text-muted-foreground">
-                {searchQuery
-                  ? "No mental models match your filter"
-                  : "No mental models yet. Create a mental model to generate and save a summary from your memories."}
+                {searchQuery ? t("emptyFilterMatch") : t("emptyNoModels")}
               </p>
             </div>
           )}
@@ -496,24 +526,47 @@ export function MentalModelsView() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Mental Model</AlertDialogTitle>
+            <AlertDialogTitle>{t("deleteDialogTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete{" "}
-              <span className="font-semibold">&quot;{deleteTarget?.name}&quot;</span>?
+              {t("deleteDialogDescription", { name: deleteTarget?.name ?? "" })}
               <br />
               <br />
-              <span className="text-destructive font-semibold">This action cannot be undone.</span>
+              <span className="text-destructive font-semibold">{t("deleteDialogWarning")}</span>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-row justify-end space-x-2">
-            <AlertDialogCancel className="mt-0">Cancel</AlertDialogCancel>
+            <AlertDialogCancel className="mt-0">{t("deleteDialogCancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
               disabled={deleting}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {deleting ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
-              Delete
+              {t("deleteDialogConfirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!clearTarget} onOpenChange={(open) => !open && setClearTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("clearDialogTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t.rich("clearDialogDescription", {
+                name: clearTarget?.name ?? "",
+                bold: (chunks) => <span className="font-semibold">{chunks}</span>,
+              })}
+              <br />
+              <br />
+              {t("clearDialogReSynth")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-row justify-end space-x-2">
+            <AlertDialogCancel className="mt-0">{t("cancelButton")}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleClear} disabled={clearing}>
+              {clearing ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+              {t("clearDialogConfirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -523,6 +576,7 @@ export function MentalModelsView() {
         mentalModelId={selectedMentalModel?.id ?? null}
         onClose={() => setSelectedMentalModel(null)}
         onDelete={(m) => setDeleteTarget({ id: m.id, name: m.name })}
+        onClear={(m) => setClearTarget({ id: m.id, name: m.name })}
         onEdit={(m) => {
           setMentalModelToUpdate(m);
           setShowUpdateDialog(true);
@@ -558,6 +612,7 @@ function RowActionsMenu({
   refreshing,
   onEdit,
   onRefresh,
+  onClear,
   onDelete,
   triggerClassName,
 }: {
@@ -565,9 +620,11 @@ function RowActionsMenu({
   refreshing: boolean;
   onEdit: (m: MentalModel) => void;
   onRefresh: (m: MentalModel) => void;
+  onClear: (m: MentalModel) => void;
   onDelete: (m: MentalModel) => void;
   triggerClassName?: string;
 }) {
+  const t = useTranslations("mentalModels");
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -576,7 +633,7 @@ function RowActionsMenu({
           size="sm"
           className={`p-0 text-muted-foreground ${triggerClassName ?? "h-8 w-8"}`}
           onClick={(e) => e.stopPropagation()}
-          aria-label="Actions"
+          aria-label={t("actionsAriaLabel")}
         >
           <MoreVertical className="h-4 w-4" />
         </Button>
@@ -584,11 +641,15 @@ function RowActionsMenu({
       <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
         <DropdownMenuItem onClick={() => onEdit(m)}>
           <Pencil className="h-4 w-4 mr-2" />
-          Edit
+          {t("actionEdit")}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => onRefresh(m)} disabled={refreshing}>
           <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
-          Refresh Manually
+          {t("actionRefresh")}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onClear(m)}>
+          <Eraser className="h-4 w-4 mr-2" />
+          {t("actionClearContent")}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
@@ -596,7 +657,7 @@ function RowActionsMenu({
           className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400 focus:bg-red-500/10"
         >
           <Trash2 className="h-4 w-4 mr-2" />
-          Delete
+          {t("actionDelete")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -612,6 +673,7 @@ function CreateMentalModelDialog({
   onClose: () => void;
   onCreated: () => void;
 }) {
+  const t = useTranslations("mentalModels");
   const { currentBank } = useBank();
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({
@@ -656,7 +718,7 @@ function CreateMentalModelDialog({
         try {
           tagGroups = JSON.parse(form.tagGroups.trim());
         } catch {
-          toast.error("Invalid JSON in Tag Groups field");
+          toast.error(t("invalidTagGroupsJson"));
           return;
         }
       }
@@ -743,56 +805,57 @@ function CreateMentalModelDialog({
     >
       <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle>Create Mental Model</DialogTitle>
-          <DialogDescription>
-            Create a mental model by running a query. The content will be auto-generated and can be
-            refreshed later.
-          </DialogDescription>
+          <DialogTitle>{t("createDialogTitle")}</DialogTitle>
+          <DialogDescription>{t("createDialogDescription")}</DialogDescription>
         </DialogHeader>
 
         <Tabs defaultValue="general" className="py-2 flex-1 flex flex-col min-h-0 overflow-hidden">
           <TabsList className="w-full">
             <TabsTrigger value="general" className="flex-1">
-              General
+              {t("tabGeneral")}
             </TabsTrigger>
             <TabsTrigger value="options" className="flex-1">
-              Options
+              {t("tabOptions")}
             </TabsTrigger>
           </TabsList>
 
-          <div className="flex-1 overflow-y-auto mt-2 pr-1">
+          <div className="flex-1 overflow-y-auto mt-2 px-1.5">
             <TabsContent value="general" className="space-y-4 pt-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">ID</label>
+                <label className="text-sm font-medium text-foreground">{t("fieldId")}</label>
                 <Input
                   value={form.id}
                   onChange={(e) => setForm({ ...form, id: e.target.value })}
-                  placeholder="e.g., team-communication"
+                  placeholder={t("fieldIdPlaceholder")}
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">Name *</label>
+                <label className="text-sm font-medium text-foreground">{t("fieldName")}</label>
                 <Input
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="e.g., Team Communication Preferences"
+                  placeholder={t("fieldNamePlaceholder")}
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">Source Query *</label>
-                <Input
+                <label className="text-sm font-medium text-foreground">
+                  {t("fieldSourceQuery")}
+                </label>
+                <Textarea
                   value={form.sourceQuery}
                   onChange={(e) => setForm({ ...form, sourceQuery: e.target.value })}
-                  placeholder="e.g., How does the team prefer to communicate?"
+                  placeholder={t("fieldSourceQueryPlaceholder")}
+                  className="min-h-[140px] font-mono text-sm leading-6 whitespace-pre-wrap"
+                  spellCheck={false}
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">Max Tokens</label>
+                <label className="text-sm font-medium text-foreground">{t("fieldMaxTokens")}</label>
                 <Input
                   type="number"
                   value={form.maxTokens}
                   onChange={(e) => setForm({ ...form, maxTokens: e.target.value })}
-                  placeholder="2048"
+                  placeholder={t("fieldMaxTokensPlaceholder")}
                   min="256"
                   max="8192"
                 />
@@ -801,7 +864,9 @@ function CreateMentalModelDialog({
 
             <TabsContent value="options" className="space-y-6 pt-4">
               <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground border-b pb-1">Refresh</h3>
+                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
+                  {t("optionsSectionRefresh")}
+                </h3>
                 <div className="flex items-center space-x-2">
                   <Checkbox
                     id="auto-refresh"
@@ -814,11 +879,13 @@ function CreateMentalModelDialog({
                     htmlFor="auto-refresh"
                     className="text-sm font-medium text-foreground cursor-pointer"
                   >
-                    Auto-refresh after consolidation
+                    {t("optionsAutoRefreshLabel")}
                   </label>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Refresh mode</label>
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsRefreshModeLabel")}
+                  </label>
                   <Select
                     value={form.mode}
                     onValueChange={(value) => setForm({ ...form, mode: value as "full" | "delta" })}
@@ -827,24 +894,19 @@ function CreateMentalModelDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="full">
-                        Full — regenerate from scratch each refresh
-                      </SelectItem>
-                      <SelectItem value="delta">
-                        Delta — surgical edits, preserve unchanged content
-                      </SelectItem>
+                      <SelectItem value="full">{t("optionsRefreshModeFull")}</SelectItem>
+                      <SelectItem value="delta">{t("optionsRefreshModeDelta")}</SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Delta mode applies minimal changes to the existing content. Falls back to a full
-                    rewrite on the first refresh and whenever the source query changes.
+                    {t("optionsRefreshModeDeltaDescription")}
                   </p>
                 </div>
               </section>
 
               <section className="space-y-4">
                 <h3 className="text-sm font-semibold text-foreground border-b pb-1">
-                  Other Mental Models
+                  {t("optionsSectionOtherModels")}
                 </h3>
                 <div className="flex items-center space-x-2">
                   <Checkbox
@@ -858,65 +920,63 @@ function CreateMentalModelDialog({
                     htmlFor="exclude-mental-models"
                     className="text-sm font-medium text-foreground cursor-pointer"
                   >
-                    Exclude all mental models
+                    {t("optionsExcludeAllLabel")}
                   </label>
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-foreground">
-                    Exclude Mental Model IDs
+                    {t("optionsExcludeIdsLabel")}
                   </label>
                   <Input
                     value={form.excludeMentalModelIds}
                     onChange={(e) => setForm({ ...form, excludeMentalModelIds: e.target.value })}
-                    placeholder="e.g., model-a, model-b (comma-separated)"
+                    placeholder={t("optionsExcludeIdsPlaceholder")}
                   />
                 </div>
               </section>
 
               <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground border-b pb-1">Tags</h3>
+                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
+                  {t("optionsSectionTags")}
+                </h3>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Tags</label>
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsTagsLabel")}
+                  </label>
                   <Input
                     value={form.tags}
                     onChange={(e) => setForm({ ...form, tags: e.target.value })}
-                    placeholder="e.g., project-x, team-alpha (comma-separated)"
+                    placeholder={t("optionsTagsPlaceholder")}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Tags scope the model during reflect <strong>and</strong> filter source memories
-                    during refresh (default <code>all_strict</code>: only memories carrying every
-                    listed tag are read). If no memories have these tags yet, refresh will produce
-                    empty content — backfill tags on memories, or adjust <em>Tags Match</em> /{" "}
-                    <em>Tag Groups</em> below.
-                  </p>
+                  <p className="text-xs text-muted-foreground">{t("optionsTagsDescription")}</p>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Tags Match</label>
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsTagsMatchLabel")}
+                  </label>
                   <Select
                     value={form.tagsMatch}
                     onValueChange={(v) => setForm({ ...form, tagsMatch: v === "default" ? "" : v })}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Default (all_strict when tags set)" />
+                      <SelectValue placeholder={t("optionsTagsMatchDefaultPlaceholder")} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="default">Default (all_strict when tags set)</SelectItem>
-                      <SelectItem value="any">any — OR matching, includes untagged</SelectItem>
-                      <SelectItem value="all">all — AND matching, includes untagged</SelectItem>
-                      <SelectItem value="any_strict">
-                        any_strict — OR matching, excludes untagged
-                      </SelectItem>
-                      <SelectItem value="all_strict">
-                        all_strict — AND matching, excludes untagged
-                      </SelectItem>
+                      <SelectItem value="default">{t("optionsTagsMatchDefault")}</SelectItem>
+                      <SelectItem value="any">{t("optionsTagsMatchAny")}</SelectItem>
+                      <SelectItem value="all">{t("optionsTagsMatchAll")}</SelectItem>
+                      <SelectItem value="any_strict">{t("optionsTagsMatchAnyStrict")}</SelectItem>
+                      <SelectItem value="all_strict">{t("optionsTagsMatchAllStrict")}</SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Controls how the model&apos;s tags filter memories during refresh.
+                    {t("optionsTagsMatchDescription")}
                   </p>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Tag Groups (JSON)</label>
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsTagGroupsLabel")}
+                  </label>
                   <Textarea
                     value={form.tagGroups}
                     onChange={(e) => setForm({ ...form, tagGroups: e.target.value })}
@@ -925,28 +985,30 @@ function CreateMentalModelDialog({
                     className="font-mono text-xs"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Compound boolean tag expressions for refresh filtering. Overrides flat tags when
-                    set.
+                    {t("optionsTagGroupsDescription")}
                   </p>
                 </div>
               </section>
 
               <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground border-b pb-1">Recall</h3>
-                <p className="text-xs text-muted-foreground">
-                  Override how the internal recall behaves when this model refreshes. Leave blank to
-                  inherit the bank/global default.
-                </p>
+                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
+                  {t("optionsSectionRecall")}
+                </h3>
+                <p className="text-xs text-muted-foreground">{t("optionsRecallDescription")}</p>
                 <div className="space-y-3">
-                  <label className="text-sm font-medium text-foreground">Fact Types</label>
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsFactTypesLabel")}
+                  </label>
                   <FactTypeCheckboxGroup
                     value={form.factTypes}
                     onChange={(v) => setForm({ ...form, factTypes: v as FactType[] })}
                   />
-                  <p className="text-xs text-muted-foreground">Leave empty to include all types.</p>
+                  <p className="text-xs text-muted-foreground">{t("optionsFactTypesEmpty")}</p>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Include chunks</label>
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsIncludeChunksLabel")}
+                  </label>
                   <Select
                     value={form.includeChunks || "default"}
                     onValueChange={(v) =>
@@ -960,38 +1022,40 @@ function CreateMentalModelDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="default">Default (inherit)</SelectItem>
-                      <SelectItem value="true">Yes — include raw chunk text</SelectItem>
-                      <SelectItem value="false">No — skip chunks (smaller prompt)</SelectItem>
+                      <SelectItem value="default">{t("optionsIncludeChunksDefault")}</SelectItem>
+                      <SelectItem value="true">{t("optionsIncludeChunksYes")}</SelectItem>
+                      <SelectItem value="false">{t("optionsIncludeChunksNo")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Recall max tokens</label>
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsRecallMaxTokensLabel")}
+                  </label>
                   <Input
                     type="number"
                     value={form.recallMaxTokens}
                     onChange={(e) => setForm({ ...form, recallMaxTokens: e.target.value })}
-                    placeholder="Default (inherit)"
+                    placeholder={t("optionsRecallMaxTokensPlaceholder")}
                     min="0"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Token budget for facts returned by recall.
+                    {t("optionsRecallMaxTokensDescription")}
                   </p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-foreground">
-                    Recall chunks max tokens
+                    {t("optionsRecallChunksMaxTokensLabel")}
                   </label>
                   <Input
                     type="number"
                     value={form.recallChunksMaxTokens}
                     onChange={(e) => setForm({ ...form, recallChunksMaxTokens: e.target.value })}
-                    placeholder="Default (inherit)"
+                    placeholder={t("optionsRecallChunksMaxTokensPlaceholder")}
                     min="0"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Token budget for raw chunk text returned by recall.
+                    {t("optionsRecallChunksMaxTokensDescription")}
                   </p>
                 </div>
               </section>
@@ -1001,7 +1065,7 @@ function CreateMentalModelDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={creating}>
-            Cancel
+            {t("cancelButton")}
           </Button>
           <Button
             onClick={handleCreate}
@@ -1010,10 +1074,10 @@ function CreateMentalModelDialog({
             {creating ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                Generating...
+                {t("creatingButton")}
               </>
             ) : (
-              "Create"
+              t("createButton")
             )}
           </Button>
         </DialogFooter>
@@ -1033,6 +1097,7 @@ function UpdateMentalModelDialog({
   onClose: () => void;
   onUpdated: (updated: MentalModel) => void;
 }) {
+  const t = useTranslations("mentalModels");
   const { currentBank } = useBank();
   const [updating, setUpdating] = useState(false);
   const buildFormState = () => ({
@@ -1097,7 +1162,7 @@ function UpdateMentalModelDialog({
         try {
           tagGroups = JSON.parse(form.tagGroups.trim());
         } catch {
-          toast.error("Invalid JSON in Tag Groups field");
+          toast.error(t("invalidTagGroupsJson"));
           return;
         }
       }
@@ -1143,51 +1208,53 @@ function UpdateMentalModelDialog({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle>Update Mental Model</DialogTitle>
-          <DialogDescription>
-            Update the mental model configuration. Changes will take effect immediately.
-          </DialogDescription>
+          <DialogTitle>{t("updateDialogTitle")}</DialogTitle>
+          <DialogDescription>{t("updateDialogDescription")}</DialogDescription>
         </DialogHeader>
 
         <Tabs defaultValue="general" className="py-2 flex-1 flex flex-col min-h-0 overflow-hidden">
           <TabsList className="w-full">
             <TabsTrigger value="general" className="flex-1">
-              General
+              {t("tabGeneral")}
             </TabsTrigger>
             <TabsTrigger value="options" className="flex-1">
-              Options
+              {t("tabOptions")}
             </TabsTrigger>
           </TabsList>
 
-          <div className="flex-1 overflow-y-auto mt-2 pr-1">
+          <div className="flex-1 overflow-y-auto mt-2 px-1.5">
             <TabsContent value="general" className="space-y-4 pt-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium text-muted-foreground">ID</label>
+                <label className="text-sm font-medium text-muted-foreground">{t("fieldId")}</label>
                 <Input value={mentalModel.id} disabled className="bg-muted" />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">Name *</label>
+                <label className="text-sm font-medium text-foreground">{t("fieldName")}</label>
                 <Input
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="e.g., Team Communication Preferences"
+                  placeholder={t("fieldNamePlaceholder")}
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">Source Query *</label>
-                <Input
+                <label className="text-sm font-medium text-foreground">
+                  {t("fieldSourceQuery")}
+                </label>
+                <Textarea
                   value={form.sourceQuery}
                   onChange={(e) => setForm({ ...form, sourceQuery: e.target.value })}
-                  placeholder="e.g., How does the team prefer to communicate?"
+                  placeholder={t("fieldSourceQueryPlaceholder")}
+                  className="min-h-[140px] font-mono text-sm leading-6 whitespace-pre-wrap"
+                  spellCheck={false}
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">Max Tokens</label>
+                <label className="text-sm font-medium text-foreground">{t("fieldMaxTokens")}</label>
                 <Input
                   type="number"
                   value={form.maxTokens}
                   onChange={(e) => setForm({ ...form, maxTokens: e.target.value })}
-                  placeholder="2048"
+                  placeholder={t("fieldMaxTokensPlaceholder")}
                   min="256"
                   max="8192"
                 />
@@ -1196,7 +1263,9 @@ function UpdateMentalModelDialog({
 
             <TabsContent value="options" className="space-y-6 pt-4">
               <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground border-b pb-1">Refresh</h3>
+                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
+                  {t("optionsSectionRefresh")}
+                </h3>
                 <div className="flex items-center space-x-2">
                   <Checkbox
                     id="update-auto-refresh"
@@ -1209,11 +1278,13 @@ function UpdateMentalModelDialog({
                     htmlFor="update-auto-refresh"
                     className="text-sm font-medium text-foreground cursor-pointer"
                   >
-                    Auto-refresh after consolidation
+                    {t("optionsAutoRefreshLabel")}
                   </label>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Refresh mode</label>
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsRefreshModeLabel")}
+                  </label>
                   <Select
                     value={form.mode}
                     onValueChange={(value) => setForm({ ...form, mode: value as "full" | "delta" })}
@@ -1222,24 +1293,19 @@ function UpdateMentalModelDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="full">
-                        Full — regenerate from scratch each refresh
-                      </SelectItem>
-                      <SelectItem value="delta">
-                        Delta — surgical edits, preserve unchanged content
-                      </SelectItem>
+                      <SelectItem value="full">{t("optionsRefreshModeFull")}</SelectItem>
+                      <SelectItem value="delta">{t("optionsRefreshModeDelta")}</SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Delta mode applies minimal changes to the existing content. Falls back to a full
-                    rewrite on the first refresh and whenever the source query changes.
+                    {t("optionsRefreshModeDeltaDescription")}
                   </p>
                 </div>
               </section>
 
               <section className="space-y-4">
                 <h3 className="text-sm font-semibold text-foreground border-b pb-1">
-                  Other Mental Models
+                  {t("optionsSectionOtherModels")}
                 </h3>
                 <div className="flex items-center space-x-2">
                   <Checkbox
@@ -1253,65 +1319,63 @@ function UpdateMentalModelDialog({
                     htmlFor="update-exclude-mental-models"
                     className="text-sm font-medium text-foreground cursor-pointer"
                   >
-                    Exclude all mental models
+                    {t("optionsExcludeAllLabel")}
                   </label>
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-foreground">
-                    Exclude Mental Model IDs
+                    {t("optionsExcludeIdsLabel")}
                   </label>
                   <Input
                     value={form.excludeMentalModelIds}
                     onChange={(e) => setForm({ ...form, excludeMentalModelIds: e.target.value })}
-                    placeholder="e.g., model-a, model-b (comma-separated)"
+                    placeholder={t("optionsExcludeIdsPlaceholder")}
                   />
                 </div>
               </section>
 
               <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground border-b pb-1">Tags</h3>
+                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
+                  {t("optionsSectionTags")}
+                </h3>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Tags</label>
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsTagsLabel")}
+                  </label>
                   <Input
                     value={form.tags}
                     onChange={(e) => setForm({ ...form, tags: e.target.value })}
-                    placeholder="e.g., project-x, team-alpha (comma-separated)"
+                    placeholder={t("optionsTagsPlaceholder")}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Tags scope the model during reflect <strong>and</strong> filter source memories
-                    during refresh (default <code>all_strict</code>: only memories carrying every
-                    listed tag are read). If no memories have these tags yet, refresh will produce
-                    empty content — backfill tags on memories, or adjust <em>Tags Match</em> /{" "}
-                    <em>Tag Groups</em> below.
-                  </p>
+                  <p className="text-xs text-muted-foreground">{t("optionsTagsDescription")}</p>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Tags Match</label>
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsTagsMatchLabel")}
+                  </label>
                   <Select
                     value={form.tagsMatch || "default"}
                     onValueChange={(v) => setForm({ ...form, tagsMatch: v === "default" ? "" : v })}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Default (all_strict when tags set)" />
+                      <SelectValue placeholder={t("optionsTagsMatchDefaultPlaceholder")} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="default">Default (all_strict when tags set)</SelectItem>
-                      <SelectItem value="any">any — OR matching, includes untagged</SelectItem>
-                      <SelectItem value="all">all — AND matching, includes untagged</SelectItem>
-                      <SelectItem value="any_strict">
-                        any_strict — OR matching, excludes untagged
-                      </SelectItem>
-                      <SelectItem value="all_strict">
-                        all_strict — AND matching, excludes untagged
-                      </SelectItem>
+                      <SelectItem value="default">{t("optionsTagsMatchDefault")}</SelectItem>
+                      <SelectItem value="any">{t("optionsTagsMatchAny")}</SelectItem>
+                      <SelectItem value="all">{t("optionsTagsMatchAll")}</SelectItem>
+                      <SelectItem value="any_strict">{t("optionsTagsMatchAnyStrict")}</SelectItem>
+                      <SelectItem value="all_strict">{t("optionsTagsMatchAllStrict")}</SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Controls how the model&apos;s tags filter memories during refresh.
+                    {t("optionsTagsMatchDescription")}
                   </p>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Tag Groups (JSON)</label>
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsTagGroupsLabel")}
+                  </label>
                   <Textarea
                     value={form.tagGroups}
                     onChange={(e) => setForm({ ...form, tagGroups: e.target.value })}
@@ -1320,28 +1384,30 @@ function UpdateMentalModelDialog({
                     className="font-mono text-xs"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Compound boolean tag expressions for refresh filtering. Overrides flat tags when
-                    set.
+                    {t("optionsTagGroupsDescription")}
                   </p>
                 </div>
               </section>
 
               <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground border-b pb-1">Recall</h3>
-                <p className="text-xs text-muted-foreground">
-                  Override how the internal recall behaves when this model refreshes. Leave blank to
-                  inherit the bank/global default.
-                </p>
+                <h3 className="text-sm font-semibold text-foreground border-b pb-1">
+                  {t("optionsSectionRecall")}
+                </h3>
+                <p className="text-xs text-muted-foreground">{t("optionsRecallDescription")}</p>
                 <div className="space-y-3">
-                  <label className="text-sm font-medium text-foreground">Fact Types</label>
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsFactTypesLabel")}
+                  </label>
                   <FactTypeCheckboxGroup
                     value={form.factTypes}
                     onChange={(v) => setForm({ ...form, factTypes: v as FactType[] })}
                   />
-                  <p className="text-xs text-muted-foreground">Leave empty to include all types.</p>
+                  <p className="text-xs text-muted-foreground">{t("optionsFactTypesEmpty")}</p>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Include chunks</label>
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsIncludeChunksLabel")}
+                  </label>
                   <Select
                     value={form.includeChunks || "default"}
                     onValueChange={(v) =>
@@ -1355,38 +1421,40 @@ function UpdateMentalModelDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="default">Default (inherit)</SelectItem>
-                      <SelectItem value="true">Yes — include raw chunk text</SelectItem>
-                      <SelectItem value="false">No — skip chunks (smaller prompt)</SelectItem>
+                      <SelectItem value="default">{t("optionsIncludeChunksDefault")}</SelectItem>
+                      <SelectItem value="true">{t("optionsIncludeChunksYes")}</SelectItem>
+                      <SelectItem value="false">{t("optionsIncludeChunksNo")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Recall max tokens</label>
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsRecallMaxTokensLabel")}
+                  </label>
                   <Input
                     type="number"
                     value={form.recallMaxTokens}
                     onChange={(e) => setForm({ ...form, recallMaxTokens: e.target.value })}
-                    placeholder="Default (inherit)"
+                    placeholder={t("optionsRecallMaxTokensPlaceholder")}
                     min="0"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Token budget for facts returned by recall.
+                    {t("optionsRecallMaxTokensDescription")}
                   </p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-foreground">
-                    Recall chunks max tokens
+                    {t("optionsRecallChunksMaxTokensLabel")}
                   </label>
                   <Input
                     type="number"
                     value={form.recallChunksMaxTokens}
                     onChange={(e) => setForm({ ...form, recallChunksMaxTokens: e.target.value })}
-                    placeholder="Default (inherit)"
+                    placeholder={t("optionsRecallChunksMaxTokensPlaceholder")}
                     min="0"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Token budget for raw chunk text returned by recall.
+                    {t("optionsRecallChunksMaxTokensDescription")}
                   </p>
                 </div>
               </section>
@@ -1396,7 +1464,7 @@ function UpdateMentalModelDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={updating}>
-            Cancel
+            {t("cancelButton")}
           </Button>
           <Button
             onClick={handleUpdate}
@@ -1405,10 +1473,10 @@ function UpdateMentalModelDialog({
             {updating ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                Updating...
+                {t("updatingButton")}
               </>
             ) : (
-              "Update"
+              t("updateButton")
             )}
           </Button>
         </DialogFooter>
@@ -1425,6 +1493,7 @@ function FilesView({
   refreshingIds,
   onEdit,
   onRefresh,
+  onClear,
   onDelete,
 }: {
   mentalModels: MentalModel[];
@@ -1434,8 +1503,10 @@ function FilesView({
   refreshingIds: Set<string>;
   onEdit: (m: MentalModel) => void;
   onRefresh: (m: MentalModel) => void;
+  onClear: (m: MentalModel) => void;
   onDelete: (m: MentalModel) => void;
 }) {
+  const t = useTranslations("mentalModels");
   const effectiveId =
     selectedId && mentalModels.some((m) => m.id === selectedId)
       ? selectedId
@@ -1526,6 +1597,7 @@ function FilesView({
                     refreshing={refreshingIds.has(selected.id)}
                     onEdit={onEdit}
                     onRefresh={onRefresh}
+                    onClear={onClear}
                     onDelete={onDelete}
                   />
                 </div>
@@ -1536,15 +1608,13 @@ function FilesView({
                 <CompactMarkdown>{selected.content}</CompactMarkdown>
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground italic">
-                No content yet. Refresh this mental model to generate content.
-              </p>
+              <p className="text-sm text-muted-foreground italic">{t("emptyContent")}</p>
             )}
           </article>
         ) : (
           <div className="p-10 text-center text-muted-foreground">
             <FileText className="w-8 h-8 mx-auto mb-2 opacity-50" />
-            <p className="text-sm">Select a mental model to view its content.</p>
+            <p className="text-sm">{t("selectModelPrompt")}</p>
           </div>
         )}
       </section>

@@ -276,6 +276,56 @@ def test_text_search_extension_rejects_unknown(monkeypatch):
         HindsightConfig.from_env()
 
 
+def test_pg_search_tokenizer_defaults_to_empty(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.delenv("HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER", raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.text_search_extension_pg_search_tokenizer == ""
+
+
+def test_pg_search_tokenizer_loaded_from_env(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER", "Jieba")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.text_search_extension_pg_search_tokenizer == "jieba"
+
+
+def test_pg_search_tokenizer_accepts_lindera_alias(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER", "chinese_lindera")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.text_search_extension_pg_search_tokenizer == "lindera(chinese)"
+
+
+@pytest.mark.parametrize("bad_value", ["jieba;DROP TABLE", "ngram(3,2)", "unknown", "pdb.jieba"])
+def test_pg_search_tokenizer_rejects_invalid_values(monkeypatch, bad_value):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER", bad_value)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    with pytest.raises(ValueError, match="Invalid HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER"):
+        HindsightConfig.from_env()
+
+
+def test_pg_search_bm25_columns_apply_tokenizer():
+    from hindsight_api._pg_search import pg_search_bm25_columns
+
+    assert pg_search_bm25_columns("id", ("text", "context"), "") == "id, text, context"
+    assert pg_search_bm25_columns("id", ("text", "context"), "jieba") == "id, (text::pdb.jieba), (context::pdb.jieba)"
+    assert pg_search_bm25_columns("id", ("text",), "ngram(2, 3)") == "id, (text::pdb.ngram(2,3))"
+    assert pg_search_bm25_columns("id", ("text",), "edge_ngram(2, 5)") == "id, (text::pdb.edge_ngram(2,5))"
+
+
 def test_llm_output_language_defaults_to_none(monkeypatch):
     from hindsight_api.config import HindsightConfig
 

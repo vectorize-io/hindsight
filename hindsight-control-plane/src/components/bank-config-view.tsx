@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
+import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
 import { useFeatures } from "@/lib/features-context";
 import { client } from "@/lib/api";
@@ -95,62 +96,130 @@ type GeminiEdits = {
 
 // ─── Gemini safety settings catalogue ────────────────────────────────────────
 
-const GEMINI_HARM_CATEGORIES = [
-  { value: "HARM_CATEGORY_HARASSMENT", label: "Harassment" },
-  { value: "HARM_CATEGORY_HATE_SPEECH", label: "Hate Speech" },
-  { value: "HARM_CATEGORY_SEXUALLY_EXPLICIT", label: "Sexually Explicit" },
-  { value: "HARM_CATEGORY_DANGEROUS_CONTENT", label: "Dangerous Content" },
+const GEMINI_HARM_CATEGORY_VALUES = [
+  "HARM_CATEGORY_HARASSMENT",
+  "HARM_CATEGORY_HATE_SPEECH",
+  "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+  "HARM_CATEGORY_DANGEROUS_CONTENT",
 ] as const;
 
-const GEMINI_THRESHOLDS = [
-  { value: "HARM_BLOCK_THRESHOLD_UNSPECIFIED", label: "Unspecified (use Gemini default)" },
-  { value: "OFF", label: "Off (filter disabled)" },
-  { value: "BLOCK_NONE", label: "Block none" },
-  { value: "BLOCK_LOW_AND_ABOVE", label: "Block low & above" },
-  { value: "BLOCK_MEDIUM_AND_ABOVE", label: "Block medium & above" },
-  { value: "BLOCK_ONLY_HIGH", label: "Block only high" },
-] as const;
+function getGeminiHarmCategories(t: (key: string) => string): { value: string; label: string }[] {
+  return [
+    { value: "HARM_CATEGORY_HARASSMENT", label: t("geminiCategoryHarassment") },
+    { value: "HARM_CATEGORY_HATE_SPEECH", label: t("geminiCategoryHateSpeech") },
+    { value: "HARM_CATEGORY_SEXUALLY_EXPLICIT", label: t("geminiCategorySexuallyExplicit") },
+    { value: "HARM_CATEGORY_DANGEROUS_CONTENT", label: t("geminiCategoryDangerousContent") },
+  ];
+}
 
-const DEFAULT_GEMINI_SAFETY_SETTINGS: GeminiSafetySetting[] = GEMINI_HARM_CATEGORIES.map((c) => ({
-  category: c.value,
-  threshold: "BLOCK_NONE",
-}));
+function getGeminiThresholds(t: (key: string) => string): { value: string; label: string }[] {
+  return [
+    { value: "HARM_BLOCK_THRESHOLD_UNSPECIFIED", label: t("geminiThresholdUnspecified") },
+    { value: "OFF", label: t("geminiThresholdOff") },
+    { value: "BLOCK_NONE", label: t("geminiThresholdBlockNone") },
+    { value: "BLOCK_LOW_AND_ABOVE", label: t("geminiThresholdBlockLowAndAbove") },
+    { value: "BLOCK_MEDIUM_AND_ABOVE", label: t("geminiThresholdBlockMediumAndAbove") },
+    { value: "BLOCK_ONLY_HIGH", label: t("geminiThresholdBlockOnlyHigh") },
+  ];
+}
+
+const DEFAULT_GEMINI_SAFETY_SETTINGS: GeminiSafetySetting[] = GEMINI_HARM_CATEGORY_VALUES.map(
+  (value) => ({
+    category: value,
+    threshold: "BLOCK_NONE",
+  })
+);
 
 // ─── MCP tool catalogue ───────────────────────────────────────────────────────
 
-const MCP_TOOL_GROUPS: { label: string; tools: string[] }[] = [
-  { label: "Core", tools: ["retain", "sync_retain", "recall", "reflect"] },
-  {
-    label: "Bank management",
-    tools: [
-      "list_banks",
-      "create_bank",
-      "get_bank",
-      "get_bank_stats",
-      "update_bank",
-      "delete_bank",
-      "clear_memories",
-    ],
-  },
-  {
-    label: "Mental models",
-    tools: [
-      "list_mental_models",
-      "get_mental_model",
-      "create_mental_model",
-      "update_mental_model",
-      "delete_mental_model",
-      "refresh_mental_model",
-    ],
-  },
-  { label: "Directives", tools: ["list_directives", "create_directive", "delete_directive"] },
-  { label: "Memories", tools: ["list_memories", "get_memory"] },
-  { label: "Documents", tools: ["list_documents", "get_document", "delete_document"] },
-  { label: "Operations", tools: ["list_operations", "get_operation", "cancel_operation"] },
-  { label: "Tags", tools: ["list_tags"] },
-];
+type McpToolGroup = { key: string; label: string; tools: string[] };
 
-const ALL_TOOLS: string[] = MCP_TOOL_GROUPS.flatMap((g) => g.tools);
+function getMcpToolGroups(t: (key: string) => string): McpToolGroup[] {
+  return [
+    {
+      key: "core",
+      label: t("mcpGroupCore"),
+      tools: ["retain", "sync_retain", "recall", "reflect"],
+    },
+    {
+      key: "bankManagement",
+      label: t("mcpGroupBankManagement"),
+      tools: [
+        "list_banks",
+        "create_bank",
+        "get_bank",
+        "get_bank_stats",
+        "update_bank",
+        "delete_bank",
+        "clear_memories",
+      ],
+    },
+    {
+      key: "mentalModels",
+      label: t("mcpGroupMentalModels"),
+      tools: [
+        "list_mental_models",
+        "get_mental_model",
+        "create_mental_model",
+        "update_mental_model",
+        "delete_mental_model",
+        "refresh_mental_model",
+        "clear_mental_model",
+      ],
+    },
+    {
+      key: "directives",
+      label: t("mcpGroupDirectives"),
+      tools: ["list_directives", "create_directive", "delete_directive"],
+    },
+    { key: "memories", label: t("mcpGroupMemories"), tools: ["list_memories", "get_memory"] },
+    {
+      key: "documents",
+      label: t("mcpGroupDocuments"),
+      tools: ["list_documents", "get_document", "delete_document"],
+    },
+    {
+      key: "operations",
+      label: t("mcpGroupOperations"),
+      tools: ["list_operations", "get_operation", "cancel_operation"],
+    },
+    { key: "tags", label: t("mcpGroupTags"), tools: ["list_tags"] },
+  ];
+}
+
+const MCP_ALL_TOOLS: string[] = [
+  "retain",
+  "sync_retain",
+  "recall",
+  "reflect",
+  "list_banks",
+  "create_bank",
+  "get_bank",
+  "get_bank_stats",
+  "update_bank",
+  "delete_bank",
+  "clear_memories",
+  "list_mental_models",
+  "get_mental_model",
+  "create_mental_model",
+  "update_mental_model",
+  "delete_mental_model",
+  "refresh_mental_model",
+  "clear_mental_model",
+  "list_directives",
+  "create_directive",
+  "delete_directive",
+  "list_memories",
+  "get_memory",
+  "list_documents",
+  "get_document",
+  "delete_document",
+  "list_operations",
+  "get_operation",
+  "cancel_operation",
+  "list_tags",
+];
+const ALL_TOOLS: string[] = MCP_ALL_TOOLS;
 
 // ─── Slice helpers ────────────────────────────────────────────────────────────
 
@@ -213,6 +282,7 @@ const DEFAULT_PROFILE: ProfileData = {
 // ─── BankConfigView ───────────────────────────────────────────────────────────
 
 export function BankConfigView() {
+  const t = useTranslations("bankConfig");
   const { currentBank: bankId } = useBank();
   const { features } = useFeatures();
   const bankConfigEnabled = features?.bank_config_api ?? true; // optimistic default while loading
@@ -313,7 +383,7 @@ export function BankConfigView() {
       await client.updateBankConfig(bankId, payload);
       setBaseConfig((prev) => ({ ...prev, ...payload }));
     } catch (err: any) {
-      setRetainError(err.message || "Failed to save retain settings");
+      setRetainError(err.message || t("retainFailedToSave"));
     } finally {
       setRetainSaving(false);
     }
@@ -327,7 +397,7 @@ export function BankConfigView() {
       await client.updateBankConfig(bankId, observationsEdits);
       setBaseConfig((prev) => ({ ...prev, ...observationsEdits }));
     } catch (err: any) {
-      setObservationsError(err.message || "Failed to save observations settings");
+      setObservationsError(err.message || t("observationsFailedToSave"));
     } finally {
       setObservationsSaving(false);
     }
@@ -346,7 +416,7 @@ export function BankConfigView() {
       });
       setBaseProfile(reflectEdits);
     } catch (err: any) {
-      setReflectError(err.message || "Failed to save reflect settings");
+      setReflectError(err.message || t("reflectFailedToSave"));
     } finally {
       setReflectSaving(false);
     }
@@ -360,7 +430,7 @@ export function BankConfigView() {
       await client.updateBankConfig(bankId, mcpEdits);
       setBaseConfig((prev) => ({ ...prev, ...mcpEdits }));
     } catch (err: any) {
-      setMcpError(err.message || "Failed to save MCP settings");
+      setMcpError(err.message || t("mcpFailedToSave"));
     } finally {
       setMcpSaving(false);
     }
@@ -374,7 +444,7 @@ export function BankConfigView() {
       await client.updateBankConfig(bankId, geminiEdits);
       setBaseConfig((prev) => ({ ...prev, ...geminiEdits }));
     } catch (err: any) {
-      setGeminiError(err.message || "Failed to save Gemini settings");
+      setGeminiError(err.message || t("geminiFailedToSave"));
     } finally {
       setGeminiSaving(false);
     }
@@ -383,7 +453,7 @@ export function BankConfigView() {
   if (!bankId) {
     return (
       <div className="flex items-center justify-center py-12">
-        <p className="text-muted-foreground">No bank selected</p>
+        <p className="text-muted-foreground">{t("noBankSelected")}</p>
       </div>
     );
   }
@@ -391,13 +461,13 @@ export function BankConfigView() {
   if (!bankConfigEnabled) {
     return (
       <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
-        <p className="text-base font-medium text-foreground">Bank configuration is disabled</p>
+        <p className="text-base font-medium text-foreground">{t("apiDisabledTitle")}</p>
         <p className="text-sm text-muted-foreground max-w-sm">
-          Set{" "}
-          <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">
-            HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true
-          </code>{" "}
-          to enable per-bank configuration.
+          {t.rich("apiDisabledDescription", {
+            code: (chunks) => (
+              <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">{chunks}</code>
+            ),
+          })}
         </p>
       </div>
     );
@@ -416,17 +486,14 @@ export function BankConfigView() {
       <div className="space-y-8">
         {/* Retain + Strategies Section */}
         <ConfigSection
-          title="Retain"
-          description="Default extraction settings and named strategies. Pass a strategy name on retain requests to override defaults per-item."
+          title={t("retainTitle")}
+          description={t("retainSectionDescription")}
           error={retainError}
           dirty={retainDirty}
           saving={retainSaving}
           onSave={saveRetain}
         >
-          <FieldRow
-            label="Default strategy"
-            description="Applied automatically when no strategy is specified on a request."
-          >
+          <FieldRow label={t("defaultStrategyLabel")} description={t("defaultStrategyDescription")}>
             <Select
               value={strategiesEdits.retain_default_strategy ?? "__none__"}
               onValueChange={(v) =>
@@ -441,7 +508,7 @@ export function BankConfigView() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__none__">
-                  <span className="text-muted-foreground italic">Default</span>
+                  <span className="text-muted-foreground italic">{t("default")}</span>
                 </SelectItem>
                 {Object.keys(strategiesEdits.retain_strategies ?? {}).map((name) => (
                   <SelectItem key={name} value={name}>
@@ -463,16 +530,16 @@ export function BankConfigView() {
 
         {/* Observations Section */}
         <ConfigSection
-          title="Observations"
-          description="Control how facts are synthesized into durable observations"
+          title={t("observationsTitle")}
+          description={t("observationsDescription")}
           error={observationsError}
           dirty={observationsDirty}
           saving={observationsSaving}
           onSave={saveObservations}
         >
           <FieldRow
-            label="Enable Observations"
-            description="Enable automatic consolidation of facts into observations"
+            label={t("enableObservationsLabel")}
+            description={t("enableObservationsDescription")}
           >
             <div className="flex justify-end">
               <Switch
@@ -484,19 +551,16 @@ export function BankConfigView() {
             </div>
           </FieldRow>
           <TextareaRow
-            label="Mission"
-            description="What this bank should synthesise into durable observations. Replaces the built-in consolidation rules — leave blank to use the server default."
+            label={t("missionLabel")}
+            description={t("observationsMissionDescription")}
             value={observationsEdits.observations_mission ?? ""}
             onChange={(v) =>
               setObservationsEdits((prev) => ({ ...prev, observations_mission: v || null }))
             }
-            placeholder="e.g. Observations are stable facts about people and projects. Always include preferences, skills, and recurring patterns. Ignore one-off events and ephemeral state."
+            placeholder={t("observationsMissionPlaceholder")}
             rows={3}
           />
-          <FieldRow
-            label="LLM Batch Size"
-            description="Number of facts sent to the LLM in a single consolidation call. Higher values reduce LLM calls at the cost of larger prompts. Leave blank to use the server default."
-          >
+          <FieldRow label={t("llmBatchSizeLabel")} description={t("llmBatchSizeDescription")}>
             <Input
               type="number"
               min={1}
@@ -510,12 +574,12 @@ export function BankConfigView() {
                     : null,
                 }))
               }
-              placeholder="Server default"
+              placeholder={t("serverDefault")}
             />
           </FieldRow>
           <FieldRow
-            label="Source Facts Max Tokens"
-            description="Total token budget for source facts included with observations during consolidation. -1 = unlimited."
+            label={t("sourceFactsMaxTokensLabel")}
+            description={t("sourceFactsMaxTokensDescription")}
           >
             <Input
               type="number"
@@ -529,12 +593,12 @@ export function BankConfigView() {
                     : null,
                 }))
               }
-              placeholder="Server default"
+              placeholder={t("serverDefault")}
             />
           </FieldRow>
           <FieldRow
-            label="Source Facts Max Tokens Per Observation"
-            description="Per-observation token cap for source facts during consolidation. Each observation gets at most this many tokens of source facts. -1 = unlimited."
+            label={t("sourceFactsMaxTokensPerObservationLabel")}
+            description={t("sourceFactsMaxTokensPerObservationDescription")}
           >
             <Input
               type="number"
@@ -548,12 +612,12 @@ export function BankConfigView() {
                     : null,
                 }))
               }
-              placeholder="Server default"
+              placeholder={t("serverDefault")}
             />
           </FieldRow>
           <FieldRow
-            label="Max Observations Per Scope"
-            description="Maximum number of observations allowed per tag scope. When the limit is reached, only updates and deletes are allowed. Observations with no tags are not subject to this limit. -1 = unlimited."
+            label={t("maxObservationsPerScopeLabel")}
+            description={t("maxObservationsPerScopeDescription")}
           >
             <Input
               type="number"
@@ -565,49 +629,49 @@ export function BankConfigView() {
                   max_observations_per_scope: e.target.value ? parseInt(e.target.value, 10) : null,
                 }))
               }
-              placeholder="Server default"
+              placeholder={t("serverDefault")}
             />
           </FieldRow>
         </ConfigSection>
 
         {/* Reflect Section */}
         <ConfigSection
-          title="Reflect"
-          description="Shape how the bank reasons and responds in reflect operations"
+          title={t("reflectTitle")}
+          description={t("reflectDescription")}
           error={reflectError}
           dirty={reflectDirty}
           saving={reflectSaving}
           onSave={saveReflect}
         >
           <TextareaRow
-            label="Mission"
-            description="Agent identity and purpose. Used as framing context in reflect."
+            label={t("missionLabel")}
+            description={t("reflectMissionDescription")}
             value={reflectEdits.reflect_mission}
             onChange={(v) => setReflectEdits((prev) => ({ ...prev, reflect_mission: v }))}
-            placeholder="e.g. You are a senior engineering assistant. Always ground answers in documented decisions and rationale. Ignore speculation. Be direct and precise."
+            placeholder={t("reflectMissionPlaceholder")}
             rows={3}
           />
           <TraitRow
-            label="Skepticism"
-            description="How skeptical vs trusting when evaluating claims"
-            lowLabel="Trusting"
-            highLabel="Skeptical"
+            label={t("skepticismLabel")}
+            description={t("skepticismDescription")}
+            lowLabel={t("skepticismLowLabel")}
+            highLabel={t("skepticismHighLabel")}
             value={reflectEdits.disposition_skepticism}
             onChange={(v) => setReflectEdits((prev) => ({ ...prev, disposition_skepticism: v }))}
           />
           <TraitRow
-            label="Literalism"
-            description="How literally to interpret information"
-            lowLabel="Flexible"
-            highLabel="Literal"
+            label={t("literalismLabel")}
+            description={t("literalismDescription")}
+            lowLabel={t("literalismLowLabel")}
+            highLabel={t("literalismHighLabel")}
             value={reflectEdits.disposition_literalism}
             onChange={(v) => setReflectEdits((prev) => ({ ...prev, disposition_literalism: v }))}
           />
           <TraitRow
-            label="Empathy"
-            description="How much to weight emotional context"
-            lowLabel="Detached"
-            highLabel="Empathetic"
+            label={t("empathyLabel")}
+            description={t("empathyDescription")}
+            lowLabel={t("empathyLowLabel")}
+            highLabel={t("empathyHighLabel")}
             value={reflectEdits.disposition_empathy}
             onChange={(v) => setReflectEdits((prev) => ({ ...prev, disposition_empathy: v }))}
           />
@@ -615,17 +679,14 @@ export function BankConfigView() {
 
         {/* MCP Tools Section */}
         <ConfigSection
-          title="MCP Tools"
-          description="Restrict which MCP tools this bank exposes to agents"
+          title={t("mcpToolsTitle")}
+          description={t("mcpToolsDescription")}
           error={mcpError}
           dirty={mcpDirty}
           saving={mcpSaving}
           onSave={saveMCP}
         >
-          <FieldRow
-            label="Restrict tools"
-            description="When off, all tools are available. When on, only the selected tools can be invoked for this bank."
-          >
+          <FieldRow label={t("restrictToolsLabel")} description={t("restrictToolsDescription")}>
             <div className="flex items-center gap-2 justify-end">
               <Switch
                 checked={mcpEdits.mcp_enabled_tools !== null}
@@ -636,7 +697,7 @@ export function BankConfigView() {
                 }
               />
               <Label className="text-xs text-muted-foreground">
-                {mcpEdits.mcp_enabled_tools !== null ? "Enabled" : "Disabled"}
+                {mcpEdits.mcp_enabled_tools !== null ? t("enabled") : t("disabled")}
               </Label>
             </div>
           </FieldRow>
@@ -650,8 +711,8 @@ export function BankConfigView() {
 
         {/* Models Section */}
         <ConfigSection
-          title="Models"
-          description="Provider-specific model settings"
+          title={t("modelsTitle")}
+          description={t("modelsDescription")}
           error={geminiError}
           dirty={geminiDirty}
           saving={geminiSaving}
@@ -659,21 +720,20 @@ export function BankConfigView() {
         >
           {/* Gemini subsection */}
           <div className="px-6 py-4 space-y-4">
-            <p className="text-sm font-semibold">Gemini / Vertex AI</p>
+            <p className="text-sm font-semibold">{t("geminiSubsectionTitle")}</p>
             <div className="pl-4 border-l-2 border-border/40 space-y-4">
               <FieldRow
-                label="Safety settings"
+                label={t("safetySettingsLabel")}
                 description={
                   <>
-                    When off, Gemini&apos;s default safety thresholds are used. When on, configure
-                    thresholds per harm category.{" "}
+                    {t("safetySettingsDescriptionPart1")}{" "}
                     <a
                       href="https://ai.google.dev/gemini-api/docs/safety-settings"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="underline hover:text-foreground transition-colors"
                     >
-                      Learn more
+                      {t("safetySettingsLearnMore")}
                     </a>
                   </>
                 }
@@ -690,7 +750,7 @@ export function BankConfigView() {
                     }
                   />
                   <Label className="text-xs text-muted-foreground">
-                    {geminiEdits.llm_gemini_safety_settings !== null ? "Custom" : "Default"}
+                    {geminiEdits.llm_gemini_safety_settings !== null ? t("custom") : t("default")}
                   </Label>
                 </div>
               </FieldRow>
@@ -731,15 +791,13 @@ function RetainStrategyForm({
   onChange: (patch: Partial<RetainFormValues>) => void;
   isOverride?: boolean;
 }) {
+  const t = useTranslations("bankConfig");
   const modeValue = values.retain_extraction_mode ?? (isOverride ? INHERIT_SENTINEL : "");
   const showCustomField = values.retain_extraction_mode === "custom";
 
   return (
     <div className="divide-y divide-border/40">
-      <FieldRow
-        label="Extraction Mode"
-        description="How aggressively to extract facts. concise = selective, verbose = capture everything, verbatim = store chunks as-is (still extract entities/time), chunks = no LLM, custom = write your own rules."
-      >
+      <FieldRow label={t("extractionModeLabel")} description={t("extractionModeDescription")}>
         <Select
           value={modeValue}
           onValueChange={(val) =>
@@ -747,12 +805,12 @@ function RetainStrategyForm({
           }
         >
           <SelectTrigger className="w-full">
-            <SelectValue placeholder={isOverride ? "Inherited from default" : undefined} />
+            <SelectValue placeholder={isOverride ? t("inherited") : undefined} />
           </SelectTrigger>
           <SelectContent>
             {isOverride && (
               <SelectItem value={INHERIT_SENTINEL}>
-                <span className="text-muted-foreground italic">inherited</span>
+                <span className="text-muted-foreground italic">{t("inherited")}</span>
               </SelectItem>
             )}
             {EXTRACTION_MODES.map((opt) => (
@@ -763,7 +821,7 @@ function RetainStrategyForm({
           </SelectContent>
         </Select>
       </FieldRow>
-      <FieldRow label="Chunk Size" description="Size of text chunks for processing (characters)">
+      <FieldRow label={t("chunkSizeLabel")} description={t("chunkSizeDescription")}>
         <Input
           type="number"
           min={500}
@@ -772,37 +830,30 @@ function RetainStrategyForm({
           onChange={(e) =>
             onChange({ retain_chunk_size: e.target.value ? parseFloat(e.target.value) : null })
           }
-          placeholder={isOverride ? "Inherited from default" : undefined}
+          placeholder={isOverride ? t("inherited") : undefined}
         />
       </FieldRow>
       <TextareaRow
-        label="Mission"
-        description="What this bank should pay attention to during extraction. Steers the LLM without replacing the extraction rules."
+        label={t("missionLabel")}
+        description={t("retainMissionDescription")}
         value={values.retain_mission ?? ""}
         onChange={(v) => onChange({ retain_mission: v || null })}
-        placeholder={
-          isOverride
-            ? "Inherited from default"
-            : "e.g. Always include technical decisions, API design choices, and architectural trade-offs."
-        }
+        placeholder={isOverride ? t("inherited") : t("retainMissionPlaceholder")}
         rows={3}
       />
       {showCustomField && (
         <TextareaRow
-          label="Custom Extraction Prompt"
-          description="Replaces the built-in extraction rules entirely. Only active when Extraction Mode is set to custom."
+          label={t("customExtractionPromptLabel")}
+          description={t("customExtractionPromptDescription")}
           value={values.retain_custom_instructions ?? ""}
           onChange={(v) => onChange({ retain_custom_instructions: v || null })}
           rows={5}
         />
       )}
-      <FieldRow
-        label="Free Form Entities"
-        description="Extract regular named entities (people, places, concepts) alongside entity labels. Disable to restrict extraction to entity labels only."
-      >
+      <FieldRow label={t("freeFormEntitiesLabel")} description={t("freeFormEntitiesDescription")}>
         <div className="flex justify-end items-center gap-2">
           <Label className="text-sm text-muted-foreground cursor-pointer select-none">
-            {(values.entities_allow_free_form ?? true) ? "Enabled" : "Disabled"}
+            {(values.entities_allow_free_form ?? true) ? t("enabled") : t("disabled")}
           </Label>
           <Switch
             checked={values.entities_allow_free_form ?? true}
@@ -867,6 +918,8 @@ function RetainStrategiesPanel({
   strategies: Record<string, Record<string, any>> | null;
   onStrategiesChange: (v: Record<string, Record<string, any>> | null) => void;
 }) {
+  const t = useTranslations("bankConfig");
+  const tCommon = useTranslations("common");
   const [local, setLocal] = useState<LocalStrategy[]>(() => fromStrategiesDict(strategies));
   const [selectedTab, setSelectedTab] = useState<number | "default">("default");
   const [pendingDelete, setPendingDelete] = useState<LocalStrategy | null>(null);
@@ -934,7 +987,7 @@ function RetainStrategiesPanel({
               : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
           }`}
         >
-          Default
+          {t("default")}
         </button>
 
         {/* Named strategy tabs */}
@@ -949,7 +1002,7 @@ function RetainStrategiesPanel({
             onClick={() => setSelectedTab(s.id)}
           >
             <span className="font-mono">
-              {s.name || <span className="italic font-normal opacity-50">unnamed</span>}
+              {s.name || <span className="italic font-normal opacity-50">{t("unnamed")}</span>}
             </span>
             <button
               type="button"
@@ -970,7 +1023,7 @@ function RetainStrategiesPanel({
           className="py-3 px-3 text-sm text-muted-foreground hover:text-primary transition-colors flex items-center gap-1.5"
         >
           <Plus className="h-3.5 w-3.5" />
-          Add strategy
+          {t("addStrategy")}
         </button>
       </div>
 
@@ -981,16 +1034,16 @@ function RetainStrategiesPanel({
         ) : activeStrategy ? (
           <div>
             <div className="px-6 py-3 flex items-center gap-3 border-b border-border/40">
-              <label className="text-xs text-muted-foreground shrink-0">Name</label>
+              <label className="text-xs text-muted-foreground shrink-0">{t("nameLabel")}</label>
               <div className="flex flex-col gap-1">
                 <Input
                   value={activeStrategy.name}
                   onChange={(e) => updateStrategy(activeStrategy.id, { name: e.target.value })}
-                  placeholder="strategy name (e.g. fast)"
+                  placeholder={t("strategyNamePlaceholder")}
                   className={`h-7 text-xs font-mono max-w-[200px] ${!activeStrategy.name.trim() ? "border-destructive focus-visible:ring-destructive" : ""}`}
                 />
                 {!activeStrategy.name.trim() && (
-                  <p className="text-xs text-destructive">Name is required</p>
+                  <p className="text-xs text-destructive">{t("nameIsRequired")}</p>
                 )}
               </div>
             </div>
@@ -1016,14 +1069,12 @@ function RetainStrategiesPanel({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Delete strategy &ldquo;{pendingDelete?.name || "unnamed"}&rdquo;?
+              {t("deleteStrategyTitle", { name: pendingDelete?.name || t("unnamed") })}
             </AlertDialogTitle>
-            <AlertDialogDescription>
-              This will remove the strategy and all its overrides. This cannot be undone.
-            </AlertDialogDescription>
+            <AlertDialogDescription>{t("deleteStrategyDescription")}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => {
@@ -1033,7 +1084,7 @@ function RetainStrategiesPanel({
                 }
               }}
             >
-              Delete
+              {tCommon("delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1051,6 +1102,8 @@ function ToolSelector({
   selected: string[];
   onChange: (tools: string[]) => void;
 }) {
+  const t = useTranslations("bankConfig");
+  const mcpToolGroups = getMcpToolGroups(t);
   const selectedSet = new Set(selected);
 
   const toggleTool = (tool: string) => {
@@ -1060,10 +1113,10 @@ function ToolSelector({
     } else {
       next.add(tool);
     }
-    onChange(ALL_TOOLS.filter((t) => next.has(t)));
+    onChange(ALL_TOOLS.filter((tool) => next.has(tool)));
   };
 
-  const allSelected = ALL_TOOLS.every((t) => selectedSet.has(t));
+  const allSelected = ALL_TOOLS.every((tool) => selectedSet.has(tool));
   const noneSelected = selected.length === 0;
 
   const toggleAll = () => {
@@ -1074,18 +1127,18 @@ function ToolSelector({
     <div className="px-6 py-4 space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground">
-          {selected.length} of {ALL_TOOLS.length} tools enabled
+          {t("toolsEnabled", { selected: selected.length, total: ALL_TOOLS.length })}
         </p>
         <button type="button" onClick={toggleAll} className="text-xs text-primary hover:underline">
-          {allSelected ? "Deselect all" : "Select all"}
+          {allSelected ? t("deselectAll") : t("selectAll")}
         </button>
       </div>
       <div className="space-y-4">
-        {MCP_TOOL_GROUPS.map((group) => {
-          const groupSelected = group.tools.filter((t) => selectedSet.has(t)).length;
+        {mcpToolGroups.map((group) => {
+          const groupSelected = group.tools.filter((tool) => selectedSet.has(tool)).length;
           const groupAll = groupSelected === group.tools.length;
           return (
-            <div key={group.label}>
+            <div key={group.key}>
               <div className="flex items-center justify-between mb-1.5">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                   {group.label}
@@ -1095,15 +1148,15 @@ function ToolSelector({
                   onClick={() => {
                     const next = new Set(selectedSet);
                     if (groupAll) {
-                      group.tools.forEach((t) => next.delete(t));
+                      group.tools.forEach((tool) => next.delete(tool));
                     } else {
-                      group.tools.forEach((t) => next.add(t));
+                      group.tools.forEach((tool) => next.add(tool));
                     }
-                    onChange(ALL_TOOLS.filter((t) => next.has(t)));
+                    onChange(ALL_TOOLS.filter((tool) => next.has(tool)));
                   }}
                   className="text-xs text-primary hover:underline"
                 >
-                  {groupAll ? "Deselect" : "Select all"}
+                  {groupAll ? t("deselect") : t("selectAll")}
                 </button>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -1129,11 +1182,7 @@ function ToolSelector({
           );
         })}
       </div>
-      {noneSelected && (
-        <p className="text-xs text-destructive">
-          Warning: no tools selected — agents will be blocked from all MCP calls for this bank.
-        </p>
-      )}
+      {noneSelected && <p className="text-xs text-destructive">{t("noToolsWarning")}</p>}
     </div>
   );
 }
@@ -1157,6 +1206,7 @@ function ConfigSection({
   saving: boolean;
   onSave: () => void;
 }) {
+  const t = useTranslations("bankConfig");
   return (
     <section className="space-y-3">
       <div>
@@ -1178,10 +1228,10 @@ function ConfigSection({
             {saving ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Saving...
+                {t("saving")}
               </>
             ) : (
-              "Save changes"
+              t("saveChanges")
             )}
           </Button>
         </div>
@@ -1319,13 +1369,6 @@ function exampleBadge(
   return `e.g. ${key}:<value>`;
 }
 
-const FIELD_TYPE_LABELS: Record<MapField["type"], string> = {
-  text: "Text",
-  value: "Single value",
-  "multi-values": "Multi-values",
-  map: "Map",
-};
-
 function MapFieldsEditor({
   fields,
   onChange,
@@ -1339,6 +1382,13 @@ function MapFieldsEditor({
   extraControls?: React.ReactNode;
   examplePrefix?: string;
 }) {
+  const t = useTranslations("bankConfig");
+  const FIELD_TYPE_LABELS: Record<MapField["type"], string> = {
+    text: t("fieldTypeText"),
+    value: t("fieldTypeValue"),
+    "multi-values": t("fieldTypeMultiValues"),
+    map: t("fieldTypeMap"),
+  };
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
   const updateField = (oldName: string, patch: Partial<MapField>) => {
@@ -1378,7 +1428,7 @@ function MapFieldsEditor({
       }
     >
       {Object.keys(fields).length === 0 && (
-        <p className="text-xs text-muted-foreground italic">No fields yet.</p>
+        <p className="text-xs text-muted-foreground italic">{t("noFieldsYet")}</p>
       )}
       {Object.entries(fields).map(([fieldName, field], fi) => {
         const isNestedMap = field.type === "map";
@@ -1405,13 +1455,13 @@ function MapFieldsEditor({
                 <span className="w-[18px] shrink-0" />
               )}
               <Input
-                placeholder="field name"
+                placeholder={t("fieldNamePlaceholder")}
                 value={fieldName}
                 onChange={(e) => renameField(fieldName, e.target.value)}
                 className="h-7 text-xs font-mono w-28 shrink-0"
               />
               <Input
-                placeholder="extractor hint: what to extract"
+                placeholder={t("extractorHintWhatPlaceholder")}
                 value={field.description}
                 onChange={(e) => updateField(fieldName, { description: e.target.value })}
                 className="h-7 text-xs flex-1 min-w-0"
@@ -1473,13 +1523,13 @@ function MapFieldsEditor({
             {isOpen && hasEnum && (
               <div className="ml-6 space-y-0.5 py-1">
                 {(field.values ?? []).length === 0 && (
-                  <p className="text-[11px] text-muted-foreground italic">No values yet.</p>
+                  <p className="text-[11px] text-muted-foreground italic">{t("noValuesYet")}</p>
                 )}
                 {(field.values ?? []).map((v, vi) => (
                   <div key={vi} className="flex items-center gap-1.5 group/val">
                     <span className="text-muted-foreground/50 text-[10px] shrink-0">&#x2022;</span>
                     <Input
-                      placeholder="value"
+                      placeholder={t("addValueShort")}
                       value={v.value}
                       onChange={(e) => {
                         const newValues = [...(field.values ?? [])];
@@ -1489,7 +1539,7 @@ function MapFieldsEditor({
                       className="h-6 text-[11px] font-mono w-24 shrink-0 border-dashed"
                     />
                     <Input
-                      placeholder="extractor hint: when to pick this value"
+                      placeholder={t("extractorHintWhichPlaceholder")}
                       value={v.description}
                       onChange={(e) => {
                         const newValues = [...(field.values ?? [])];
@@ -1519,7 +1569,7 @@ function MapFieldsEditor({
                   className="text-[11px] text-muted-foreground/60 hover:text-foreground inline-flex items-center gap-1 ml-2.5"
                 >
                   <Plus className="h-2.5 w-2.5" />
-                  value
+                  {t("addValueShort")}
                 </button>
               </div>
             )}
@@ -1532,7 +1582,7 @@ function MapFieldsEditor({
         className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
       >
         <Plus className="h-3 w-3" />
-        field
+        {t("addField")}
       </button>
     </div>
   );
@@ -1559,6 +1609,7 @@ function EntityLabelsEditor({
   value: LabelGroup[];
   onChange: (attrs: LabelGroup[]) => void;
 }) {
+  const t = useTranslations("entityLabelsEditor");
   const updateAttr = (i: number, patch: Partial<LabelGroup>) => {
     const next = value.map((a, idx) => (idx === i ? { ...a, ...patch } : a));
     onChange(next);
@@ -1576,21 +1627,18 @@ function EntityLabelsEditor({
     <div className="px-6 py-4 space-y-3">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm font-medium">Entity Labels</p>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Extracted per memory at retain time. Every field is optional — only filled when clearly
-            applicable.
-          </p>
+          <p className="text-sm font-medium">{t("entityLabelsTitle")}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{t("entityLabelsDescription")}</p>
         </div>
         {value.length > 0 && (
           <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full shrink-0">
-            {value.length} label{value.length !== 1 ? "s" : ""}
+            {t("labelCount", { count: value.length })}
           </span>
         )}
       </div>
 
       {value.length === 0 && (
-        <p className="text-xs text-muted-foreground italic">No entity labels defined.</p>
+        <p className="text-xs text-muted-foreground italic">{t("noEntityLabelsDefined")}</p>
       )}
 
       <div className="space-y-2">
@@ -1625,14 +1673,14 @@ function EntityLabelsEditor({
               extraControls={
                 <label
                   className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0 cursor-pointer select-none"
-                  title="Also store extracted values as tags on the memory (not just entities)"
+                  title={t("alsoStoreAsTagTooltip")}
                 >
                   <Checkbox
                     checked={attr.tag}
                     onCheckedChange={(checked) => updateAttr(i, { tag: !!checked })}
                     className="h-4 w-4"
                   />
-                  + tag
+                  {t("plusTag")}
                 </label>
               }
               examplePrefix={attr.key}
@@ -1647,7 +1695,7 @@ function EntityLabelsEditor({
         className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
       >
         <Plus className="h-3.5 w-3.5" />
-        Add label
+        {t("addLabel")}
       </button>
     </div>
   );
@@ -1662,12 +1710,15 @@ function GeminiSafetyEditor({
   value: GeminiSafetySetting[];
   onChange: (settings: GeminiSafetySetting[]) => void;
 }) {
+  const t = useTranslations("bankConfig");
+  const harmCategories = getGeminiHarmCategories(t);
+  const thresholds = getGeminiThresholds(t);
   const getThreshold = (category: string): string => {
     return value.find((s) => s.category === category)?.threshold ?? "BLOCK_MEDIUM_AND_ABOVE";
   };
 
   const setThreshold = (category: string, threshold: string) => {
-    const next = GEMINI_HARM_CATEGORIES.map((c) => ({
+    const next = harmCategories.map((c) => ({
       category: c.value,
       threshold: c.value === category ? threshold : getThreshold(c.value),
     }));
@@ -1677,19 +1728,18 @@ function GeminiSafetyEditor({
   return (
     <div className="px-6 py-4 space-y-3">
       <p className="text-xs text-muted-foreground">
-        Set the blocking threshold for each harm category. "Off" disables the filter entirely
-        (default for Gemini 2.5+). Lower thresholds block more content.{" "}
+        {t("geminiSafetyEditorDescriptionPart1")}{" "}
         <a
           href="https://ai.google.dev/gemini-api/docs/safety-settings"
           target="_blank"
           rel="noopener noreferrer"
           className="underline hover:text-foreground transition-colors"
         >
-          Learn more
+          {t("geminiSafetyEditorLearnMore")}
         </a>
       </p>
       <div className="space-y-2">
-        {GEMINI_HARM_CATEGORIES.map((cat) => (
+        {harmCategories.map((cat) => (
           <div key={cat.value} className="flex items-center justify-between gap-4">
             <span className="text-sm">{cat.label}</span>
             <Select
@@ -1700,9 +1750,9 @@ function GeminiSafetyEditor({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {GEMINI_THRESHOLDS.map((t) => (
-                  <SelectItem key={t.value} value={t.value} className="text-xs">
-                    {t.label}
+                {thresholds.map((th) => (
+                  <SelectItem key={th.value} value={th.value} className="text-xs">
+                    {th.label}
                   </SelectItem>
                 ))}
               </SelectContent>

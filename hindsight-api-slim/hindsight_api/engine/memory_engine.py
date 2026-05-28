@@ -113,6 +113,18 @@ class UnqualifiedTableError(Exception):
     pass
 
 
+class MentalModelRefreshError(Exception):
+    """Raised when refresh_mental_model cannot produce new content.
+
+    The previous content (if any) is preserved in the DB and the reflect_response
+    audit trail is persisted before this is raised, so the failure is recoverable
+    and auditable. Callers (worker queue, integration tests) should treat this
+    as a retryable condition.
+    """
+
+    pass
+
+
 def validate_sql_schema(sql: str) -> None:
     """
     Validate that SQL doesn't contain unqualified table references.
@@ -382,6 +394,15 @@ def _resolve_thinking_budget(config_dict: dict, budget: "Budget | None", max_tok
 def utcnow():
     """Get current UTC time with timezone info."""
     return datetime.now(UTC)
+
+
+def _recall_scoring_now(question_date: datetime | None) -> datetime:
+    """Return the reference time for recall scoring boosts."""
+    if question_date is None:
+        return utcnow()
+    if question_date.tzinfo is None or question_date.utcoffset() is None:
+        return question_date.replace(tzinfo=UTC)
+    return question_date.astimezone(UTC)
 
 
 # Logger for memory system
@@ -1164,6 +1185,29 @@ class MemoryEngine(MemoryEngineInterface):
         logger.info(f"[CONSOLIDATION] bank={bank_id} completed: {result.get('memories_processed', 0)} processed")
         return result
 
+    async def _handle_graph_maintenance(self, task_dict: dict[str, Any]):
+        """Handler for graph_maintenance tasks. Drains graph_maintenance_queue for the bank."""
+        bank_id = task_dict.get("bank_id")
+        if not bank_id:
+            raise ValueError("bank_id is required for graph_maintenance task")
+
+        from hindsight_api.models import RequestContext
+
+        from .graph_maintenance import run_graph_maintenance_job
+
+        internal_context = RequestContext(
+            internal=True,
+            tenant_id=task_dict.get("_tenant_id"),
+            api_key_id=task_dict.get("_api_key_id"),
+            retry_count=task_dict.get("_retry_count", 0),
+        )
+        return await run_graph_maintenance_job(
+            memory_engine=self,
+            bank_id=bank_id,
+            request_context=internal_context,
+            operation_id=task_dict.get("operation_id"),
+        )
+
     async def _handle_refresh_mental_model(self, task_dict: dict[str, Any]):
         """
         Handler for refresh_mental_model tasks.
@@ -1304,6 +1348,8 @@ class MemoryEngine(MemoryEngineInterface):
                     await self._handle_file_convert_retain(task_dict)
                 elif task_type == "consolidation":
                     consolidation_result = await self._handle_consolidation(task_dict)
+                elif task_type == "graph_maintenance":
+                    await self._handle_graph_maintenance(task_dict)
                 elif task_type == "refresh_mental_model":
                     await self._handle_refresh_mental_model(task_dict)
                 elif task_type == "webhook_delivery":
@@ -2062,7 +2108,10 @@ class MemoryEngine(MemoryEngineInterface):
                         schema = tenant.schema
                         if schema:
                             ensure_text_search_extension(
-                                self.db_url, text_search_extension=config.text_search_extension, schema=schema
+                                self.db_url,
+                                text_search_extension=config.text_search_extension,
+                                pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
+                                schema=schema,
                             )
 
         logger.info(f"Connecting to database at {mask_network_location(self.db_url)}")
@@ -2673,6 +2722,15 @@ class MemoryEngine(MemoryEngineInterface):
                 # Log but don't fail the retain - consolidation is non-critical
                 logger.warning(f"Failed to submit consolidation task for bank {bank_id}: {e}")
 
+        # Trigger graph maintenance if a document upsert in this retain
+        # enqueued any cleanup work. submit_async_graph_maintenance
+        # short-circuits when the queue is empty, so a regular non-upsert
+        # retain pays a single cheap indexed SELECT here.
+        try:
+            await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
+        except Exception as e:
+            logger.warning(f"Failed to submit graph maintenance task for bank {bank_id}: {e}")
+
         if return_usage:
             return result, total_usage
         return result
@@ -2841,7 +2899,7 @@ class MemoryEngine(MemoryEngineInterface):
                        Results are returned until token budget is reached, stopping before
                        including a fact that would exceed the limit
             enable_trace: Whether to return trace for debugging (deprecated)
-            question_date: Optional date when question was asked (for temporal filtering)
+            question_date: Optional date when question was asked (for temporal filtering and recency scoring)
             include_entities: Whether to include entity observations in the response
             max_entity_tokens: Maximum tokens for entity observations (default 500)
             include_chunks: Whether to include raw chunks in the response
@@ -3166,7 +3224,11 @@ class MemoryEngine(MemoryEngineInterface):
             embedding_span.set_attribute("hindsight.query", query[:100])
 
             try:
-                query_embeddings = await embedding_utils.generate_embeddings_batch(self.embeddings, [query])
+                query_embeddings = await embedding_utils.generate_embeddings_batch(
+                    self.embeddings,
+                    [query],
+                    input_type="query",
+                )
                 query_embedding = query_embeddings[0]
                 step_duration = time.time() - step_start
                 log_buffer.append(f"  [1] Generate query embedding: {step_duration:.3f}s")
@@ -3496,7 +3558,11 @@ class MemoryEngine(MemoryEngineInterface):
             if scored_results:
                 ce = reranker_instance.cross_encoder
                 is_passthrough = ce is not None and ce.provider_name == "rrf"
-                apply_combined_scoring(scored_results, now=utcnow(), is_passthrough_reranker=is_passthrough)
+                apply_combined_scoring(
+                    scored_results,
+                    now=_recall_scoring_now(question_date),
+                    is_passthrough_reranker=is_passthrough,
+                )
                 scored_results.sort(key=lambda x: x.weight, reverse=True)
                 log_buffer.append("  [4.6] Combined scoring: ce * recency_boost(0.2) * temporal_boost(0.2)")
 
@@ -4149,6 +4215,13 @@ class MemoryEngine(MemoryEngineInterface):
                     f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE document_id = $1", document_id
                 )
 
+                # Capture relink victims BEFORE the cascade — once the source
+                # rows are gone, the join finding them returns nothing.
+                if unit_ids:
+                    from .graph_maintenance import enqueue_relink_victims
+
+                    await enqueue_relink_victims(conn, bank_id, unit_ids, ops=backend.ops)
+
                 # Delete document first (cascades to memory_units and all their links).
                 # Running the stale-observation sweep AFTER the delete ensures we also
                 # catch observations inserted concurrently by consolidation — otherwise
@@ -4176,6 +4249,15 @@ class MemoryEngine(MemoryEngineInterface):
                     await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
                 except Exception as e:
                     logger.warning(f"Failed to submit consolidation after document deletion for bank {bank_id}: {e}")
+
+        # Run graph_maintenance whenever any unit was removed — even if no
+        # relink victims were enqueued, the deleted unit's entities may now
+        # be orphans that the bank-wide sweep should clean up.
+        if unit_ids:
+            try:
+                await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
+            except Exception as e:
+                logger.warning(f"Failed to submit graph maintenance after document deletion for bank {bank_id}: {e}")
 
         return result
 
@@ -4371,6 +4453,7 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
         invalidated_obs = 0
         bank_id_for_consolidation: str | None = None
+        bank_id_for_graph_maintenance: str | None = None
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
                 # Get bank_id and fact_type before deletion
@@ -4380,6 +4463,13 @@ class MemoryEngine(MemoryEngineInterface):
                 )
                 bank_id = row["bank_id"] if row else None
                 fact_type = row["fact_type"] if row else None
+
+                # Capture relink victims BEFORE the cascade — once the row is
+                # gone, the join finding them returns nothing.
+                if bank_id and fact_type in ("experience", "world"):
+                    from .graph_maintenance import enqueue_relink_victims
+
+                    await enqueue_relink_victims(conn, bank_id, [unit_id], ops=backend.ops)
 
                 # Delete the memory unit first (cascades to links and associations).
                 # The stale-observation sweep runs AFTER the delete so it also catches
@@ -4395,6 +4485,12 @@ class MemoryEngine(MemoryEngineInterface):
                     invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, [unit_id])
                     if invalidated_obs > 0:
                         bank_id_for_consolidation = bank_id
+
+                # Run graph_maintenance whenever a source-memory unit was
+                # removed — even if no relink victims were enqueued, the
+                # deleted unit's entities may now be orphans.
+                if deleted and bank_id and fact_type in ("experience", "world"):
+                    bank_id_for_graph_maintenance = bank_id
 
                 result = {
                     "success": deleted is not None,
@@ -4416,6 +4512,17 @@ class MemoryEngine(MemoryEngineInterface):
                         f"Failed to submit consolidation after memory deletion"
                         f" for bank {bank_id_for_consolidation}: {e}"
                     )
+
+        if bank_id_for_graph_maintenance:
+            try:
+                await self.submit_async_graph_maintenance(
+                    bank_id=bank_id_for_graph_maintenance, request_context=request_context
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to submit graph maintenance after memory deletion "
+                    f"for bank {bank_id_for_graph_maintenance}: {e}"
+                )
 
         return result
 
@@ -4881,7 +4988,9 @@ class MemoryEngine(MemoryEngineInterface):
                     source_memory_ids.extend(unit["source_memory_ids"])
             source_memory_ids = list(set(source_memory_ids))  # Deduplicate
 
-            # Fetch links where BOTH endpoints are in the visible set (or source memories)
+            # Fetch non-entity links where BOTH endpoints are in the visible set (or
+            # source memories). Entity edges are derived below from unit_entities so
+            # we don't materialize them in memory_links anymore.
             # Cap at 10k edges — the UI can't usefully render more, and uncapped queries
             # on highly-connected graphs (e.g. 1000 nodes with 500k+ edges) are too slow.
             max_edges = 10000
@@ -4893,10 +5002,11 @@ class MemoryEngine(MemoryEngineInterface):
                            ml.to_unit_id,
                            ml.link_type,
                            ml.weight,
-                           e.canonical_name as entity_name
+                           NULL::text AS entity_name
                     FROM {fq_table("memory_links")} ml
-                    LEFT JOIN {fq_table("entities")} e ON ml.entity_id = e.id
-                    WHERE ml.from_unit_id = ANY($1::uuid[]) AND ml.to_unit_id = ANY($1::uuid[])
+                    WHERE ml.link_type <> 'entity'
+                      AND ml.from_unit_id = ANY($1::uuid[])
+                      AND ml.to_unit_id = ANY($1::uuid[])
                     ORDER BY ml.weight DESC NULLS LAST
                     LIMIT $2
                 """,
@@ -5034,16 +5144,21 @@ class MemoryEngine(MemoryEngineInterface):
                 }
             )
 
-        # Build observation-inferred links from inherited entities and shared source memories.
-        # Observations never have direct memory_links rows, so all their links must be derived.
+        # Build derived links: entity edges for all visible units (from unit_entities)
+        # and observation semantic edges via shared source memories.
+        # Observations never have direct memory_links rows, so all their links are derived.
         observation_units = [unit for unit in units if unit["fact_type"] == "observation"]
-        observation_ids = {unit["id"] for unit in observation_units}
 
-        # Entity links: pair observations that share at least one inherited entity
-        entity_to_observations: dict[str, list] = {}
-        for obs_id in observation_ids:
-            for entity_name in entity_map.get(obs_id, []):
-                entity_to_observations.setdefault(entity_name, []).append(obs_id)
+        # Entity links: pair any visible units that share at least one entity.
+        # Each unit links to up to max_neighbors_per_unit subsequent units in the
+        # per-entity list, so every unit that shares an entity with another visible
+        # unit gets edges (matches the historical writer cap, which was per-unit).
+        # Bounds total edges to ~N * cap per entity instead of N² for hot entities.
+        max_neighbors_per_unit = 10
+        entity_to_units_visible: dict[str, list] = {}
+        for unit_id in unit_ids:
+            for entity_name in entity_map.get(unit_id, []):
+                entity_to_units_visible.setdefault(entity_name, []).append(unit_id)
 
         # Semantic links: pair observations that share at least one source memory
         source_to_obs_for_semantic: dict = {}
@@ -5055,16 +5170,22 @@ class MemoryEngine(MemoryEngineInterface):
         observation_inferred_links = []
         seen_inferred: set[tuple] = set()
 
-        for entity_name, obs_ids in entity_to_observations.items():
-            for i, obs_a in enumerate(obs_ids):
-                for obs_b in obs_ids[i + 1 :]:
-                    pair = (min(str(obs_a), str(obs_b)), max(str(obs_a), str(obs_b)), "entity", entity_name)
+        for entity_name, ent_unit_ids in entity_to_units_visible.items():
+            n = len(ent_unit_ids)
+            for i, unit_a in enumerate(ent_unit_ids):
+                # Sliding window: link unit_a to its next max_neighbors_per_unit
+                # in the list. Each pair is also "incoming" for the later unit,
+                # so every unit ends up with up to ~2*max_neighbors_per_unit edges
+                # for this entity (its successors + its predecessors via their pairs).
+                for j in range(i + 1, min(i + 1 + max_neighbors_per_unit, n)):
+                    unit_b = ent_unit_ids[j]
+                    pair = (min(str(unit_a), str(unit_b)), max(str(unit_a), str(unit_b)), "entity", entity_name)
                     if pair not in seen_inferred:
                         seen_inferred.add(pair)
                         observation_inferred_links.append(
                             {
-                                "from_unit_id": obs_a,
-                                "to_unit_id": obs_b,
+                                "from_unit_id": unit_a,
+                                "to_unit_id": unit_b,
                                 "link_type": "entity",
                                 "weight": 1.0,
                                 "entity_name": entity_name,
@@ -6250,7 +6371,11 @@ class MemoryEngine(MemoryEngineInterface):
 
         async def search_mental_models_fn(q: str, max_results: int = 5) -> dict[str, Any]:
             # Generate embedding for the query
-            embeddings = await embedding_utils.generate_embeddings_batch(self.embeddings, [q])
+            embeddings = await embedding_utils.generate_embeddings_batch(
+                self.embeddings,
+                [q],
+                input_type="query",
+            )
             query_embedding = embeddings[0]
             async with backend.acquire() as conn:
                 return await tool_search_mental_models(
@@ -6996,17 +7121,54 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id,
             )
 
-            # Link stats — filter on ml.bank_id directly instead of joining through mu.bank_id.
-            # link_counts and link_counts_by_fact_type are derived in Python from the breakdown.
-            link_breakdown_stats = await conn.fetch(
+            # Link stats — filter on ml.bank_id (indexed) instead of joining through mu.bank_id.
+            # With the idx_memory_links_bank_link_type index this turns a full-table hash join
+            # into an indexed scan + PK lookups.  link_counts and link_counts_by_fact_type are
+            # derived in Python from the breakdown.
+            non_entity_breakdown = await conn.fetch(
                 f"""
                 SELECT mu.fact_type, ml.link_type, COUNT(*) as count
                 FROM {fq_table("memory_links")} ml
                 JOIN {fq_table("memory_units")} mu ON ml.from_unit_id = mu.id
-                WHERE ml.bank_id = $1
+                WHERE ml.bank_id = $1 AND ml.link_type <> 'entity'
                 GROUP BY mu.fact_type, ml.link_type
                 """,
                 bank_id,
+            )
+
+            # Entity links are derived from unit_entities (no longer stored in memory_links).
+            # Replicate the historical writer cap: each unit linked bidirectionally to up to
+            # MAX_LINKS_PER_ENTITY others sharing each entity. Count per (unit, entity) the
+            # outgoing rows the writer would have produced — by fact_type of the source unit.
+            max_links_per_entity = 10
+            entity_breakdown = await conn.fetch(
+                f"""
+                WITH per_entity AS (
+                    SELECT ue.entity_id, COUNT(*) AS n
+                    FROM {fq_table("unit_entities")} ue
+                    JOIN {fq_table("memory_units")} mu ON mu.id = ue.unit_id
+                    WHERE mu.bank_id = $1
+                    GROUP BY ue.entity_id
+                )
+                SELECT mu.fact_type, SUM(LEAST(pe.n - 1, $2))::bigint AS count
+                FROM {fq_table("unit_entities")} ue
+                JOIN {fq_table("memory_units")} mu ON mu.id = ue.unit_id
+                JOIN per_entity pe ON pe.entity_id = ue.entity_id
+                WHERE mu.bank_id = $1
+                GROUP BY mu.fact_type
+                """,
+                bank_id,
+                max_links_per_entity,
+            )
+
+            link_breakdown_stats = [
+                {"fact_type": row["fact_type"], "link_type": row["link_type"], "count": row["count"]}
+                for row in non_entity_breakdown
+            ]
+            link_breakdown_stats.extend(
+                {"fact_type": row["fact_type"], "link_type": "entity", "count": int(row["count"] or 0)}
+                for row in entity_breakdown
+                if (row["count"] or 0) > 0
             )
 
             link_counts: dict[str, int] = {}
@@ -8032,26 +8194,32 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Refuse to overwrite existing content with an empty render.
             # The reflect agent can return an empty answer (small models, all
-            # tool-call retries failing, transient provider errors) and the
-            # delta merge can also fall back to that empty candidate. Writing
-            # "" to the DB would destroy the working document — and since the
-            # next refresh sees current_content == "" it would also skip the
-            # delta path, compounding the problem. Preserve what's there and
-            # surface the failure via reflect_response.
-            if not final_content.strip() and current_content:
+            # tool-call retries failing, transient provider errors, the cleaner
+            # regex eating a JSON-dump that the LLM put in the answer field).
+            # Writing "" to the DB would destroy the working document; on the
+            # other hand silently returning the previous content masks upstream
+            # failures from callers (workers, tests). So: preserve existing
+            # content in the DB (and audit the failure via reflect_response),
+            # then RAISE so the caller knows the refresh didn't happen.
+            if not final_content.strip():
                 logger.warning(
                     f"[MENTAL_MODELS] Refresh for {mental_model_id} produced empty content; "
-                    "preserving previous content (likely an upstream LLM failure)"
+                    "preserving previous content and raising MentalModelRefreshError."
                 )
                 reflect_response_payload["refresh_skipped"] = "empty_candidate"
                 # Persist the reflect_response (so the failure is auditable) and
                 # the source-query tracking, but do NOT touch content/structured.
-                return await self.update_mental_model(
+                await self.update_mental_model(
                     bank_id,
                     mental_model_id,
                     reflect_response=reflect_response_payload,
                     last_refreshed_source_query=current_source_query,
                     request_context=request_context,
+                )
+                raise MentalModelRefreshError(
+                    f"Refresh produced empty content for mental_model_id={mental_model_id} "
+                    "(likely an upstream LLM failure). Previous content preserved in DB; "
+                    "reflect_response.refresh_skipped == 'empty_candidate' for audit."
                 )
 
             # When delta is not applied (full mode, or delta fallback), parse the
@@ -9806,6 +9974,60 @@ class MemoryEngine(MemoryEngineInterface):
             task_type="consolidation",
             task_payload=task_payload,
             dedupe_by_bank=dedupe,
+        )
+
+    async def submit_async_graph_maintenance(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Submit a graph-maintenance job to drain ``graph_maintenance_queue`` for a bank.
+
+        Idempotent: short-circuits with ``no_work=True`` when the queue is empty
+        for this bank, so unconditional callers (e.g. every retain that may or
+        may not have triggered a document upsert) don't generate empty worker
+        tasks. Deduplicates by bank when an existing pending job is already
+        scheduled.
+
+        Returns:
+            Dict with ``operation_id``. May contain ``no_work=True`` (and a
+            null operation_id) when the queue was already empty.
+        """
+        await self._authenticate_tenant(request_context)
+
+        # Cheap pre-check on the (bank_id, enqueued_at) index. Lets every
+        # retain call this unconditionally without paying for an async_operations
+        # row when there's nothing to do.
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            has_work = await conn.fetchval(
+                f"SELECT 1 FROM {fq_table('graph_maintenance_queue')} WHERE bank_id = $1 LIMIT 1",
+                bank_id,
+            )
+        if not has_work:
+            return {"operation_id": None, "no_work": True}
+
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext
+
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation="submit_async_graph_maintenance", request_context=request_context
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+
+        task_payload: dict[str, Any] = {}
+        if request_context.tenant_id:
+            task_payload["_tenant_id"] = request_context.tenant_id
+        if request_context.api_key_id:
+            task_payload["_api_key_id"] = request_context.api_key_id
+
+        return await self._submit_async_operation(
+            bank_id=bank_id,
+            operation_type="graph_maintenance",
+            task_type="graph_maintenance",
+            task_payload=task_payload,
+            dedupe_by_bank=True,
         )
 
     async def submit_async_refresh_mental_model(

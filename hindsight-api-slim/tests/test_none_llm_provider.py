@@ -145,8 +145,9 @@ async def test_async_batch_retain_tracks_all_document_ids_with_none_provider(non
         request_context=request_context,
     )
 
-    # Poll until the async operation completes (avoid flaky sleep)
-    for _ in range(50):
+    # Poll until the async operation completes; SyncTaskBackend executes inline
+    # but extra iterations absorb DB commit latency under load.
+    for _ in range(100):
         status = await none_memory.get_operation_status(
             bank_id=bank_id,
             operation_id=result["operation_id"],

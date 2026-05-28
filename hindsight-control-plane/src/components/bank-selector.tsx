@@ -3,9 +3,11 @@
 import * as React from "react";
 import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
 import { bankRoute } from "@/lib/bank-url";
 import { client } from "@/lib/api";
+import { LanguageSwitcher } from "@/components/language-switcher";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -85,6 +87,10 @@ function formatTimeAgo(isoDate: string): string {
 function BankSelectorInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const tNav = useTranslations("nav");
+  const tNavBank = useTranslations("nav.bank");
+  const tCommon = useTranslations("common");
+  const tAddDocument = useTranslations("addDocument");
   const { currentBank, setCurrentBank, banks, bankInfos, banksLoading, loadBanks } = useBank();
   const { theme, toggleTheme } = useTheme();
   const { features } = useFeatures();
@@ -203,7 +209,9 @@ function BankSelectorInner() {
           await client.importBankTemplate(newBankId.trim(), manifest);
         } catch (importError) {
           setTemplateError(
-            importError instanceof Error ? importError.message : "Failed to import template"
+            importError instanceof Error
+              ? importError.message
+              : tAddDocument("failedToImportTemplate")
           );
           setIsCreating(false);
           return;
@@ -219,7 +227,7 @@ function BankSelectorInner() {
       setCurrentBank(newBankId.trim());
       router.push(bankRoute(newBankId.trim(), "?view=data"));
     } catch (error) {
-      setCreateError(error instanceof Error ? error.message : "Failed to create bank");
+      setCreateError(error instanceof Error ? error.message : tAddDocument("failedToCreateBank"));
     } finally {
       setIsCreating(false);
     }
@@ -482,22 +490,22 @@ function BankSelectorInner() {
               aria-expanded={open}
               className="w-[250px] justify-between font-bold border-2 border-primary hover:bg-accent"
             >
-              <span className="truncate">{currentBank || "Select a memory bank..."}</span>
+              <span className="truncate">{currentBank || tNavBank("select")}</span>
               <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-[420px] p-0" align="start">
             <Command>
-              {sortedBanks.length > 0 && <CommandInput placeholder="Search memory banks..." />}
+              {sortedBanks.length > 0 && <CommandInput placeholder={tNavBank("search")} />}
               <CommandList>
                 <CommandEmpty>
                   {banksLoading ? (
                     <div className="flex items-center justify-center gap-2 py-2">
                       <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                      <span>Loading banks...</span>
+                      <span>{tCommon("loading")}</span>
                     </div>
                   ) : (
-                    "No memory banks yet."
+                    tNavBank("empty")
                   )}
                 </CommandEmpty>
                 <CommandGroup>
@@ -565,7 +573,7 @@ function BankSelectorInner() {
                   }}
                 >
                   <Plus className="h-4 w-4" />
-                  <span>Create new bank</span>
+                  <span>{tNavBank("create")}</span>
                 </button>
               </div>
             </Command>
@@ -582,11 +590,11 @@ function BankSelectorInner() {
             size="sm"
             className="h-9 gap-1.5"
             onClick={() => setDocDialogOpen(true)}
-            title="Add document to current bank"
+            title={tAddDocument("addDocumentToCurrentBank")}
             data-add-document
           >
             <Plus className="h-4 w-4" />
-            <span>Add Document</span>
+            <span>{tAddDocument("addDocumentButton")}</span>
           </Button>
         )}
 
@@ -599,7 +607,7 @@ function BankSelectorInner() {
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
-          title="View on GitHub"
+          title={tNav("viewOnGitHub")}
         >
           <Github className="h-5 w-5" />
           <span className="text-sm font-medium">GitHub</span>
@@ -614,10 +622,12 @@ function BankSelectorInner() {
           size="icon"
           onClick={toggleTheme}
           className="h-9 w-9"
-          title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+          title={theme === "light" ? tNav("darkMode") : tNav("lightMode")}
         >
           {theme === "light" ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
         </Button>
+
+        <LanguageSwitcher />
 
         {features?.access_key_auth && (
           <>
@@ -643,11 +653,11 @@ function BankSelectorInner() {
         <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
           <DialogContent className="sm:max-w-[550px]">
             <DialogHeader>
-              <DialogTitle>Create New Memory Bank</DialogTitle>
+              <DialogTitle>{tAddDocument("createBankTitle")}</DialogTitle>
             </DialogHeader>
             <div className="py-4 space-y-4">
               <Input
-                placeholder="Enter bank ID..."
+                placeholder={tAddDocument("createBankIdPlaceholder")}
                 value={newBankId}
                 onChange={(e) => setNewBankId(e.target.value)}
                 onKeyDown={(e) => {
@@ -669,7 +679,9 @@ function BankSelectorInner() {
                       }
                     }}
                   />
-                  <label className="text-sm font-medium">Import from template</label>
+                  <label className="text-sm font-medium">
+                    {tAddDocument("importFromTemplateLabel")}
+                  </label>
                 </div>
                 {useTemplate && (
                   <a
@@ -678,15 +690,14 @@ function BankSelectorInner() {
                     rel="noopener noreferrer"
                     className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                   >
-                    Browse templates &rarr;
+                    {tAddDocument("browseTemplates")}
                   </a>
                 )}
               </div>
               {useTemplate && (
                 <div>
                   <p className="text-xs text-muted-foreground mb-2">
-                    Paste a template manifest JSON to pre-configure the bank with settings, mental
-                    models, and directives.
+                    {tAddDocument("templateManifestHelp")}
                   </p>
                   <Textarea
                     placeholder='{"version": "1", "bank": {...}, "mental_models": [...]}'
@@ -716,10 +727,10 @@ function BankSelectorInner() {
                   setTemplateError(null);
                 }}
               >
-                Cancel
+                {tCommon("cancel")}
               </Button>
               <Button onClick={handleCreateBank} disabled={isCreating || !newBankId.trim()}>
-                {isCreating ? "Creating..." : "Create"}
+                {isCreating ? tAddDocument("creating") : tCommon("create")}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -728,9 +739,9 @@ function BankSelectorInner() {
         <Dialog open={docDialogOpen} onOpenChange={setDocDialogOpen}>
           <DialogContent className="sm:max-w-[750px] max-h-[90vh] flex flex-col">
             <DialogHeader>
-              <DialogTitle>Add New Document</DialogTitle>
+              <DialogTitle>{tAddDocument("dialogTitle")}</DialogTitle>
               <p className="text-sm text-muted-foreground">
-                Add a new document to memory bank:{" "}
+                {tAddDocument("dialogSubtitle")}
                 <span className="font-semibold">{currentBank}</span>
               </p>
             </DialogHeader>
@@ -741,7 +752,7 @@ function BankSelectorInner() {
                 <TabsList className="grid w-full grid-cols-2">
                   <TabsTrigger value="text" className="flex items-center gap-2">
                     <FileText className="h-4 w-4" />
-                    Text
+                    {tAddDocument("tabText")}
                   </TabsTrigger>
                   <TabsTrigger
                     value="upload"
@@ -753,16 +764,18 @@ function BankSelectorInner() {
                     ) : (
                       <Upload className="h-4 w-4" />
                     )}
-                    Upload Files
+                    {tAddDocument("tabUploadFiles")}
                   </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="text" className="mt-3">
-                  <label className="font-bold block mb-1 text-sm text-foreground">Content *</label>
+                  <label className="font-bold block mb-1 text-sm text-foreground">
+                    {tAddDocument("contentLabel")}
+                  </label>
                   <Textarea
                     value={docContent}
                     onChange={(e) => setDocContent(e.target.value)}
-                    placeholder="Enter the document content..."
+                    placeholder={tAddDocument("contentPlaceholder")}
                     className="min-h-[150px] resize-y"
                     autoFocus
                   />
@@ -773,15 +786,18 @@ function BankSelectorInner() {
                     <div className="flex flex-col items-center justify-center py-8 text-center space-y-3">
                       <Lock className="h-12 w-12 text-muted-foreground/50" />
                       <div>
-                        <p className="font-semibold text-foreground">File Upload API Disabled</p>
+                        <p className="font-semibold text-foreground">
+                          {tAddDocument("fileUploadDisabled")}
+                        </p>
                         <p className="text-sm text-muted-foreground mt-1">
-                          File upload is not enabled on this server.
+                          {tAddDocument("fileUploadDisabledMessage")}
                         </p>
                         <p className="text-xs text-muted-foreground mt-2">
-                          To enable, set{" "}
-                          <code className="bg-muted px-1 py-0.5 rounded">
-                            HINDSIGHT_API_ENABLE_FILE_UPLOAD_API=true
-                          </code>
+                          {tAddDocument.rich("fileUploadEnableHint", {
+                            code: (chunks) => (
+                              <code className="bg-muted px-1 py-0.5 rounded">{chunks}</code>
+                            ),
+                          })}
                         </p>
                       </div>
                     </div>
@@ -801,7 +817,7 @@ function BankSelectorInner() {
                       >
                         <Upload className="h-8 w-8 text-muted-foreground mb-2" />
                         <span className="text-sm text-muted-foreground">
-                          Click to select files or drag and drop
+                          {tAddDocument("clickToSelectFiles")}
                         </span>
                       </label>
 
@@ -827,7 +843,7 @@ function BankSelectorInner() {
                                     type="button"
                                     className="flex items-center gap-1.5 min-w-0 flex-1 text-left hover:opacity-75 transition-opacity"
                                     onClick={() => toggleFileExpanded(index)}
-                                    title="Edit metadata for this file"
+                                    title={tAddDocument("editFileMetadata")}
                                   >
                                     {meta?.expanded ? (
                                       <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -875,7 +891,7 @@ function BankSelectorInner() {
                                           <div className="grid grid-cols-2 gap-2">
                                             <div>
                                               <label className="font-bold block mb-1 text-sm text-foreground">
-                                                Event Date
+                                                {tAddDocument("eventDateLabel")}
                                               </label>
                                               <Input
                                                 type="date"
@@ -888,7 +904,7 @@ function BankSelectorInner() {
                                             </div>
                                             <div>
                                               <label className="font-bold block mb-1 text-sm text-foreground">
-                                                Document ID
+                                                {tAddDocument("documentIdLabel")}
                                               </label>
                                               <Input
                                                 value={meta.document_id}
@@ -899,14 +915,14 @@ function BankSelectorInner() {
                                                     e.target.value
                                                   )
                                                 }
-                                                placeholder="Optional ID..."
+                                                placeholder={tAddDocument("fileIdPlaceholder")}
                                                 className="h-8 text-sm"
                                               />
                                             </div>
                                           </div>
                                           <div>
                                             <label className="font-bold block mb-1 text-sm text-foreground">
-                                              Strategy
+                                              {tAddDocument("strategyLabel")}
                                             </label>
                                             {bankStrategies.length > 0 ? (
                                               <Select
@@ -925,7 +941,7 @@ function BankSelectorInner() {
                                                 <SelectContent>
                                                   <SelectItem value="__none__">
                                                     <span className="text-muted-foreground italic">
-                                                      Default
+                                                      {tAddDocument("strategyDefault")}
                                                     </span>
                                                   </SelectItem>
                                                   {bankStrategies.map((name) => (
@@ -941,7 +957,7 @@ function BankSelectorInner() {
                                                 onChange={(e) =>
                                                   updateFileMeta(index, "strategy", e.target.value)
                                                 }
-                                                placeholder="Strategy name (optional)..."
+                                                placeholder={tAddDocument("strategyPlaceholder")}
                                                 className="h-8 text-sm"
                                               />
                                             )}
@@ -950,33 +966,32 @@ function BankSelectorInner() {
                                         <TabsContent value="tags" className="mt-0 space-y-2">
                                           <div>
                                             <label className="font-bold block mb-1 text-sm text-foreground">
-                                              Tags
+                                              {tAddDocument("tagsLabel")}
                                             </label>
                                             <Input
                                               value={meta.tags}
                                               onChange={(e) =>
                                                 updateFileMeta(index, "tags", e.target.value)
                                               }
-                                              placeholder="tag1, tag2..."
+                                              placeholder={tAddDocument("fileTagsPlaceholder")}
                                               className="h-8 text-sm"
                                             />
                                             <p className="text-xs text-muted-foreground mt-1">
-                                              Comma-separated — used to filter memories during
-                                              recall/reflect
+                                              {tAddDocument("fileTagsHelp")}
                                             </p>
                                           </div>
                                         </TabsContent>
                                         <TabsContent value="source" className="mt-0 space-y-2">
                                           <div>
                                             <label className="font-bold block mb-1 text-sm text-foreground">
-                                              Context
+                                              {tAddDocument("contextLabel")}
                                             </label>
                                             <Input
                                               value={meta.context}
                                               onChange={(e) =>
                                                 updateFileMeta(index, "context", e.target.value)
                                               }
-                                              placeholder="Optional context..."
+                                              placeholder={tAddDocument("fileContextPlaceholder")}
                                               className="h-8 text-sm"
                                             />
                                           </div>
@@ -1015,12 +1030,14 @@ function BankSelectorInner() {
               {/* Context — text tab only */}
               {docTab === "text" && (
                 <div>
-                  <label className="font-bold block mb-1 text-sm text-foreground">Context</label>
+                  <label className="font-bold block mb-1 text-sm text-foreground">
+                    {tAddDocument("contextLabel")}
+                  </label>
                   <Input
                     type="text"
                     value={docContext}
                     onChange={(e) => setDocContext(e.target.value)}
-                    placeholder="Optional context about this document..."
+                    placeholder={tAddDocument("contextPlaceholder")}
                   />
                 </div>
               )}
@@ -1058,7 +1075,7 @@ function BankSelectorInner() {
                         <div className="grid grid-cols-2 gap-3">
                           <div>
                             <label className="font-bold block mb-1 text-sm text-foreground">
-                              Event Date
+                              {tAddDocument("eventDateLabel")}
                             </label>
                             <Input
                               type="date"
@@ -1069,19 +1086,19 @@ function BankSelectorInner() {
                           </div>
                           <div>
                             <label className="font-bold block mb-1 text-sm text-foreground">
-                              Document ID
+                              {tAddDocument("documentIdLabel")}
                             </label>
                             <Input
                               type="text"
                               value={docDocumentId}
                               onChange={(e) => setDocDocumentId(e.target.value)}
-                              placeholder="Optional document identifier..."
+                              placeholder={tAddDocument("documentIdPlaceholder")}
                             />
                           </div>
                         </div>
                         <div>
                           <label className="font-bold block mb-1 text-sm text-foreground">
-                            Strategy
+                            {tAddDocument("strategyLabel")}
                           </label>
                           {bankStrategies.length > 0 ? (
                             <Select
@@ -1093,7 +1110,9 @@ function BankSelectorInner() {
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="__none__">
-                                  <span className="text-muted-foreground italic">Default</span>
+                                  <span className="text-muted-foreground italic">
+                                    {tAddDocument("strategyDefault")}
+                                  </span>
                                 </SelectItem>
                                 {bankStrategies.map((name) => (
                                   <SelectItem key={name} value={name}>
@@ -1107,11 +1126,11 @@ function BankSelectorInner() {
                               type="text"
                               value={docStrategy}
                               onChange={(e) => setDocStrategy(e.target.value)}
-                              placeholder="Strategy name (optional)..."
+                              placeholder={tAddDocument("strategyPlaceholder")}
                             />
                           )}
                           <p className="text-xs text-muted-foreground mt-1">
-                            Override the bank&apos;s default extraction strategy for this document.
+                            {tAddDocument("strategyHelpText")}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
@@ -1124,7 +1143,7 @@ function BankSelectorInner() {
                             htmlFor="async-doc"
                             className="text-sm cursor-pointer text-foreground"
                           >
-                            Process in background (async)
+                            {tAddDocument("asyncLabel")}
                           </label>
                         </div>
                       </TabsContent>
@@ -1132,21 +1151,21 @@ function BankSelectorInner() {
                       <TabsContent value="tags" className="mt-0 space-y-3">
                         <div>
                           <label className="font-bold block mb-1 text-sm text-foreground">
-                            Tags
+                            {tAddDocument("tagsLabel")}
                           </label>
                           <Input
                             type="text"
                             value={docTags}
                             onChange={(e) => setDocTags(e.target.value)}
-                            placeholder="user_alice, session_123, project_x"
+                            placeholder={tAddDocument("tagsPlaceholder")}
                           />
                           <p className="text-xs text-muted-foreground mt-1">
-                            Comma-separated — used to filter memories during recall/reflect
+                            {tAddDocument("tagsHelpText")}
                           </p>
                         </div>
                         <div>
                           <label className="font-bold block mb-1 text-sm text-foreground">
-                            Observation Scopes
+                            {tAddDocument("observationScopesLabel")}
                           </label>
                           <Select
                             value={docObservationScopes}
@@ -1160,9 +1179,13 @@ function BankSelectorInner() {
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="per_tag">Per tag</SelectItem>
+                              <SelectItem value="per_tag">
+                                {tAddDocument("observationScopePerTag")}
+                              </SelectItem>
                               <SelectItem value="combined">Combined</SelectItem>
-                              <SelectItem value="all_combinations">All combinations</SelectItem>
+                              <SelectItem value="all_combinations">
+                                {tAddDocument("observationScopeAllCombinations")}
+                              </SelectItem>
                               <SelectItem value="custom">Custom</SelectItem>
                             </SelectContent>
                           </Select>
@@ -1177,7 +1200,7 @@ function BankSelectorInner() {
                               if (tags.length === 0) {
                                 return (
                                   <p className="text-xs text-muted-foreground/60 mt-1.5 italic">
-                                    Add tags above to preview observation scopes
+                                    {tAddDocument("observationScopesEmpty")}
                                   </p>
                                 );
                               }
@@ -1195,7 +1218,7 @@ function BankSelectorInner() {
                                   ))}
                                   {scopes.length > MAX && (
                                     <li className="text-xs text-muted-foreground">
-                                      +{scopes.length - MAX} more scopes
+                                      {tAddDocument("moreScopes", { count: scopes.length - MAX })}
                                     </li>
                                   )}
                                 </ul>
@@ -1224,7 +1247,11 @@ function BankSelectorInner() {
                             className="min-h-[72px] resize-y font-mono text-sm"
                           />
                           <p className="text-xs text-muted-foreground mt-1">
-                            One <code className="bg-muted px-0.5 rounded">key: value</code> per line
+                            {tAddDocument.rich("metadataHelpText", {
+                              code: (chunks) => (
+                                <code className="bg-muted px-0.5 rounded">{chunks}</code>
+                              ),
+                            })}
                           </p>
                         </div>
                         <div>
@@ -1238,7 +1265,7 @@ function BankSelectorInner() {
                             placeholder="Alice, Google, ML model"
                           />
                           <p className="text-xs text-muted-foreground mt-1">
-                            Comma-separated hints merged with auto-extracted entities
+                            {tAddDocument("entitiesHelpText")}
                           </p>
                         </div>
                       </TabsContent>
@@ -1269,14 +1296,16 @@ function BankSelectorInner() {
                   setUploadProgress("");
                 }}
               >
-                Cancel
+                {tAddDocument("cancel")}
               </Button>
               {docTab === "text" ? (
                 <Button
                   onClick={handleCreateDocument}
                   disabled={isCreatingDoc || !docContent.trim()}
                 >
-                  {isCreatingDoc ? "Adding..." : "Add Document"}
+                  {isCreatingDoc
+                    ? tAddDocument("addingDocument")
+                    : tAddDocument("addDocumentSubmit")}
                 </Button>
               ) : (
                 <Button
@@ -1284,8 +1313,8 @@ function BankSelectorInner() {
                   disabled={isCreatingDoc || selectedFiles.length === 0}
                 >
                   {isCreatingDoc
-                    ? uploadProgress || "Uploading..."
-                    : `Upload ${selectedFiles.length} File${selectedFiles.length !== 1 ? "s" : ""}`}
+                    ? uploadProgress || tAddDocument("uploading")
+                    : tAddDocument("uploadFiles", { count: selectedFiles.length })}
                 </Button>
               )}
             </DialogFooter>

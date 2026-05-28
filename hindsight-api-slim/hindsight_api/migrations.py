@@ -27,6 +27,7 @@ from alembic.config import Config
 from alembic.script.revision import ResolutionError
 from sqlalchemy import Connection, create_engine, text
 
+from ._pg_search import normalize_pg_search_tokenizer, pg_search_bm25_columns
 from ._vector_index import (
     bootstrap_extension,
     detect_vector_extension,
@@ -803,6 +804,7 @@ def ensure_text_search_extension(
     database_url: str,
     text_search_extension: str = "native",
     schema: str | None = None,
+    pg_search_tokenizer: str | None = None,
 ) -> None:
     """
     Ensure the text search columns and indexes match the configured extension.
@@ -816,13 +818,17 @@ def ensure_text_search_extension(
     Args:
         database_url: SQLAlchemy database URL
         text_search_extension: Configured text search extension — one of
-            "native", "vchord", "pg_textsearch", or "pgroonga"
+            "native", "vchord", "pg_textsearch", "pgroonga", or "pg_search"
         schema: Target PostgreSQL schema name (None for public)
+        pg_search_tokenizer: Optional ParadeDB tokenizer to apply to pg_search
+            BM25 text fields when indexes are created. Empty keeps the
+            ParadeDB default.
 
     Raises:
         RuntimeError: If extension mismatch with existing data
     """
     schema_name = schema or "public"
+    pg_search_tokenizer = normalize_pg_search_tokenizer(pg_search_tokenizer)
 
     engine = create_engine(to_libpq_url(database_url))
     with engine.connect() as conn:
@@ -845,6 +851,11 @@ def ensure_text_search_extension(
             # and so the column-type mismatch detection above keeps working.
             target_column_type = "text"
             target_index_type = "pgroonga"
+        elif text_search_extension == "pg_search":
+            # ParadeDB: same column type / access method as pg_textsearch.
+            # Disambiguated below by inspecting the index reloptions (key_field).
+            target_column_type = "text"
+            target_index_type = "bm25"
         else:  # native
             target_column_type = "tsvector"
             target_index_type = "gin"
@@ -882,16 +893,18 @@ def ensure_text_search_extension(
 
             if not current_column_info:
                 logger.warning(f"No search_vector column found for {table_name}, will create it")
-                mismatched_tables.append((table_name, None, None))
+                mismatched_tables.append((table_name, None, None, False))
                 continue
 
             # Check column type (udt_name contains the actual type: tsvector, bm25vector, etc.)
             current_column_type = current_column_info[1]  # udt_name
 
-            # Get current index type
+            # Get current index type and definition. The definition lets us
+            # disambiguate pg_textsearch vs pg_search (both register a `bm25`
+            # access method but only pg_search uses the `key_field` reloption).
             current_index_info = conn.execute(
                 text("""
-                    SELECT am.amname
+                    SELECT am.amname, pi.indexdef
                     FROM pg_indexes pi
                     JOIN pg_class c ON c.relname = pi.indexname
                     JOIN pg_am am ON am.oid = c.relam
@@ -903,10 +916,21 @@ def ensure_text_search_extension(
             ).fetchone()
 
             current_index_type = current_index_info[0] if current_index_info else None
+            current_index_def = current_index_info[1] if current_index_info else None
+
+            # Detect pg_search specifically (vs pg_textsearch) via the key_field reloption
+            current_is_pg_search = bool(current_index_def and "key_field" in current_index_def)
+            want_pg_search = text_search_extension == "pg_search"
 
             # Check if column and index types match target
             column_matches = current_column_type == target_column_type
             index_matches = current_index_type == target_index_type if current_index_type else False
+            # When both target and current sit at column=text/index=bm25, the
+            # access-method check alone can't tell pg_textsearch from pg_search —
+            # require the key_field reloption to agree with the configured backend.
+            if column_matches and index_matches and target_index_type == "bm25" and target_column_type == "text":
+                if current_is_pg_search != want_pg_search:
+                    index_matches = False
 
             if not (column_matches and index_matches):
                 logger.info(
@@ -914,7 +938,7 @@ def ensure_text_search_extension(
                     f"column={current_column_type} (want {target_column_type}), "
                     f"index={current_index_type} (want {target_index_type})"
                 )
-                mismatched_tables.append((table_name, current_column_type, current_index_type))
+                mismatched_tables.append((table_name, current_column_type, current_index_type, current_is_pg_search))
 
                 # Check if table has data
                 row_count = conn.execute(text(f"SELECT COUNT(*) FROM {schema_name}.{table_name}")).scalar()
@@ -932,11 +956,12 @@ def ensure_text_search_extension(
         # If there's data in any mismatched table, raise error
         if tables_with_data:
             table_list = ", ".join([f"{table}({count} rows)" for table, count in tables_with_data])
-            # Detect current extension from column type + index type. tsvector is
-            # unambiguous; text could be either pg_textsearch or pgroonga, so we
-            # disambiguate via the index type.
+            # Detect current extension from column type, index type, and (for the
+            # text/bm25 ambiguity) the key_field reloption. tsvector is
+            # unambiguous; text could be pg_textsearch, pgroonga, or pg_search.
             current_col_type = mismatched_tables[0][1]
             current_idx_type = mismatched_tables[0][2]
+            first_is_pg_search = mismatched_tables[0][3]
             if current_col_type == "tsvector":
                 current_ext = "native"
             elif current_col_type == "bm25vector":
@@ -944,7 +969,7 @@ def ensure_text_search_extension(
             elif current_col_type == "text" and current_idx_type == "pgroonga":
                 current_ext = "pgroonga"
             elif current_col_type == "text":
-                current_ext = "pg_textsearch"
+                current_ext = "pg_search" if first_is_pg_search else "pg_textsearch"
             else:
                 current_ext = "unknown"
             raise RuntimeError(
@@ -959,7 +984,7 @@ def ensure_text_search_extension(
         # Tables are empty, safe to recreate columns/indexes
         logger.info(f"Recreating text search columns/indexes for {text_search_extension}")
 
-        for table_name, current_col_type, current_idx_type in mismatched_tables:
+        for table_name, current_col_type, current_idx_type, _was_pg_search in mismatched_tables:
             # Drop existing index if it exists
             if current_idx_type:
                 logger.info(f"Dropping {current_idx_type} index on {table_name}")
@@ -1047,6 +1072,35 @@ def ensure_text_search_extension(
                         ON {schema_name}.{table_name}
                         USING pgroonga ({index_expr})
                         WITH (tokenizer='TokenBigram', normalizer='NormalizerNFKC150')
+                    """)
+                )
+            elif text_search_extension == "pg_search":
+                logger.info(f"Creating TEXT column on {table_name}")
+                # Dummy TEXT column for schema symmetry; pg_search indexes operate on base columns.
+                conn.execute(text(f"ALTER TABLE {schema_name}.{table_name} ADD COLUMN search_vector TEXT"))
+
+                # ParadeDB BM25 index over the table's primary key and text columns.
+                # Column list mirrors what the initial / text_signals migrations create.
+                if table_name == "memory_units":
+                    bm25_cols = pg_search_bm25_columns(
+                        "id",
+                        ("text", "context", "text_signals"),
+                        pg_search_tokenizer,
+                    )
+                else:  # reflections
+                    bm25_cols = pg_search_bm25_columns(
+                        "id",
+                        ("name", "content"),
+                        pg_search_tokenizer,
+                    )
+
+                logger.info(f"Creating ParadeDB BM25 index on {table_name}")
+                conn.execute(
+                    text(f"""
+                        CREATE INDEX idx_{table_name.replace(".", "_")}_text_search
+                        ON {schema_name}.{table_name}
+                        USING bm25 ({bm25_cols})
+                        WITH (key_field='id')
                     """)
                 )
             else:  # native

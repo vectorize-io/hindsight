@@ -24,7 +24,15 @@ import uvicorn
 from . import MemoryEngine, __version__
 from .api import create_app
 from .banner import print_banner
-from .config import DEFAULT_WORKERS, ENV_HOST, ENV_WORKERS, HindsightConfig, _get_raw_config
+from .config import (
+    DEFAULT_ACCESS_LOG,
+    DEFAULT_WORKERS,
+    ENV_ACCESS_LOG,
+    ENV_HOST,
+    ENV_WORKERS,
+    HindsightConfig,
+    _get_raw_config,
+)
 from .daemon import (
     DEFAULT_DAEMON_PORT,
     DEFAULT_IDLE_TIMEOUT,
@@ -120,9 +128,18 @@ def main():
     )
 
     # Access log options
-    parser.add_argument("--access-log", action="store_true", help="Enable access log")
-    parser.add_argument("--no-access-log", dest="access_log", action="store_false", help="Disable access log (default)")
-    parser.set_defaults(access_log=False)
+    parser.add_argument(
+        "--access-log",
+        action="store_true",
+        default=os.getenv(ENV_ACCESS_LOG, "").lower() in ("1", "true", "yes", "on") or DEFAULT_ACCESS_LOG,
+        help=f"Enable access log (env: {ENV_ACCESS_LOG}, default: {DEFAULT_ACCESS_LOG})",
+    )
+    parser.add_argument(
+        "--no-access-log",
+        dest="access_log",
+        action="store_false",
+        help="Disable access log (overrides env and default)",
+    )
 
     # Proxy options
     parser.add_argument(

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-api-slim"
-version = "0.6.2"
+version = "0.7.0"
 description = "Hindsight: Agent Memory That Works Like Human Memory"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -142,6 +142,7 @@ addopts = "--timeout 300 -n 8 --dist loadgroup --durations=10 -v"
 markers = [
     "oracle: Oracle 23ai integration tests (require ORACLE_TEST_DSN env var)",
     "hs_llm_mat: LLM minimum acceptance tests — run in CI matrix across multiple providers",
+    "hs_llm_core: Core pipeline tests that need a real LLM but only one provider",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

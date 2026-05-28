@@ -737,6 +737,9 @@ jobs:
     - name: Test Control Plane
       run: npm test --workspace=hindsight-control-plane
 
+    - name: Check i18n locale parity and hardcoded strings
+      run: npm run i18n:check --workspace=hindsight-control-plane
+
     - name: Build Control Plane
       run: npm run build --workspace=hindsight-control-plane
 
@@ -1121,7 +1124,70 @@ jobs:
 
     - name: Run tests
       working-directory: ./hindsight-api-slim
-      run: uv run pytest tests -v -m "not hs_llm_mat"
+      run: uv run pytest tests -v -m "not hs_llm_mat and not hs_llm_core"
+
+  test-api-llm-core:
+    needs: [detect-changes]
+    if: >-
+      needs.detect-changes.outputs.has_secrets == 'true' &&
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    name: Core LLM tests
+    env:
+      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
+      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Setup GCP credentials
+      run: |
+        printf '%s' '${{ secrets.GCP_VERTEXAI_CREDENTIALS }}' > /tmp/gcp-credentials.json
+        PROJECT_ID=$(jq -r '.project_id' /tmp/gcp-credentials.json)
+        echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Install dependencies
+      working-directory: ./hindsight-api-slim
+      run: uv sync --frozen --all-extras --index-strategy unsafe-best-match
+
+    - name: Cache HuggingFace models
+      uses: actions/cache@v5
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-huggingface-
+
+    - name: Pre-download models
+      working-directory: ./hindsight-api-slim
+      run: |
+        uv run python -c "
+        from sentence_transformers import SentenceTransformer, CrossEncoder
+        SentenceTransformer('BAAI/bge-small-en-v1.5')
+        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        print('Models downloaded successfully')
+        "
+
+    - name: Run core LLM tests
+      working-directory: ./hindsight-api-slim
+      run: uv run pytest tests -v -m "hs_llm_core" --timeout 600
 
   test-api-llm-acceptance:
     needs: [detect-changes]
@@ -1279,8 +1345,8 @@ jobs:
         conn = oracledb.connect(user='system', password='oracle', dsn='localhost:1521/FREEPDB1')
         cursor = conn.cursor()
         cursor.execute(\"\"\"
-            CREATE TABLESPACE hindsight_ts
-            DATAFILE 'hindsight_ts.dbf' SIZE 200M AUTOEXTEND ON NEXT 50M
+            CREATE BIGFILE TABLESPACE hindsight_ts
+            DATAFILE 'hindsight_ts.dbf' SIZE 2G AUTOEXTEND ON NEXT 500M MAXSIZE UNLIMITED
             EXTENT MANAGEMENT LOCAL
             SEGMENT SPACE MANAGEMENT AUTO
         \"\"\")
@@ -1633,8 +1699,8 @@ jobs:
         conn = oracledb.connect(user='system', password='oracle', dsn='localhost:1521/FREEPDB1')
         cursor = conn.cursor()
         cursor.execute(\"\"\"
-            CREATE TABLESPACE hindsight_ts
-            DATAFILE 'hindsight_ts.dbf' SIZE 200M AUTOEXTEND ON NEXT 50M
+            CREATE BIGFILE TABLESPACE hindsight_ts
+            DATAFILE 'hindsight_ts.dbf' SIZE 2G AUTOEXTEND ON NEXT 500M MAXSIZE UNLIMITED
             EXTENT MANAGEMENT LOCAL
             SEGMENT SPACE MANAGEMENT AUTO
         \"\"\")
@@ -1792,8 +1858,8 @@ jobs:
         conn = oracledb.connect(user='system', password='oracle', dsn='localhost:1521/FREEPDB1')
         cursor = conn.cursor()
         cursor.execute(\"\"\"
-            CREATE TABLESPACE hindsight_ts
-            DATAFILE 'hindsight_ts.dbf' SIZE 200M AUTOEXTEND ON NEXT 50M
+            CREATE BIGFILE TABLESPACE hindsight_ts
+            DATAFILE 'hindsight_ts.dbf' SIZE 2G AUTOEXTEND ON NEXT 500M MAXSIZE UNLIMITED
             EXTENT MANAGEMENT LOCAL
             SEGMENT SPACE MANAGEMENT AUTO
         \"\"\")
@@ -3221,6 +3287,9 @@ jobs:
 
     - name: Test Control Plane
       run: npm test --workspace=hindsight-control-plane
+
+    - name: Check i18n locale parity and hardcoded strings
+      run: npm run i18n:check --workspace=hindsight-control-plane
 
     - name: Build Control Plane
       run: npm run build --workspace=hindsight-control-plane

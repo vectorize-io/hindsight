@@ -1187,6 +1187,16 @@ export class ControlPlaneClient {
   }
 
   /**
+   * Clear a mental model's content. The next refresh re-synthesizes from scratch.
+   */
+  async clearMentalModel(bankId: string, mentalModelId: string) {
+    return this.fetchApi<MentalModel>(
+      bankApi(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}/clear`),
+      { method: "POST" }
+    );
+  }
+
+  /**
    * Get the refresh history of a mental model
    */
   async getMentalModelHistory(bankId: string, mentalModelId: string) {

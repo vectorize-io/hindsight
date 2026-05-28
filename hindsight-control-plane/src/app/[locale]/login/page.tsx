@@ -2,12 +2,15 @@
 
 import { Suspense, useState, FormEvent, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
+import { LanguageSwitcher } from "@/components/language-switcher";
 import Image from "next/image";
 
 function LoginForm() {
+  const t = useTranslations("login");
   const [key, setKey] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -41,10 +44,10 @@ function LoginForm() {
         router.refresh();
       } else {
         const data = await res.json().catch(() => null);
-        setError(data?.error || "Invalid access key");
+        setError(data?.error || t("invalidKey"));
       }
     } catch {
-      setError("Failed to connect to server");
+      setError(t("connectFailed"));
     } finally {
       setLoading(false);
     }
@@ -52,6 +55,9 @@ function LoginForm() {
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <div className="absolute top-4 right-4">
+        <LanguageSwitcher />
+      </div>
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <Image
@@ -62,7 +68,7 @@ function LoginForm() {
             className="mx-auto"
             unoptimized
           />
-          <CardDescription>Enter your access key to continue</CardDescription>
+          <CardDescription>{t("description")}</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -70,7 +76,7 @@ function LoginForm() {
               <Input
                 id="access-key"
                 type="password"
-                placeholder="Enter access key"
+                placeholder={t("accessKeyPlaceholder")}
                 value={key}
                 onChange={(e) => setKey(e.target.value)}
                 autoComplete="off"
@@ -80,7 +86,7 @@ function LoginForm() {
             {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
             <Button type="submit" className="w-full" disabled={loading || !key}>
-              {loading ? "Signing in..." : "Sign In"}
+              {loading ? t("signingIn") : t("signIn")}
             </Button>
           </form>
         </CardContent>

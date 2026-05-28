@@ -925,11 +925,13 @@ def test_extraction_schema_no_labels_when_unconfigured():
 
 
 @pytest.mark.asyncio
-async def test_retain_extracts_single_value_label(memory, request_context):
+@pytest.mark.hs_llm_core
+async def test_retain_extracts_single_value_label(memory_real_llm, request_context):
     """
     End-to-end: retain content with entity_labels configured (single-value).
     Verify that the LLM assigns the label and it ends up as a key:value entity on the memory unit.
     """
+    memory = memory_real_llm
     from hindsight_api.engine.memory_engine import fq_table
 
     bank_id = f"test-labels-single-{uuid.uuid4().hex[:8]}"
@@ -992,11 +994,13 @@ async def test_retain_extracts_single_value_label(memory, request_context):
 
 
 @pytest.mark.asyncio
-async def test_retain_extracts_multi_value_label(memory, request_context):
+@pytest.mark.hs_llm_core
+async def test_retain_extracts_multi_value_label(memory_real_llm, request_context):
     """
     End-to-end: retain content with a multi_value entity_labels group.
     Verify that multiple label values can be assigned to a single fact.
     """
+    memory = memory_real_llm
     from hindsight_api.engine.memory_engine import fq_table
 
     bank_id = f"test-labels-multi-{uuid.uuid4().hex[:8]}"
@@ -1058,12 +1062,14 @@ async def test_retain_extracts_multi_value_label(memory, request_context):
 
 
 @pytest.mark.asyncio
-async def test_retain_extracts_free_values_label(memory, request_context):
+@pytest.mark.hs_llm_core
+async def test_retain_extracts_free_values_label(memory_real_llm, request_context):
     """
     End-to-end: retain content with a free_values entity_labels group.
     Verify that the LLM produces a key:value entity with an open-ended value
     (not constrained to a predefined enum list).
     """
+    memory = memory_real_llm
     from hindsight_api.engine.memory_engine import fq_table
 
     bank_id = f"test-labels-free-{uuid.uuid4().hex[:8]}"
@@ -1124,7 +1130,8 @@ async def test_retain_extracts_free_values_label(memory, request_context):
 
 
 @pytest.mark.asyncio
-async def test_retain_extracts_map_type_entities(memory, request_context):
+@pytest.mark.hs_llm_core
+async def test_retain_extracts_map_type_entities(memory_real_llm, request_context):
     """
     End-to-end: retain content with a map-type entity_labels group.
     Verify that structured entity fields are extracted as key:field:value entity strings.
@@ -1133,10 +1140,10 @@ async def test_retain_extracts_map_type_entities(memory, request_context):
 
     bank_id = f"test-labels-map-{uuid.uuid4().hex[:8]}"
     try:
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_real_llm.get_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Configure a map-type entity label
-        await memory._config_resolver.update_bank_config(
+        await memory_real_llm._config_resolver.update_bank_config(
             bank_id=bank_id,
             updates={
                 "entity_labels": [
@@ -1156,7 +1163,7 @@ async def test_retain_extracts_map_type_entities(memory, request_context):
             context=request_context,
         )
 
-        unit_ids = await memory.retain_async(
+        unit_ids = await memory_real_llm.retain_async(
             bank_id=bank_id,
             content=(
                 "Alice Johnson is a Senior Software Engineer at Google. "
@@ -1167,7 +1174,7 @@ async def test_retain_extracts_map_type_entities(memory, request_context):
 
         assert len(unit_ids) > 0, "Should have extracted at least one fact"
 
-        async with memory._pool.acquire() as conn:
+        async with memory_real_llm._pool.acquire() as conn:
             rows = await conn.fetch(
                 f"""
                 SELECT e.canonical_name
@@ -1202,7 +1209,7 @@ async def test_retain_extracts_map_type_entities(memory, request_context):
             f"Free-form entities should not appear in labels-only mode. Got: {non_person_entities}"
         )
     finally:
-        await memory.delete_bank(bank_id, request_context=request_context)
+        await memory_real_llm.delete_bank(bank_id, request_context=request_context)
 
 
 # ─── map-type entity labels ──────────────────────────────────────────────────
@@ -1935,7 +1942,8 @@ def test_inject_label_tags_multivalue_all_tags_added():
 
 
 @pytest.mark.asyncio
-async def test_retain_multivalue_tag_entities_all_stored(memory, request_context):
+@pytest.mark.hs_llm_core
+async def test_retain_multivalue_tag_entities_all_stored(memory_real_llm, request_context):
     """
     GH-1558 reproducer (integration): retain content referencing multiple values
     of a multi-values entity label with tag=True.
@@ -1951,13 +1959,13 @@ async def test_retain_multivalue_tag_entities_all_stored(memory, request_context
 
     bank_id = f"test-1558-multivalue-tag-{uuid.uuid4().hex[:8]}"
     try:
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_real_llm.get_bank_profile(bank_id=bank_id, request_context=request_context)
 
         # Configure entity labels matching the bug report scenario:
         # - multi-values type
         # - tag=True
         # - entities_allow_free_form=False
-        await memory._config_resolver.update_bank_config(
+        await memory_real_llm._config_resolver.update_bank_config(
             bank_id=bank_id,
             updates={
                 "entity_labels": [
@@ -1981,7 +1989,7 @@ async def test_retain_multivalue_tag_entities_all_stored(memory, request_context
 
         # Content that explicitly references multiple use case identifiers
         # in a way that a single fact should capture both
-        unit_ids = await memory.retain_async(
+        unit_ids = await memory_real_llm.retain_async(
             bank_id=bank_id,
             content=(
                 "## System Integration Notes (use-001, use-002)\n\n"
@@ -1995,7 +2003,7 @@ async def test_retain_multivalue_tag_entities_all_stored(memory, request_context
 
         assert len(unit_ids) > 0, "Should have extracted at least one fact"
 
-        async with memory._pool.acquire() as conn:
+        async with memory_real_llm._pool.acquire() as conn:
             # Check entities in unit_entities table
             entity_rows = await conn.fetch(
                 f"""
@@ -2043,11 +2051,12 @@ async def test_retain_multivalue_tag_entities_all_stored(memory, request_context
             f"Entities found: {use_entities}"
         )
     finally:
-        await memory.delete_bank(bank_id, request_context=request_context)
+        await memory_real_llm.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_retain_multivalue_tag_entities_second_retain(memory, request_context):
+@pytest.mark.hs_llm_core
+async def test_retain_multivalue_tag_entities_second_retain(memory_real_llm, request_context):
     """
     GH-1558 reproducer (second retain): entity resolution with existing entities.
 
@@ -2061,9 +2070,9 @@ async def test_retain_multivalue_tag_entities_second_retain(memory, request_cont
 
     bank_id = f"test-1558-second-{uuid.uuid4().hex[:8]}"
     try:
-        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_real_llm.get_bank_profile(bank_id=bank_id, request_context=request_context)
 
-        await memory._config_resolver.update_bank_config(
+        await memory_real_llm._config_resolver.update_bank_config(
             bank_id=bank_id,
             updates={
                 "entity_labels": [
@@ -2085,7 +2094,7 @@ async def test_retain_multivalue_tag_entities_second_retain(memory, request_cont
         )
 
         # First retain: creates entities in the bank
-        await memory.retain_async(
+        await memory_real_llm.retain_async(
             bank_id=bank_id,
             content=(
                 "## Authentication Flow (use-001)\n\n"
@@ -2096,7 +2105,7 @@ async def test_retain_multivalue_tag_entities_second_retain(memory, request_cont
 
         # Second retain: references BOTH use-001 and use-002
         # Entity resolution now has existing entities to match against
-        unit_ids_2 = await memory.retain_async(
+        unit_ids_2 = await memory_real_llm.retain_async(
             bank_id=bank_id,
             content=(
                 "## Integration Notes (use-001, use-002)\n\n"
@@ -2108,7 +2117,7 @@ async def test_retain_multivalue_tag_entities_second_retain(memory, request_cont
 
         assert len(unit_ids_2) > 0
 
-        async with memory._pool.acquire() as conn:
+        async with memory_real_llm._pool.acquire() as conn:
             entity_rows = await conn.fetch(
                 f"""
                 SELECT e.canonical_name
@@ -2150,7 +2159,7 @@ async def test_retain_multivalue_tag_entities_second_retain(memory, request_cont
             f"GH-1558 BUG: Tags present but entities missing after second retain: {missing}"
         )
     finally:
-        await memory.delete_bank(bank_id, request_context=request_context)
+        await memory_real_llm.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio

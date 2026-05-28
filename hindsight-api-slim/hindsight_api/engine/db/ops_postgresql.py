@@ -141,9 +141,9 @@ class PostgreSQLOps(DataAccessOps):
                 RETURNING id
             """
         else:
-            # pg_textsearch and pgroonga: search_vector is a dummy TEXT column;
-            # the actual full-text index operates on the base text columns
-            # directly, so we don't populate search_vector at insert time.
+            # pg_textsearch, pgroonga, and pg_search: search_vector is a dummy
+            # TEXT column; the actual full-text index operates on the base text
+            # columns directly, so we don't populate search_vector at insert time.
             query = f"""
                 WITH input_data AS (
                     SELECT * FROM unnest(
@@ -290,28 +290,100 @@ class PostgreSQLOps(DataAccessOps):
             entity_ids,
         )
 
-    async def fetch_entity_unit_fanout(
+    async def enqueue_graph_maintenance(
         self,
         conn: DatabaseConnection,
-        ue_table: str,
-        entity_id_list: list[UUID],
-        limit_per_entity: int,
-    ) -> list[ResultRow]:
-        return await conn.fetch(
+        table: str,
+        bank_id: str,
+        unit_ids: list,
+    ) -> None:
+        if not unit_ids:
+            return
+        await conn.execute(
             f"""
-            SELECT e.entity_id, n.unit_id
-            FROM unnest($1::uuid[]) AS e(entity_id)
-            CROSS JOIN LATERAL (
-                SELECT ue.unit_id
-                FROM {ue_table} ue
-                WHERE ue.entity_id = e.entity_id
-                ORDER BY ue.unit_id DESC
-                LIMIT $2
-            ) n
+            INSERT INTO {table} (bank_id, unit_id)
+            SELECT $1, v FROM unnest($2::uuid[]) AS t(v)
+            ON CONFLICT (bank_id, unit_id) DO NOTHING
             """,
-            entity_id_list,
-            limit_per_entity,
+            bank_id,
+            unit_ids,
         )
+
+    async def claim_graph_maintenance_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        limit: int,
+    ) -> list[str]:
+        rows = await conn.fetch(
+            f"""
+            DELETE FROM {table}
+            WHERE (bank_id, unit_id) IN (
+                SELECT bank_id, unit_id FROM {table}
+                WHERE bank_id = $1
+                ORDER BY enqueued_at
+                LIMIT $2
+            )
+            RETURNING unit_id
+            """,
+            bank_id,
+            limit,
+        )
+        return [str(row["unit_id"]) for row in rows]
+
+    async def prune_orphan_entities(
+        self,
+        conn: DatabaseConnection,
+        entities_table: str,
+        ue_table: str,
+        bank_id: str,
+    ) -> int:
+        # Scoped by entities.bank_id (indexed). The NOT EXISTS subquery is
+        # backed by idx_ue_entity on unit_entities(entity_id), so this stays
+        # linear in the number of entities in the bank — not in the size of
+        # unit_entities globally.
+        result = await conn.execute(
+            f"""
+            DELETE FROM {entities_table} e
+            WHERE e.bank_id = $1
+              AND NOT EXISTS (
+                  SELECT 1 FROM {ue_table} ue WHERE ue.entity_id = e.id
+              )
+            """,
+            bank_id,
+        )
+        # asyncpg returns "DELETE N"
+        return int(result.split()[-1]) if isinstance(result, str) and result.startswith("DELETE") else 0
+
+    async def prune_stale_cooccurrences(
+        self,
+        conn: DatabaseConnection,
+        ec_table: str,
+        ue_table: str,
+        entities_table: str,
+        bank_id: str,
+    ) -> int:
+        # Scope by joining through entities.bank_id (entity_cooccurrences itself
+        # has no bank_id column — entities don't span banks, so scoping via
+        # entity_id_1 is sufficient).
+        result = await conn.execute(
+            f"""
+            DELETE FROM {ec_table} c
+            USING {entities_table} e
+            WHERE e.id = c.entity_id_1
+              AND e.bank_id = $1
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM {ue_table} u1
+                  JOIN {ue_table} u2 ON u1.unit_id = u2.unit_id
+                  WHERE u1.entity_id = c.entity_id_1
+                    AND u2.entity_id = c.entity_id_2
+              )
+            """,
+            bank_id,
+        )
+        return int(result.split()[-1]) if isinstance(result, str) and result.startswith("DELETE") else 0
 
     async def fetch_unit_dates(
         self,

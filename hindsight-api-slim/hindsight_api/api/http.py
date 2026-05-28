@@ -152,7 +152,11 @@ class RecallRequest(BaseModel):
     max_tokens: int = 4096
     trace: bool = False
     query_timestamp: str | None = Field(
-        default=None, description="ISO format date string (e.g., '2023-05-30T23:40:00')"
+        default=None,
+        description=(
+            "ISO format date string (e.g., '2023-05-30T23:40:00'). Used as the query-time anchor for "
+            "relative temporal expressions and recency scoring."
+        ),
     )
     include: IncludeOptions = FieldWithDefault(
         IncludeOptions,

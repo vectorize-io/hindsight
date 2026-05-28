@@ -328,8 +328,11 @@ async def test_run_migration_without_schema_discovers_and_deduplicates_schemas(m
         database_url: str,
         text_search_extension: str = "native",
         schema: str | None = None,
+        pg_search_tokenizer: str | None = None,
     ) -> None:
-        calls["ensure_text_search_extension"].append((database_url, text_search_extension, schema))
+        calls["ensure_text_search_extension"].append(
+            (database_url, text_search_extension, pg_search_tokenizer, schema)
+        )
 
     monkeypatch.setenv("HINDSIGHT_API_DATABASE_URL", "postgresql://test")
     monkeypatch.setattr(admin_cli, "load_extension", lambda *args, **kwargs: MockTenantExtension())
@@ -353,8 +356,8 @@ async def test_run_migration_without_schema_discovers_and_deduplicates_schemas(m
         ("resolved::postgresql://test", "pgvector", "tenant_demo"),
     ]
     assert calls["ensure_text_search_extension"] == [
-        ("resolved::postgresql://test", "native", "public"),
-        ("resolved::postgresql://test", "native", "tenant_demo"),
+        ("resolved::postgresql://test", "native", "", "public"),
+        ("resolved::postgresql://test", "native", "", "tenant_demo"),
     ]
 
 
@@ -398,8 +401,11 @@ async def test_run_migration_without_schema_runs_optional_post_migration_hooks(m
         database_url: str,
         text_search_extension: str = "native",
         schema: str | None = None,
+        pg_search_tokenizer: str | None = None,
     ) -> None:
-        calls["ensure_text_search_extension"].append((database_url, text_search_extension, schema))
+        calls["ensure_text_search_extension"].append(
+            (database_url, text_search_extension, pg_search_tokenizer, schema)
+        )
 
     monkeypatch.setattr(admin_cli, "load_extension", lambda *args, **kwargs: MockTenantExtension())
     monkeypatch.setattr(admin_cli, "resolve_database_url", fake_resolve_database_url)
@@ -431,8 +437,8 @@ async def test_run_migration_without_schema_runs_optional_post_migration_hooks(m
         ("resolved::postgresql://test", "pgvector", "tenant_demo"),
     ]
     assert calls["ensure_text_search_extension"] == [
-        ("resolved::postgresql://test", "native", "public"),
-        ("resolved::postgresql://test", "native", "tenant_demo"),
+        ("resolved::postgresql://test", "native", "", "public"),
+        ("resolved::postgresql://test", "native", "", "tenant_demo"),
     ]
 
 
@@ -467,8 +473,11 @@ async def test_run_migration_with_schema_only_runs_requested_schema(monkeypatch)
         database_url: str,
         text_search_extension: str = "native",
         schema: str | None = None,
+        pg_search_tokenizer: str | None = None,
     ) -> None:
-        calls["ensure_text_search_extension"].append((database_url, text_search_extension, schema))
+        calls["ensure_text_search_extension"].append(
+            (database_url, text_search_extension, pg_search_tokenizer, schema)
+        )
 
     monkeypatch.setattr(admin_cli, "load_extension", lambda *args, **kwargs: MockTenantExtension())
     monkeypatch.setattr(admin_cli, "resolve_database_url", fake_resolve_database_url)
@@ -484,4 +493,4 @@ async def test_run_migration_with_schema_only_runs_requested_schema(monkeypatch)
     assert schemas == ["tenant_demo"]
     assert calls["run_migrations"] == [("resolved::postgresql://test", "tenant_demo")]
     assert calls["ensure_vector_extension"] == [("resolved::postgresql://test", "pgvector", "tenant_demo")]
-    assert calls["ensure_text_search_extension"] == [("resolved::postgresql://test", "native", "tenant_demo")]
+    assert calls["ensure_text_search_extension"] == [("resolved::postgresql://test", "native", "", "tenant_demo")]

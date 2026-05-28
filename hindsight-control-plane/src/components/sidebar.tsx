@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
 import { bankRoute } from "@/lib/bank-url";
 import {
@@ -24,6 +25,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
+  const t = useTranslations("bank.sidebar");
+  const tBank = useTranslations("bank");
   const { currentBank } = useBank();
   const [isCollapsed, setIsCollapsed] = useState(true);
 
@@ -32,12 +35,12 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
   }
 
   const navItems = [
-    { id: "data" as NavItem, label: "Memories", icon: Database },
-    { id: "recall" as NavItem, label: "Recall", icon: Search },
-    { id: "reflect" as NavItem, label: "Reflect", icon: Sparkles },
-    { id: "documents" as NavItem, label: "Documents", icon: FileText },
-    { id: "entities" as NavItem, label: "Entities", icon: Users },
-    { id: "profile" as NavItem, label: "Bank Configuration", icon: Settings },
+    { id: "data" as NavItem, label: t("memories"), icon: Database },
+    { id: "recall" as NavItem, label: t("recall"), icon: Search },
+    { id: "reflect" as NavItem, label: t("reflect"), icon: Sparkles },
+    { id: "documents" as NavItem, label: t("documents"), icon: FileText },
+    { id: "entities" as NavItem, label: t("entities"), icon: Users },
+    { id: "profile" as NavItem, label: tBank("bankConfiguration"), icon: Settings },
   ];
 
   return (
@@ -93,14 +96,14 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
             "w-full flex items-center gap-3 px-4 py-2 rounded-lg text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors",
             isCollapsed && "justify-center px-0"
           )}
-          title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={isCollapsed ? t("expandSidebar") : t("collapseSidebar")}
         >
           {isCollapsed ? (
             <ChevronRight className="w-5 h-5" />
           ) : (
             <>
               <ChevronLeft className="w-5 h-5" />
-              <span>Collapse</span>
+              <span>{t("collapse")}</span>
             </>
           )}
         </button>

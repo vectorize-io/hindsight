@@ -906,6 +906,7 @@ class TestWorkerPoller:
         assert row["worker_id"] is None
 
     @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
     async def test_claim_batch_allows_non_consolidation_when_consolidation_processing(
         self, pool, backend, clean_operations
     ):

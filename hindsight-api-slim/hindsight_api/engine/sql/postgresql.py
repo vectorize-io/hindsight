@@ -203,6 +203,20 @@ class PostgreSQLDialect(SQLDialect):
                 f"AND (COALESCE(text, '') || ' ' || COALESCE(context, '') || ' ' || COALESCE(text_signals, '')) "
                 f"&@~ {text_param}"
             )
+        elif text_search_extension == "pg_search":
+            # ParadeDB pg_search: BM25 index over (id, text, context, text_signals)
+            # with key_field='id'. The @@@ operator on the key_field requires a
+            # field-qualified query (`text:foo`); to keep the bind-parameter form,
+            # we fan the query out across all indexed text fields with paradedb.boolean.
+            bm25_score_expr = "paradedb.score(id)"
+            bm25_order_by = "paradedb.score(id) DESC"
+            bm25_where_filter = (
+                f"AND id @@@ paradedb.boolean(should => ARRAY["
+                f"paradedb.match('text', {text_param}), "
+                f"paradedb.match('context', {text_param}), "
+                f"paradedb.match('text_signals', {text_param})"
+                f"])"
+            )
         else:  # native tsvector
             # bm25_language is validated as a PG identifier in HindsightConfig.validate(),
             # so embedding it as a SQL literal here is safe.
@@ -233,7 +247,7 @@ class PostgreSQLDialect(SQLDialect):
         *,
         text_search_extension: str = "native",
     ) -> str:
-        if text_search_extension in ("vchord", "pg_textsearch", "pgroonga"):
+        if text_search_extension in ("vchord", "pg_textsearch", "pgroonga", "pg_search"):
             return query_text
         # native tsvector: join tokens with OR operator
         return " | ".join(tokens)

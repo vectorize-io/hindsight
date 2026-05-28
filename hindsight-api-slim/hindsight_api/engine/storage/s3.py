@@ -16,7 +16,7 @@ class S3FileStorage(FileStorage):
     S3-compatible object storage backend.
 
     Uses obstore (Rust-backed) for high-throughput async access to
-    Amazon S3, MinIO, Cloudflare R2, and other S3-compliant APIs.
+    Amazon S3, MinIO, Cloudflare R2, Tigris, and other S3-compliant APIs.
     """
 
     def __init__(

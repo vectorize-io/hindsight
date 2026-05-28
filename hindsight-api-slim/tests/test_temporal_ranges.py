@@ -5,16 +5,18 @@ import pytest
 from hindsight_api.engine.memory_engine import Budget
 from hindsight_api import RequestContext
 
+pytestmark = pytest.mark.hs_llm_core
+
 
 @pytest.mark.asyncio
 @pytest.mark.xfail(reason="LLM date extraction from content is non-deterministic", strict=False)
-async def test_temporal_ranges_are_written(memory, request_context):
+async def test_temporal_ranges_are_written(memory_real_llm, request_context):
     """Test that occurred_start, occurred_end, and mentioned_at are actually written to database."""
     bank_id = "test_temporal_ranges"
 
     # Clean up any existing data
     try:
-        await memory.delete_bank(bank_id, request_context=request_context)
+        await memory_real_llm.delete_bank(bank_id, request_context=request_context)
     except Exception:
         pass
 
@@ -22,7 +24,7 @@ async def test_temporal_ranges_are_written(memory, request_context):
     conversation_date = datetime(2024, 11, 17, 10, 0, 0, tzinfo=timezone.utc)
     text1 = "Yesterday I went to a pottery workshop where I made a beautiful vase."
 
-    await memory.retain_async(
+    await memory_real_llm.retain_async(
         bank_id=bank_id,
         content=text1,
         event_date=conversation_date,
@@ -32,7 +34,7 @@ async def test_temporal_ranges_are_written(memory, request_context):
     # Test 2: Period event (month range)
     text2 = "In February 2024, Alice visited Paris and explored the Louvre museum."
 
-    await memory.retain_async(
+    await memory_real_llm.retain_async(
         bank_id=bank_id,
         content=text2,
         event_date=conversation_date,
@@ -43,7 +45,7 @@ async def test_temporal_ranges_are_written(memory, request_context):
     await asyncio.sleep(2)
 
     # Retrieve facts from database directly
-    pool = await memory._get_pool()
+    pool = await memory_real_llm._get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
@@ -113,7 +115,7 @@ async def test_temporal_ranges_are_written(memory, request_context):
 
     # Test search results also include temporal fields
     print("\n=== Testing Search Results ===")
-    search_result = await memory.recall_async(
+    search_result = await memory_real_llm.recall_async(
         bank_id=bank_id,
         query="pottery workshop",
         fact_type=["world", "experience"],
@@ -137,4 +139,4 @@ async def test_temporal_ranges_are_written(memory, request_context):
             print("⚠ Temporal fields not yet populated in search results (known issue)")
 
     # Clean up
-    await memory.delete_bank(bank_id, request_context=request_context)
+    await memory_real_llm.delete_bank(bank_id, request_context=request_context)

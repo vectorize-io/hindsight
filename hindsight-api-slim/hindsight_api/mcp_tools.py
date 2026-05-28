@@ -799,7 +799,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     {"tags": [...], "match": "any_strict"} or compound {"and": [...]}, {"or": [...]}, {"not": {...}}.
                     Example: [{"not": {"tags": ["closeout"], "match": "any_strict"}}] excludes memories tagged closeout.
                     Mutually exclusive with tags.
-                query_timestamp: Temporal context for the query (ISO format, e.g., '2024-01-15T10:30:00Z'). Helps retrieve time-relevant memories.
+                query_timestamp: Temporal context for the query (ISO format, e.g., '2024-01-15T10:30:00Z').
+                    Anchors relative temporal expressions and recency scoring.
                 bank_id: Optional bank to search in (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -869,7 +870,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     {"tags": [...], "match": "any_strict"} or compound {"and": [...]}, {"or": [...]}, {"not": {...}}.
                     Example: [{"not": {"tags": ["closeout"], "match": "any_strict"}}] excludes memories tagged closeout.
                     Mutually exclusive with tags.
-                query_timestamp: Temporal context for the query (ISO format, e.g., '2024-01-15T10:30:00Z'). Helps retrieve time-relevant memories.
+                query_timestamp: Temporal context for the query (ISO format, e.g., '2024-01-15T10:30:00Z').
+                    Anchors relative temporal expressions and recency scoring.
             """
             try:
                 target_bank = config.bank_id_resolver()

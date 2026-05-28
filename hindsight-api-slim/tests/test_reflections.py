@@ -2,11 +2,13 @@
 
 import uuid
 
+import httpx
 import pytest
 import pytest_asyncio
-import httpx
+
 from hindsight_api.api import create_app
 from hindsight_api.engine.memory_engine import MemoryEngine
+from tests.llm_judge import assert_meets_criteria
 
 
 @pytest_asyncio.fixture
@@ -401,6 +403,11 @@ class TestRecallWithObservationsAndMentalModels:
 class TestReflectUsesMentalModels:
     """Test that reflect searches and uses mental models when available."""
 
+    @pytest.fixture
+    def memory(self, memory_real_llm):
+        """Override to use real LLM — reflect tool-calling requires a real model."""
+        return memory_real_llm
+
     # Reflect doesn't pin a tool-call temperature, so weaker models in the
     # acceptance matrix (e.g. gemini-2.5-flash-lite) occasionally pick `recall`
     # or `search_observations` instead of `search_mental_models`. Rerun a
@@ -457,19 +464,25 @@ class TestReflectUsesMentalModels:
         for tc in search_mm_calls:
             assert tc.reason is not None, "Tool call should have a reason for debugging"
 
-        # The response should mention concepts from the mental model
-        response_text = result.text.lower()
-        has_relevant_content = any(
-            keyword in response_text
-            for keyword in ["slack", "async", "standup", "code review", "documentation", "communication"]
-        )
-        assert has_relevant_content, (
-            f"Expected response to reference mental model content. Got: {result.text[:500]}"
+        # The response should reference concepts from the mental model
+        await assert_meets_criteria(
+            response=result.text,
+            criteria=(
+                "The response references at least one concept from the team's collaboration practices: "
+                "async communication, Slack, daily standups, code reviews, documentation, or written communication."
+            ),
+            context=(
+                "Mental model content: The team uses async communication via Slack and holds daily "
+                "standups at 9am. Code reviews are required before merging. The team values "
+                "documentation and prefers written communication for complex decisions."
+            ),
+            msg=f"Expected response to reference mental model content. Got: {result.text[:500]}",
         )
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.hs_llm_core
     @pytest.mark.asyncio
     async def test_reflect_tool_trace_includes_reason(self, memory: MemoryEngine, request_context):
         """Test that tool traces include the reason field for debugging."""
@@ -512,7 +525,9 @@ class TestMentalModelReflectOptions:
             request_context=request_context,
         )
 
-        fetched = await memory.get_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+        fetched = await memory.get_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
         assert fetched["trigger"]["fact_types"] == ["observation"]
         assert fetched["trigger"]["refresh_after_consolidation"] is False
 
@@ -533,7 +548,9 @@ class TestMentalModelReflectOptions:
             request_context=request_context,
         )
 
-        fetched = await memory.get_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+        fetched = await memory.get_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
         assert fetched["trigger"]["exclude_mental_models"] is True
 
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -554,7 +571,9 @@ class TestMentalModelReflectOptions:
             request_context=request_context,
         )
 
-        fetched = await memory.get_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
+        fetched = await memory.get_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
         assert fetched["trigger"]["exclude_mental_model_ids"] == excluded_ids
 
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -598,9 +617,7 @@ class TestReflectFactTypeFiltering:
     """Tests for fact_types and exclude_mental_models filtering in reflect_async."""
 
     @pytest.mark.asyncio
-    async def test_exclude_mental_models_skips_search_mental_models_tool(
-        self, memory: MemoryEngine, request_context
-    ):
+    async def test_exclude_mental_models_skips_search_mental_models_tool(self, memory: MemoryEngine, request_context):
         """When exclude_mental_models=True, search_mental_models is never called."""
         bank_id = f"test-reflect-exmm-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)

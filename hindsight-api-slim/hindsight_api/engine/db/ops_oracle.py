@@ -215,29 +215,96 @@ class OracleOps(DataAccessOps):
             list(zip(unit_ids, entity_ids)),
         )
 
-    async def fetch_entity_unit_fanout(
+    async def enqueue_graph_maintenance(
         self,
         conn: DatabaseConnection,
-        ue_table: str,
-        entity_id_list: list[UUID],
-        limit_per_entity: int,
-    ) -> list[ResultRow]:
-        # Query each entity individually
-        rows: list[ResultRow] = []
-        for eid in entity_id_list:
-            entity_rows = await conn.fetch(
-                f"""
-                SELECT $1 AS entity_id, ue.unit_id
-                FROM {ue_table} ue
-                WHERE ue.entity_id = $1
-                ORDER BY ue.unit_id DESC
-                LIMIT $2
-                """,
-                eid,
-                limit_per_entity,
+        table: str,
+        bank_id: str,
+        unit_ids: list,
+    ) -> None:
+        if not unit_ids:
+            return
+        # Oracle doesn't support ON CONFLICT; rely on the PK and the
+        # IGNORE_ROW_ON_DUPKEY_INDEX hint to skip duplicates server-side.
+        # The hint name must match the PK constraint exactly.
+        await conn.executemany(
+            f"""
+            INSERT /*+ IGNORE_ROW_ON_DUPKEY_INDEX({table}, pk_graph_maintenance_queue) */
+            INTO {table} (bank_id, unit_id)
+            VALUES ($1, $2)
+            """,
+            [(bank_id, uid) for uid in unit_ids],
+        )
+
+    async def claim_graph_maintenance_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        limit: int,
+    ) -> list[str]:
+        # Two-step claim: select the batch, then delete by exact keys. Oracle's
+        # DELETE ... RETURNING doesn't accept a multi-row subquery, so we can't
+        # do it in one statement like the PG version.
+        rows = await conn.fetch(
+            f"""
+            SELECT unit_id FROM {table}
+            WHERE bank_id = $1
+            ORDER BY enqueued_at
+            FETCH FIRST $2 ROWS ONLY
+            """,
+            bank_id,
+            limit,
+        )
+        claimed = [str(row["unit_id"]) for row in rows]
+        if claimed:
+            await conn.executemany(
+                f"DELETE FROM {table} WHERE bank_id = $1 AND unit_id = $2",
+                [(bank_id, uid) for uid in claimed],
             )
-            rows.extend(entity_rows)
-        return rows
+        return claimed
+
+    async def prune_orphan_entities(
+        self,
+        conn: DatabaseConnection,
+        entities_table: str,
+        ue_table: str,
+        bank_id: str,
+    ) -> int:
+        # The Oracle DatabaseConnection wrapper reshapes ``cursor.rowcount`` into
+        # the same ``"DELETE N"`` status string asyncpg returns, so the same
+        # ``int(deleted.split()[-1])`` parsing works on both dialects.
+        deleted = await conn.execute(
+            f"""
+            DELETE FROM {entities_table}
+            WHERE bank_id = $1
+              AND id NOT IN (SELECT DISTINCT entity_id FROM {ue_table})
+            """,
+            bank_id,
+        )
+        return int(deleted.split()[-1]) if isinstance(deleted, str) and deleted.startswith("DELETE") else 0
+
+    async def prune_stale_cooccurrences(
+        self,
+        conn: DatabaseConnection,
+        ec_table: str,
+        ue_table: str,
+        entities_table: str,
+        bank_id: str,
+    ) -> int:
+        deleted = await conn.execute(
+            f"""
+            DELETE FROM {ec_table}
+            WHERE entity_id_1 IN (SELECT id FROM {entities_table} WHERE bank_id = $1)
+              AND (entity_id_1, entity_id_2) NOT IN (
+                  SELECT u1.entity_id, u2.entity_id
+                  FROM {ue_table} u1
+                  JOIN {ue_table} u2 ON u1.unit_id = u2.unit_id
+              )
+            """,
+            bank_id,
+        )
+        return int(deleted.split()[-1]) if isinstance(deleted, str) and deleted.startswith("DELETE") else 0
 
     async def fetch_unit_dates(
         self,

@@ -466,6 +466,8 @@ async def retrieve_temporal_combined(
                 best_date = ep["mentioned_at"]
 
             if best_date:
+                if best_date.tzinfo is None:
+                    best_date = best_date.replace(tzinfo=UTC)
                 days_from_mid = abs((best_date - mid_date).total_seconds() / 86400)
                 temporal_proximity = 1.0 - min(days_from_mid / (total_days / 2), 1.0) if total_days > 0 else 1.0
             else:
@@ -559,6 +561,8 @@ async def retrieve_temporal_combined(
                     neighbor_best_date = n["mentioned_at"]
 
                 if neighbor_best_date:
+                    if neighbor_best_date.tzinfo is None:
+                        neighbor_best_date = neighbor_best_date.replace(tzinfo=UTC)
                     days_from_mid = abs((neighbor_best_date - mid_date).total_seconds() / 86400)
                     neighbor_temporal_proximity = (
                         1.0 - min(days_from_mid / (total_days / 2), 1.0) if total_days > 0 else 1.0

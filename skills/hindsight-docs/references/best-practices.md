@@ -442,7 +442,7 @@ This is a hard SQL WHERE clause applied across all four retrieval strategies. Th
 
 ### `query_timestamp`
 
-Set for time-sensitive queries. Anchors temporal ranking to a specific point in time.
+Set for time-sensitive queries. Anchors relative temporal expressions and recency scoring to a specific point in time.
 
 ```python
 # "What was the team working on in January?"

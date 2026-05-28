@@ -7,6 +7,7 @@ the stored fact text.
 - vchord: text_signals included in tokenize() at insert time
 - native: search_vector GENERATED column regenerated to include text_signals
 - pg_textsearch: no change (index only supports a single base column)
+- pg_search: BM25 index dropped and recreated to include text_signals
 
 Revision ID: a2b3c4d5e6f7
 Revises: z1u2v3w4x5y6
@@ -18,6 +19,11 @@ from collections.abc import Sequence
 
 from alembic import context, op
 
+from hindsight_api._pg_search import (
+    PG_SEARCH_TOKENIZER_ENV,
+    normalize_pg_search_tokenizer,
+    pg_search_bm25_columns,
+)
 from hindsight_api.alembic._dialect import run_for_dialect
 
 revision: str = "a2b3c4d5e6f7"
@@ -33,6 +39,10 @@ def _get_schema_prefix() -> str:
 
 def _detect_text_search_extension() -> str:
     return os.getenv("HINDSIGHT_API_TEXT_SEARCH_EXTENSION", "native").lower()
+
+
+def _pg_search_tokenizer() -> str:
+    return normalize_pg_search_tokenizer(os.getenv(PG_SEARCH_TOKENIZER_ENV))
 
 
 def _pg_upgrade() -> None:
@@ -62,6 +72,16 @@ def _pg_upgrade() -> None:
             CREATE INDEX IF NOT EXISTS idx_memory_units_text_search
             ON {table} USING gin(search_vector)
         """)
+    elif text_search_ext == "pg_search":
+        # ParadeDB pg_search: drop the existing BM25 index and recreate it
+        # to include text_signals alongside text and context.
+        bm25_cols = pg_search_bm25_columns("id", ("text", "context", "text_signals"), _pg_search_tokenizer())
+        op.execute(f"DROP INDEX IF EXISTS {schema}idx_memory_units_text_search")
+        op.execute(f"""
+            CREATE INDEX idx_memory_units_text_search ON {table}
+            USING bm25 ({bm25_cols})
+            WITH (key_field='id')
+        """)
 
     # vchord: tokenize() call in fact_storage.py is updated to include text_signals at insert time
     # pg_textsearch: no change — index operates on the base `text` column only
@@ -85,6 +105,15 @@ def _pg_downgrade() -> None:
         op.execute(f"""
             CREATE INDEX idx_memory_units_text_search
             ON {table} USING gin(search_vector)
+        """)
+    elif text_search_ext == "pg_search":
+        # Restore the original (id, text, context) BM25 index without text_signals.
+        bm25_cols = pg_search_bm25_columns("id", ("text", "context"), _pg_search_tokenizer())
+        op.execute(f"DROP INDEX IF EXISTS {schema}idx_memory_units_text_search")
+        op.execute(f"""
+            CREATE INDEX idx_memory_units_text_search ON {table}
+            USING bm25 ({bm25_cols})
+            WITH (key_field='id')
         """)
 
     op.execute(f"ALTER TABLE {table} DROP COLUMN IF EXISTS text_signals")

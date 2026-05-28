@@ -321,6 +321,15 @@ async def handle_document_tracking(
                     f"[RETAIN] Document {document_id} re-ingested: invalidated "
                     f"{invalidated} observation(s) derived from {len(existing_unit_ids)} outgoing memory_units"
                 )
+            # Capture link-recompute victims BEFORE the cascade. Same staleness
+            # applies on upsert as on explicit delete: surviving units in OTHER
+            # documents that linked to these doomed units are about to lose
+            # those links. ``ops`` may be None for older callers that haven't
+            # been wired up — skip enqueue in that case rather than crash.
+            if ops is not None:
+                from ..graph_maintenance import enqueue_relink_victims
+
+                await enqueue_relink_victims(conn, bank_id, [str(uid) for uid in existing_unit_ids], ops=ops)
         # Explicitly delete memory_units by document_id BEFORE deleting the
         # document row. The CASCADE from documents→chunks→memory_units only
         # catches units that have a non-NULL chunk_id FK. Units with chunk_id=NULL

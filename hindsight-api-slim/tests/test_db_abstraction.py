@@ -255,6 +255,23 @@ class TestPostgreSQLDialect:
         )
         assert "french" not in arm
 
+    def test_build_bm25_arm_pg_search(self, d):
+        arm = d.build_bm25_arm(
+            table="schema.memory_units", cols="id, text", fact_type="world",
+            bank_id_param="$2", limit_param="$3", text_param="$4",
+            text_search_extension="pg_search",
+        )
+        assert "paradedb.score(id)" in arm
+        # @@@ on the key_field requires a field-qualified query, so we
+        # fan the bind param out across all indexed text fields.
+        assert "id @@@ paradedb.boolean(should =>" in arm
+        assert "paradedb.match('text', $4)" in arm
+        assert "paradedb.match('context', $4)" in arm
+        assert "paradedb.match('text_signals', $4)" in arm
+        assert "paradedb.score(id) DESC" in arm
+        assert "'bm25' AS source" in arm
+        assert "LIMIT $3" in arm
+
     def test_prepare_bm25_text_native(self, d):
         result = d.prepare_bm25_text(["hello", "world"], "hello world")
         assert result == "hello | world"
@@ -267,6 +284,10 @@ class TestPostgreSQLDialect:
         # pgroonga accepts raw query text via &@~ and parses it with its own
         # query syntax; we pass the original query through unchanged.
         result = d.prepare_bm25_text(["hello", "world"], "hello world", text_search_extension="pgroonga")
+        assert result == "hello world"
+
+    def test_prepare_bm25_text_pg_search(self, d):
+        result = d.prepare_bm25_text(["hello", "world"], "hello world", text_search_extension="pg_search")
         assert result == "hello world"
 
 

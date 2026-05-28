@@ -153,11 +153,24 @@ class MockLLM(LLMInterface):
             result = self._response_callback(messages, scope)
         elif self._mock_response is not None:
             result = self._mock_response
+        elif scope == "retain_extract_facts" and skip_validation:
+            # Fact extraction: return canned facts derived from user message text.
+            # This allows tests using a mock LLM to get real facts into the DB
+            # so retain → recall → reflect pipelines work end-to-end.
+            result = self._build_mock_facts(messages)
+        elif scope == "consolidation" and response_format is not None:
+            # Consolidation: produce a single observation from the input facts
+            # so the full pipeline (retain → consolidation → observation → recall) works.
+            result = self._build_mock_consolidation(messages, response_format)
+        elif scope == "memory_think":
+            # Reflect: return a plausible text answer
+            result = "Based on the available information, the answer is related to the context provided."
         elif response_format is not None:
-            # Try to create a minimal valid instance of the response format
+            # Structured output: try to return a valid empty instance of the model
+            # so that callers expecting e.g. response_format with defaults
+            # get a valid instance rather than a crash on {"mock": True}.
             try:
-                # For Pydantic models, try to create with minimal valid data
-                result = {"mock": True}
+                result = response_format()
             except Exception:
                 result = {"mock": True}
         else:
@@ -243,6 +256,12 @@ class MockLLM(LLMInterface):
         else:
             result = LLMToolCallResult(content="mock response", finish_reason="stop")
 
+        # Set mock token usage on result if not already set
+        if result.input_tokens == 0:
+            result.input_tokens = 10
+        if result.output_tokens == 0:
+            result.output_tokens = 5
+
         # Record span with mock values
         # Convert LLMToolCall objects to dicts for span recording
         tool_calls_dict = (
@@ -265,6 +284,92 @@ class MockLLM(LLMInterface):
         )
 
         return result
+
+    @staticmethod
+    def _build_mock_facts(messages: list[dict]) -> dict:
+        """Build a canned fact extraction response from the user message text.
+
+        Splits the input into sentence-like chunks and returns each as a separate
+        world fact with a simple entity extracted from the first noun-like word.
+        This is intentionally simplistic — it just needs to produce structurally
+        valid facts so the rest of the pipeline (embedding, storage, recall) works.
+        """
+        import re
+
+        user_text = ""
+        for m in messages:
+            if m.get("role") == "user":
+                user_text = m.get("content", "")
+                break
+
+        # Split on sentence boundaries: period followed by space/EOL (not mid-number), or newlines
+        sentences = [s.strip() for s in re.split(r"(?<=\.)\s+|\n+", user_text) if s.strip() and len(s.strip()) > 10]
+
+        if not sentences:
+            sentences = [user_text[:200] if user_text else "mock fact"]
+
+        facts = []
+        for sentence in sentences[:10]:  # Cap at 10 facts per chunk
+            # Extract simple entities: capitalized words that aren't common words
+            words = re.findall(r"\b[A-Z][a-z]+\b", sentence)
+            entities = [{"text": w} for w in dict.fromkeys(words)][:5]  # Dedupe, cap at 5
+
+            facts.append(
+                {
+                    "what": sentence,
+                    "when": "N/A",
+                    "where": "N/A",
+                    "who": "N/A",
+                    "why": "N/A",
+                    "fact_kind": "conversation",
+                    "fact_type": "world",
+                    "entities": entities,
+                }
+            )
+
+        return {"facts": facts}
+
+    @staticmethod
+    def _build_mock_consolidation(messages: list[dict], response_format: Any) -> Any:
+        """Build a mock consolidation response that creates one observation per fact.
+
+        Parses fact IDs from the consolidation prompt and creates one observation
+        per fact, each referencing its source fact ID. This mimics real LLM behavior
+        where distinct facts produce separate observations, preserving entity
+        separation so pipeline tests (graph filtering, entity linking) work correctly.
+        """
+        import re
+
+        user_text = ""
+        for m in messages:
+            if m.get("role") == "user":
+                user_text = m.get("content", "")
+                break
+
+        # Extract fact UUIDs from the prompt (format: "[<uuid>] <text>")
+        fact_entries = re.findall(r"\[([0-9a-f-]{36})\]\s*(.+?)(?:\n|$)", user_text)
+
+        if not fact_entries:
+            # No facts to consolidate — return empty response
+            try:
+                return response_format()
+            except Exception:
+                return {"creates": [], "updates": [], "deletes": []}
+
+        # Create one observation per fact to preserve entity separation
+        creates = []
+        for fact_id, fact_text in fact_entries:
+            creates.append({"text": fact_text.strip(), "source_fact_ids": [fact_id]})
+
+        try:
+            return response_format(
+                creates=creates,
+                updates=[],
+                deletes=[],
+            )
+        except Exception:
+            # Fallback if response_format constructor doesn't accept these args
+            return {"creates": creates, "updates": [], "deletes": []}
 
     async def cleanup(self) -> None:
         """Clean up resources (no-op for mock provider)."""
@@ -318,6 +423,8 @@ class MockLLM(LLMInterface):
         return self._mock_calls
 
     def clear_mock_calls(self) -> None:
-        """Clear the recorded mock calls and any set exception."""
+        """Clear all recorded calls and any configured response/exception state."""
         self._mock_calls = []
         self._mock_exception = None
+        self._mock_response = None
+        self._response_callback = None

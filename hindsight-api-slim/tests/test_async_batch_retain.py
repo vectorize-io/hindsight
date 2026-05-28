@@ -106,6 +106,7 @@ async def test_small_async_batch_no_splitting(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(600)
 async def test_large_async_batch_auto_splits(memory, request_context):
     """Test that large async batches automatically split into sub-batches with parent operation."""
     from hindsight_api.engine.memory_engine import count_tokens

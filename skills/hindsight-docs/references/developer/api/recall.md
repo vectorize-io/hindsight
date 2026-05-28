@@ -234,7 +234,7 @@ hindsight memory recall my-bank "Alice's email" --max-tokens 500
 
 ### query_timestamp
 
-An ISO 8601 datetime representing when the query is being asked, from the user's perspective. When provided, it is used as the anchor for resolving relative temporal expressions in the query — for example, if the query says "last month" and `query_timestamp` is `2023-05-30`, the temporal search window becomes approximately April 2023. Without it, the server's current time is used as the anchor. This field matters most for replaying historical conversations or building agents that need time-anchored recall.
+An ISO 8601 datetime representing when the query is being asked, from the user's perspective. When provided, it is used as the anchor for resolving relative temporal expressions in the query and for recency scoring — for example, if the query says "last month" and `query_timestamp` is `2023-05-30`, the temporal search window becomes approximately April 2023, and recency boosts are calculated as of May 30, 2023. Without it, the server's current time is used as the anchor. This field matters most for replaying historical conversations or building agents that need time-anchored recall.
 
 ### include
 

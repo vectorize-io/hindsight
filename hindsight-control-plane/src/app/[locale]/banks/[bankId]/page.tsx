@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { BankSelector } from "@/components/bank-selector";
 import { Sidebar } from "@/components/sidebar";
@@ -49,6 +50,8 @@ export default function BankPage() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const t = useTranslations("bank");
+  const tCommon = useTranslations("common");
   const { features } = useFeatures();
   const { currentBank: bankId, setCurrentBank, loadBanks } = useBank();
 
@@ -107,8 +110,8 @@ export default function BankPage() {
     try {
       const result = await client.clearObservations(bankId);
       setShowClearObservationsDialog(false);
-      toast.success("Success", {
-        description: result.message || "Observations cleared successfully",
+      toast.success(t("observationsCleared"), {
+        description: result.message || t("observationsClearedDefault"),
       });
     } catch (error) {
       // Error toast is shown automatically by the API client interceptor
@@ -149,9 +152,7 @@ export default function BankPage() {
     setIsRecoveringConsolidation(true);
     try {
       const result = await client.recoverConsolidation(bankId);
-      toast.success(
-        `Recovered ${result.retried_count} failed ${result.retried_count === 1 ? "memory" : "memories"} for re-consolidation`
-      );
+      toast.success(t("recoveredMemories", { count: result.retried_count }));
     } catch (error) {
       // Error toast is shown automatically by the API client interceptor
     } finally {
@@ -173,15 +174,15 @@ export default function BankPage() {
               <div>
                 <div className="flex justify-between items-start mb-6">
                   <div>
-                    <h1 className="text-3xl font-bold mb-2 text-foreground">Bank Configuration</h1>
-                    <p className="text-muted-foreground">
-                      Manage bank settings, profile, and operations.
-                    </p>
+                    <h1 className="text-3xl font-bold mb-2 text-foreground">
+                      {t("bankConfiguration")}
+                    </h1>
+                    <p className="text-muted-foreground">{t("bankConfigurationDescription")}</p>
                   </div>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" size="sm">
-                        Actions
+                        {t("actions")}
                         <MoreVertical className="w-4 h-4 ml-2" />
                       </Button>
                     </DropdownMenuTrigger>
@@ -193,14 +194,14 @@ export default function BankPage() {
                             const manifest = await client.exportBankTemplate(bankId);
                             const json = JSON.stringify(manifest, null, 2);
                             await navigator.clipboard.writeText(json);
-                            toast.success("Template copied to clipboard");
+                            toast.success(t("templateCopied"));
                           } catch {
-                            toast.error("Failed to export template");
+                            toast.error(t("failedToExportTemplate"));
                           }
                         }}
                       >
                         <Download className="w-4 h-4 mr-2" />
-                        Export Template
+                        {t("exportTemplate")}
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
@@ -215,7 +216,7 @@ export default function BankPage() {
                         ) : (
                           <Brain className="w-4 h-4 mr-2" />
                         )}
-                        {isConsolidating ? "Consolidating..." : "Run Consolidation"}
+                        {isConsolidating ? t("consolidating") : t("runConsolidation")}
                         {!observationsEnabled && (
                           <span className="ml-auto text-xs text-muted-foreground">Off</span>
                         )}
@@ -232,7 +233,7 @@ export default function BankPage() {
                         ) : (
                           <RotateCcw className="w-4 h-4 mr-2" />
                         )}
-                        {isRecoveringConsolidation ? "Recovering..." : "Recover Consolidation"}
+                        {isRecoveringConsolidation ? t("recovering") : t("recoverConsolidation")}
                         {!observationsEnabled && (
                           <span className="ml-auto text-xs text-muted-foreground">Off</span>
                         )}
@@ -246,7 +247,7 @@ export default function BankPage() {
                         }
                       >
                         <Trash2 className="w-4 h-4 mr-2" />
-                        Clear Observations
+                        {t("clearObservations")}
                         {!observationsEnabled && (
                           <span className="ml-auto text-xs text-muted-foreground">Off</span>
                         )}
@@ -259,7 +260,7 @@ export default function BankPage() {
                         title={!bankConfigEnabled ? "Bank Config API is disabled" : undefined}
                       >
                         <RotateCcw className="w-4 h-4 mr-2" />
-                        Reset Configuration
+                        {t("resetConfiguration")}
                         {!bankConfigEnabled && (
                           <span className="ml-auto text-xs text-muted-foreground">Off</span>
                         )}
@@ -270,7 +271,7 @@ export default function BankPage() {
                         className="text-red-600 dark:text-red-400 focus:text-red-700 dark:focus:text-red-300"
                       >
                         <Trash2 className="w-4 h-4 mr-2" />
-                        Delete Bank
+                        {t("deleteBank")}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -287,7 +288,7 @@ export default function BankPage() {
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      General
+                      {t("general")}
                       {bankConfigTab === "general" && (
                         <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
                       )}
@@ -301,7 +302,7 @@ export default function BankPage() {
                             : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        Configuration
+                        {t("configuration")}
                         {bankConfigTab === "configuration" && (
                           <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
                         )}
@@ -315,7 +316,7 @@ export default function BankPage() {
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      Webhooks
+                      {t("webhooks")}
                       {bankConfigTab === "webhooks" && (
                         <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
                       )}
@@ -328,7 +329,7 @@ export default function BankPage() {
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      Audit Logs
+                      {t("auditLogs")}
                       {bankConfigTab === "audit-logs" && (
                         <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
                       )}
@@ -341,7 +342,7 @@ export default function BankPage() {
                   {bankConfigTab === "general" && (
                     <div>
                       <p className="text-sm text-muted-foreground mb-4">
-                        Overview statistics and background operations for this memory bank.
+                        {t("overviewAndOperations")}
                       </p>
                       <div className="space-y-6">
                         <BankStatsView />
@@ -358,8 +359,7 @@ export default function BankPage() {
                   {bankConfigTab === "webhooks" && (
                     <div>
                       <p className="text-sm text-muted-foreground mb-4">
-                        Manage webhook endpoints to receive event notifications from this memory
-                        bank.
+                        {t("webhooksDescription")}
                       </p>
                       <WebhooksView />
                     </div>
@@ -367,7 +367,7 @@ export default function BankPage() {
                   {bankConfigTab === "audit-logs" && (
                     <div>
                       <p className="text-sm text-muted-foreground mb-4">
-                        View audit trail of all operations performed on this memory bank.
+                        {t("auditLogsDescription")}
                       </p>
                       <AuditLogsView />
                     </div>
@@ -379,10 +379,8 @@ export default function BankPage() {
             {/* Recall Tab */}
             {view === "recall" && (
               <div>
-                <h1 className="text-3xl font-bold mb-2 text-foreground">Recall</h1>
-                <p className="text-muted-foreground mb-6">
-                  Analyze memory recall with detailed trace information and retrieval methods.
-                </p>
+                <h1 className="text-3xl font-bold mb-2 text-foreground">{t("recallAnalyzer")}</h1>
+                <p className="text-muted-foreground mb-6">{t("recallAnalyzerDescription")}</p>
                 <SearchDebugView />
               </div>
             )}
@@ -390,11 +388,8 @@ export default function BankPage() {
             {/* Reflect Tab */}
             {view === "reflect" && (
               <div>
-                <h1 className="text-3xl font-bold mb-2 text-foreground">Reflect</h1>
-                <p className="text-muted-foreground mb-6">
-                  Run an agentic loop that autonomously gathers evidence and reasons through the
-                  lens of the bank&apos;s disposition to generate contextual responses.
-                </p>
+                <h1 className="text-3xl font-bold mb-2 text-foreground">{t("reflect")}</h1>
+                <p className="text-muted-foreground mb-6">{t("reflectDescription")}</p>
                 <ThinkView />
               </div>
             )}
@@ -402,10 +397,8 @@ export default function BankPage() {
             {/* Data/Memories Tab */}
             {view === "data" && (
               <div>
-                <h1 className="text-3xl font-bold mb-2 text-foreground">Memories</h1>
-                <p className="text-muted-foreground mb-6">
-                  View and explore different types of memories stored in this memory bank.
-                </p>
+                <h1 className="text-3xl font-bold mb-2 text-foreground">{t("memories")}</h1>
+                <p className="text-muted-foreground mb-6">{t("memoriesDescription")}</p>
 
                 <div className="mb-6 border-b border-border">
                   <div className="flex gap-1">
@@ -417,7 +410,7 @@ export default function BankPage() {
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      World Facts
+                      {t("worldFacts")}
                       {subTab === "world" && (
                         <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
                       )}
@@ -430,7 +423,7 @@ export default function BankPage() {
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      Experience
+                      {t("experience")}
                       {subTab === "experience" && (
                         <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
                       )}
@@ -443,7 +436,7 @@ export default function BankPage() {
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      Observations
+                      {t("observations")}
                       {!observationsEnabled && (
                         <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                           Off
@@ -461,7 +454,7 @@ export default function BankPage() {
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      Mental Models
+                      {t("mentalModels")}
                       {subTab === "mental-models" && (
                         <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
                       )}
@@ -473,7 +466,7 @@ export default function BankPage() {
                   {subTab === "world" && (
                     <div>
                       <p className="text-sm text-muted-foreground mb-4">
-                        Objective facts about the world received from external sources.
+                        {t("worldFactsDescription")}
                       </p>
                       <DataView key="world" factType="world" />
                     </div>
@@ -481,7 +474,7 @@ export default function BankPage() {
                   {subTab === "experience" && (
                     <div>
                       <p className="text-sm text-muted-foreground mb-4">
-                        The bank&apos;s own actions, interactions, and first-person experiences.
+                        {t("experienceDescription")}
                       </p>
                       <DataView key="experience" factType="experience" />
                     </div>
@@ -490,8 +483,7 @@ export default function BankPage() {
                     (observationsEnabled ? (
                       <div>
                         <p className="text-sm text-muted-foreground mb-4">
-                          Consolidated knowledge synthesized from facts — patterns, preferences, and
-                          learnings that emerge from accumulated evidence.
+                          {t("observationsDescription")}
                         </p>
                         <DataView key="observations" factType="observation" />
                       </div>
@@ -515,22 +507,23 @@ export default function BankPage() {
                           </svg>
                         </div>
                         <h3 className="text-lg font-semibold text-foreground mb-1">
-                          Observations Not Enabled
+                          {t("observationsNotEnabled")}
                         </h3>
                         <p className="text-sm text-muted-foreground max-w-md">
-                          Observations consolidation is disabled on this server. Set{" "}
-                          <code className="px-1 py-0.5 bg-muted rounded text-xs">
-                            HINDSIGHT_API_ENABLE_OBSERVATIONS=true
-                          </code>{" "}
-                          to enable.
+                          {t.rich("observationsDisabledMessage", {
+                            envVar: () => (
+                              <code className="px-1 py-0.5 bg-muted rounded text-xs">
+                                HINDSIGHT_API_ENABLE_OBSERVATIONS=true
+                              </code>
+                            ),
+                          })}
                         </p>
                       </div>
                     ))}
                   {subTab === "mental-models" && (
                     <div>
                       <p className="text-sm text-muted-foreground mb-4">
-                        User-curated summaries generated from queries — reusable knowledge snapshots
-                        that can be refreshed as memories evolve.
+                        {t("mentalModelsDescription")}
                       </p>
                       <MentalModelsView key="mental-models" />
                     </div>
@@ -542,10 +535,8 @@ export default function BankPage() {
             {/* Documents Tab */}
             {view === "documents" && (
               <div>
-                <h1 className="text-3xl font-bold mb-2 text-foreground">Documents</h1>
-                <p className="text-muted-foreground mb-6">
-                  Manage documents and retain new memories.
-                </p>
+                <h1 className="text-3xl font-bold mb-2 text-foreground">{t("documents")}</h1>
+                <p className="text-muted-foreground mb-6">{t("documentsDescription")}</p>
                 <DocumentsView />
               </div>
             )}
@@ -553,10 +544,8 @@ export default function BankPage() {
             {/* Entities Tab */}
             {view === "entities" && (
               <div>
-                <h1 className="text-3xl font-bold mb-2 text-foreground">Entities</h1>
-                <p className="text-muted-foreground mb-6">
-                  Explore entities (people, organizations, places) mentioned in memories.
-                </p>
+                <h1 className="text-3xl font-bold mb-2 text-foreground">{t("entities")}</h1>
+                <p className="text-muted-foreground mb-6">{t("entitiesDescription")}</p>
                 <EntitiesView />
               </div>
             )}
@@ -568,22 +557,22 @@ export default function BankPage() {
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Memory Bank</AlertDialogTitle>
+            <AlertDialogTitle>{t("deleteMemoryBank")}</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm text-muted-foreground">
                 <p>
-                  Are you sure you want to delete the memory bank{" "}
-                  <span className="font-semibold text-foreground">{bankId}</span>?
+                  {t.rich("deleteBankPrompt", {
+                    bankName: () => <span className="font-semibold text-foreground">{bankId}</span>,
+                  })}
                 </p>
                 <p className="text-red-600 dark:text-red-400 font-medium">
-                  This action cannot be undone. All memories, entities, documents, and the bank
-                  profile will be permanently deleted.
+                  {t("deleteBankWarning")}
                 </p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={isDeleting}>{tCommon("cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDeleteBank}
               disabled={isDeleting}
@@ -592,12 +581,12 @@ export default function BankPage() {
               {isDeleting ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Deleting...
+                  {t("deleting")}
                 </>
               ) : (
                 <>
                   <Trash2 className="w-4 h-4 mr-2" />
-                  Delete Bank
+                  {t("deleteBank")}
                 </>
               )}
             </AlertDialogAction>
@@ -609,32 +598,32 @@ export default function BankPage() {
       <AlertDialog open={showResetConfigDialog} onOpenChange={setShowResetConfigDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Reset Configuration</AlertDialogTitle>
+            <AlertDialogTitle>{t("resetConfigTitle")}</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm text-muted-foreground">
                 <p>
-                  Are you sure you want to reset all configuration overrides for{" "}
-                  <span className="font-semibold text-foreground">{bankId}</span>?
+                  {t.rich("resetConfigPrompt", {
+                    bankName: () => <span className="font-semibold text-foreground">{bankId}</span>,
+                  })}
                 </p>
                 <p className="text-amber-600 dark:text-amber-400 font-medium">
-                  All per-bank settings (retain, observations, reflect) will revert to server
-                  defaults. This does not affect memories, entities, or the bank profile.
+                  {t("resetConfigWarning")}
                 </p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isResettingConfig}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={isResettingConfig}>{tCommon("cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={handleResetConfig} disabled={isResettingConfig}>
               {isResettingConfig ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Resetting...
+                  {t("resetting")}
                 </>
               ) : (
                 <>
                   <RotateCcw className="w-4 h-4 mr-2" />
-                  Reset Configuration
+                  {t("resetConfiguration")}
                 </>
               )}
             </AlertDialogAction>
@@ -646,22 +635,24 @@ export default function BankPage() {
       <AlertDialog open={showClearObservationsDialog} onOpenChange={setShowClearObservationsDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Clear Observations</AlertDialogTitle>
+            <AlertDialogTitle>{t("clearObservationsTitle")}</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm text-muted-foreground">
                 <p>
-                  Are you sure you want to clear all observations for{" "}
-                  <span className="font-semibold text-foreground">{bankId}</span>?
+                  {t.rich("clearObservationsPrompt", {
+                    bankName: () => <span className="font-semibold text-foreground">{bankId}</span>,
+                  })}
                 </p>
                 <p className="text-amber-600 dark:text-amber-400 font-medium">
-                  This will delete all consolidated knowledge. Observations will be regenerated the
-                  next time consolidation runs.
+                  {t("clearObservationsWarning")}
                 </p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isClearingObservations}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={isClearingObservations}>
+              {tCommon("cancel")}
+            </AlertDialogCancel>
             <AlertDialogAction
               onClick={handleClearObservations}
               disabled={isClearingObservations}
@@ -670,12 +661,12 @@ export default function BankPage() {
               {isClearingObservations ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Clearing...
+                  {t("clearing")}
                 </>
               ) : (
                 <>
                   <Trash2 className="w-4 h-4 mr-2" />
-                  Clear Observations
+                  {t("clearObservations")}
                 </>
               )}
             </AlertDialogAction>

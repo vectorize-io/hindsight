@@ -100,7 +100,6 @@ from .types import (
     ChunkMetadata,
     EntityResolutionResult,
     Phase1Result,
-    Phase3Context,
     ProcessedFact,
     RetainContent,
     RetainContentDict,
@@ -259,30 +258,27 @@ async def _insert_facts_and_links(
     skip_semantic_links: bool = False,
     outbox_callback=None,
     ops=None,
-) -> tuple[list[list[str]], Phase3Context]:
+) -> list[list[str]]:
     """
     Phase 2 of the retain pipeline: insert facts and retrieval-critical links.
 
     Runs inside a single database transaction to ensure atomicity of the data
     that retrieval depends on (facts, unit_entities, temporal/semantic/causal links).
 
-    Entity link generation and insertion for UI visualization are NOT done here —
-    only the unit_entities INSERT (FK to memory_units) stays in the transaction.
-    Entity link building is deferred to Phase 3 (post-transaction, best-effort).
+    Entity edges for UI graph visualization are derived on demand from
+    unit_entities by the /graph endpoint, so no entity rows are written to
+    memory_links here.
     """
     set_stage("retain.phase2.insert_facts")
     unit_ids = await fact_storage.insert_facts_batch(conn, bank_id, processed_facts, ops=ops)
     step_start = time.time()
     log_buffer.append(f"  Insert facts: {len(unit_ids)} units in {time.time() - step_start:.3f}s")
 
-    # Context for Phase 3 entity link building (after transaction commits)
-    phase3_context = Phase3Context()
-
     if unit_ids:
         # Entity resolution was done in Phase 1 (separate connection).
         # Remap placeholder IDs to actual unit IDs.
         step_start = time.time()
-        remapped_entity_to_unit, remapped_unit_to_entity_ids, remapped_semantic = _remap_phase1_results(
+        remapped_entity_to_unit, _remapped_unit_to_entity_ids, remapped_semantic = _remap_phase1_results(
             resolved_entity_ids, entity_to_unit, unit_to_entity_ids, semantic_ann_links or [], unit_ids
         )
         # Update semantic_ann_links with remapped IDs for Phase 2
@@ -296,13 +292,6 @@ async def _insert_facts_and_links(
         ]
         await entity_resolver.link_units_to_entities_batch(unit_entity_pairs, conn=conn)
         log_buffer.append(f"  Insert unit_entities: {len(unit_entity_pairs)} pairs in {time.time() - step_start:.3f}s")
-        # Save context for Phase 3 entity link building (after commit)
-        phase3_context = Phase3Context(
-            unit_ids=unit_ids,
-            resolved_entity_ids=resolved_entity_ids,
-            entity_to_unit=remapped_entity_to_unit,
-            unit_to_entity_ids=remapped_unit_to_entity_ids,
-        )
 
         # Create temporal links
         step_start = time.time()
@@ -346,49 +335,7 @@ async def _insert_facts_and_links(
     if outbox_callback is not None:
         await outbox_callback(conn)
 
-    return result_unit_ids, phase3_context
-
-
-async def _build_and_insert_entity_links_phase3(
-    pool: Any,
-    entity_resolver,
-    bank_id: str,
-    phase3_ctx: Phase3Context,
-    log_buffer: list[str],
-) -> None:
-    """
-    Phase 3 helper: build entity links from resolved data and insert them.
-
-    Runs on a fresh connection after the main transaction has committed.
-    Entity links are for UI graph visualization only — retrieval uses
-    the unit_entities self-join instead.
-    """
-    set_stage("retain.phase3.entity_links")
-    p3_unit_ids = phase3_ctx.unit_ids
-    p3_resolved = phase3_ctx.resolved_entity_ids
-    p3_entity_to_unit = phase3_ctx.entity_to_unit
-    p3_unit_to_entity_ids = phase3_ctx.unit_to_entity_ids
-
-    if not p3_unit_ids or not p3_resolved:
-        return
-
-    async with acquire_with_retry(pool) as conn:
-        step_start = time.time()
-        entity_links = await entity_processing.build_entity_links(
-            entity_resolver,
-            conn,
-            bank_id,
-            p3_unit_ids,
-            p3_resolved,
-            p3_entity_to_unit,
-            p3_unit_to_entity_ids,
-            log_buffer,
-            skip_unit_entities_insert=True,  # Already inserted in Phase 2
-            ops=pool.ops,
-        )
-        if entity_links:
-            await entity_processing.insert_entity_links_batch(conn, entity_links, bank_id, ops=pool.ops)
-        log_buffer.append(f"  Entity links (viz): {len(entity_links)} links in {time.time() - step_start:.3f}s")
+    return result_unit_ids
 
 
 async def _extract_and_embed(
@@ -1200,7 +1147,6 @@ async def _streaming_retain_batch(
 
             p2_start = time.time()
             batch_result_ids = None
-            phase3_ctx = None
             async with acquire_with_retry(pool) as conn:
                 async with conn.transaction():
                     # --- Document ownership gate ---
@@ -1289,7 +1235,7 @@ async def _streaming_retain_batch(
 
                     # Insert facts and links — skip semantic links entirely in streaming
                     # mode; they are created in a single final ANN pass after all batches.
-                    batch_result_ids, phase3_ctx = await _insert_facts_and_links(
+                    batch_result_ids = await _insert_facts_and_links(
                         conn,
                         entity_resolver,
                         bank_id,
@@ -1309,15 +1255,13 @@ async def _streaming_retain_batch(
 
                 logger.info(f"[streaming] Phase 2 (write txn): {time.time() - p2_start:.3f}s")
 
-                # Best-effort: entity viz + stats (fast, not semantic ANN)
-                if phase3_ctx is not None:
-                    try:
-                        await entity_resolver.flush_pending_stats()
-                        await _build_and_insert_entity_links_phase3(
-                            pool, entity_resolver, bank_id, phase3_ctx, log_buffer
-                        )
-                    except Exception:
-                        logger.warning(f"Phase 3 stats (consumer batch {consumer_batch_idx + 1}) failed", exc_info=True)
+                # Best-effort: flush entity_cooccurrences and other deferred stats.
+                try:
+                    await entity_resolver.flush_pending_stats()
+                except Exception:
+                    logger.warning(
+                        f"Entity stats flush (consumer batch {consumer_batch_idx + 1}) failed", exc_info=True
+                    )
 
             logger.info(
                 f"[streaming] Consumer batch {consumer_batch_idx + 1} total "
@@ -1775,7 +1719,7 @@ async def _try_delta_retain(
                 # Insert facts and retrieval-critical links.
                 # Use delta_contents (the changed/new chunks) as the content list,
                 # since extracted_facts have content_index relative to delta_contents.
-                result_unit_ids, phase3_ctx = await _insert_facts_and_links(
+                result_unit_ids = await _insert_facts_and_links(
                     conn,
                     entity_resolver,
                     bank_id,
@@ -1792,12 +1736,11 @@ async def _try_delta_retain(
                     ops=pool.ops,
                 )
 
-            # PHASE 3 — Best-Effort Display Data (post-transaction)
+            # Flush deferred entity_cooccurrences stats (post-transaction, best-effort).
             try:
                 await entity_resolver.flush_pending_stats()
-                await _build_and_insert_entity_links_phase3(pool, entity_resolver, bank_id, phase3_ctx, log_buffer)
             except Exception:
-                logger.warning("Phase 3 (best-effort display data) failed — retrieval unaffected", exc_info=True)
+                logger.warning("Entity stats flush failed — retrieval unaffected", exc_info=True)
 
             total_time = time.time() - start_time
             log_buffer.append(f"{'=' * 60}")

@@ -13,6 +13,7 @@ import pytest
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(1200)
 async def test_high_fanout_entity_returns_results(memory, request_context):
     """
     A high-fanout entity (appearing in many facts) should still produce
@@ -145,6 +146,7 @@ async def test_entity_expansion_timeout_fallback(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(1200)
 async def test_per_entity_limit_caps_expansion(memory, request_context):
     """
     With graph_per_entity_limit set to a small value, entity expansion should

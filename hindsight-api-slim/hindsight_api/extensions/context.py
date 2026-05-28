@@ -146,7 +146,11 @@ class DefaultExtensionContext(ExtensionContext):
 
         # Ensure text search columns/indexes match the configured extension
         await asyncio.to_thread(
-            ensure_text_search_extension, db_url, text_search_extension=config.text_search_extension, schema=schema
+            ensure_text_search_extension,
+            db_url,
+            text_search_extension=config.text_search_extension,
+            pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
+            schema=schema,
         )
 
     def get_memory_engine(self) -> "MemoryEngineInterface":

@@ -63,6 +63,20 @@ No single search method handles all these well. Hindsight solves this with **TEM
 
 **Why it matters:** Ensures you never miss results that mention specific names or terms, even if they're semantically distant from your query.
 
+**Backends:** Hindsight ships five pluggable BM25 backends, selected via
+`HINDSIGHT_API_TEXT_SEARCH_EXTENSION`:
+
+| Backend | What it uses | Citus-compatible? |
+|---|---|---|
+| `native` | PostgreSQL `tsvector` + `ts_rank_cd` (TF-IDF, not true BM25) | Yes |
+| `vchord` | `vchord_bm25` extension | No |
+| `pg_textsearch` | Timescale `pg_textsearch` extension | No |
+| `pgroonga` | PGroonga (Groonga) full-text extension, `TokenBigram` polyglot tokenizer | No |
+| `pg_search` | ParadeDB `pg_search` extension, configurable tokenizer (e.g. `jieba`, `chinese_compatible`, `ngram`) via `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER` | Yes |
+
+If you need true BM25 ranking on a horizontally scaled Postgres (Citus) cluster,
+`pg_search` is the only option. See the [`pg_search` docker-compose example](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/pg_search).
+
 ---
 
 ### Graph Traversal
@@ -303,7 +317,7 @@ Linear decay over 365 days from the memory's occurrence date:
 recency = clamp(1.0 - days_ago / 365, 0.1, 1.0)
 ```
 
-A memory from today has recency 1.0 (+10% boost). A memory from 6 months ago has recency ~0.5 (neutral). A memory older than a year has recency 0.1 (-8% penalty). Memories without dates get 0.5 (neutral — no boost or penalty).
+A memory from the query timestamp has recency 1.0 (+10% boost). A memory from 6 months before the query timestamp has recency ~0.5 (neutral). A memory more than a year before the query timestamp has recency 0.1 (-8% penalty). If no `query_timestamp` is provided, the server's current time is used. Memories without dates get 0.5 (neutral — no boost or penalty).
 
 #### Temporal proximity signal
 

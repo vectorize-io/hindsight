@@ -546,15 +546,27 @@ class TestDeltaRefreshPlumbing:
 
         monkeypatch.setattr(memory._reflect_llm_config, "call", boom)
 
-        refreshed = await memory.refresh_mental_model(
+        from hindsight_api.engine.memory_engine import MentalModelRefreshError
+
+        # Empty reflect answer must now RAISE — the previous silent-preserve
+        # behavior masked upstream LLM failures from workers and tests. The
+        # exception is the signal; existing content + reflect_response audit
+        # still get persisted before the raise so the failure is recoverable.
+        with pytest.raises(MentalModelRefreshError):
+            await memory.refresh_mental_model(
+                bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+            )
+
+        # Existing content was preserved in the DB, and the reflect_response
+        # audit trail records the skip reason — fetch directly to verify.
+        preserved = await memory.get_mental_model(
             bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
         )
-
-        # Existing content preserved exactly.
-        assert refreshed["content"] == existing, (
-            "Empty reflect answer overwrote existing content — guard regressed"
+        assert preserved is not None
+        assert preserved["content"] == existing, (
+            "Empty reflect answer overwrote existing content — preserve guard regressed"
         )
-        rr = refreshed.get("reflect_response") or {}
+        rr = preserved.get("reflect_response") or {}
         assert rr.get("refresh_skipped") == "empty_candidate"
 
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -673,6 +685,7 @@ Generate a concise, top-N personalized AI/ML news brief in response to user-trig
 
 
 @pytestmark_gemini
+@pytest.mark.hs_llm_core
 class TestDeltaRefreshGeminiEval:
     """Real-LLM evals for the structured-delta refresh path.
 

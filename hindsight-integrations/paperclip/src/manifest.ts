@@ -40,12 +40,25 @@ const manifest: PaperclipPluginManifestV1 = {
         description:
           "Name of the Paperclip secret holding your Hindsight Cloud API key. Leave empty for self-hosted.",
       },
+      dynamicBankId: {
+        type: "boolean",
+        title: "Dynamic Bank ID",
+        description:
+          "When true (default), bank ID is derived from bankGranularity. Set false and provide bankId to use a static shared bank.",
+        default: true,
+      },
+      bankId: {
+        type: "string",
+        title: "Static Bank ID",
+        description:
+          "Static bank ID used when dynamicBankId is false. All agents sharing this value read/write the same memory bank.",
+      },
       bankGranularity: {
         type: "array",
         title: "Bank Granularity",
         description:
-          "Controls memory isolation. Default ['company', 'agent'] gives each agent its own bank per company.",
-        items: { type: "string", enum: ["company", "agent"] },
+          "Controls memory isolation when dynamicBankId is true. Default ['company', 'agent'] gives each agent its own bank per company. Add 'user' for per-user memory isolation (useful for GDPR compliance).",
+        items: { type: "string", enum: ["company", "agent", "user"] },
         default: ["company", "agent"],
       },
       recallBudget: {
