@@ -190,26 +190,17 @@ class CodexLLM(LLMInterface):
         return access_token, account_id
 
     def _load_codex_refresh_token(self) -> str | None:
-        """Delegate to ``_auth_manager.load_refresh_token_from_file()``.
+        """Read ``tokens.refresh_token`` from the configured auth file.
 
         Kept as an instance method so existing tests that patch
-        ``CodexLLM._load_codex_refresh_token`` continue to work.
+        ``CodexLLM._load_codex_refresh_token`` continue to work. Works both
+        pre- and post-``__init__`` because it does not depend on
+        ``_auth_manager`` being constructed yet.
         """
-        # During __init__ the manager doesn't exist yet; fall back to reading
-        # from the default auth file path directly.
-        if not hasattr(self, "_auth_manager"):
-            auth_file = Path.home() / ".codex" / "auth.json"
-            try:
-                with open(auth_file) as f:
-                    data = json.load(f)
-            except (OSError, json.JSONDecodeError) as e:
-                logger.warning(
-                    f"Codex auth file unreadable when loading refresh_token: {type(e).__name__}. "
-                    "Token refresh will not be available; the access_token in memory will be used until it expires."
-                )
-                return None
-            return data.get("tokens", {}).get("refresh_token")
-        return self._auth_manager.load_refresh_token_from_file()
+        auth_file = (
+            self._auth_manager._auth_file if hasattr(self, "_auth_manager") else Path.home() / ".codex" / "auth.json"
+        )
+        return CodexAuthManager.load_refresh_token_from_file(auth_file)
 
     @staticmethod
     def _decode_jwt_exp_unixtime(token: str) -> int | None:

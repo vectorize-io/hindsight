@@ -157,14 +157,15 @@ class CodexAuthManager:
     # Token state helpers
     # ------------------------------------------------------------------
 
-    def load_refresh_token_from_file(self) -> str | None:
-        """Re-read ``tokens.refresh_token`` from ``_auth_file``.
+    @staticmethod
+    def load_refresh_token_from_file(auth_file: Path) -> str | None:
+        """Read ``tokens.refresh_token`` from ``auth_file``.
 
         Returns ``None`` when the file is unreadable or omits the field.
         Does not raise — the provider degrades to one-shot mode.
         """
         try:
-            with open(self._auth_file) as f:
+            with open(auth_file) as f:
                 data = json.load(f)
         except (OSError, json.JSONDecodeError) as e:
             logger.warning(

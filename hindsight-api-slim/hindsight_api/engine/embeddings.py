@@ -590,8 +590,6 @@ class CodexOAuthEmbeddings(OpenAIEmbeddings):
         """
         from openai import AuthenticationError
 
-        from .providers.codex_auth import CodexRefreshExpiredError
-
         # Proactive refresh — cheap when fresh (JWT exp decode + compare).
         self._auth_manager.ensure_fresh_token()
         if self._auth_manager.access_token != self.api_key:

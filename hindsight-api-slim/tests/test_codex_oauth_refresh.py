@@ -554,17 +554,14 @@ def _make_codex_auth_file(tmp_path: Path, access_token: str, refresh_token: str 
 def test_codex_oauth_embeddings_picks_up_refreshed_token_on_encode(tmp_path: Path, monkeypatch):
     """encode() calls ensure_fresh_token() and updates api_key when the token rotated."""
     from hindsight_api.engine.embeddings import CodexOAuthEmbeddings
-    from hindsight_api.engine.providers.codex_auth import CodexAuthManager
 
     expired = _make_jwt(int(time.time()) - 60)
     new_access = _make_jwt(int(time.time()) + 3600)
 
-    auth_file = _make_codex_auth_file(tmp_path, expired, refresh_token="rt-embed")
-    monkeypatch.setenv("HOME", str(tmp_path))
+    _make_codex_auth_file(tmp_path, expired, refresh_token="rt-embed")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     emb = CodexOAuthEmbeddings(model="text-embedding-3-small", batch_size=10)
-    # Manually point to our tmp auth file after construction.
-    emb._auth_manager._auth_file = auth_file
 
     refresh_resp = _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-new"})
 
@@ -592,11 +589,10 @@ def test_codex_oauth_embeddings_reactive_refresh_on_401(tmp_path: Path, monkeypa
     fresh = _make_jwt(int(time.time()) + 3600)
     new_access = _make_jwt(int(time.time()) + 7200)
 
-    auth_file = _make_codex_auth_file(tmp_path, fresh, refresh_token="rt-embed")
-    monkeypatch.setenv("HOME", str(tmp_path))
+    _make_codex_auth_file(tmp_path, fresh, refresh_token="rt-embed")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     emb = CodexOAuthEmbeddings(model="text-embedding-3-small", batch_size=10)
-    emb._auth_manager._auth_file = auth_file
     emb._dimension = 1536
 
     refresh_resp = _refresh_response(200, {"access_token": new_access, "refresh_token": "rt-rotated"})
