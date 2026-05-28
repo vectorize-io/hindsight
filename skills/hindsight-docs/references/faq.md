@@ -4,7 +4,6 @@
 
 **Contents**
 - [What is Hindsight and how does it differ from RAG?](#what-is-hindsight-and-how-does-it-differ-from-rag)
-- [How is Hindsight's graph different from a traditional knowledge graph?](#how-is-hindsights-graph-different-from-a-traditional-knowledge-graph)
 - [Why use Hindsight instead of other solutions?](#why-use-hindsight-instead-of-other-solutions)
 - [Supported clients, integrations, and LLM providers](#which-clients-and-languages-are-supported)
 - [Which model should I use?](#which-model-should-i-use-with-hindsight)
@@ -18,6 +17,7 @@
 - [Tags, metadata, and entity labels](#does-hindsight-support-metadata-filtering)
 - [Controlling which memory types are recalled](#how-do-i-control-which-types-of-memories-are-recalled)
 - [Recommended format for conversations](#what-is-the-recommended-format-for-retaining-conversations)
+- [How is Hindsight's graph different from a traditional knowledge graph?](#how-is-hindsights-graph-different-from-a-traditional-knowledge-graph)
 
 ---
 
@@ -32,54 +32,6 @@ Hindsight is an agent memory system that provides long-term memory for AI agents
 - **Enables disposition-aware reflection** for nuanced reasoning
 
 For a detailed comparison, see [RAG vs Memory](developer/rag-vs-hindsight.md).
-
----
-
-### How is Hindsight's graph different from a traditional knowledge graph?
-
-Hindsight uses an **event-centric graph** — technically a temporal bipartite hypergraph — that organizes data around moments (conversations, observations, memories) rather than static, isolated facts. The closest analogy is a map versus a scrapbook.
-
-**A traditional graph (like Neo4j) is a map.** It shows how places connect directly to each other via roads, mapping rigid structural facts about the world:
-
-```
-[Toronto] ──IS_IN──> [Canada]
-```
-
-**A Hindsight graph is a scrapbook.** Each page is a single memory. On that page, you slap stickers of all the people, concepts, and labels present in that specific moment. The stickers don't touch each other — they just live on the same page together:
-
-```
-Scrapbook page: "Math Class"
-  [Alice]   [Acme]   [pedagogy:scaffolding]
-```
-
-#### How do the two handle change over time?
-
-This is where traditional graphs run into major limitations when used for AI memory.
-
-**Traditional graphs struggle with change.** If Alice leaves Acme Corp to work at Stark Industries, you have to manually delete or rewrite the old `[WORKS_AT]` arrow. If you don't, the graph contradicts reality by stating she works at both places simultaneously. Traditional graphs are built for the absolute present; they lose history when data changes.
-
-**Hindsight handles change effortlessly because history is preserved.** If Alice changes jobs, you don't rewrite the past. You simply create a new scrapbook page — `Memory: Tuesday's Call` with a sticker for `[Stark Industries]`. The old page from last year still accurately links her to `[Acme Corp]`. The graph naturally tracks how the world evolves without complex database maintenance.
-
-#### Where do the stickers come from? How do I control them?
-
-The creation of stickers happens through a mix of AI automation and developer control:
-
-- **Open-world automation (default):** Hindsight's LLM pipeline automatically detects and extracts standard entities — people, places, dates — from raw text and turns them into stickers.
-- **Developer control via `entity_labels`:** You can define a custom schema using [entity labels](developer/retain.md#entity-labels). This forces the LLM to categorize memories using a strict, predefined vocabulary. Instead of letting the AI invent random descriptors, you choose the exact names and parameters for the stickers — for example, forcing a `pedagogy` key to only choose from `scaffolding`, `direct_instruction`, or `socratic_questioning`.
-
-#### Can I build direct entity-to-entity pipelines?
-
-No. In Hindsight, entities (people, places, concepts, or classification labels) do not have direct arrows connecting them to one another. Instead, they interact by anchoring to the same parent memory unit — the same scrapbook page.
-
-#### How does Hindsight find connections if entities aren't directly linked?
-
-Through shared stickers. If Memory A and Memory B both anchor to the same entity node — like `[pedagogy:scaffolding]` — Hindsight instantly traverses the path:
-
-```
-Memory A → [pedagogy:scaffolding] → Memory B
-```
-
-It links your experiences by finding different scrapbook pages that happen to share the exact same stickers.
 
 ---
 
@@ -386,6 +338,54 @@ await client.retain(
 Re-retaining with the same `id` replaces the old document and its facts, so you won't accumulate duplicates as the conversation grows.
 
 **Don't pre-summarize or pre-extract facts.** Hindsight does this automatically and needs the full conversation for context — a message like "yes, exactly" or "I'll go with option 2" is meaningless without the surrounding exchange.
+
+---
+
+### How is Hindsight's graph different from a traditional knowledge graph?
+
+Hindsight uses an **event-centric graph** — technically a temporal bipartite hypergraph — that organizes data around moments (conversations, observations, memories) rather than static, isolated facts. The closest analogy is a map versus a scrapbook.
+
+**A traditional graph (like Neo4j) is a map.** It shows how places connect directly to each other via roads, mapping rigid structural facts about the world:
+
+```
+[Toronto] ──IS_IN──> [Canada]
+```
+
+**A Hindsight graph is a scrapbook.** Each page is a single memory. On that page, you slap stickers of all the people, concepts, and labels present in that specific moment. The stickers don't touch each other — they just live on the same page together:
+
+```
+Scrapbook page: "Math Class"
+  [Alice]   [Acme]   [pedagogy:scaffolding]
+```
+
+#### How do the two handle change over time?
+
+This is where traditional graphs run into major limitations when used for AI memory.
+
+**Traditional graphs struggle with change.** If Alice leaves Acme Corp to work at Stark Industries, you have to manually delete or rewrite the old `[WORKS_AT]` arrow. If you don't, the graph contradicts reality by stating she works at both places simultaneously. Traditional graphs are built for the absolute present; they lose history when data changes.
+
+**Hindsight handles change effortlessly because history is preserved.** If Alice changes jobs, you don't rewrite the past. You simply create a new scrapbook page — `Memory: Tuesday's Call` with a sticker for `[Stark Industries]`. The old page from last year still accurately links her to `[Acme Corp]`. The graph naturally tracks how the world evolves without complex database maintenance.
+
+#### Where do the stickers come from? How do I control them?
+
+The creation of stickers happens through a mix of AI automation and developer control:
+
+- **Open-world automation (default):** Hindsight's LLM pipeline automatically detects and extracts standard entities — people, places, dates — from raw text and turns them into stickers. If you want to lock the bank to a strict controlled vocabulary, this default can be disabled by setting `entities_allow_free_form: false` on the bank config — the LLM then only emits entries that match your configured `entity_labels` and skips free-form named entities entirely.
+- **Developer control via `entity_labels`:** You can define a custom schema using [entity labels](developer/retain.md#entity-labels). This forces the LLM to categorize memories using a strict, predefined vocabulary. Instead of letting the AI invent random descriptors, you choose the exact names and parameters for the stickers — for example, forcing a `pedagogy` key to only choose from `scaffolding`, `direct_instruction`, or `socratic_questioning`.
+
+#### Can I build direct entity-to-entity pipelines?
+
+No. In Hindsight, entities (people, places, concepts, or classification labels) do not have direct arrows connecting them to one another. Instead, they interact by anchoring to the same parent memory unit — the same scrapbook page.
+
+#### How does Hindsight find connections if entities aren't directly linked?
+
+Through shared stickers. If Memory A and Memory B both anchor to the same entity node — like `[pedagogy:scaffolding]` — Hindsight instantly traverses the path:
+
+```
+Memory A → [pedagogy:scaffolding] → Memory B
+```
+
+It links your experiences by finding different scrapbook pages that happen to share the exact same stickers.
 
 ---
 
