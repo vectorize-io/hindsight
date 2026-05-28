@@ -25,15 +25,20 @@ def _make_conn(pg_trgm_available: bool) -> MagicMock:
     conn.backend_type = "postgresql"
     conn.fetchval = AsyncMock(return_value=pg_trgm_available)
     conn.fetch = AsyncMock(return_value=[])
+    conn.execute = AsyncMock()
     conn.executemany = AsyncMock()
     conn.fetchrow = AsyncMock(return_value=None)
     return conn
 
 
-def _make_resolver(entity_lookup: str = "trigram") -> EntityResolver:
+def _make_resolver(entity_lookup: str = "trigram", entity_resolution_batch_size: int = 100) -> EntityResolver:
     """Return an EntityResolver with a mock pool (only ops attribute is needed)."""
     pool = MagicMock()
-    return EntityResolver(pool=pool, entity_lookup=entity_lookup)  # type: ignore[arg-type]
+    return EntityResolver(
+        pool=pool,
+        entity_lookup=entity_lookup,
+        entity_resolution_batch_size=entity_resolution_batch_size,
+    )  # type: ignore[arg-type]
 
 
 class TestPgTrgmAutoDetection:
@@ -166,3 +171,28 @@ class TestPgTrgmAutoDetection:
         assert mock_full.call_count == 2
         # pg_trgm check was issued exactly once
         assert conn.fetchval.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_trigram_candidate_lookup_batches_entity_texts(self):
+        """The trigram candidate query is split into bounded batches."""
+        resolver = _make_resolver(entity_lookup="trigram", entity_resolution_batch_size=2)
+        conn = _make_conn(pg_trgm_available=True)
+        entities_data = [{"text": f"Entity {idx}"} for idx in range(5)]
+
+        with (
+            patch("hindsight_api.engine.entity_resolver.fq_table", side_effect=lambda table: table),
+            patch.object(resolver, "_resolve_from_candidates", new=AsyncMock(return_value=[])),
+        ):
+            await resolver._resolve_entities_batch_trigram(
+                conn=conn,
+                bank_id="test-bank",
+                entities_data=entities_data,
+                unit_event_date=None,
+            )
+
+        assert conn.fetch.call_count == 3
+        batches = [call.args[2] for call in conn.fetch.call_args_list]
+        assert sorted(len(batch) for batch in batches) == [1, 2, 2]
+        assert {entity for batch in batches for entity in batch} == {f"Entity {idx}" for idx in range(5)}
+        conn.execute.assert_any_await("SET pg_trgm.similarity_threshold = 0.15")
+        conn.execute.assert_any_await("RESET pg_trgm.similarity_threshold")

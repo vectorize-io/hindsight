@@ -97,7 +97,12 @@ class EntityResolver:
     Resolves entities to canonical IDs with disambiguation.
     """
 
-    def __init__(self, pool: Any, entity_lookup: str = "full"):
+    def __init__(
+        self,
+        pool: Any,
+        entity_lookup: str = "full",
+        entity_resolution_batch_size: int = 100,
+    ):
         """
         Initialize entity resolver.
 
@@ -106,9 +111,14 @@ class EntityResolver:
             entity_lookup: Lookup strategy — "full" loads all bank entities then
                 matches in Python; "trigram" uses pg_trgm GIN index to fetch only
                 similar candidates per entity name (much faster for large banks).
+            entity_resolution_batch_size: Number of unique entity names to include
+                in each pg_trgm candidate lookup query.
         """
         self.pool = pool
         self.entity_lookup = entity_lookup
+        if entity_resolution_batch_size < 1:
+            raise ValueError("entity_resolution_batch_size must be >= 1")
+        self.entity_resolution_batch_size = entity_resolution_batch_size
         self._pg_trgm_checked = False
         # Backend-specific operations — accessed via pool.ops (Django pattern).
         self._ops = pool.ops if pool is not None else None
@@ -206,6 +216,11 @@ class EntityResolver:
     def _build_labels_lookup(entity_labels: list | None) -> set[str]:
         """Build a set of valid 'key:value' entity label strings for fast lookup."""
         return _build_labels_lookup_from_config(entity_labels)
+
+    @staticmethod
+    def _chunked(values: list[str], size: int) -> list[list[str]]:
+        """Split values into fixed-size batches."""
+        return [values[i : i + size] for i in range(0, len(values), size)]
 
     async def resolve_entities_batch(
         self,
@@ -390,7 +405,7 @@ class EntityResolver:
         """
         entity_texts = list(set(e["text"] for e in entities_data))
 
-        # Fetch candidates for all unique entity texts in a single batched query.
+        # Fetch candidates for unique entity texts in bounded batches.
         # Uses the GIN trigram index on LOWER(canonical_name) for case-insensitive
         # similarity lookup. Previous version also had LIKE '%...' substring fallbacks,
         # but those forced full sequential scans of the entities table and caused
@@ -398,21 +413,35 @@ class EntityResolver:
         # to 0.15 (from default 0.3) catches most substring relationships while
         # staying fully index-based.
         await conn.execute("SET pg_trgm.similarity_threshold = 0.15")
-        rows = await conn.fetch(
-            f"""
-            SELECT DISTINCT ON (e.id)
-                e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
-                q.query_text
-            FROM unnest($2::text[]) AS q(query_text)
-            JOIN {fq_table("entities")} e ON (
-                e.bank_id = $1
-                AND LOWER(e.canonical_name) % LOWER(q.query_text)
-            )
-            """,
-            bank_id,
-            entity_texts,
-        )
-        await conn.execute("RESET pg_trgm.similarity_threshold")
+        rows = []
+        try:
+            for entity_text_batch in self._chunked(entity_texts, self.entity_resolution_batch_size):
+                rows.extend(
+                    await conn.fetch(
+                        f"""
+                        SELECT DISTINCT ON (e.id)
+                            e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
+                            q.query_text
+                        FROM unnest($2::text[]) AS q(query_text)
+                        JOIN {fq_table("entities")} e ON (
+                            e.bank_id = $1
+                            AND LOWER(e.canonical_name) % LOWER(q.query_text)
+                        )
+                        """,
+                        bank_id,
+                        entity_text_batch,
+                    )
+                )
+        except Exception:
+            try:
+                await conn.execute("RESET pg_trgm.similarity_threshold")
+            except Exception:
+                logger.warning(
+                    "Failed to reset pg_trgm similarity threshold after candidate lookup error", exc_info=True
+                )
+            raise
+        else:
+            await conn.execute("RESET pg_trgm.similarity_threshold")
 
         # Group candidates by query_text
         all_candidates: dict[str, list] = {t: [] for t in entity_texts}

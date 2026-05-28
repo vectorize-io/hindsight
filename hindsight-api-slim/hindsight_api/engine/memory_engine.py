@@ -737,6 +737,7 @@ class MemoryEngine(MemoryEngineInterface):
         self._db_statement_timeout = config.db_statement_timeout
         self._run_migrations = run_migrations
         self._retain_entity_lookup = config.retain_entity_lookup
+        self._retain_entity_resolution_batch_size = config.retain_entity_resolution_batch_size
 
         # Webhook manager (will be created in initialize() after pool is ready)
         self._webhook_manager = None
@@ -2304,6 +2305,7 @@ class MemoryEngine(MemoryEngineInterface):
         self.entity_resolver = EntityResolver(
             self._backend,
             entity_lookup=self._retain_entity_lookup,
+            entity_resolution_batch_size=self._retain_entity_resolution_batch_size,
         )
 
         # Initialize config resolver for hierarchical configuration
