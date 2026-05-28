@@ -53,8 +53,7 @@ def generate_embedding(
 
     if len(embeddings) != 1:
         raise RuntimeError(
-            f"Embeddings backend returned {len(embeddings)} vectors for 1 input text; "
-            "expected exact 1:1 alignment"
+            f"Embeddings backend returned {len(embeddings)} vectors for 1 input text; expected exact 1:1 alignment"
         )
     return _validate_embedding_vector(
         embeddings[0],
