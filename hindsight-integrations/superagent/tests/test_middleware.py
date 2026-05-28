@@ -1304,3 +1304,51 @@ class TestOnGuardErrorContainment:
         )
         with pytest.raises(GuardBlockedError):
             await safe.recall("anything")
+
+
+class TestDeterministicRoundTrip:
+    """Full retain -> recall -> reflect orchestration with mocked clients.
+
+    The in-CI / no-keys analog of the live round-trip in test_e2e.py: it drives
+    SafeHindsight end to end with mocked Hindsight + Superagent clients, so the
+    guard/redact-then-forward orchestration is exercised deterministically.
+    Deterministic bucket (no requires_real_llm marker).
+    """
+
+    def setup_method(self) -> None:
+        reset_config()
+
+    def teardown_method(self) -> None:
+        reset_config()
+
+    @pytest.mark.asyncio
+    async def test_retain_recall_reflect_roundtrip(self) -> None:
+        hindsight = _mock_hindsight_client()
+        hindsight.arecall.return_value = _mock_recall_response(["The team uses PostgreSQL 16"])
+        reflect_resp = MagicMock()
+        reflect_resp.text = "The team's stack centers on PostgreSQL 16."
+        hindsight.areflect.return_value = reflect_resp
+        safety = _mock_safety_client(redacted_text="The team uses PostgreSQL 16")
+
+        safe = SafeHindsight(
+            bank_id="roundtrip",
+            hindsight_client=hindsight,
+            safety_client=safety,
+            redact_model="openai/gpt-4o-mini",
+        )
+
+        # retain: guard + redact applied, redacted content forwarded to Hindsight
+        assert await safe.retain("The team uses PostgreSQL 16") == "Memory stored successfully."
+        hindsight.aretain.assert_awaited_once()
+        assert hindsight.aretain.call_args.kwargs["content"] == "The team uses PostgreSQL 16"
+
+        # recall: guard on the query, stored memory comes back
+        recall = await safe.recall("What does the team use?")
+        assert any("postgresql" in r.text.lower() for r in recall.results)
+
+        # reflect: guard on the query, synthesised text returned
+        reflect = await safe.reflect("Summarise the team stack")
+        assert "postgresql" in reflect.text.lower()
+
+        # guard ran on each of the three ops (all enabled by default)
+        assert safety.guard.await_count >= 3
