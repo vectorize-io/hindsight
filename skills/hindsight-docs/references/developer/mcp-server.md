@@ -100,8 +100,8 @@ The MCP server operates in two modes depending on the URL:
 
 | Mode | URL | Tools | bank_id |
 |------|-----|-------|---------|
-| **Single-bank** | `/mcp/{bank_id}/` | 26 tools (memory, mental models, directives, documents, operations, tags, bank management) | Implicit from URL |
-| **Multi-bank** | `/mcp/` | All 29 tools including `list_banks`, `create_bank`, `get_bank_stats` | Explicit `bank_id` parameter on each tool |
+| **Single-bank** | `/mcp/{bank_id}/` | 27 tools (memory, mental models, directives, documents, operations, tags, bank management) | Implicit from URL |
+| **Multi-bank** | `/mcp/` | All 30 tools including `list_banks`, `create_bank`, `get_bank_stats` | Explicit `bank_id` parameter on each tool |
 
 **Single-bank mode** (recommended) scopes all operations to the bank in the URL. Tools don't expose a `bank_id` parameter.
 
@@ -141,6 +141,38 @@ Store information to long-term memory.
 - Important events or milestones are mentioned
 - Decisions, opinions, or goals are stated
 - Work context or project details are discussed
+
+---
+
+### sync_retain
+
+Store information to long-term memory and wait for completion. Unlike [`retain`](#retain) (which is asynchronous), `sync_retain` blocks until the memory is fully stored and immediately available for recall — useful for read-after-write flows where you query right after storing.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `content` | string | Yes | The fact or memory to store |
+| `context` | string | No | Category for the memory (default: `general`) |
+| `timestamp` | string | No | ISO 8601 timestamp for when the event occurred |
+| `tags` | list[string] | No | Tags for organizing and filtering this memory |
+| `metadata` | object | No | Key-value metadata to attach (e.g., `{"source": "slack"}`) |
+| `document_id` | string | No | Associate this memory with an existing document |
+
+**Example:**
+```json
+{
+  "name": "sync_retain",
+  "arguments": {
+    "content": "User prefers Python over JavaScript for backend development",
+    "context": "programming_preferences",
+    "tags": ["user:alice", "preferences"]
+  }
+}
+```
+
+**When to use:**
+- You need the memory queryable immediately after storing (read-after-write)
+- A workflow step depends on the stored memory being available before continuing
+- Otherwise prefer `retain` (asynchronous) to avoid blocking on storage
 
 ---
 
