@@ -933,9 +933,7 @@ def _parse_bank_priority(raw: str) -> dict[str, int]:
         try:
             priority = int(priority_str)
         except ValueError:
-            raise ValueError(
-                f"Invalid priority '{priority_str}' in entry '{entry}': must be an integer"
-            ) from None
+            raise ValueError(f"Invalid priority '{priority_str}' in entry '{entry}': must be an integer") from None
         if priority < 1:
             raise ValueError(f"Priority must be >= 1, got {priority} in entry '{entry}'")
         result[pattern] = priority
