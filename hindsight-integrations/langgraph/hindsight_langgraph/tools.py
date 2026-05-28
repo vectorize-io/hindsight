@@ -76,9 +76,9 @@ def create_hindsight_tools(
 
     Returns:
         List of LangChain tool instances. When no client/URL/config is
-        supplied, the tools target the default API URL (Hindsight Cloud) and
-        read the ``HINDSIGHT_API_KEY`` env var; a missing key surfaces only
-        when a tool is actually invoked.
+        supplied, the tools target the default API URL and read the
+        ``HINDSIGHT_API_KEY`` env var; a missing key surfaces only when a
+        tool is actually invoked.
     """
     resolved_client = resolve_client(client, hindsight_api_url, api_key)
 
