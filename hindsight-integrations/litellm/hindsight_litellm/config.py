@@ -21,6 +21,8 @@ from enum import Enum
 from importlib import metadata
 from typing import Any, Dict, List, Optional
 
+from ._async import ensure_loop
+
 try:
     _VERSION = metadata.version("hindsight-litellm")
 except metadata.PackageNotFoundError:
@@ -525,6 +527,7 @@ def _create_or_update_bank(
     try:
         from hindsight_client import Hindsight
 
+        ensure_loop()
         client = Hindsight(base_url=hindsight_api_url, api_key=api_key, user_agent=USER_AGENT)
         client.create_bank(
             bank_id=bank_id,
@@ -600,6 +603,7 @@ def set_bank_mission(
         ) from e
 
     try:
+        ensure_loop()
         client = Hindsight(base_url=resolved_url, api_key=resolved_key, user_agent=USER_AGENT)
         client.create_bank(bank_id=resolved_bank, name=name, mission=mission)
     except Exception as e:

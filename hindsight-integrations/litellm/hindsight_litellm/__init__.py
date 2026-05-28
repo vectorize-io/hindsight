@@ -107,6 +107,7 @@ from typing import List, Optional
 
 import litellm
 
+from ._async import ensure_loop, run_sync
 from .callbacks import (
     HindsightCallback,
     HindsightError,
@@ -341,14 +342,7 @@ def _inject_memories(
                     include=reflect_include_options.ReflectIncludeOptions(facts={}),
                     **reflect_kwargs,
                 )
-                import asyncio
-
-                try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                result = loop.run_until_complete(client._api.reflect(bank_id, request_obj))
+                result = run_sync(client._api.reflect(bank_id, request_obj))
                 # Extract facts from based_on
                 if hasattr(result, "based_on") and result.based_on:
                     reflect_facts = [
@@ -726,6 +720,11 @@ def enable() -> None:
         if not defaults or not defaults.bank_id:
             raise RuntimeError("Hindsight bank_id not set. Call set_defaults(bank_id=...) before enable().")
 
+        # Own this thread's event loop now, before the first patched
+        # completion drives the client. This keeps the client's internal
+        # get_event_loop() on a loop we manage and close in cleanup().
+        ensure_loop()
+
         # Guard against the double-injection footgun: if any HindsightCallback
         # is already registered in litellm.callbacks, the request would flow
         # through both the monkeypatch AND the callback, injecting memories
@@ -1043,8 +1042,6 @@ def _get_existing_document_content(bank_id: str, document_id: str, verbose: bool
     Returns:
         The existing document's original_text, or None if not found.
     """
-    import asyncio
-
     config = get_config()
     if not config:
         return None
@@ -1071,13 +1068,7 @@ def _get_existing_document_content(bank_id: str, document_id: str, verbose: bool
             finally:
                 await api_client.close()
 
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        original_text = loop.run_until_complete(_fetch())
+        original_text = run_sync(_fetch())
         if original_text and verbose:
             _storage_logger.debug(f"Fetched existing document: {document_id}")
         return original_text

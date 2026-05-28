@@ -26,6 +26,7 @@ from .config import (
 from .config import (
     _merge_call_settings as _merge_settings,
 )
+from ._async import ensure_loop, run_sync
 
 # Background thread support for async retain
 _retain_errors: List[Exception] = []
@@ -43,6 +44,10 @@ def _get_client(api_url: str, api_key: Optional[str] = None):
     """
     from hindsight_client import Hindsight
 
+    # Establish this thread's owned event loop before the client's first call so
+    # the client's internal get_event_loop() reuses it (no deprecation, no
+    # orphaned loop) and cleanup() can close it later.
+    ensure_loop()
     return Hindsight(base_url=api_url, api_key=api_key, timeout=30.0, user_agent=USER_AGENT)
 
 
@@ -903,11 +908,38 @@ class HindsightOpenAI:
         # Create wrapped chat.completions interface
         self.chat = _WrappedChat(self)
 
+    def close(self) -> None:
+        """Release the Hindsight connection and close the wrapped client.
+
+        Closes the lazily-created Hindsight client so aiohttp doesn't leak its
+        session, then forwards to the underlying client's ``close()`` if it
+        has one. Safe to call multiple times. Also usable as a context manager
+        (``with wrap_openai(OpenAI()) as client: ...``).
+        """
+        if self._hindsight_client is not None:
+            try:
+                self._hindsight_client.close()
+            finally:
+                self._hindsight_client = None
+        underlying_close = getattr(self._client, "close", None)
+        if callable(underlying_close):
+            underlying_close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+        return False
+
     def _get_hindsight_client(self):
         """Get or create the Hindsight client."""
         if self._hindsight_client is None:
             from hindsight_client import Hindsight
 
+            # Own this thread's loop before the client's first call so its
+            # cached session binds to a loop cleanup() can later close.
+            ensure_loop()
             self._hindsight_client = Hindsight(
                 base_url=self._api_url,
                 api_key=self._api_key,
@@ -1049,8 +1081,6 @@ class HindsightOpenAI:
         Returns:
             The document's original_text, or None if not found.
         """
-        import asyncio
-
         from hindsight_client_api.api import documents_api
 
         try:
@@ -1066,13 +1096,7 @@ class HindsightOpenAI:
                         return None
                     raise
 
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-            return loop.run_until_complete(_fetch())
+            return run_sync(_fetch())
         except Exception as e:
             logger.debug(f"Failed to fetch document: {e}")
             return None
@@ -1314,11 +1338,38 @@ class HindsightAnthropic:
         # Create wrapped messages interface
         self.messages = _WrappedAnthropicMessages(self)
 
+    def close(self) -> None:
+        """Release the Hindsight connection and close the wrapped client.
+
+        Closes the lazily-created Hindsight client so aiohttp doesn't leak its
+        session, then forwards to the underlying client's ``close()`` if it
+        has one. Safe to call multiple times. Also usable as a context manager
+        (``with wrap_anthropic(Anthropic()) as client: ...``).
+        """
+        if self._hindsight_client is not None:
+            try:
+                self._hindsight_client.close()
+            finally:
+                self._hindsight_client = None
+        underlying_close = getattr(self._client, "close", None)
+        if callable(underlying_close):
+            underlying_close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+        return False
+
     def _get_hindsight_client(self):
         """Get or create the Hindsight client."""
         if self._hindsight_client is None:
             from hindsight_client import Hindsight
 
+            # Own this thread's loop before the client's first call so its
+            # cached session binds to a loop cleanup() can later close.
+            ensure_loop()
             self._hindsight_client = Hindsight(
                 base_url=self._api_url,
                 api_key=self._api_key,
@@ -1460,8 +1511,6 @@ class HindsightAnthropic:
         Returns:
             The document's original_text, or None if not found.
         """
-        import asyncio
-
         from hindsight_client_api.api import documents_api
 
         try:
@@ -1477,13 +1526,7 @@ class HindsightAnthropic:
                         return None
                     raise
 
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-            return loop.run_until_complete(_fetch())
+            return run_sync(_fetch())
         except Exception as e:
             logger.debug(f"Failed to fetch document: {e}")
             return None

@@ -70,7 +70,16 @@ def bank_id():
 def client():
     from hindsight_client import Hindsight
 
-    return Hindsight(base_url=HINDSIGHT_API_URL)
+    c = Hindsight(base_url=HINDSIGHT_API_URL)
+    try:
+        yield c
+    finally:
+        # Close the client so aiohttp doesn't leak the ClientSession created
+        # by the sync calls above (surfaced as "Unclosed client session").
+        try:
+            c.close()
+        except Exception:
+            pass
 
 
 @pytest.fixture(autouse=True)
@@ -93,6 +102,8 @@ def setup_and_teardown(request, bank_id, client):
     try:
         loop = asyncio.new_event_loop()
         loop.run_until_complete(client.adelete_bank(bank_id))
+        # Close the async session in the same loop that created it.
+        loop.run_until_complete(client.aclose())
         loop.close()
     except Exception:
         pass
@@ -288,6 +299,10 @@ class TestEnableMonkeypatch:
                 loop.run_until_complete(client.adelete_bank(other_bank))
             except Exception:
                 pass
+            try:
+                loop.run_until_complete(client.aclose())
+            except Exception:
+                pass
             loop.close()
 
     def test_streaming_stores_after_consumption(self, bank_id):
@@ -416,24 +431,27 @@ class TestWrapOpenAI:
             inject_memories=True,
         )
 
-        client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[{"role": "user", "content": "My project is called Nebula and uses Go."}],
-        )
-        time.sleep(RETAIN_SLEEP)
+        try:
+            client.chat.completions.create(
+                model=LLM_MODEL,
+                messages=[{"role": "user", "content": "My project is called Nebula and uses Go."}],
+            )
+            time.sleep(RETAIN_SLEEP)
 
-        response = client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[{"role": "user", "content": "What project am I working on?"}],
-        )
-        content = response.choices[0].message.content.lower()
-        assert "nebula" in content or "go" in content, (
-            f"Expected Nebula/Go injected via wrap_openai, got: {content}"
-        )
-        # Quiet ruff F841 for the imports above used only for type-side-effects.
-        configure(hindsight_api_url=HINDSIGHT_API_URL)
-        set_defaults(bank_id=bank_id)
-        _ = recall
+            response = client.chat.completions.create(
+                model=LLM_MODEL,
+                messages=[{"role": "user", "content": "What project am I working on?"}],
+            )
+            content = response.choices[0].message.content.lower()
+            assert "nebula" in content or "go" in content, (
+                f"Expected Nebula/Go injected via wrap_openai, got: {content}"
+            )
+            # Quiet ruff F841 for the imports above used only for type-side-effects.
+            configure(hindsight_api_url=HINDSIGHT_API_URL)
+            set_defaults(bank_id=bank_id)
+            _ = recall
+        finally:
+            client.close()
 
     def test_per_call_override(self, bank_id):
         from hindsight_litellm import wrap_openai
@@ -445,13 +463,16 @@ class TestWrapOpenAI:
             bank_id=bank_id,
         )
 
-        response = wrapped.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[{"role": "user", "content": "Hello"}],
-            hindsight_inject_memories=False,
-            hindsight_store_conversations=False,
-        )
-        assert response.choices[0].message.content, "Expected response"
+        try:
+            response = wrapped.chat.completions.create(
+                model=LLM_MODEL,
+                messages=[{"role": "user", "content": "Hello"}],
+                hindsight_inject_memories=False,
+                hindsight_store_conversations=False,
+            )
+            assert response.choices[0].message.content, "Expected response"
+        finally:
+            wrapped.close()
 
     def test_streaming(self, bank_id):
         from hindsight_litellm import configure, recall, set_defaults, wrap_openai
@@ -465,26 +486,29 @@ class TestWrapOpenAI:
             inject_memories=False,
         )
 
-        stream = wrapped.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[{"role": "user", "content": "My favorite sport is basketball."}],
-            stream=True,
-        )
-        content = ""
-        for chunk in stream:
-            if hasattr(chunk, "choices") and chunk.choices:
-                delta = chunk.choices[0].delta
-                if hasattr(delta, "content") and delta.content:
-                    content += delta.content
+        try:
+            stream = wrapped.chat.completions.create(
+                model=LLM_MODEL,
+                messages=[{"role": "user", "content": "My favorite sport is basketball."}],
+                stream=True,
+            )
+            content = ""
+            for chunk in stream:
+                if hasattr(chunk, "choices") and chunk.choices:
+                    delta = chunk.choices[0].delta
+                    if hasattr(delta, "content") and delta.content:
+                        content += delta.content
 
-        assert content, "Expected streamed content"
-        time.sleep(RETAIN_SLEEP)
+            assert content, "Expected streamed content"
+            time.sleep(RETAIN_SLEEP)
 
-        configure(hindsight_api_url=HINDSIGHT_API_URL)
-        set_defaults(bank_id=bank_id)
-        results = recall("sport")
-        texts = " ".join(r.text.lower() for r in results)
-        assert "basketball" in texts, f"Expected 'basketball' stored from stream, got: {texts}"
+            configure(hindsight_api_url=HINDSIGHT_API_URL)
+            set_defaults(bank_id=bank_id)
+            results = recall("sport")
+            texts = " ".join(r.text.lower() for r in results)
+            assert "basketball" in texts, f"Expected 'basketball' stored from stream, got: {texts}"
+        finally:
+            wrapped.close()
 
 
 # ── Design Fix Verification ───────────────────────────────────────

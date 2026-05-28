@@ -1743,3 +1743,78 @@ class TestDedupLRU:
         callback._is_duplicate("d")
         assert "a" in callback._recent_hashes
         assert "b" not in callback._recent_hashes
+
+
+class TestWrapperClose:
+    """close() / context-manager support on the native client wrappers."""
+
+    def test_close_closes_cached_hindsight_client_and_underlying(self):
+        from unittest.mock import MagicMock, Mock
+
+        from hindsight_litellm.wrappers import wrap_openai
+
+        mock_client = Mock()
+        wrapped = wrap_openai(
+            mock_client,
+            hindsight_api_url="http://localhost:8888",
+            bank_id="test-agent",
+        )
+        # Force the lazy Hindsight client into existence.
+        fake_hs = MagicMock()
+        wrapped._hindsight_client = fake_hs
+
+        wrapped.close()
+
+        fake_hs.close.assert_called_once()
+        mock_client.close.assert_called_once()
+        assert wrapped._hindsight_client is None
+
+    def test_close_is_idempotent(self):
+        from unittest.mock import Mock
+
+        from hindsight_litellm.wrappers import wrap_openai
+
+        mock_client = Mock()
+        wrapped = wrap_openai(mock_client, hindsight_api_url="http://localhost:8888", bank_id="b")
+        wrapped.close()
+        wrapped.close()  # second call must not raise
+        assert wrapped._hindsight_client is None
+
+    def test_close_without_underlying_close_is_safe(self):
+        from unittest.mock import MagicMock
+
+        from hindsight_litellm.wrappers import wrap_openai
+
+        # Underlying client with no close() attribute.
+        class _NoClose:
+            def __init__(self):
+                self.chat = MagicMock()
+
+        wrapped = wrap_openai(_NoClose(), hindsight_api_url="http://localhost:8888", bank_id="b")
+        wrapped.close()  # must not raise even though underlying has no close()
+
+    def test_context_manager_closes_on_exit(self):
+        from unittest.mock import MagicMock, Mock
+
+        from hindsight_litellm.wrappers import wrap_openai
+
+        mock_client = Mock()
+        with wrap_openai(mock_client, hindsight_api_url="http://localhost:8888", bank_id="b") as wrapped:
+            wrapped._hindsight_client = MagicMock()
+            hs = wrapped._hindsight_client
+        hs.close.assert_called_once()
+        mock_client.close.assert_called_once()
+
+    def test_wrap_anthropic_close(self):
+        from unittest.mock import MagicMock, Mock
+
+        from hindsight_litellm.wrappers import wrap_anthropic
+
+        mock_client = Mock()
+        wrapped = wrap_anthropic(mock_client, hindsight_api_url="http://localhost:8888", bank_id="b")
+        fake_hs = MagicMock()
+        wrapped._hindsight_client = fake_hs
+        wrapped.close()
+        fake_hs.close.assert_called_once()
+        mock_client.close.assert_called_once()
+        assert wrapped._hindsight_client is None
