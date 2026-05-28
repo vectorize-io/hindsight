@@ -369,7 +369,9 @@ No. In Hindsight, entities (people, places, concepts, or classification labels) 
 
 #### How does Hindsight find connections if entities aren't directly linked?
 
-Through shared stickers. If Memory A and Memory B both anchor to the same entity node — like `[pedagogy:scaffolding]` — Hindsight instantly traverses the path:
+Through shared stickers. Recall starts with semantic search — finding the memories most relevant to your query as seed pages — and then expands along shared-sticker connections from those seeds to surface related memories. The semantic layer picks the starting points; the graph fills in the connections.
+
+If Memory A and Memory B both anchor to the same entity node — like `[pedagogy:scaffolding]` — Hindsight instantly traverses the path:
 
 ```
 Memory A → [pedagogy:scaffolding] → Memory B
