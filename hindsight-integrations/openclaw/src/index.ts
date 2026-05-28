@@ -915,7 +915,7 @@ function cacheSessionIdentity(
   });
 }
 
-interface ResolveAndCacheIdentityOptions {
+export interface ResolveAndCacheIdentityOptions {
   sessionKey?: string;
   ctx?: PluginHookAgentContext;
   senderIdHint?: string;
@@ -923,7 +923,7 @@ interface ResolveAndCacheIdentityOptions {
   pluginConfig?: PluginConfig;
 }
 
-function resolveAndCacheIdentity(options: ResolveAndCacheIdentityOptions): {
+export function resolveAndCacheIdentity(options: ResolveAndCacheIdentityOptions): {
   effectiveCtx: PluginHookAgentContext | undefined;
   resolvedCtx: PluginHookAgentContext | undefined;
   skipReason?: IdentitySkipReason;
@@ -933,6 +933,15 @@ function resolveAndCacheIdentity(options: ResolveAndCacheIdentityOptions): {
   const cachedIdentity = sessionKey ? sessionIdentityBySession.get(sessionKey) : undefined;
   const baseCtx =
     options.ctx || (sessionKey ? ({ sessionKey } as PluginHookAgentContext) : undefined);
+  // "main" is the synthetic provider produced by parseSessionKey for default
+  // `agent:<id>:main` sessions — the *real* dispatch surface (telegram,
+  // webchat, qqbot, …) is whatever the dispatcher provides. Treat it as if
+  // the session key carried no provider so the dispatchChannel flows through
+  // as the effective surface for downstream identity resolution. (#1541)
+  const sessionProvider =
+    parsedSession.provider && parsedSession.provider !== "main"
+      ? parsedSession.provider
+      : undefined;
   const effectiveCtx =
     baseCtx || cachedIdentity || options.senderIdHint || options.dispatchChannel || sessionKey
       ? {
@@ -949,19 +958,40 @@ function resolveAndCacheIdentity(options: ResolveAndCacheIdentityOptions): {
       ? {
           ...effectiveCtx,
           messageProvider:
-            effectiveCtx.messageProvider ?? parsedSession.provider ?? options.dispatchChannel,
+            effectiveCtx.messageProvider ?? sessionProvider ?? options.dispatchChannel,
           channelId: effectiveCtx.channelId ?? parsedSession.channel,
         }
       : undefined
   );
 
+  // The dispatch-surface gate guards against retaining a turn into a bank
+  // keyed by the *wrong* channel when the user has explicitly opted into
+  // channel-scoped routing. Only fire when:
+  //   - The session key carries a real (non-synthetic) provider.
+  //   - The live dispatch surface actually differs from it.
+  //   - Bank routing depends on the dispatch surface (granularity includes
+  //     "channel" or "provider") AND the user has not pinned a static bank.
+  // Without these guards, default `agent:<id>:main` sessions dispatched via
+  // a real surface (telegram, webchat, …) and statically-banked setups were
+  // silently skipped on every turn. (#1541)
+  const granularity =
+    options.pluginConfig?.dynamicBankGranularity ?? DEFAULT_DYNAMIC_BANK_GRANULARITY;
+  const bankRoutingDependsOnSurface =
+    granularity.includes("channel") || granularity.includes("provider");
+  const staticBanking =
+    options.pluginConfig?.dynamicBankId === false &&
+    typeof options.pluginConfig?.bankId === "string" &&
+    options.pluginConfig.bankId.length > 0;
+
   if (
-    parsedSession.provider &&
+    sessionProvider &&
     options.dispatchChannel &&
-    parsedSession.provider !== options.dispatchChannel
+    sessionProvider !== options.dispatchChannel &&
+    bankRoutingDependsOnSurface &&
+    !staticBanking
   ) {
     const skipReason = finalSkipReason(
-      `dispatch surface ${options.dispatchChannel} does not match session provider ${parsedSession.provider}`
+      `dispatch surface ${options.dispatchChannel} does not match session provider ${sessionProvider}`
     );
     if (sessionKey) {
       setCappedMapValue(skipHindsightTurnBySession, sessionKey, skipReason);
