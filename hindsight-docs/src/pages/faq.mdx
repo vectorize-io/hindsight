@@ -360,8 +360,8 @@ This is where traditional graphs run into major limitations when used for AI mem
 
 The creation of stickers happens through a mix of AI automation and developer control:
 
-- **Open-world automation (default):** Hindsight's LLM pipeline automatically detects and extracts standard entities — people, places, dates — from raw text and turns them into stickers. If you want to lock the bank to a strict controlled vocabulary, this default can be disabled by setting `entities_allow_free_form: false` on the bank config — the LLM then only emits entries that match your configured `entity_labels` and skips free-form named entities entirely.
-- **Developer control via `entity_labels`:** You can define a custom schema using [entity labels](/developer/retain#entity-labels). This forces the LLM to categorize memories using a strict, predefined vocabulary. Instead of letting the AI invent random descriptors, you choose the exact names and parameters for the stickers — for example, forcing a `pedagogy` key to only choose from `scaffolding`, `direct_instruction`, or `socratic_questioning`.
+- **Open-world automation (default):** Hindsight's LLM pipeline automatically detects and extracts standard entities — people, places, dates — from raw text and turns them into stickers.
+- **Developer control via `entity_labels`:** You can define a custom schema using [entity labels](/developer/retain#entity-labels). This forces the LLM to categorize memories using a strict, predefined vocabulary. Instead of letting the AI invent random descriptors, you choose the exact names and parameters for the stickers — for example, forcing a `pedagogy` key to only choose from `scaffolding`, `direct_instruction`, or `socratic_questioning`. To lock the bank to *only* your configured labels and turn off the open-world automation above, also set `entities_allow_free_form: false` on the bank config — the LLM then skips free-form named entities entirely and emits only entries that match your schema.
 
 #### Can I build direct entity-to-entity pipelines?
 
