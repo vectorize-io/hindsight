@@ -832,6 +832,254 @@ async def test_submit_async_operation_leaves_claimable_row_when_submit_task_fail
     assert payload["contents"] == [{"content": "hello", "document_id": "d1"}]
 
 
+# ---------------------------------------------------------------------------
+# Regression tests for issue #1795: submit_async_retain must NOT fragment a
+# single oversized item across multiple child async-operations. Workers have
+# no per-document serialization for retain (the busy-bank guard in
+# claim_tasks only covers consolidation), so concurrent siblings sharing one
+# document_id race on handle_document_tracking(is_first_batch=True), cascade-
+# delete each other's memory_units, and trip FK violations on memory_links in
+# the final ANN pass. The fix: keep the oversized item un-chunked in a single
+# child; the worker's in-process splitter handles intra-document chunking
+# sequentially with correct is_first_batch semantics.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_oversized_single_item_creates_one_child_not_many(memory, request_context):
+    """One oversized document → one child operation holding the un-chunked content."""
+    from hindsight_api.config import get_config
+    from hindsight_api.engine.memory_engine import count_tokens
+
+    bank_id = f"test_oversized_one_child_{uuid.uuid4().hex[:8]}"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+
+    tokens_per_batch = get_config().retain_batch_tokens
+    # Build content that comfortably exceeds the per-batch token budget.
+    # The pre-fix code would split this into many siblings, all sharing
+    # the same document_id and racing on handle_document_tracking.
+    unit = "The quick brown fox jumps over the lazy dog. " * 50  # ~570 tokens
+    repetitions = max(1, (tokens_per_batch * 4) // count_tokens(unit) + 1)
+    big_content = unit * repetitions
+    document_id = f"doc-oversize-{uuid.uuid4().hex[:8]}"
+
+    total_tokens = count_tokens(big_content)
+    assert total_tokens > tokens_per_batch, (
+        f"Test setup error: content has {total_tokens} tokens, must exceed the batch budget of {tokens_per_batch}"
+    )
+
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=[{"content": big_content, "document_id": document_id}],
+        request_context=request_context,
+    )
+    parent_operation_id = result["operation_id"]
+
+    # Parent metadata must say one child — even though token count is huge,
+    # the un-fragmenting splitter keeps the single item in one child.
+    parent_row = await pool.fetchrow(
+        "SELECT result_metadata FROM async_operations WHERE operation_id = $1",
+        uuid.UUID(parent_operation_id),
+    )
+    parent_meta = (
+        json.loads(parent_row["result_metadata"])
+        if isinstance(parent_row["result_metadata"], str)
+        else parent_row["result_metadata"]
+    )
+    assert parent_meta["num_sub_batches"] == 1, (
+        f"Expected 1 child for an oversized single item, got {parent_meta['num_sub_batches']}. "
+        "Issue #1795: per-chunk children race on the shared document_id."
+    )
+
+    # Exactly one retain child row.
+    children = await pool.fetch(
+        """
+        SELECT operation_id, status, task_payload, result_metadata
+        FROM async_operations
+        WHERE bank_id = $1 AND operation_type = 'retain'
+        """,
+        bank_id,
+    )
+    assert len(children) == 1, (
+        f"Expected exactly 1 child retain operation for bank_id={bank_id}, "
+        f"got {len(children)}. Issue #1795 regression: oversized item was "
+        f"fragmented into per-chunk children."
+    )
+
+    child = children[0]
+    payload = child["task_payload"]
+    payload = json.loads(payload) if isinstance(payload, str) else payload
+    assert payload["type"] == "batch_retain"
+    assert payload["bank_id"] == bank_id
+    # Child holds the full un-chunked content — the worker's in-process
+    # splitter will re-chunk it sequentially with is_first_batch=(i==1).
+    assert len(payload["contents"]) == 1, (
+        f"Child payload should hold the original single item, got {len(payload['contents'])} items"
+    )
+    assert payload["contents"][0]["document_id"] == document_id
+    assert payload["contents"][0]["content"] == big_content, (
+        "Child must carry the FULL un-chunked content — chunking happens inside the worker, not at submit time"
+    )
+
+
+@pytest.mark.asyncio
+async def test_oversized_single_item_drains_without_fk_violation(memory, request_context):
+    """End-to-end: oversized doc retains successfully — no FK violation, no orphaned units."""
+    from hindsight_api.config import get_config
+    from hindsight_api.engine.memory_engine import count_tokens
+
+    bank_id = f"test_oversized_drain_{uuid.uuid4().hex[:8]}"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+
+    tokens_per_batch = get_config().retain_batch_tokens
+    # Use natural-language sentences so the in-process splitter actually
+    # produces multiple chunks during worker execution (this is what
+    # exercises the is_first_batch=(i==1) sequencing inside retain_batch_async).
+    paragraph = (
+        "Alice met Bob at the coffee shop in Paris. "
+        "They discussed the new project deadline. "
+        "Carol joined later with research notes from Berlin. "
+        "The team agreed to ship the prototype by Friday. "
+    )
+    big_content = paragraph * max(1, (tokens_per_batch * 3) // count_tokens(paragraph) + 1)
+    document_id = f"doc-drain-{uuid.uuid4().hex[:8]}"
+    assert count_tokens(big_content) > tokens_per_batch
+
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=[{"content": big_content, "document_id": document_id}],
+        request_context=request_context,
+    )
+
+    # SyncTaskBackend runs the child inline; give it a moment to settle.
+    await asyncio.sleep(0.5)
+
+    parent_status = await memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=result["operation_id"],
+        request_context=request_context,
+    )
+    assert parent_status["status"] == "completed", parent_status
+    assert len(parent_status["child_operations"]) == 1
+    assert parent_status["child_operations"][0]["status"] == "completed", parent_status
+
+    # Document row exists and is owned by this retain (content_hash is a
+    # real SHA, not the __pending__ placeholder used during in-flight
+    # ownership-locking).
+    doc_row = await pool.fetchrow(
+        "SELECT content_hash FROM documents WHERE id = $1 AND bank_id = $2",
+        document_id,
+        bank_id,
+    )
+    assert doc_row is not None, "Document row must exist after successful retain"
+    assert doc_row["content_hash"] != "__pending__", (
+        f"Document content_hash is still the placeholder: {doc_row['content_hash']!r}. "
+        "Retain finished without writing the real hash — partial state."
+    )
+
+    # Memory units were committed for this document.
+    unit_count = await pool.fetchval(
+        "SELECT COUNT(*) FROM memory_units WHERE document_id = $1 AND bank_id = $2",
+        document_id,
+        bank_id,
+    )
+    assert unit_count > 0, (
+        f"Expected memory_units for document {document_id} after successful retain, "
+        f"got 0. A cascade-delete race (issue #1795) would wipe them."
+    )
+
+    # Every memory_link FK is satisfied — no rows pointing at deleted units.
+    # This is the exact invariant the pre-fix code violated: child A would
+    # commit units {u1..uN}, child B cascade-deletes them, then A's final
+    # ANN pass tries to insert links from u1..uN → FK violation.
+    orphaned_from = await pool.fetchval(
+        """
+        SELECT COUNT(*)
+        FROM memory_links ml
+        LEFT JOIN memory_units mu ON mu.id = ml.from_unit_id
+        WHERE ml.bank_id = $1 AND mu.id IS NULL
+        """,
+        bank_id,
+    )
+    assert orphaned_from == 0, (
+        f"Found {orphaned_from} memory_links with from_unit_id pointing at "
+        f"non-existent memory_units. This is the issue #1795 race symptom."
+    )
+    orphaned_to = await pool.fetchval(
+        """
+        SELECT COUNT(*)
+        FROM memory_links ml
+        LEFT JOIN memory_units mu ON mu.id = ml.to_unit_id
+        WHERE ml.bank_id = $1 AND mu.id IS NULL
+        """,
+        bank_id,
+    )
+    assert orphaned_to == 0, f"Found {orphaned_to} memory_links with to_unit_id pointing at non-existent memory_units."
+
+
+@pytest.mark.asyncio
+async def test_oversized_item_among_small_items_keeps_small_items_packed(memory, request_context):
+    """Mixed batch: small items pack together; oversized item isolates to its own child."""
+    from hindsight_api.config import get_config
+    from hindsight_api.engine.memory_engine import count_tokens
+
+    bank_id = f"test_mixed_pack_{uuid.uuid4().hex[:8]}"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+
+    tokens_per_batch = get_config().retain_batch_tokens
+    big_unit = "The quick brown fox jumps over the lazy dog. " * 50
+    big_repetitions = max(1, (tokens_per_batch * 3) // count_tokens(big_unit) + 1)
+    big_content = big_unit * big_repetitions
+
+    big_doc = f"doc-big-{uuid.uuid4().hex[:8]}"
+    small_docs = [f"doc-small-{i}-{uuid.uuid4().hex[:6]}" for i in range(3)]
+    contents = [
+        {"content": "Alice works at Google.", "document_id": small_docs[0]},
+        {"content": big_content, "document_id": big_doc},
+        {"content": "Bob loves Python.", "document_id": small_docs[1]},
+        {"content": "Carol writes Rust.", "document_id": small_docs[2]},
+    ]
+
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=contents,
+        request_context=request_context,
+    )
+
+    children = await pool.fetch(
+        """
+        SELECT task_payload
+        FROM async_operations
+        WHERE bank_id = $1 AND operation_type = 'retain'
+        ORDER BY created_at, operation_id
+        """,
+        bank_id,
+    )
+
+    # Find the child holding the big doc — it must hold ONLY the big doc.
+    big_child = None
+    small_doc_ids_seen: list[str] = []
+    for row in children:
+        payload = row["task_payload"]
+        payload = json.loads(payload) if isinstance(payload, str) else payload
+        items = payload["contents"]
+        doc_ids = [item["document_id"] for item in items]
+        if big_doc in doc_ids:
+            assert big_child is None, f"Big doc {big_doc} should appear in exactly one child, found in 2"
+            big_child = items
+            assert doc_ids == [big_doc], f"Child holding the oversized item must hold ONLY that item, got {doc_ids}"
+            assert items[0]["content"] == big_content
+        else:
+            small_doc_ids_seen.extend(doc_ids)
+
+    assert big_child is not None, "Big doc must appear in some child"
+    # Every small input present, exactly once, across the other children.
+    assert sorted(small_doc_ids_seen) == sorted(small_docs)
+
+
 @pytest.mark.asyncio
 async def test_submit_async_batch_retain_rolls_back_parent_on_child_failure(
     memory_no_llm_verify, request_context, monkeypatch

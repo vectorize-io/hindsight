@@ -273,6 +273,12 @@ def _split_contents_into_sub_batches(
     would pass through as a ``1/1`` sub-batch holding the entire
     payload — which contradicts the splitter's log and lets the
     orchestrator OOM under realistic memory limits (see issue #1571).
+
+    Used by the in-process ``retain_batch_async`` path, which processes
+    the returned sub-batches SEQUENTIALLY with ``is_first_batch=(i==1)``.
+    The async submission path uses ``_split_contents_into_async_children``
+    instead, which never fragments a single item across children — see
+    that helper for the reasoning.
     """
     from .retain import fact_extraction
 
@@ -324,6 +330,66 @@ def _split_contents_into_sub_batches(
 
     _flush()
     return _SubBatchSplit(sub_batches=sub_batches, origin_indices=origin_indices)
+
+
+def _split_contents_into_async_children(
+    contents: list[RetainContentDict],
+    tokens_per_batch: int,
+) -> list[list[RetainContentDict]]:
+    """Pack retain contents into child operations for async submission.
+
+    Unlike ``_split_contents_into_sub_batches`` (used by the in-process
+    path), this NEVER fragments a single input item across multiple
+    children. Items where ``count_tokens(content) > tokens_per_batch``
+    are emitted as their own single-item child holding the FULL
+    un-chunked content; the in-process ``retain_batch_async`` then
+    re-chunks them SEQUENTIALLY inside one worker slot with correct
+    ``is_first_batch=(i==1)`` semantics.
+
+    The previous behavior — chunking oversized items into N independent
+    child async-operations sharing one ``document_id`` — let workers
+    claim siblings concurrently with no per-document gate (the busy-bank
+    guard in ``claim_tasks`` only covers consolidation). Each concurrent
+    child ran ``handle_document_tracking(is_first_batch=True)``, which
+    cascade-deletes the prior winner's ``memory_units`` for that
+    document. The loser's final ANN pass then attempted to insert
+    ``memory_links`` referencing now-deleted units → FK violations on
+    ``fk_memory_links_from_unit_id_memory_units``, partial document
+    state, and worker thread exhaustion from sentence-transformer pools
+    spun up per concurrent child. See issue #1795.
+
+    Items smaller than the budget are still packed together so genuinely
+    independent items keep cross-worker parallelism.
+    """
+    children: list[list[RetainContentDict]] = []
+    current: list[RetainContentDict] = []
+    current_tokens = 0
+
+    def _flush() -> None:
+        nonlocal current, current_tokens
+        if current:
+            children.append(current)
+            current = []
+            current_tokens = 0
+
+    for item in contents:
+        item_tokens = count_tokens(item.get("content", "") or "")
+
+        if item_tokens > tokens_per_batch:
+            # Oversized: flush in-flight items into their own child,
+            # then emit this item AS-IS (un-chunked) into its own child.
+            # The worker will sequentially chunk it inside retain_batch_async.
+            _flush()
+            children.append([item])
+            continue
+
+        if current and current_tokens + item_tokens > tokens_per_batch:
+            _flush()
+        current.append(item)
+        current_tokens += item_tokens
+
+    _flush()
+    return children
 
 
 def _is_invalid_embedding_dimension_error(e: Exception) -> bool:
@@ -9655,14 +9721,14 @@ class MemoryEngine(MemoryEngineInterface):
         config = get_config()
         tokens_per_batch = config.retain_batch_tokens
 
-        # Split into sub-batches based on token count. Oversized single
-        # items get chunked into per-chunk sub-batches by the helper
-        # (see issue #1571). origin_indices is unused here because
-        # submit_async_retain returns only the parent operation_id, not
-        # per-input results.
-        sub_batches = _split_contents_into_sub_batches(
-            cast(list[RetainContentDict], contents), tokens_per_batch
-        ).sub_batches
+        # Pack items into child operations by token budget. An oversized
+        # single item is emitted as its own un-chunked child rather than
+        # being fragmented across siblings — workers have no
+        # per-document serialization, so concurrent siblings would race
+        # on the same document_id and trigger FK violations in the final
+        # ANN pass (issue #1795). The worker's in-process splitter
+        # handles intra-document chunking sequentially.
+        sub_batches = _split_contents_into_async_children(cast(list[RetainContentDict], contents), tokens_per_batch)
 
         # Log splitting info if we actually split
         if len(sub_batches) > 1:
@@ -9670,13 +9736,13 @@ class MemoryEngine(MemoryEngineInterface):
             if len(sub_batches) <= 20:
                 logger.info(
                     f"Large async retain batch ({total_tokens:,} tokens from {len(contents)} items). "
-                    f"Split into {len(sub_batches)} sub-batches: {sub_batch_sizes} items each"
+                    f"Split into {len(sub_batches)} child operations: {sub_batch_sizes} items each"
                 )
             else:
                 logger.info(
                     f"Large async retain batch ({total_tokens:,} tokens from {len(contents)} items). "
-                    f"Split into {len(sub_batches)} sub-batches "
-                    f"(items per sub-batch: min={min(sub_batch_sizes)}, "
+                    f"Split into {len(sub_batches)} child operations "
+                    f"(items per child: min={min(sub_batch_sizes)}, "
                     f"max={max(sub_batch_sizes)}, total={sum(sub_batch_sizes)})"
                 )
 
@@ -9742,7 +9808,7 @@ class MemoryEngine(MemoryEngineInterface):
                     if len(sub_batches) > 1:
                         sub_batch_tokens = sum(count_tokens(item.get("content", "")) for item in sub_batch)
                         logger.info(
-                            f"Submitting sub-batch {i}/{len(sub_batches)}: {len(sub_batch)} items, {sub_batch_tokens:,} tokens"
+                            f"Submitting child {i}/{len(sub_batches)}: {len(sub_batch)} items, {sub_batch_tokens:,} tokens"
                         )
 
                     task_payload: dict[str, Any] = {"contents": sub_batch}
