@@ -316,13 +316,16 @@ async function flushRetainQueue(): Promise<void> {
 const DEFAULT_RECALL_PROMPT_PREAMBLE =
   "Relevant memories from past conversations (prioritize recent when conflicting). Only use memories that are directly useful to continue this conversation; ignore the rest:";
 
-function formatCurrentTimeForRecall(date = new Date()): string {
+export function formatCurrentTimeForRecall(date = new Date()): string {
   const year = date.getUTCFullYear();
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
   const day = String(date.getUTCDate()).padStart(2, "0");
   const hours = String(date.getUTCHours()).padStart(2, "0");
   const minutes = String(date.getUTCMinutes()).padStart(2, "0");
-  return `${year}-${month}-${day} ${hours}:${minutes}`;
+  // Suffix with " UTC" so the LLM doesn't misread the timestamp as local
+  // time and make wrong recency judgments. Mirrors the fix landed for the
+  // Claude Code integration in #1568. (#1789)
+  return `${year}-${month}-${day} ${hours}:${minutes} UTC`;
 }
 
 /**

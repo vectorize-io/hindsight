@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   stripMemoryTags,
   extractRecallQuery,
+  formatCurrentTimeForRecall,
   formatMemories,
   prepareRetentionTranscript,
   countUserTurns,
@@ -246,6 +247,22 @@ describe("formatMemories", () => {
 
   it("returns empty string for empty memories", () => {
     expect(formatMemories([])).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatCurrentTimeForRecall — UTC label (#1789, mirrors #1568)
+// ---------------------------------------------------------------------------
+
+describe("formatCurrentTimeForRecall", () => {
+  it("renders the UTC suffix so the LLM doesn't misread it as local time", () => {
+    const fixed = new Date(Date.UTC(2026, 4, 27, 16, 25, 0)); // 2026-05-27 16:25 UTC
+    expect(formatCurrentTimeForRecall(fixed)).toBe("2026-05-27 16:25 UTC");
+  });
+
+  it("zero-pads month / day / hours / minutes", () => {
+    const fixed = new Date(Date.UTC(2026, 0, 3, 4, 5, 0));
+    expect(formatCurrentTimeForRecall(fixed)).toBe("2026-01-03 04:05 UTC");
   });
 });
 
