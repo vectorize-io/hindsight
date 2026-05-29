@@ -124,14 +124,18 @@ class FireworksLLM(OpenAICompatibleLLM):
         output_dataset_id = f"hs-batch-out-{uuid.uuid4().hex}"
         headers = self._auth_headers()
 
-        # The `dataset` resource takes display/format metadata on create. CHAT is
-        # the format for chat-completion batch input. (`userUploaded` is an
-        # output-only source marker, not a create field — sending it 400s.)
+        # The `dataset` resource takes format + exampleCount on create. CHAT is
+        # the format for chat-completion batch input; exampleCount is the JSONL
+        # line count (Fireworks rejects uploaded datasets without it) and is an
+        # int64 proto field, so it goes over the wire as a string.
         await self._request(
             "POST",
             self._datasets_url(),
             headers=headers,
-            json={"datasetId": input_dataset_id, "dataset": {"format": "CHAT"}},
+            json={
+                "datasetId": input_dataset_id,
+                "dataset": {"format": "CHAT", "exampleCount": str(len(requests))},
+            },
         )
 
         await self._request(

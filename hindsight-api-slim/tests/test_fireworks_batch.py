@@ -224,6 +224,7 @@ async def test_submit_batch_runs_dataset_upload_job_workflow():
     paths: list[str] = []
     upload_body: list[str] = []
     job_body: list[dict] = []
+    dataset_body: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -232,6 +233,7 @@ async def test_submit_batch_runs_dataset_upload_job_workflow():
 
         if request.method == "POST" and path.endswith("/datasets"):
             body = json.loads(request.content)
+            dataset_body.append(body)
             return httpx.Response(200, json={"name": f"accounts/acct-test/datasets/{body['datasetId']}"})
         if request.method == "POST" and path.endswith(":upload"):
             upload_body.append(request.content.decode("utf-8", errors="replace"))
@@ -279,6 +281,11 @@ async def test_submit_batch_runs_dataset_upload_job_workflow():
 
     # Job references the configured model.
     assert job_body[0]["model"] == "accounts/fireworks/models/llama-v3p1-8b-instruct"
+
+    # Dataset create declares format + exampleCount (Fireworks rejects uploaded
+    # datasets without example_count; it's the JSONL line count, as a string).
+    assert dataset_body[0]["dataset"]["format"] == "CHAT"
+    assert dataset_body[0]["dataset"]["exampleCount"] == str(len(requests))
 
     await client.aclose()
 
