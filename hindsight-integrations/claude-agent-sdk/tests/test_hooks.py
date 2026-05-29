@@ -114,6 +114,14 @@ class TestCreateMemoryHooks:
             assert mock_cls.call_args.kwargs["base_url"] == DEFAULT_HINDSIGHT_API_URL
             assert "api_key" not in mock_cls.call_args.kwargs
 
+    def test_reads_api_key_from_env_without_config(self, monkeypatch):
+        """create_memory_hooks honours HINDSIGHT_API_KEY even without configure()."""
+        monkeypatch.setenv("HINDSIGHT_API_KEY", "sk-from-env")
+        with patch("hindsight_claude_agent_sdk._client.Hindsight") as mock_cls:
+            mock_cls.return_value = _mock_client()
+            create_memory_hooks(bank_id="test")
+            assert mock_cls.call_args.kwargs["api_key"] == "sk-from-env"
+
 
 class TestRecallHook:
     @pytest.mark.asyncio
