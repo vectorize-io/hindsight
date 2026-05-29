@@ -698,7 +698,9 @@ DEFAULT_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = (
     100  # Max memories per consolidation round (0 = unlimited). Limits how long one bank holds a worker slot.
 )
 DEFAULT_CONSOLIDATION_LLM_BATCH_SIZE = 8  # Facts per LLM call (1 = no batching; >1 = batch mode)
-DEFAULT_CONSOLIDATION_LLM_PARALLELISM = 1  # Number of LLM batches processed concurrently within one consolidation op (1 = sequential)
+DEFAULT_CONSOLIDATION_LLM_PARALLELISM = (
+    1  # Number of LLM batches processed concurrently within one consolidation op (1 = sequential)
+)
 DEFAULT_CONSOLIDATION_MAX_TOKENS = 512  # Max tokens for recall when finding related observations
 DEFAULT_CONSOLIDATION_RECALL_BUDGET = "low"  # Budget level for consolidation recall (low/mid/high)
 DEFAULT_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS = (
@@ -1404,6 +1406,7 @@ class HindsightConfig:
         "enable_observations",
         "enable_auto_consolidation",
         "consolidation_llm_batch_size",
+        "consolidation_llm_parallelism",
         "consolidation_max_memories_per_round",
         "consolidation_source_facts_max_tokens",
         "consolidation_source_facts_max_tokens_per_observation",

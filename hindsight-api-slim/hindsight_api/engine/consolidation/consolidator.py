@@ -44,6 +44,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class _BatchDeltas:
+    """Per-LLM-batch deltas, merged into the job's running stats after dispatch.
+
+    Returned by value rather than mutated into the outer ``stats`` /
+    ``consolidated_tags`` so parallel batches cannot race on those shared
+    structures (the merge happens once, serially, after dispatch completes).
+    """
+
+    stats: dict[str, int]
+    tags: set[str]
+    cancelled: bool
+
+
 async def _filter_live_source_memories(
     conn: "Connection",
     bank_id: str,
@@ -379,25 +393,34 @@ async def run_consolidation_job(
             tag_key = tuple(sorted(m.get("tags") or []))
             tag_groups.setdefault(tag_key, []).append(dict(m))
 
-        # Flatten into LLM batches respecting both tag groups and llm_batch_size
-        llm_batches: list[list[dict[str, Any]]] = []
+        # Split each tag group into LLM batches of at most llm_batch_size, keeping
+        # the group boundary intact so the dispatcher below can parallelise across
+        # groups while running each group's batches serially.
+        grouped_batches: list[list[list[dict[str, Any]]]] = []
         for group in tag_groups.values():
-            for i in range(0, len(group), llm_batch_size):
-                llm_batches.append(group[i : i + llm_batch_size])
+            grouped_batches.append([group[i : i + llm_batch_size] for i in range(0, len(group), llm_batch_size)])
 
-        # Process LLM batches either sequentially (default, parallelism=1) or in
-        # parallel via asyncio.gather + Semaphore. Per-bank single-flight is still
-        # enforced at the SQL claim level (see ops_postgresql.claim_tasks), so only
-        # one worker process owns this consolidation op at a time — intra-op
-        # parallelism here just lets that one worker fire N LLM calls concurrently.
-        # State mutations to outer `stats` and `consolidated_tags` are deferred:
-        # each parallel batch returns local deltas, and the outer loop merges them
-        # after gather completes to avoid lost-update races.
-        llm_parallelism = max(1, getattr(config, "consolidation_llm_parallelism", 1))
+        # Dispatch LLM batches with the TAG GROUP as the unit of concurrency.
+        # Batches WITHIN a tag group share the same observation scope and run
+        # serially — the write path executes delete/update/create actions serially
+        # for consistency, so two concurrent writers on one scope would double-create
+        # observations or lose updates. Distinct tag groups touch disjoint scopes
+        # (under the default "combined" scope) and run concurrently for the
+        # throughput win.
+        #
+        # Caveat: per_tag / all_combinations observation_scopes can make two groups
+        # write to an overlapping single-tag scope; banks using those modes should
+        # keep parallelism=1.
+        #
+        # Per-bank single-flight is still enforced at the SQL claim level (see
+        # ops_postgresql.claim_tasks), so only one worker process owns this op at a
+        # time — this just lets that worker fan out across tag groups. Mutations to
+        # outer `stats` / `consolidated_tags` are deferred: each batch returns local
+        # deltas that the outer loop merges after dispatch, avoiding lost-update
+        # races on the shared counters.
+        llm_parallelism = max(1, config.consolidation_llm_parallelism)
 
-        async def _process_one_llm_batch(
-            llm_batch_local: list[dict[str, Any]], batch_num_local: int
-        ) -> dict[str, Any]:
+        async def _process_one_llm_batch(llm_batch_local: list[dict[str, Any]], batch_num_local: int) -> _BatchDeltas:
             """Process one LLM batch independently. Returns local deltas + a cancelled flag."""
             llm_batch_start = time.time()
             snap_timings = perf.timings.copy()
@@ -547,8 +570,7 @@ async def run_consolidation_job(
             cancelled_local = False
             if operation_id and not await memory_engine._check_op_alive(operation_id):
                 logger.info(
-                    f"[CONSOLIDATION] bank={bank_id} operation {operation_id} cancelled (bank deleted),"
-                    " stopping early"
+                    f"[CONSOLIDATION] bank={bank_id} operation {operation_id} cancelled (bank deleted), stopping early"
                 )
                 cancelled_local = True
 
@@ -610,36 +632,61 @@ async def run_consolidation_job(
                 f" | avg={llm_batch_time / max(1, len(llm_batch_local)):.3f}s/memory"
             )
 
-            return {"stats": local_stats, "tags": local_tags, "cancelled": cancelled_local}
+            return _BatchDeltas(stats=local_stats, tags=local_tags, cancelled=cancelled_local)
 
-        # Number all batches up-front so the log line numbering is deterministic
-        # regardless of which dispatch mode we use below.
-        numbered_batches = []
-        for b in llm_batches:
-            llm_batch_num += 1
-            numbered_batches.append((b, llm_batch_num))
+        # Number every batch up front (across all groups) so log line numbering is
+        # deterministic regardless of dispatch mode. Each group keeps its own list
+        # of (batch, number) pairs so it can be processed as one serial unit.
+        numbered_groups: list[list[tuple[list[dict[str, Any]], int]]] = []
+        for batches in grouped_batches:
+            numbered: list[tuple[list[dict[str, Any]], int]] = []
+            for b in batches:
+                llm_batch_num += 1
+                numbered.append((b, llm_batch_num))
+            numbered_groups.append(numbered)
 
-        if llm_parallelism > 1 and len(numbered_batches) > 1:
+        async def _process_tag_group(
+            group_batches: list[tuple[list[dict[str, Any]], int]],
+        ) -> list[_BatchDeltas]:
+            # Batches in a group share an observation scope, so they MUST run
+            # serially. Stop early if the op was cancelled mid-group.
+            deltas: list[_BatchDeltas] = []
+            for b, n in group_batches:
+                d = await _process_one_llm_batch(b, n)
+                deltas.append(d)
+                if d.cancelled:
+                    break
+            return deltas
+
+        if llm_parallelism > 1 and len(numbered_groups) > 1:
             sem = asyncio.Semaphore(llm_parallelism)
 
-            async def _run_with_sem(b: list[dict[str, Any]], n: int) -> dict[str, Any]:
+            async def _run_group_with_sem(
+                group_batches: list[tuple[list[dict[str, Any]], int]],
+            ) -> list[_BatchDeltas]:
                 async with sem:
-                    return await _process_one_llm_batch(b, n)
+                    return await _process_tag_group(group_batches)
 
-            batch_results = await asyncio.gather(*(_run_with_sem(b, n) for b, n in numbered_batches))
+            group_results = await asyncio.gather(*(_run_group_with_sem(g) for g in numbered_groups))
+            batch_results = [d for group_deltas in group_results for d in group_deltas]
+            any_cancelled = any(d.cancelled for d in batch_results)
         else:
             batch_results = []
-            for b, n in numbered_batches:
-                batch_results.append(await _process_one_llm_batch(b, n))
+            any_cancelled = False
+            for g in numbered_groups:
+                group_deltas = await _process_tag_group(g)
+                batch_results.extend(group_deltas)
+                # Sequential default path: don't start the next group once cancelled.
+                if any(d.cancelled for d in group_deltas):
+                    any_cancelled = True
+                    break
 
-        # Merge per-batch deltas into outer state and surface cancellation
-        any_cancelled = False
-        for r in batch_results:
-            for k, v in r["stats"].items():
+        # Merge per-batch deltas into outer state (deferred so concurrent batches
+        # never race on the shared counters / tag set).
+        for d in batch_results:
+            for k, v in d.stats.items():
                 stats[k] = stats.get(k, 0) + v
-            consolidated_tags.update(r["tags"])
-            if r["cancelled"]:
-                any_cancelled = True
+            consolidated_tags.update(d.tags)
 
         if any_cancelled:
             return {"status": "cancelled", "bank_id": bank_id, **stats}
