@@ -290,6 +290,25 @@ async def test_submit_batch_without_account_id_fails_fast():
         await llm.submit_batch([{"custom_id": "c0", "method": "POST", "url": "/v1/chat/completions", "body": {}}])
 
 
+@pytest.mark.asyncio
+async def test_api_errors_surface_the_response_body():
+    """A 4xx must include Fireworks' error body in the raised error — otherwise a
+    malformed dataset/job request is undebuggable (raise_for_status drops it)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": "invalid field 'userUploaded' in dataset"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    llm = _make_fireworks(http_client=client)
+
+    with pytest.raises(httpx.HTTPStatusError, match="invalid field 'userUploaded'"):
+        await llm.submit_batch(
+            [{"custom_id": "c0", "method": "POST", "url": "/v1/chat/completions", "body": {}}]
+        )
+
+    await client.aclose()
+
+
 # --------------------------------------------------------------------------
 # get_batch_status: state + counts mapping, and the PENDING-forever timeout
 # --------------------------------------------------------------------------

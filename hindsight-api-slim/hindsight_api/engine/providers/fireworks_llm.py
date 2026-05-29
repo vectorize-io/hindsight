@@ -124,11 +124,14 @@ class FireworksLLM(OpenAICompatibleLLM):
         output_dataset_id = f"hs-batch-out-{uuid.uuid4().hex}"
         headers = self._auth_headers()
 
+        # The `dataset` resource takes display/format metadata on create. CHAT is
+        # the format for chat-completion batch input. (`userUploaded` is an
+        # output-only source marker, not a create field — sending it 400s.)
         await self._request(
             "POST",
             self._datasets_url(),
             headers=headers,
-            json={"datasetId": input_dataset_id, "dataset": {"userUploaded": {}}},
+            json={"datasetId": input_dataset_id, "dataset": {"format": "CHAT"}},
         )
 
         await self._request(
@@ -332,7 +335,15 @@ class FireworksLLM(OpenAICompatibleLLM):
         files: dict[str, Any] | None = None,
     ) -> httpx.Response:
         resp = await self._http().request(method, url, headers=headers, json=json, files=files)
-        resp.raise_for_status()
+        if resp.is_error:
+            # Surface the API's error body. Fireworks returns JSON describing why a
+            # 4xx/5xx happened; raise_for_status() alone discards it, which makes
+            # failures (e.g. a malformed dataset/job request) undebuggable.
+            raise httpx.HTTPStatusError(
+                f"Fireworks API {resp.status_code} for {method} {url}: {resp.text[:2000]}",
+                request=resp.request,
+                response=resp,
+            )
         return resp
 
     def _accounts_base(self) -> str:
