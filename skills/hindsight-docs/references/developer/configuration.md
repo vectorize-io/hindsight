@@ -836,6 +836,8 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_GRAPH_RETRIEVER` | Graph retrieval algorithm | `link_expansion` |
+| `HINDSIGHT_API_LINK_EXPANSION_PER_ENTITY_LIMIT` | Max target units expanded per entity in `link_expansion` graph retrieval (LATERAL fanout cap per entity; bounds high-fanout entities). | `200` |
+| `HINDSIGHT_API_LINK_EXPANSION_TIMEOUT` | Timeout (seconds) for the per-entity graph expansion query in `link_expansion` retrieval. | `10` |
 | `HINDSIGHT_API_RECALL_MAX_CONCURRENT` | Max concurrent recall operations per worker (backpressure) | `32` |
 | `HINDSIGHT_API_RECALL_CONNECTION_BUDGET` | Max concurrent DB connections per recall operation | `4` |
 | `HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS` | Maximum token length of a recall query; requests exceeding this limit are rejected with HTTP 400 | `500` |
