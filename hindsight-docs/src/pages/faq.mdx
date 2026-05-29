@@ -333,7 +333,7 @@ Re-retaining with the same `id` replaces the old document and its facts, so you 
 
 ### How is Hindsight's graph different from a traditional knowledge graph?
 
-Hindsight uses an **event-centric graph** — technically a temporal bipartite hypergraph — that organizes data around moments (conversations, observations, memories) rather than static, isolated facts. The closest analogy is a map versus a scrapbook.
+Hindsight uses an **event-centric graph** that organizes data around moments (conversations, observations, memories) rather than static, isolated facts. Memories are the anchor: entities attach to the memories they appear in, and memories themselves can also be linked directly to each other (more on that below). The closest analogy is a map versus a scrapbook.
 
 **A traditional graph (like Neo4j) is a map.** It shows how places connect directly to each other via roads, mapping rigid structural facts about the world:
 
@@ -369,22 +369,20 @@ No. In Hindsight, entities (people, places, concepts, or classification labels) 
 
 #### How does Hindsight find connections if entities aren't directly linked?
 
-Through shared stickers. Recall starts with semantic search — finding the memories most relevant to your query as seed pages — and then expands along shared-sticker connections from those seeds to surface related memories. The semantic layer picks the starting points; the graph fills in the connections.
+Recall starts with semantic search — finding the memories most relevant to your query as seed pages — and then expands from those seeds through three parallel signals:
 
-If Memory A and Memory B both anchor to the same entity node — like `[pedagogy:scaffolding]` — Hindsight instantly traverses the path:
+- **Shared entities.** If Memory A and Memory B both anchor to the same entity node — like `[pedagogy:scaffolding]` — Hindsight traverses `Memory A → [pedagogy:scaffolding] → Memory B`. This is the scrapbook-pages-with-the-same-stickers case.
+- **Semantic links between memories.** When a new memory is retained, Hindsight precomputes links to its nearest neighbors in embedding space, so semantically related pages connect directly without needing a shared sticker.
+- **Causal links between memories.** Hindsight also extracts explicit causal relationships (`causes`, `caused_by`, `enables`, `prevents`) between memories, so cause-and-effect chains are first-class edges rather than something the model has to infer.
 
-```
-Memory A → [pedagogy:scaffolding] → Memory B
-```
-
-It links your experiences by finding different scrapbook pages that happen to share the exact same stickers.
+The semantic layer picks the starting points; the graph fills in the connections through whichever of those three signals is strongest for each candidate.
 
 #### Does this graph structure help reduce hallucinations in my agent?
 
 Yes — by giving the consuming LLM better-grounded context to reason from. Three properties of the scrapbook model contribute directly:
 
 - **History is preserved, not collapsed.** The model sees time-bounded facts (Alice worked at Acme last year, Stark Industries now) rather than a contradictory present-tense edge that forces it to reconcile or guess.
-- **Connections come from real shared entities, not inference.** When recall surfaces two related memories, it's because they genuinely share an entity sticker — the link appears in the retrieved context, so the model doesn't have to invent one.
+- **Connections come from recorded links, not inference.** When recall surfaces two related memories, it's because they share an entity, a precomputed semantic neighbor, or an explicit causal edge — the link appears in the retrieved context, so the model doesn't have to invent one.
 - **Convergent evidence accumulates.** Multiple memories anchoring to the same entity reinforce each other instead of competing, giving the model corroborated claims rather than singular unsupported ones.
 
 ---
