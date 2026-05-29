@@ -308,7 +308,7 @@ async def oracle_memory(oracle_db_url, embeddings, cross_encoder, query_analyzer
             cross_encoder=cross_encoder,
             query_analyzer=query_analyzer,
             pool_min_size=1,
-            pool_max_size=5,
+            pool_max_size=30,
             run_migrations=False,  # Already ran above
             task_backend=SyncTaskBackend(),
         )
@@ -430,7 +430,7 @@ async def memory(pg0_db_url, embeddings, cross_encoder, query_analyzer):
         cross_encoder=cross_encoder,
         query_analyzer=query_analyzer,
         pool_min_size=1,
-        pool_max_size=5,
+        pool_max_size=30,
         run_migrations=False,
         task_backend=SyncTaskBackend(),
     )
@@ -463,7 +463,7 @@ async def memory_real_llm(pg0_db_url, embeddings, cross_encoder, query_analyzer)
         cross_encoder=cross_encoder,
         query_analyzer=query_analyzer,
         pool_min_size=1,
-        pool_max_size=5,
+        pool_max_size=30,
         run_migrations=False,
         task_backend=SyncTaskBackend(),
     )
@@ -493,7 +493,7 @@ async def memory_no_llm_verify(pg0_db_url, embeddings, cross_encoder, query_anal
         cross_encoder=cross_encoder,
         query_analyzer=query_analyzer,
         pool_min_size=1,
-        pool_max_size=5,
+        pool_max_size=30,
         run_migrations=False,
         task_backend=SyncTaskBackend(),
         skip_llm_verification=True,  # Skip verification - will be overridden by test
