@@ -7,7 +7,7 @@ info:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
   title: Hindsight HTTP API
-  version: 0.6.2
+  version: 0.7.1
 servers:
 - url: /
 paths:
@@ -1155,6 +1155,54 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: Refresh mental model
+      tags:
+      - Mental Models
+  /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear:
+    post:
+      description: "Clear a mental model's content so the next refresh performs a\
+        \ full re-synthesis. This is useful for delta-mode models that have accumulated\
+        \ drift over many incremental refreshes. After clearing, call the /refresh\
+        \ endpoint to trigger a clean full rebuild."
+      operationId: clear_mental_model
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: mental_model_id
+        required: true
+        schema:
+          title: Mental Model Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MentalModelResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Clear mental model content
       tags:
       - Mental Models
   /v1/default/banks/{bank_id}/directives:
@@ -2785,6 +2833,11 @@ paths:
           nullable: true
           type: string
         style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsolidationRequest'
       responses:
         "200":
           content:
@@ -4297,6 +4350,23 @@ components:
       required:
       - deleted_count
       title: ClearMemoryObservationsResponse
+    ConsolidationRequest:
+      description: Request model for consolidation trigger endpoint.
+      example:
+        observation_scopes:
+        - - observation_scopes
+          - observation_scopes
+        - - observation_scopes
+          - observation_scopes
+      properties:
+        observation_scopes:
+          items:
+            items:
+              type: string
+            type: array
+          nullable: true
+          type: array
+      title: ConsolidationRequest
     ConsolidationResponse:
       description: Response model for consolidation trigger endpoint.
       example:

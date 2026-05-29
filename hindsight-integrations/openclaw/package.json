@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/hindsight-openclaw",
-  "version": "0.7.7",
+  "version": "0.8.0",
   "description": "Hindsight memory plugin for OpenClaw - biomimetic long-term memory with fact extraction",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -47,8 +47,8 @@
   "dependencies": {
     "@clack/prompts": "^1.2.0",
     "@vectorize-io/hindsight-agent-sdk": "^0.1.0",
-    "@vectorize-io/hindsight-all": "^0.1.0",
-    "@vectorize-io/hindsight-client": "^0.5.0"
+    "@vectorize-io/hindsight-all": "^0.6.2",
+    "@vectorize-io/hindsight-client": "^0.6.2"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

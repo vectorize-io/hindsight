@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { hindsightClient } from "@/lib/hindsight-client";
 
 export async function POST(request: NextRequest) {
@@ -7,7 +8,13 @@ export async function POST(request: NextRequest) {
     const bankId = body.bank_id || body.agent_id;
 
     if (!bankId) {
-      return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "bank_id is required",
+          errorKey: "api.errors.validation.bankIdRequired",
+        }),
+        { status: 400 }
+      );
     }
 
     const { items, document_id, document_tags, observation_scopes } = body;
@@ -36,12 +43,22 @@ export async function POST(request: NextRequest) {
     // If we have a statusCode, use it
     if (statusCode && typeof statusCode === "number") {
       return NextResponse.json(
-        { error: errorMessage, details: errorDetails },
+        localizeApiErrorPayload(request, {
+          error: errorMessage,
+          details: errorDetails,
+          errorKey: "api.errors.memories.retain",
+        }),
         { status: statusCode }
       );
     }
 
     // Otherwise, return generic 500 error
-    return NextResponse.json({ error: errorMessage || "Failed to batch retain" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: errorMessage || "Failed to batch retain",
+        errorKey: "api.errors.memories.retain",
+      }),
+      { status: 500 }
+    );
   }
 }

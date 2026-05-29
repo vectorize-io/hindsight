@@ -1,5 +1,6 @@
 """
-OpenAI-compatible LLM provider supporting OpenAI, Groq, Ollama, LMStudio, MiniMax, and DeepSeek.
+OpenAI-compatible LLM provider supporting OpenAI, Groq, Ollama, LMStudio, MiniMax, DeepSeek,
+and Opencode Go.
 
 This provider handles all OpenAI API-compatible models including:
 - OpenAI: GPT-4, GPT-4o, GPT-5, o1, o3 (reasoning models)
@@ -8,6 +9,7 @@ This provider handles all OpenAI API-compatible models including:
 - LMStudio: Local models with OpenAI-compatible API
 - MiniMax: MiniMax-M2.7 models with 1M context window
 - DeepSeek: deepseek-v4-flash / deepseek-v4-pro / deepseek-chat / deepseek-reasoner via api.deepseek.com
+- Opencode Go: deepseek-v4-flash via https://opencode.ai/zen/go/v1
 
 Features:
 - Reasoning models with extended thinking (o1, o3, GPT-5 families)
@@ -232,6 +234,7 @@ class OpenAICompatibleLLM(LLMInterface):
     - LMStudio: Local models with OpenAI-compatible API
     - MiniMax: MiniMax-M2.7 models via OpenAI-compatible API (https://api.minimax.io/v1)
     - DeepSeek: deepseek-v4-flash / deepseek-v4-pro / deepseek-chat / deepseek-reasoner via https://api.deepseek.com
+    - opencode-go: deepseek-v4-flash via https://opencode.ai/zen/go/v1
     """
 
     def __init__(
@@ -250,7 +253,7 @@ class OpenAICompatibleLLM(LLMInterface):
         Initialize OpenAI-compatible LLM provider.
 
         Args:
-            provider: Provider name ("openai", "groq", "ollama", "lmstudio").
+            provider: Provider name ("openai", "groq", "ollama", "lmstudio", "opencode-go", etc.).
             api_key: API key (optional for ollama/lmstudio).
             base_url: Base URL for the API (uses defaults for groq/ollama/lmstudio if empty).
             model: Model name.
@@ -267,6 +270,7 @@ class OpenAICompatibleLLM(LLMInterface):
             "openai",
             "groq",
             "ollama",
+            "ollama-cloud",
             "lmstudio",
             "llamacpp",
             "minimax",
@@ -274,6 +278,7 @@ class OpenAICompatibleLLM(LLMInterface):
             "volcano",
             "openrouter",
             "zai",
+            "opencode-go",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"OpenAICompatibleLLM only supports: {', '.join(valid_providers)}. Got: {self.provider}")
@@ -284,6 +289,8 @@ class OpenAICompatibleLLM(LLMInterface):
                 self.base_url = "https://api.groq.com/openai/v1"
             elif self.provider == "ollama":
                 self.base_url = "http://localhost:11434/v1"
+            elif self.provider == "ollama-cloud":
+                self.base_url = "https://ollama.com/v1"
             elif self.provider == "lmstudio":
                 self.base_url = "http://localhost:1234/v1"
             elif self.provider == "minimax":
@@ -294,13 +301,28 @@ class OpenAICompatibleLLM(LLMInterface):
                 self.base_url = "https://openrouter.ai/api/v1"
             elif self.provider == "zai":
                 self.base_url = "https://api.z.ai/api/coding/paas/v4"
+            elif self.provider == "opencode-go":
+                self.base_url = "https://opencode.ai/zen/go/v1"
 
         # For ollama/lmstudio, use dummy key if not provided
         if self.provider in ("ollama", "lmstudio") and not self.api_key:
             self.api_key = "local"
 
         # Validate API key for cloud providers
-        if self.provider in ("openai", "groq", "minimax", "deepseek", "openrouter", "zai") and not self.api_key:
+        if (
+            self.provider
+            in (
+                "openai",
+                "groq",
+                "minimax",
+                "deepseek",
+                "openrouter",
+                "zai",
+                "opencode-go",
+                "ollama-cloud",
+            )
+            and not self.api_key
+        ):
             raise ValueError(f"API key is required for {self.provider}")
 
         # Service tier configuration (from config, not env vars)
@@ -561,10 +583,11 @@ class OpenAICompatibleLLM(LLMInterface):
                     )
 
                     # Strip reasoning model thinking tags
-                    # Supports: <think>, <thinking>, <reasoning>, |startthink|/|endthink|
+                    # Supports: <think>, <thinking>, <thought>, <reasoning>, |startthink|/|endthink|
                     original_len = len(content)
                     content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
                     content = re.sub(r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL)
+                    content = re.sub(r"<thought>.*?</thought>", "", content, flags=re.DOTALL)
                     content = re.sub(r"<reasoning>.*?</reasoning>", "", content, flags=re.DOTALL)
                     content = re.sub(r"\|startthink\|.*?\|endthink\|", "", content, flags=re.DOTALL)
                     content = content.strip()
@@ -1054,12 +1077,17 @@ class OpenAICompatibleLLM(LLMInterface):
 
         last_exception = None
 
+        # Pass API key as Bearer token for cloud Ollama endpoints
+        headers: dict[str, str] = {}
+        if self.api_key and self.api_key != "local":
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
         async with httpx.AsyncClient(timeout=300.0) as client:
             for attempt in range(max_retries + 1):
                 if attempt > 0:
                     set_stage(f"llm.ollama_native.{scope}.attempt={attempt + 1}/{max_retries + 1}")
                 try:
-                    response = await client.post(native_url, json=payload)
+                    response = await client.post(native_url, json=payload, headers=headers)
                     response.raise_for_status()
 
                     result = response.json()

@@ -1,17 +1,14 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-const ACCESS_KEY_COOKIE = "hindsight_cp_access";
+import { ACCESS_KEY_COOKIE, sessionCookieOptions } from "@/lib/auth/session";
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   const response = NextResponse.json({ success: true });
 
   response.cookies.set({
     name: ACCESS_KEY_COOKIE,
     value: "",
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
+    ...sessionCookieOptions(request),
     maxAge: 0,
   });
 

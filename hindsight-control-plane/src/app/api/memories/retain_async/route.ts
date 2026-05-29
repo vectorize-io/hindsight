@@ -1,26 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { sdk, lowLevelClient } from "@/lib/hindsight-client";
+import { respondWithSdk } from "@/lib/sdk-response";
 
 export async function POST(request: NextRequest) {
+  let body;
   try {
-    const body = await request.json();
-    const bankId = body.bank_id || body.agent_id;
-
-    if (!bankId) {
-      return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
-    }
-
-    const { items } = body;
-
-    const response = await sdk.retainMemories({
-      client: lowLevelClient,
-      path: { bank_id: bankId },
-      body: { items, async: true },
-    });
-
-    return NextResponse.json(response.data, { status: 200 });
-  } catch (error) {
-    console.error("Error batch retain async:", error);
-    return NextResponse.json({ error: "Failed to batch retain async" }, { status: 500 });
+    body = await request.json();
+  } catch {
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Invalid JSON body",
+        errorKey: "api.errors.auth.invalidRequestBody",
+      }),
+      { status: 400 }
+    );
   }
+  const bankId = body.bank_id || body.agent_id;
+
+  if (!bankId) {
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "bank_id is required",
+        errorKey: "api.errors.validation.bankIdRequired",
+      }),
+      { status: 400 }
+    );
+  }
+
+  const { items } = body;
+
+  const response = await sdk.retainMemories({
+    client: lowLevelClient,
+    path: { bank_id: bankId },
+    body: { items, async: true },
+  });
+  return respondWithSdk(response, "Failed to batch retain async", { request });
 }

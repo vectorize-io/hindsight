@@ -3,7 +3,7 @@
 from .daemon_embed_manager import DaemonEmbedManager
 from .embed_manager import EmbedManager
 
-__version__ = "0.6.2"
+__version__ = "0.7.1"
 
 __all__ = [
     "EmbedManager",

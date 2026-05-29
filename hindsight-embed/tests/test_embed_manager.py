@@ -96,17 +96,37 @@ def test_register_profile_calls_create_when_api_keys_present():
     )
 
 
-def test_find_ui_command_uses_npx_yes_flag_for_published_control_plane(monkeypatch):
-    """First-run UI installs must auto-confirm the published control-plane package."""
+def test_find_ui_command_uses_npx_yes_flag_when_npx_not_on_path(monkeypatch):
+    """When npx is not on PATH, fall back to a bare `npx -y` command so the
+    surrounding FileNotFoundError handler can report a clean install hint."""
     manager = DaemonEmbedManager()
     monkeypatch.setenv("HINDSIGHT_EMBED_CP_VERSION", "9.9.9")
 
-    with patch("pathlib.Path.exists", return_value=False):
+    with patch("pathlib.Path.exists", return_value=False), \
+         patch("shutil.which", return_value=None):
         assert manager._find_ui_command() == [
             "npx",
             "-y",
             "@vectorize-io/hindsight-control-plane@9.9.9",
         ]
+
+
+def test_find_ui_command_resolves_npx_absolute_path_with_yes_flag(monkeypatch):
+    """When npx is on PATH, use the resolved absolute path (Windows detached
+    processes don't always inherit PATH — see embed_manager._find_ui_command).
+    Either way, `-y` must be set so first-run installs don't block on a prompt."""
+    manager = DaemonEmbedManager()
+    monkeypatch.setenv("HINDSIGHT_EMBED_CP_VERSION", "9.9.9")
+
+    with patch("pathlib.Path.exists", return_value=False), \
+         patch("shutil.which", return_value="/usr/local/bin/npx"):
+        cmd = manager._find_ui_command()
+
+    assert cmd == [
+        "/usr/local/bin/npx",
+        "-y",
+        "@vectorize-io/hindsight-control-plane@9.9.9",
+    ]
 
 
 def test_find_api_command_prefers_installed_binary_over_uvx(tmp_path, monkeypatch):

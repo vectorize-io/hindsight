@@ -24,9 +24,23 @@ def client():
 
 
 @pytest.fixture
-def bank_id():
-    """Provide a unique test bank ID for each test."""
-    return f"test_bank_{uuid.uuid4().hex[:12]}"
+def bank_id(client):
+    """Provide a unique test bank ID for each test and delete it on teardown.
+
+    Without teardown, every function-scoped test leaves its bank behind, and the
+    accumulating data exhausts the backing tablespace on resource-constrained
+    backends (Oracle Free's 12GB user-data cap is the typical hit).  The bank
+    may not have been auto-created by the test (some tests fail before any
+    write), so the delete is best-effort.
+    """
+    bid = f"test_bank_{uuid.uuid4().hex[:12]}"
+    yield bid
+    try:
+        client.delete_bank(bank_id=bid)
+    except Exception:
+        # Bank may not exist or already be deleted — fixture cleanup must not
+        # mask the underlying test result with a teardown exception.
+        pass
 
 
 class TestRetain:

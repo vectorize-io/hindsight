@@ -71,11 +71,13 @@ Browse all supported integrations in the Integrations Hub.
 - Vertex AI
 - Groq
 - Ollama
+- Ollama Cloud
 - LM Studio
 - llama.cpp
 - MiniMax
 - DeepSeek
 - z.ai
+- opencode-go
 - Volcano Engine
 - OpenRouter
 - OpenAI Codex

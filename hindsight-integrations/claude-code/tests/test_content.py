@@ -1,11 +1,14 @@
 """Tests for lib/content.py — pure content-processing functions."""
 
+import re
+
 import pytest
 
 from lib.content import (
     _extract_text_content,
     _is_channel_message_tool,
     compose_recall_query,
+    format_current_time,
     format_memories,
     prepare_retention_transcript,
     slice_last_turns_by_user_boundary,
@@ -469,3 +472,18 @@ class TestPrepareRetentionTranscript:
         transcript, _ = prepare_retention_transcript(msgs, retain_full_window=True, include_tool_calls=False)
         assert "[role: user]" in transcript
         assert "[user:end]" in transcript
+
+
+# ---------------------------------------------------------------------------
+# format_current_time
+# ---------------------------------------------------------------------------
+
+
+class TestFormatCurrentTime:
+    def test_includes_utc_suffix(self):
+        # The "UTC" suffix prevents client LLMs from misreading the
+        # timestamp as local time.
+        assert format_current_time().endswith(" UTC")
+
+    def test_format_shape(self):
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC", format_current_time())

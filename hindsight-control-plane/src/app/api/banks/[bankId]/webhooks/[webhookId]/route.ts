@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 
 export async function PATCH(
   request: Request,
@@ -13,7 +14,14 @@ export async function PATCH(
     body: JSON.stringify(body),
   });
   const data = await res.json();
-  if (!res.ok) return NextResponse.json({ error: data.detail || "Failed" }, { status: res.status });
+  if (!res.ok)
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: data.detail || "Failed to update webhook",
+        errorKey: "api.errors.webhooks.update",
+      }),
+      { status: res.status }
+    );
   return NextResponse.json(data);
 }
 
@@ -27,6 +35,13 @@ export async function DELETE(
     headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
   });
   const data = await res.json();
-  if (!res.ok) return NextResponse.json({ error: data.detail || "Failed" }, { status: res.status });
+  if (!res.ok)
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: data.detail || "Failed to delete webhook",
+        errorKey: "api.errors.webhooks.delete",
+      }),
+      { status: res.status }
+    );
   return NextResponse.json(data);
 }

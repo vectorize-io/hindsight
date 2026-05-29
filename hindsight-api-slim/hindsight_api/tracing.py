@@ -129,6 +129,7 @@ PROVIDER_NAME_MAPPING = {
     "vertexai": "google",
     "groq": "groq",
     "ollama": "ollama",
+    "ollama-cloud": "ollama",
     "lmstudio": "lmstudio",
     "openai-codex": "openai",
     "claude-code": "anthropic",

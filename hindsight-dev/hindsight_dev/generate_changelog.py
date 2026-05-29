@@ -61,6 +61,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "smolagents": IntegrationMeta("hindsight-smolagents", "SmolAgents"),
     "n8n": IntegrationMeta("@vectorize-io/n8n-nodes-hindsight", "n8n"),
     "dify": IntegrationMeta("hindsight-dify", "Dify"),
+    "vapi": IntegrationMeta("hindsight-vapi", "Vapi"),
 }
 
 VALID_INTEGRATIONS = list(INTEGRATIONS.keys())

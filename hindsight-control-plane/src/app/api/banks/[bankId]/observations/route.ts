@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { sdk, lowLevelClient } from "@/lib/hindsight-client";
 
 export async function GET(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
@@ -6,7 +7,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
     const { bankId } = await params;
 
     if (!bankId) {
-      return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "bank_id is required",
+          errorKey: "api.errors.validation.bankIdRequired",
+        }),
+        { status: 400 }
+      );
     }
 
     // Note: tags filtering is not supported by the list_memories API endpoint
@@ -21,7 +28,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
 
     if (response.error) {
       console.error("API error listing observations:", response.error);
-      return NextResponse.json({ error: "Failed to list observations" }, { status: 500 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "Failed to list observations",
+          errorKey: "api.errors.observations.list",
+        }),
+        { status: 500 }
+      );
     }
 
     // Transform list memories response to observations format
@@ -41,7 +54,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
     return NextResponse.json({ items }, { status: 200 });
   } catch (error) {
     console.error("Error listing observations:", error);
-    return NextResponse.json({ error: "Failed to list observations" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to list observations",
+        errorKey: "api.errors.observations.list",
+      }),
+      { status: 500 }
+    );
   }
 }
 
@@ -53,7 +72,13 @@ export async function DELETE(
     const { bankId } = await params;
 
     if (!bankId) {
-      return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "bank_id is required",
+          errorKey: "api.errors.validation.bankIdRequired",
+        }),
+        { status: 400 }
+      );
     }
 
     const response = await sdk.clearObservations({
@@ -63,12 +88,24 @@ export async function DELETE(
 
     if (response.error) {
       console.error("API error clearing observations:", response.error);
-      return NextResponse.json({ error: "Failed to clear observations" }, { status: 500 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "Failed to clear observations",
+          errorKey: "api.errors.observations.clear",
+        }),
+        { status: 500 }
+      );
     }
 
     return NextResponse.json(response.data, { status: 200 });
   } catch (error) {
     console.error("Error clearing observations:", error);
-    return NextResponse.json({ error: "Failed to clear observations" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to clear observations",
+        errorKey: "api.errors.observations.clear",
+      }),
+      { status: 500 }
+    );
   }
 }

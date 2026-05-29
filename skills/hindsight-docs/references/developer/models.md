@@ -25,11 +25,13 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - Vertex AI
 - Groq
 - Ollama
+- Ollama Cloud
 - LM Studio
 - llama.cpp
 - MiniMax
 - DeepSeek
 - z.ai
+- opencode-go
 - Volcano Engine
 - OpenRouter
 - OpenAI Codex
@@ -53,6 +55,8 @@ See [Configuration](./configuration#llm-provider) for setup examples.
 > **💡 Built-in llama.cpp (fully local, no API key)**
 > 
 Set `HINDSIGHT_API_LLM_PROVIDER=llamacpp` to run a built-in llama.cpp server with no external dependencies. A Gemma 4 E2B GGUF model (~3.5 GB) is auto-downloaded on first run. Requires the `local-llm` extra: `pip install 'hindsight-api-slim[local-llm]'`.
+
+The published Docker image does not bundle `llama-cpp-python` (to keep the image small). For a runnable Docker setup that adds it on top, see [`docker/docker-compose/local-llm/`](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/local-llm).
 
 See [Configuration](./configuration#built-in-llamacpp) for all options.
 > **💡 LiteLLM Provider (Azure, Together AI, and more)**
@@ -104,11 +108,13 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `vertexai` | `gemini-2.0-flash-001` |
 | `groq` | `openai/gpt-oss-120b` |
 | `ollama` | `gemma3:12b` |
+| `ollama-cloud` | `gemma3:12b` |
 | `lmstudio` | `local-model` |
 | `llamacpp` | `gemma-4-e2b-it` (auto-downloaded GGUF) |
 | `minimax` | `MiniMax-M2.7` |
 | `deepseek` | `deepseek-v4-flash` |
 | `zai` | `glm-4.5-flash` |
+| `opencode-go` | `deepseek-v4-flash` |
 | `volcano` | `doubao-pro-32k` |
 | `openrouter` | `qwen/qwen3.5-9b` |
 | `openai-codex` | `gpt-5.4-mini` |
@@ -185,6 +191,11 @@ export HINDSIGHT_API_LLM_PROVIDER=ollama
 export HINDSIGHT_API_LLM_BASE_URL=http://localhost:11434/v1
 export HINDSIGHT_API_LLM_MODEL=llama3
 
+# Ollama Cloud (hosted Ollama endpoint, requires API key)
+export HINDSIGHT_API_LLM_PROVIDER=ollama-cloud
+export HINDSIGHT_API_LLM_API_KEY=your-ollama-cloud-api-key
+export HINDSIGHT_API_LLM_MODEL=gemma3:12b
+
 # LM Studio (local)
 export HINDSIGHT_API_LLM_PROVIDER=lmstudio
 export HINDSIGHT_API_LLM_BASE_URL=http://localhost:1234/v1
@@ -204,6 +215,11 @@ export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash  # or deepseek-v4-pro / deepsee
 export HINDSIGHT_API_LLM_PROVIDER=zai
 export HINDSIGHT_API_LLM_API_KEY=your-zai-api-key
 export HINDSIGHT_API_LLM_MODEL=glm-4.5-flash  # or glm-4.5-air for the paid tier
+
+# opencode-go (OpenAI-compatible)
+export HINDSIGHT_API_LLM_PROVIDER=opencode-go
+export HINDSIGHT_API_LLM_API_KEY=your-opencode-go-api-key
+export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
 
 # Vertex AI (Google Cloud)
 export HINDSIGHT_API_LLM_PROVIDER=vertexai
@@ -407,9 +423,12 @@ Converts text into dense vector representations for semantic similarity search.
 |----------|-------------|----------|
 | `local` | SentenceTransformers (default) | Development, low latency |
 | `openai` | OpenAI embeddings API | Production, high quality |
+| `openai-codex` | OpenAI embeddings via Codex OAuth (ChatGPT Plus/Pro, no API key) | Existing ChatGPT/Codex subscribers |
+| `openrouter` | OpenRouter embeddings (OpenAI-compatible gateway) | Multi-provider setups |
 | `cohere` | Cohere embeddings API | Production, multilingual |
 | `google` | Google embeddings (Gemini API or Vertex AI) | Production, multilingual, high quality |
 | `tei` | HuggingFace Text Embeddings Inference | Production, self-hosted |
+| `zeroentropy` | ZeroEntropy zembed-1 | Production, high quality retrieval |
 | `litellm` | LiteLLM proxy (unified gateway) | Multi-provider setups |
 | `litellm-sdk` | LiteLLM SDK (direct API, no proxy) | Multi-provider, simpler setup |
 
@@ -442,6 +461,14 @@ Google's `gemini-embedding-001` supports configurable output dimensionality via 
 |-------|------------|----------|
 | `embed-english-v3.0` | 1024 | English text |
 | `embed-multilingual-v3.0` | 1024 | 100+ languages |
+
+### ZeroEntropy Models
+
+| Model | Dimensions | Use Case |
+|-------|------------|----------|
+| `zembed-1` | 1280 default (2560/1280/640/320/160/80/40 configurable) | High quality asymmetric retrieval |
+
+Hindsight sends retained memory text to ZeroEntropy as `document` inputs and recall/search text as `query` inputs. ZeroEntropy's API default is 2560 dimensions; Hindsight defaults to 1280 so pgvector HNSW works without changing the vector extension.
 
 > **⚠️ Embedding Dimensions**
 > 
@@ -477,6 +504,12 @@ export HINDSIGHT_API_EMBEDDINGS_VERTEXAI_PROJECT_ID=your-gcp-project-id
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=tei
 export HINDSIGHT_API_EMBEDDINGS_TEI_URL=http://localhost:8080
 
+# ZeroEntropy
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=zeroentropy
+export HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY=your-api-key
+export HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_MODEL=zembed-1
+export HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_DIMENSIONS=1280
+
 # LiteLLM proxy
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=litellm
 export HINDSIGHT_API_LITELLM_API_BASE=http://localhost:4000
@@ -506,6 +539,7 @@ Reranks initial search results to improve precision.
 | `cohere` | Cohere rerank API | Production, high quality |
 | `zeroentropy` | ZeroEntropy rerank API (zerank-2) | Production, state-of-the-art accuracy |
 | `siliconflow` | SiliconFlow rerank API (Cohere-compatible `/rerank` endpoint) | Users in China or anyone on SiliconFlow's platform |
+| `alibaba` | Alibaba Cloud DashScope rerank API (qwen3-rerank) | Users on Alibaba Cloud / DashScope |
 | `tei` | HuggingFace Text Embeddings Inference | Production, self-hosted |
 | `flashrank` | FlashRank (lightweight, fast) | Resource-constrained environments |
 | `litellm` | LiteLLM proxy (unified gateway) | Multi-provider setups |
@@ -542,6 +576,14 @@ SiliconFlow hosts a range of open-weight rerankers behind a Cohere-compatible `/
 |-------|----------|
 | `BAAI/bge-reranker-v2-m3` | Multilingual, strong default |
 | `Qwen/Qwen3-Reranker-8B` | Larger, higher accuracy |
+
+### Alibaba Cloud Models
+
+Alibaba Cloud DashScope exposes `qwen3-rerank` via a Cohere-compatible `/reranks` endpoint:
+
+| Model | Use Case |
+|-------|----------|
+| `qwen3-rerank` | 100+ languages, default |
 
 ### LiteLLM Supported Providers
 
@@ -588,6 +630,11 @@ export HINDSIGHT_API_RERANKER_PROVIDER=siliconflow
 export HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY=your-api-key
 export HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL=BAAI/bge-reranker-v2-m3  # default, can omit
 
+# Alibaba Cloud DashScope (qwen3-rerank)
+export HINDSIGHT_API_RERANKER_PROVIDER=alibaba
+export HINDSIGHT_API_RERANKER_ALIBABA_API_KEY=your-dashscope-api-key
+export HINDSIGHT_API_RERANKER_ALIBABA_MODEL=qwen3-rerank  # default, can omit
+
 # TEI (self-hosted)
 export HINDSIGHT_API_RERANKER_PROVIDER=tei
 export HINDSIGHT_API_RERANKER_TEI_URL=http://localhost:8081
@@ -605,4 +652,3 @@ export HINDSIGHT_API_RERANKER_PROVIDER=rrf
 ```
 
 See [Configuration](./configuration#reranker) for all options including Azure-hosted endpoints and batch settings.
-

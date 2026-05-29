@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(
@@ -18,6 +19,12 @@ export async function GET(
     return NextResponse.json(body, { status: upstream.status });
   } catch (error) {
     console.error("Error fetching memories timeseries:", error);
-    return NextResponse.json({ error: "Failed to fetch memories timeseries" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to fetch memories timeseries",
+        errorKey: "api.errors.stats.memoriesTimeseries",
+      }),
+      { status: 500 }
+    );
   }
 }

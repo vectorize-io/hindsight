@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/hindsight-control-plane",
-  "version": "0.6.2",
+  "version": "0.7.1",
   "description": "Control plane for Hindsight - Semantic memory system",
   "bin": {
     "hindsight-control-plane": "./bin/cli.js"
@@ -16,6 +16,9 @@
     "build:standalone": "rm -rf standalone && SERVER_JS=$(find .next/standalone -path '*/node_modules' -prune -o -name 'server.js' -print | head -1) && test -n \"$SERVER_JS\" || (echo 'Error: server.js not found in .next/standalone - standalone build failed' && exit 1) && STANDALONE_ROOT=$(dirname \"$SERVER_JS\") && cp -r \"$STANDALONE_ROOT\" standalone && cp -r .next/standalone/node_modules standalone/node_modules && mkdir -p standalone/.next && cp -r .next/static standalone/.next/static && mkdir -p standalone/public && (cp -r public/* standalone/public/ 2>/dev/null || true)",
     "start": "next start",
     "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "i18n:check": "tsx scripts/find-untranslated.ts",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -57,6 +60,7 @@
     "eslint-config-next": "^16.0.1",
     "lucide-react": "^0.553.0",
     "next": "^16.2.6",
+    "next-intl": "^4.12.0",
     "next-themes": "^0.4.6",
     "postcss": "^8.5.6",
     "react": "^19.2.0",
@@ -81,6 +85,8 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "prettier": "^3.7.4",
-    "typescript-eslint": "^8.50.0"
+    "tsx": "^4.22.3",
+    "typescript-eslint": "^8.50.0",
+    "vitest": "^4.1.7"
   }
 }

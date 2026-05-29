@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function POST(request: NextRequest) {
@@ -9,14 +10,38 @@ export async function POST(request: NextRequest) {
     // Extract bank_id from request JSON
     const requestJson = formData.get("request");
     if (!requestJson || typeof requestJson !== "string") {
-      return NextResponse.json({ error: "Missing request data" }, { status: 400 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "Missing request data",
+          errorKey: "api.errors.validation.missingRequestData",
+        }),
+        { status: 400 }
+      );
     }
 
-    const requestData = JSON.parse(requestJson);
+    let requestData: { bank_id?: string };
+    try {
+      requestData = JSON.parse(requestJson);
+    } catch {
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "Invalid request body",
+          errorKey: "api.errors.auth.invalidRequestBody",
+        }),
+        { status: 400 }
+      );
+    }
+
     const bankId = requestData.bank_id;
 
     if (!bankId) {
-      return NextResponse.json({ error: "Missing bank_id" }, { status: 400 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "Missing bank_id",
+          errorKey: "api.errors.validation.missingBankId",
+        }),
+        { status: 400 }
+      );
     }
 
     // Use the shared dataplane URL configuration
@@ -46,7 +71,10 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Error uploading files:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to upload files" },
+      localizeApiErrorPayload(request, {
+        error: error instanceof Error ? error.message : "Failed to upload files",
+        errorKey: "api.errors.files.upload",
+      }),
       { status: 500 }
     );
   }

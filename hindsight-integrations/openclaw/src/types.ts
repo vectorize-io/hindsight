@@ -105,7 +105,7 @@ export interface PluginConfig {
   retainToolCalls?: boolean; // When true (default) and retainFormat='json', each message's content is an Anthropic-shaped array of typed blocks (text, tool_use, tool_result) including the agent's tool calls and their results. When false, content is a flat string with only text.
   recallBudget?: "low" | "mid" | "high"; // Recall effort. Default: 'mid'
   recallMaxTokens?: number; // Max tokens for recall response. Default: 1024
-  recallTypes?: Array<"world" | "experience" | "observation">; // Memory types to recall. Default: ['world', 'experience']
+  recallTypes?: Array<"world" | "experience" | "observation">; // Memory types to recall. Default: ['observation'] — surfaces only the consolidated, deduplicated view (raw world/experience facts can drive the same answer multiple times when many memories say the same thing).
   recallRoles?: Array<"user" | "assistant" | "system" | "tool">; // Roles to include when composing contextual recall query. Default: ['user', 'assistant']
   includeSenderContext?: boolean; // When true (default), prepend a session context block (sender, channel, provider) to retained transcripts so similarity search can distinguish memories by speaker even when dynamicBankGranularity does not include 'user'. Set false to omit.
   retainDocumentScope?: "session" | "turn"; // Granularity of the retained document_id. 'session' (default) groups all retains under a single document per OpenClaw session (`openclaw:{sessionKey}`). 'turn' produces a new document per retain (`openclaw:{sessionKey}:turn:NNNNNN` / `:window:NNNNNN`).

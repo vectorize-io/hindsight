@@ -270,6 +270,7 @@ class OracleDialect(SQLDialect):
         groups_clause: str = "",
         arm_index: int = 0,
         text_search_extension: str = "native",
+        bm25_language: str = "english",
         extra_where: str = "",
     ) -> str:
         # Oracle Text: CONTAINS() / SCORE() with the CTXSYS.CONTEXT index.

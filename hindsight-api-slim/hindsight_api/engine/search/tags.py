@@ -191,21 +191,21 @@ class TagGroupLeaf(BaseModel):
 class TagGroupAnd(BaseModel):
     """Compound AND group: all child filters must match."""
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
     filters: list[TagGroup] = Field(alias="and")
 
 
 class TagGroupOr(BaseModel):
     """Compound OR group: at least one child filter must match."""
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
     filters: list[TagGroup] = Field(alias="or")
 
 
 class TagGroupNot(BaseModel):
     """Compound NOT group: child filter must NOT match."""
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
     filter: TagGroup = Field(alias="not")
 
 

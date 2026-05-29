@@ -1,13 +1,13 @@
 """
 Entity processing for retain pipeline.
 
-Handles entity extraction, resolution, and link creation for stored facts.
+Handles entity extraction and resolution for stored facts.
 """
 
 import logging
 
 from . import link_utils
-from .types import EntityLink, ProcessedFact
+from .types import ProcessedFact
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +76,7 @@ async def resolve_entities(
         entity_labels: Optional entity label taxonomy
 
     Returns:
-        Tuple of (resolved_entity_ids, entity_to_unit, unit_to_entity_ids)
-        to pass to build_entity_links().
+        Tuple of (resolved_entity_ids, entity_to_unit, unit_to_entity_ids).
     """
     if not unit_ids or not facts:
         return [], [], {}
@@ -99,68 +98,3 @@ async def resolve_entities(
         log_buffer,
         entity_labels=entity_labels,
     )
-
-
-async def build_entity_links(
-    entity_resolver,
-    conn,
-    bank_id: str,
-    unit_ids: list[str],
-    resolved_entity_ids: list[str],
-    entity_to_unit: list[tuple],
-    unit_to_entity_ids: dict[str, list[str]],
-    log_buffer: list[str] = None,
-    skip_unit_entities_insert: bool = False,
-    ops=None,
-) -> list[EntityLink]:
-    """
-    Build entity links for UI graph visualization.
-
-    Queries unit_entities to find shared entities between new and existing units,
-    then generates EntityLink objects. When called from Phase 3 (post-transaction),
-    set skip_unit_entities_insert=True since unit_entities were already inserted
-    in Phase 2.
-
-    Args:
-        entity_resolver: EntityResolver instance
-        conn: Database connection
-        bank_id: Bank identifier
-        unit_ids: Actual unit IDs (must already be inserted in the DB)
-        resolved_entity_ids: From resolve_entities()
-        entity_to_unit: From resolve_entities()
-        unit_to_entity_ids: From resolve_entities()
-        log_buffer: Optional buffer for detailed logging
-        skip_unit_entities_insert: Skip unit_entities INSERT (already done in Phase 2)
-        ops: DataAccessOps instance (from backend.ops)
-
-    Returns:
-        List of EntityLink objects for batch insertion
-    """
-    return await link_utils.build_entity_links_from_resolved(
-        entity_resolver,
-        conn,
-        bank_id,
-        unit_ids,
-        resolved_entity_ids,
-        entity_to_unit,
-        unit_to_entity_ids,
-        log_buffer,
-        skip_unit_entities_insert=skip_unit_entities_insert,
-        ops=ops,
-    )
-
-
-async def insert_entity_links_batch(conn, entity_links: list[EntityLink], bank_id: str, ops=None) -> None:
-    """
-    Insert entity links in batch.
-
-    Args:
-        conn: Database connection
-        entity_links: List of EntityLink objects
-        bank_id: Bank identifier (stored directly on memory_links for fast filtering)
-        ops: DataAccessOps instance (from backend.ops)
-    """
-    if not entity_links:
-        return
-
-    await link_utils.insert_entity_links_batch(conn, entity_links, bank_id, ops=ops)

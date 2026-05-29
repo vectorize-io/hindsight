@@ -145,8 +145,9 @@ async def test_async_batch_retain_tracks_all_document_ids_with_none_provider(non
         request_context=request_context,
     )
 
-    # Poll until the async operation completes (avoid flaky sleep)
-    for _ in range(50):
+    # Poll until the async operation completes; SyncTaskBackend executes inline
+    # but extra iterations absorb DB commit latency under load.
+    for _ in range(100):
         status = await none_memory.get_operation_status(
             bank_id=bank_id,
             operation_id=result["operation_id"],
@@ -246,6 +247,21 @@ async def test_http_retain_works(none_api_client):
         json={"items": [{"content": "Hello world", "context": "test"}]},
     )
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", ["", "   \n\t"])
+async def test_http_retain_rejects_blank_content(none_api_client, content):
+    """Retain endpoint should reject empty or whitespace-only content."""
+    bank_id = f"test_none_http_retain_blank_{datetime.now(timezone.utc).timestamp()}"
+
+    response = await none_api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={"items": [{"content": content, "context": "test"}]},
+    )
+
+    assert response.status_code == 422
+    assert "content cannot be empty" in str(response.json()["detail"])
 
 
 @pytest.mark.asyncio

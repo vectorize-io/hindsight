@@ -15,6 +15,8 @@ from hindsight_api import LLMConfig
 from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
 
+pytestmark = pytest.mark.hs_llm_core
+
 
 class TestCausalRelationsValidation:
     """Tests for causal relations index validation."""

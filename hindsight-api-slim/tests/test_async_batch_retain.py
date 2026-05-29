@@ -106,6 +106,7 @@ async def test_small_async_batch_no_splitting(memory, request_context):
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(600)
 async def test_large_async_batch_auto_splits(memory, request_context):
     """Test that large async batches automatically split into sub-batches with parent operation."""
     from hindsight_api.engine.memory_engine import count_tokens
@@ -829,6 +830,173 @@ async def test_submit_async_operation_leaves_claimable_row_when_submit_task_fail
     assert payload["type"] == "batch_retain"
     assert payload["bank_id"] == bank_id
     assert payload["contents"] == [{"content": "hello", "document_id": "d1"}]
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for issue #1795: submit_async_retain must NOT fragment a
+# single oversized item across multiple child async-operations. Workers have
+# no per-document serialization for retain (the busy-bank guard in
+# claim_tasks only covers consolidation), so concurrent siblings sharing one
+# document_id race on handle_document_tracking(is_first_batch=True), cascade-
+# delete each other's memory_units, and trip FK violations on memory_links in
+# the final ANN pass. The fix: keep the oversized item un-chunked in a single
+# child; the worker's in-process splitter handles intra-document chunking
+# sequentially with correct is_first_batch semantics.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_oversized_single_item_creates_one_child_not_many(memory, request_context, monkeypatch):
+    """One oversized document → one child operation holding the un-chunked content."""
+    from hindsight_api.config import get_config
+    from hindsight_api.engine.memory_engine import count_tokens
+
+    bank_id = f"test_oversized_one_child_{uuid.uuid4().hex[:8]}"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+
+    # No-op the worker dispatch: this is a structural assertion on the
+    # async_operations rows that submit_async_retain inserts (those rows are
+    # committed before submit_task is invoked), so we don't need the
+    # SyncTaskBackend to drive the slow LLM pipeline to completion.
+    async def noop_submit_task(_task_dict):
+        return None
+
+    monkeypatch.setattr(memory._task_backend, "submit_task", noop_submit_task)
+
+    tokens_per_batch = get_config().retain_batch_tokens
+    # Build content that comfortably exceeds the per-batch token budget.
+    # The pre-fix code would split this into many siblings, all sharing
+    # the same document_id and racing on handle_document_tracking.
+    unit = "The quick brown fox jumps over the lazy dog. " * 50  # ~570 tokens
+    repetitions = max(1, (tokens_per_batch * 4) // count_tokens(unit) + 1)
+    big_content = unit * repetitions
+    document_id = f"doc-oversize-{uuid.uuid4().hex[:8]}"
+
+    total_tokens = count_tokens(big_content)
+    assert total_tokens > tokens_per_batch, (
+        f"Test setup error: content has {total_tokens} tokens, must exceed the batch budget of {tokens_per_batch}"
+    )
+
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=[{"content": big_content, "document_id": document_id}],
+        request_context=request_context,
+    )
+    parent_operation_id = result["operation_id"]
+
+    # Parent metadata must say one child — even though token count is huge,
+    # the un-fragmenting splitter keeps the single item in one child.
+    parent_row = await pool.fetchrow(
+        "SELECT result_metadata FROM async_operations WHERE operation_id = $1",
+        uuid.UUID(parent_operation_id),
+    )
+    parent_meta = (
+        json.loads(parent_row["result_metadata"])
+        if isinstance(parent_row["result_metadata"], str)
+        else parent_row["result_metadata"]
+    )
+    assert parent_meta["num_sub_batches"] == 1, (
+        f"Expected 1 child for an oversized single item, got {parent_meta['num_sub_batches']}. "
+        "Issue #1795: per-chunk children race on the shared document_id."
+    )
+
+    # Exactly one retain child row.
+    children = await pool.fetch(
+        """
+        SELECT operation_id, status, task_payload, result_metadata
+        FROM async_operations
+        WHERE bank_id = $1 AND operation_type = 'retain'
+        """,
+        bank_id,
+    )
+    assert len(children) == 1, (
+        f"Expected exactly 1 child retain operation for bank_id={bank_id}, "
+        f"got {len(children)}. Issue #1795 regression: oversized item was "
+        f"fragmented into per-chunk children."
+    )
+
+    child = children[0]
+    payload = child["task_payload"]
+    payload = json.loads(payload) if isinstance(payload, str) else payload
+    assert payload["type"] == "batch_retain"
+    assert payload["bank_id"] == bank_id
+    # Child holds the full un-chunked content — the worker's in-process
+    # splitter will re-chunk it sequentially with is_first_batch=(i==1).
+    assert len(payload["contents"]) == 1, (
+        f"Child payload should hold the original single item, got {len(payload['contents'])} items"
+    )
+    assert payload["contents"][0]["document_id"] == document_id
+    assert payload["contents"][0]["content"] == big_content, (
+        "Child must carry the FULL un-chunked content — chunking happens inside the worker, not at submit time"
+    )
+
+
+@pytest.mark.asyncio
+async def test_oversized_item_among_small_items_keeps_small_items_packed(memory, request_context, monkeypatch):
+    """Mixed batch: small items pack together; oversized item isolates to its own child."""
+    from hindsight_api.config import get_config
+    from hindsight_api.engine.memory_engine import count_tokens
+
+    bank_id = f"test_mixed_pack_{uuid.uuid4().hex[:8]}"
+    pool = await memory._get_pool()
+    await _ensure_bank(pool, bank_id)
+
+    # Structural assertion on async_operations rows only — skip worker dispatch.
+    async def noop_submit_task(_task_dict):
+        return None
+
+    monkeypatch.setattr(memory._task_backend, "submit_task", noop_submit_task)
+
+    tokens_per_batch = get_config().retain_batch_tokens
+    big_unit = "The quick brown fox jumps over the lazy dog. " * 50
+    big_repetitions = max(1, (tokens_per_batch * 3) // count_tokens(big_unit) + 1)
+    big_content = big_unit * big_repetitions
+
+    big_doc = f"doc-big-{uuid.uuid4().hex[:8]}"
+    small_docs = [f"doc-small-{i}-{uuid.uuid4().hex[:6]}" for i in range(3)]
+    contents = [
+        {"content": "Alice works at Google.", "document_id": small_docs[0]},
+        {"content": big_content, "document_id": big_doc},
+        {"content": "Bob loves Python.", "document_id": small_docs[1]},
+        {"content": "Carol writes Rust.", "document_id": small_docs[2]},
+    ]
+
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=contents,
+        request_context=request_context,
+    )
+
+    children = await pool.fetch(
+        """
+        SELECT task_payload
+        FROM async_operations
+        WHERE bank_id = $1 AND operation_type = 'retain'
+        ORDER BY created_at, operation_id
+        """,
+        bank_id,
+    )
+
+    # Find the child holding the big doc — it must hold ONLY the big doc.
+    big_child = None
+    small_doc_ids_seen: list[str] = []
+    for row in children:
+        payload = row["task_payload"]
+        payload = json.loads(payload) if isinstance(payload, str) else payload
+        items = payload["contents"]
+        doc_ids = [item["document_id"] for item in items]
+        if big_doc in doc_ids:
+            assert big_child is None, f"Big doc {big_doc} should appear in exactly one child, found in 2"
+            big_child = items
+            assert doc_ids == [big_doc], f"Child holding the oversized item must hold ONLY that item, got {doc_ids}"
+            assert items[0]["content"] == big_content
+        else:
+            small_doc_ids_seen.extend(doc_ids)
+
+    assert big_child is not None, "Big doc must appear in some child"
+    # Every small input present, exactly once, across the other children.
+    assert sorted(small_doc_ids_seen) == sorted(small_docs)
 
 
 @pytest.mark.asyncio

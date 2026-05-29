@@ -72,6 +72,9 @@ _RETURNING_RE = re.compile(r"\bRETURNING\s+(.+)", re.IGNORECASE | re.DOTALL)
 
 _ANY_RE = re.compile(r"=\s*ANY\s*\(\s*:(\d+)\s*\)", re.IGNORECASE)
 _NOT_ALL_RE = re.compile(r"!=\s*ALL\s*\(\s*:(\d+)\s*\)", re.IGNORECASE)
+# LIKE ANY / NOT LIKE ALL — capture the column name before the operator
+_LIKE_ANY_RE = re.compile(r"(\w+)\s+LIKE\s+ANY\s*\(\s*:(\d+)\s*\)", re.IGNORECASE)
+_NOT_LIKE_ALL_RE = re.compile(r"(\w+)\s+NOT\s+LIKE\s+ALL\s*\(\s*:(\d+)\s*\)", re.IGNORECASE)
 
 _JSON_ARROW_TEXT_RE = re.compile(r'("?\w+"?)\s*->>\s*\'(\w+)\'')  # handles both col and "col"
 _JSON_HAS_KEY_RE = re.compile(r"(\w+)\s*\?\s*'(\w+)'")
@@ -535,6 +538,12 @@ def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
     # != ALL(:N) → NOT IN (expanded list) — the negative counterpart of = ANY
     query = _NOT_ALL_RE.sub(r"NOT IN (/*EXPAND:\1*/)", query)
 
+    # col LIKE ANY(:N) → (col LIKE :p0 OR col LIKE :p1 OR ...)
+    query = _LIKE_ANY_RE.sub(r"\1 /*LIKE_ANY:\2:\1*/", query)
+
+    # col NOT LIKE ALL(:N) → (col NOT LIKE :p0 AND col NOT LIKE :p1 AND ...)
+    query = _NOT_LIKE_ALL_RE.sub(r"\1 /*NOT_LIKE_ALL:\2:\1*/", query)
+
     # CTE AS MATERIALIZED (...) → AS (...) — Oracle doesn't support MATERIALIZED CTE hint
     query = re.sub(r"\bAS\s+MATERIALIZED\s*\(", "AS (", query, flags=re.IGNORECASE)
 
@@ -725,16 +734,37 @@ class OracleConnection(DatabaseConnection):
     _expand_counter = 0
 
     @staticmethod
+    def _resolve_list_param(params: dict[str, Any], key: str) -> list | None:
+        """Resolve a parameter that may be a list or a JSON-encoded list string."""
+        val = params.get(key)
+        if isinstance(val, str):
+            try:
+                parsed = json.loads(val)
+                if isinstance(parsed, list):
+                    return parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+        if isinstance(val, (list, tuple)):
+            return list(val)
+        return None
+
+    @staticmethod
     def _expand_any_lists(query: str, params: dict[str, Any] | None) -> tuple[str, dict[str, Any] | None]:
-        """Expand /*EXPAND:N*/ markers into individual bind vars for IN clauses.
+        """Expand /*EXPAND:N*/, /*LIKE_ANY:N:col*/, /*NOT_LIKE_ALL:N:col*/ markers.
 
         Converts: IN (/*EXPAND:1*/) with params["1"] = [a, b, c]
         Into:     IN (:any_0, :any_1, :any_2) with params["any_0"]=a, etc.
 
+        Converts: col /*LIKE_ANY:1:col*/ with params["1"] = [a, b]
+        Into:     (col LIKE :lk_0 OR col LIKE :lk_1)
+
+        Converts: col /*NOT_LIKE_ALL:1:col*/ with params["1"] = [a, b]
+        Into:     (col NOT LIKE :nlk_0 AND col NOT LIKE :nlk_1)
+
         Uses a unique prefix to avoid name collisions with other bind vars.
         The original param is kept (for other references to :N in the query).
         """
-        if params is None or "/*EXPAND:" not in query:
+        if params is None or "/*" not in query:
             return query, params
 
         expand_re = re.compile(r"/\*EXPAND:(\d+)\*/")
@@ -774,6 +804,50 @@ class OracleConnection(DatabaseConnection):
             return ", ".join(expanded_keys)
 
         query = expand_re.sub(_replace, query)
+
+        # Expand LIKE ANY: col /*LIKE_ANY:N:col*/ → (col LIKE :p0 OR col LIKE :p1 ...)
+        like_any_re = re.compile(r"(\w+)\s*/\*LIKE_ANY:(\d+):(\w+)\*/")
+
+        def _replace_like_any(m):
+            _col = m.group(1)  # redundant column ref before marker
+            param_key = m.group(2)
+            col = m.group(3)
+            val = OracleConnection._resolve_list_param(params, param_key)
+            if val is None or len(val) == 0:
+                return "1=0"  # no patterns → no match
+            OracleConnection._expand_counter += 1
+            prefix = f"lk{OracleConnection._expand_counter}"
+            clauses = []
+            for i, item in enumerate(val):
+                k = f"{prefix}_{i}"
+                params[k] = item
+                clauses.append(f"{col} LIKE :{k}")
+            keys_to_remove.add(param_key)
+            return f"({' OR '.join(clauses)})"
+
+        query = like_any_re.sub(_replace_like_any, query)
+
+        # Expand NOT LIKE ALL: col /*NOT_LIKE_ALL:N:col*/ → (col NOT LIKE :p0 AND ...)
+        not_like_all_re = re.compile(r"(\w+)\s*/\*NOT_LIKE_ALL:(\d+):(\w+)\*/")
+
+        def _replace_not_like_all(m):
+            _col = m.group(1)
+            param_key = m.group(2)
+            col = m.group(3)
+            val = OracleConnection._resolve_list_param(params, param_key)
+            if val is None or len(val) == 0:
+                return "1=1"  # no patterns → everything matches
+            OracleConnection._expand_counter += 1
+            prefix = f"nlk{OracleConnection._expand_counter}"
+            clauses = []
+            for i, item in enumerate(val):
+                k = f"{prefix}_{i}"
+                params[k] = item
+                clauses.append(f"{col} NOT LIKE :{k}")
+            keys_to_remove.add(param_key)
+            return f"({' AND '.join(clauses)})"
+
+        query = not_like_all_re.sub(_replace_not_like_all, query)
 
         # Remove original list params that were expanded — their placeholder
         # (:N) no longer exists in the query, and leaving them causes DPY-4008.

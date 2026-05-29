@@ -268,6 +268,7 @@ async def _run_migration(
         ensure_text_search_extension(
             resolved_url,
             text_search_extension=config.text_search_extension,
+            pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
             schema=schema,
         )
 

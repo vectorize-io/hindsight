@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useCallback, useMemo, useState } from "react";
+import { useTranslations } from "next-intl";
 import { prepare, layout, prepareWithSegments, layoutWithLines } from "@chenglou/pretext";
 import type { GraphData, GraphNode, GraphLink } from "./graph-2d";
 
@@ -177,6 +178,7 @@ export function Constellation({
   compactLabels,
   sizeLegendLabel,
 }: ConstellationProps) {
+  const t = useTranslations("constellation");
   const wrapperRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -533,7 +535,13 @@ export function Constellation({
     ctx.fillStyle = isDark ? "#71717a" : "#71717a";
     ctx.textAlign = "left";
     ctx.fillText(
-      `${preparedNodes.length} memories · ${visibleCount} visible · ${labelsShown} labels · ${linksDrawn} links · zoom ${zoom.toFixed(2)}x`,
+      t("hudStats", {
+        memories: preparedNodes.length,
+        visible: visibleCount,
+        labels: labelsShown,
+        links: linksDrawn,
+        zoom: zoom.toFixed(2),
+      }),
       12,
       H - 12
     );
@@ -542,10 +550,16 @@ export function Constellation({
     ctx.textAlign = "right";
     let legendX = W - 12;
     ctx.font = FONT_BOLD;
+    const linkTypeLabel: Record<string, string> = {
+      semantic: t("linkTypeSemantic"),
+      temporal: t("linkTypeTemporal"),
+      entity: t("linkTypeEntity"),
+    };
     for (const [type, color] of Object.entries(LINK_TYPE_COLORS).reverse()) {
-      const tw = ctx.measureText(type).width;
+      const label = linkTypeLabel[type] ?? type;
+      const tw = ctx.measureText(label).width;
       ctx.fillStyle = isDark ? "#a1a1aa" : "#52525b";
-      ctx.fillText(type, legendX, H - 12);
+      ctx.fillText(label, legendX, H - 12);
       legendX -= tw + 4;
       ctx.fillStyle = color;
       ctx.beginPath();
@@ -558,8 +572,8 @@ export function Constellation({
     ctx.textAlign = "left";
     ctx.font = FONT_BOLD;
     ctx.fillStyle = isDark ? "#a1a1aa" : "#52525b";
-    ctx.fillText((heatLegendLabel || "LINKS").toUpperCase(), 12, 36);
-    const [heatLo, heatHi] = heatLegendEndpoints || ["few", "many"];
+    ctx.fillText((heatLegendLabel || t("legendLinks")).toUpperCase(), 12, 36);
+    const [heatLo, heatHi] = heatLegendEndpoints || [t("legendFew"), t("legendMany")];
     // Size the bar so both endpoint labels fit without overlap (e.g. ISO dates
     // are wider than "few"/"many"). Min 80px keeps the visual weight stable.
     ctx.font = MONO;
@@ -607,7 +621,7 @@ export function Constellation({
     ctx.textAlign = "left";
     ctx.font = MONO;
     ctx.fillStyle = isDark ? "#52525b" : "#a1a1aa";
-    ctx.fillText("Scroll to zoom · Drag to pan · Hover to explore · Click to select", 12, 16);
+    ctx.fillText(t("instructions"), 12, 16);
 
     ctx.restore();
 
@@ -937,7 +951,7 @@ export function Constellation({
   useEffect(() => {
     if (!canvasRef.current) return;
     // Small delay to let the DOM update
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       const dpr = window.devicePixelRatio || 1;
       const rect = canvasRef.current!.getBoundingClientRect();
       canvasRef.current!.width = rect.width * dpr;
@@ -946,7 +960,7 @@ export function Constellation({
       stateRef.current.W = rect.width;
       stateRef.current.H = rect.height;
     }, 50);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [isFullscreen]);
 
   return (
@@ -992,7 +1006,7 @@ export function Constellation({
         onMouseLeave={(e) => {
           (e.currentTarget as HTMLButtonElement).style.opacity = "0.7";
         }}
-        title={isFullscreen ? "Exit fullscreen (Esc)" : "Enter fullscreen"}
+        title={isFullscreen ? t("exitFullscreenTitle") : t("enterFullscreenTitle")}
       >
         {isFullscreen ? (
           <svg
@@ -1027,7 +1041,7 @@ export function Constellation({
             <line x1="3" y1="21" x2="10" y2="14" />
           </svg>
         )}
-        {isFullscreen ? "Exit" : "Fullscreen"}
+        {isFullscreen ? t("exitFullscreenLabel") : t("enterFullscreenLabel")}
       </button>
 
       {/* Tooltip */}

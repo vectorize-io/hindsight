@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.6.2"
+    "version": "0.7.1"
   },
   "paths": {
     "/health": {
@@ -1673,6 +1673,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AsyncOperationSubmitResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear": {
+      "post": {
+        "tags": [
+          "Mental Models"
+        ],
+        "summary": "Clear mental model content",
+        "description": "Clear a mental model's content so the next refresh performs a full re-synthesis. This is useful for delta-mode models that have accumulated drift over many incremental refreshes. After clearing, call the /refresh endpoint to trigger a clean full rebuild.",
+        "operationId": "clear_mental_model",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "mental_model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Mental Model Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MentalModelResponse"
                 }
               }
             }
@@ -4069,6 +4137,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ConsolidationRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Request"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -6451,6 +6536,31 @@
         "example": {
           "deleted_count": 3
         }
+      },
+      "ConsolidationRequest": {
+        "properties": {
+          "observation_scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observation Scopes",
+            "description": "Optional list of tag scopes to consolidate. Each scope is a list of tags. Only unconsolidated memories whose tags contain all tags in at least one scope will be processed. If omitted, all unconsolidated memories are processed."
+          }
+        },
+        "type": "object",
+        "title": "ConsolidationRequest",
+        "description": "Request model for consolidation trigger endpoint."
       },
       "ConsolidationResponse": {
         "properties": {
@@ -8932,7 +9042,7 @@
               }
             ],
             "title": "Query Timestamp",
-            "description": "ISO format date string (e.g., '2023-05-30T23:40:00')"
+            "description": "ISO format date string (e.g., '2023-05-30T23:40:00'). Used as the query-time anchor for relative temporal expressions and recency scoring."
           },
           "include": {
             "$ref": "#/components/schemas/IncludeOptions",

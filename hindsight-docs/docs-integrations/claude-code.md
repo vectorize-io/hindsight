@@ -10,6 +10,10 @@ Biomimetic long-term memory for [Claude Code](https://docs.anthropic.com/en/docs
 
 [View Changelog →](/changelog/integrations/claude-code)
 
+:::tip Works in Grok Build too
+Grok Build natively supports Claude Code plugins. See the [Grok Build integration guide](/sdks/integrations/grok-build) for Grok-specific setup.
+:::
+
 ## Quick Start
 
 ```bash
@@ -128,7 +132,7 @@ These settings configure which LLM the local daemon uses for fact extraction. Th
 
 | Setting | Env Var | Default | Description |
 |---------|---------|---------|-------------|
-| `llmProvider` | `HINDSIGHT_LLM_PROVIDER` | auto-detect | Which LLM provider to use. Supported values: `openai`, `anthropic`, `gemini`, `groq`, `ollama`, `openai-codex`, `claude-code`. When omitted, the plugin auto-detects by checking for API key env vars in order: `OPENAI_API_KEY` → `ANTHROPIC_API_KEY` → `GEMINI_API_KEY` → `GROQ_API_KEY`. |
+| `llmProvider` | `HINDSIGHT_LLM_PROVIDER` | auto-detect | Which LLM provider to use. Supported values: `openai`, `anthropic`, `gemini`, `groq`, `ollama`, `ollama-cloud`, `openai-codex`, `claude-code`. When omitted, the plugin auto-detects by checking for API key env vars in order: `OPENAI_API_KEY` → `ANTHROPIC_API_KEY` → `GEMINI_API_KEY` → `GROQ_API_KEY`. |
 | `llmModel` | `HINDSIGHT_LLM_MODEL` | provider default | Override the default model for the chosen provider (e.g. `"gpt-4o"`, `"claude-sonnet-4-20250514"`). When omitted, the Hindsight API picks a sensible default for each provider. |
 | `llmApiKeyEnv` | — | provider standard | Name of the environment variable that holds the API key. Normally auto-detected (e.g. `OPENAI_API_KEY` for the `openai` provider). Set this only if your key is in a non-standard env var. |
 
@@ -180,7 +184,7 @@ Auto-recall runs on every user prompt. It queries Hindsight for relevant memorie
 | `autoRecall` | `HINDSIGHT_AUTO_RECALL` | `true` | Master switch for auto-recall. Set to `false` to disable memory retrieval entirely. |
 | `recallBudget` | `HINDSIGHT_RECALL_BUDGET` | `"mid"` | Controls how hard Hindsight searches for memories. `"low"` = fast, fewer strategies; `"mid"` = balanced; `"high"` = thorough, slower. Affects latency directly. |
 | `recallMaxTokens` | `HINDSIGHT_RECALL_MAX_TOKENS` | `1024` | Maximum number of tokens in the recalled memory block. Lower values reduce context usage but may truncate relevant memories. |
-| `recallTypes` | — | `["world", "experience"]` | Which memory types to retrieve. `"world"` = general facts; `"experience"` = personal experiences; `"observation"` = raw observations. |
+| `recallTypes` | — | `["observation"]` | Which memory types to retrieve. `"world"` = general facts; `"experience"` = personal experiences; `"observation"` = consolidated, deduplicated beliefs built from multiple facts. Defaults to observations so the same answer doesn't surface multiple times when many raw memories say the same thing. |
 | `recallContextTurns` | `HINDSIGHT_RECALL_CONTEXT_TURNS` | `1` | How many prior conversation turns to include when composing the recall query. `1` = only the latest user message; higher values give more context but may dilute the query. |
 | `recallMaxQueryChars` | `HINDSIGHT_RECALL_MAX_QUERY_CHARS` | `800` | Maximum character length of the query sent to Hindsight. Longer queries are truncated. |
 | `recallRoles` | — | `["user", "assistant"]` | Which message roles to include when building the recall query from prior turns. |

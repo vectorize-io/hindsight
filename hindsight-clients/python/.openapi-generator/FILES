@@ -43,6 +43,7 @@ hindsight_client_api/models/chunk_data.py
 hindsight_client_api/models/chunk_include_options.py
 hindsight_client_api/models/chunk_response.py
 hindsight_client_api/models/clear_memory_observations_response.py
+hindsight_client_api/models/consolidation_request.py
 hindsight_client_api/models/consolidation_response.py
 hindsight_client_api/models/create_bank_request.py
 hindsight_client_api/models/create_directive_request.py

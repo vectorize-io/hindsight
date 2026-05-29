@@ -1,0 +1,74 @@
+name: hindsight-local-llm
+# Example: run Hindsight against a local llama.cpp server sidecar — fully
+# offline, no external API key needed.
+#
+# Pattern follows https://servicestack.net/posts/hosting-llama-server :
+# llama.cpp runs as its own container exposing an OpenAI-compatible HTTP
+# API, and Hindsight talks to it via the `openai` LLM provider with a
+# custom `base_url`. This means we can use the published Hindsight image
+# unchanged — no derived Dockerfile, no `llama-cpp-python` install on top.
+#
+# Quick start:
+#   docker compose -f docker/docker-compose/local-llm/docker-compose.yaml up
+#
+# First boot downloads the default Gemma 4 E2B GGUF (~3.5 GB) into the
+# `llama_models` volume; subsequent boots reuse it.
+
+services:
+  llama:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: hindsight-local-llm-llama
+    environment:
+      LLAMA_ARG_HOST: 0.0.0.0
+      LLAMA_ARG_PORT: "8080"
+      # Auto-download a small GGUF from HuggingFace on first start.
+      # Override these to use a different model.
+      LLAMA_ARG_HF_REPO: bartowski/google_gemma-4-E2B-it-GGUF
+      LLAMA_ARG_HF_FILE: google_gemma-4-E2B-it-Q4_K_M.gguf
+      LLAMA_ARG_CTX_SIZE: "8192"
+      # Uncomment for NVIDIA GPU (and switch image to :server-cuda):
+      # LLAMA_ARG_N_GPU_LAYERS: "999"
+    volumes:
+      # llama-server stores HuggingFace downloads under ~/.cache/huggingface
+      # (not ~/.cache/llama.cpp), so mount the named volume there to avoid
+      # re-downloading the GGUF on every recreate.
+      - llama_models:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+    # For NVIDIA GPU acceleration, swap the image above to
+    # `ghcr.io/ggml-org/llama.cpp:server-cuda` and uncomment:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:latest
+    container_name: hindsight-local-llm
+    depends_on:
+      llama:
+        condition: service_healthy
+    ports:
+      - "8888:8888"
+      - "9999:9999"
+    environment:
+      # llama-server is OpenAI-compatible, so use the `openai` provider and
+      # point base_url at the sidecar. The API key is unused by llama-server
+      # but Hindsight requires the env var to be set.
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: http://llama:8080/v1
+      HINDSIGHT_API_LLM_API_KEY: not-needed
+      HINDSIGHT_API_LLM_MODEL: gemma-4-e2b-it
+    volumes:
+      - pg_data:/home/hindsight/.pg0
+
+volumes:
+  pg_data:
+  llama_models:

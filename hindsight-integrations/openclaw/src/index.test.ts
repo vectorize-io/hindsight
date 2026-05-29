@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   stripMemoryTags,
   extractRecallQuery,
+  formatCurrentTimeForRecall,
   formatMemories,
   prepareRetentionTranscript,
   countUserTurns,
@@ -14,6 +15,7 @@ import {
   parseSessionKey,
   extractTelegramDirectSenderId,
   resolveSessionIdentity,
+  resolveAndCacheIdentity,
   getIdentitySkipReason,
   isEphemeralOperationalText,
   deriveBankId,
@@ -246,6 +248,22 @@ describe("formatMemories", () => {
 
   it("returns empty string for empty memories", () => {
     expect(formatMemories([])).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatCurrentTimeForRecall — UTC label (#1789, mirrors #1568)
+// ---------------------------------------------------------------------------
+
+describe("formatCurrentTimeForRecall", () => {
+  it("renders the UTC suffix so the LLM doesn't misread it as local time", () => {
+    const fixed = new Date(Date.UTC(2026, 4, 27, 16, 25, 0)); // 2026-05-27 16:25 UTC
+    expect(formatCurrentTimeForRecall(fixed)).toBe("2026-05-27 16:25 UTC");
+  });
+
+  it("zero-pads month / day / hours / minutes", () => {
+    const fixed = new Date(Date.UTC(2026, 0, 3, 4, 5, 0));
+    expect(formatCurrentTimeForRecall(fixed)).toBe("2026-01-03 04:05 UTC");
   });
 });
 
@@ -1184,6 +1202,90 @@ describe("session identity helpers", () => {
       isEphemeralOperationalText("[role: user]\nA new session was started via /new.\n[user:end]")
     ).toBe(true);
     expect(isEphemeralOperationalText("Tell me what I said about dark mode.")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveAndCacheIdentity — dispatch-surface gate (#1541)
+// ---------------------------------------------------------------------------
+
+describe("resolveAndCacheIdentity dispatch-surface gate (#1541)", () => {
+  it("does not skip when session provider is synthetic 'main' (telegram dispatch)", () => {
+    const { resolvedCtx, skipReason } = resolveAndCacheIdentity({
+      sessionKey: "agent:bug1541-tg:main",
+      ctx: { sessionKey: "agent:bug1541-tg:main" },
+      dispatchChannel: "telegram",
+    });
+
+    expect(skipReason).toBeUndefined();
+    expect(resolvedCtx?.messageProvider).toBe("telegram");
+  });
+
+  it("does not skip when session provider is synthetic 'main' (webchat dispatch)", () => {
+    const { skipReason } = resolveAndCacheIdentity({
+      sessionKey: "agent:bug1541-wc:main",
+      ctx: { sessionKey: "agent:bug1541-wc:main" },
+      dispatchChannel: "webchat",
+    });
+
+    expect(skipReason).toBeUndefined();
+  });
+
+  it("does not skip when a static bankId is configured (feishu session via webchat)", () => {
+    const { skipReason } = resolveAndCacheIdentity({
+      sessionKey: "agent:main:feishu:direct:user-1541-static",
+      ctx: {
+        sessionKey: "agent:main:feishu:direct:user-1541-static",
+        senderId: "user-1541-static",
+      },
+      dispatchChannel: "webchat",
+      pluginConfig: { dynamicBankId: false, bankId: "shared-bank" },
+    });
+
+    expect(skipReason).toBeUndefined();
+  });
+
+  it("does not skip when granularity excludes channel and provider (qqbot via webchat)", () => {
+    const { skipReason } = resolveAndCacheIdentity({
+      sessionKey: "agent:main:qqbot:direct:user-1541-agentonly",
+      ctx: {
+        sessionKey: "agent:main:qqbot:direct:user-1541-agentonly",
+        senderId: "user-1541-agentonly",
+      },
+      dispatchChannel: "webchat",
+      pluginConfig: { dynamicBankGranularity: ["agent", "user"] },
+    });
+
+    expect(skipReason).toBeUndefined();
+  });
+
+  it("still skips real-provider mismatch with default granularity (qqbot via webchat)", () => {
+    const { skipReason } = resolveAndCacheIdentity({
+      sessionKey: "agent:main:qqbot:direct:user-1541-default",
+      ctx: {
+        sessionKey: "agent:main:qqbot:direct:user-1541-default",
+        senderId: "user-1541-default",
+      },
+      dispatchChannel: "webchat",
+    });
+
+    expect(skipReason).toEqual({
+      kind: "final",
+      detail: "dispatch surface webchat does not match session provider qqbot",
+    });
+  });
+
+  it("does not skip when dispatch surface matches session provider (qqbot via qqbot)", () => {
+    const { skipReason } = resolveAndCacheIdentity({
+      sessionKey: "agent:main:qqbot:direct:user-1541-match",
+      ctx: {
+        sessionKey: "agent:main:qqbot:direct:user-1541-match",
+        senderId: "user-1541-match",
+      },
+      dispatchChannel: "qqbot",
+    });
+
+    expect(skipReason).toBeUndefined();
   });
 });
 

@@ -9,6 +9,7 @@ automatically handles authentication via `claude auth login` credentials.
 import asyncio
 import json
 import logging
+import tempfile
 import time
 from typing import Any
 
@@ -19,6 +20,32 @@ from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult,
 from hindsight_api.metrics import get_metrics_collector
 
 logger = logging.getLogger(__name__)
+
+
+# Isolation env passed to the spawned `claude` CLI. CLAUDE_CONFIG_DIR
+# redirects the subprocess away from the host's ~/.claude/, so any
+# operator-installed plugins (e.g. hindsight-memory) and their Stop hooks do
+# not fire inside our LLM-call subprocesses. Without this, retain/reflect/
+# consolidation LLM calls would trigger a Stop-hook retain of the subprocess
+# transcript back into the same bank — a recursive feedback loop (issue #1751).
+# CLAUDE_SECURESTORAGE_CONFIG_DIR="" forces the CLI's keychain service name
+# back to the canonical un-suffixed entry that `claude auth login` wrote;
+# otherwise it would be namespaced by sha256(CLAUDE_CONFIG_DIR) and OAuth
+# lookup would fail. Requires bundled CLI >= 2.1.150 (claude-agent-sdk 0.2.82).
+_isolated_claude_env: dict[str, str] | None = None
+
+
+def _get_isolated_claude_env() -> dict[str, str]:
+    """Return a process-lifetime env dict that isolates the spawned CLI from user plugins."""
+    global _isolated_claude_env
+    if _isolated_claude_env is None:
+        path = tempfile.mkdtemp(prefix="hindsight-claude-code-")
+        _isolated_claude_env = {
+            "CLAUDE_CONFIG_DIR": path,
+            "CLAUDE_SECURESTORAGE_CONFIG_DIR": "",
+        }
+        logger.debug(f"Claude Code: isolated CLAUDE_CONFIG_DIR={path}")
+    return _isolated_claude_env
 
 
 class ClaudeCodeLLM(LLMInterface):
@@ -183,6 +210,7 @@ class ClaudeCodeLLM(LLMInterface):
             system_prompt=system_prompt if system_prompt else None,
             max_turns=1,  # Single-turn for API-style interactions
             allowed_tools=[],  # Disable tools for standard LLM calls
+            env=_get_isolated_claude_env(),
         )
 
         # Call Claude Agent SDK
@@ -473,6 +501,7 @@ class ClaudeCodeLLM(LLMInterface):
             max_turns=2,  # Allow tool call + tool result round-trip
             mcp_servers=mcp_servers_config,
             allowed_tools=allowed_tool_names,
+            env=_get_isolated_claude_env(),
         )
 
         # Call Claude Agent SDK with retry logic

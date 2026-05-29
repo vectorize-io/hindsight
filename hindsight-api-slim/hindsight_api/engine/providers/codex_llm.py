@@ -4,12 +4,19 @@ OpenAI Codex LLM provider using ChatGPT Plus/Pro OAuth authentication.
 This provider enables using ChatGPT Plus/Pro subscriptions for API calls
 without separate OpenAI Platform API credits. It uses OAuth tokens from
 ~/.codex/auth.json and communicates with the ChatGPT backend API.
+
+Tokens are refreshed automatically: the provider decodes the access_token
+JWT's ``exp`` claim and proactively refreshes via
+``POST https://auth.openai.com/oauth/token`` ~60s before expiry. It also
+reactively refreshes once on a 401/403 from the Codex backend before giving
+up. The refresh request shape mirrors the canonical ``@openai/codex`` CLI
+implementation (codex-rs/login/src/auth/manager.rs on github.com/openai/codex)
+so that future server-side changes affect both clients identically.
 """
 
 import asyncio
 import json
 import logging
-import os
 import time
 import uuid
 from pathlib import Path
@@ -20,6 +27,26 @@ import httpx
 from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
+
+from .codex_auth import (
+    _CODEX_CLIENT_ID,
+    _CODEX_REFRESH_TOKEN_URL,
+    _CODEX_TERMINAL_REFRESH_ERROR_CODES,
+    _CODEX_TOKEN_REFRESH_SKEW_SECONDS,
+    CodexAuthManager,
+    CodexRefreshExpiredError,
+)
+
+# Re-export for backward compatibility (tests import from this module).
+__all__ = [
+    "CodexLLM",
+    "CodexRefreshExpiredError",
+    "CodexAuthManager",
+    "_CODEX_REFRESH_TOKEN_URL",
+    "_CODEX_CLIENT_ID",
+    "_CODEX_TOKEN_REFRESH_SKEW_SECONDS",
+    "_CODEX_TERMINAL_REFRESH_ERROR_CODES",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +71,15 @@ class CodexLLM(LLMInterface):
         """Initialize Codex LLM provider."""
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
 
-        # Load Codex OAuth credentials
+        # Single-flight async refresh lock. Multiple concurrent coroutines
+        # racing toward an expired token should produce one network refresh.
+        self._auth_lock = asyncio.Lock()
+
+        # Load Codex OAuth credentials (keep these methods for test patching).
         try:
-            self.access_token, self.account_id = self._load_codex_auth()
-            logger.info(f"Loaded Codex OAuth credentials for account: {self.account_id}")
+            access_token, account_id = self._load_codex_auth()
+            refresh_token = self._load_codex_refresh_token()
+            logger.info(f"Loaded Codex OAuth credentials for account: {account_id}")
         except Exception as e:
             raise RuntimeError(
                 f"Failed to load Codex OAuth credentials from ~/.codex/auth.json: {e}\n\n"
@@ -58,9 +90,22 @@ class CodexLLM(LLMInterface):
                 "Or use a different provider (openai, anthropic, gemini) with API keys."
             ) from e
 
-        # Use ChatGPT backend API endpoint
-        if not self.base_url:
+        self._auth_manager = CodexAuthManager(
+            access_token=access_token,
+            account_id=account_id,
+            refresh_token=refresh_token,
+            auth_file=Path.home() / ".codex" / "auth.json",
+        )
+
+        # Use ChatGPT backend API endpoint. Codex auth is tied to
+        # chatgpt.com/backend-api, not the OpenAI-compatible base URL used by
+        # other providers. Deployments often set a global LLM_BASE_URL for an
+        # OpenAI-compatible proxy; ignore that inherited value unless the user
+        # explicitly provides a Codex backend URL.
+        if not self.base_url or self.base_url.rstrip("/").endswith("/v1"):
             self.base_url = "https://chatgpt.com/backend-api"
+        else:
+            self.base_url = self.base_url.rstrip("/")
 
         # Normalize model name (strip openai/ prefix if present)
         if self.model.startswith("openai/"):
@@ -72,6 +117,42 @@ class CodexLLM(LLMInterface):
 
         # HTTP client for SSE streaming
         self._client = httpx.AsyncClient(timeout=120.0)
+
+    # ------------------------------------------------------------------
+    # Properties — delegate to _auth_manager (preserves test-visible API)
+    # ------------------------------------------------------------------
+
+    @property
+    def access_token(self) -> str:
+        return self._auth_manager.access_token
+
+    @access_token.setter
+    def access_token(self, v: str) -> None:
+        self._auth_manager.access_token = v
+
+    @property
+    def account_id(self) -> str:
+        return self._auth_manager.account_id
+
+    @property
+    def refresh_token(self) -> str | None:
+        return self._auth_manager.refresh_token
+
+    @refresh_token.setter
+    def refresh_token(self, v: str | None) -> None:
+        self._auth_manager.refresh_token = v
+
+    @property
+    def _auth_file(self) -> Path:
+        return self._auth_manager._auth_file
+
+    @_auth_file.setter
+    def _auth_file(self, v: Path) -> None:
+        self._auth_manager._auth_file = v
+
+    # ------------------------------------------------------------------
+    # Forwarding methods (keep surface area for tests / subclasses)
+    # ------------------------------------------------------------------
 
     def _load_codex_auth(self) -> tuple[str, str]:
         """
@@ -107,6 +188,71 @@ class CodexLLM(LLMInterface):
             raise ValueError("No access_token found in Codex auth file. Run 'codex auth login' again.")
 
         return access_token, account_id
+
+    def _load_codex_refresh_token(self) -> str | None:
+        """Read ``tokens.refresh_token`` from the configured auth file.
+
+        Kept as an instance method so existing tests that patch
+        ``CodexLLM._load_codex_refresh_token`` continue to work. Works both
+        pre- and post-``__init__`` because it does not depend on
+        ``_auth_manager`` being constructed yet.
+        """
+        auth_file = (
+            self._auth_manager._auth_file if hasattr(self, "_auth_manager") else Path.home() / ".codex" / "auth.json"
+        )
+        return CodexAuthManager.load_refresh_token_from_file(auth_file)
+
+    @staticmethod
+    def _decode_jwt_exp_unixtime(token: str) -> int | None:
+        """Delegate to ``CodexAuthManager._decode_jwt_exp_unixtime``."""
+        return CodexAuthManager._decode_jwt_exp_unixtime(token)
+
+    def _token_is_stale(self, skew_seconds: int = _CODEX_TOKEN_REFRESH_SKEW_SECONDS) -> bool:
+        """Delegate to ``_auth_manager._token_is_stale``."""
+        return self._auth_manager._token_is_stale(skew_seconds)
+
+    def _persist_auth_atomic(self, updated_tokens: dict[str, Any]) -> None:
+        """Delegate to ``_auth_manager._persist_auth_atomic``."""
+        return self._auth_manager._persist_auth_atomic(updated_tokens)
+
+    async def _refresh_oauth_tokens(self, reason: str = "", *, force: bool = False) -> None:
+        """Async single-flight OAuth token refresh.
+
+        Outer asyncio.Lock preserves single-flight semantics for concurrent
+        coroutines; the actual network call is offloaded to a thread via
+        ``asyncio.to_thread`` so the event loop stays unblocked.
+
+        Args:
+            reason: Free-form string included in log lines for diagnostics.
+            force: When True, refresh even if the JWT exp claim looks fresh.
+                Used by the reactive 401 path.
+
+        Raises:
+            CodexRefreshExpiredError: when the server returns a terminal
+                error code or any 401 on the refresh endpoint.
+            RuntimeError: for other refresh failures (network, 5xx, etc.).
+        """
+        token_before_lock = self.access_token
+        async with self._auth_lock:
+            if force:
+                if self.access_token != token_before_lock:
+                    return
+            else:
+                if not self._auth_manager._token_is_stale():
+                    return
+            await asyncio.to_thread(lambda: self._auth_manager.refresh_tokens(reason, force=force))
+
+    async def _ensure_fresh_token(self) -> None:
+        """Refresh the access_token proactively if it is near or past expiry.
+
+        Called at the top of every API-bound method. Cheap when the token is
+        fresh (just decodes the JWT exp claim and returns).
+        """
+        if self._auth_manager._token_is_stale():
+            try:
+                await self._refresh_oauth_tokens(reason="proactive (token near expiry)")
+            except CodexRefreshExpiredError:
+                raise
 
     def _map_reasoning_effort(self, effort: str) -> str:
         """
@@ -189,6 +335,15 @@ class CodexLLM(LLMInterface):
         """Make API call to Codex backend with SSE streaming."""
         start_time = time.time()
 
+        # Proactively refresh the OAuth access_token if it's near expiry.
+        # Cheap when fresh: a JWT exp decode + comparison.
+        await self._ensure_fresh_token()
+
+        # Tracks whether we've already attempted a reactive refresh in
+        # response to a 401 from the backend. Set once on the first auth
+        # failure so we retry exactly once after refresh, not in a loop.
+        attempted_refresh_after_auth_error = False
+
         # Prepare system instructions
         system_instruction = ""
         user_messages = []
@@ -244,7 +399,12 @@ class CodexLLM(LLMInterface):
         url = f"{self.base_url}/codex/responses"
         last_exception = None
 
-        for attempt in range(max_retries + 1):
+        # Manual attempt tracking instead of ``for attempt in range(...)`` so
+        # that the reactive-refresh path can retry once without consuming a
+        # normal-retry budget slot. The refresh-retry is conceptually a
+        # separate auth-recovery attempt that shouldn't compete with backoff.
+        attempt = 0
+        while True:
             try:
                 response = await self._client.post(url, json=payload, headers=headers, timeout=120.0)
                 response.raise_for_status()
@@ -269,6 +429,7 @@ class CodexLLM(LLMInterface):
                             backoff = min(initial_backoff * (2**attempt), max_backoff)
                             await asyncio.sleep(backoff)
                             last_exception = e
+                            attempt += 1
                             continue
                         raise
 
@@ -332,8 +493,38 @@ class CodexLLM(LLMInterface):
                 last_exception = e
                 status_code = e.response.status_code
 
-                # Fast fail on auth errors
+                # Auth error: try one OAuth refresh + retry before giving up.
+                # The proactive refresh at the top of this method catches most
+                # expiries, but a token can also become invalid mid-request if
+                # another process rotates auth.json out from under us, or if
+                # the JWT exp claim is unparseable and we never knew it was
+                # stale. Reactive refresh is the safety net.
                 if status_code in (401, 403):
+                    if not attempted_refresh_after_auth_error:
+                        attempted_refresh_after_auth_error = True
+                        try:
+                            await self._refresh_oauth_tokens(
+                                reason=f"reactive (HTTP {status_code} from codex backend)",
+                                force=True,
+                            )
+                            # Rebuild the Authorization header with the new
+                            # token and retry without consuming a normal-retry
+                            # budget slot — this is a dedicated auth-recovery
+                            # attempt that shouldn't compete with backoff.
+                            headers["Authorization"] = f"Bearer {self.access_token}"
+                            logger.info("Codex auth refreshed after auth error; retrying request once")
+                            continue
+                        except CodexRefreshExpiredError as refresh_err:
+                            logger.error("Codex refresh_token is permanently invalid; cannot recover from auth error")
+                            raise RuntimeError(
+                                "Codex authentication failed and the refresh_token is no longer valid.\n"
+                                "Run 'codex auth login' to re-authenticate."
+                            ) from refresh_err
+                        except Exception as refresh_err:
+                            logger.error(
+                                f"Codex token refresh attempt failed: {type(refresh_err).__name__}: {refresh_err}"
+                            )
+                            # Fall through to the original raise below.
                     logger.error(f"Codex auth error (HTTP {status_code}): {e.response.text[:200]}")
                     raise RuntimeError(
                         "Codex authentication failed. Your OAuth token may have expired.\n"
@@ -349,6 +540,7 @@ class CodexLLM(LLMInterface):
                         f"Codex HTTP error {status_code} (attempt {attempt + 1}/{max_retries + 1}): {error_detail}"
                     )
                     await asyncio.sleep(backoff)
+                    attempt += 1
                     continue
                 else:
                     logger.error(
@@ -362,6 +554,7 @@ class CodexLLM(LLMInterface):
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                     logger.warning(f"Codex connection error (attempt {attempt + 1}/{max_retries + 1}): {e}")
                     await asyncio.sleep(backoff)
+                    attempt += 1
                     continue
                 else:
                     logger.error(f"Codex connection error after {max_retries + 1} attempts: {e}")
@@ -462,6 +655,11 @@ class CodexLLM(LLMInterface):
         """
         start_time = time.time()
 
+        # Proactively refresh the OAuth access_token if it's near expiry.
+        # Same rationale as in ``call()`` — keeps the request from leaving
+        # the client carrying a token that's already past ``exp``.
+        await self._ensure_fresh_token()
+
         # Prepare system instructions
         system_instruction = ""
         user_messages = []
@@ -534,8 +732,38 @@ class CodexLLM(LLMInterface):
         # Debug logging for troubleshooting
         logger.debug(f"Codex tool call request: url={url}, model={payload['model']}, tools={len(codex_tools)}")
 
+        # One reactive refresh attempt on auth failure, mirroring call().
+        # ``call_with_tools`` doesn't have a retry loop, so we hand-roll a
+        # single retry after refreshing the token. Any non-auth error still
+        # surfaces immediately to keep behavior identical for callers.
+        attempted_refresh_after_auth_error = False
+
         try:
             response = await self._client.post(url, json=payload, headers=headers, timeout=120.0)
+
+            if response.status_code in (401, 403) and not attempted_refresh_after_auth_error:
+                attempted_refresh_after_auth_error = True
+                try:
+                    await self._refresh_oauth_tokens(
+                        reason=f"reactive (HTTP {response.status_code} from codex backend in call_with_tools)",
+                        force=True,
+                    )
+                    headers["Authorization"] = f"Bearer {self.access_token}"
+                    logger.info("Codex auth refreshed after auth error; retrying tool-call request once")
+                    response = await self._client.post(url, json=payload, headers=headers, timeout=120.0)
+                except CodexRefreshExpiredError as refresh_err:
+                    logger.error(
+                        "Codex refresh_token is permanently invalid; cannot recover from auth error in tool-call path"
+                    )
+                    raise RuntimeError(
+                        "Codex authentication failed and the refresh_token is no longer valid.\n"
+                        "Run 'codex auth login' to re-authenticate."
+                    ) from refresh_err
+                except Exception as refresh_err:
+                    logger.error(
+                        f"Codex token refresh attempt failed in tool-call path: {type(refresh_err).__name__}: {refresh_err}"
+                    )
+                    # Fall through to the normal error path below.
 
             # Log response details on error
             if response.status_code != 200:
@@ -655,5 +883,6 @@ class CodexLLM(LLMInterface):
         return content if content else None, tool_calls
 
     async def cleanup(self) -> None:
-        """Clean up HTTP client."""
+        """Clean up HTTP clients."""
         await self._client.aclose()
+        self._auth_manager.close()

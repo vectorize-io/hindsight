@@ -1,11 +1,18 @@
 import { NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
   try {
     const { bankId } = await params;
     if (!bankId) {
-      return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "bank_id is required",
+          errorKey: "api.errors.validation.bankIdRequired",
+        }),
+        { status: 400 }
+      );
     }
 
     const { searchParams } = new URL(request.url);
@@ -20,7 +27,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
     const data = await response.json();
     if (!response.ok) {
       return NextResponse.json(
-        { error: data.detail || "Failed to get audit log stats" },
+        localizeApiErrorPayload(request, {
+          error: data.detail || "Failed to get audit log stats",
+          errorKey: "api.errors.auditLogs.stats",
+        }),
         { status: response.status }
       );
     }
@@ -28,6 +38,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
     return NextResponse.json(data, { status: 200 });
   } catch (error) {
     console.error("Error getting audit log stats:", error);
-    return NextResponse.json({ error: "Failed to get audit log stats" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to get audit log stats",
+        errorKey: "api.errors.auditLogs.stats",
+      }),
+      { status: 500 }
+    );
   }
 }

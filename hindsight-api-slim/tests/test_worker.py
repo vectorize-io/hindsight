@@ -906,7 +906,10 @@ class TestWorkerPoller:
         assert row["worker_id"] is None
 
     @pytest.mark.asyncio
-    async def test_claim_batch_allows_non_consolidation_when_consolidation_processing(self, pool, backend, clean_operations):
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    async def test_claim_batch_allows_non_consolidation_when_consolidation_processing(
+        self, pool, backend, clean_operations
+    ):
         """Test that non-consolidation tasks are still claimed even if consolidation is processing."""
         from hindsight_api.worker import WorkerPoller
 
@@ -2554,8 +2557,7 @@ class TestMarkFailedParentPropagation:
         # downstream filters that classify failures by error_message lose all
         # signal once a batch has children.
         assert "DB constraint violation" in (parent_row["error_message"] or ""), (
-            f"Parent error_message should inherit child's reason, "
-            f"got: {parent_row['error_message']!r}"
+            f"Parent error_message should inherit child's reason, got: {parent_row['error_message']!r}"
         )
 
     @pytest.mark.asyncio
@@ -2586,7 +2588,9 @@ class TestMarkFailedParentPropagation:
         assert parent_row["status"] == "failed"
 
     @pytest.mark.asyncio
-    async def test_mark_failed_does_not_finalise_parent_when_siblings_still_pending(self, pool, backend, clean_operations):
+    async def test_mark_failed_does_not_finalise_parent_when_siblings_still_pending(
+        self, pool, backend, clean_operations
+    ):
         """Parent is NOT updated while other siblings are still processing/pending."""
         from hindsight_api.worker import WorkerPoller
 
@@ -2892,7 +2896,8 @@ class TestClaimBatchRotation:
         from hindsight_api.worker import WorkerPoller
 
         # Minimal contract-satisfying implementation: returns the empty
-        # set. Enough to prove the poller follows the server-side path.
+        # set. Use a non-default schema so the default-schema consistency
+        # check does not intentionally fall back to the per-schema scan.
         await pool.execute(
             "CREATE OR REPLACE FUNCTION public.schemas_with_pending_work() "
             "RETURNS SETOF text AS $$ BEGIN RETURN; END $$ LANGUAGE plpgsql STABLE"
@@ -2920,7 +2925,7 @@ class TestClaimBatchRotation:
             PostgresConnection.fetch = spy_fetch  # type: ignore[method-assign]
             PostgresConnection.fetchval = spy_fetchval  # type: ignore[method-assign]
             try:
-                await poller._scan_active_schemas([None])
+                await poller._scan_active_schemas(["tenant_alpha"])
             finally:
                 PostgresConnection.fetch = original_fetch  # type: ignore[method-assign]
                 PostgresConnection.fetchval = original_fetchval  # type: ignore[method-assign]
@@ -2938,6 +2943,69 @@ class TestClaimBatchRotation:
             )
             # Probe result is cached so the next scan skips the pg_proc lookup.
             assert poller._optional_routines._cache.get("schemas_with_pending_work") is True
+        finally:
+            await pool.execute("DROP FUNCTION IF EXISTS public.schemas_with_pending_work()")
+
+    @pytest.mark.asyncio
+    async def test_scan_normalizes_public_from_optional_routine(self, pool, backend, clean_operations):
+        """The optional routine returns PostgreSQL schema names, while the
+        poller represents the default schema as None. ``public`` must match
+        [None] or claim_batch filters the active schema out.
+        """
+        from hindsight_api.worker import WorkerPoller
+
+        await pool.execute(
+            "CREATE OR REPLACE FUNCTION public.schemas_with_pending_work() "
+            "RETURNS SETOF text AS $$ "
+            "BEGIN RETURN QUERY SELECT 'public'::text; END "
+            "$$ LANGUAGE plpgsql STABLE"
+        )
+        try:
+            poller = WorkerPoller(
+                backend=backend,
+                worker_id="test-routine-public",
+                executor=lambda x: None,
+            )
+
+            result = await poller._scan_active_schemas([None])
+
+            assert result == {None}
+        finally:
+            await pool.execute("DROP FUNCTION IF EXISTS public.schemas_with_pending_work()")
+
+    @pytest.mark.asyncio
+    async def test_scan_falls_back_when_optional_routine_misses_public(self, pool, backend, clean_operations, caplog):
+        """If an installed routine scans tenant schemas only, public
+        single-tenant workers must still use the correct per-schema fallback.
+        """
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-missed-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        await pool.execute(
+            """INSERT INTO async_operations
+               (operation_id, bank_id, operation_type, status, task_payload)
+               VALUES ($1, $2, 'test', 'pending', $3::jsonb)""",
+            uuid.uuid4(),
+            bank_id,
+            json.dumps({"type": "test", "bank_id": bank_id}),
+        )
+        await pool.execute(
+            "CREATE OR REPLACE FUNCTION public.schemas_with_pending_work() "
+            "RETURNS SETOF text AS $$ BEGIN RETURN; END $$ LANGUAGE plpgsql STABLE"
+        )
+        try:
+            poller = WorkerPoller(
+                backend=backend,
+                worker_id="test-routine-missed-public",
+                executor=lambda x: None,
+            )
+
+            with caplog.at_level("WARNING", logger="hindsight_api.worker.poller"):
+                result = await poller._scan_active_schemas([None])
+
+            assert None in result
+            assert any("missed claimable schema" in record.message for record in caplog.records)
         finally:
             await pool.execute("DROP FUNCTION IF EXISTS public.schemas_with_pending_work()")
 
@@ -3247,3 +3315,341 @@ class TestWorkerStatus:
         )
 
         assert len(rows) == 0
+
+
+# ---------------------------------------------------------------------------
+# Config parsing tests for _parse_bank_priority
+# ---------------------------------------------------------------------------
+
+
+class TestParseBankPriority:
+    """Tests for the bank priority config parser."""
+
+    def test_empty_string_returns_empty_dict(self):
+        from hindsight_api.config import _parse_bank_priority
+
+        assert _parse_bank_priority("") == {}
+        assert _parse_bank_priority("  ") == {}
+
+    def test_single_entry(self):
+        from hindsight_api.config import _parse_bank_priority
+
+        assert _parse_bank_priority("shadow-meetings:10") == {"shadow-meetings": 10}
+
+    def test_multiple_entries_with_catch_all(self):
+        from hindsight_api.config import _parse_bank_priority
+
+        result = _parse_bank_priority("shadow-*:10,staging-*:5,*:1")
+        assert result == {"shadow-*": 10, "staging-*": 5, "*": 1}
+
+    def test_spaces_are_stripped(self):
+        from hindsight_api.config import _parse_bank_priority
+
+        result = _parse_bank_priority(" shadow-meetings : 10 , * : 1 ")
+        assert result == {"shadow-meetings": 10, "*": 1}
+
+    def test_invalid_no_colon_raises(self):
+        from hindsight_api.config import _parse_bank_priority
+
+        with pytest.raises(ValueError, match="expected 'bank-pattern:priority'"):
+            _parse_bank_priority("shadow-meetings")
+
+    def test_invalid_priority_not_int_raises(self):
+        from hindsight_api.config import _parse_bank_priority
+
+        with pytest.raises(ValueError, match="must be an integer"):
+            _parse_bank_priority("shadow-meetings:abc")
+
+    def test_invalid_priority_zero_raises(self):
+        from hindsight_api.config import _parse_bank_priority
+
+        with pytest.raises(ValueError, match="must be >= 1"):
+            _parse_bank_priority("shadow-meetings:0")
+
+    def test_invalid_empty_pattern_raises(self):
+        from hindsight_api.config import _parse_bank_priority
+
+        with pytest.raises(ValueError, match="Empty bank pattern"):
+            _parse_bank_priority(":10")
+
+
+# ---------------------------------------------------------------------------
+# Consolidation bank priority tests
+# ---------------------------------------------------------------------------
+
+
+class TestConsolidationBankPriority:
+    """Tests for priority-based consolidation task claiming."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    async def test_high_priority_bank_claimed_first(self, pool, backend, clean_operations):
+        """With priority set, higher-priority bank's task is claimed before lower-priority."""
+        from hindsight_api.worker import WorkerPoller
+
+        high_bank = f"test-worker-shadow-{uuid.uuid4().hex[:8]}"
+        low_bank = f"test-worker-other-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, high_bank)
+        await _ensure_bank(pool, low_bank)
+
+        # Insert low-priority task FIRST (older created_at)
+        low_op_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, created_at)
+            VALUES ($1, $2, 'consolidation', 'pending', $3::jsonb, NOW() - interval '10 seconds')
+            """,
+            low_op_id,
+            low_bank,
+            json.dumps({"type": "consolidation", "bank_id": low_bank}),
+        )
+
+        # Insert high-priority task SECOND (newer created_at)
+        high_op_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, created_at)
+            VALUES ($1, $2, 'consolidation', 'pending', $3::jsonb, NOW())
+            """,
+            high_op_id,
+            high_bank,
+            json.dumps({"type": "consolidation", "bank_id": high_bank}),
+        )
+
+        # Priority: shadow-* banks get priority 10, everything else gets 1
+        # Only claim 1 slot to prove ordering
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="test-worker-priority-1",
+            executor=lambda x: None,
+            max_slots=1,
+            slot_reservations={"consolidation": 1},
+            consolidation_bank_priority={"test-worker-shadow-*": 10, "*": 1},
+        )
+
+        claimed = await poller.claim_batch()
+
+        test_banks = {high_bank, low_bank}
+        my_claims = [c for c in claimed if c.task_dict.get("bank_id") in test_banks]
+
+        # High-priority bank should be claimed despite being newer
+        assert len(my_claims) == 1
+        assert my_claims[0].operation_id == str(high_op_id)
+        assert my_claims[0].task_dict["bank_id"] == high_bank
+
+    @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    async def test_wildcard_pattern_matching(self, pool, backend, clean_operations):
+        """Wildcard patterns like shadow-* match banks with that prefix."""
+        from hindsight_api.worker import WorkerPoller
+
+        shadow_meetings = f"test-worker-shadow-meetings-{uuid.uuid4().hex[:8]}"
+        shadow_people = f"test-worker-shadow-people-{uuid.uuid4().hex[:8]}"
+        normal_bank = f"test-worker-normal-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, shadow_meetings)
+        await _ensure_bank(pool, shadow_people)
+        await _ensure_bank(pool, normal_bank)
+
+        # Insert normal bank first (oldest)
+        normal_op = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, created_at)
+            VALUES ($1, $2, 'consolidation', 'pending', $3::jsonb, NOW() - interval '20 seconds')
+            """,
+            normal_op,
+            normal_bank,
+            json.dumps({"type": "consolidation", "bank_id": normal_bank}),
+        )
+
+        # Insert shadow banks (newer)
+        shadow_ops = []
+        for i, bank in enumerate([shadow_meetings, shadow_people]):
+            op_id = uuid.uuid4()
+            shadow_ops.append(op_id)
+            await pool.execute(
+                """
+                INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, created_at)
+                VALUES ($1, $2, 'consolidation', 'pending', $3::jsonb, NOW() - interval '1 seconds' * $4)
+                """,
+                op_id,
+                bank,
+                json.dumps({"type": "consolidation", "bank_id": bank}),
+                10 - i,  # shadow_meetings=9s ago, shadow_people=8s ago
+            )
+
+        # shadow-* gets priority 10, all 3 slots available
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="test-worker-priority-2",
+            executor=lambda x: None,
+            max_slots=3,
+            slot_reservations={"consolidation": 3},
+            consolidation_bank_priority={"test-worker-shadow-*": 10, "*": 1},
+        )
+
+        claimed = await poller.claim_batch()
+        test_banks = {shadow_meetings, shadow_people, normal_bank}
+        my_claims = [c for c in claimed if c.task_dict.get("bank_id") in test_banks]
+
+        # All 3 should be claimed, but shadow banks first
+        assert len(my_claims) == 3
+        claimed_bank_ids = [c.task_dict["bank_id"] for c in my_claims]
+        # First two should be shadow banks (order between them is by created_at)
+        assert set(claimed_bank_ids[:2]) == {shadow_meetings, shadow_people}
+        # Last should be normal bank
+        assert claimed_bank_ids[2] == normal_bank
+
+    @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    async def test_catch_all_default_priority(self, pool, backend, clean_operations):
+        """When no wildcard *, unlisted banks still get claimed at default priority 1."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank = f"test-worker-unlisted-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank)
+
+        op_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'consolidation', 'pending', $3::jsonb)
+            """,
+            op_id,
+            bank,
+            json.dumps({"type": "consolidation", "bank_id": bank}),
+        )
+
+        # Priority map has specific patterns but no catch-all *
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="test-worker-priority-3",
+            executor=lambda x: None,
+            consolidation_bank_priority={"some-other-bank": 10},
+        )
+
+        claimed = await poller.claim_batch()
+        my_claims = [c for c in claimed if c.task_dict.get("bank_id") == bank]
+
+        # Unlisted bank should still be claimed (catch-all tier at priority 1)
+        assert len(my_claims) == 1
+        assert my_claims[0].operation_id == str(op_id)
+
+    @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    async def test_unset_priority_preserves_created_at_order(self, pool, backend, clean_operations):
+        """When priority is unset (None), tasks are claimed in created_at order (backwards compat)."""
+        from hindsight_api.worker import WorkerPoller
+
+        old_bank = f"test-worker-old-{uuid.uuid4().hex[:8]}"
+        new_bank = f"test-worker-new-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, old_bank)
+        await _ensure_bank(pool, new_bank)
+
+        old_op = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, created_at)
+            VALUES ($1, $2, 'consolidation', 'pending', $3::jsonb, NOW() - interval '10 seconds')
+            """,
+            old_op,
+            old_bank,
+            json.dumps({"type": "consolidation", "bank_id": old_bank}),
+        )
+
+        new_op = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, created_at)
+            VALUES ($1, $2, 'consolidation', 'pending', $3::jsonb, NOW())
+            """,
+            new_op,
+            new_bank,
+            json.dumps({"type": "consolidation", "bank_id": new_bank}),
+        )
+
+        # No priority set — should use created_at order
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="test-worker-priority-4",
+            executor=lambda x: None,
+            max_slots=1,
+            slot_reservations={"consolidation": 1},
+        )
+
+        claimed = await poller.claim_batch()
+        test_banks = {old_bank, new_bank}
+        my_claims = [c for c in claimed if c.task_dict.get("bank_id") in test_banks]
+
+        # Older task should be claimed first
+        assert len(my_claims) == 1
+        assert my_claims[0].operation_id == str(old_op)
+
+    @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    async def test_priority_respects_bank_serialization(self, pool, backend, clean_operations):
+        """High-priority bank with a processing consolidation is still excluded."""
+        from hindsight_api.worker import WorkerPoller
+
+        high_bank = f"test-worker-shadow-ser-{uuid.uuid4().hex[:8]}"
+        low_bank = f"test-worker-other-ser-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, high_bank)
+        await _ensure_bank(pool, low_bank)
+
+        # High-priority bank already has a processing consolidation
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, 'other-worker')
+            """,
+            uuid.uuid4(),
+            high_bank,
+            json.dumps({"type": "consolidation", "bank_id": high_bank}),
+        )
+
+        # High-priority bank has a pending consolidation (should be skipped)
+        high_pending_op = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'consolidation', 'pending', $3::jsonb)
+            """,
+            high_pending_op,
+            high_bank,
+            json.dumps({"type": "consolidation", "bank_id": high_bank}),
+        )
+
+        # Low-priority bank has a pending consolidation (should be claimed)
+        low_op = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'consolidation', 'pending', $3::jsonb)
+            """,
+            low_op,
+            low_bank,
+            json.dumps({"type": "consolidation", "bank_id": low_bank}),
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="test-worker-priority-5",
+            executor=lambda x: None,
+            consolidation_bank_priority={"test-worker-shadow-*": 10, "*": 1},
+        )
+
+        claimed = await poller.claim_batch()
+        test_banks = {high_bank, low_bank}
+        my_claims = [c for c in claimed if c.task_dict.get("bank_id") in test_banks]
+
+        # Only the low-priority bank should be claimed (high-priority is busy)
+        assert len(my_claims) == 1
+        assert my_claims[0].operation_id == str(low_op)
+        assert my_claims[0].task_dict["bank_id"] == low_bank
+
+        # Verify high-priority pending task is still pending
+        row = await pool.fetchrow(
+            "SELECT status FROM async_operations WHERE operation_id = $1",
+            high_pending_op,
+        )
+        assert row["status"] == "pending"

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useTranslations } from "next-intl";
 import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import { DataView } from "./data-view";
@@ -146,6 +147,7 @@ function MemoryComposition({
 }: {
   nodesByFactType: { world: number; experience: number; observation: number } | undefined;
 }) {
+  const t = useTranslations("dataView");
   const counts = nodesByFactType ?? { world: 0, experience: 0, observation: 0 };
   const total = counts.world + counts.experience + counts.observation;
   const items = [
@@ -158,12 +160,12 @@ function MemoryComposition({
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-[0.08em]">
-          Memory composition
+          {t("memoryComposition")}
         </h4>
         <span className="text-xs text-muted-foreground tabular-nums">{total.toLocaleString()}</span>
       </div>
       {total === 0 ? (
-        <div className="text-xs text-muted-foreground py-2">No memories yet</div>
+        <div className="text-xs text-muted-foreground py-2">{t("noMemoriesYet")}</div>
       ) : (
         <>
           <div className="h-1.5 flex w-full rounded-full overflow-hidden bg-muted">
@@ -315,6 +317,8 @@ function ChunkRow({ chunk }: { chunk: any }) {
 }
 
 export function DocumentsView() {
+  const t = useTranslations("documentsView");
+  const tCommon = useTranslations("common");
   const { currentBank } = useBank();
   const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -465,7 +469,7 @@ export function DocumentsView() {
       const result = await client.deleteDocument(documentId, currentBank);
       setDeleteResult({
         success: true,
-        message: `Deleted document and ${result.memory_units_deleted} memory units.`,
+        message: t("toastDeletedDocumentAndUnits", { count: result.memory_units_deleted }),
       });
 
       // Close panel if this document was selected
@@ -479,7 +483,7 @@ export function DocumentsView() {
       console.error("Error deleting document:", error);
       setDeleteResult({
         success: false,
-        message: "Error deleting document: " + (error as Error).message,
+        message: t("toastErrorDeletingDocument") + (error as Error).message,
       });
     } finally {
       setDeletingDocumentId(null);
@@ -602,14 +606,12 @@ export function DocumentsView() {
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <div className="text-4xl mb-2">⏳</div>
-            <div className="text-sm text-muted-foreground">Loading documents...</div>
+            <div className="text-sm text-muted-foreground">{t("loadingDocuments")}</div>
           </div>
         </div>
       ) : documents.length > 0 ? (
         <>
-          <div className="mb-4 text-sm text-muted-foreground">
-            {total} {total === 1 ? "document" : "documents"}
-          </div>
+          <div className="mb-4 text-sm text-muted-foreground">{t("totalDocuments", { total })}</div>
           {/* Documents Table */}
           <div className="w-full">
             <div className="px-5 mb-4">
@@ -617,7 +619,7 @@ export function DocumentsView() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search documents (ID)..."
+                placeholder={t("searchPlaceholder")}
                 className="max-w-2xl"
               />
             </div>
@@ -626,13 +628,13 @@ export function DocumentsView() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Document ID</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead>Updated</TableHead>
-                    <TableHead>Tags</TableHead>
-                    <TableHead>Metadata</TableHead>
-                    <TableHead>Size</TableHead>
-                    <TableHead>Memory Units</TableHead>
+                    <TableHead>{t("colDocumentId")}</TableHead>
+                    <TableHead>{t("colCreated")}</TableHead>
+                    <TableHead>{t("colUpdated")}</TableHead>
+                    <TableHead>{t("colTags")}</TableHead>
+                    <TableHead>{t("colMetadata")}</TableHead>
+                    <TableHead>{t("colSize")}</TableHead>
+                    <TableHead>{t("colMemoryUnits")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -698,7 +700,7 @@ export function DocumentsView() {
                   ) : (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center">
-                        Click "Load Documents" to view data
+                        {t("clickLoadDocumentsToView")}
                       </TableCell>
                     </TableRow>
                   )}
@@ -761,7 +763,7 @@ export function DocumentsView() {
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <div className="text-4xl mb-2">📄</div>
-            <div className="text-sm text-muted-foreground">No documents found</div>
+            <div className="text-sm text-muted-foreground">{t("noDocumentsFound")}</div>
           </div>
         </div>
       )}
@@ -781,7 +783,7 @@ export function DocumentsView() {
             <div className="flex items-center justify-center flex-1">
               <div className="text-center">
                 <div className="text-4xl mb-2">⏳</div>
-                <div className="text-sm text-muted-foreground">Loading document...</div>
+                <div className="text-sm text-muted-foreground">{t("loadingDocument")}</div>
               </div>
             </div>
           ) : selectedDocument ? (
@@ -816,7 +818,7 @@ export function DocumentsView() {
                       size="sm"
                       className="h-8 w-8 p-0 shrink-0"
                       disabled={reprocessing}
-                      aria-label="Actions"
+                      aria-label={tCommon("actions")}
                     >
                       <MoreVertical className="h-4 w-4" />
                     </Button>
@@ -837,7 +839,7 @@ export function DocumentsView() {
                       className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400 focus:bg-red-500/10"
                     >
                       <Trash2 className="h-4 w-4 mr-2" />
-                      Delete
+                      {t("deleteButton")}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -862,7 +864,7 @@ export function DocumentsView() {
                               ) : (
                                 <Check className="h-3 w-3" />
                               )}
-                              Save
+                              {t("saveButton")}
                             </Button>
                             <Button
                               variant="outline"
@@ -872,7 +874,7 @@ export function DocumentsView() {
                               className="h-7 px-3 gap-1 text-xs"
                             >
                               <X className="h-3 w-3" />
-                              Cancel
+                              {t("cancelButton")}
                             </Button>
                           </div>
                         </div>
@@ -882,10 +884,7 @@ export function DocumentsView() {
                           className="w-full min-h-[400px] max-h-[600px] p-4 bg-muted/50 rounded-lg border border-border text-sm font-mono leading-relaxed text-card-foreground resize-y"
                           autoFocus
                         />
-                        <p className="text-xs text-muted-foreground">
-                          Saving will re-ingest this document via retain (upsert). Existing memory
-                          units for this document will be replaced.
-                        </p>
+                        <p className="text-xs text-muted-foreground">{t("saveHint")}</p>
                       </div>
                     ) : (
                       <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
@@ -893,7 +892,7 @@ export function DocumentsView() {
                           <div className="flex items-center gap-1.5">
                             <FileText className="w-3.5 h-3.5" />
                             <span className="font-semibold uppercase tracking-wide">
-                              Stored content
+                              {t("storedContent")}
                             </span>
                             <span className="text-muted-foreground/70">
                               &middot;{" "}
@@ -907,7 +906,7 @@ export function DocumentsView() {
                             className="h-6 px-2 gap-1 text-xs"
                           >
                             <Pencil className="h-3 w-3" />
-                            Edit
+                            {t("editButton")}
                           </Button>
                         </div>
                         <pre className="p-4 text-[11px] leading-5 text-foreground/80 whitespace-pre-wrap font-mono">
@@ -953,31 +952,31 @@ export function DocumentsView() {
                       <InfoCard title="Document" icon={<FileText className="w-3.5 h-3.5" />}>
                         {selectedDocument.created_at && (
                           <MetadataRow
-                            label="Created"
+                            label={t("labelCreated")}
                             value={new Date(selectedDocument.created_at).toLocaleString()}
                           />
                         )}
                         {selectedDocument.updated_at && (
                           <MetadataRow
-                            label="Updated"
+                            label={t("labelUpdated")}
                             value={new Date(selectedDocument.updated_at).toLocaleString()}
                           />
                         )}
                         {selectedDocument.original_text && (
                           <MetadataRow
-                            label="Size"
+                            label={t("colSize")}
                             value={formatBytes(new Blob([selectedDocument.original_text]).size)}
                           />
                         )}
                         <MetadataRow
-                          label="Tags"
+                          label={t("labelTags")}
                           value={
                             editingTags ? (
                               <div className="flex items-center gap-2">
                                 <Input
                                   value={tagInput}
                                   onChange={(e) => setTagInput(e.target.value)}
-                                  placeholder="tag1, tag2, tag3"
+                                  placeholder={t("tagsInputPlaceholder")}
                                   className="text-sm h-7 w-64"
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter") saveDocumentTags();
@@ -1043,7 +1042,7 @@ export function DocumentsView() {
                         )}
                         {selectedDocument.retain_params?.event_date && (
                           <MetadataRow
-                            label="Event Date"
+                            label={t("labelEventDate")}
                             value={new Date(
                               selectedDocument.retain_params.event_date
                             ).toLocaleString()}
@@ -1063,7 +1062,7 @@ export function DocumentsView() {
                       </InfoCard>
 
                       <InfoCard
-                        title="Memory Composition"
+                        title={t("memoryCompositionTitle")}
                         icon={<Network className="w-3.5 h-3.5" />}
                       >
                         <MemoryComposition nodesByFactType={selectedDocument.nodes_by_fact_type} />
@@ -1078,7 +1077,7 @@ export function DocumentsView() {
                     <div className="flex items-center justify-center py-20">
                       <div className="text-center">
                         <div className="text-4xl mb-2">⏳</div>
-                        <div className="text-sm text-muted-foreground">Loading chunks...</div>
+                        <div className="text-sm text-muted-foreground">{t("loadingChunks")}</div>
                       </div>
                     </div>
                   ) : chunks.length > 0 ? (
@@ -1091,16 +1090,14 @@ export function DocumentsView() {
                     <div className="flex items-center justify-center py-20">
                       <div className="text-center">
                         <div className="text-4xl mb-2">📄</div>
-                        <div className="text-sm text-muted-foreground">
-                          No chunks found for this document
-                        </div>
+                        <div className="text-sm text-muted-foreground">{t("noChunksFound")}</div>
                       </div>
                     </div>
                   ) : (
                     <div className="flex items-center justify-center py-20">
                       <div className="text-center">
                         <div className="text-sm text-muted-foreground">
-                          Click the Chunks tab to load chunks
+                          {t("clickChunksTabToLoad")}
                         </div>
                       </div>
                     </div>
@@ -1119,31 +1116,33 @@ export function DocumentsView() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Document</AlertDialogTitle>
+            <AlertDialogTitle>{t("deleteDialogTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete document{" "}
+              {t("deleteDialogDescription")}{" "}
               <span className="font-mono font-semibold">&quot;{documentToDelete?.id}&quot;</span>?
               <br />
               <br />
-              This will also delete{" "}
+              {t("deleteDialogWillDelete")}{" "}
               {documentToDelete?.memoryCount !== undefined ? (
-                <span className="font-semibold">{documentToDelete.memoryCount} memory units</span>
+                <span className="font-semibold">
+                  {t("deleteDialogMemoryUnits", { count: documentToDelete.memoryCount })}
+                </span>
               ) : (
-                "all memory units"
+                t("deleteDialogAllMemoryUnits")
               )}{" "}
-              extracted from this document.
+              {t("deleteDialogExtracted")}
               <br />
               <br />
-              <span className="text-destructive font-semibold">This action cannot be undone.</span>
+              <span className="text-destructive font-semibold">{t("deleteDialogCannotUndo")}</span>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("cancelButton")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmDeleteDocument}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Delete
+              {t("deleteButton")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1154,12 +1153,14 @@ export function DocumentsView() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {deleteResult?.success ? "Document Deleted" : "Error"}
+              {deleteResult?.success ? t("deleteResultSuccessTitle") : t("deleteResultErrorTitle")}
             </AlertDialogTitle>
             <AlertDialogDescription>{deleteResult?.message}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogAction onClick={() => setDeleteResult(null)}>OK</AlertDialogAction>
+            <AlertDialogAction onClick={() => setDeleteResult(null)}>
+              {t("okButton")}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1172,12 +1173,14 @@ export function DocumentsView() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {reprocessResult?.success ? "Reprocessing Started" : "Error"}
+              {reprocessResult?.success ? "Reprocessing Started" : t("deleteResultErrorTitle")}
             </AlertDialogTitle>
             <AlertDialogDescription>{reprocessResult?.message}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogAction onClick={() => setReprocessResult(null)}>OK</AlertDialogAction>
+            <AlertDialogAction onClick={() => setReprocessResult(null)}>
+              {t("okButton")}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

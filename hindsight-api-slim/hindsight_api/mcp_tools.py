@@ -44,6 +44,7 @@ _ALL_TOOLS: frozenset[str] = frozenset(
         "update_mental_model",
         "delete_mental_model",
         "refresh_mental_model",
+        "clear_mental_model",
         "list_directives",
         "create_directive",
         "delete_directive",
@@ -221,6 +222,7 @@ def register_mcp_tools(
         "update_mental_model",
         "delete_mental_model",
         "refresh_mental_model",
+        "clear_mental_model",
         "list_directives",
         "create_directive",
         "delete_directive",
@@ -276,6 +278,9 @@ def register_mcp_tools(
 
     if "refresh_mental_model" in tools_to_register:
         _register_refresh_mental_model(mcp, memory, config)
+
+    if "clear_mental_model" in tools_to_register:
+        _register_clear_mental_model(mcp, memory, config)
 
     # Directive tools
     if "list_directives" in tools_to_register:
@@ -438,6 +443,7 @@ _AUDITABLE_MCP_TOOLS: frozenset[str] = frozenset(
         "update_mental_model",
         "delete_mental_model",
         "refresh_mental_model",
+        "clear_mental_model",
         "create_directive",
         "delete_directive",
         "delete_document",
@@ -793,7 +799,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     {"tags": [...], "match": "any_strict"} or compound {"and": [...]}, {"or": [...]}, {"not": {...}}.
                     Example: [{"not": {"tags": ["closeout"], "match": "any_strict"}}] excludes memories tagged closeout.
                     Mutually exclusive with tags.
-                query_timestamp: Temporal context for the query (ISO format, e.g., '2024-01-15T10:30:00Z'). Helps retrieve time-relevant memories.
+                query_timestamp: Temporal context for the query (ISO format, e.g., '2024-01-15T10:30:00Z').
+                    Anchors relative temporal expressions and recency scoring.
                 bank_id: Optional bank to search in (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -863,7 +870,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     {"tags": [...], "match": "any_strict"} or compound {"and": [...]}, {"or": [...]}, {"not": {...}}.
                     Example: [{"not": {"tags": ["closeout"], "match": "any_strict"}}] excludes memories tagged closeout.
                     Mutually exclusive with tags.
-                query_timestamp: Temporal context for the query (ISO format, e.g., '2024-01-15T10:30:00Z'). Helps retrieve time-relevant memories.
+                query_timestamp: Temporal context for the query (ISO format, e.g., '2024-01-15T10:30:00Z').
+                    Anchors relative temporal expressions and recency scoring.
             """
             try:
                 target_bank = config.bank_id_resolver()
@@ -922,6 +930,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
             response_schema: dict | None = None,
             tags: list[str] | None = None,
             tags_match: str = "any",
+            include_based_on: bool = False,
             bank_id: str | None = None,
         ) -> str:
             """
@@ -951,6 +960,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 response_schema: Optional JSON schema for structured output. When provided, the response includes a 'structured_output' field.
                 tags: Optional tags to filter memories by (e.g., ['project:alpha'])
                 tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                include_based_on: Include source facts used for synthesis. Defaults to false because broad reflections can exceed MCP client result limits.
                 bank_id: Optional bank to reflect in (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -978,6 +988,8 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 reflect_result = await memory.reflect_async(**reflect_kwargs)
 
                 result_data = json.loads(reflect_result.model_dump_json(indent=2))
+                if not include_based_on:
+                    result_data.pop("based_on", None)
                 if response_schema is not None and hasattr(reflect_result, "structured_output"):
                     result_data["structured_output"] = reflect_result.structured_output
                 return json.dumps(result_data, indent=2)
@@ -999,6 +1011,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
             response_schema: dict | None = None,
             tags: list[str] | None = None,
             tags_match: str = "any",
+            include_based_on: bool = False,
         ) -> dict:
             """
             Generate thoughtful analysis by synthesizing stored memories with the bank's personality.
@@ -1027,6 +1040,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 response_schema: Optional JSON schema for structured output. When provided, the response includes a 'structured_output' field.
                 tags: Optional tags to filter memories by (e.g., ['project:alpha'])
                 tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                include_based_on: Include source facts used for synthesis. Defaults to false because broad reflections can exceed MCP client result limits.
             """
             try:
                 target_bank = config.bank_id_resolver()
@@ -1053,6 +1067,8 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 reflect_result = await memory.reflect_async(**reflect_kwargs)
 
                 result_data = reflect_result.model_dump()
+                if not include_based_on:
+                    result_data.pop("based_on", None)
                 if response_schema is not None and hasattr(reflect_result, "structured_output"):
                     result_data["structured_output"] = reflect_result.structured_output
                 return result_data
@@ -1762,6 +1778,98 @@ def _register_refresh_mental_model(mcp: FastMCP, memory: MemoryEngine, config: M
                 return {"error": str(e)}
             except Exception as e:
                 logger.error(f"Error refreshing mental model: {e}", exc_info=True)
+                return {"error": str(e)}
+
+
+def _register_clear_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the clear_mental_model tool."""
+
+    if config.include_bank_id_param:
+
+        @mcp.tool()
+        async def clear_mental_model(
+            mental_model_id: str,
+            bank_id: str | None = None,
+        ) -> str:
+            """
+            Clear a mental model's content so the next refresh performs a full re-synthesis.
+
+            This is useful for delta-mode models that have accumulated drift over many
+            incremental refreshes. After clearing, call refresh_mental_model to trigger
+            a clean full rebuild.
+
+            Args:
+                mental_model_id: The ID of the mental model to clear
+                bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
+            """
+            try:
+                target_bank = bank_id or config.bank_id_resolver()
+                if target_bank is None:
+                    return '{"error": "No bank_id configured"}'
+
+                result = await memory.clear_mental_model(
+                    bank_id=target_bank,
+                    mental_model_id=mental_model_id,
+                    request_context=_get_request_context(config),
+                )
+                if result is None:
+                    return json.dumps({"error": f"Mental model '{mental_model_id}' not found"})
+                return json.dumps(
+                    {
+                        "mental_model_id": result["id"],
+                        "status": "cleared",
+                        "message": f"Mental model '{mental_model_id}' content cleared. Call refresh_mental_model to rebuild.",
+                    }
+                )
+            except OperationValidationError as e:
+                logger.warning(f"Operation rejected: {e}")
+                return json.dumps({"error": str(e)})
+            except ValueError as e:
+                return json.dumps({"error": str(e)})
+            except Exception as e:
+                logger.error(f"Error clearing mental model: {e}", exc_info=True)
+                return f'{{"error": "{e}"}}'
+
+    else:
+
+        @mcp.tool()
+        async def clear_mental_model(
+            mental_model_id: str,
+        ) -> dict:
+            """
+            Clear a mental model's content so the next refresh performs a full re-synthesis.
+
+            This is useful for delta-mode models that have accumulated drift over many
+            incremental refreshes. After clearing, call refresh_mental_model to trigger
+            a clean full rebuild.
+
+            Args:
+                mental_model_id: The ID of the mental model to clear
+            """
+            try:
+                target_bank = config.bank_id_resolver()
+                if target_bank is None:
+                    return {"error": "No bank_id configured"}
+
+                result = await memory.clear_mental_model(
+                    bank_id=target_bank,
+                    mental_model_id=mental_model_id,
+                    request_context=_get_request_context(config),
+                )
+                if result is None:
+                    return {"error": f"Mental model '{mental_model_id}' not found"}
+                return {
+                    "mental_model_id": result["id"],
+                    "status": "cleared",
+                    "message": f"Mental model '{mental_model_id}' content cleared. Call refresh_mental_model to rebuild.",
+                }
+            except OperationValidationError as e:
+                logger.warning(f"Operation rejected: {e}")
+                return {"error": str(e)}
+            except ValueError as e:
+                return {"error": str(e)}
+            except Exception as e:
+                logger.error(f"Error clearing mental model: {e}", exc_info=True)
                 return {"error": str(e)}
 
 

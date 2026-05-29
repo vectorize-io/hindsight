@@ -18,6 +18,8 @@ pip install hindsight-agno
 
 ## Quick Start
 
+> ✨ **Recommended: [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** — free tier, no self-hosting required. Sign up and grab an API key in under a minute.
+
 ```python
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -27,7 +29,8 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[HindsightTools(
         bank_id="user-123",
-        hindsight_api_url="http://localhost:8888",
+        hindsight_api_url="https://api.hindsight.vectorize.io",
+        api_key="hsk_...",  # or set HINDSIGHT_API_KEY env var
     )],
 )
 
@@ -41,6 +44,19 @@ The agent now has three tools it can call:
 - **`recall_memory`** — Search long-term memory for relevant facts
 - **`reflect_on_memory`** — Synthesize a reasoned answer from memories
 
+### Self-hosting (local development)
+
+If you're running Hindsight locally with `./scripts/dev/start-api.sh`, point at your local server instead:
+
+```python
+tools=[HindsightTools(
+    bank_id="user-123",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+)]
+```
+
+See the [Hindsight installation guide](https://hindsight.vectorize.io/developer/installation) for self-hosting setup.
+
 ## With Memory Instructions
 
 Pre-recall relevant memories and inject them into the system prompt:
@@ -52,11 +68,11 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[HindsightTools(
         bank_id="user-123",
-        hindsight_api_url="http://localhost:8888",
+        hindsight_api_url="https://api.hindsight.vectorize.io",
     )],
     instructions=[memory_instructions(
         bank_id="user-123",
-        hindsight_api_url="http://localhost:8888",
+        hindsight_api_url="https://api.hindsight.vectorize.io",
     )],
 )
 ```
@@ -68,7 +84,7 @@ Include only the tools you need:
 ```python
 tools = [HindsightTools(
     bank_id="user-123",
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
     enable_retain=True,
     enable_recall=True,
     enable_reflect=False,  # Omit reflect
@@ -87,7 +103,7 @@ The bank ID is resolved in order:
 # Per-user banks from RunContext
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[HindsightTools(hindsight_api_url="http://localhost:8888")],
+    tools=[HindsightTools(hindsight_api_url="https://api.hindsight.vectorize.io")],
     user_id="user-123",  # Used as bank_id
 )
 
@@ -99,7 +115,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[HindsightTools(
         bank_resolver=resolve_bank,
-        hindsight_api_url="http://localhost:8888",
+        hindsight_api_url="https://api.hindsight.vectorize.io",
     )],
 )
 ```
@@ -112,7 +128,7 @@ Instead of passing connection details to every toolkit, configure once:
 from hindsight_agno import configure, HindsightTools
 
 configure(
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
     api_key="your-api-key",       # Or set HINDSIGHT_API_KEY env var
     budget="mid",                  # Recall budget: low/mid/high
     max_tokens=4096,               # Max tokens for recall results
@@ -165,7 +181,7 @@ tools = [HindsightTools(bank_id="user-123")]
 
 | Parameter | Default | Description |
 |---|---|---|
-| `hindsight_api_url` | Production API | Hindsight API URL |
+| `hindsight_api_url` | Hindsight Cloud (`https://api.hindsight.vectorize.io`) | Hindsight API URL |
 | `api_key` | `HINDSIGHT_API_KEY` env | API key for authentication |
 | `budget` | `"mid"` | Default recall budget level |
 | `max_tokens` | `4096` | Default max tokens for recall |

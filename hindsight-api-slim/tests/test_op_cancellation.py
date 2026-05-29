@@ -302,9 +302,18 @@ class TestRetainCheckpoint:
                     operation_id=op_id,
                 )
 
-            # Should have stopped early: fewer results than total items
-            assert len(result) < len(contents), (
-                f"Expected early stop but got {len(result)}/{len(contents)} results"
+            # Public contract change in #1571: ``retain_batch_async`` now
+            # always returns one slot per input content. Un-processed
+            # inputs (because of cancellation between sub-batches) come
+            # back as empty lists instead of being omitted from the
+            # result. The cancellation check still has to short-circuit
+            # — assert that fewer than all inputs produced unit_ids.
+            assert len(result) == len(contents), (
+                f"Expected per-input result list (len={len(contents)}), got {len(result)}"
+            )
+            non_empty = [r for r in result if r]
+            assert len(non_empty) < len(contents), (
+                f"Expected early stop (fewer non-empty results than inputs), got {non_empty}"
             )
             assert check_calls >= 1
         finally:

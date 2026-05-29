@@ -22,7 +22,8 @@ def enable_observations():
 
 
 @pytest.mark.asyncio
-async def test_link_expansion_observation_graph_retrieval(memory, request_context):
+@pytest.mark.hs_llm_core
+async def test_link_expansion_observation_graph_retrieval(memory_real_llm, request_context):
     """
     Test that observations can find other observations via shared entities.
 
@@ -41,6 +42,7 @@ async def test_link_expansion_observation_graph_retrieval(memory, request_contex
     - Observations only share entities with world facts (cross-type), not with other observations
     - So filtering to fact_type='observation' returns 0 results
     """
+    memory = memory_real_llm
     bank_id = f"test_link_expansion_obs_{datetime.now(timezone.utc).timestamp()}"
 
     try:

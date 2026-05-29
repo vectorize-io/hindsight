@@ -156,7 +156,7 @@ Search memories to provide personalized responses.
 | `types` | list[string] | No | Filter by fact type: `world`, `experience`, `opinion`. Defaults to all |
 | `tags` | list[string] | No | Filter memories by tags |
 | `tags_match` | string | No | Tag matching mode: `any` (default) or `all` |
-| `query_timestamp` | string | No | ISO 8601 timestamp — recall as if asking at this point in time |
+| `query_timestamp` | string | No | ISO 8601 timestamp — recall as if asking at this point in time; anchors relative temporal expressions and recency scoring |
 
 **Example:**
 ```json
@@ -292,6 +292,16 @@ Re-generate a mental model's content from the latest memories. Runs asynchronous
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `mental_model_id` | string | Yes | The ID of the mental model to refresh |
+
+---
+
+### clear_mental_model
+
+Clear a mental model's content while keeping its definition. After clearing, call `refresh_mental_model` to rebuild it from the latest memories.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `mental_model_id` | string | Yes | The ID of the mental model to clear |
 
 ---
 

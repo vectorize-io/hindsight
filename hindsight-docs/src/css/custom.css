@@ -542,6 +542,14 @@ article a:not(.button):not([class*="hash-link"]):hover {
   align-items: center !important;
 }
 
+/* Inline code inside admonition headings: don't inherit the transparent
+   text fill from the gradient title, or backticks render invisible. */
+[class*="admonitionHeading_"] code {
+  -webkit-text-fill-color: initial !important;
+  color: var(--ifm-color-content) !important;
+  background-image: none !important;
+}
+
 /* Admonition icon - gradient start color */
 [class*="admonitionIcon_"] svg,
 [class*="admonitionIcon_"] svg path {

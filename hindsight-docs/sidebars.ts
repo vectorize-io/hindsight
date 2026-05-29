@@ -204,6 +204,12 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'link',
+          href: '/sdks/integrations/grok-build',
+          label: 'Grok Build',
+          customProps: { icon: '/img/icons/terminal.svg' },
+        },
+        {
+          type: 'link',
           href: '/sdks/integrations/codex',
           label: 'OpenAI Codex CLI',
           customProps: { icon: '/img/icons/terminal.svg' },

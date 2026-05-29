@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi.middleware.gzip import GZipMiddleware
 
 from hindsight_api.engine.audit import AuditEntry, AuditLogger
 from hindsight_api.extensions import AuthenticationError
@@ -151,7 +152,11 @@ class RecallRequest(BaseModel):
     max_tokens: int = 4096
     trace: bool = False
     query_timestamp: str | None = Field(
-        default=None, description="ISO format date string (e.g., '2023-05-30T23:40:00')"
+        default=None,
+        description=(
+            "ISO format date string (e.g., '2023-05-30T23:40:00'). Used as the query-time anchor for "
+            "relative temporal expressions and recency scoring."
+        ),
     )
     include: IncludeOptions = FieldWithDefault(
         IncludeOptions,
@@ -465,6 +470,13 @@ class MemoryItem(BaseModel):
         default=None,
         description="Optional tags for visibility scoping. Memories with tags can be filtered during recall.",
     )
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("content cannot be empty")
+        return v
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -2180,6 +2192,19 @@ class OperationResponse(BaseModel):
     )
 
 
+class ConsolidationRequest(BaseModel):
+    """Request model for consolidation trigger endpoint."""
+
+    observation_scopes: list[list[str]] | None = Field(
+        default=None,
+        description=(
+            "Optional list of tag scopes to consolidate. Each scope is a list of tags. "
+            "Only unconsolidated memories whose tags contain all tags in at least one scope "
+            "will be processed. If omitted, all unconsolidated memories are processed."
+        ),
+    )
+
+
 class ConsolidationResponse(BaseModel):
     """Response model for consolidation trigger endpoint."""
 
@@ -2649,6 +2674,7 @@ def create_app(
                 tenant_extension=memory._tenant_extension,
                 max_slots=config.worker_max_slots,
                 slot_reservations=config.worker_slot_reservations,
+                consolidation_bank_priority=config.worker_consolidation_bank_priority or None,
             )
             poller_task = asyncio.create_task(poller.run())
             logging.info(f"Worker poller started (worker_id={worker_id})")
@@ -2720,6 +2746,8 @@ def create_app(
     # This is required for mounted sub-applications where lifespan may not fire
     app.state.memory = memory
     app.state.audit_logger = memory.audit_logger
+
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     # ---------------------------------------------------------------------------
     # Patch OpenAPI schema: align ValidationError with Pydantic v2 error format
@@ -2884,6 +2912,57 @@ def _register_routes(app: FastAPI):
             else:
                 api_key = authorization.strip()
         return RequestContext(api_key=api_key)
+
+    def precheck_for(operation: str):
+        """
+        Build a FastAPI dependency that runs ``OperationValidator.precheck``.
+
+        FastAPI resolves dependencies before deserialising the route's body
+        parameter. Wiring this dependency on the billable POST routes lets
+        an extension reject a request — e.g. with HTTP 402 when a tenant's
+        balance is exhausted — without the request body ever being read or
+        materialised in memory.
+
+        The dependency intentionally:
+        - authenticates the tenant (so ``request_context.tenant_id`` is
+          resolved before the precheck runs);
+        - falls through silently when no validator is configured or the
+          validator's default no-op precheck is in effect;
+        - converts a rejection ``ValidationResult`` into the corresponding
+          ``HTTPException`` directly (the per-route ``OperationValidationError``
+          catch blocks don't see exceptions raised in dependencies, so we
+          translate here instead of relying on each handler's try/except).
+
+        Args:
+            operation: Short identifier for the route, e.g. ``"retain"``.
+
+        Returns:
+            A FastAPI dependency callable suitable for ``Depends(...)``.
+        """
+
+        async def _precheck_dep(
+            bank_id: str,
+            request_context: RequestContext = Depends(get_request_context),
+        ) -> None:
+            validator = getattr(app.state.memory, "_operation_validator", None)
+            if validator is None:
+                return
+            from hindsight_api.extensions import PrecheckContext
+
+            await app.state.memory._authenticate_tenant(request_context)
+            ctx = PrecheckContext(
+                operation=operation,
+                bank_id=bank_id,
+                request_context=request_context,
+            )
+            result = await validator.precheck(ctx)
+            if not result.allowed:
+                raise HTTPException(
+                    status_code=result.status_code,
+                    detail=result.reason or "Operation not allowed",
+                )
+
+        return _precheck_dep
 
     # Global exception handler for authentication errors
     @app.exception_handler(AuthenticationError)
@@ -3142,7 +3221,10 @@ def _register_routes(app: FastAPI):
     )
     @audited("recall")
     async def api_recall(
-        bank_id: str, request: RecallRequest, request_context: RequestContext = Depends(get_request_context)
+        bank_id: str,
+        request: RecallRequest,
+        request_context: RequestContext = Depends(get_request_context),
+        _precheck: None = Depends(precheck_for("recall")),
     ):
         """Run a recall and return results with trace."""
         import time
@@ -3330,7 +3412,10 @@ def _register_routes(app: FastAPI):
     )
     @audited("reflect")
     async def api_reflect(
-        bank_id: str, request: ReflectRequest, request_context: RequestContext = Depends(get_request_context)
+        bank_id: str,
+        request: ReflectRequest,
+        request_context: RequestContext = Depends(get_request_context),
+        _precheck: None = Depends(precheck_for("reflect")),
     ):
         metrics = get_metrics_collector()
 
@@ -3828,6 +3913,7 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         body: CreateMentalModelRequest,
         request_context: RequestContext = Depends(get_request_context),
+        _precheck: None = Depends(precheck_for("mental_model_create")),
     ):
         """Create a mental model (async - returns operation_id)."""
         try:
@@ -3876,6 +3962,7 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         mental_model_id: str,
         request_context: RequestContext = Depends(get_request_context),
+        _precheck: None = Depends(precheck_for("mental_model_refresh")),
     ):
         """Refresh a mental model by re-running its source query (async)."""
         try:
@@ -3899,6 +3986,48 @@ def _register_routes(app: FastAPI):
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(
                 f"Error in POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh: {error_detail}"
+            )
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear",
+        response_model=MentalModelResponse,
+        summary="Clear mental model content",
+        description=(
+            "Clear a mental model's content so the next refresh performs a full re-synthesis. "
+            "This is useful for delta-mode models that have accumulated drift over many "
+            "incremental refreshes. After clearing, call the /refresh endpoint to trigger "
+            "a clean full rebuild."
+        ),
+        operation_id="clear_mental_model",
+        tags=["Mental Models"],
+    )
+    @audited("clear_mental_model", request_param=None)
+    async def api_clear_mental_model(
+        bank_id: str,
+        mental_model_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Clear a mental model's content."""
+        try:
+            mental_model = await app.state.memory.clear_mental_model(
+                bank_id=bank_id,
+                mental_model_id=mental_model_id,
+                request_context=request_context,
+            )
+            if mental_model is None:
+                raise HTTPException(status_code=404, detail=f"Mental model '{mental_model_id}' not found")
+            return MentalModelResponse(**mental_model)
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(
+                f"Error in POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear: {error_detail}"
             )
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -5395,11 +5524,20 @@ def _register_routes(app: FastAPI):
         operation_id="trigger_consolidation",
         tags=["Banks"],
     )
-    @audited("consolidation", request_param=None)
-    async def api_trigger_consolidation(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
+    @audited("consolidation")
+    async def api_trigger_consolidation(
+        bank_id: str,
+        request: ConsolidationRequest | None = None,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
         """Trigger consolidation for a bank (async)."""
         try:
-            result = await app.state.memory.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+            observation_scopes = request.observation_scopes if request else None
+            result = await app.state.memory.submit_async_consolidation(
+                bank_id=bank_id,
+                request_context=request_context,
+                observation_scopes=observation_scopes,
+            )
             return ConsolidationResponse(
                 operation_id=result["operation_id"],
                 deduplicated=result.get("deduplicated", False),
@@ -5722,7 +5860,10 @@ def _register_routes(app: FastAPI):
     )
     @audited("retain")
     async def api_retain(
-        bank_id: str, request: RetainRequest, request_context: RequestContext = Depends(get_request_context)
+        bank_id: str,
+        request: RetainRequest,
+        request_context: RequestContext = Depends(get_request_context),
+        _precheck: None = Depends(precheck_for("retain")),
     ):
         """Retain memories with optional async processing."""
         metrics = get_metrics_collector()
@@ -5807,9 +5948,8 @@ def _register_routes(app: FastAPI):
                             strategy=group_strategy,
                             request_context=request_context,
                             return_usage=True,
-                            outbox_callback=app.state.memory._build_retain_outbox_callback(
+                            outbox_callback_factory=app.state.memory._build_retain_outbox_callback_factory(
                                 bank_id=bank_id,
-                                contents=contents,
                                 operation_id=None,
                                 schema=_current_schema.get(),
                             ),
@@ -5892,6 +6032,7 @@ def _register_routes(app: FastAPI):
         files: list[UploadFile] = File(..., description="Files to upload and convert"),
         request: str = Form(..., description="JSON string with FileRetainRequest model"),
         request_context: RequestContext = Depends(get_request_context),
+        _precheck: None = Depends(precheck_for("files_retain")),
     ):
         """Upload and convert files to memories."""
         from hindsight_api.config import get_config

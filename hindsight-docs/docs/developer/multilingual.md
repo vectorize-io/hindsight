@@ -153,7 +153,7 @@ Most modern LLMs (GPT-4, Claude, Gemini, Llama 3, etc.) support dozens of langua
 
 ## Configuring for Multilingual Use
 
-For optimal multilingual performance, you should configure all three components of the pipeline:
+For optimal multilingual performance, configure all four components of the pipeline:
 
 ### 1. LLM (Required)
 Your LLM must support the target languages. Most modern LLMs do, but verify with your specific model.
@@ -186,6 +186,58 @@ HINDSIGHT_API_RERANKER_LOCAL_MODEL=BAAI/bge-reranker-v2-m3
 |-------|-----------|-------|
 | `BAAI/bge-reranker-v2-m3` | 100+ | Best multilingual reranking |
 | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | 14 | Lighter alternative |
+
+### 4. BM25 / Full-Text Search Backend
+
+The semantic (embedding) arm covers cross-lingual matches by meaning. Hindsight runs a BM25 keyword arm in parallel, and **BM25 is inherently within-language** — it's character/token matching against a tokenizer's lexemes. The default `native` backend uses PostgreSQL's English dictionary, which produces poor results for non-English content (and no useful tokenization at all for Chinese / Japanese / Korean, which lack whitespace word boundaries).
+
+There are two knobs that interact:
+
+- `HINDSIGHT_API_TEXT_SEARCH_EXTENSION` — selects the backend (`native`, `vchord`, `pg_textsearch`, `pgroonga`, or `pg_search`).
+- `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE` — selects the PostgreSQL dictionary used by the `native` backend (default: `english`).
+
+Pick the backend based on the languages your bank stores:
+
+| Backend | Multilingual / CJK | Notes |
+|---------|--------------------|-------|
+| `native` | European languages only (English, French, German, Spanish, Italian, Portuguese, Russian, Dutch, Swedish, Norwegian, Danish, Finnish, Hungarian, Turkish, Arabic, plus `simple`). CJK requires a third-party dictionary like `zhparser`. | Stock PostgreSQL — no extra extensions. Configure the language via `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE`. |
+| `vchord` | Multilingual via `llmlingua2` tokenizer. | Best when you're already using vchord for vector search. |
+| `pg_textsearch` | English only (hardcoded). | Industry-standard BM25 ranking + Block-Max WAND. |
+| `pgroonga` | **Yes — out of the box.** Single index handles English, CJK, and mixed-script content via the `TokenBigram` polyglot tokenizer + `NormalizerNFKC150` Unicode normalization. | Recommended for non-English / mixed-language banks. Requires the `pgroonga` extension. See `docker/docker-compose/pgroonga/`. |
+| `pg_search` | Multilingual via configurable tokenizer (e.g. `chinese_compatible`, `jieba`, `chinese_lindera`, `japanese_lindera`, `korean_lindera`, `ngram`). | ParadeDB `pg_search` extension; the only Citus-compatible BM25 backend. Tokenizer set via `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER`. See `docker/docker-compose/pg_search/`. |
+
+**Choosing for a single-language bank** (e.g. all Spanish content):
+```bash
+HINDSIGHT_API_TEXT_SEARCH_EXTENSION=native
+HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE=spanish
+```
+
+**Choosing for a CJK or mixed-language bank**:
+```bash
+HINDSIGHT_API_TEXT_SEARCH_EXTENSION=pgroonga
+```
+
+The `native` and `pgroonga` knobs do not apply to each other — `pgroonga`'s tokenizer is set at index creation and ignores `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE`.
+
+#### Forcing the LLM Output Language
+
+Independent from the BM25 backend, `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE` forces every LLM-generated artifact into a single language regardless of the source content. This applies uniformly to:
+
+- **Retain** — fact text, context, and entity names extracted from source documents.
+- **Consolidation** — observations / mental models synthesized from those facts.
+- **Reflect** — the final natural-language response returned by the reflect API.
+
+```bash
+# Every LLM call (retain, consolidation, reflect) emits Spanish regardless of source language.
+HINDSIGHT_API_LLM_OUTPUT_LANGUAGE=Spanish
+```
+
+Common patterns:
+- **Aligned, single-language bank**: `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE=spanish` + `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE=Spanish` — store, index, and respond in Spanish even when sources are mixed.
+- **Mixed-language bank with multilingual indexing**: `HINDSIGHT_API_TEXT_SEARCH_EXTENSION=pgroonga` + leave `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE` unset — preserve source-language facts; pgroonga handles all of them in one index; reflect responds in the query's language.
+- **Cross-lingual unification**: `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE=English` — every fact, observation, and reflect response in English regardless of source. Useful when the consumer (an English-only LLM, dashboard, or downstream pipeline) needs uniform output.
+
+Leave `HINDSIGHT_API_LLM_OUTPUT_LANGUAGE` unset to preserve the source/query language across the pipeline (the default).
 
 ---
 

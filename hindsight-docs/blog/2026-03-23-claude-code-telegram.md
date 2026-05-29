@@ -46,7 +46,7 @@ Open Telegram and start a chat with [@BotFather][3].
 Send `/newbot` and follow the prompts — pick a name and a username (must end in `bot`). BotFather will give you a token like:
 
 ```
-1234567890:ABCDefghIJKlmnOPQrstUVwxyz
+[REDACTED_TELEGRAM_BOT_TOKEN]
 ```
 
 Keep this token for Step 3.

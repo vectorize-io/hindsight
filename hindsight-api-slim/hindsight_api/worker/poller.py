@@ -24,7 +24,7 @@ from .exceptions import DeferOperation, RetryTaskAt
 from .stage import StageHolder, bind_holder
 
 if TYPE_CHECKING:
-    from hindsight_api.engine.db.base import DatabaseBackend
+    from hindsight_api.engine.db.base import DatabaseBackend, DatabaseConnection
     from hindsight_api.extensions.tenant import TenantExtension
 
 logger = logging.getLogger(__name__)
@@ -133,6 +133,7 @@ class WorkerPoller:
         tenant_extension: "TenantExtension | None" = None,
         max_slots: int = 10,
         slot_reservations: dict[str, int] | None = None,
+        consolidation_bank_priority: dict[str, int] | None = None,
     ):
         """
         Initialize the worker poller.
@@ -150,6 +151,11 @@ class WorkerPoller:
                 "retain": 3}). Reserved slots guarantee capacity for that operation type.
                 Remaining slots (max_slots - sum of reservations) form a shared pool usable
                 by any operation type. Defaults to {"consolidation": 2} if None.
+            consolidation_bank_priority: Per-bank priority for consolidation scheduling.
+                Maps bank name patterns to integer priorities (higher = claimed first).
+                Patterns support ``*`` as wildcard. A bare ``*`` key is the catch-all default.
+                When set, consolidation tasks are claimed in priority tiers rather than
+                pure created_at order. None or empty dict preserves current behavior.
         """
         self._backend = backend
         self._worker_id = worker_id
@@ -167,6 +173,9 @@ class WorkerPoller:
         self._max_slots = max_slots
         self._slot_reservations: dict[str, int] = (
             slot_reservations if slot_reservations is not None else {"consolidation": 2}
+        )
+        self._consolidation_bank_priority: dict[str, int] | None = (
+            consolidation_bank_priority if consolidation_bank_priority else None
         )
         # Cache of which optional PG routines are installed on the server
         # (probed once, memoised for the life of the poller).
@@ -187,13 +196,18 @@ class WorkerPoller:
         # schema we serviced so a busy tenant can't monopolize the poll order.
         self._next_schema_idx: int = 0
 
-    async def _get_schemas(self) -> list[str | None]:
-        """Get list of schemas to poll. Returns [None] for default schema (no prefix)."""
+    @staticmethod
+    def _normalize_poll_schema(schema: str | None) -> str | None:
+        """Use None internally for the default schema because SQL helpers omit that prefix."""
         from ..config import DEFAULT_DATABASE_SCHEMA
 
+        return None if schema == DEFAULT_DATABASE_SCHEMA else schema
+
+    async def _get_schemas(self) -> list[str | None]:
+        """Get list of schemas to poll. Returns [None] for default schema (no prefix)."""
         tenants = await self._tenant_extension.list_tenants()
         # Convert default schema to None for SQL compatibility (no prefix), keep others as-is
-        return [t.schema if t.schema != DEFAULT_DATABASE_SCHEMA else None for t in tenants]
+        return [self._normalize_poll_schema(t.schema) for t in tenants]
 
     async def _scan_active_schemas(self, schemas: list[str | None]) -> set[str | None]:
         """Find which schemas have pending work.
@@ -213,22 +227,57 @@ class WorkerPoller:
         async with self._backend.acquire() as conn:
             if await self._optional_routines.is_installed(conn, "schemas_with_pending_work"):
                 rows = await conn.fetch("SELECT * FROM public.schemas_with_pending_work()")
-                return {r[0] for r in rows}
-
-            # Fallback: per-schema EXISTS checks from Python
-            active: set[str | None] = set()
-            for schema in schemas:
-                table = fq_table("async_operations", schema)
-                try:
-                    has_work = await conn.fetchval(
-                        f"SELECT EXISTS(SELECT 1 FROM {table} "
-                        f"WHERE status = 'pending' AND task_payload IS NOT NULL LIMIT 1)"
+                routine_active = {self._normalize_poll_schema(r[0]) for r in rows}
+                known_schemas = set(schemas)
+                active = routine_active & known_schemas
+                unknown = routine_active - known_schemas
+                if unknown:
+                    logger.warning(
+                        "Optional PG routine public.schemas_with_pending_work() returned schema(s) "
+                        "not present in tenant discovery: %s",
+                        sorted(str(s) for s in unknown),
                     )
-                    if has_work:
-                        active.add(schema)
-                except Exception:
-                    pass
-            return active
+
+                # The optional routine returns PostgreSQL schema names, but the poller uses
+                # None for the default schema. Older operator-supplied implementations also
+                # commonly scan tenant_% only; when the default schema is in scope but absent
+                # from the routine result, verify via the fully-correct per-schema fallback so
+                # public single-tenant deployments cannot silently starve.
+                should_verify_with_fallback = (None in known_schemas and None not in active) or (
+                    bool(routine_active) and not active
+                )
+                if not should_verify_with_fallback:
+                    return active
+
+                fallback_active = await self._scan_active_schemas_by_exists(conn, schemas)
+                missed = fallback_active - active
+                if missed:
+                    logger.warning(
+                        "Optional PG routine public.schemas_with_pending_work() missed claimable schema(s) %s; "
+                        "using per-schema fallback for this poll",
+                        sorted(str(s) for s in missed),
+                    )
+                return fallback_active
+
+            return await self._scan_active_schemas_by_exists(conn, schemas)
+
+    async def _scan_active_schemas_by_exists(
+        self, conn: "DatabaseConnection", schemas: list[str | None]
+    ) -> set[str | None]:
+        """Find active schemas using per-schema EXISTS checks."""
+        active: set[str | None] = set()
+        for schema in schemas:
+            table = fq_table("async_operations", schema)
+            try:
+                has_work = await conn.fetchval(
+                    f"SELECT EXISTS(SELECT 1 FROM {table} "
+                    f"WHERE status = 'pending' AND task_payload IS NOT NULL LIMIT 1)"
+                )
+                if has_work:
+                    active.add(schema)
+            except Exception:
+                pass
+        return active
 
     async def _get_available_slots(self) -> SlotAvailability:
         """
@@ -428,6 +477,7 @@ class WorkerPoller:
                     self._worker_id,
                     reserved_limits,
                     shared_limit,
+                    consolidation_bank_priority=self._consolidation_bank_priority,
                 )
 
                 if not all_rows:

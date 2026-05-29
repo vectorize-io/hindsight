@@ -938,6 +938,20 @@ export type ClearMemoryObservationsResponse = {
 };
 
 /**
+ * ConsolidationRequest
+ *
+ * Request model for consolidation trigger endpoint.
+ */
+export type ConsolidationRequest = {
+  /**
+   * Observation Scopes
+   *
+   * Optional list of tag scopes to consolidate. Each scope is a list of tags. Only unconsolidated memories whose tags contain all tags in at least one scope will be processed. If omitted, all unconsolidated memories are processed.
+   */
+  observation_scopes?: Array<Array<string>> | null;
+};
+
+/**
  * ConsolidationResponse
  *
  * Response model for consolidation trigger endpoint.
@@ -2315,7 +2329,7 @@ export type RecallRequest = {
   /**
    * Query Timestamp
    *
-   * ISO format date string (e.g., '2023-05-30T23:40:00')
+   * ISO format date string (e.g., '2023-05-30T23:40:00'). Used as the query-time anchor for relative temporal expressions and recency scoring.
    */
   query_timestamp?: string | null;
   /**
@@ -4335,6 +4349,46 @@ export type RefreshMentalModelResponses = {
 export type RefreshMentalModelResponse =
   RefreshMentalModelResponses[keyof RefreshMentalModelResponses];
 
+export type ClearMentalModelData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Mental Model Id
+     */
+    mental_model_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear";
+};
+
+export type ClearMentalModelErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ClearMentalModelError = ClearMentalModelErrors[keyof ClearMentalModelErrors];
+
+export type ClearMentalModelResponses = {
+  /**
+   * Successful Response
+   */
+  200: MentalModelResponse;
+};
+
+export type ClearMentalModelResponse = ClearMentalModelResponses[keyof ClearMentalModelResponses];
+
 export type ListDirectivesData = {
   body?: never;
   headers?: {
@@ -5663,7 +5717,10 @@ export type UpdateBankConfigResponses = {
 export type UpdateBankConfigResponse = UpdateBankConfigResponses[keyof UpdateBankConfigResponses];
 
 export type TriggerConsolidationData = {
-  body?: never;
+  /**
+   * Request
+   */
+  body?: ConsolidationRequest | null;
   headers?: {
     /**
      * Authorization

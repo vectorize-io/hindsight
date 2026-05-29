@@ -109,6 +109,23 @@ if mental_model_id:
     # [/docs:refresh-mental-model]
 
 
+    # [docs:clear-mental-model]
+    # Clear a mental model's content, then refresh for a full re-synthesis
+    client.clear_mental_model(
+        bank_id=BANK_ID,
+        mental_model_id=mental_model_id
+    )
+
+    # Trigger a fresh full rebuild
+    result = client.refresh_mental_model(
+        bank_id=BANK_ID,
+        mental_model_id=mental_model_id
+    )
+
+    print(f"Full refresh operation ID: {result.operation_id}")
+    # [/docs:clear-mental-model]
+
+
     # [docs:update-mental-model]
     # Update a mental model's metadata
     updated = client.update_mental_model(

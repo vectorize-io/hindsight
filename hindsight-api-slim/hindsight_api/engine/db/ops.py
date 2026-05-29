@@ -167,21 +167,6 @@ class DataAccessOps(ABC):
     # -- LATERAL / fan-out queries ---------------------------------------
 
     @abstractmethod
-    async def fetch_entity_unit_fanout(
-        self,
-        conn: DatabaseConnection,
-        ue_table: str,
-        entity_id_list: list[UUID],
-        limit_per_entity: int,
-    ) -> list[ResultRow]:
-        """Fetch unit_ids for a list of entities with per-entity row cap.
-
-        PG uses unnest + CROSS JOIN LATERAL with LIMIT.
-        Non-PG queries each entity individually.
-        """
-        ...
-
-    @abstractmethod
     async def fetch_unit_dates(
         self,
         conn: DatabaseConnection,
@@ -406,6 +391,74 @@ class DataAccessOps(ABC):
         """Insert a webhook delivery task into async_operations."""
         ...
 
+    # -- Graph maintenance queue -----------------------------------------
+
+    @abstractmethod
+    async def enqueue_graph_maintenance(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        unit_ids: list,
+    ) -> None:
+        """Insert unit_ids into graph_maintenance_queue, deduplicating on the
+        (bank_id, unit_id) primary key.
+
+        Called inside the triggering transaction so enqueue is atomic with
+        the mutation that caused it. Order is unspecified.
+        """
+        ...
+
+    @abstractmethod
+    async def claim_graph_maintenance_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        limit: int,
+    ) -> list[str]:
+        """Atomically claim a batch of rows from graph_maintenance_queue and
+        remove them from the table.
+
+        Returns the list of ``unit_id`` strings. Empty list when the queue
+        for ``bank_id`` is drained.
+        """
+        ...
+
+    @abstractmethod
+    async def prune_orphan_entities(
+        self,
+        conn: DatabaseConnection,
+        entities_table: str,
+        ue_table: str,
+        bank_id: str,
+    ) -> int:
+        """Delete entities in ``bank_id`` that no longer have any unit_entities
+        rows referencing them. Returns the number of rows deleted.
+
+        FK ON DELETE CASCADE on entity_cooccurrences then removes any
+        cooccurrence row pointing at the pruned entities.
+        """
+        ...
+
+    @abstractmethod
+    async def prune_stale_cooccurrences(
+        self,
+        conn: DatabaseConnection,
+        ec_table: str,
+        ue_table: str,
+        entities_table: str,
+        bank_id: str,
+    ) -> int:
+        """Delete entity_cooccurrences rows in ``bank_id`` where the two
+        entities still exist but no current unit references both of them.
+
+        These are stale-count rows: cooccurrence was real at the time it was
+        recorded, but every memory_unit that witnessed both entities has
+        since been deleted. Returns the number of rows deleted.
+        """
+        ...
+
     # -- Task claiming operations ------------------------------------------
 
     @abstractmethod
@@ -416,12 +469,22 @@ class DataAccessOps(ABC):
         worker_id: str,
         reserved_limits: dict[str, int],
         shared_limit: int,
+        *,
+        consolidation_bank_priority: dict[str, int] | None = None,
     ) -> list[ResultRow]:
         """Claim pending tasks from the async_operations table.
 
         PG implementation can use NOT EXISTS + FOR UPDATE SKIP LOCKED in one query.
         Oracle implementation uses two-step claims (query busy banks first, then
         claim excluding them) to avoid ORA-02014.
+
+        Args:
+            consolidation_bank_priority: Per-bank priority for consolidation scheduling.
+                Maps bank name patterns to integer priorities (higher = claimed first).
+                Patterns support ``*`` as wildcard (converted to SQL ``%`` for LIKE).
+                A bare ``*`` key is the catch-all default for unlisted banks.
+                When set, consolidation tasks are claimed in priority tiers.
+                None preserves current behavior (pure created_at ordering).
 
         Returns claimed rows with operation_id, operation_type, task_payload, retry_count.
         The caller is responsible for building ClaimedTask objects.

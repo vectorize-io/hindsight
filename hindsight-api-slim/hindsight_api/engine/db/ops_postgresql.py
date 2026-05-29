@@ -104,7 +104,46 @@ class PostgreSQLOps(DataAccessOps):
                 FROM input_data
                 RETURNING id
             """
+        elif config.text_search_extension == "native":
+            # search_vector is a regular tsvector column populated here using the
+            # configured native dictionary. It used to be GENERATED ALWAYS with
+            # a hardcoded 'english', which prevented per-deployment language
+            # configuration. text_search_extension_native_language is validated
+            # in HindsightConfig.validate() as a PG identifier, so embedding it
+            # as a SQL literal is safe.
+            query = f"""
+                WITH input_data AS (
+                    SELECT * FROM unnest(
+                        $2::text[], $3::vector[], $4::timestamptz[], $5::timestamptz[], $6::timestamptz[], $7::timestamptz[],
+                        $8::text[], $9::text[], $10::jsonb[], $11::text[], $12::text[], $13::jsonb[], $14::jsonb[], $15::text[]
+                    ) AS t(text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
+                           context, fact_type, metadata, chunk_id, document_id, tags_json,
+                           observation_scopes_json, text_signals)
+                )
+                INSERT INTO {table} (bank_id, text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
+                                     context, fact_type, metadata, chunk_id, document_id, tags,
+                                     observation_scopes, text_signals, search_vector)
+                SELECT
+                    $1,
+                    text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
+                    context, fact_type, metadata, chunk_id, document_id,
+                    COALESCE(
+                        (SELECT array_agg(elem) FROM jsonb_array_elements_text(tags_json) AS elem),
+                        '{{}}'::varchar[]
+                    ),
+                    observation_scopes_json,
+                    text_signals,
+                    to_tsvector(
+                        '{config.text_search_extension_native_language}'::regconfig,
+                        COALESCE(text, '') || ' ' || COALESCE(context, '') || ' ' || COALESCE(text_signals, '')
+                    )
+                FROM input_data
+                RETURNING id
+            """
         else:
+            # pg_textsearch, pgroonga, and pg_search: search_vector is a dummy
+            # TEXT column; the actual full-text index operates on the base text
+            # columns directly, so we don't populate search_vector at insert time.
             query = f"""
                 WITH input_data AS (
                     SELECT * FROM unnest(
@@ -251,28 +290,100 @@ class PostgreSQLOps(DataAccessOps):
             entity_ids,
         )
 
-    async def fetch_entity_unit_fanout(
+    async def enqueue_graph_maintenance(
         self,
         conn: DatabaseConnection,
-        ue_table: str,
-        entity_id_list: list[UUID],
-        limit_per_entity: int,
-    ) -> list[ResultRow]:
-        return await conn.fetch(
+        table: str,
+        bank_id: str,
+        unit_ids: list,
+    ) -> None:
+        if not unit_ids:
+            return
+        await conn.execute(
             f"""
-            SELECT e.entity_id, n.unit_id
-            FROM unnest($1::uuid[]) AS e(entity_id)
-            CROSS JOIN LATERAL (
-                SELECT ue.unit_id
-                FROM {ue_table} ue
-                WHERE ue.entity_id = e.entity_id
-                ORDER BY ue.unit_id DESC
-                LIMIT $2
-            ) n
+            INSERT INTO {table} (bank_id, unit_id)
+            SELECT $1, v FROM unnest($2::uuid[]) AS t(v)
+            ON CONFLICT (bank_id, unit_id) DO NOTHING
             """,
-            entity_id_list,
-            limit_per_entity,
+            bank_id,
+            unit_ids,
         )
+
+    async def claim_graph_maintenance_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        limit: int,
+    ) -> list[str]:
+        rows = await conn.fetch(
+            f"""
+            DELETE FROM {table}
+            WHERE (bank_id, unit_id) IN (
+                SELECT bank_id, unit_id FROM {table}
+                WHERE bank_id = $1
+                ORDER BY enqueued_at
+                LIMIT $2
+            )
+            RETURNING unit_id
+            """,
+            bank_id,
+            limit,
+        )
+        return [str(row["unit_id"]) for row in rows]
+
+    async def prune_orphan_entities(
+        self,
+        conn: DatabaseConnection,
+        entities_table: str,
+        ue_table: str,
+        bank_id: str,
+    ) -> int:
+        # Scoped by entities.bank_id (indexed). The NOT EXISTS subquery is
+        # backed by idx_ue_entity on unit_entities(entity_id), so this stays
+        # linear in the number of entities in the bank — not in the size of
+        # unit_entities globally.
+        result = await conn.execute(
+            f"""
+            DELETE FROM {entities_table} e
+            WHERE e.bank_id = $1
+              AND NOT EXISTS (
+                  SELECT 1 FROM {ue_table} ue WHERE ue.entity_id = e.id
+              )
+            """,
+            bank_id,
+        )
+        # asyncpg returns "DELETE N"
+        return int(result.split()[-1]) if isinstance(result, str) and result.startswith("DELETE") else 0
+
+    async def prune_stale_cooccurrences(
+        self,
+        conn: DatabaseConnection,
+        ec_table: str,
+        ue_table: str,
+        entities_table: str,
+        bank_id: str,
+    ) -> int:
+        # Scope by joining through entities.bank_id (entity_cooccurrences itself
+        # has no bank_id column — entities don't span banks, so scoping via
+        # entity_id_1 is sufficient).
+        result = await conn.execute(
+            f"""
+            DELETE FROM {ec_table} c
+            USING {entities_table} e
+            WHERE e.id = c.entity_id_1
+              AND e.bank_id = $1
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM {ue_table} u1
+                  JOIN {ue_table} u2 ON u1.unit_id = u2.unit_id
+                  WHERE u1.entity_id = c.entity_id_1
+                    AND u2.entity_id = c.entity_id_2
+              )
+            """,
+            bank_id,
+        )
+        return int(result.split()[-1]) if isinstance(result, str) and result.startswith("DELETE") else 0
 
     async def fetch_unit_dates(
         self,
@@ -726,7 +837,268 @@ class PostgreSQLOps(DataAccessOps):
 
     # -- Task claiming operations ------------------------------------------
 
-    async def claim_tasks(self, conn, table, worker_id, reserved_limits, shared_limit):
+    async def _claim_consolidation_tasks(
+        self,
+        conn,
+        table: str,
+        busy_bank_ids: list[str],
+        claimed_ids: list,
+        limit: int,
+        priority_map: dict[str, int] | None,
+    ) -> list:
+        """Claim consolidation tasks with optional priority-based tiered ordering.
+
+        When *priority_map* is ``None``, uses the default ``ORDER BY created_at``
+        with bank-serialization (exclude busy banks).  When set, claims in
+        priority tiers — highest-priority banks first.  Specific patterns always
+        take precedence over the catch-all ``*`` entry.
+        """
+        if limit <= 0:
+            return []
+
+        # --- Fast path: no priority map -> current behavior ---
+        if not priority_map:
+            return await self._claim_consolidation_plain(conn, table, busy_bank_ids, claimed_ids, limit)
+
+        # --- Tiered claiming ---
+        # Separate specific patterns from catch-all.
+        # Specific patterns always take precedence: a bank matching ``shadow-*``
+        # uses that entry's priority even if the catch-all ``*`` has a higher
+        # value.  The catch-all only applies to banks not matching any specific
+        # pattern.
+        specific_by_priority: dict[int, list[str]] = {}
+        all_specific_sql: list[str] = []
+        catch_all_priority = 1  # default when no ``*`` entry
+
+        for pattern, priority in priority_map.items():
+            if pattern == "*":
+                catch_all_priority = priority
+            else:
+                sql_pat = pattern.replace("*", "%")
+                specific_by_priority.setdefault(priority, []).append(sql_pat)
+                all_specific_sql.append(sql_pat)
+
+        # Collect all priority levels (specific tiers + catch-all) sorted desc.
+        all_priorities = sorted(set(specific_by_priority.keys()) | {catch_all_priority}, reverse=True)
+
+        remaining = limit
+        result: list = []
+
+        for pri in all_priorities:
+            if remaining <= 0:
+                break
+
+            # Specific-pattern tier at this priority level
+            if pri in specific_by_priority:
+                rows = await self._claim_consolidation_like(
+                    conn,
+                    table,
+                    busy_bank_ids,
+                    claimed_ids,
+                    remaining,
+                    specific_by_priority[pri],
+                )
+                for row in rows:
+                    claimed_ids.append(row["operation_id"])
+                    result.append(row)
+                remaining -= len(rows)
+
+            # Catch-all tier at this priority level
+            if pri == catch_all_priority and remaining > 0:
+                rows = await self._claim_consolidation_not_like(
+                    conn,
+                    table,
+                    busy_bank_ids,
+                    claimed_ids,
+                    remaining,
+                    all_specific_sql,
+                )
+                for row in rows:
+                    claimed_ids.append(row["operation_id"])
+                    result.append(row)
+                remaining -= len(rows)
+
+        return result
+
+    async def _claim_consolidation_plain(
+        self,
+        conn,
+        table,
+        busy_bank_ids,
+        claimed_ids,
+        limit,
+    ) -> list:
+        """Claim consolidation tasks with default created_at ordering."""
+        exclude_ids = claimed_ids if claimed_ids else None
+        if busy_bank_ids:
+            if exclude_ids:
+                return await conn.fetch(
+                    f"""
+                    SELECT operation_id, operation_type, task_payload, retry_count
+                    FROM {table}
+                    WHERE status = 'pending'
+                      AND task_payload IS NOT NULL
+                      AND operation_type = 'consolidation'
+                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+                      AND bank_id != ALL($1::text[])
+                      AND operation_id != ALL($2::uuid[])
+                    ORDER BY created_at
+                    LIMIT $3
+                    FOR UPDATE SKIP LOCKED
+                    """,
+                    busy_bank_ids,
+                    exclude_ids,
+                    limit,
+                )
+            else:
+                return await conn.fetch(
+                    f"""
+                    SELECT operation_id, operation_type, task_payload, retry_count
+                    FROM {table}
+                    WHERE status = 'pending'
+                      AND task_payload IS NOT NULL
+                      AND operation_type = 'consolidation'
+                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+                      AND bank_id != ALL($1::text[])
+                    ORDER BY created_at
+                    LIMIT $2
+                    FOR UPDATE SKIP LOCKED
+                    """,
+                    busy_bank_ids,
+                    limit,
+                )
+        else:
+            if exclude_ids:
+                return await conn.fetch(
+                    f"""
+                    SELECT operation_id, operation_type, task_payload, retry_count
+                    FROM {table}
+                    WHERE status = 'pending'
+                      AND task_payload IS NOT NULL
+                      AND operation_type = 'consolidation'
+                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+                      AND operation_id != ALL($1::uuid[])
+                    ORDER BY created_at
+                    LIMIT $2
+                    FOR UPDATE SKIP LOCKED
+                    """,
+                    exclude_ids,
+                    limit,
+                )
+            else:
+                return await conn.fetch(
+                    f"""
+                    SELECT operation_id, operation_type, task_payload, retry_count
+                    FROM {table}
+                    WHERE status = 'pending'
+                      AND task_payload IS NOT NULL
+                      AND operation_type = 'consolidation'
+                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+                    ORDER BY created_at
+                    LIMIT $1
+                    FOR UPDATE SKIP LOCKED
+                    """,
+                    limit,
+                )
+
+    async def _claim_consolidation_like(
+        self,
+        conn,
+        table,
+        busy_bank_ids,
+        claimed_ids,
+        limit,
+        sql_patterns,
+    ) -> list:
+        """Claim consolidation tasks from banks matching LIKE patterns."""
+        params: list = [sql_patterns]
+        conditions = ["bank_id LIKE ANY($1::text[])"]
+        idx = 2
+
+        if busy_bank_ids:
+            conditions.append(f"bank_id != ALL(${idx}::text[])")
+            params.append(busy_bank_ids)
+            idx += 1
+
+        if claimed_ids:
+            conditions.append(f"operation_id != ALL(${idx}::uuid[])")
+            params.append(claimed_ids)
+            idx += 1
+
+        params.append(limit)
+        extra = " AND ".join(conditions)
+        return await conn.fetch(
+            f"""
+            SELECT operation_id, operation_type, task_payload, retry_count
+            FROM {table}
+            WHERE status = 'pending'
+              AND task_payload IS NOT NULL
+              AND operation_type = 'consolidation'
+              AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+              AND {extra}
+            ORDER BY created_at
+            LIMIT ${idx}
+            FOR UPDATE SKIP LOCKED
+            """,
+            *params,
+        )
+
+    async def _claim_consolidation_not_like(
+        self,
+        conn,
+        table,
+        busy_bank_ids,
+        claimed_ids,
+        limit,
+        exclude_patterns,
+    ) -> list:
+        """Claim consolidation tasks from banks NOT matching any specific pattern (catch-all tier)."""
+        params: list = []
+        conditions: list[str] = []
+        idx = 1
+
+        if exclude_patterns:
+            conditions.append(f"bank_id NOT LIKE ALL(${idx}::text[])")
+            params.append(exclude_patterns)
+            idx += 1
+
+        if busy_bank_ids:
+            conditions.append(f"bank_id != ALL(${idx}::text[])")
+            params.append(busy_bank_ids)
+            idx += 1
+
+        if claimed_ids:
+            conditions.append(f"operation_id != ALL(${idx}::uuid[])")
+            params.append(claimed_ids)
+            idx += 1
+
+        params.append(limit)
+        extra_clause = (" AND " + " AND ".join(conditions)) if conditions else ""
+        return await conn.fetch(
+            f"""
+            SELECT operation_id, operation_type, task_payload, retry_count
+            FROM {table}
+            WHERE status = 'pending'
+              AND task_payload IS NOT NULL
+              AND operation_type = 'consolidation'
+              AND (next_retry_at IS NULL OR next_retry_at <= NOW()){extra_clause}
+            ORDER BY created_at
+            LIMIT ${idx}
+            FOR UPDATE SKIP LOCKED
+            """,
+            *params,
+        )
+
+    async def claim_tasks(
+        self,
+        conn,
+        table,
+        worker_id,
+        reserved_limits,
+        shared_limit,
+        *,
+        consolidation_bank_priority=None,
+    ):
         all_rows = []
         claimed_ids = []
 
@@ -744,38 +1116,14 @@ class PostgreSQLOps(DataAccessOps):
                 )
                 busy_bank_ids = [r["bank_id"] for r in busy_banks]
 
-                if busy_bank_ids:
-                    rows = await conn.fetch(
-                        f"""
-                        SELECT operation_id, operation_type, task_payload, retry_count
-                        FROM {table}
-                        WHERE status = 'pending'
-                          AND task_payload IS NOT NULL
-                          AND operation_type = 'consolidation'
-                          AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                          AND bank_id != ALL($1::text[])
-                        ORDER BY created_at
-                        LIMIT $2
-                        FOR UPDATE SKIP LOCKED
-                        """,
-                        busy_bank_ids,
-                        limit,
-                    )
-                else:
-                    rows = await conn.fetch(
-                        f"""
-                        SELECT operation_id, operation_type, task_payload, retry_count
-                        FROM {table}
-                        WHERE status = 'pending'
-                          AND task_payload IS NOT NULL
-                          AND operation_type = 'consolidation'
-                          AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                        ORDER BY created_at
-                        LIMIT $1
-                        FOR UPDATE SKIP LOCKED
-                        """,
-                        limit,
-                    )
+                rows = await self._claim_consolidation_tasks(
+                    conn,
+                    table,
+                    busy_bank_ids,
+                    claimed_ids,
+                    limit,
+                    consolidation_bank_priority,
+                )
             else:
                 rows = await conn.fetch(
                     f"""
@@ -839,7 +1187,7 @@ class PostgreSQLOps(DataAccessOps):
                 all_rows.append(row)
             remaining_shared -= len(rows)
 
-            # 2b. Consolidation tasks (with bank-serialization)
+            # 2b. Consolidation tasks (with bank-serialization + optional priority)
             if remaining_shared > 0:
                 busy_banks_2 = await conn.fetch(
                     f"""
@@ -849,76 +1197,14 @@ class PostgreSQLOps(DataAccessOps):
                 )
                 busy_bank_ids_2 = [r["bank_id"] for r in busy_banks_2]
 
-                if claimed_ids:
-                    if busy_bank_ids_2:
-                        rows = await conn.fetch(
-                            f"""
-                            SELECT operation_id, operation_type, task_payload, retry_count
-                            FROM {table}
-                            WHERE status = 'pending'
-                              AND task_payload IS NOT NULL
-                              AND operation_type = 'consolidation'
-                              AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                              AND operation_id != ALL($1::uuid[])
-                              AND bank_id != ALL($2::text[])
-                            ORDER BY created_at
-                            LIMIT $3
-                            FOR UPDATE SKIP LOCKED
-                            """,
-                            claimed_ids,
-                            busy_bank_ids_2,
-                            remaining_shared,
-                        )
-                    else:
-                        rows = await conn.fetch(
-                            f"""
-                            SELECT operation_id, operation_type, task_payload, retry_count
-                            FROM {table}
-                            WHERE status = 'pending'
-                              AND task_payload IS NOT NULL
-                              AND operation_type = 'consolidation'
-                              AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                              AND operation_id != ALL($1::uuid[])
-                            ORDER BY created_at
-                            LIMIT $2
-                            FOR UPDATE SKIP LOCKED
-                            """,
-                            claimed_ids,
-                            remaining_shared,
-                        )
-                else:
-                    if busy_bank_ids_2:
-                        rows = await conn.fetch(
-                            f"""
-                            SELECT operation_id, operation_type, task_payload, retry_count
-                            FROM {table}
-                            WHERE status = 'pending'
-                              AND task_payload IS NOT NULL
-                              AND operation_type = 'consolidation'
-                              AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                              AND bank_id != ALL($1::text[])
-                            ORDER BY created_at
-                            LIMIT $2
-                            FOR UPDATE SKIP LOCKED
-                            """,
-                            busy_bank_ids_2,
-                            remaining_shared,
-                        )
-                    else:
-                        rows = await conn.fetch(
-                            f"""
-                            SELECT operation_id, operation_type, task_payload, retry_count
-                            FROM {table}
-                            WHERE status = 'pending'
-                              AND task_payload IS NOT NULL
-                              AND operation_type = 'consolidation'
-                              AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                            ORDER BY created_at
-                            LIMIT $1
-                            FOR UPDATE SKIP LOCKED
-                            """,
-                            remaining_shared,
-                        )
+                rows = await self._claim_consolidation_tasks(
+                    conn,
+                    table,
+                    busy_bank_ids_2,
+                    claimed_ids,
+                    remaining_shared,
+                    consolidation_bank_priority,
+                )
 
                 for row in rows:
                     claimed_ids.append(row["operation_id"])

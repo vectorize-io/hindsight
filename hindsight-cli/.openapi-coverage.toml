@@ -35,6 +35,9 @@ list_document_chunks = "UI-only endpoint for the control plane document detail d
 # Reprocess triggers an async retain re-run; exposed in the control plane UI only.
 reprocess_document = "UI-only endpoint for the control plane document detail dialog"
 
+# Clear mental model content is a new endpoint; CLI subcommand not yet implemented.
+clear_mental_model = "Not yet exposed in the CLI; use the HTTP API or SDK"
+
 # ---------------------------------------------------------------------------
 # Per-operation parameter skips
 # ---------------------------------------------------------------------------

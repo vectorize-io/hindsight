@@ -12,9 +12,9 @@ For the source code, see [`hindsight-integrations/openai-agents`](https://github
 
 ## [0.1.1](https://github.com/vectorize-io/hindsight/tree/integrations/openai-agents/v0.1.1)
 
-**Features**
+**Improvements**
 
-- Added a configuration option to limit how many memories can be consolidated per round (to control consolidation behavior).<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/nicoloboschi.png?size=40" alt="@nicoloboschi" width="18" height="18" style={{borderRadius: "50%"}} />@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/ca561aca" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>ca561aca</a>
+- Documentation and test polish: corrected the openai-agents SDK version requirement, added `memory_instructions()` to the README and API reference, added a Production Patterns section to the README (error handling, bank lifecycle, multi-agent workflows), and added a dedicated `test_config.py` covering defaults, configure, env var fallback, and reset.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/DK09876" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/DK09876.png?size=40" alt="@DK09876" width="18" height="18" style={{borderRadius: "50%"}} />@DK09876</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/52c148c2" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>52c148c2</a>
 
 ## [0.1.0](https://github.com/vectorize-io/hindsight/tree/integrations/openai-agents/v0.1.0)
 

@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-dev"
-version = "0.6.2"
+version = "0.7.1"
 description = "Development utilities for Hindsight"
 requires-python = ">=3.11"
 dependencies = [
-    "hindsight-api==0.6.2",
+    "hindsight-api==0.7.1",
     "python-fasthtml>=0.12.33",
     "streamlit>=1.54.0",
     "openai>=1.0.0",

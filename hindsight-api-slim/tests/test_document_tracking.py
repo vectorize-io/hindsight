@@ -206,13 +206,15 @@ async def test_document_without_metadata(memory, request_context):
 
 
 @pytest.mark.asyncio
-async def test_document_persisted_with_zero_facts(memory, request_context):
+@pytest.mark.hs_llm_core
+async def test_document_persisted_with_zero_facts(memory_real_llm, request_context):
     """
     Test that documents are persisted even when zero facts are extracted.
 
     This is a regression test for issue #324 where documents with no extractable
     facts were reported as disappearing from the system.
     """
+    memory = memory_real_llm
     bank_id = f"test_zero_facts_{datetime.now(timezone.utc).timestamp()}"
 
     try:
@@ -258,12 +260,14 @@ async def test_document_persisted_with_zero_facts(memory, request_context):
 
 
 @pytest.mark.asyncio
-async def test_document_persisted_with_zero_facts_batch(memory, request_context):
+@pytest.mark.hs_llm_core
+async def test_document_persisted_with_zero_facts_batch(memory_real_llm, request_context):
     """
     Test that documents are persisted with zero facts in batch retain operations.
 
     This tests the async batch code path to ensure it also handles zero facts correctly.
     """
+    memory = memory_real_llm
     bank_id = f"test_zero_facts_batch_{datetime.now(timezone.utc).timestamp()}"
 
     try:
@@ -314,13 +318,15 @@ async def test_document_persisted_with_zero_facts_batch(memory, request_context)
 
 
 @pytest.mark.asyncio
-async def test_document_persisted_with_zero_facts_async_submit(memory, request_context):
+@pytest.mark.hs_llm_core
+async def test_document_persisted_with_zero_facts_async_submit(memory_real_llm, request_context):
     """
     Test that documents are persisted with zero facts in fire-and-forget async retain.
 
     This tests the submit_async_retain (background task) code path to ensure it also
     handles zero facts correctly.
     """
+    memory = memory_real_llm
     import asyncio
 
     bank_id = f"test_zero_facts_async_{datetime.now(timezone.utc).timestamp()}"

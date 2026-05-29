@@ -111,6 +111,16 @@
       "icon": "/img/icons/claudecode.svg"
     },
     {
+      "id": "grok-build",
+      "name": "Grok Build",
+      "description": "Automatic long-term memory for Grok Build (xAI) via Hindsight hooks. Captures every conversation, recalls relevant context on every prompt.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/grok-build",
+      "icon": "/img/icons/grok-build.png"
+    },
+    {
       "id": "codex",
       "name": "Codex",
       "description": "Automatic long-term memory for Codex CLI via Hindsight hooks. Captures every conversation, recalls relevant context on every prompt.",
@@ -169,6 +179,16 @@
       "category": "framework",
       "link": "/sdks/integrations/nemoclaw",
       "icon": "/img/icons/nemoclaw.png"
+    },
+    {
+      "id": "right-agent",
+      "name": "Right Agent",
+      "description": "Persistent memory for Right Agent — closed-box AI agents that run Claude Code inside OpenShell sandboxes. Hindsight is the native memory provider, selected during initialization.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/right-agent",
+      "icon": "/img/icons/right-agent.svg"
     },
     {
       "id": "strands",
@@ -269,6 +289,26 @@
       "category": "framework",
       "link": "/sdks/integrations/dify",
       "icon": "/img/icons/dify.png"
+    },
+    {
+      "id": "vapi",
+      "name": "Vapi",
+      "description": "Persistent memory for Vapi voice AI calls via Hindsight webhooks. Recalls caller context at call start and retains the transcript when the call ends.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/vapi",
+      "icon": "/img/icons/vapi.png"
+    },
+    {
+      "id": "roo-code",
+      "name": "Roo Code",
+      "description": "Persistent memory for Roo Code via Hindsight MCP. Auto-recalls context before each task and retains learnings after.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/roo-code",
+      "icon": "/img/icons/roo-code.png"
     },
     {
       "id": "hindclaw",

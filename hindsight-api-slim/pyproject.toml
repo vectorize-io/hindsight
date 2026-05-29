@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-api-slim"
-version = "0.6.2"
+version = "0.7.1"
 description = "Hindsight: Agent Memory That Works Like Human Memory"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -21,7 +21,7 @@ dependencies = [
     "sqlalchemy>=2.0.44",
     "alembic>=1.17.1",
     "pgvector>=0.4.1",
-    "greenlet>=3.2.4,<3.4.0",  # 3.4.0 lacks arm64 wheels for manylinux_2_41
+    "greenlet>=3.2.4,<3.4.0", # 3.4.0 lacks arm64 wheels for manylinux_2_41
     "psycopg2-binary>=2.9.11",
     "tiktoken>=0.12.0",
     "httpx>=0.27.0",
@@ -68,7 +68,7 @@ dependencies = [
     "tornado>=6.5.5", # DoS multipart/incomplete cookie validation fix
     "aiohttp>=3.13.3", # Multiple DoS vulnerabilities
     "pygments>=2.20.0", # ReDoS via inefficient GUID regex fix
-    "claude-agent-sdk>=0.1.27",
+    "claude-agent-sdk>=0.2.82",
     "boto3>=1.42.74",
 ]
 
@@ -142,6 +142,7 @@ addopts = "--timeout 300 -n 8 --dist loadgroup --durations=10 -v"
 markers = [
     "oracle: Oracle 23ai integration tests (require ORACLE_TEST_DSN env var)",
     "hs_llm_mat: LLM minimum acceptance tests — run in CI matrix across multiple providers",
+    "hs_llm_core: Core pipeline tests that need a real LLM but only one provider",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

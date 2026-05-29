@@ -187,6 +187,46 @@ class TestDeltaRefreshPlumbing:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_delta_mode_pending_placeholder_falls_back_to_full(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_llm_call,
+    ):
+        """The async creation placeholder is not a real delta baseline.
+
+        A first refresh for a newly-created model must do a full recall over
+        pre-existing facts instead of scoping recall to last_refreshed_at.
+        """
+        bank_id = f"test-delta-placeholder-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Backend Overview",
+            source_query="What is the backend architecture?",
+            content="Generating content...",
+            trigger={"mode": "delta"},
+            request_context=request_context,
+        )
+
+        reflect_calls = patch_reflect(memory, text="# Backend\n\nFull fresh synthesis.")
+        llm_calls = patch_llm_call(memory, returns="should-not-be-called")
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+
+        assert refreshed["content"] == "# Backend\n\nFull fresh synthesis."
+        assert len(llm_calls) == 0
+        assert "created_after" not in reflect_calls[0]
+        rr = refreshed.get("reflect_response") or {}
+        assert rr.get("delta_applied") is not True
+        assert rr.get("delta_skipped_reason") is None
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     async def test_delta_mode_source_query_change_falls_back_to_full(
         self,
         memory: MemoryEngine,
@@ -506,15 +546,27 @@ class TestDeltaRefreshPlumbing:
 
         monkeypatch.setattr(memory._reflect_llm_config, "call", boom)
 
-        refreshed = await memory.refresh_mental_model(
+        from hindsight_api.engine.memory_engine import MentalModelRefreshError
+
+        # Empty reflect answer must now RAISE — the previous silent-preserve
+        # behavior masked upstream LLM failures from workers and tests. The
+        # exception is the signal; existing content + reflect_response audit
+        # still get persisted before the raise so the failure is recoverable.
+        with pytest.raises(MentalModelRefreshError):
+            await memory.refresh_mental_model(
+                bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+            )
+
+        # Existing content was preserved in the DB, and the reflect_response
+        # audit trail records the skip reason — fetch directly to verify.
+        preserved = await memory.get_mental_model(
             bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
         )
-
-        # Existing content preserved exactly.
-        assert refreshed["content"] == existing, (
-            "Empty reflect answer overwrote existing content — guard regressed"
+        assert preserved is not None
+        assert preserved["content"] == existing, (
+            "Empty reflect answer overwrote existing content — preserve guard regressed"
         )
-        rr = refreshed.get("reflect_response") or {}
+        rr = preserved.get("reflect_response") or {}
         assert rr.get("refresh_skipped") == "empty_candidate"
 
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -633,6 +685,7 @@ Generate a concise, top-N personalized AI/ML news brief in response to user-trig
 
 
 @pytestmark_gemini
+@pytest.mark.hs_llm_core
 class TestDeltaRefreshGeminiEval:
     """Real-LLM evals for the structured-delta refresh path.
 

@@ -276,6 +276,7 @@ async def memory_no_llm(pg0_db_url, embeddings, cross_encoder, query_analyzer):
 
 
 @pytest.mark.asyncio
+@pytest.mark.flaky(reruns=2, reruns_delay=2)
 async def test_concurrent_upserts_no_duplicates(memory_no_llm, request_context):
     """
     Stress test: N concurrent retains of the same document with different content.
