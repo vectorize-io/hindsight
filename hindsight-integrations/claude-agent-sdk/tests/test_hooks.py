@@ -1,7 +1,7 @@
 """Unit tests for Hindsight Claude Agent SDK hooks."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from hindsight_claude_agent_sdk import (
@@ -102,9 +102,17 @@ class TestCreateMemoryHooks:
         )
         assert hooks["PostToolUse"][0].matcher == "Bash|Read"
 
-    def test_raises_without_client_or_config(self):
-        with pytest.raises(HindsightError, match="No Hindsight API URL"):
-            create_memory_hooks(bank_id="test")
+    def test_defaults_to_cloud_without_config(self, monkeypatch):
+        """With no client, config, or explicit URL, hooks default to the cloud URL."""
+        from hindsight_claude_agent_sdk.config import DEFAULT_HINDSIGHT_API_URL
+
+        monkeypatch.delenv("HINDSIGHT_API_KEY", raising=False)
+        with patch("hindsight_claude_agent_sdk._client.Hindsight") as mock_cls:
+            mock_cls.return_value = _mock_client()
+            hooks = create_memory_hooks(bank_id="test")
+            assert "UserPromptSubmit" in hooks
+            assert mock_cls.call_args.kwargs["base_url"] == DEFAULT_HINDSIGHT_API_URL
+            assert "api_key" not in mock_cls.call_args.kwargs
 
 
 class TestRecallHook:
