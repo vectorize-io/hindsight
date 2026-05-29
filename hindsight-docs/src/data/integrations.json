@@ -171,6 +171,16 @@
       "icon": "/img/icons/llamaindex.png"
     },
     {
+      "id": "google-adk",
+      "name": "Google ADK",
+      "description": "Persistent memory for Google ADK agents. Implements BaseMemoryService for automatic retain on session end and recall on search_memory, plus explicit FunctionTool wrappers.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/google-adk",
+      "icon": "/img/icons/google-adk.png"
+    },
+    {
       "id": "nemoclaw",
       "name": "NemoClaw",
       "description": "Persistent memory for NemoClaw sandboxed agents. One-command setup — no code changes required.",

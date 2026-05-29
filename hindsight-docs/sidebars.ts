@@ -312,6 +312,12 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'link',
+          href: '/sdks/integrations/google-adk',
+          label: 'Google ADK',
+          customProps: { icon: '/img/icons/google-adk.png' },
+        },
+        {
+          type: 'link',
           href: '/sdks/integrations/skills',
           label: 'Skills',
           customProps: { icon: '/img/icons/skills.png' },

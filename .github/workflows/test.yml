@@ -53,6 +53,7 @@ jobs:
       integrations-gemini-spark: ${{ steps.filter.outputs.integrations-gemini-spark }}
       integrations-vapi: ${{ steps.filter.outputs.integrations-vapi }}
       integrations-flowise: ${{ steps.filter.outputs.integrations-flowise }}
+      integrations-google-adk: ${{ steps.filter.outputs.integrations-google-adk }}
       tools-agent-sdk: ${{ steps.filter.outputs.tools-agent-sdk }}
       integrations-roo-code: ${{ steps.filter.outputs.integrations-roo-code }}
       dev: ${{ steps.filter.outputs.dev }}
@@ -154,6 +155,8 @@ jobs:
             - 'hindsight-integrations/vapi/**'
           integrations-flowise:
             - 'hindsight-integrations/flowise/**'
+          integrations-google-adk:
+            - 'hindsight-integrations/google-adk/**'
           tools-agent-sdk:
             - 'hindsight-tools/hindsight-agent-sdk/**'
           integrations-roo-code:
@@ -726,6 +729,43 @@ jobs:
 
     - name: Run tests
       working-directory: ./hindsight-integrations/pipecat
+      run: uv run pytest tests -v
+
+  test-google-adk-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-google-adk == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build google-adk integration
+      working-directory: ./hindsight-integrations/google-adk
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/google-adk
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/google-adk
       run: uv run pytest tests -v
 
   test-gemini-spark-integration:
@@ -3960,6 +4000,7 @@ jobs:
       - test-pipecat-integration
       - test-gemini-spark-integration
       - test-vapi-integration
+      - test-google-adk-integration
       - test-roo-code-integration
       - build-control-plane
       - build-docs
