@@ -115,12 +115,17 @@ _VALIDATE_SQL_SCHEMAS = True
 # filtered upstream by `_is_non_retryable_task_error` and never reach the
 # retry path. The dedup-by-bank guard prevents per-op retries from
 # multiplying when a peer consolidation is already pending for the bank.
-_CONSOLIDATION_RETRY_BACKOFF_BASE_SECONDS = 60
+#
+# Base is intentionally short so a momentary 5xx clears in seconds, not
+# minutes; the cap is preserved so a genuine multi-hour outage doesn't hammer
+# the upstream. Issue #1842 observed banks sitting idle for whole minutes on
+# transient LLM blips because the prior 60s base overshot recovery by 10x+.
+_CONSOLIDATION_RETRY_BACKOFF_BASE_SECONDS = 5
 _CONSOLIDATION_RETRY_BACKOFF_MAX_SECONDS = 1800  # 30 min cap
 
 
 def _consolidation_retry_backoff_seconds(retry_count: int) -> int:
-    """Capped exponential backoff: 60, 120, 240, 480, 960, 1800, 1800, …"""
+    """Capped exponential backoff: 5, 10, 20, 40, 80, 160, 320, 640, 1280, 1800, 1800, …"""
     return min(
         _CONSOLIDATION_RETRY_BACKOFF_BASE_SECONDS * (2**retry_count),
         _CONSOLIDATION_RETRY_BACKOFF_MAX_SECONDS,

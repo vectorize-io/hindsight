@@ -180,27 +180,33 @@ async def test_peer_only_dedups_when_same_bank(memory):
 
 def test_backoff_helper_schedule():
     """
-    The backoff helper produces capped exponential growth:
-    60, 120, 240, 480, 960, then pinned at the 1800s cap.
+    The backoff helper produces capped exponential growth starting at 5s so a
+    transient blip (LLM 503 that clears in a few seconds) doesn't park the
+    bank for a full minute: 5, 10, 20, 40, 80, 160, 320, 640, 1280, then
+    pinned at the 1800s cap.
     """
-    assert _consolidation_retry_backoff_seconds(0) == 60
-    assert _consolidation_retry_backoff_seconds(1) == 120
-    assert _consolidation_retry_backoff_seconds(2) == 240
-    assert _consolidation_retry_backoff_seconds(3) == 480
-    assert _consolidation_retry_backoff_seconds(4) == 960
-    assert _consolidation_retry_backoff_seconds(5) == _CONSOLIDATION_RETRY_BACKOFF_MAX_SECONDS
+    assert _consolidation_retry_backoff_seconds(0) == 5
+    assert _consolidation_retry_backoff_seconds(1) == 10
+    assert _consolidation_retry_backoff_seconds(2) == 20
+    assert _consolidation_retry_backoff_seconds(3) == 40
+    assert _consolidation_retry_backoff_seconds(4) == 80
+    assert _consolidation_retry_backoff_seconds(5) == 160
+    assert _consolidation_retry_backoff_seconds(6) == 320
+    assert _consolidation_retry_backoff_seconds(7) == 640
+    assert _consolidation_retry_backoff_seconds(8) == 1280
+    assert _consolidation_retry_backoff_seconds(9) == _CONSOLIDATION_RETRY_BACKOFF_MAX_SECONDS
     # Cap holds at arbitrarily high attempt counts (we never give up).
     assert _consolidation_retry_backoff_seconds(50) == _CONSOLIDATION_RETRY_BACKOFF_MAX_SECONDS
     assert _consolidation_retry_backoff_seconds(1000) == _CONSOLIDATION_RETRY_BACKOFF_MAX_SECONDS
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("retry_count", [0, 1, 2, 5])
+@pytest.mark.parametrize("retry_count", [0, 1, 2, 9])
 async def test_backoff_matches_schedule_by_retry_count(memory, retry_count):
     """
     Each retry schedules `retry_at = now + backoff(retry_count)`. The tolerance
     covers the few seconds between ``now()`` capture in the test and inside
-    the retry handler. Includes retry_count=5 to verify the cap branch.
+    the retry handler. Includes retry_count=9 to verify the cap branch.
     """
     bank_id = f"test-backoff-{uuid.uuid4().hex[:8]}"
     op_id = uuid.uuid4()
