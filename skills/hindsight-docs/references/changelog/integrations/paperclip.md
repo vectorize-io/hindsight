@@ -10,6 +10,16 @@ For the source code, see [`hindsight-integrations/paperclip`](https://github.com
 
 ← [Back to main changelog](../index.md)
 
+## [0.2.2](https://github.com/vectorize-io/hindsight/tree/integrations/paperclip/v0.2.2)
+
+**Improvements**
+
+- Updated dependencies to address known security vulnerabilities (npm and pip).<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/dcbouius" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@dcbouius</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/26c5028c" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>26c5028c</a>
+
+**Bug Fixes**
+
+- Fixed the Paperclip integration to correctly handle real Paperclip event payloads, improving reliability of event processing.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/amirhmoradi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@amirhmoradi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/be908d5b" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>be908d5b</a>
+
 ## [0.2.1](https://github.com/vectorize-io/hindsight/tree/integrations/paperclip/v0.2.1)
 
 **Breaking Changes**

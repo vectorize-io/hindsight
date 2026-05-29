@@ -8,6 +8,16 @@ import PageHero from '@site/src/components/PageHero';
 
 [← OpenClaw integration](/sdks/integrations/openclaw)
 
+## [0.7.7](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.7.7)
+
+**Features**
+
+- Retained transcripts now include a session-context block at the beginning to preserve important session details.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/kryptt" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/kryptt.png?size=40" alt="@kryptt" width="18" height="18" style={{borderRadius: "50%"}} />@kryptt</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/be696b0d" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>be696b0d</a>
+
+**Bug Fixes**
+
+- Setup wizard now correctly backfills the plugin allowlist to include hindsight-openclaw, preventing the integration from being unintentionally blocked after setup.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/nicoloboschi.png?size=40" alt="@nicoloboschi" width="18" height="18" style={{borderRadius: "50%"}} />@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/4088af36" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>4088af36</a>
+
 ## [0.7.6](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.7.6)
 
 **Bug Fixes**
