@@ -11,6 +11,7 @@ import pytest
 from hindsight_embed import daemon_client
 from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
 
+
 @pytest.fixture
 def config():
     """Default config for tests."""
@@ -207,7 +208,10 @@ class TestClearPort:
             mock_client = MagicMock()
             mock_client.__enter__ = Mock(return_value=mock_client)
             mock_client.__exit__ = Mock(return_value=False)
-            mock_client.get.return_value = Mock(status_code=200)
+            mock_client.get.return_value = Mock(
+                status_code=200,
+                json=Mock(return_value={"status": "healthy", "database": "connected"}),
+            )
             mock_httpx_cls.return_value = mock_client
 
             assert manager._clear_port(9555) is True
@@ -220,6 +224,7 @@ class TestClearPort:
         with (
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch("httpx.Client") as mock_httpx_cls,
+            patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 0.0),
         ):
             mock_client = MagicMock()
             mock_client.__enter__ = Mock(return_value=mock_client)
@@ -235,6 +240,7 @@ class TestClearPort:
         with (
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch("httpx.Client") as mock_httpx_cls,
+            patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 0.0),
         ):
             mock_client = MagicMock()
             mock_client.__enter__ = Mock(return_value=mock_client)
@@ -251,6 +257,7 @@ class TestClearPort:
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch("httpx.Client") as mock_httpx_cls,
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=None),
+            patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 0.0),
         ):
             mock_client = MagicMock()
             mock_client.__enter__ = Mock(return_value=mock_client)
@@ -268,6 +275,7 @@ class TestClearPort:
             patch("httpx.Client") as mock_httpx_cls,
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=12345),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=False),
+            patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 0.0),
         ):
             mock_client = MagicMock()
             mock_client.__enter__ = Mock(return_value=mock_client)
@@ -285,6 +293,7 @@ class TestClearPort:
             patch("httpx.Client") as mock_httpx_cls,
             patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=12345),
             patch.object(DaemonEmbedManager, "_kill_process", return_value=True),
+            patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 0.0),
         ):
             mock_client = MagicMock()
             mock_client.__enter__ = Mock(return_value=mock_client)
@@ -293,6 +302,87 @@ class TestClearPort:
             mock_httpx_cls.return_value = mock_client
 
             assert manager._clear_port(9555) is True
+
+    def test_port_occupied_by_warming_hindsight_is_reused(self):
+        """Port bound before /health is ready — wait briefly and reuse when healthy."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch("httpx.Client") as mock_httpx_cls,
+            patch.object(DaemonEmbedManager, "_find_pid_on_port") as mock_find_pid,
+            patch.object(DaemonEmbedManager, "_kill_process") as mock_kill,
+            patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 1.0),
+            patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_CHECK_INTERVAL", 0.01),
+        ):
+            mock_client = MagicMock()
+            mock_client.__enter__ = Mock(return_value=mock_client)
+            mock_client.__exit__ = Mock(return_value=False)
+            mock_client.get.side_effect = [
+                Mock(status_code=503),
+                Mock(status_code=503),
+                Mock(
+                    status_code=200,
+                    json=Mock(return_value={"status": "healthy", "database": "connected"}),
+                ),
+            ]
+            mock_httpx_cls.return_value = mock_client
+
+            assert manager._clear_port(9555) is True
+            assert mock_client.get.call_count == 3
+            mock_find_pid.assert_not_called()
+            mock_kill.assert_not_called()
+
+    def test_port_occupied_by_foreign_health_200_returns_false(self):
+        """HTTP 200 alone is not enough to identify the listener as Hindsight."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch("httpx.Client") as mock_httpx_cls,
+            patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=None) as mock_find_pid,
+            patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 0.0),
+        ):
+            mock_client = MagicMock()
+            mock_client.__enter__ = Mock(return_value=mock_client)
+            mock_client.__exit__ = Mock(return_value=False)
+            mock_client.get.return_value = Mock(
+                status_code=200,
+                json=Mock(return_value={"status": "ok"}),
+            )
+            mock_httpx_cls.return_value = mock_client
+
+            assert manager._clear_port(9555) is False
+            mock_find_pid.assert_called_once_with(9555)
+
+    def test_port_cleared_during_grace_returns_true(self):
+        """If a stale listener exits during the grace wait, the port is already clear."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(DaemonEmbedManager, "_is_port_in_use", side_effect=[True, False, False]),
+            patch("httpx.Client") as mock_httpx_cls,
+            patch.object(DaemonEmbedManager, "_find_pid_on_port") as mock_find_pid,
+            patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_GRACE_TIMEOUT", 1.0),
+            patch("hindsight_embed.daemon_embed_manager.PORT_HEALTH_CHECK_INTERVAL", 0.01),
+        ):
+            mock_client = MagicMock()
+            mock_client.__enter__ = Mock(return_value=mock_client)
+            mock_client.__exit__ = Mock(return_value=False)
+            mock_client.get.return_value = Mock(status_code=503)
+            mock_httpx_cls.return_value = mock_client
+
+            assert manager._clear_port(9555) is True
+            mock_find_pid.assert_not_called()
+
+    def test_invalid_port_health_timeout_is_bounded(self):
+        """Invalid grace timeout values must not create an unbounded wait."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch.object(DaemonEmbedManager, "_port_health_ok", return_value=False) as mock_health,
+            patch("hindsight_embed.daemon_embed_manager.time.sleep") as mock_sleep,
+        ):
+            assert manager._wait_for_port_health(9555, timeout=float("nan")) is False
+            mock_health.assert_called_once_with(9555)
+            mock_sleep.assert_not_called()
 
 
 class TestStartDaemonSerialization:
