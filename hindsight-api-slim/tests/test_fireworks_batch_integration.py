@@ -71,6 +71,10 @@ def fireworks_env(monkeypatch) -> FireworksTestEnv:
     )
 
 
+# Override the suite-wide --timeout 300: a real batch job queues and runs for
+# minutes (Fireworks' SLA is minutes-to-hours), well past the default cap. The
+# provider has its own createTime-derived max-wait as the real backstop.
+@pytest.mark.timeout(3600)
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.asyncio
