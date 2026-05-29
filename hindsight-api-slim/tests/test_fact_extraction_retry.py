@@ -17,6 +17,7 @@ def _make_config(llm_max_retries: int = 3, retain_llm_max_retries: int | None = 
     from hindsight_api.config import HindsightConfig
 
     cfg = MagicMock(spec=HindsightConfig)
+    cfg.retain_batch_enabled = False
     cfg.retain_llm_max_retries = retain_llm_max_retries
     cfg.llm_max_retries = llm_max_retries
     cfg.retain_llm_initial_backoff = None
@@ -28,6 +29,10 @@ def _make_config(llm_max_retries: int = 3, retain_llm_max_retries: int | None = 
     cfg.retain_extract_causal_links = False
     cfg.retain_mission = None
     return cfg
+
+
+class _TransientProviderError(Exception):
+    status_code = 503
 
 
 def _make_llm_config(mock_response):
@@ -212,3 +217,87 @@ async def test_none_event_date_with_valid_facts_no_crash():
 
     assert len(facts) == 1
     assert "Alice visited Paris" in facts[0].fact
+
+
+@pytest.mark.asyncio
+async def test_extract_facts_from_contents_reraises_retryable_content_failure():
+    """
+    Retryable chunk failures must escape extract_facts_from_contents so the
+    worker poller can schedule the retain task for retry instead of completing
+    it with zero facts.
+    """
+    from hindsight_api.engine.retain.fact_extraction import extract_facts_from_contents
+    from hindsight_api.engine.retain.types import RetainContent
+
+    async def fail_with_retryable_error(**_kwargs):
+        raise RuntimeError("Fact extraction failed: 1/1 chunks failed. First failures: chunk 0: APIStatusError") from (
+            _TransientProviderError("HTTP 503: service unavailable")
+        )
+
+    config = _make_config(llm_max_retries=1)
+    content = RetainContent(content="Alice updated the incident runbook.")
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction.extract_facts_from_text",
+        side_effect=fail_with_retryable_error,
+    ):
+        with pytest.raises(RuntimeError, match="Fact extraction failed"):
+            await extract_facts_from_contents(
+                contents=[content],
+                llm_config=MagicMock(),
+                agent_name="agent",
+                config=config,
+            )
+
+
+@pytest.mark.asyncio
+async def test_extract_facts_from_contents_reraises_retryable_failure_summary_without_cause():
+    """The chunk failure summary alone is enough to identify common retryable provider errors."""
+    from hindsight_api.engine.retain.fact_extraction import extract_facts_from_contents
+    from hindsight_api.engine.retain.types import RetainContent
+
+    async def fail_with_retryable_summary(**_kwargs):
+        raise RuntimeError("Fact extraction failed: 1/1 chunks failed. First failures: chunk 0: RateLimitError")
+
+    config = _make_config(llm_max_retries=1)
+    content = RetainContent(content="Alice updated the incident runbook.")
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction.extract_facts_from_text",
+        side_effect=fail_with_retryable_summary,
+    ):
+        with pytest.raises(RuntimeError, match="RateLimitError"):
+            await extract_facts_from_contents(
+                contents=[content],
+                llm_config=MagicMock(),
+                agent_name="agent",
+                config=config,
+            )
+
+
+@pytest.mark.asyncio
+async def test_extract_facts_from_contents_still_skips_non_retryable_content_failure():
+    """Deterministic extraction failures keep the existing skip-and-continue behavior."""
+    from hindsight_api.engine.retain.fact_extraction import extract_facts_from_contents
+    from hindsight_api.engine.retain.types import RetainContent
+
+    async def fail_with_non_retryable_error(**_kwargs):
+        raise RuntimeError("Fact extraction failed after 1 attempts: LLM did not return valid JSON")
+
+    config = _make_config(llm_max_retries=1)
+    content = RetainContent(content="Alice updated the incident runbook.")
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction.extract_facts_from_text",
+        side_effect=fail_with_non_retryable_error,
+    ):
+        facts, chunks, usage = await extract_facts_from_contents(
+            contents=[content],
+            llm_config=MagicMock(),
+            agent_name="agent",
+            config=config,
+        )
+
+    assert facts == []
+    assert chunks == []
+    assert usage.total_tokens == 0

@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import Iterator
 from datetime import datetime, timedelta
 from typing import Literal, cast
 
@@ -1616,7 +1617,7 @@ async def extract_facts_from_text(
         raise RuntimeError(
             f"Fact extraction failed: {len(failed_chunks)}/{len(chunks)} chunks failed. "
             f"First failures: {failed_summary}"
-        )
+        ) from failed_chunks[0][1]
 
     return all_facts, chunk_metadata, total_usage
 
@@ -1635,6 +1636,84 @@ logger = logging.getLogger(__name__)
 
 # Each fact gets 10ms offset to preserve ordering within a document
 SECONDS_PER_FACT = 0.01
+_RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+_RETRYABLE_ERROR_NAME_MARKERS = (
+    "apiconnectionerror",
+    "apitimeouterror",
+    "connectionerror",
+    "connecterror",
+    "ratelimit",
+    "readerror",
+    "timeouterror",
+    "timeout",
+)
+_RETRYABLE_ERROR_MESSAGE_MARKERS = (
+    "apiconnectionerror",
+    "apitimeouterror",
+    "ratelimiterror",
+    "rate limit",
+    "rate_limit",
+    "too many requests",
+    "timed out",
+    "timeout",
+    "connection",
+    "temporarily unavailable",
+    "service unavailable",
+    "internal server error",
+    "bad gateway",
+    "gateway timeout",
+    "http 408",
+    "http 409",
+    "http 425",
+    "http 429",
+    "http 500",
+    "http 502",
+    "http 503",
+    "http 504",
+)
+
+
+def _iter_exception_chain(error: BaseException) -> Iterator[BaseException]:
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
+def _status_code_for_error(error: BaseException) -> int | None:
+    for attr in ("status_code", "status"):
+        value = getattr(error, attr, None)
+        if isinstance(value, int):
+            return value
+    response = getattr(error, "response", None)
+    value = getattr(response, "status_code", None)
+    return value if isinstance(value, int) else None
+
+
+def _is_retryable_content_extraction_error(error: BaseException) -> bool:
+    """Detect provider/transient failures that should use the worker retry path."""
+    for chained in _iter_exception_chain(error):
+        retryable = getattr(chained, "retryable", None)
+        if retryable is True:
+            return True
+        if retryable is False:
+            return False
+
+        status_code = _status_code_for_error(chained)
+        if status_code in _RETRYABLE_STATUS_CODES:
+            return True
+
+        error_name = type(chained).__name__.lower()
+        if any(marker in error_name for marker in _RETRYABLE_ERROR_NAME_MARKERS):
+            return True
+
+        error_text = str(chained).lower()
+        if any(marker in error_text for marker in _RETRYABLE_ERROR_MESSAGE_MARKERS):
+            return True
+
+    return False
 
 
 async def extract_facts_from_contents_batch_api(
@@ -2226,6 +2305,9 @@ async def extract_facts_from_contents(
     valid_results = []
     for content, result in zip(contents, all_fact_results):
         if isinstance(result, Exception):
+            if _is_retryable_content_extraction_error(result):
+                logger.warning(f"Content extraction failed with retryable error: {type(result).__name__}: {result}")
+                raise result
             logger.warning(f"Content extraction failed (skipping): {type(result).__name__}: {result}")
             valid_results.append((content, ([], [], TokenUsage())))
         else:
