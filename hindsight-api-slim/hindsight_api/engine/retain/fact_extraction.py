@@ -1142,11 +1142,14 @@ async def _extract_facts_from_chunk(
                     )
                     continue
                 else:
-                    logger.warning(
-                        f"LLM returned non-dict JSON after {llm_max_retries} attempts: {type(extraction_response_json).__name__}. "
-                        f"Raw: {str(extraction_response_json)[:500]}"
+                    # A non-dict response is malformed (the schema is {"facts": [...]}).
+                    # Raise instead of returning [] so the failure propagates to the
+                    # worker's retry machinery and ultimately fails loudly — never
+                    # silently commit the document with 0 facts. See issue #1833.
+                    raise RuntimeError(
+                        f"Fact extraction failed: LLM returned non-dict JSON after {llm_max_retries} attempts "
+                        f"({type(extraction_response_json).__name__}). Raw: {str(extraction_response_json)[:500]}"
                     )
-                    return [], usage
 
             raw_facts = extraction_response_json.get("facts", [])
 
@@ -2211,7 +2214,9 @@ async def extract_facts_from_contents(
         fact_extraction_tasks.append(task)
 
     # Step 2: Wait for all fact extractions to complete.
-    # Use return_exceptions=True so one content item failure doesn't discard the rest.
+    # return_exceptions=True so a failing item doesn't cancel its still-running
+    # siblings (which would leave orphaned LLM calls / partial work); we await
+    # them all, then propagate.
     all_fact_results = await asyncio.gather(*fact_extraction_tasks, return_exceptions=True)
 
     # Step 3: Flatten and convert to typed objects
@@ -2222,14 +2227,18 @@ async def extract_facts_from_contents(
     global_chunk_idx = 0
     global_fact_idx = 0
 
-    # Filter out failed content items
+    # Never silently drop a document's memory. Any extraction failure (provider
+    # rate-limit / timeout / 5xx, malformed response, token-limit, etc.)
+    # propagates so the streaming producer surfaces it and the worker's
+    # RetryTaskAt machinery retries the task — and ultimately fails it *loudly*
+    # if the problem persists. Swallowing the error and substituting an empty
+    # result here used to commit the document with 0 facts and mark the
+    # operation `completed`, losing the memory with no signal. See issue #1833.
     valid_results = []
     for content, result in zip(contents, all_fact_results):
         if isinstance(result, Exception):
-            logger.warning(f"Content extraction failed (skipping): {type(result).__name__}: {result}")
-            valid_results.append((content, ([], [], TokenUsage())))
-        else:
-            valid_results.append((content, result))
+            raise result
+        valid_results.append((content, result))
 
     for content_index, (content, (facts_from_llm, chunks_from_llm, content_usage)) in enumerate(valid_results):
         total_usage = total_usage + content_usage
