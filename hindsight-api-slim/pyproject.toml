@@ -143,6 +143,8 @@ markers = [
     "oracle: Oracle 23ai integration tests (require ORACLE_TEST_DSN env var)",
     "hs_llm_mat: LLM minimum acceptance tests — run in CI matrix across multiple providers",
     "hs_llm_core: Core pipeline tests that need a real LLM but only one provider",
+    "integration: Live external-API integration tests (require provider credentials; skipped without)",
+    "slow: Slow tests (minutes); not run in fast CI",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
