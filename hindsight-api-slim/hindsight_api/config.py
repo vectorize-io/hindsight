@@ -172,6 +172,17 @@ ENV_RETAIN_LLM_MAX_BACKOFF = "HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF"
 ENV_RETAIN_LLM_TIMEOUT = "HINDSIGHT_API_RETAIN_LLM_TIMEOUT"
 ENV_RETAIN_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_RETAIN_LLM_LITELLMROUTER_CONFIG"
 
+# Fireworks AI batch inference. Fireworks' batch API is a proprietary
+# account-scoped dataset/job REST API on a control-plane host, distinct from the
+# OpenAI-compatible inference host. account_id is REQUIRED for batch retain
+# (the control-plane endpoints are /v1/accounts/{account_id}/...). Static,
+# server-level config — it pairs with the Fireworks API key.
+ENV_FIREWORKS_ACCOUNT_ID = "HINDSIGHT_API_FIREWORKS_ACCOUNT_ID"
+ENV_FIREWORKS_BATCH_BASE_URL = "HINDSIGHT_API_FIREWORKS_BATCH_BASE_URL"
+ENV_FIREWORKS_BATCH_MAX_WAIT_SECONDS = "HINDSIGHT_API_FIREWORKS_BATCH_MAX_WAIT_SECONDS"
+DEFAULT_FIREWORKS_BATCH_BASE_URL = "https://api.fireworks.ai"
+DEFAULT_FIREWORKS_BATCH_MAX_WAIT_SECONDS = 86_400  # 24h — Fireworks' max job timeout
+
 ENV_REFLECT_LLM_PROVIDER = "HINDSIGHT_API_REFLECT_LLM_PROVIDER"
 ENV_REFLECT_LLM_API_KEY = "HINDSIGHT_API_REFLECT_LLM_API_KEY"
 ENV_REFLECT_LLM_MODEL = "HINDSIGHT_API_REFLECT_LLM_MODEL"
@@ -518,6 +529,7 @@ PROVIDER_DEFAULT_MODELS = {
     "bedrock": "us.amazon.nova-2-lite-v1:0",
     "volcano": "doubao-pro-32k",
     "openrouter": "qwen/qwen3.5-9b",
+    "fireworks": "accounts/fireworks/models/llama-v3p1-8b-instruct",
 }
 DEFAULT_LLM_MODEL = "gpt-4o-mini"  # Fallback if provider not in table
 # Built-in llama.cpp defaults
@@ -1065,6 +1077,11 @@ class HindsightConfig:
     retain_llm_max_backoff: float | None
     retain_llm_timeout: float | None
     retain_llm_litellmrouter_config: dict | None
+
+    # Fireworks AI batch inference (static, server-level)
+    fireworks_account_id: str | None
+    fireworks_batch_base_url: str
+    fireworks_batch_max_wait_seconds: int
 
     reflect_llm_provider: str | None
     reflect_llm_api_key: str | None
@@ -1645,6 +1662,11 @@ class HindsightConfig:
                 else None
             ),
             retain_llm_base_url=os.getenv(ENV_RETAIN_LLM_BASE_URL) or None,
+            fireworks_account_id=os.getenv(ENV_FIREWORKS_ACCOUNT_ID) or None,
+            fireworks_batch_base_url=os.getenv(ENV_FIREWORKS_BATCH_BASE_URL) or DEFAULT_FIREWORKS_BATCH_BASE_URL,
+            fireworks_batch_max_wait_seconds=int(
+                os.getenv(ENV_FIREWORKS_BATCH_MAX_WAIT_SECONDS, str(DEFAULT_FIREWORKS_BATCH_MAX_WAIT_SECONDS))
+            ),
             retain_llm_max_concurrent=int(os.getenv(ENV_RETAIN_LLM_MAX_CONCURRENT))
             if os.getenv(ENV_RETAIN_LLM_MAX_CONCURRENT)
             else None,

@@ -249,6 +249,7 @@ def create_llm_provider(
         AnthropicLLM,
         ClaudeCodeLLM,
         CodexLLM,
+        FireworksLLM,
         GeminiLLM,
         LiteLLMLLM,
         LiteLLMRouterLLM,
@@ -374,6 +375,19 @@ def create_llm_provider(
             extra_args=config.llamacpp_extra_args,
         )
 
+    elif provider_lower == "fireworks":
+        # Fireworks online inference is OpenAI-compatible; FireworksLLM adds the
+        # native (non-OpenAI) batch API on top. The existing LiteLLM
+        # ``fireworks_ai/...`` online path (provider="litellm") is untouched.
+        return FireworksLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
+        )
+
     elif provider_lower in (
         "openai",
         "groq",
@@ -495,6 +509,7 @@ class LLMProvider:
             "openrouter",
             "zai",
             "opencode-go",
+            "fireworks",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")

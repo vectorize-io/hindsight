@@ -279,6 +279,7 @@ class OpenAICompatibleLLM(LLMInterface):
             "openrouter",
             "zai",
             "opencode-go",
+            "fireworks",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"OpenAICompatibleLLM only supports: {', '.join(valid_providers)}. Got: {self.provider}")
@@ -303,6 +304,10 @@ class OpenAICompatibleLLM(LLMInterface):
                 self.base_url = "https://api.z.ai/api/coding/paas/v4"
             elif self.provider == "opencode-go":
                 self.base_url = "https://opencode.ai/zen/go/v1"
+            elif self.provider == "fireworks":
+                # OpenAI-compatible inference host (online path). The batch API
+                # lives on a separate control-plane host — see FireworksLLM.
+                self.base_url = "https://api.fireworks.ai/inference/v1"
 
         # For ollama/lmstudio, use dummy key if not provided
         if self.provider in ("ollama", "lmstudio") and not self.api_key:
