@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
 import { bankRoute } from "@/lib/bank-url";
+import { withBasePath } from "@/lib/base-path";
 import { client } from "@/lib/api";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { Button } from "@/components/ui/button";
@@ -464,7 +465,7 @@ function BankSelectorInner() {
       <div className="flex items-center gap-4 text-sm">
         {/* Logo */}
         <Image
-          src="/logo.png"
+          src={withBasePath("/logo.png")}
           alt="Hindsight"
           width={40}
           height={40}
@@ -639,9 +640,9 @@ function BankSelectorInner() {
               title="Logout"
               onClick={async () => {
                 try {
-                  await fetch("/api/auth/logout", { method: "POST" });
+                  await fetch(withBasePath("/api/auth/logout"), { method: "POST" });
                 } finally {
-                  window.location.href = "/login";
+                  window.location.href = withBasePath("/login");
                 }
               }}
             >
@@ -1332,7 +1333,7 @@ export function BankSelector() {
         <div className="bg-card text-card-foreground px-5 py-3 border-b-4 border-primary-gradient">
           <div className="flex items-center gap-4 text-sm">
             <Image
-              src="/logo.png"
+              src={withBasePath("/logo.png")}
               alt="Hindsight"
               width={40}
               height={40}

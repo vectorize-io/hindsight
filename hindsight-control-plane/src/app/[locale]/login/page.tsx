@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { stripBasePath, withBasePath } from "@/lib/base-path";
 import Image from "next/image";
 
 function LoginForm() {
@@ -18,7 +19,7 @@ function LoginForm() {
   const searchParams = useSearchParams();
 
   // Get the returnTo URL from query params
-  const returnTo = searchParams.get("returnTo") || "/dashboard";
+  const returnTo = stripBasePath(searchParams.get("returnTo") || "/dashboard");
 
   useEffect(() => {
     // Focus the input on mount
@@ -32,7 +33,7 @@ function LoginForm() {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await fetch(withBasePath("/api/auth/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key }),
@@ -61,7 +62,7 @@ function LoginForm() {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <Image
-            src="/logo.png"
+            src={withBasePath("/logo.png")}
             alt="Hindsight"
             width={160}
             height={160}
