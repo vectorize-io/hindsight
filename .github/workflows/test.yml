@@ -3169,7 +3169,9 @@ jobs:
 
     - name: Run tests
       working-directory: ./hindsight-integrations/openai-agents
-      run: uv run pytest tests -v
+      # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
+      # (requires_real_llm) needs a live Hindsight server and runs separately.
+      run: uv run pytest tests -v -m "not requires_real_llm"
 
   test-agentcore-integration:
     needs: [detect-changes]
