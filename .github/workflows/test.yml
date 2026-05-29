@@ -1124,6 +1124,15 @@ jobs:
       needs.detect-changes.outputs.core == 'true' ||
       needs.detect-changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
+    # Sharded with pytest-split. Splits the ~19-min pytest run across 3
+    # parallel jobs, cutting critical-path wall time to ~7-8 min/shard. The
+    # .venv cache lets shards 2+ skip the ~3-min `uv sync` once shard 1
+    # populates the key — same key on re-runs hits cache on all three.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    name: test-api (${{ matrix.shard }}/3)
     env:
       HINDSIGHT_API_LLM_PROVIDER: vertexai
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
@@ -1164,6 +1173,18 @@ jobs:
       working-directory: ./hindsight-api-slim
       run: uv build
 
+    - name: Cache hindsight-api-slim/.venv
+      # Keyed on the workspace lockfile, the API package's pyproject, and the
+      # pinned Python version — the only inputs that change the resolved env.
+      # `uv sync --frozen` still runs after restore but is a near-instant link
+      # check when the venv already matches the lock.
+      uses: actions/cache@v5
+      with:
+        path: hindsight-api-slim/.venv
+        key: ${{ runner.os }}-venv-test-api-${{ hashFiles('uv.lock', 'hindsight-api-slim/pyproject.toml', '.python-version') }}
+        restore-keys: |
+          ${{ runner.os }}-venv-test-api-
+
     - name: Install dependencies
       working-directory: ./hindsight-api-slim
       run: uv sync --frozen --all-extras --index-strategy unsafe-best-match
@@ -1188,9 +1209,12 @@ jobs:
         print('Models downloaded successfully')
         "
 
-    - name: Run tests
+    - name: Run tests (shard ${{ matrix.shard }}/3)
       working-directory: ./hindsight-api-slim
-      run: uv run pytest tests -v -m "not hs_llm_mat and not hs_llm_core"
+      # `--with pytest-split` adds the plugin ad-hoc — no uv.lock churn.
+      # pytest-split filters at collection (before xdist takes over), so it
+      # composes cleanly with the `-n 8 --dist loadgroup` baked into addopts.
+      run: uv run --with pytest-split pytest tests -v -m "not hs_llm_mat and not hs_llm_core" --splits 3 --group ${{ matrix.shard }}
 
   test-api-llm-core:
     needs: [detect-changes]
