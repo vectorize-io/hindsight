@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { LanguageSwitcher } from "@/components/language-switcher";
-import { stripBasePath, withBasePath } from "@/lib/base-path";
+import { sanitizeReturnTo, withBasePath } from "@/lib/base-path";
 import Image from "next/image";
 
 function LoginForm() {
@@ -18,8 +18,8 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Get the returnTo URL from query params
-  const returnTo = stripBasePath(searchParams.get("returnTo") || "/dashboard");
+  // Validate returnTo to prevent open-redirect via crafted login links.
+  const returnTo = sanitizeReturnTo(searchParams.get("returnTo"));
 
   useEffect(() => {
     // Focus the input on mount

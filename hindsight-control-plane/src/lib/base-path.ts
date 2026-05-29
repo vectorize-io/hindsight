@@ -33,6 +33,26 @@ export function withBasePath(path: string): string {
   return `${basePath}${normalizedPath}`;
 }
 
+// Validates a `returnTo` query parameter to prevent open-redirect attacks
+// (e.g. ?returnTo=//evil.com, ?returnTo=javascript:...). Returns the fallback
+// when the value isn't a safe same-origin app path. Leading control chars are
+// stripped because browsers ignore them when resolving URLs.
+export function sanitizeReturnTo(
+  rawValue: string | null | undefined,
+  fallback = "/dashboard"
+): string {
+  if (!rawValue) return fallback;
+  // Strip leading C0 controls and space — the WHATWG URL parser ignores these,
+  // so a value like " //evil.com" would still resolve off-origin if we didn't.
+  // eslint-disable-next-line no-control-regex
+  const trimmed = rawValue.replace(/^[\x00-\x20]+/, "");
+  if (!trimmed.startsWith("/")) return fallback;
+  if (trimmed.startsWith("//") || trimmed.startsWith("/\\") || ABSOLUTE_URL_PATTERN.test(trimmed)) {
+    return fallback;
+  }
+  return stripBasePath(trimmed);
+}
+
 export function stripBasePath(path: string): string {
   if (ABSOLUTE_URL_PATTERN.test(path) || path.startsWith("//")) {
     return path;
