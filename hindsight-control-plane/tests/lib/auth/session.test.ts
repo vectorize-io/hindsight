@@ -6,7 +6,7 @@ import {
   createSessionToken,
   isSecureRequest,
   verifySessionToken,
-} from "./session";
+} from "@/lib/auth/session";
 
 const ACCESS_KEY = "super-secret-access-key";
 

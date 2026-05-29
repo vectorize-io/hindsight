@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { normalizeBasePath, sanitizeReturnTo, stripBasePath, withBasePath } from "./base-path";
+import { normalizeBasePath, sanitizeReturnTo, stripBasePath, withBasePath } from "@/lib/base-path";
 
 afterEach(() => {
   vi.unstubAllEnvs();

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { respondWithSdk, type SdkResult } from "./sdk-response";
+import { respondWithSdk, type SdkResult } from "@/lib/sdk-response";
 
 const HTTP_OK = 200;
 const HTTP_CREATED = 201;

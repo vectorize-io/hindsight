@@ -6,7 +6,7 @@ vi.mock("@/lib/hindsight-client", () => ({
   getDataplaneHeaders: vi.fn(() => ({})),
 }));
 
-import { POST } from "./route";
+import { POST } from "@/app/api/files/retain/route";
 
 describe("POST /api/files/retain", () => {
   beforeEach(() => {

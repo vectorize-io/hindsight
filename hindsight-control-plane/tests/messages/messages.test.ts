@@ -19,7 +19,7 @@ import { locales, defaultLocale } from "@/i18n/config";
 
 type Catalog = Record<string, unknown>;
 
-const MESSAGES_DIR = join(__dirname);
+const MESSAGES_DIR = join(__dirname, "..", "..", "src", "messages");
 
 function readCatalog(locale: string): Catalog {
   const raw = readFileSync(join(MESSAGES_DIR, `${locale}.json`), "utf-8");
