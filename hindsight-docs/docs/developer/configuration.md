@@ -1478,12 +1478,16 @@ The Control Plane is the web UI for managing memory banks.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_CP_DATAPLANE_API_URL` | URL of the API service | `http://localhost:8888` |
+| `HINDSIGHT_CP_DATAPLANE_API_KEY` | Bearer token the Control Plane sends as `Authorization: Bearer <key>` on every request to the API service. Required when the API service is auth-protected; omit for a public API. | *(none — no `Authorization` header sent)* |
 | `HINDSIGHT_CP_ACCESS_KEY` | Access key to protect the Control Plane UI. When set, users must enter this key to log in. | *(none — auth disabled)* |
 | `NEXT_PUBLIC_BASE_PATH` | Base path for Control Plane UI when behind reverse proxy (e.g., `/hindsight`) | `""` (root) |
 
 ```bash
 # Point Control Plane to a remote API service
 export HINDSIGHT_CP_DATAPLANE_API_URL=http://api.example.com:8888
+
+# Authenticate to an auth-protected API service
+export HINDSIGHT_CP_DATAPLANE_API_KEY=my-dataplane-bearer-token
 
 # Protect the Control Plane with an access key
 export HINDSIGHT_CP_ACCESS_KEY=my-secret-key
