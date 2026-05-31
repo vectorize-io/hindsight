@@ -287,7 +287,7 @@ enum BankCommands {
         /// Bank ID
         bank_id: String,
 
-        /// Filter by fact type (world, experience, opinion)
+        /// Filter by fact type (world, experience, observation)
         #[arg(short = 't', long)]
         fact_type: Option<String>,
 
@@ -455,7 +455,7 @@ enum MemoryCommands {
         /// Bank ID
         bank_id: String,
 
-        /// Filter by fact type (world, experience, opinion)
+        /// Filter by fact type (world, experience, observation)
         #[arg(short = 't', long)]
         fact_type: Option<String>,
 
@@ -489,8 +489,8 @@ enum MemoryCommands {
         /// Search query
         query: String,
 
-        /// Fact types to search (world, experience, opinion)
-        #[arg(short = 't', long, value_delimiter = ',', default_values = &["world", "experience", "opinion"])]
+        /// Fact types to search (world, experience, observation)
+        #[arg(short = 't', long, value_delimiter = ',', default_values = &["world", "experience", "observation"])]
         fact_type: Vec<String>,
 
         /// Thinking budget (low, mid, high)
@@ -645,8 +645,8 @@ enum MemoryCommands {
         /// Bank ID
         bank_id: String,
 
-        /// Fact type to clear (world, agent, opinion). If not specified, clears all types.
-        #[arg(short = 't', long, value_parser = ["world", "agent", "opinion"])]
+        /// Fact type to clear (world, experience, observation). If not specified, clears all types.
+        #[arg(short = 't', long, value_parser = ["world", "experience", "observation"])]
         fact_type: Option<String>,
 
         /// Skip confirmation prompt
