@@ -107,6 +107,9 @@ class MemoryUnit(Base):
     )  # User-defined metadata (str->str)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    valid_to: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True)
+    )  # NULL = still valid; non-NULL = superseded at this timestamp (recall filters out)
 
     # Relationships
     document = relationship("Document", back_populates="memory_units")
@@ -151,6 +154,12 @@ class MemoryUnit(Base):
             "embedding",
             postgresql_using="hnsw",
             postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index(
+            "idx_memory_units_active",
+            "bank_id",
+            "fact_type",
+            postgresql_where=sql_text("valid_to IS NULL"),
         ),
     )
 
