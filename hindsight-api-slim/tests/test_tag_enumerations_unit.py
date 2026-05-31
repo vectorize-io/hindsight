@@ -294,3 +294,27 @@ def test_tag_enumerations_config_is_constructible():
     """Smoke check that TagEnumerationsConfig is part of the public API."""
     cfg = TagEnumerationsConfig(enumerations=[])
     assert cfg.enumerations == []
+
+
+def test_config_field_accepts_raw_list():
+    import dataclasses
+
+    from hindsight_api.config import HindsightConfig
+
+    raw = [{"namespace": "feedback", "type": "value", "values": [{"value": "a"}]}]
+    # HindsightConfig has hundreds of required fields; build a baseline via
+    # from_env() and override only the field under test.
+    base = HindsightConfig.from_env()
+    cfg = dataclasses.replace(base, tag_enumerations=raw)
+    # Stored as the raw list; parsing happens in the retain pipeline.
+    assert cfg.tag_enumerations == raw
+    # Default is None when not overridden.
+    assert base.tag_enumerations is None
+
+
+def test_configurable_fields_includes_tag_enumerations():
+    from hindsight_api.config import HindsightConfig
+
+    assert "tag_enumerations" in HindsightConfig._CONFIGURABLE_FIELDS
+    # Also reachable via the public helper.
+    assert "tag_enumerations" in HindsightConfig.get_configurable_fields()

@@ -1259,6 +1259,10 @@ class HindsightConfig:
     # Whether to extract regular named entities alongside entity labels (default: True)
     # When False: only label entities are extracted (or no entities at all if no labels configured)
     entities_allow_free_form: bool
+    # Tag enumerations (controlled vocabulary of namespace:value tags assigned to facts at retain time)
+    # List of enumeration dicts: [{namespace, description, type, optional, values: [{value, description}]}]
+    # Stored as the raw list; parsing happens in the retain pipeline.
+    tag_enumerations: list | None
 
     # Reflect agent settings
     reflect_mission: str | None
@@ -1409,6 +1413,8 @@ class HindsightConfig:
         # Entity labels (controlled vocabulary for entity classification)
         "entity_labels",
         "entities_allow_free_form",
+        # Tag enumerations (controlled vocabulary of namespace:value tags assigned at retain time)
+        "tag_enumerations",
         # Consolidation settings
         "enable_observations",
         "enable_auto_consolidation",
@@ -2069,6 +2075,7 @@ class HindsightConfig:
             ),
             entity_labels=None,
             entities_allow_free_form=True,
+            tag_enumerations=None,
             # Database migrations
             run_migrations_on_startup=os.getenv(ENV_RUN_MIGRATIONS_ON_STARTUP, "true").lower() == "true",
             # Database connection pool

@@ -2990,6 +2990,7 @@ def _register_update_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
                     - disposition_empathy: Emotional context consideration (1-5).
                     - entity_labels: Controlled vocabulary for entity classification.
                     - entities_allow_free_form: Allow labels outside entity_labels.
+                    - tag_enumerations: Controlled vocabularies of namespace:value tags assigned to facts at retain time.
                     - recall_include_chunks: Include raw chunks in recall results.
                     - recall_max_tokens: Max tokens for recall results.
                     - mcp_enabled_tools: Tool allowlist for this bank.
@@ -3049,6 +3050,7 @@ def _register_update_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
                     - disposition_empathy: Emotional context consideration (1-5).
                     - entity_labels: Controlled vocabulary for entity classification.
                     - entities_allow_free_form: Allow labels outside entity_labels.
+                    - tag_enumerations: Controlled vocabularies of namespace:value tags assigned to facts at retain time.
                     - recall_include_chunks: Include raw chunks in recall results.
                     - recall_max_tokens: Max tokens for recall results.
                     - mcp_enabled_tools: Tool allowlist for this bank.

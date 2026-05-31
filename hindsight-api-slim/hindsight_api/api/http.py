@@ -1824,6 +1824,16 @@ class BankTemplateConfig(BaseModel):
     entities_allow_free_form: bool | None = Field(
         default=None, description="Allow entities outside the label vocabulary"
     )
+    tag_enumerations: list[dict[str, Any]] | None = Field(
+        default=None,
+        description=(
+            "Bank-level enumerated tag vocabularies. Each item is "
+            "{namespace, description, type, optional, values:[{value, "
+            "description}]}. The retain extractor will classify each "
+            "memory along each enumeration and write the picks as "
+            "`namespace:value` tags."
+        ),
+    )
     retain_default_strategy: str | None = Field(
         default=None, description="Name of the default retain strategy (key into retain_strategies map)"
     )
