@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from hindsight_api.engine.memory_engine import MemoryEngine
-from hindsight_api.engine.sql.postgresql import PostgresDialect
+from hindsight_api.engine.sql.postgresql import PostgreSQLDialect as PostgresDialect
 from hindsight_api.models import RequestContext
 
 
