@@ -13,6 +13,7 @@ import asyncio
 import contextvars
 import json
 import logging
+import os
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -753,6 +754,8 @@ class MemoryEngine(MemoryEngineInterface):
             config.read_database_url if self._database_backend_type == "postgresql" else None
         )
         self._initialized = False
+        self._embeddings_initialized = False
+        self._reranker_initialized = False
         self._pool_min_size = pool_min_size if pool_min_size is not None else config.db_pool_min_size
         self._pool_max_size = pool_max_size if pool_max_size is not None else config.db_pool_max_size
         self._read_pool_min_size = config.read_db_pool_min_size
@@ -2071,12 +2074,30 @@ class MemoryEngine(MemoryEngineInterface):
 
         Loads models (embeddings, cross-encoder) in parallel with pg0 startup
         for faster overall initialization.
+
+        Model initialization failures (e.g. HuggingFace downloads blocked by
+        firewall) are handled gracefully: the daemon logs a warning and starts
+        with degraded functionality rather than crashing. Set
+        HINDSIGHT_MODEL_INIT_TIMEOUT (seconds, default 300) to control the
+        per-task timeout.
         """
         if self._initialized:
             return
 
+        # Track which optional components initialized successfully
+        self._embeddings_initialized = False
+        self._reranker_initialized = False
+
         # Run model loading in thread pool (CPU-bound) in parallel with pg0 startup
         loop = asyncio.get_event_loop()
+
+        def _run_in_sub_loop(coro):
+            """Run coroutine in a dedicated asyncio event loop via the thread pool.
+
+            This avoids blocking the main event loop with CPU-bound model loading
+            and isolates the temporary sub-loop from parent-loop cancellations.
+            """
+            return loop.run_in_executor(None, lambda: asyncio.run(coro))
 
         async def start_pg0():
             """Start pg0 if configured."""
@@ -2093,22 +2114,30 @@ class MemoryEngine(MemoryEngineInterface):
                     self._pg0 = pg0
 
         async def init_embeddings():
-            """Initialize embedding model."""
+            """Initialize embedding model.
+
+            Raises on failure — the caller (_with_timeout) handles the exception
+            and sets self._embeddings_initialized = False.
+            """
             # For local providers, run in thread pool to avoid blocking event loop
             if self.embeddings.provider_name == "local":
-                await loop.run_in_executor(None, lambda: asyncio.run(self.embeddings.initialize()))
+                await _run_in_sub_loop(self.embeddings.initialize())
             else:
                 await self.embeddings.initialize()
 
         async def init_cross_encoder():
-            """Initialize cross-encoder model."""
+            """Initialize cross-encoder model.
+
+            Raises on failure — the caller (_with_timeout) handles the exception
+            and sets self._reranker_initialized = False.
+            """
             cross_encoder = self._cross_encoder_reranker.cross_encoder
             # For local providers, run in thread pool to avoid blocking event loop
             if cross_encoder.provider_name == "local":
-                await loop.run_in_executor(None, lambda: asyncio.run(cross_encoder.initialize()))
+                await _run_in_sub_loop(cross_encoder.initialize())
             else:
                 await cross_encoder.initialize()
-            # Mark reranker as initialized
+            # Mark reranker as initialized only on success
             self._cross_encoder_reranker._initialized = True
 
         async def init_query_analyzer():
@@ -2191,23 +2220,87 @@ class MemoryEngine(MemoryEngineInterface):
                             f"set HINDSIGHT_API_RETAIN_BATCH_ENABLED=false."
                         )
 
-        # Build list of initialization tasks
-        init_tasks = [
-            start_pg0(),
-            init_embeddings(),
-            init_query_analyzer(),
+        # Run pg0 and selected model initializations in parallel.
+        # Model init failures are degraded gracefully (warning + continue),
+        # but infrastructure failures (pg0) are fatal.
+        model_init_timeout = float(os.environ.get("HINDSIGHT_MODEL_INIT_TIMEOUT", "300"))
+
+        async def _with_timeout(task, name="task", *, fatal=False):
+            """Run a single init task with a timeout.
+
+            Args:
+                task: The awaitable to run.
+                name: Human-readable name for log messages.
+                fatal: If True, re-raise the exception after logging so the
+                       caller (and ultimately initialize()) aborts. Use for
+                       infrastructure tasks where continuing is meaningless.
+            """
+            try:
+                await asyncio.wait_for(task, timeout=model_init_timeout)
+            except asyncio.TimeoutError:
+                logger.warning("%s timed out after %.0fs", name, model_init_timeout)
+                if fatal:
+                    raise
+            except Exception as e:
+                logger.warning("%s failed: %s", name, e)
+                if fatal:
+                    raise
+
+        # Fatal tasks abort initialization if they fail. Model tasks degrade.
+        fatal_tasks = [
+            _with_timeout(start_pg0(), "pg0 startup", fatal=True),
         ]
 
-        # Only init cross-encoder eagerly if not using lazy initialization
+        # Optional model tasks — failure is degraded (warning + continue)
+        model_tasks = [
+            _with_timeout(init_embeddings(), "embedding model init"),
+            _with_timeout(init_query_analyzer(), "query analyzer init"),
+        ]
         if not self._lazy_reranker:
-            init_tasks.append(init_cross_encoder())
-
-        # Only verify LLM if not skipping
+            model_tasks.append(_with_timeout(init_cross_encoder(), "cross-encoder init"))
         if not self._skip_llm_verification:
-            init_tasks.append(verify_llm())
+            # verify_llm raises RuntimeError for config errors (e.g. batch API
+            # incompatibility) which MUST propagate. Regular connection failures
+            # are already logged as warnings inside verify_llm itself.
+            fatal_tasks.append(_with_timeout(verify_llm(), "LLM verification", fatal=True))
 
-        # Run pg0 and selected model initializations in parallel
-        await asyncio.gather(*init_tasks)
+        # Run everything in parallel. Fatal task exceptions are collected and
+        # re-raised below; model task exceptions are logged and degraded.
+        all_results = await asyncio.gather(
+            *fatal_tasks, *model_tasks, return_exceptions=True
+        )
+
+        # Re-raise all fatal task exceptions (pg0 startup, LLM config validation).
+        # This includes TimeoutError and non-RuntimeError failures, not just
+        # RuntimeError, because _with_timeout(..., fatal=True) means abort.
+        for result in all_results[: len(fatal_tasks)]:
+            if isinstance(result, BaseException):
+                raise result
+
+        # Track which model components initialized successfully.
+        # _with_timeout swallowed their exceptions, so we probe the objects.
+        # Embeddings: if initialize() succeeded, LocalSTEmbeddings._model is set;
+        # for remote providers, _client is set. A simple probe: check dimension.
+        try:
+            _ = self.embeddings.dimension
+            self._embeddings_initialized = True
+        except Exception:
+            self._embeddings_initialized = False
+            logger.warning(
+                "Embedding model not available. Semantic search and retain "
+                "operations will fail until the model is loaded. "
+                "If behind a firewall, set HF_ENDPOINT=https://hf-mirror.com "
+                "or HF_HUB_OFFLINE=1 and pre-download models."
+            )
+
+        self._reranker_initialized = self._cross_encoder_reranker._initialized
+        if not self._reranker_initialized and not self._lazy_reranker:
+            logger.warning(
+                "Cross-encoder reranker not available. Recall will fall back "
+                "to embedding-only scoring. If behind a firewall, set "
+                "HF_ENDPOINT=https://hf-mirror.com or HF_HUB_OFFLINE=1 "
+                "and pre-download models."
+            )
 
         # Run database migrations if enabled
         if self._run_migrations:
@@ -2242,15 +2335,24 @@ class MemoryEngine(MemoryEngineInterface):
                 )
 
                 if tenants:
-                    for tenant in tenants:
-                        schema = tenant.schema
-                        if schema:
-                            ensure_embedding_dimension(
-                                self.db_url,
-                                self.embeddings.dimension,
-                                schema=schema,
-                                vector_extension=config.vector_extension,
-                            )
+                    # Skip embedding dimension migration if the embedding model
+                    # failed to initialize — we don't have a valid dimension to
+                    # enforce, and writing a stale value would corrupt the schema.
+                    if self._embeddings_initialized:
+                        for tenant in tenants:
+                            schema = tenant.schema
+                            if schema:
+                                ensure_embedding_dimension(
+                                    self.db_url,
+                                    self.embeddings.dimension,
+                                    schema=schema,
+                                    vector_extension=config.vector_extension,
+                                )
+                    else:
+                        logger.warning(
+                            "Skipping embedding dimension migration: "
+                            "embedding model not initialized."
+                        )
 
                     for tenant in tenants:
                         schema = tenant.schema
@@ -3392,6 +3494,12 @@ class MemoryEngine(MemoryEngineInterface):
             embedding_span.set_attribute("hindsight.query", query[:100])
 
             try:
+                if not self._embeddings_initialized:
+                    raise RuntimeError(
+                        "Embedding model is not initialized; recall requires embeddings. "
+                        "If behind a firewall, set HF_ENDPOINT=https://hf-mirror.com "
+                        "or HF_HUB_OFFLINE=1 and pre-download models."
+                    )
                 query_embeddings = await embedding_utils.generate_embeddings_batch(
                     self.embeddings,
                     [query],

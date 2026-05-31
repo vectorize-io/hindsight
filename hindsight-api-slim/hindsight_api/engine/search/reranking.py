@@ -2,10 +2,14 @@
 Cross-encoder neural reranking for search results.
 """
 
+import logging
 import math
+import os
 from datetime import datetime, timezone
 
 from .types import MergedCandidate, ScoredResult
+
+logger = logging.getLogger(__name__)
 
 UTC = timezone.utc
 
@@ -154,20 +158,69 @@ class CrossEncoderReranker:
         self._initialized = False
 
     async def ensure_initialized(self):
-        """Ensure the cross-encoder model is initialized (for lazy initialization)."""
+        """Ensure the cross-encoder model is initialized (for lazy initialization).
+
+        If initialization fails (e.g. HuggingFace model download blocked by
+        firewall), logs a warning and leaves ``_initialized`` as False so
+        rerank() can fall back to RRF-based scoring instead of crashing.
+        """
         if self._initialized:
             return
 
         import asyncio
 
-        cross_encoder = self.cross_encoder
-        # For local providers, run in thread pool to avoid blocking event loop
-        if cross_encoder.provider_name == "local":
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, lambda: asyncio.run(cross_encoder.initialize()))
-        else:
-            await cross_encoder.initialize()
+        async def _initialize_cross_encoder():
+            cross_encoder = self.cross_encoder
+            # For local providers, run in thread pool to avoid blocking event loop
+            if cross_encoder.provider_name == "local":
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, lambda: asyncio.run(cross_encoder.initialize()))
+            else:
+                await cross_encoder.initialize()
+
+        timeout = float(os.environ.get("HINDSIGHT_MODEL_INIT_TIMEOUT", "300"))
+        try:
+            await asyncio.wait_for(_initialize_cross_encoder(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Cross-encoder initialization timed out after %.0fs during lazy init. "
+                "Reranking operations will fall back to RRF-based scoring.",
+                timeout,
+            )
+            return
+        except Exception as e:
+            logger.warning(
+                "Cross-encoder initialization failed during lazy init: %s. "
+                "Reranking operations will fall back to RRF-based scoring. "
+                "If behind a firewall, set HF_ENDPOINT=https://hf-mirror.com "
+                "or HF_HUB_OFFLINE=1 and pre-download models.",
+                e,
+            )
+            return
         self._initialized = True
+
+    def _fallback_rerank(self, candidates: list[MergedCandidate]) -> list[ScoredResult]:
+        """Fallback reranking based on RRF order when cross-encoder is unavailable."""
+        if not candidates:
+            return []
+
+        sorted_candidates = sorted(candidates, key=lambda candidate: candidate.rrf_score, reverse=True)
+        denom = max(1, len(sorted_candidates) - 1)
+        scored_results = []
+        for rank, candidate in enumerate(sorted_candidates):
+            # Map RRF rank to [0.1, 1.0] so downstream combined scoring can still
+            # apply recency / temporal / proof-count nudges without losing the
+            # retrieval relevance signal.
+            normalized_score = 1.0 - (0.9 * rank / denom)
+            scored_results.append(
+                ScoredResult(
+                    candidate=candidate,
+                    cross_encoder_score=normalized_score,
+                    cross_encoder_score_normalized=normalized_score,
+                    weight=normalized_score,
+                )
+            )
+        return scored_results
 
     async def rerank(self, query: str, candidates: list[MergedCandidate]) -> list[ScoredResult]:
         """
@@ -182,6 +235,10 @@ class CrossEncoderReranker:
         """
         if not candidates:
             return []
+
+        if not self._initialized:
+            logger.warning("Cross-encoder is not initialized; using RRF-based fallback reranking")
+            return self._fallback_rerank(candidates)
 
         # Prepare query-document pairs with date information
         pairs = []
@@ -210,7 +267,12 @@ class CrossEncoderReranker:
             pairs.append([query, doc_text])
 
         # Get cross-encoder scores
-        scores = await self.cross_encoder.predict(pairs)
+        try:
+            scores = await self.cross_encoder.predict(pairs)
+        except Exception as e:
+            logger.warning("Cross-encoder prediction failed: %s. Using RRF-based fallback reranking", e)
+            self._initialized = False
+            return self._fallback_rerank(candidates)
 
         # Normalize scores to [0, 1] range.
         # External API rerankers (Cohere, Jina, llama.cpp/Qwen, etc.) return
