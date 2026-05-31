@@ -378,3 +378,73 @@ def test_build_extraction_prompt_and_schema_works_without_tag_enumerations():
     prompt, schema = _build_extraction_prompt_and_schema(cfg)
     assert isinstance(prompt, str) and len(prompt) > 0
     assert schema is not None
+
+
+def test_extraction_schema_constrains_tags_when_enumerations_present():
+    """When tag_enumerations are configured, the dynamic per-fact response
+    schema must include a `tags` field whose values are Literal-constrained."""
+    from hindsight_api.config import HindsightConfig
+    from hindsight_api.engine.retain.fact_extraction import (
+        _build_extraction_prompt_and_schema,
+    )
+
+    cfg = HindsightConfig.from_env()
+    raw_enums = [
+        {
+            "namespace": "feedback",
+            "type": "value",
+            "optional": True,
+            "values": [{"value": "behavior"}, {"value": "style"}],
+        }
+    ]
+    prompt, schema = _build_extraction_prompt_and_schema(cfg, tag_enumerations_raw=raw_enums)
+    # Prompt mentions the namespace AND at least one value
+    assert "feedback" in prompt
+    assert "behavior" in prompt
+    assert "style" in prompt
+    # JSON schema includes feedback as a constrained enum somewhere inside the
+    # facts envelope. Stringify to avoid hardcoding the envelope shape.
+    json_schema_text = str(schema.model_json_schema())
+    assert "feedback" in json_schema_text
+    assert "behavior" in json_schema_text
+    assert "style" in json_schema_text
+
+
+def test_extraction_schema_unchanged_when_no_enumerations():
+    """Without tag_enumerations, the schema must NOT mention any enumeration
+    artifacts — back-compat."""
+    from hindsight_api.config import HindsightConfig
+    from hindsight_api.engine.retain.fact_extraction import (
+        _build_extraction_prompt_and_schema,
+    )
+
+    cfg = HindsightConfig.from_env()
+    cfg.tag_enumerations = None
+    prompt, schema = _build_extraction_prompt_and_schema(cfg, tag_enumerations_raw=None)
+    # Smoke check: existing tests already cover the no-enum baseline; here we
+    # just confirm the prompt section header isn't appended.
+    assert "Enumerated tag classification" not in prompt
+
+
+def test_per_retain_enumerations_appear_in_schema_when_bank_has_none():
+    """The merge logic: per-retain overrides bank, but also works alone."""
+    from hindsight_api.config import HindsightConfig
+    from hindsight_api.engine.retain.fact_extraction import (
+        _build_extraction_prompt_and_schema,
+    )
+
+    cfg = HindsightConfig.from_env()
+    cfg.tag_enumerations = None
+    per_retain = [
+        {
+            "namespace": "severity",
+            "type": "multi-values",
+            "values": [{"value": "low"}, {"value": "high"}],
+        }
+    ]
+    prompt, schema = _build_extraction_prompt_and_schema(cfg, tag_enumerations_raw=per_retain)
+    assert "severity" in prompt
+    assert "low" in prompt
+    assert "high" in prompt
+    json_schema_text = str(schema.model_json_schema())
+    assert "severity" in json_schema_text

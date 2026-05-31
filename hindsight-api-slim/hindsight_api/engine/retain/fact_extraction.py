@@ -26,8 +26,10 @@ from .entity_labels import (
     parse_entity_labels,
 )
 from .tag_enumerations import (
+    build_tag_enumerations_response_field,
     merge_tag_enumerations,
     parse_tag_enumerations,
+    render_tag_enumerations_to_prompt_section,
 )
 
 
@@ -950,16 +952,16 @@ def _build_extraction_prompt_and_schema(config, tag_enumerations_raw: list | Non
     entity_labels_raw = getattr(config, "entity_labels", None)
     labels_cfg = parse_entity_labels(entity_labels_raw)
     # Resolve effective tag enumerations: bank-level ⊕ per-retain merge.
-    # The merged config will be consumed by Task 5 (prompt + schema injection).
     bank_tag_enums = parse_tag_enumerations(getattr(config, "tag_enumerations", None))
     per_retain_tag_enums = parse_tag_enumerations(tag_enumerations_raw)
     effective_tag_enums = merge_tag_enumerations(bank_tag_enums, per_retain_tag_enums)
-    # `effective_tag_enums` will be consumed by Task 5 (prompt + schema injection).
-    _ = effective_tag_enums  # silence unused-var lint until Task 5 wires it in
     free_form_entities = getattr(config, "entities_allow_free_form", True)
     labels_section = _build_labels_prompt_section(labels_cfg, free_form_entities)
     if labels_section:
         prompt = prompt + labels_section
+    tag_enums_section = render_tag_enumerations_to_prompt_section(effective_tag_enums)
+    if tag_enums_section:
+        prompt = prompt + tag_enums_section
 
     # Force the LLM to emit fact text in the configured language, regardless of
     # the source content's language. Same directive is applied to consolidation
@@ -972,6 +974,17 @@ def _build_extraction_prompt_and_schema(config, tag_enumerations_raw: list | Non
     prompt = prompt + output_language_directive(getattr(config, "llm_output_language", None))
 
     response_schema = base_response_class
+    # `current_fact_class` is the per-fact model that will be wrapped into the
+    # response envelope. Each composition step below may extend it. We track
+    # the current required-field set alongside so successive `create_model`
+    # calls don't drop earlier additions from the JSON schema's `required`
+    # array (Pydantic's `__config__` here overrides, doesn't merge).
+    current_fact_class: type = base_fact_class
+    base_extra = base_fact_class.model_config.get("json_schema_extra")
+    current_required: list[str] = list(
+        cast(dict, base_extra).get("required", []) if isinstance(base_extra, dict) else []
+    )
+    fact_class_changed = False
 
     if labels_cfg and labels_cfg.attributes:
         LabelsModel = build_labels_model(labels_cfg)
@@ -991,19 +1004,48 @@ def _build_extraction_prompt_and_schema(config, tag_enumerations_raw: list | Non
                 )
             # Inherit parent's required fields and add 'labels' so it appears in the JSON schema
             # required array (the base class json_schema_extra overrides required entirely)
-            base_extra = base_fact_class.model_config.get("json_schema_extra")
-            base_required = cast(dict, base_extra).get("required", []) if isinstance(base_extra, dict) else []
-            DynamicFact = create_model(
+            current_required = [*current_required, "labels"]
+            current_fact_class = create_model(
                 "LabelsFact",
-                __base__=base_fact_class,
+                __base__=current_fact_class,
                 __config__=ConfigDict(
                     json_schema_mode="validation",
-                    json_schema_extra={"required": [*base_required, "labels"]},
+                    json_schema_extra={"required": list(current_required)},
                 ),
                 **dynamic_fields,
             )
-            DynamicResponse = create_model("LabelsResponse", facts=(list[DynamicFact], ...))  # type: ignore[valid-type]
-            response_schema = DynamicResponse
+            fact_class_changed = True
+
+    # Mirror the labels pattern for enumerated tag classification. The
+    # `tags` field is intentionally NOT added to `required` by default —
+    # the model produces an empty assignments object when no enumeration
+    # fits. Only promote to required when at least one enumeration has
+    # type="value" and optional=False, in which case the schema cannot be
+    # satisfied without an explicit `tags` object.
+    if effective_tag_enums and effective_tag_enums.enumerations:
+        tags_field_type, tags_field_info = build_tag_enumerations_response_field(effective_tag_enums)
+        if tags_field_type is not None:
+            has_required_value_enum = any(
+                e.type == "value" and not e.optional for e in effective_tag_enums.enumerations
+            )
+            if has_required_value_enum:
+                current_required = [*current_required, "tags"]
+            current_fact_class = create_model(
+                "TagEnumsFact",
+                __base__=current_fact_class,
+                __config__=ConfigDict(
+                    json_schema_mode="validation",
+                    json_schema_extra={"required": list(current_required)},
+                ),
+                tags=(tags_field_type, tags_field_info),
+            )
+            fact_class_changed = True
+
+    if fact_class_changed:
+        response_schema = create_model(
+            "DynamicFactExtractionResponse",
+            facts=(list[current_fact_class], ...),  # type: ignore[valid-type]
+        )
 
     return prompt, response_schema
 
