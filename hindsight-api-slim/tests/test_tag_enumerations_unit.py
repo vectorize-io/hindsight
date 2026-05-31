@@ -448,3 +448,174 @@ def test_per_retain_enumerations_appear_in_schema_when_bank_has_none():
     assert "high" in prompt
     json_schema_text = str(schema.model_json_schema())
     assert "severity" in json_schema_text
+
+
+def test_assignments_to_tag_strings_handles_pydantic_model_from_extractor():
+    """The dynamic Pydantic model from build_tag_enumerations_response_field
+    should flow through assignments_to_tag_strings correctly."""
+    from hindsight_api.engine.retain.tag_enumerations import (
+        assignments_to_tag_strings,
+        build_tag_enumerations_response_field,
+        parse_tag_enumerations,
+    )
+
+    cfg = parse_tag_enumerations(
+        [
+            {
+                "namespace": "feedback",
+                "type": "multi-values",
+                "values": [{"value": "behavior"}, {"value": "style"}],
+            },
+        ]
+    )
+    field_type, _ = build_tag_enumerations_response_field(cfg)
+    instance = field_type(feedback=["behavior"])
+    assert assignments_to_tag_strings(instance, cfg) == ["feedback:behavior"]
+
+
+def test_merge_classified_tags_helper_unions_and_sorts():
+    """_merge_classified_tags merges LLM-emitted tags (validated against the
+    enum vocabulary) with caller-supplied tags, deduplicates, and sorts."""
+    from hindsight_api.engine.retain.fact_extraction import _merge_classified_tags
+    from hindsight_api.engine.retain.tag_enumerations import parse_tag_enumerations
+
+    cfg = parse_tag_enumerations(
+        [
+            {
+                "namespace": "feedback",
+                "type": "multi-values",
+                "values": [{"value": "behavior"}, {"value": "style"}],
+            },
+        ]
+    )
+    llm_fact = {"what": "...", "tags": {"feedback": ["behavior"]}}
+    merged = _merge_classified_tags(llm_fact, ["user:chris"], cfg)
+    assert merged == ["feedback:behavior", "user:chris"]
+
+
+def test_merge_classified_tags_helper_noop_when_no_enums():
+    """If no tag_enumerations are configured, the helper must just return
+    the caller-supplied tags (sorted+deduped) unchanged."""
+    from hindsight_api.engine.retain.fact_extraction import _merge_classified_tags
+
+    llm_fact = {"what": "...", "tags": {"feedback": ["behavior"]}}
+    merged = _merge_classified_tags(llm_fact, ["user:chris", "team:eng"], None)
+    # No enums configured => assignments_to_tag_strings returns [], so only
+    # caller tags survive.
+    assert merged == ["team:eng", "user:chris"]
+
+
+def test_merge_classified_tags_helper_dedupes_overlap():
+    """If the LLM and the caller both supply the same tag, the result must
+    contain it exactly once."""
+    from hindsight_api.engine.retain.fact_extraction import _merge_classified_tags
+    from hindsight_api.engine.retain.tag_enumerations import parse_tag_enumerations
+
+    cfg = parse_tag_enumerations(
+        [
+            {
+                "namespace": "feedback",
+                "type": "multi-values",
+                "values": [{"value": "behavior"}],
+            },
+        ]
+    )
+    llm_fact = {"tags": {"feedback": ["behavior"]}}
+    merged = _merge_classified_tags(llm_fact, ["feedback:behavior"], cfg)
+    assert merged == ["feedback:behavior"]
+
+
+def test_merge_classified_tags_helper_drops_out_of_vocab():
+    """Defense in depth: if the LLM emits a value not in the configured
+    enum vocabulary, it MUST be dropped (assignments_to_tag_strings filters)."""
+    from hindsight_api.engine.retain.fact_extraction import _merge_classified_tags
+    from hindsight_api.engine.retain.tag_enumerations import parse_tag_enumerations
+
+    cfg = parse_tag_enumerations(
+        [
+            {
+                "namespace": "feedback",
+                "type": "multi-values",
+                "values": [{"value": "behavior"}],
+            },
+        ]
+    )
+    llm_fact = {"tags": {"feedback": ["behavior", "made_up_value"]}}
+    merged = _merge_classified_tags(llm_fact, [], cfg)
+    assert merged == ["feedback:behavior"]
+
+
+def test_extract_facts_from_text_merges_llm_tags_onto_fact_object(monkeypatch):
+    """End-to-end at the fact-extraction layer: a stubbed LLM that returns
+    a fact with `tags: {feedback: [behavior]}` should produce a Fact whose
+    `tags` attribute is `["feedback:behavior"]`. Downstream
+    extract_facts_from_contents merges this onto ExtractedFact.tags.
+
+    This is a focused integration test for the LLM-to-Fact merge — the
+    broader HTTP-driven integration test lives in Task 7.
+    """
+    import asyncio
+
+    from hindsight_api.config import HindsightConfig
+    from hindsight_api.engine.llm_wrapper import LLMConfig
+    from hindsight_api.engine.retain.fact_extraction import (
+        TokenUsage,
+        extract_facts_from_text,
+    )
+
+    async def fake_call(self, *args, **kwargs):
+        # Mirror the lenient-JSON path: return (dict, usage) when
+        # return_usage=True. fact_extraction passes skip_validation=True so
+        # we return raw dicts matching the dynamic schema.
+        result = {
+            "facts": [
+                {
+                    "what": "User wants ship-without-asking",
+                    "when": "during chat",
+                    "where": "N/A",
+                    "who": "user",
+                    "why": "wants speed",
+                    "fact_type": "assistant",
+                    "fact_kind": "conversation",
+                    "tags": {"feedback": ["behavior"]},
+                }
+            ]
+        }
+        if kwargs.get("return_usage"):
+            return result, TokenUsage()
+        return result
+
+    monkeypatch.setattr(LLMConfig, "call", fake_call, raising=True)
+
+    cfg = HindsightConfig.from_env()
+    # Use a minimal text so chunking yields exactly 1 chunk and we don't
+    # accidentally exercise the auto-split path. The retain mode default
+    # is "structured", which is what we want.
+    text = "Chris said: ship without asking next time."
+
+    per_retain_enums = [
+        {
+            "namespace": "feedback",
+            "type": "multi-values",
+            "values": [{"value": "behavior"}, {"value": "style"}],
+        }
+    ]
+
+    facts, _chunks, _usage = asyncio.run(
+        extract_facts_from_text(
+            text=text,
+            event_date=None,
+            llm_config=LLMConfig.from_env(),
+            agent_name="test-agent",
+            config=cfg,
+            context="unit test",
+            metadata=None,
+            tag_enumerations_raw=per_retain_enums,
+        )
+    )
+
+    assert len(facts) == 1, f"expected 1 fact, got {len(facts)}: {facts}"
+    fact = facts[0]
+    assert fact.tags == ["feedback:behavior"], (
+        f"expected LLM-emitted tags to be merged onto Fact.tags as ['feedback:behavior'], got {fact.tags!r}"
+    )

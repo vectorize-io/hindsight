@@ -26,6 +26,7 @@ from .entity_labels import (
     parse_entity_labels,
 )
 from .tag_enumerations import (
+    assignments_to_tag_strings,
     build_tag_enumerations_response_field,
     merge_tag_enumerations,
     parse_tag_enumerations,
@@ -74,6 +75,30 @@ def _extract_map_entities(
             if label_str.lower() not in existing_texts_lower:
                 validated_entities.append(Entity(text=label_str))
                 existing_texts_lower.add(label_str.lower())
+
+
+def _merge_classified_tags(
+    llm_fact: dict,
+    caller_tags: list[str] | None,
+    effective_tag_enums,
+) -> list[str]:
+    """Merge LLM-emitted enumerated-tag classifications with caller-supplied tags.
+
+    Reads `llm_fact["tags"]` (a `{namespace: value(s)}` map produced by the
+    Task-5 dynamic schema), converts it to flat `namespace:value` strings via
+    `assignments_to_tag_strings` (which validates against the configured
+    vocabulary and lowercases), and unions with the caller-supplied tags.
+
+    Returns a sorted, deduplicated list of strings. Tags from the caller
+    preserve their original casing; LLM-emitted tags are already lowercased.
+    When `effective_tag_enums` is None (no enumerations configured),
+    `assignments_to_tag_strings` returns an empty list and this is a no-op
+    on top of the caller-supplied tags.
+    """
+    llm_tag_assignments = llm_fact.get("tags") if isinstance(llm_fact, dict) else None
+    classified_tags = assignments_to_tag_strings(llm_tag_assignments, effective_tag_enums)
+    caller = list(caller_tags) if caller_tags else []
+    return sorted({*caller, *classified_tags})
 
 
 def _infer_temporal_date(fact_text: str, event_date: datetime | None) -> str | None:
@@ -151,6 +176,12 @@ class Fact(BaseModel):
     # Optional structured data
     entities: list[Entity] | None = None
     causal_relations: list["CausalRelation"] | None = None
+
+    # Enumerated-tag classifications from the LLM (flat `namespace:value` strings),
+    # populated when tag_enumerations are configured. The orchestration layer
+    # merges these with caller-supplied RetainContent.tags before they land on
+    # the ExtractedFact dataclass.
+    tags: list[str] | None = None
 
 
 class CausalRelation(BaseModel):
@@ -1144,6 +1175,14 @@ async def _extract_facts_from_chunk(
     # Build prompt and schema using helper function
     prompt, response_schema = _build_extraction_prompt_and_schema(config, tag_enumerations_raw=tag_enumerations_raw)
 
+    # Resolve effective tag enumerations for this chunk so we can map LLM-emitted
+    # `tags` payloads back to flat `namespace:value` strings on each Fact.
+    # Mirrors the merge inside _build_extraction_prompt_and_schema — parse is
+    # cheap and keeping the call here avoids changing that helper's return shape.
+    bank_tag_enums = parse_tag_enumerations(getattr(config, "tag_enumerations", None))
+    per_retain_tag_enums = parse_tag_enumerations(tag_enumerations_raw)
+    effective_tag_enums = merge_tag_enumerations(bank_tag_enums, per_retain_tag_enums)
+
     # Check config for extraction mode and causal link extraction
     extraction_mode = config.retain_extraction_mode
     extract_causal_links = config.retain_extract_causal_links
@@ -1408,6 +1447,14 @@ async def _extract_facts_from_chunk(
                 # Set mentioned_at to the event_date (when the conversation/document occurred),
                 # or None when the caller opted into no timestamp.
                 fact_data["mentioned_at"] = event_date.isoformat() if event_date is not None else None
+
+                # Read LLM-emitted enumerated-tag classifications (Task 5 wires
+                # `tags` into the response schema when tag_enumerations are
+                # configured) and store on the Fact for the orchestration layer
+                # to merge with caller-supplied RetainContent.tags.
+                classified_tags = assignments_to_tag_strings(llm_fact.get("tags"), effective_tag_enums)
+                if classified_tags:
+                    fact_data["tags"] = classified_tags
 
                 # Build Fact model instance
                 try:
@@ -1766,6 +1813,18 @@ async def extract_facts_from_contents_batch_api(
             if batch_id:
                 logger.info(f"Resuming existing batch: batch_id={batch_id} (crash recovery)")
 
+    # Resolve effective tag enumerations once per content so we can map LLM-emitted
+    # `tags` payloads back to flat `namespace:value` strings when we parse batch
+    # results below. Indexed by content_index.
+    bank_tag_enums = parse_tag_enumerations(getattr(config, "tag_enumerations", None))
+    effective_tag_enums_per_content: list = [
+        merge_tag_enumerations(
+            bank_tag_enums,
+            parse_tag_enumerations(getattr(item, "tag_enumerations", None)),
+        )
+        for item in contents
+    ]
+
     # Step 1: Chunk all contents and build batch requests (skip if resuming)
     all_chunks_info = []  # List of (chunk_text, content_index, chunk_index_in_content, event_date, context)
     batch_requests = []
@@ -2095,6 +2154,17 @@ async def extract_facts_from_contents_batch_api(
             # or None when the caller opted into no timestamp.
             fact_data["mentioned_at"] = event_date.isoformat() if event_date is not None else None
 
+            # Read LLM-emitted enumerated-tag classifications and store on the
+            # Fact for the orchestration layer to merge with RetainContent.tags.
+            effective_tag_enums = (
+                effective_tag_enums_per_content[content_index]
+                if content_index < len(effective_tag_enums_per_content)
+                else None
+            )
+            classified_tags = assignments_to_tag_strings(llm_fact.get("tags"), effective_tag_enums)
+            if classified_tags:
+                fact_data["tags"] = classified_tags
+
             try:
                 fact = Fact(fact=combined_text, fact_type=fact_type, **fact_data)
                 chunk_facts.append(fact)
@@ -2139,6 +2209,10 @@ async def extract_facts_from_contents_batch_api(
         content = contents[chunk_meta.content_index]
 
         for fact_from_llm in chunk_facts:
+            # Merge LLM-emitted enumerated-tag classifications (stashed on
+            # Fact.tags during batch-response parsing) with caller-supplied
+            # RetainContent.tags. Sorted+deduplicated for predictability.
+            merged_tags = sorted({*content.tags, *(fact_from_llm.tags or [])})
             extracted_fact = ExtractedFactType(
                 fact_text=fact_from_llm.fact,
                 fact_type=fact_from_llm.fact_type,
@@ -2151,7 +2225,7 @@ async def extract_facts_from_contents_batch_api(
                 context=content.context,
                 mentioned_at=content.event_date,
                 metadata=content.metadata,
-                tags=content.tags,
+                tags=merged_tags,
                 observation_scopes=content.observation_scopes,
             )
 
@@ -2329,6 +2403,11 @@ async def extract_facts_from_contents(
                 if fact_idx_in_content < len(facts_from_llm):
                     fact_from_llm = facts_from_llm[fact_idx_in_content]
 
+                    # Merge LLM-emitted enumerated-tag classifications (stashed
+                    # on Fact.tags during chunk parsing) with caller-supplied
+                    # RetainContent.tags. Sorted+deduplicated for predictability.
+                    merged_tags = sorted({*content.tags, *(fact_from_llm.tags or [])})
+
                     # Convert Fact model from LLM to ExtractedFactType dataclass
                     # mentioned_at is always the event_date (when the conversation/document occurred)
                     extracted_fact = ExtractedFactType(
@@ -2351,7 +2430,7 @@ async def extract_facts_from_contents(
                         # mentioned_at: always the event_date (when the conversation/document occurred)
                         mentioned_at=content.event_date,
                         metadata=content.metadata,
-                        tags=content.tags,
+                        tags=merged_tags,
                         observation_scopes=content.observation_scopes,
                     )
 
