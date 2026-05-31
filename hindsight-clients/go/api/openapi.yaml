@@ -3960,6 +3960,11 @@ components:
         entities_allow_free_form:
           nullable: true
           type: boolean
+        tag_enumerations:
+          items:
+            additionalProperties: {}
+          nullable: true
+          type: array
         retain_default_strategy:
           nullable: true
           type: string
@@ -5379,6 +5384,11 @@ components:
         tags:
           items:
             type: string
+          nullable: true
+          type: array
+        tag_enumerations:
+          items:
+            additionalProperties: {}
           nullable: true
           type: array
         observation_scopes:

@@ -106,6 +106,23 @@ export interface EntityInput {
   type?: string;
 }
 
+export interface TagEnumerationValue {
+  value: string;
+  description?: string;
+  // Index signature for compatibility with the generated SDK's open dict shape.
+  [key: string]: unknown;
+}
+
+export interface TagEnumeration {
+  namespace: string;
+  description?: string;
+  type: "value" | "multi-values";
+  optional?: boolean;
+  values: TagEnumerationValue[];
+  // Index signature for compatibility with the generated SDK's open dict shape.
+  [key: string]: unknown;
+}
+
 export interface MemoryItemInput {
   content: string;
   timestamp?: string | Date;
@@ -114,6 +131,7 @@ export interface MemoryItemInput {
   document_id?: string;
   entities?: EntityInput[];
   tags?: string[];
+  tag_enumerations?: TagEnumeration[];
   observation_scopes?: "per_tag" | "combined" | "all_combinations" | string[][];
   strategy?: string;
   update_mode?: "replace" | "append";
@@ -178,6 +196,8 @@ export class HindsightClient {
       entities?: EntityInput[];
       /** Optional list of tags for this memory */
       tags?: string[];
+      /** Optional enumerated-tag classifications for the LLM extractor to apply */
+      tagEnumerations?: TagEnumeration[];
       /** How to handle existing documents: 'replace' (default) or 'append' */
       updateMode?: "replace" | "append";
       /** Observation scoping strategy: 'per_tag', 'combined', 'all_combinations', or explicit scope groups */
@@ -198,6 +218,7 @@ export class HindsightClient {
           document_id: options?.documentId,
           entities: options?.entities,
           tags: options?.tags,
+          tag_enumerations: options?.tagEnumerations,
           update_mode: options?.updateMode,
           observation_scopes: options?.observationScopes,
           strategy: options?.strategy,
@@ -227,6 +248,7 @@ export class HindsightClient {
       document_id: item.document_id,
       entities: item.entities,
       tags: item.tags,
+      tag_enumerations: item.tag_enumerations,
       observation_scopes: item.observation_scopes,
       strategy: item.strategy,
       update_mode: item.update_mode,

@@ -491,6 +491,14 @@ export type BankTemplateConfig = {
    */
   entities_allow_free_form?: boolean | null;
   /**
+   * Tag Enumerations
+   *
+   * Bank-level enumerated tag vocabularies. Each item is {namespace, description, type, optional, values:[{value, description}]}. The retain extractor will classify each memory along each enumeration and write the picks as `namespace:value` tags.
+   */
+  tag_enumerations?: Array<{
+    [key: string]: unknown;
+  }> | null;
+  /**
    * Retain Default Strategy
    *
    * Name of the default retain strategy (key into retain_strategies map)
@@ -1892,6 +1900,14 @@ export type MemoryItem = {
    * Optional tags for visibility scoping. Memories with tags can be filtered during recall.
    */
   tags?: Array<string> | null;
+  /**
+   * Tag Enumerations
+   *
+   * Per-retain enumerated tag vocabularies for this item. Same shape as the bank-level setting ({namespace, description, type:'value'|'multi-values', optional, values:[{value, description}]}). Merged with the bank-level config by namespace; per-retain wins on collision.
+   */
+  tag_enumerations?: Array<{
+    [key: string]: unknown;
+  }> | null;
   /**
    * ObservationScopes
    *

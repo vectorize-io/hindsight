@@ -28,6 +28,7 @@ type MemoryItem struct {
 	DocumentId NullableString `json:"document_id,omitempty"`
 	Entities []EntityInput `json:"entities,omitempty"`
 	Tags []string `json:"tags,omitempty"`
+	TagEnumerations []map[string]interface{} `json:"tag_enumerations,omitempty"`
 	ObservationScopes NullableObservationScopes `json:"observation_scopes,omitempty"`
 	Strategy NullableString `json:"strategy,omitempty"`
 	UpdateMode NullableString `json:"update_mode,omitempty"`
@@ -302,6 +303,39 @@ func (o *MemoryItem) SetTags(v []string) {
 	o.Tags = v
 }
 
+// GetTagEnumerations returns the TagEnumerations field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MemoryItem) GetTagEnumerations() []map[string]interface{} {
+	if o == nil {
+		var ret []map[string]interface{}
+		return ret
+	}
+	return o.TagEnumerations
+}
+
+// GetTagEnumerationsOk returns a tuple with the TagEnumerations field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MemoryItem) GetTagEnumerationsOk() ([]map[string]interface{}, bool) {
+	if o == nil || IsNil(o.TagEnumerations) {
+		return nil, false
+	}
+	return o.TagEnumerations, true
+}
+
+// HasTagEnumerations returns a boolean if a field has been set.
+func (o *MemoryItem) HasTagEnumerations() bool {
+	if o != nil && !IsNil(o.TagEnumerations) {
+		return true
+	}
+
+	return false
+}
+
+// SetTagEnumerations gets a reference to the given []map[string]interface{} and assigns it to the TagEnumerations field.
+func (o *MemoryItem) SetTagEnumerations(v []map[string]interface{}) {
+	o.TagEnumerations = v
+}
+
 // GetObservationScopes returns the ObservationScopes field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *MemoryItem) GetObservationScopes() ObservationScopes {
 	if o == nil || IsNil(o.ObservationScopes.Get()) {
@@ -456,6 +490,9 @@ func (o MemoryItem) ToMap() (map[string]interface{}, error) {
 	}
 	if o.Tags != nil {
 		toSerialize["tags"] = o.Tags
+	}
+	if o.TagEnumerations != nil {
+		toSerialize["tag_enumerations"] = o.TagEnumerations
 	}
 	if o.ObservationScopes.IsSet() {
 		toSerialize["observation_scopes"] = o.ObservationScopes.Get()

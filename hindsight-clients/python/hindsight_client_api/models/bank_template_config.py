@@ -39,6 +39,7 @@ class BankTemplateConfig(BaseModel):
     disposition_empathy: Optional[Annotated[int, Field(le=5, strict=True, ge=1)]] = None
     entity_labels: Optional[List[Dict[str, Any]]] = None
     entities_allow_free_form: Optional[StrictBool] = None
+    tag_enumerations: Optional[List[Dict[str, Any]]] = None
     retain_default_strategy: Optional[StrictStr] = None
     retain_strategies: Optional[Dict[str, Any]] = None
     retain_chunk_batch_size: Optional[StrictInt] = None
@@ -58,7 +59,7 @@ class BankTemplateConfig(BaseModel):
     recall_budget_adaptive_high: Optional[Union[StrictFloat, StrictInt]] = None
     recall_budget_min: Optional[StrictInt] = None
     recall_budget_max: Optional[StrictInt] = None
-    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "enable_observations", "observations_mission", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "reflect_source_facts_max_tokens", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max"]
+    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "enable_observations", "observations_mission", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "tag_enumerations", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "mcp_enabled_tools", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "reflect_source_facts_max_tokens", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -158,6 +159,11 @@ class BankTemplateConfig(BaseModel):
         # and model_fields_set contains the field
         if self.entities_allow_free_form is None and "entities_allow_free_form" in self.model_fields_set:
             _dict['entities_allow_free_form'] = None
+
+        # set to None if tag_enumerations (nullable) is None
+        # and model_fields_set contains the field
+        if self.tag_enumerations is None and "tag_enumerations" in self.model_fields_set:
+            _dict['tag_enumerations'] = None
 
         # set to None if retain_default_strategy (nullable) is None
         # and model_fields_set contains the field
@@ -278,6 +284,7 @@ class BankTemplateConfig(BaseModel):
             "disposition_empathy": obj.get("disposition_empathy"),
             "entity_labels": obj.get("entity_labels"),
             "entities_allow_free_form": obj.get("entities_allow_free_form"),
+            "tag_enumerations": obj.get("tag_enumerations"),
             "retain_default_strategy": obj.get("retain_default_strategy"),
             "retain_strategies": obj.get("retain_strategies"),
             "retain_chunk_batch_size": obj.get("retain_chunk_batch_size"),

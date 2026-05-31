@@ -36,10 +36,11 @@ class MemoryItem(BaseModel):
     document_id: Optional[StrictStr] = None
     entities: Optional[List[EntityInput]] = None
     tags: Optional[List[StrictStr]] = None
+    tag_enumerations: Optional[List[Dict[str, Any]]] = None
     observation_scopes: Optional[ObservationScopes] = None
     strategy: Optional[StrictStr] = None
     update_mode: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["content", "timestamp", "context", "metadata", "document_id", "entities", "tags", "observation_scopes", "strategy", "update_mode"]
+    __properties: ClassVar[List[str]] = ["content", "timestamp", "context", "metadata", "document_id", "entities", "tags", "tag_enumerations", "observation_scopes", "strategy", "update_mode"]
 
     @field_validator('update_mode')
     def update_mode_validate_enum(cls, value):
@@ -133,6 +134,11 @@ class MemoryItem(BaseModel):
         if self.tags is None and "tags" in self.model_fields_set:
             _dict['tags'] = None
 
+        # set to None if tag_enumerations (nullable) is None
+        # and model_fields_set contains the field
+        if self.tag_enumerations is None and "tag_enumerations" in self.model_fields_set:
+            _dict['tag_enumerations'] = None
+
         # set to None if observation_scopes (nullable) is None
         # and model_fields_set contains the field
         if self.observation_scopes is None and "observation_scopes" in self.model_fields_set:
@@ -167,6 +173,7 @@ class MemoryItem(BaseModel):
             "document_id": obj.get("document_id"),
             "entities": [EntityInput.from_dict(_item) for _item in obj["entities"]] if obj.get("entities") is not None else None,
             "tags": obj.get("tags"),
+            "tag_enumerations": obj.get("tag_enumerations"),
             "observation_scopes": ObservationScopes.from_dict(obj["observation_scopes"]) if obj.get("observation_scopes") is not None else None,
             "strategy": obj.get("strategy"),
             "update_mode": obj.get("update_mode")

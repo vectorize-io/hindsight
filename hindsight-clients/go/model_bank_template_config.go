@@ -31,6 +31,7 @@ type BankTemplateConfig struct {
 	DispositionEmpathy NullableInt32 `json:"disposition_empathy,omitempty"`
 	EntityLabels []map[string]interface{} `json:"entity_labels,omitempty"`
 	EntitiesAllowFreeForm NullableBool `json:"entities_allow_free_form,omitempty"`
+	TagEnumerations []map[string]interface{} `json:"tag_enumerations,omitempty"`
 	RetainDefaultStrategy NullableString `json:"retain_default_strategy,omitempty"`
 	RetainStrategies map[string]interface{} `json:"retain_strategies,omitempty"`
 	RetainChunkBatchSize NullableInt32 `json:"retain_chunk_batch_size,omitempty"`
@@ -562,6 +563,39 @@ func (o *BankTemplateConfig) SetEntitiesAllowFreeFormNil() {
 // UnsetEntitiesAllowFreeForm ensures that no value is present for EntitiesAllowFreeForm, not even an explicit nil
 func (o *BankTemplateConfig) UnsetEntitiesAllowFreeForm() {
 	o.EntitiesAllowFreeForm.Unset()
+}
+
+// GetTagEnumerations returns the TagEnumerations field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetTagEnumerations() []map[string]interface{} {
+	if o == nil {
+		var ret []map[string]interface{}
+		return ret
+	}
+	return o.TagEnumerations
+}
+
+// GetTagEnumerationsOk returns a tuple with the TagEnumerations field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetTagEnumerationsOk() ([]map[string]interface{}, bool) {
+	if o == nil || IsNil(o.TagEnumerations) {
+		return nil, false
+	}
+	return o.TagEnumerations, true
+}
+
+// HasTagEnumerations returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasTagEnumerations() bool {
+	if o != nil && !IsNil(o.TagEnumerations) {
+		return true
+	}
+
+	return false
+}
+
+// SetTagEnumerations gets a reference to the given []map[string]interface{} and assigns it to the TagEnumerations field.
+func (o *BankTemplateConfig) SetTagEnumerations(v []map[string]interface{}) {
+	o.TagEnumerations = v
 }
 
 // GetRetainDefaultStrategy returns the RetainDefaultStrategy field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -1380,6 +1414,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.EntitiesAllowFreeForm.IsSet() {
 		toSerialize["entities_allow_free_form"] = o.EntitiesAllowFreeForm.Get()
+	}
+	if o.TagEnumerations != nil {
+		toSerialize["tag_enumerations"] = o.TagEnumerations
 	}
 	if o.RetainDefaultStrategy.IsSet() {
 		toSerialize["retain_default_strategy"] = o.RetainDefaultStrategy.Get()
