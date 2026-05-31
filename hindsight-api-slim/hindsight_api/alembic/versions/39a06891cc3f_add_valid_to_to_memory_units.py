@@ -1,8 +1,8 @@
 """Add valid_to validity-window column to memory_units table.
 
-Revision ID: a2b3c4d5e6f7
-Revises: z1u2v3w4x5y6
-Create Date: 2026-05-02
+Revision ID: 39a06891cc3f
+Revises: c1d2e3f4a5b6
+Create Date: 2026-05-31
 
 Adds a nullable ``valid_to TIMESTAMPTZ`` column on ``memory_units`` so that
 superseded facts can be soft-retired without losing their timeline. Also
@@ -24,8 +24,8 @@ from alembic import context, op
 
 from hindsight_api.alembic._dialect import run_for_dialect
 
-revision: str = "a2b3c4d5e6f7"
-down_revision: str | Sequence[str] | None = "z1u2v3w4x5y6"
+revision: str = "39a06891cc3f"
+down_revision: str | Sequence[str] | None = "c1d2e3f4a5b6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
