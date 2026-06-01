@@ -8,9 +8,11 @@ from hindsight_api._vector_index import (
     index_type_keyword,
     index_using_clause,
     pg_extension_name,
+    resolve_vector_extension_from_installed,
     should_defer_index_creation,
     uses_per_bank_vector_indexes,
     validate_extension,
+    validate_vector_index_dimension,
 )
 from hindsight_api.engine.retain import bank_utils
 
@@ -41,6 +43,15 @@ def test_index_using_clause_scann_uses_cosine_auto_mode():
 
 def test_index_using_clause_pgvector_matches_existing_clause():
     assert index_using_clause("pgvector") == "USING hnsw (embedding vector_cosine_ops)"
+
+
+def test_index_using_clause_can_target_shadow_column():
+    assert index_using_clause("pgvector", column="embedding_reembed") == (
+        "USING hnsw (embedding_reembed vector_cosine_ops)"
+    )
+    assert index_using_clause("scann", column="embedding_reembed") == (
+        "USING scann (embedding_reembed cosine) WITH (mode = 'AUTO')"
+    )
 
 
 def test_index_using_clause_vchord_uses_cosine_ops():
@@ -74,6 +85,23 @@ def test_scann_index_creation_defers_until_table_is_large_enough():
     assert should_defer_index_creation("scann", SCANN_MIN_ROWS_FOR_AUTO_INDEX - 1)
     assert not should_defer_index_creation("scann", SCANN_MIN_ROWS_FOR_AUTO_INDEX)
     assert not should_defer_index_creation("pgvector", 0)
+
+
+def test_validate_vector_index_dimension_rejects_pgvector_hnsw_over_limit():
+    import pytest
+
+    validate_vector_index_dimension("pgvector", 2000)
+    with pytest.raises(RuntimeError, match="exceeds pgvector HNSW index limit"):
+        validate_vector_index_dimension("pgvector", 2001, table_name="memory_units")
+    validate_vector_index_dimension("pgvectorscale", 2001)
+    validate_vector_index_dimension("pg_diskann", 2001)
+    validate_vector_index_dimension("scann", 2001)
+
+
+def test_resolve_vector_extension_from_installed_handles_azure_diskann():
+    assert resolve_vector_extension_from_installed("pgvectorscale", {"vector", "pg_diskann"}) == "pg_diskann"
+    assert resolve_vector_extension_from_installed("pgvectorscale", {"vector", "vectorscale"}) == "pgvectorscale"
+    assert resolve_vector_extension_from_installed("pgvector", {"vector"}) == "pgvector"
 
 
 def test_ann_search_tuning_settings_pgvector_dispatches_hnsw_ef_search():

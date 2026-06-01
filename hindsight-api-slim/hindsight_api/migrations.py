@@ -36,6 +36,7 @@ from ._vector_index import (
     minimum_rows_for_index,
     should_defer_index_creation,
     uses_per_bank_vector_indexes,
+    validate_vector_index_dimension,
 )
 from .db_url import is_oracle_url, to_libpq_url
 from .utils import mask_network_location
@@ -476,6 +477,8 @@ def _migrate_table_embedding_dimension(
             f"  2. Use a model with {current_dim}-dimensional embeddings"
         )
 
+    validate_vector_index_dimension(vector_ext, required_dimension, table_name=table_name)
+
     logger.info(f"Altering {table_name}.embedding column dimension from {current_dim} to {required_dimension}")
 
     # Drop existing vector index (works for HNSW, DiskANN, vchordrq, and ScaNN)
@@ -509,13 +512,6 @@ def _migrate_table_embedding_dimension(
     conn.commit()
 
     # Recreate index with appropriate type based on detected extension
-    if vector_ext == "pgvector" and required_dimension > 2000:
-        raise RuntimeError(
-            f"Embedding dimension {required_dimension} exceeds pgvector HNSW index limit of 2000. "
-            f"Use an embedding model with <= 2000 dimensions, or switch to a vector extension "
-            f"that supports higher dimensions (e.g., pgvectorscale/DiskANN or AlloyDB ScaNN)."
-        )
-
     index_type = index_type_keyword(vector_ext)
     if should_defer_index_creation(vector_ext, row_count):
         minimum_rows = minimum_rows_for_index(vector_ext)
@@ -625,8 +621,7 @@ def ensure_vector_extension(
         # Tables with vector indexes to check
         tables_to_check = [
             ("memory_units", "idx_memory_units_embedding"),
-            ("learnings", "idx_learnings_embedding"),
-            ("pinned_reflections", "idx_pinned_reflections_embedding"),
+            ("mental_models", "idx_mental_models_embedding"),
         ]
 
         target_index_type = index_type_keyword(target_ext)
@@ -739,14 +734,26 @@ def ensure_vector_extension(
                 f"Cannot change vector extension from {current_index_type} to {target_index_type}: "
                 f"the following tables contain data: {table_list}. "
                 f"To change vector extension, you must either:\n"
-                f"  1. Re-embed all data: DELETE FROM {schema_name}.memory_units; "
-                f"DELETE FROM {schema_name}.learnings; DELETE FROM {schema_name}.pinned_reflections; then restart\n"
+                f"  1. Re-embed all data with hindsight-admin reembed, then restart\n"
                 f"  2. Use the current vector extension (set HINDSIGHT_API_VECTOR_EXTENSION='{current_ext_name}')"
             )
 
         logger.info(f"Reconciling vector indexes for {target_ext}")
 
         for table_name, index_name, current_type, row_count in mismatched_tables:
+            embed_dim = conn.execute(
+                text("""
+                    SELECT atttypmod
+                    FROM pg_attribute a
+                    JOIN pg_class c ON a.attrelid = c.oid
+                    JOIN pg_namespace n ON c.relnamespace = n.oid
+                    WHERE n.nspname = :schema AND c.relname = :table_name AND a.attname = 'embedding'
+                """),
+                {"schema": schema_name, "table_name": table_name},
+            ).scalar()
+            if embed_dim:
+                validate_vector_index_dimension(target_ext, int(embed_dim), table_name=table_name)
+
             if should_defer_index_creation(target_ext, row_count):
                 minimum_rows = minimum_rows_for_index(target_ext)
                 logger.warning(
@@ -763,27 +770,6 @@ def ensure_vector_extension(
             if current_type:
                 logger.info(f"Dropping {current_type} index on {table_name}")
                 conn.execute(text(f"DROP INDEX IF EXISTS {schema_name}.{index_name}"))
-
-            # Create new index with appropriate type
-            if target_ext == "pgvector":
-                # Check embedding dimension — pgvector HNSW indexes only support up to 2000 dims
-                embed_dim = conn.execute(
-                    text("""
-                        SELECT atttypmod
-                        FROM pg_attribute a
-                        JOIN pg_class c ON a.attrelid = c.oid
-                        JOIN pg_namespace n ON c.relnamespace = n.oid
-                        WHERE n.nspname = :schema AND c.relname = :table_name AND a.attname = 'embedding'
-                    """),
-                    {"schema": schema_name, "table_name": table_name},
-                ).scalar()
-
-                if embed_dim and embed_dim > 2000:
-                    raise RuntimeError(
-                        f"Embedding dimension {embed_dim} on {table_name} exceeds pgvector HNSW index limit of 2000. "
-                        f"Use an embedding model with <= 2000 dimensions, or switch to a vector extension "
-                        f"that supports higher dimensions (e.g., pgvectorscale/DiskANN or AlloyDB ScaNN)."
-                    )
 
             logger.info(f"Creating {target_index_type} index on {table_name}")
             conn.execute(

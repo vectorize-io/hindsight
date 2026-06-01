@@ -741,7 +741,7 @@ async def _run_final_semantic_ann(
     seeds. This replaces per-batch within-batch + fire-and-forget ANN with
     one efficient pass that sees the full bank.
     """
-    from .link_utils import _bulk_insert_links, compute_semantic_links_ann
+    from .link_utils import STREAMING_SEMANTIC_LINK_TOP_K, _bulk_insert_links, compute_semantic_links_ann
 
     if not unit_ids:
         return
@@ -808,7 +808,7 @@ async def _run_final_semantic_ann(
                     chunk_ids,
                     chunk_embs,
                     fact_types=chunk_ftypes,
-                    top_k=20,  # Recall uses at most 20 neighbors
+                    top_k=STREAMING_SEMANTIC_LINK_TOP_K,
                     log_buffer=log_buffer,
                 )
                 if ann_links:

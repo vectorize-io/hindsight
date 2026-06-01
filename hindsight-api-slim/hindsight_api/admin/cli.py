@@ -9,6 +9,8 @@ import io
 import json
 import logging
 import zipfile
+from collections.abc import Callable
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,15 @@ from ..engine.schema import fq_table_explicit as _fq_table
 from ..engine.transfer import export_bank
 from ..extensions import TenantExtension, load_extension
 from ..pg0 import parse_pg0_url, resolve_database_url
+from .reembed import (
+    ReembedOptions,
+    ReembedProgress,
+    abandon_reembed,
+    discover_hindsight_schemas,
+    ensure_no_active_reembed_state,
+    reembed_schema,
+    reembed_status,
+)
 
 # Setup logging
 logging.basicConfig(
@@ -62,6 +73,8 @@ BACKUP_TABLES = [
     "audit_log",
     "llm_requests",
     "graph_maintenance_queue",
+    "embedding_reembed_migrations",
+    "embedding_reembed_semantic_links",
 ]
 
 MANIFEST_VERSION = "1"
@@ -88,6 +101,8 @@ async def _backup(database_url: str, output_path: Path, schema: str = "public") 
     """Backup all tables to a zip file using binary COPY protocol."""
     conn = await asyncpg.connect(database_url)
     try:
+        await ensure_no_active_reembed_state(conn, schema, "backup")
+
         tables: dict[str, Any] = {}
         manifest: dict[str, Any] = {
             "version": MANIFEST_VERSION,
@@ -135,6 +150,8 @@ async def _restore(database_url: str, input_path: Path, schema: str = "public") 
     """Restore all tables from a zip file using binary COPY protocol."""
     conn = await asyncpg.connect(database_url)
     try:
+        await ensure_no_active_reembed_state(conn, schema, "restore")
+
         with zipfile.ZipFile(input_path, "r") as zf:
             # Read and validate manifest
             manifest: dict[str, Any] = json.loads(zf.read("manifest.json"))
@@ -467,6 +484,242 @@ def import_bank_command(
         f"{result.mental_model_history_imported} mm-history row(s), {result.directives_imported} directive(s), "
         f"{result.webhooks_imported} webhook(s), {result.history_rows_imported} history row(s)"
     )
+
+
+async def _resolve_reembed_schemas(
+    database_url: str,
+    config: HindsightConfig,
+    schemas: list[str] | None,
+    all_schemas: bool,
+) -> list[str]:
+    if schemas and all_schemas:
+        raise ValueError("Use either --schema or --all-schemas, not both")
+    if schemas:
+        return list(dict.fromkeys(schemas))
+    if not all_schemas:
+        raise ValueError("Specify --schema or --all-schemas for reembed")
+
+    is_pg0, instance_name, _ = parse_pg0_url(database_url)
+    if is_pg0:
+        typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
+    resolved_url = await resolve_database_url(database_url)
+
+    conn = await asyncpg.connect(resolved_url)
+    try:
+        discovered = await discover_hindsight_schemas(
+            conn,
+            config.database_schema or DEFAULT_DATABASE_SCHEMA,
+        )
+    finally:
+        await conn.close()
+    return discovered
+
+
+async def _run_reembed(
+    database_url: str,
+    config: HindsightConfig,
+    schemas: list[str],
+    options: ReembedOptions,
+    progress_callback: Callable[[ReembedProgress], None] | None = None,
+):
+    resolved_url = await resolve_database_url(database_url)
+    reports = []
+    for schema in schemas:
+        reports.append(await reembed_schema(resolved_url, schema, config, options, progress_callback))
+    return reports
+
+
+def _format_reembed_progress(progress: ReembedProgress) -> str:
+    parts = [f"{progress.schema}: {progress.phase}"]
+    if progress.migration_id:
+        parts.append(f"migration={progress.migration_id}")
+    if progress.memory_units_total is not None and progress.memory_units_done is not None:
+        parts.append(f"memory_units={progress.memory_units_done}/{progress.memory_units_total}")
+    if progress.mental_models_total is not None and progress.mental_models_done is not None:
+        parts.append(f"mental_models={progress.mental_models_done}/{progress.mental_models_total}")
+    if progress.semantic_links_staged is not None:
+        parts.append(f"semantic_links_staged={progress.semantic_links_staged}")
+    if progress.group_total is not None:
+        group_index = progress.group_index if progress.group_index is not None else 0
+        parts.append(f"groups={group_index}/{progress.group_total}")
+    if progress.message:
+        parts.append(progress.message)
+    return " ".join(parts)
+
+
+@app.command(name="reembed")
+def reembed(
+    schemas: list[str] | None = typer.Option(
+        None,
+        "--schema",
+        "-s",
+        help="Database schema to reembed. Can be supplied multiple times. Required unless --all-schemas is used.",
+    ),
+    all_schemas: bool = typer.Option(
+        False,
+        "--all-schemas",
+        help="Discover and reembed all Hindsight schemas in the current PostgreSQL database.",
+    ),
+    batch_size: int = typer.Option(100, "--batch-size", help="Rows to embed per provider batch."),
+    max_retries: int = typer.Option(3, "--max-retries", help="Embedding batch retry count."),
+    index_max_parallel_maintenance_workers: int | None = typer.Option(
+        None,
+        "--index-max-parallel-maintenance-workers",
+        help="Temporarily override max_parallel_maintenance_workers while building shadow vector indexes.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report planned work without modifying the database."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+):
+    """Recompute stored embeddings offline and cut over atomically."""
+    if batch_size < 1:
+        typer.echo("Error: --batch-size must be at least 1", err=True)
+        raise typer.Exit(1)
+    if max_retries < 0:
+        typer.echo("Error: --max-retries must be at least 0", err=True)
+        raise typer.Exit(1)
+    if index_max_parallel_maintenance_workers is not None and index_max_parallel_maintenance_workers < 0:
+        typer.echo("Error: --index-max-parallel-maintenance-workers must be at least 0", err=True)
+        raise typer.Exit(1)
+
+    config = HindsightConfig.from_env()
+
+    if not config.database_url:
+        typer.echo("Error: Database URL not configured.", err=True)
+        typer.echo("Set HINDSIGHT_API_DATABASE_URL environment variable.", err=True)
+        raise typer.Exit(1)
+
+    try:
+        target_schemas = asyncio.run(
+            _resolve_reembed_schemas(
+                config.database_url,
+                config,
+                schemas,
+                all_schemas,
+            )
+        )
+    except Exception as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    if not target_schemas:
+        typer.echo("No schemas matched the requested reembed scope")
+        return
+
+    if not dry_run and not yes:
+        typer.confirm(
+            f"This will recompute embeddings and cut over schema(s): {', '.join(target_schemas)}. Continue?",
+            abort=True,
+        )
+
+    options = ReembedOptions(
+        batch_size=batch_size,
+        dry_run=dry_run,
+        max_retries=max_retries,
+        index_max_parallel_maintenance_workers=index_max_parallel_maintenance_workers,
+    )
+    try:
+        reports = asyncio.run(
+            _run_reembed(
+                config.database_url,
+                config,
+                target_schemas,
+                options,
+                lambda progress: typer.echo(_format_reembed_progress(progress)),
+            )
+        )
+    except Exception as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    for report in reports:
+        typer.echo(
+            f"{report.schema}: status={report.status} migration={report.migration_id or '-'} "
+            f"memory_units={report.memory_units_done}/{report.memory_units_total} "
+            f"mental_models={report.mental_models_done}/{report.mental_models_total} "
+            f"semantic_links_staged={report.semantic_links_staged} "
+            f"shadow_indexes={report.shadow_indexes_state or '-'}"
+        )
+        if report.message:
+            typer.echo(f"  {report.message}")
+
+
+@app.command(name="reembed-status")
+def reembed_status_cmd(
+    schema: str | None = typer.Option(
+        None,
+        "--schema",
+        "-s",
+        help="Database schema. Required.",
+    ),
+):
+    """Show embedding re-materialization status."""
+    if not schema:
+        typer.echo("Error: Specify --schema for reembed-status", err=True)
+        raise typer.Exit(1)
+
+    config = HindsightConfig.from_env()
+
+    if not config.database_url:
+        typer.echo("Error: Database URL not configured.", err=True)
+        typer.echo("Set HINDSIGHT_API_DATABASE_URL environment variable.", err=True)
+        raise typer.Exit(1)
+
+    async def _run():
+        resolved_url = await resolve_database_url(config.database_url)
+        return await reembed_status(resolved_url, schema)
+
+    status = asyncio.run(_run())
+    typer.echo(json.dumps(asdict(status), indent=2, default=str))
+
+
+@app.command(name="reembed-abandon")
+def reembed_abandon_cmd(
+    schema: str | None = typer.Option(
+        None,
+        "--schema",
+        "-s",
+        help="Database schema. Required.",
+    ),
+    orphan_shadow_state: bool = typer.Option(
+        False,
+        "--orphan-shadow-state",
+        help="Remove shadow columns/indexes/staging rows even without an active migration row.",
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+):
+    """Abandon a failed reembed migration and remove shadow state."""
+    if not schema:
+        typer.echo("Error: Specify --schema for reembed-abandon", err=True)
+        raise typer.Exit(1)
+
+    config = HindsightConfig.from_env()
+
+    if not config.database_url:
+        typer.echo("Error: Database URL not configured.", err=True)
+        typer.echo("Set HINDSIGHT_API_DATABASE_URL environment variable.", err=True)
+        raise typer.Exit(1)
+
+    if not yes:
+        typer.confirm(
+            f"This will remove reembed shadow state from schema '{schema}'. Continue?",
+            abort=True,
+        )
+
+    async def _run():
+        resolved_url = await resolve_database_url(config.database_url)
+        return await abandon_reembed(
+            resolved_url,
+            schema,
+            orphan_shadow_state=orphan_shadow_state,
+        )
+
+    try:
+        report = asyncio.run(_run())
+    except Exception as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"{report.schema}: status={report.status} migration={report.migration_id or '-'}")
+    typer.echo(report.message)
 
 
 async def _decommission_worker(db_url: str, worker_id: str, schema: str = "public") -> int:
