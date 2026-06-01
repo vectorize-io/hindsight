@@ -162,7 +162,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `none` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `none` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
@@ -891,6 +891,27 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE` | Max unique entity names per fuzzy candidate lookup query (`trigram` on PG, `oracle_fuzzy` on Oracle). Bounds query size so very wide retain batches don't time out a single `unnest(...)` join on banks with many entities. | `100` |
 | `HINDSIGHT_API_RETAIN_DEFAULT_STRATEGY` | Default retain strategy name. When set, all retain calls without an explicit `strategy` parameter use this strategy. | - |
 | `HINDSIGHT_API_RETAIN_BATCH_POLL_INTERVAL_SECONDS` | Batch API polling interval in seconds | `60` |
+
+> **Batch-capable providers.** `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` only works with a retain LLM provider that implements a batch API: `openai`, `groq`, and `fireworks`. Batch always requires async retain (`async=true`); a sync retain with batch enabled errors. Other providers fail fast at startup.
+
+#### Fireworks batch inference
+
+Fireworks AI's batch API is **not** OpenAI `/v1/batches`-compatible — it is a proprietary, account-scoped dataset/job workflow on a separate control-plane host (`https://api.fireworks.ai`), distinct from the OpenAI-compatible inference host (`https://api.fireworks.ai/inference/v1`). Hindsight adapts it transparently, so enabling batch is the same as any other provider plus one required setting: your Fireworks **account id**. (This is separate from the existing LiteLLM `fireworks_ai/...` online path, which is unaffected.)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_FIREWORKS_ACCOUNT_ID` | Fireworks account id. **Required** for `fireworks` batch retain — the control-plane endpoints are `/v1/accounts/{account_id}/...`. Static, server-level. | - |
+| `HINDSIGHT_API_FIREWORKS_BATCH_BASE_URL` | Fireworks batch control-plane host. | `https://api.fireworks.ai` |
+| `HINDSIGHT_API_FIREWORKS_BATCH_MAX_WAIT_SECONDS` | Max time to wait for a batch job before surfacing a failure. Guards against the Fireworks gotcha where a non-batch-eligible model leaves the job `PENDING` forever. | `86400` (24h) |
+
+```bash
+# Fireworks batch retain (50% cost savings, async only)
+export HINDSIGHT_API_RETAIN_LLM_PROVIDER=fireworks
+export HINDSIGHT_API_RETAIN_LLM_API_KEY=fw_xxxxxxxxxxxx
+export HINDSIGHT_API_RETAIN_LLM_MODEL=accounts/fireworks/models/llama-v3p1-8b-instruct
+export HINDSIGHT_API_FIREWORKS_ACCOUNT_ID=your-account-id
+export HINDSIGHT_API_RETAIN_BATCH_ENABLED=true
+```
 
 > **Entity labels** (`entity_labels`) and **free-form entity extraction** (`entities_allow_free_form`) are configured per bank via the [bank config API](api/memory-banks.md#retain-configuration), not as global environment variables — each bank can have its own controlled vocabulary. See [Entity Labels](retain.md#entity-labels) for details.
 
