@@ -572,3 +572,95 @@ def test_configure_from_env_accepts_providers_outside_interactive_menu(temp_home
 
     contents = (config_dir / "embed").read_text()
     assert "HINDSIGHT_API_LLM_PROVIDER=anthropic" in contents
+
+
+def _windows_scripts_dir(tmp_path: Path, *, with_pythonw: bool) -> Path:
+    """Build a fake Windows venv Scripts dir with hindsight-api.exe.
+
+    The dir holds hindsight-api.exe and python.exe; when ``with_pythonw`` is
+    True the GUI-subsystem interpreter (pythonw.exe) is created next to
+    python.exe so `_windows_gui_interpreter()` can find it.
+    """
+    scripts_dir = tmp_path / "Scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "hindsight-api.exe").write_bytes(b"MZ")
+    (scripts_dir / "python.exe").write_bytes(b"MZ")
+    if with_pythonw:
+        (scripts_dir / "pythonw.exe").write_bytes(b"MZ")
+    return scripts_dir
+
+
+def test_windows_daemon_launches_via_gui_interpreter(temp_home, tmp_path, monkeypatch):
+    """Regression test for issue #1885.
+
+    On Windows the daemon must be launched through the GUI-subsystem
+    pythonw.exe (`pythonw.exe -m hindsight_api.main`) rather than the
+    console-subsystem hindsight-api.exe wrapper. The CUI exe makes Windows
+    Terminal's ConPTY pop a visible terminal tab on every daemon start; the GUI
+    interpreter never allocates a console.
+    """
+    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+
+    scripts_dir = _windows_scripts_dir(tmp_path, with_pythonw=True)
+
+    manager = DaemonEmbedManager()
+    monkeypatch.setattr(manager, "_dev_api_command", lambda: None)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.sysconfig.get_path",
+        lambda name: str(scripts_dir),
+    )
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.sys.executable",
+        str(scripts_dir / "python.exe"),
+    )
+
+    cmd = manager._find_api_command()
+    assert cmd == [str(scripts_dir / "pythonw.exe"), "-m", "hindsight_api.main"]
+
+
+def test_windows_daemon_falls_back_to_console_exe_without_pythonw(temp_home, tmp_path, monkeypatch):
+    """When pythonw.exe is missing the daemon still launches via the console exe.
+
+    The GUI-interpreter swap is best-effort: an exotic install without
+    pythonw.exe must not break daemon startup, only forgo the no-window benefit.
+    """
+    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+
+    scripts_dir = _windows_scripts_dir(tmp_path, with_pythonw=False)
+
+    manager = DaemonEmbedManager()
+    monkeypatch.setattr(manager, "_dev_api_command", lambda: None)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.sysconfig.get_path",
+        lambda name: str(scripts_dir),
+    )
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.sys.executable",
+        str(scripts_dir / "python.exe"),
+    )
+
+    cmd = manager._find_api_command()
+    assert cmd == [str(scripts_dir / "hindsight-api.exe")]
+
+
+def test_posix_daemon_uses_console_entrypoint(temp_home, tmp_path, monkeypatch):
+    """On POSIX there's no pythonw substitution — run the console entry point."""
+    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+
+    scripts_dir = tmp_path / "bin"
+    scripts_dir.mkdir()
+    console_bin = scripts_dir / "hindsight-api"
+    console_bin.write_text("#!/usr/bin/env python\n")
+
+    manager = DaemonEmbedManager()
+    monkeypatch.setattr(manager, "_dev_api_command", lambda: None)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.sysconfig.get_path",
+        lambda name: str(scripts_dir),
+    )
+
+    cmd = manager._find_api_command()
+    assert cmd == [str(console_bin)]
