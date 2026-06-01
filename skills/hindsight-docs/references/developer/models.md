@@ -111,7 +111,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `ollama-cloud` | `gemma3:12b` |
 | `lmstudio` | `local-model` |
 | `llamacpp` | `gemma-4-e2b-it` (auto-downloaded GGUF) |
-| `minimax` | `MiniMax-M2.7` |
+| `minimax` | `MiniMax-M3` |
 | `deepseek` | `deepseek-v4-flash` |
 | `zai` | `glm-4.5-flash` |
 | `opencode-go` | `deepseek-v4-flash` |
@@ -204,7 +204,7 @@ export HINDSIGHT_API_LLM_MODEL=your-local-model
 # MiniMax (1M context window)
 export HINDSIGHT_API_LLM_PROVIDER=minimax
 export HINDSIGHT_API_LLM_API_KEY=your-minimax-api-key
-export HINDSIGHT_API_LLM_MODEL=MiniMax-M2.7
+export HINDSIGHT_API_LLM_MODEL=MiniMax-M3  # or MiniMax-M2.7 for the previous generation
 
 # DeepSeek (https://api.deepseek.com)
 export HINDSIGHT_API_LLM_PROVIDER=deepseek

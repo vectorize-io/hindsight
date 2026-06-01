@@ -8,7 +8,7 @@
   {"id": "ollama-cloud",  "label": "Ollama Cloud",      "iconKey": "ollama",             "defaultModel": "gemma3:12b"},
   {"id": "lmstudio",      "label": "LM Studio",         "iconKey": "brain",              "defaultModel": "local-model"},
   {"id": "llamacpp",      "label": "llama.cpp",         "iconKey": "terminal",           "defaultModel": "gemma-4-e2b-it", "defaultModelNote": "auto-downloaded GGUF"},
-  {"id": "minimax",       "label": "MiniMax",           "iconKey": "sparkles",           "defaultModel": "MiniMax-M2.7"},
+  {"id": "minimax",       "label": "MiniMax",           "iconKey": "sparkles",           "defaultModel": "MiniMax-M3"},
   {"id": "deepseek",      "label": "DeepSeek",          "iconKey": "brain",              "defaultModel": "deepseek-v4-flash"},
   {"id": "zai",           "label": "z.ai",              "iconKey": "sparkles",           "defaultModel": "glm-4.5-flash"},
   {"id": "opencode-go",   "label": "opencode-go",       "iconKey": "openai-compatible",  "defaultModel": "deepseek-v4-flash"},

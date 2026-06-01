@@ -515,7 +515,7 @@ PROVIDER_DEFAULT_MODELS = {
     "anthropic": "claude-haiku-4-5",
     "gemini": "gemini-2.5-flash",
     "groq": "openai/gpt-oss-120b",
-    "minimax": "MiniMax-M2.7",
+    "minimax": "MiniMax-M3",
     "deepseek": "deepseek-v4-flash",
     "zai": "glm-4.5-flash",
     "opencode-go": "deepseek-v4-flash",
