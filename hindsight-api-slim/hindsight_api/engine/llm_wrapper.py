@@ -114,7 +114,7 @@ def _semaphores_for_scope(scope: str) -> list[asyncio.Semaphore]:
     return [per_op, _global_llm_semaphore]
 
 
-def sanitize_llm_output(text: str | None) -> str | None:
+def sanitize_text(text: str | None) -> str | None:
     """
     Sanitize text by removing characters that break downstream systems.
 
@@ -126,14 +126,23 @@ def sanitize_llm_output(text: str | None) -> str | None:
 
     Surrogate characters are used in UTF-16 encoding but cannot be encoded
     in UTF-8. They can appear in Python strings from improperly decoded data
-    (e.g., from JavaScript or broken files). Control characters commonly appear
-    in LLM output embedded inside JSON string values.
+    (e.g., from JavaScript or broken files): a client may serialize a half-emoji
+    split at a boundary as a lone ``\\udXXX`` escape. Such input crashes the
+    SentenceTransformers/cross-encoder Rust tokenizers and stdout logging, so
+    user content is sanitized at the retain/recall/reflect ingress (see issue
+    #1875). Control characters commonly appear in LLM output embedded inside
+    JSON string values.
     """
     if text is None:
         return None
     if not text:
         return text
     return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ud800-\udfff]", "", text)
+
+
+# Back-compat alias: this helper was originally introduced to scrub LLM *output*;
+# it now also scrubs user *input* at ingress, hence the broader name.
+sanitize_llm_output = sanitize_text
 
 
 class OutputTooLongError(Exception):
