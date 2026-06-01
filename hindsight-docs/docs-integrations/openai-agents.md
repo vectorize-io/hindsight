@@ -215,7 +215,7 @@ shared_tools = create_hindsight_tools(
 | `recall_tags_match` | `"any"` | Tag matching mode (any/all/any\_strict/all\_strict) |
 | `retain_metadata` | `None` | Default metadata dict for retain operations |
 | `retain_document_id` | `None` | Default document\_id for retain (groups/upserts memories) |
-| `recall_types` | `None` | Fact types to filter (world, experience, opinion, observation) |
+| `recall_types` | `None` | Fact types to filter (world, experience, observation) |
 | `recall_include_entities` | `False` | Include entity information in recall results |
 | `reflect_context` | `None` | Additional context for reflect operations |
 | `reflect_max_tokens` | `None` | Max tokens for reflect results (defaults to `max_tokens`) |
