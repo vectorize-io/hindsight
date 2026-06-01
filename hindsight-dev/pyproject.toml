@@ -15,6 +15,8 @@ dependencies = [
     "rich>=13.0.0",
     "pydantic>=2.0.0",
     "httpx>=0.27.0",
+    "litellm>=1.0.0",
+    "hindsight-client>=0.7.0",
 ]
 
 [project.optional-dependencies]
@@ -29,6 +31,7 @@ packages = ["hindsight_dev", "benchmarks", "upgrade_tests"]
 
 [tool.uv.sources]
 hindsight-api = { workspace = true }
+hindsight-client = { workspace = true }
 
 [project.scripts]
 generate-openapi = "hindsight_dev.generate_openapi:generate_openapi_spec"
@@ -40,6 +43,7 @@ check-openapi-compatibility = "hindsight_dev.check_openapi_compatibility:main"
 cli-coverage-check = "hindsight_dev.cli_coverage_check:main"
 client-coverage-check = "hindsight_dev.client_coverage_check:main"
 perf-test = "benchmarks.perf.system_perf:main"
+mission-sandbox = "hindsight_dev.mission_sandbox.cli:main"
 
 [dependency-groups]
 dev = [
