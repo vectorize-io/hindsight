@@ -1,0 +1,111 @@
+name: Windows Smoke Test
+
+# Daily smoke test that installs the API on Windows and runs the Python client
+# integration tests against a live server. Windows is only exercised by the
+# hindsight-embed jobs in test.yml on PRs; this catches Windows-specific
+# regressions in the API server + client path (e.g. process spawning, console
+# subsystem / ConPTY behaviour, see #1885) that the Linux client jobs miss.
+on:
+  schedule:
+    # 06:00 UTC daily.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-client-smoke:
+    # Don't run on forks: the job needs the org's Vertex AI credentials.
+    if: github.repository == 'vectorize-io/hindsight'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: ${{ github.workspace }}/gcp-credentials.json
+      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
+      HINDSIGHT_API_URL: http://localhost:8888
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Force UTF-8 I/O so the API/CLI's ✓/box-drawing output doesn't crash the
+      # default Windows cp1252 codec (matches test-embed-windows in test.yml).
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup GCP credentials
+        shell: bash
+        run: |
+          printf '%s' '${{ secrets.GCP_VERTEXAI_CREDENTIALS }}' > gcp-credentials.json
+          PROJECT_ID=$(jq -r '.project_id' gcp-credentials.json)
+          echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          prune-cache: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install API dependencies (all extras - local-ml + embedded pg0)
+        working-directory: ./hindsight-api-slim
+        run: uv sync --frozen --all-extras --index-strategy unsafe-best-match
+
+      - name: Install Python client test dependencies
+        working-directory: ./hindsight-clients/python
+        run: uv sync --frozen --extra test --index-strategy unsafe-best-match
+
+      - name: Cache HuggingFace models
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/huggingface
+          key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-huggingface-
+
+      - name: Pre-download models
+        working-directory: ./hindsight-api-slim
+        run: |
+          uv run python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; SentenceTransformer('BAAI/bge-small-en-v1.5'); CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); print('Models downloaded')"
+
+      # Start the server and run the client tests in a SINGLE step. On Windows
+      # runners a process backgrounded with `&` in one step is not reliably kept
+      # alive for later steps (unlike Linux, where it reparents to init), so the
+      # server must live in the same shell that runs pytest.
+      - name: Start API server and run Python client tests
+        shell: bash
+        run: |
+          # Config is read straight from the environment (job-level env + the
+          # PROJECT_ID exported to GITHUB_ENV above), so no .env file is needed.
+          # Embedded pg0 is the default when HINDSIGHT_API_DATABASE_URL is unset.
+          ( cd hindsight-api-slim && uv run hindsight-api --port 8888 ) > "$RUNNER_TEMP/api-server.log" 2>&1 &
+          server_pid=$!
+          echo "Waiting for API server to be ready (pid $server_pid)..."
+          # pg0 unpacks Postgres + runs initdb on first boot, which is slow on a
+          # cold Windows runner — give it a generous budget before failing.
+          ready=false
+          for i in $(seq 1 300); do
+            if curl -sf http://localhost:8888/health > /dev/null 2>&1; then
+              echo "API server is ready after ${i}s"
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then
+            echo "API server failed to start after 300s"
+            cat "$RUNNER_TEMP/api-server.log"
+            exit 1
+          fi
+
+          cd hindsight-clients/python && uv run pytest tests -v
+
+      - name: Show API server logs
+        if: always()
+        shell: bash
+        run: cat "$RUNNER_TEMP/api-server.log" || echo "No API server log found"
