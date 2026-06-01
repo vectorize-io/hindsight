@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { loadConfig, type HindsightConfig } from "./config.js";
+import { loadConfig, DEFAULT_HINDSIGHT_API_URL, type HindsightConfig } from "./config.js";
 
 describe("loadConfig", () => {
   const originalEnv = { ...process.env };
@@ -27,7 +27,7 @@ describe("loadConfig", () => {
     expect(config.agentName).toBe("opencode");
     expect(config.dynamicBankId).toBe(false);
     expect(config.debug).toBe(false);
-    expect(config.hindsightApiUrl).toBeNull();
+    expect(config.hindsightApiUrl).toBe(DEFAULT_HINDSIGHT_API_URL);
     expect(config.hindsightApiToken).toBeNull();
     expect(config.bankId).toBeNull();
   });

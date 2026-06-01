@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/opencode-hindsight",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Hindsight memory plugin for OpenCode - Give your AI coding agent persistent long-term memory",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -38,6 +38,7 @@
     "clean": "rm -rf dist",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "HINDSIGHT_LIVE_E2E=1 vitest run",
     "prepublishOnly": "npm run clean && npm run build"
   },
   "peerDependencies": {
