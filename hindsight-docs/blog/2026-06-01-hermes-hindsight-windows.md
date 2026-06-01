@@ -1,5 +1,5 @@
 ---
-title: "Hermes Agent on Windows: Add Persistent Codebase Memory with Hindsight"
+title: "Building a Hermes Coding Assistant on Windows That Remembers Your Codebase"
 authors: [benfrank241]
 slug: "2026/06/01/hermes-hindsight-windows"
 date: 2026-06-01T12:00
