@@ -1,25 +1,25 @@
 ---
-title: "Running Hermes with Persistent Codebase Memory on Windows"
+title: "Hermes Agent on Windows: Add Persistent Codebase Memory with Hindsight"
 authors: [benfrank241]
 slug: "2026/06/01/hermes-hindsight-windows"
 date: 2026-06-01T12:00
 tags: [hermes, windows, coding, memory, agents, tutorial, hindsight]
-description: "Hermes Agent + Hindsight runs natively on Windows — embedded PostgreSQL, no Docker, persistent codebase memory across sessions. Setup in PowerShell."
+description: "Nous Research just announced Hermes Agent native on Windows. Here's how to add persistent codebase memory with Hindsight — no Docker, no WSL, PowerShell start to finish."
 image: /img/blog/hermes-hindsight-windows.png
 hide_table_of_contents: true
 ---
 
-![Running Hermes with Persistent Codebase Memory on Windows](/img/blog/hermes-hindsight-windows.png)
+![Hermes Agent on Windows with Hindsight](/img/blog/hermes-hindsight-windows.png)
 
-Most AI-coding tutorials assume macOS or Linux.
+Yesterday, Nous Research [announced that Hermes Agent is now natively supported on Windows](https://x.com/NousResearch/status/2061236625925886252). Here's how to give it persistent codebase memory.
 
-If your daily driver is Windows, you've probably run into the gap: setup steps that bury you in WSL workarounds, integrations that quietly only ship Mac binaries, embedded databases that fail at install because someone assumed `bash`. Persistent memory for your coding assistant is no different — until now.
+If Windows is your daily driver, the gap has been real — WSL workarounds, Mac-only binaries, embedded databases that assume `bash`. Hermes just closed its side of that gap. Hindsight closes the memory side.
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) with Hindsight runs natively on Windows. No Docker. No WSL. PowerShell from start to finish. Embedded PostgreSQL handles the storage layer, the daemon spawns as a normal Windows process, and your codebase memory compounds across sessions the same way it does on every other platform.
 
-We just landed a [daily Windows smoke test](https://github.com/vectorize-io/hindsight/blob/main/.github/workflows/windows-smoke.yml) in CI — the full API + embedded Postgres + Python client path is now verified on `windows-latest` every morning at 06:00 UTC. If it breaks on Windows, we know within 24 hours.
-
 This post is the Windows-specific companion to [Building a Hermes Coding Assistant That Remembers Your Codebase](/blog/2026/05/25/hermes-coding-assistant-codebase-memory). Same workflow, same compounding memory — different setup steps.
+
+On the Hindsight side, we've been verifying the Windows path for weeks: a [daily Windows smoke test](https://github.com/vectorize-io/hindsight/blob/main/.github/workflows/windows-smoke.yml) runs the full API + embedded Postgres + Python client stack on `windows-latest` every morning at 06:00 UTC. Now that Hermes is native too, the pair is ready out of the gate.
 
 <!-- truncate -->
 
@@ -174,7 +174,7 @@ A few things to watch for, distilled from the Windows CI runs and user reports:
 
 Same payoff as on any other platform. Session one, Hermes knows nothing about your Windows project. Session five, it knows the framework, the conventions, the build pipeline. Session 30, it knows the Windows-specific quirks that never get documented but always trip up new contributors.
 
-The Windows side just took longer to reach parity. That's done now.
+Hermes just shipped native Windows. Hindsight has been there. Plug them together and your codebase memory compounds on the platform you already work on.
 
 Set it up with `hermes memory setup`, or start with the [Hindsight Windows installation guide](https://hindsight.vectorize.io/developer/installation#windows).
 
