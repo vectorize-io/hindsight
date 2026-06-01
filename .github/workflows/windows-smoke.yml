@@ -68,10 +68,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-huggingface-
 
+      # `uv run` re-syncs the project env to its default (no-extras) state before
+      # running, which drops sentence-transformers / pg0. Pass --all-extras on
+      # every `uv run` so the local-ml + embedded-db deps stay installed (this is
+      # the same reason hindsight-embed launches the daemon with `--extra all`).
       - name: Pre-download models
         working-directory: ./hindsight-api-slim
         run: |
-          uv run python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; SentenceTransformer('BAAI/bge-small-en-v1.5'); CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); print('Models downloaded')"
+          uv run --all-extras python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; SentenceTransformer('BAAI/bge-small-en-v1.5'); CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); print('Models downloaded')"
 
       # Start the server and run the client tests in a SINGLE step. On Windows
       # runners a process backgrounded with `&` in one step is not reliably kept
@@ -83,7 +87,7 @@ jobs:
           # Config is read straight from the environment (job-level env + the
           # PROJECT_ID exported to GITHUB_ENV above), so no .env file is needed.
           # Embedded pg0 is the default when HINDSIGHT_API_DATABASE_URL is unset.
-          ( cd hindsight-api-slim && uv run hindsight-api --port 8888 ) > "$RUNNER_TEMP/api-server.log" 2>&1 &
+          ( cd hindsight-api-slim && uv run --all-extras hindsight-api --port 8888 ) > "$RUNNER_TEMP/api-server.log" 2>&1 &
           server_pid=$!
           echo "Waiting for API server to be ready (pid $server_pid)..."
           # pg0 unpacks Postgres + runs initdb on first boot, which is slow on a
@@ -103,7 +107,7 @@ jobs:
             exit 1
           fi
 
-          cd hindsight-clients/python && uv run pytest tests -v
+          cd hindsight-clients/python && uv run --extra test pytest tests -v
 
       - name: Show API server logs
         if: always()
