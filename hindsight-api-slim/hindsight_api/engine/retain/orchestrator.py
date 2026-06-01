@@ -1674,14 +1674,73 @@ async def _try_delta_retain(
                 )
                 # Verify the document hasn't been replaced since we loaded chunks.
                 # Compare the current hash against what we snapshotted at load time.
+                # On mismatch, attempt in-TXN recovery instead of falling back to a
+                # full re-process — re-load chunks under the lock and recompute the
+                # diff. If the concurrent request already processed identical content,
+                # we skip the LLM call entirely (recovery: no-op). If chunks genuinely
+                # differ, we abort and let the caller's streaming path re-process.
+                _recovery_no_op = False
+                should_abort = False
                 if current_hash is not None and doc_hash_at_load is not None and current_hash != doc_hash_at_load:
                     log_buffer.append(
                         f"[delta] Document {effective_doc_id} was modified by concurrent request "
-                        f"since chunks were loaded — aborting delta, falling back to full retain"
+                        f"since chunks were loaded — attempting in-TXN recovery"
                     )
+                    current_chunks = await chunk_storage.load_existing_chunks(conn, bank_id, effective_doc_id)
+                    if not current_chunks:
+                        should_abort = True
+                        log_buffer.append(
+                            "[delta] Recovery: current document has no chunks — falling back to full retain"
+                        )
+                    else:
+                        current_by_index = {c.chunk_index: c for c in current_chunks}
+                        rec_unchanged, rec_changed, rec_new, rec_removed = [], [], [], []
+                        for idx, new_hash in new_hashes.items():
+                            existing = current_by_index.get(idx)
+                            if existing and existing.content_hash == new_hash:
+                                rec_unchanged.append(idx)
+                            elif existing:
+                                rec_changed.append(idx)
+                            else:
+                                rec_new.append(idx)
+                        for idx in current_by_index:
+                            if idx not in new_hashes:
+                                rec_removed.append(idx)
+                        log_buffer.append(
+                            f"[delta] Recovery diff: {len(rec_unchanged)} unchanged, "
+                            f"{len(rec_changed)} changed, {len(rec_new)} new, {len(rec_removed)} removed"
+                        )
+                        if not (rec_changed or rec_new or rec_removed):
+                            # Concurrent request already processed identical content.
+                            # Update metadata only, no LLM call.
+                            log_buffer.append(
+                                "[delta] Recovery: no chunk changes vs current state — skipping LLM call"
+                            )
+                            if document_body_override is not None:
+                                combined_content = document_body_override
+                            else:
+                                combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
+                            retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)
+                            await fact_storage.upsert_document_metadata(
+                                conn, bank_id, effective_doc_id, combined_content, retain_params, merged_tags,
+                            )
+                            await fact_storage.update_memory_units_tags(conn, bank_id, effective_doc_id, merged_tags)
+                            if outbox_callback is not None:
+                                await outbox_callback(conn)
+                            _recovery_no_op = True
+                        else:
+                            should_abort = True
+                            log_buffer.append(
+                                f"[delta] Recovery: {len(rec_changed) + len(rec_new)} chunks differ — "
+                                f"falling back to full retain (cannot call LLM inside TXN)"
+                            )
+                if should_abort:
                     logger.info("\n" + "\n".join(log_buffer) + "\n")
-                    # Return None to fall back to streaming (which has full FOR UPDATE protection)
                     return None
+                if _recovery_no_op:
+                    logger.info("\n" + "\n".join(log_buffer) + "\n")
+                    # Skip the rest of the DB work; the outer function will see the
+                    # no-op accounting via the recovery sentinel below.
 
                 # Update document metadata (no delete)
                 step_start = time.time()
@@ -1803,6 +1862,11 @@ async def _try_delta_retain(
     # changed/new chunks (see ``_build_delta_contents``) — i.e. exactly what
     # the LLM pipeline saw this call. Unchanged chunks contribute zero.
     processed_tokens = _count_delta_content_tokens(delta_contents)
+    if _recovery_no_op:
+        # Recovery handled a hash-mismatch race where a concurrent request
+        # already processed identical content. Report clean no-op accounting.
+        result_unit_ids = [[]]
+        processed_tokens = 0
     return result_unit_ids, usage, processed_tokens
 
 
