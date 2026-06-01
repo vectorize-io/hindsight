@@ -37,6 +37,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - OpenAI Codex
 - Claude Code
 - AWS Bedrock
+- Fireworks AI
 - OpenAI Compatible
 - LiteLLM (100+)
 
@@ -120,6 +121,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `openai-codex` | `gpt-5.4-mini` |
 | `claude-code` | `claude-sonnet-4-5-20250929` |
 | `bedrock` | `us.amazon.nova-2-lite-v1:0` |
+| `fireworks` | `accounts/fireworks/models/llama-v3p1-8b-instruct` |
 | `litellm` | `gpt-4o-mini` |
 
 **Example:** Setting just the provider uses its default model:
