@@ -32,6 +32,7 @@ from hindsight_api.api.http import BankTemplateConfig
 NEW_FIELDS: list[tuple[str, object]] = [
     ("retain_default_strategy", "strategy-a"),
     ("retain_strategies", {"strategy-a": {"mode": "concise", "max_tokens": 512}}),
+    ("retain_narrator", "Nimbus Agent"),
     ("retain_chunk_batch_size", 7),
     ("mcp_enabled_tools", ["list_banks", "get_bank_profile"]),
     ("consolidation_llm_batch_size", 11),

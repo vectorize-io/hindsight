@@ -3928,6 +3928,9 @@ components:
         retain_custom_instructions:
           nullable: true
           type: string
+        retain_narrator:
+          nullable: true
+          type: string
         retain_chunk_size:
           nullable: true
           type: integer
@@ -4429,6 +4432,9 @@ components:
           nullable: true
           type: string
         retain_custom_instructions:
+          nullable: true
+          type: string
+        retain_narrator:
           nullable: true
           type: string
         retain_chunk_size:

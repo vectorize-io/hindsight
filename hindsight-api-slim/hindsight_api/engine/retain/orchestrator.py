@@ -111,6 +111,17 @@ RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
 RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
 
 
+def _resolve_retain_narrator(config) -> str:
+    """Return the semantic narrator used for first-person assistant statements.
+
+    Bank names, source systems, and tags are storage/routing metadata; they should
+    not become semantic actors in extracted facts. A generic default preserves the
+    experience/world classification hint without leaking bank identity into
+    ``who``/``Involving`` fields.
+    """
+    return fact_extraction._sanitize_retain_narrator(getattr(config, "retain_narrator", None))
+
+
 def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None):
     """Build retain_params and merged_tags from content dicts."""
     if doc_contents is not None:
@@ -428,9 +439,10 @@ async def retain_batch(
     log_buffer.append(f"Batch size: {len(contents_dicts)} content items, {total_chars:,} chars")
     log_buffer.append(f"{'=' * 60}")
 
-    # Get bank profile
-    profile = await bank_utils.get_bank_profile(pool, bank_id)
-    agent_name = profile["name"]
+    # Ensure the bank row/vector indexes exist before retaining. Do not use the
+    # profile name as narrator: bank ids and source tags are metadata, not actors.
+    await bank_utils.get_bank_profile(pool, bank_id)
+    agent_name = _resolve_retain_narrator(config)
 
     # Convert dicts to RetainContent objects
     contents = _build_contents(contents_dicts, document_tags)

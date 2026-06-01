@@ -30,6 +30,7 @@ type CreateBankRequest struct {
 	RetainMission NullableString `json:"retain_mission,omitempty"`
 	RetainExtractionMode NullableString `json:"retain_extraction_mode,omitempty"`
 	RetainCustomInstructions NullableString `json:"retain_custom_instructions,omitempty"`
+	RetainNarrator NullableString `json:"retain_narrator,omitempty"`
 	RetainChunkSize NullableInt32 `json:"retain_chunk_size,omitempty"`
 	EnableObservations NullableBool `json:"enable_observations,omitempty"`
 	ObservationsMission NullableString `json:"observations_mission,omitempty"`
@@ -514,6 +515,48 @@ func (o *CreateBankRequest) UnsetRetainCustomInstructions() {
 	o.RetainCustomInstructions.Unset()
 }
 
+// GetRetainNarrator returns the RetainNarrator field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *CreateBankRequest) GetRetainNarrator() string {
+	if o == nil || IsNil(o.RetainNarrator.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.RetainNarrator.Get()
+}
+
+// GetRetainNarratorOk returns a tuple with the RetainNarrator field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *CreateBankRequest) GetRetainNarratorOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.RetainNarrator.Get(), o.RetainNarrator.IsSet()
+}
+
+// HasRetainNarrator returns a boolean if a field has been set.
+func (o *CreateBankRequest) HasRetainNarrator() bool {
+	if o != nil && o.RetainNarrator.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRetainNarrator gets a reference to the given NullableString and assigns it to the RetainNarrator field.
+func (o *CreateBankRequest) SetRetainNarrator(v string) {
+	o.RetainNarrator.Set(&v)
+}
+// SetRetainNarratorNil sets the value for RetainNarrator to be an explicit nil
+func (o *CreateBankRequest) SetRetainNarratorNil() {
+	o.RetainNarrator.Set(nil)
+}
+
+// UnsetRetainNarrator ensures that no value is present for RetainNarrator, not even an explicit nil
+func (o *CreateBankRequest) UnsetRetainNarrator() {
+	o.RetainNarrator.Unset()
+}
+
 // GetRetainChunkSize returns the RetainChunkSize field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *CreateBankRequest) GetRetainChunkSize() int32 {
 	if o == nil || IsNil(o.RetainChunkSize.Get()) {
@@ -682,6 +725,9 @@ func (o CreateBankRequest) ToMap() (map[string]interface{}, error) {
 	}
 	if o.RetainCustomInstructions.IsSet() {
 		toSerialize["retain_custom_instructions"] = o.RetainCustomInstructions.Get()
+	}
+	if o.RetainNarrator.IsSet() {
+		toSerialize["retain_narrator"] = o.RetainNarrator.Get()
 	}
 	if o.RetainChunkSize.IsSet() {
 		toSerialize["retain_chunk_size"] = o.RetainChunkSize.Get()

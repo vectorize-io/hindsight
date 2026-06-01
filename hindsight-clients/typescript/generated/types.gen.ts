@@ -441,6 +441,12 @@ export type BankTemplateConfig = {
    */
   retain_custom_instructions?: string | null;
   /**
+   * Retain Narrator
+   *
+   * Semantic narrator label for first-person assistant statements
+   */
+  retain_narrator?: string | null;
+  /**
    * Retain Chunk Size
    *
    * Max token size for each content chunk
@@ -1041,6 +1047,12 @@ export type CreateBankRequest = {
    * Custom extraction prompt. Only active when retain_extraction_mode is 'custom'.
    */
   retain_custom_instructions?: string | null;
+  /**
+   * Retain Narrator
+   *
+   * Semantic narrator label for first-person assistant statements during retain. Defaults to a generic AI assistant; do not use bank/source/tag names.
+   */
+  retain_narrator?: string | null;
   /**
    * Retain Chunk Size
    *

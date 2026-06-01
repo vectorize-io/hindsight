@@ -39,10 +39,11 @@ class CreateBankRequest(BaseModel):
     retain_mission: Optional[StrictStr] = None
     retain_extraction_mode: Optional[StrictStr] = None
     retain_custom_instructions: Optional[StrictStr] = None
+    retain_narrator: Optional[StrictStr] = None
     retain_chunk_size: Optional[StrictInt] = None
     enable_observations: Optional[StrictBool] = None
     observations_mission: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["name", "disposition", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "mission", "background", "reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "enable_observations", "observations_mission"]
+    __properties: ClassVar[List[str]] = ["name", "disposition", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "mission", "background", "reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_narrator", "retain_chunk_size", "enable_observations", "observations_mission"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -141,6 +142,11 @@ class CreateBankRequest(BaseModel):
         if self.retain_custom_instructions is None and "retain_custom_instructions" in self.model_fields_set:
             _dict['retain_custom_instructions'] = None
 
+        # set to None if retain_narrator (nullable) is None
+        # and model_fields_set contains the field
+        if self.retain_narrator is None and "retain_narrator" in self.model_fields_set:
+            _dict['retain_narrator'] = None
+
         # set to None if retain_chunk_size (nullable) is None
         # and model_fields_set contains the field
         if self.retain_chunk_size is None and "retain_chunk_size" in self.model_fields_set:
@@ -179,6 +185,7 @@ class CreateBankRequest(BaseModel):
             "retain_mission": obj.get("retain_mission"),
             "retain_extraction_mode": obj.get("retain_extraction_mode"),
             "retain_custom_instructions": obj.get("retain_custom_instructions"),
+            "retain_narrator": obj.get("retain_narrator"),
             "retain_chunk_size": obj.get("retain_chunk_size"),
             "enable_observations": obj.get("enable_observations"),
             "observations_mission": obj.get("observations_mission")

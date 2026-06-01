@@ -359,6 +359,7 @@ ENV_RETAIN_EXTRACT_CAUSAL_LINKS = "HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS"
 ENV_RETAIN_EXTRACTION_MODE = "HINDSIGHT_API_RETAIN_EXTRACTION_MODE"
 ENV_RETAIN_MISSION = "HINDSIGHT_API_RETAIN_MISSION"
 ENV_RETAIN_CUSTOM_INSTRUCTIONS = "HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS"
+ENV_RETAIN_NARRATOR = "HINDSIGHT_API_RETAIN_NARRATOR"
 ENV_RETAIN_DEFAULT_STRATEGY = "HINDSIGHT_API_RETAIN_DEFAULT_STRATEGY"
 ENV_RETAIN_BATCH_TOKENS = "HINDSIGHT_API_RETAIN_BATCH_TOKENS"
 ENV_RETAIN_ENTITY_LOOKUP = "HINDSIGHT_API_RETAIN_ENTITY_LOOKUP"
@@ -664,6 +665,7 @@ DEFAULT_RETAIN_EXTRACTION_MODE = "concise"  # Extraction mode: "concise", "verbo
 RETAIN_EXTRACTION_MODES = ("concise", "verbose", "custom", "verbatim", "chunks")  # Allowed extraction modes
 DEFAULT_RETAIN_MISSION = None  # Declarative spec of what to retain (injected into any extraction mode)
 DEFAULT_RETAIN_CUSTOM_INSTRUCTIONS = None  # Custom extraction guidelines (only used when mode="custom")
+DEFAULT_RETAIN_NARRATOR = "AI assistant"  # Semantic narrator for first-person assistant statements
 DEFAULT_RETAIN_DEFAULT_STRATEGY = None  # Default strategy name (None = no strategy override)
 DEFAULT_RETAIN_STRATEGIES: dict | None = None  # Named retain strategies (dict of name → config overrides)
 DEFAULT_RETAIN_CHUNK_BATCH_SIZE = (
@@ -1204,6 +1206,7 @@ class HindsightConfig:
     retain_extraction_mode: str
     retain_mission: str | None
     retain_custom_instructions: str | None
+    retain_narrator: str | None
     retain_default_strategy: str | None
     retain_strategies: dict | None
     retain_batch_tokens: int
@@ -1403,6 +1406,7 @@ class HindsightConfig:
         "retain_extraction_mode",
         "retain_mission",
         "retain_custom_instructions",
+        "retain_narrator",
         "retain_default_strategy",
         "retain_strategies",
         "retain_chunk_batch_size",
@@ -1960,6 +1964,7 @@ class HindsightConfig:
             ),
             retain_mission=os.getenv(ENV_RETAIN_MISSION) or DEFAULT_RETAIN_MISSION,
             retain_custom_instructions=os.getenv(ENV_RETAIN_CUSTOM_INSTRUCTIONS) or DEFAULT_RETAIN_CUSTOM_INSTRUCTIONS,
+            retain_narrator=os.getenv(ENV_RETAIN_NARRATOR) or DEFAULT_RETAIN_NARRATOR,
             retain_default_strategy=os.getenv(ENV_RETAIN_DEFAULT_STRATEGY) or DEFAULT_RETAIN_DEFAULT_STRATEGY,
             retain_strategies=DEFAULT_RETAIN_STRATEGIES,
             retain_batch_tokens=int(os.getenv(ENV_RETAIN_BATCH_TOKENS, str(DEFAULT_RETAIN_BATCH_TOKENS))),

@@ -880,6 +880,7 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_EXTRACTION_MODE` | Fact extraction mode: `concise`, `verbose`, `verbatim`, `chunks`, or `custom` | `concise` |
 | `HINDSIGHT_API_RETAIN_MISSION` | What this bank should pay attention to during extraction. Steers the LLM without replacing the extraction rules — works alongside any extraction mode. | - |
 | `HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS` | Full prompt override for fact extraction (only used when mode is `custom`). Replaces built-in extraction rules entirely. | - |
+| `HINDSIGHT_API_RETAIN_NARRATOR` | Semantic narrator label used to resolve first-person assistant statements during extraction. Keep this as a role/name, not a bank id, source system, or tag. | `AI assistant` |
 | `HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS` | Extract causal relationships between facts | `true` |
 | `HINDSIGHT_API_RETAIN_BATCH_ENABLED` | Use LLM Batch API for fact extraction (50% cost savings, only with async operations) | `false` |
 | `HINDSIGHT_API_RETAIN_MAX_CONCURRENT` | Max concurrent retain DB phases (HNSW reads + writes). Limits I/O contention during high-concurrency ingestion. | `4` |
@@ -894,7 +895,7 @@ Controls the retain (memory ingestion) pipeline.
 
 #### Customizing retain: when to use what
 
-There are five levels of customization for the retain pipeline. Start with the simplest that covers your needs:
+There are several levels of customization for the retain pipeline. Start with the simplest that covers your needs:
 
 | Goal | Use |
 |------|-----|
@@ -903,6 +904,7 @@ There are five levels of customization for the retain pipeline. Start with the s
 | Store chunks as-is, LLM extracts metadata | `HINDSIGHT_API_RETAIN_EXTRACTION_MODE=verbatim` |
 | Store chunks as-is, zero LLM cost | `HINDSIGHT_API_RETAIN_EXTRACTION_MODE=chunks` |
 | Completely replace the extraction rules | `HINDSIGHT_API_RETAIN_EXTRACTION_MODE=custom` + `HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS` |
+| Name the assistant/narrator for first-person statements | `HINDSIGHT_API_RETAIN_NARRATOR` or per-bank `retain_narrator` |
 
 **`HINDSIGHT_API_RETAIN_MISSION` — steer extraction without replacing it (recommended starting point)**
 
@@ -915,6 +917,16 @@ export HINDSIGHT_API_RETAIN_MISSION="Focus on technical decisions, architecture 
 **`HINDSIGHT_API_RETAIN_EXTRACTION_MODE=verbose` — more detail per fact**
 
 Use when you need richer facts with full context, relationships, and verbosity. Slower and uses more tokens than `concise`.
+
+**`HINDSIGHT_API_RETAIN_NARRATOR` — semantic narrator for first-person assistant statements**
+
+This label tells the extraction model who “I” refers to when assistant-authored content is retained. Use a semantic role or actual agent display name, such as `AI assistant` or `Nimbus Agent`; do not use bank ids, source systems, or tags like `team-memory-prod`.
+
+Why this matters: routing labels are not actors. If a bank id or integration name leaks into the retain prompt as the narrator, the LLM may write memories like `team-memory-prod completed the migration | Involving: team-memory-prod`, even though the real actor was the assistant. Hindsight strips routing-only metadata from the semantic prompt and falls back to `AI assistant` when `retain_narrator` looks like a bank/source/tag label.
+
+```bash
+export HINDSIGHT_API_RETAIN_NARRATOR="AI assistant"
+```
 
 **`HINDSIGHT_API_RETAIN_EXTRACTION_MODE=verbatim` — store chunks as-is**
 

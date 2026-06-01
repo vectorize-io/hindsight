@@ -5726,6 +5726,18 @@
             "title": "Retain Custom Instructions",
             "description": "Custom extraction prompt (when mode='custom')"
           },
+          "retain_narrator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Narrator",
+            "description": "Semantic narrator label for first-person assistant statements"
+          },
           "retain_chunk_size": {
             "anyOf": [
               {
@@ -6721,6 +6733,18 @@
             ],
             "title": "Retain Custom Instructions",
             "description": "Custom extraction prompt. Only active when retain_extraction_mode is 'custom'."
+          },
+          "retain_narrator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Narrator",
+            "description": "Semantic narrator label for first-person assistant statements during retain. Defaults to a generic AI assistant; do not use bank/source/tag names."
           },
           "retain_chunk_size": {
             "anyOf": [

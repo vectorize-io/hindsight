@@ -101,6 +101,7 @@ async def test_hierarchical_fields_categorization():
     assert "retain_extraction_mode" in configurable
     assert "retain_mission" in configurable
     assert "retain_custom_instructions" in configurable
+    assert "retain_narrator" in configurable
     assert "retain_chunk_size" in configurable
     assert "enable_observations" in configurable
     assert "consolidation_llm_batch_size" in configurable
@@ -128,7 +129,7 @@ async def test_hierarchical_fields_categorization():
     assert "consolidation_llm_parallelism" in configurable
 
     # Verify count is correct
-    assert len(configurable) == 37
+    assert len(configurable) == 38
 
     # Verify credential fields (NEVER exposed)
     assert "llm_api_key" in credentials

@@ -1100,6 +1100,13 @@ class CreateBankRequest(BaseModel):
         default=None,
         description="Custom extraction prompt. Only active when retain_extraction_mode is 'custom'.",
     )
+    retain_narrator: str | None = Field(
+        default=None,
+        description=(
+            "Semantic narrator label for first-person assistant statements during retain. "
+            "Defaults to a generic AI assistant; do not use bank/source/tag names."
+        ),
+    )
     retain_chunk_size: int | None = Field(
         default=None,
         description="Maximum token size for each content chunk during retain.",
@@ -1141,6 +1148,7 @@ class CreateBankRequest(BaseModel):
             "retain_mission",
             "retain_extraction_mode",
             "retain_custom_instructions",
+            "retain_narrator",
             "retain_chunk_size",
             "enable_observations",
             "observations_mission",
@@ -1811,6 +1819,9 @@ class BankTemplateConfig(BaseModel):
     )
     retain_custom_instructions: str | None = Field(
         default=None, description="Custom extraction prompt (when mode='custom')"
+    )
+    retain_narrator: str | None = Field(
+        default=None, description="Semantic narrator label for first-person assistant statements"
     )
     retain_chunk_size: int | None = Field(default=None, description="Max token size for each content chunk")
     enable_observations: bool | None = Field(default=None, description="Toggle observation consolidation")

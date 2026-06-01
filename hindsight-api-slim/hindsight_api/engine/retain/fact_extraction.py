@@ -10,7 +10,7 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
@@ -111,6 +111,156 @@ def _infer_temporal_date(fact_text: str, event_date: datetime | None) -> str | N
 
 def _sanitize_text(text: str | None) -> str | None:
     return sanitize_llm_output(text)
+
+
+# Metadata in memory units is user-defined, so only drop fields whose names are
+# infrastructure-only. Do not infer routing intent from arbitrary string values:
+# values like "source: customer interview" can be legitimate semantic context.
+_ROUTING_METADATA_KEYS = {
+    "agent_id",
+    "bank",
+    "bank_id",
+    "bank_name",
+    "client_id",
+    "conversation_id",
+    "document_id",
+    "integration",
+    "integration_id",
+    "operation_id",
+    "profile",
+    "profile_id",
+    "profile_name",
+    "request_id",
+    "session_id",
+    "source_id",
+    "source_name",
+    "source_system",
+    "source_system_id",
+    "tag",
+    "tag_list",
+    "tags",
+    "tenant_id",
+    "thread_id",
+    "workspace_id",
+}
+_ROUTING_METADATA_KEY_PREFIXES = (
+    "integration_",
+    "source_system_",
+)
+_RETAIN_NARRATOR_DEFAULT = "AI assistant"
+_RETAIN_NARRATOR_ROUTING_KEYS = {
+    "bank",
+    "bank_id",
+    "bank_name",
+    "profile",
+    "profile_id",
+    "profile_name",
+    "source",
+    "source_id",
+    "source_name",
+    "source_system",
+    "source_system_id",
+    "tag",
+    "tag_list",
+    "tags",
+}
+_RETAIN_NARRATOR_PROMPT_INJECTION_PATTERNS = (
+    re.compile(r"[\r\n]"),
+    re.compile(r"\b(system|developer|user|assistant)\s*:", re.IGNORECASE),
+    re.compile(r"</?\s*(system|developer|user|assistant)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(ignore|disregard|forget)\b.{0,80}\b(previous|above|system|developer|instructions?|prompt)\b", re.IGNORECASE
+    ),
+    re.compile(r"\bprompt\s+injection\b", re.IGNORECASE),
+)
+
+
+def _normalize_metadata_key(key: str) -> str:
+    key = re.sub(r"(?<!^)(?=[A-Z])", "_", key)
+    return re.sub(r"[^a-z0-9]+", "_", key.strip().lower()).strip("_")
+
+
+def _is_routing_metadata_key(key: str) -> bool:
+    normalized = _normalize_metadata_key(key)
+    return normalized in _ROUTING_METADATA_KEYS or normalized.startswith(_ROUTING_METADATA_KEY_PREFIXES)
+
+
+def _metadata_value_to_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        return str(value)
+
+
+def _filter_semantic_metadata_value(value: Any) -> Any | None:
+    """Remove routing-only keys while preserving user-authored semantic values."""
+    if isinstance(value, dict):
+        filtered: dict[str, Any] = {}
+        for key, raw_value in value.items():
+            key_text = str(key).strip()
+            if not key_text or _is_routing_metadata_key(key_text):
+                continue
+            filtered_value = _filter_semantic_metadata_value(raw_value)
+            if filtered_value is not None:
+                filtered[key_text] = filtered_value
+        return filtered or None
+    if isinstance(value, (list, tuple, set)):
+        filtered_items = [
+            filtered_item for item in value if (filtered_item := _filter_semantic_metadata_value(item)) is not None
+        ]
+        return filtered_items or None
+    return value
+
+
+def _looks_like_routing_narrator(value: str) -> bool:
+    prefix, separator, remainder = value.strip().partition(":")
+    return bool(separator and remainder.strip()) and _normalize_metadata_key(prefix) in _RETAIN_NARRATOR_ROUTING_KEYS
+
+
+def _looks_like_prompt_injection(value: str) -> bool:
+    return any(pattern.search(value) for pattern in _RETAIN_NARRATOR_PROMPT_INJECTION_PATTERNS)
+
+
+def _sanitize_retain_narrator(value: Any) -> str:
+    if not isinstance(value, str):
+        return _RETAIN_NARRATOR_DEFAULT
+
+    stripped = value.strip()
+    sanitized = (_sanitize_text(stripped) or "").strip()
+    if not sanitized:
+        return _RETAIN_NARRATOR_DEFAULT
+
+    if _looks_like_routing_narrator(sanitized) or _looks_like_prompt_injection(sanitized):
+        return _RETAIN_NARRATOR_DEFAULT
+
+    return sanitized
+
+
+def _semantic_metadata_items(metadata: dict[str, Any]) -> list[tuple[str, str]]:
+    """Return metadata safe to include in the semantic extraction prompt."""
+    items: list[tuple[str, str]] = []
+    for key, raw_value in metadata.items():
+        key_text = str(key).strip()
+        if not key_text or _is_routing_metadata_key(key_text):
+            continue
+
+        filtered_value = _filter_semantic_metadata_value(raw_value)
+        if filtered_value is None:
+            continue
+
+        value_text = _metadata_value_to_text(filtered_value).strip()
+        if not value_text:
+            continue
+
+        sanitized_value = _sanitize_text(value_text)
+        if sanitized_value:
+            items.append((key_text, sanitized_value))
+
+    return items
 
 
 class Entity(BaseModel):
@@ -1003,7 +1153,7 @@ def _build_user_message(
     total_chunks: int,
     event_date: datetime | None,
     context: str,
-    metadata: dict[str, str] | None = None,
+    metadata: dict[str, Any] | None = None,
     agent_name: str | None = None,
 ) -> str:
     """Build user message for fact extraction."""
@@ -1020,12 +1170,19 @@ def _build_user_message(
 
     metadata_section = ""
     if metadata:
-        metadata_lines = "\n".join(f"  {k}: {v}" for k, v in metadata.items())
-        metadata_section = f"\nMetadata:\n{metadata_lines}"
+        semantic_metadata = _semantic_metadata_items(metadata)
+        if semantic_metadata:
+            metadata_lines = "\n".join(f"  {k}: {v}" for k, v in semantic_metadata)
+            metadata_section = f"\nMetadata:\n{metadata_lines}"
 
     narrator_section = ""
     if agent_name:
-        narrator_section = f'\nNarrator: {agent_name} (AI agent — first-person statements like "I did X" are the agent\'s own actions; classify as "assistant")'
+        sanitized_agent_name = _sanitize_retain_narrator(agent_name)
+        narrator_section = (
+            f"\nNarrator: {sanitized_agent_name} "
+            '(AI agent — first-person statements like "I did X" are the agent\'s own actions; '
+            'classify as "assistant")'
+        )
 
     return f"""Extract facts from the following text chunk.
 
