@@ -352,6 +352,10 @@ def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
     # Boolean literals: Oracle uses NUMBER(1) for booleans
     query = re.sub(r"\b=\s*TRUE\b", "= 1", query, flags=re.IGNORECASE)
     query = re.sub(r"\b=\s*FALSE\b", "= 0", query, flags=re.IGNORECASE)
+    # FOR NO KEY UPDATE → FOR UPDATE (Oracle has only FOR UPDATE; it does not block
+    # indexed-FK child inserts the way PG's FOR UPDATE would, so plain FOR UPDATE is
+    # the correct equivalent). Must run before the FOR SHARE rule below.
+    query = re.sub(r"\bFOR\s+NO\s+KEY\s+UPDATE\b", "FOR UPDATE", query, flags=re.IGNORECASE)
     # FOR SHARE → FOR UPDATE (Oracle doesn't support FOR SHARE)
     query = re.sub(r"\bFOR\s+SHARE\b", "FOR UPDATE", query, flags=re.IGNORECASE)
 

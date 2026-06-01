@@ -9886,31 +9886,6 @@ class MemoryEngine(MemoryEngineInterface):
 
         backend = await self._get_backend()
 
-        # Check for existing pending task if deduplication is enabled
-        # Note: We only check 'pending', not 'processing', because a processing task
-        # uses a watermark from when it started - new memories added after that point
-        # would need another consolidation run to be processed.
-        if dedupe_by_bank:
-            async with acquire_with_retry(backend) as conn:
-                existing = await conn.fetchrow(
-                    f"""
-                    SELECT operation_id FROM {fq_table("async_operations")}
-                    WHERE bank_id = $1 AND operation_type = $2 AND status = 'pending'
-                    LIMIT 1
-                    """,
-                    bank_id,
-                    operation_type,
-                )
-                if existing:
-                    logger.debug(
-                        f"{operation_type} task already pending for bank_id={bank_id}, "
-                        f"skipping duplicate (existing operation_id={existing['operation_id']})"
-                    )
-                    return {
-                        "operation_id": str(existing["operation_id"]),
-                        "deduplicated": True,
-                    }
-
         operation_id = uuid.uuid4()
 
         # Build full payload before INSERT so task_payload is included atomically.
@@ -9924,20 +9899,73 @@ class MemoryEngine(MemoryEngineInterface):
             **task_payload,
         }
 
-        # Insert operation record with task_payload in a single atomic statement
         async with acquire_with_retry(backend) as conn:
-            await conn.execute(
-                f"""
-                INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status, task_payload)
-                VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-                """,
-                operation_id,
-                bank_id,
-                operation_type,
-                json.dumps(result_metadata or {}, default=_json_default),
-                "pending",
-                json.dumps(full_payload, default=_json_default),
-            )
+            async with conn.transaction():
+                if dedupe_by_bank:
+                    # Serialize concurrent submits for this bank so the dedup
+                    # check-and-insert is atomic. A bare check-then-INSERT races
+                    # under READ COMMITTED: two /consolidate calls (or a manual
+                    # trigger racing a retain-driven submit / round-limit re-queue)
+                    # both see no pending row and both insert, leaking duplicate
+                    # pending ops that then pile up as retry_blocked and starve the
+                    # bank (issue #1842). Locking the bank row serializes submits for
+                    # this bank; it releases on commit below.
+                    #
+                    # FOR NO KEY UPDATE, not FOR UPDATE: async_operations has an FK to
+                    # banks, so every async-op insert for this bank (a scoped
+                    # consolidation, a batch-retain op, a webhook delivery, ...) takes a
+                    # FOR KEY SHARE lock on the bank row. FOR UPDATE conflicts with
+                    # FOR KEY SHARE and would block all of those during the submit;
+                    # FOR NO KEY UPDATE still conflicts with itself (so two submits
+                    # serialize) but not with FOR KEY SHARE (so those inserts proceed).
+                    # On Oracle this rewrites to FOR UPDATE, which there does not block
+                    # indexed-FK child inserts.
+                    await conn.execute(
+                        f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1 FOR NO KEY UPDATE",
+                        bank_id,
+                    )
+                    # Only check 'pending', not 'processing': a processing task uses a
+                    # watermark from when it started, so memories added after that need
+                    # a fresh run regardless.
+                    pending = await conn.fetch(
+                        f"""
+                        SELECT operation_id, task_payload FROM {fq_table("async_operations")}
+                        WHERE bank_id = $1 AND operation_type = $2 AND status = 'pending'
+                        """,
+                        bank_id,
+                        operation_type,
+                    )
+                    # Dedup only against an existing *unscoped* (full-bank) pending op.
+                    # A pending scoped consolidation covers only its tag subset, so it
+                    # must not swallow a full-bank sweep (#1842). The scope check is in
+                    # Python because the JSON predicate isn't portable — Oracle's
+                    # JSON_VALUE returns NULL for the array-valued observation_scopes.
+                    # (Scoped submits never reach here: they pass dedupe_by_bank=False.)
+                    for row in pending:
+                        row_payload = row["task_payload"]
+                        row_dict = json.loads(row_payload) if isinstance(row_payload, str) else (row_payload or {})
+                        if row_dict.get("observation_scopes") is None:
+                            logger.debug(
+                                f"{operation_type} task already pending for bank_id={bank_id}, "
+                                f"skipping duplicate (existing operation_id={row['operation_id']})"
+                            )
+                            return {
+                                "operation_id": str(row["operation_id"]),
+                                "deduplicated": True,
+                            }
+
+                await conn.execute(
+                    f"""
+                    INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status, task_payload)
+                    VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+                    """,
+                    operation_id,
+                    bank_id,
+                    operation_type,
+                    json.dumps(result_metadata or {}, default=_json_default),
+                    "pending",
+                    json.dumps(full_payload, default=_json_default),
+                )
 
         # For SyncTaskBackend: executes the task immediately.
         # For BrokerTaskBackend: no-op (submit_task's UPDATE skips rows whose

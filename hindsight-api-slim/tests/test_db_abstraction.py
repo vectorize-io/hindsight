@@ -456,6 +456,14 @@ class TestOracleQueryRewriter:
         assert "'true'" in query
         assert "->>" not in query
 
+    def test_for_no_key_update_rewrite(self):
+        """FOR NO KEY UPDATE (PG-only) maps to plain FOR UPDATE on Oracle."""
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("SELECT 1 FROM banks WHERE bank_id = $1 FOR NO KEY UPDATE")
+        assert "FOR UPDATE" in query
+        assert "NO KEY" not in query
+
     def test_jsonb_arrow_text_quoted(self):
         """Verify ->> works with quoted column names."""
         from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
