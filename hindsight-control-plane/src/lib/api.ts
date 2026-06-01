@@ -1286,8 +1286,74 @@ export class ControlPlaneClient {
         worker: boolean;
         bank_config_api: boolean;
         file_upload_api: boolean;
+        document_export_api: boolean;
+        document_import_api: boolean;
       };
     }>("/api/version");
+  }
+
+  /**
+   * Export documents from a bank as a transfer ZIP archive (no LLM re-extraction).
+   * Pass documentIds to export specific documents, or omit to export the whole bank.
+   * Set includeObservations to also carry consolidated observations.
+   * Returns the raw zip Blob so callers can trigger a download.
+   */
+  async exportDocuments(
+    bankId: string,
+    documentIds?: string[],
+    includeObservations = false
+  ): Promise<Blob> {
+    const params = new URLSearchParams({ bank_id: bankId });
+    (documentIds || []).forEach((id) => params.append("document_id", id));
+    if (includeObservations) params.set("include_observations", "true");
+    // Direct fetch (not fetchApi) because the response is a binary zip, not JSON.
+    const response = await fetch(withBasePath(`/api/documents/transfer?${params.toString()}`));
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorMessage;
+      } catch {
+        // Ignore parse errors
+      }
+      const error = new Error(errorMessage);
+      (error as any).status = response.status;
+      throw error;
+    }
+    return response.blob();
+  }
+
+  /**
+   * Submit a transfer ZIP archive for async import into a bank. Facts are
+   * re-embedded with the target bank's model and entities re-resolved — no LLM.
+   * Returns an operation_id; poll getOperationStatus for the result counts.
+   */
+  async importDocuments(
+    bankId: string,
+    zipFile: File,
+    onConflict: "skip" | "replace" | "new-id" = "skip"
+  ): Promise<{ operation_id: string; status: string }> {
+    const formData = new FormData();
+    formData.append("file", zipFile);
+    const params = new URLSearchParams({ bank_id: bankId, on_conflict: onConflict });
+    // Direct fetch for multipart/form-data; browser sets the boundary header.
+    const response = await fetch(withBasePath(`/api/documents/transfer?${params.toString()}`), {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorMessage;
+      } catch {
+        // Ignore parse errors
+      }
+      const error = new Error(errorMessage);
+      (error as any).status = response.status;
+      throw error;
+    }
+    return response.json();
   }
 
   /**

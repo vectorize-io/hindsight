@@ -5,6 +5,7 @@ hindsight_client_api/api/audit_api.py
 hindsight_client_api/api/bank_templates_api.py
 hindsight_client_api/api/banks_api.py
 hindsight_client_api/api/directives_api.py
+hindsight_client_api/api/document_transfer_api.py
 hindsight_client_api/api/documents_api.py
 hindsight_client_api/api/entities_api.py
 hindsight_client_api/api/files_api.py
@@ -56,6 +57,7 @@ hindsight_client_api/models/delete_response.py
 hindsight_client_api/models/directive_list_response.py
 hindsight_client_api/models/directive_response.py
 hindsight_client_api/models/disposition_traits.py
+hindsight_client_api/models/document_import_submit_response.py
 hindsight_client_api/models/document_response.py
 hindsight_client_api/models/entity_detail_response.py
 hindsight_client_api/models/entity_graph_response.py

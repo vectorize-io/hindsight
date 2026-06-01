@@ -17,23 +17,18 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
-from typing import Any, ClassVar, Dict, List
+from pydantic import BaseModel, ConfigDict, StrictStr
+from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
-class FeaturesInfo(BaseModel):
+class DocumentImportSubmitResponse(BaseModel):
     """
-    Feature flags indicating which capabilities are enabled.
+    Response for the async document-import endpoint (202).  The import runs in the background; poll the operations endpoint for status. The imported/skipped counts (documents_imported, facts_imported, observations_imported, etc.) are written to the operation's result_metadata.
     """ # noqa: E501
-    observations: StrictBool = Field(description="Whether observations (auto-consolidation) are enabled")
-    mcp: StrictBool = Field(description="Whether MCP (Model Context Protocol) server is enabled")
-    worker: StrictBool = Field(description="Whether the background worker is enabled")
-    bank_config_api: StrictBool = Field(description="Whether per-bank configuration API is enabled")
-    file_upload_api: StrictBool = Field(description="Whether file upload/conversion API is enabled")
-    document_export_api: StrictBool = Field(description="Whether the document export endpoint is enabled")
-    document_import_api: StrictBool = Field(description="Whether the document import endpoint is enabled")
-    __properties: ClassVar[List[str]] = ["observations", "mcp", "worker", "bank_config_api", "file_upload_api", "document_export_api", "document_import_api"]
+    operation_id: StrictStr
+    status: Optional[StrictStr] = 'pending'
+    __properties: ClassVar[List[str]] = ["operation_id", "status"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -53,7 +48,7 @@ class FeaturesInfo(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of FeaturesInfo from a JSON string"""
+        """Create an instance of DocumentImportSubmitResponse from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -78,7 +73,7 @@ class FeaturesInfo(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of FeaturesInfo from a dict"""
+        """Create an instance of DocumentImportSubmitResponse from a dict"""
         if obj is None:
             return None
 
@@ -86,13 +81,8 @@ class FeaturesInfo(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "observations": obj.get("observations"),
-            "mcp": obj.get("mcp"),
-            "worker": obj.get("worker"),
-            "bank_config_api": obj.get("bank_config_api"),
-            "file_upload_api": obj.get("file_upload_api"),
-            "document_export_api": obj.get("document_export_api"),
-            "document_import_api": obj.get("document_import_api")
+            "operation_id": obj.get("operation_id"),
+            "status": obj.get("status") if obj.get("status") is not None else 'pending'
         })
         return _obj
 

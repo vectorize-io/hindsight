@@ -607,7 +607,26 @@
     "retainTracesSummary": "{calls, plural, other {# 次呼叫}} · {tokens} 個 token",
     "loadingChunks": "載入片段中...",
     "noChunksFound": "找不到此文件的片段",
-    "clickChunksTabToLoad": "選取「片段」分頁以載入片段"
+    "clickChunksTabToLoad": "選取「片段」分頁以載入片段",
+    "exportButton": "匯出",
+    "importButton": "從 zip 匯入",
+    "exporting": "匯出緊…",
+    "importing": "匯入緊…",
+    "exportSuccess": "已匯出文件",
+    "importSuccess": "已匯入 {imported} 個文件、{facts} 條事實；略過 {skipped} 個",
+    "importFailed": "匯入失敗",
+    "importTimeout": "匯入耗時超出預期；請稍後再查看",
+    "exportDialogTitle": "匯出文件",
+    "exportDialogDescription": "將呢個庫嘅文件同擷取嘅事實下載做 .zip 檔。唔包含向量，匯入時會用目標庫嘅模型重新產生。",
+    "exportIncludeObservationsLabel": "包含已整合嘅觀測",
+    "exportIncludeObservationsHint": "一齊匯出合成嘅觀測。若關閉，目標庫會喺整合時重新產生。",
+    "importDialogTitle": "匯入文件",
+    "importDialogDescription": "上載之前由某個庫匯出嘅 .zip 檔。呢個唔係一般文件上載——事實會喺呢個庫重新嵌入同關聯。匯入會喺背景執行。",
+    "actionsButton": "操作",
+    "importConflictLabel": "當文件已存在時",
+    "importConflictSkip": "略過 — 保留現有文件",
+    "importConflictReplace": "取代 — 以匯入嘅覆寫",
+    "importConflictNewId": "兩者都保留 — 以新 id 匯入"
   },
   "entitiesView": {
     "viewRelations": "關係",
@@ -1443,7 +1462,8 @@
         "bankAndModelIdRequired": "必須提供 bank_id 及 model_id",
         "operationIdRequired": "必須提供 operation_id",
         "missingRequestData": "缺少請求資料",
-        "missingBankId": "缺少 bank_id"
+        "missingBankId": "缺少 bank_id",
+        "fileRequired": "需要檔案"
       },
       "generic": {
         "failed": "失敗",
@@ -1481,7 +1501,9 @@
         "updateTags": "未能更新文件標籤",
         "delete": "未能刪除文件",
         "chunks": "未能載入文件片段",
-        "reprocess": "未能重新處理文件"
+        "reprocess": "未能重新處理文件",
+        "export": "匯出文件失敗",
+        "import": "匯入文件失敗"
       },
       "files": {
         "upload": "未能上傳檔案"

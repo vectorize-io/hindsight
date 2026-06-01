@@ -224,6 +224,7 @@ if TYPE_CHECKING:
     from hindsight_api.models import RequestContext
 
     from .audit import AuditLogListResponse, AuditLogStatsResponse
+    from .transfer import ImportResult
 
 
 from enum import Enum
@@ -1027,6 +1028,61 @@ class MemoryEngine(MemoryEngineInterface):
         _current_schema.set(tenant_context.schema_name)
         return tenant_context.schema_name
 
+    async def _handle_import_documents(self, task_dict: dict[str, Any]):
+        """Handler for async document-import tasks.
+
+        Retrieves the stashed archive, runs the deterministic import, records the
+        imported/skipped counts in the operation's ``result_metadata``, and
+        deletes the archive. ``execute_task`` marks the operation completed.
+        """
+        import json
+
+        bank_id = task_dict.get("bank_id")
+        storage_key = task_dict.get("storage_key")
+        on_conflict = task_dict.get("on_conflict", "skip")
+        operation_id = task_dict.get("operation_id")
+        if not bank_id or not storage_key:
+            raise ValueError("bank_id and storage_key are required for import_documents task")
+
+        from hindsight_api.models import RequestContext
+
+        context = RequestContext(
+            internal=True,
+            user_initiated=True,
+            tenant_id=task_dict.get("_tenant_id"),
+            api_key_id=task_dict.get("_api_key_id"),
+            retry_count=task_dict.get("_retry_count", 0),
+        )
+
+        archive_bytes = await self._file_storage.retrieve(storage_key)
+        result = await self._run_import_documents(bank_id, archive_bytes, on_conflict, context)
+
+        if operation_id:
+            counts = {
+                "documents_imported": result.documents_imported,
+                "documents_skipped": result.documents_skipped,
+                "facts_imported": result.facts_imported,
+                "observations_imported": result.observations_imported,
+                "observations_skipped": result.observations_skipped,
+                "skipped_document_ids": result.skipped_document_ids,
+                "remapped_document_ids": result.remapped_document_ids,
+            }
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                await conn.execute(
+                    f"UPDATE {fq_table('async_operations')} "
+                    f"SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $1::jsonb "
+                    f"WHERE operation_id = $2",
+                    json.dumps(counts, default=_json_default),
+                    uuid.UUID(operation_id),
+                )
+
+        # Best-effort cleanup of the transient upload.
+        try:
+            await self._file_storage.delete(storage_key)
+        except Exception:
+            logger.warning("Failed to delete import archive %s", storage_key, exc_info=True)
+
     async def _handle_batch_retain(self, task_dict: dict[str, Any]):
         """
         Handler for batch retain tasks.
@@ -1486,6 +1542,8 @@ class MemoryEngine(MemoryEngineInterface):
                     await self._handle_batch_retain(task_dict)
                 elif task_type == "file_convert_retain":
                     await self._handle_file_convert_retain(task_dict)
+                elif task_type == "import_documents":
+                    await self._handle_import_documents(task_dict)
                 elif task_type == "consolidation":
                     consolidation_result = await self._handle_consolidation(task_dict)
                 elif task_type == "graph_maintenance":
@@ -3118,6 +3176,100 @@ class MemoryEngine(MemoryEngineInterface):
             # never adds latency to the retain response.
             self._llm_recorder.attach_memory_ids(trace_context_of(retain_llm), created=created_ids)
             return result
+
+    async def export_documents_async(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+        document_ids: list[str] | None = None,
+        include_observations: bool = False,
+    ) -> bytes:
+        """Export documents from a bank into a transfer ZIP archive (no LLM, no embeddings).
+
+        See :mod:`hindsight_api.engine.transfer`. Embeddings and database ids are
+        not included; the archive carries extracted facts, entity canonical
+        names, causal links, and chunks so it can be replayed into another bank.
+        When ``include_observations`` is set, consolidated observations are also
+        exported (and restored on import) instead of being regenerated.
+        """
+        from .transfer import export_documents
+
+        await self._get_backend()
+        return await export_documents(self._backend, bank_id, document_ids, include_observations=include_observations)
+
+    async def import_documents_async(
+        self,
+        bank_id: str,
+        archive_bytes: bytes,
+        request_context: "RequestContext",
+        on_conflict: str = "skip",
+    ) -> dict[str, Any]:
+        """Submit an async document-import operation and return its ``operation_id``.
+
+        The archive is validated up front (so a bad zip fails fast), stashed in
+        file storage, and processed by a worker — or inline when the engine uses
+        a ``SyncTaskBackend`` (e.g. in tests). Poll the operations endpoint for
+        status; the imported/skipped counts land in ``result_metadata``.
+        Re-embeds facts and re-resolves entities — no LLM extraction is run.
+        """
+        from .transfer.importer import parse_archive
+
+        if on_conflict not in ("skip", "replace", "new-id"):
+            raise ValueError(f"Invalid on_conflict '{on_conflict}'; expected skip|replace|new-id")
+        # Validate synchronously so a malformed/unsupported archive surfaces as an
+        # immediate error to the caller rather than a background task failure.
+        parse_archive(archive_bytes)
+
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        # Ensure the bank (and its per-bank vector indexes) exist before inserts.
+        await bank_utils.get_or_create_bank_profile(backend, bank_id)
+
+        # Stash the archive in file storage and reference it by key in the task
+        # payload, rather than base64-ing megabytes into the operation JSON.
+        storage_key = f"banks/{bank_id}/imports/{uuid.uuid4()}/transfer.zip"
+        await self._file_storage.store(
+            file_data=archive_bytes,
+            key=storage_key,
+            metadata={"content_type": "application/zip", "bank_id": bank_id},
+        )
+
+        task_payload: dict[str, Any] = {"storage_key": storage_key, "on_conflict": on_conflict}
+        if request_context.tenant_id:
+            task_payload["_tenant_id"] = request_context.tenant_id
+        if request_context.api_key_id:
+            task_payload["_api_key_id"] = request_context.api_key_id
+
+        return await self._submit_async_operation(
+            bank_id,
+            operation_type="import_documents",
+            task_type="import_documents",
+            task_payload=task_payload,
+        )
+
+    async def _run_import_documents(
+        self,
+        bank_id: str,
+        archive_bytes: bytes,
+        on_conflict: str,
+        request_context: "RequestContext",
+    ) -> "ImportResult":
+        """Run the deterministic import inline (shared by the worker handler)."""
+        from .transfer import import_documents
+
+        backend = await self._get_backend()
+        await bank_utils.get_or_create_bank_profile(backend, bank_id)
+        resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+        return await import_documents(
+            backend=backend,
+            embeddings_model=self.embeddings,
+            entity_resolver=self.entity_resolver,
+            config=resolved_config,
+            format_date_fn=self._format_readable_date,
+            bank_id=bank_id,
+            archive_bytes=archive_bytes,
+            on_conflict=on_conflict,
+        )
 
     def recall(
         self,

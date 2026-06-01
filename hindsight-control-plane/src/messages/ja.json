@@ -607,7 +607,26 @@
     "retainTracesSummary": "{calls, plural, other {# 回の呼び出し}} · {tokens} トークン",
     "loadingChunks": "チャンクを読み込み中...",
     "noChunksFound": "このドキュメントのチャンクは見つかりませんでした",
-    "clickChunksTabToLoad": "チャンクタブをクリックしてチャンクを読み込みます"
+    "clickChunksTabToLoad": "チャンクタブをクリックしてチャンクを読み込みます",
+    "exportButton": "エクスポート",
+    "importButton": "zip からインポート",
+    "exporting": "エクスポート中…",
+    "importing": "インポート中…",
+    "exportSuccess": "ドキュメントをエクスポートしました",
+    "importSuccess": "{imported} 件のドキュメント、{facts} 件のファクトをインポートしました。{skipped} 件をスキップ",
+    "importFailed": "インポートに失敗しました",
+    "importTimeout": "インポートに想定より時間がかかっています。しばらくしてからご確認ください",
+    "exportDialogTitle": "ドキュメントをエクスポート",
+    "exportDialogDescription": "このバンクのドキュメントと抽出済みファクトを .zip としてダウンロードします。埋め込みは含まれず、インポート時にインポート先バンクのモデルで再生成されます。",
+    "exportIncludeObservationsLabel": "統合された観測を含める",
+    "exportIncludeObservationsHint": "合成された観測もエクスポートします。オフの場合、インポート先バンクが統合時に再生成します。",
+    "importDialogTitle": "ドキュメントをインポート",
+    "importDialogDescription": "バンクからエクスポートした .zip をアップロードします。通常のドキュメントアップロードではなく、ファクトはこのバンクで再埋め込み・再リンクされます。インポートはバックグラウンドで実行されます。",
+    "actionsButton": "アクション",
+    "importConflictLabel": "ドキュメントが既に存在する場合",
+    "importConflictSkip": "スキップ — 既存のドキュメントを保持",
+    "importConflictReplace": "置換 — インポート版で上書き",
+    "importConflictNewId": "両方保持 — 新しい id でインポート"
   },
   "entitiesView": {
     "viewRelations": "関係",
@@ -1443,7 +1462,8 @@
         "bankAndModelIdRequired": "bank_id と model_id は必須です",
         "operationIdRequired": "operation_id は必須です",
         "missingRequestData": "リクエストデータが不足しています",
-        "missingBankId": "bank_id がありません"
+        "missingBankId": "bank_id がありません",
+        "fileRequired": "ファイルが必要です"
       },
       "generic": {
         "failed": "失敗しました",
@@ -1481,7 +1501,9 @@
         "updateTags": "ドキュメントタグの更新に失敗しました",
         "delete": "ドキュメントの削除に失敗しました",
         "chunks": "ドキュメントチャンクの取得に失敗しました",
-        "reprocess": "ドキュメントの再処理に失敗しました"
+        "reprocess": "ドキュメントの再処理に失敗しました",
+        "export": "ドキュメントのエクスポートに失敗しました",
+        "import": "ドキュメントのインポートに失敗しました"
       },
       "files": {
         "upload": "ファイルのアップロードに失敗しました"

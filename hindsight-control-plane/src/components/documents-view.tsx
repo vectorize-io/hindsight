@@ -2,8 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
+import { toast } from "sonner";
 import { client, LLMRequestEntry } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
+import { useFeatures } from "@/lib/features-context";
 import { DataView } from "./data-view";
 import { TraceDialog } from "./llm-requests-view";
 import { Button } from "@/components/ui/button";
@@ -16,7 +18,23 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DropdownMenu,
@@ -53,6 +71,8 @@ import {
   Network,
   Eye,
   Activity,
+  Download,
+  Upload,
 } from "lucide-react";
 
 const ITEMS_PER_PAGE = 50;
@@ -418,11 +438,22 @@ function ChunkRow({ chunk }: { chunk: any }) {
 export function DocumentsView() {
   const t = useTranslations("documentsView");
   const tCommon = useTranslations("common");
+  const tBank = useTranslations("bank");
   const { currentBank } = useBank();
+  const { features } = useFeatures();
   const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [total, setTotal] = useState(0);
+
+  // Document transfer (export/import) state
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportIncludeObservations, setExportIncludeObservations] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importOnConflict, setImportOnConflict] = useState<"skip" | "replace" | "new-id">("skip");
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -698,8 +729,225 @@ export function DocumentsView() {
     return () => clearTimeout(timeoutId);
   }, [searchQuery]);
 
+  const triggerDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportDocuments = async (documentIds?: string[], includeObservations = false) => {
+    if (!currentBank || exporting) return;
+    setExporting(true);
+    try {
+      const blob = await client.exportDocuments(currentBank, documentIds, includeObservations);
+      const suffix = documentIds && documentIds.length === 1 ? `-${documentIds[0]}` : "-documents";
+      triggerDownload(blob, `${currentBank}${suffix}.zip`);
+      toast.success(t("exportSuccess"));
+      setExportDialogOpen(false);
+    } catch {
+      // Errors surface via the API client / route; nothing extra to do here.
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const runImport = async (file: File) => {
+    if (!file || !currentBank) return;
+    setImporting(true);
+    try {
+      // Import is an async operation: submit, then poll until it completes.
+      const { operation_id } = await client.importDocuments(currentBank, file, importOnConflict);
+      const deadline = Date.now() + 5 * 60 * 1000; // give large imports up to 5 min
+      let meta: Record<string, any> | null = null;
+      while (Date.now() < deadline) {
+        const op = await client.getOperationStatus(currentBank, operation_id);
+        if (op.status === "completed") {
+          meta = op.result_metadata ?? {};
+          break;
+        }
+        if (op.status === "failed") {
+          toast.error(op.error_message || t("importFailed"));
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      if (meta === null) {
+        toast.error(t("importTimeout"));
+        return;
+      }
+      toast.success(
+        t("importSuccess", {
+          imported: meta.documents_imported ?? 0,
+          facts: meta.facts_imported ?? 0,
+          skipped: meta.documents_skipped ?? 0,
+        })
+      );
+      loadDocuments(currentPage);
+      setImportDialogOpen(false);
+      setImportFile(null);
+    } catch {
+      // Error toast handled by the API client.
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const canExport = features?.document_export_api ?? false;
+  const canImport = features?.document_import_api ?? false;
+
   return (
     <div>
+      {/* Page header: the bank-page title for the Documents tab, with the
+          Export/Import Actions menu on the same row (right-aligned). */}
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold mb-2 text-foreground">{tBank("documents")}</h1>
+          <p className="text-muted-foreground">{tBank("documentsDescription")}</p>
+        </div>
+        {(canExport || canImport) && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 shrink-0"
+                disabled={!currentBank || exporting || importing}
+              >
+                {exporting ? t("exporting") : importing ? t("importing") : t("actionsButton")}
+                <ChevronDown className="w-4 h-4 ml-1" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {canExport && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    setExportIncludeObservations(false);
+                    setExportDialogOpen(true);
+                  }}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  {t("exportButton")}
+                </DropdownMenuItem>
+              )}
+              {canImport && (
+                <DropdownMenuItem onClick={() => setImportDialogOpen(true)}>
+                  <Upload className="h-4 w-4 mr-2" />
+                  {t("importButton")}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+
+      {/* Export dialog: explains the action and offers the observations choice. */}
+      <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("exportDialogTitle")}</DialogTitle>
+            <DialogDescription>{t("exportDialogDescription")}</DialogDescription>
+          </DialogHeader>
+          <div className="flex items-start gap-2 py-2">
+            <Checkbox
+              id="export-include-observations"
+              checked={exportIncludeObservations}
+              onCheckedChange={(v) => setExportIncludeObservations(v === true)}
+            />
+            <div className="grid gap-1 leading-none">
+              <Label htmlFor="export-include-observations">
+                {t("exportIncludeObservationsLabel")}
+              </Label>
+              <p className="text-xs text-muted-foreground">{t("exportIncludeObservationsHint")}</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setExportDialogOpen(false)}
+              disabled={exporting}
+            >
+              {tCommon("cancel")}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => exportDocuments(undefined, exportIncludeObservations)}
+              disabled={exporting}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              {exporting ? t("exporting") : t("exportButton")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import dialog: explains the action and only accepts .zip archives. */}
+      <Dialog
+        open={importDialogOpen}
+        onOpenChange={(open) => {
+          setImportDialogOpen(open);
+          if (!open) setImportFile(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("importDialogTitle")}</DialogTitle>
+            <DialogDescription>{t("importDialogDescription")}</DialogDescription>
+          </DialogHeader>
+          <div className="py-2 space-y-4">
+            <input
+              type="file"
+              accept=".zip,application/zip"
+              disabled={importing}
+              onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+              className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-muted/80"
+            />
+            <div className="grid gap-1.5">
+              <Label htmlFor="import-on-conflict">{t("importConflictLabel")}</Label>
+              <Select
+                value={importOnConflict}
+                onValueChange={(v) => setImportOnConflict(v as "skip" | "replace" | "new-id")}
+                disabled={importing}
+              >
+                <SelectTrigger id="import-on-conflict" className="h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="skip">{t("importConflictSkip")}</SelectItem>
+                  <SelectItem value="replace">{t("importConflictReplace")}</SelectItem>
+                  <SelectItem value="new-id">{t("importConflictNewId")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setImportDialogOpen(false);
+                setImportFile(null);
+              }}
+              disabled={importing}
+            >
+              {tCommon("cancel")}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => importFile && runImport(importFile)}
+              disabled={!importFile || importing}
+            >
+              <Upload className="h-4 w-4 mr-2" />
+              {importing ? t("importing") : t("importButton")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {/* Documents List Section */}
       {loading ? (
         <div className="flex items-center justify-center py-20">
@@ -927,6 +1175,15 @@ export function DocumentsView() {
                       <RefreshCw className="h-4 w-4 mr-2" />
                       Reprocess
                     </DropdownMenuItem>
+                    {canExport && (
+                      <DropdownMenuItem
+                        onClick={() => exportDocuments([selectedDocument.id])}
+                        disabled={exporting}
+                      >
+                        <Download className="h-4 w-4 mr-2" />
+                        {t("exportButton")}
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onClick={() =>

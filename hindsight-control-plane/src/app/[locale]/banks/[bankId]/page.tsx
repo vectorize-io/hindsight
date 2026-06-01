@@ -554,11 +554,10 @@ export default function BankPage() {
               </div>
             )}
 
-            {/* Documents Tab */}
+            {/* Documents Tab — DocumentsView renders its own title row so the
+                Export/Import Actions menu can sit beside the heading. */}
             {view === "documents" && (
               <div>
-                <h1 className="text-3xl font-bold mb-2 text-foreground">{t("documents")}</h1>
-                <p className="text-muted-foreground mb-6">{t("documentsDescription")}</p>
                 <DocumentsView />
               </div>
             )}

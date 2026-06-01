@@ -607,7 +607,26 @@
     "retainTracesSummary": "{calls, plural, one {# appel} other {# appels}} · {tokens} jetons",
     "loadingChunks": "Chargement des fragments...",
     "noChunksFound": "Aucun fragment trouvé pour ce document",
-    "clickChunksTabToLoad": "Cliquez sur l'onglet Fragments pour charger les fragments"
+    "clickChunksTabToLoad": "Cliquez sur l'onglet Fragments pour charger les fragments",
+    "exportButton": "Exporter",
+    "importButton": "Importer depuis un zip",
+    "exporting": "Exportation…",
+    "importing": "Importation…",
+    "exportSuccess": "Documents exportés",
+    "importSuccess": "{imported} document(s) importé(s), {facts} fait(s) ; {skipped} ignoré(s)",
+    "importFailed": "Échec de l'importation",
+    "importTimeout": "L'importation prend plus de temps que prévu ; réessayez bientôt",
+    "exportDialogTitle": "Exporter des documents",
+    "exportDialogDescription": "Téléchargez les documents de ce bank et leurs faits extraits sous forme d'archive .zip. Les embeddings ne sont pas inclus : l'import les régénère avec le modèle du bank cible.",
+    "exportIncludeObservationsLabel": "Inclure les observations consolidées",
+    "exportIncludeObservationsHint": "Exporter aussi les observations synthétisées. Sinon, le bank cible les régénère lors de la consolidation.",
+    "importDialogTitle": "Importer des documents",
+    "importDialogDescription": "Importez une archive .zip exportée depuis un bank. Ce n'est pas un import de document classique : les faits sont ré-encodés et reliés dans ce bank. L'import s'exécute en arrière-plan.",
+    "actionsButton": "Actions",
+    "importConflictLabel": "Si un document existe déjà",
+    "importConflictSkip": "Ignorer — conserver le document existant",
+    "importConflictReplace": "Remplacer — écraser par celui importé",
+    "importConflictNewId": "Conserver les deux — importer sous un nouvel id"
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -1443,7 +1462,8 @@
         "bankAndModelIdRequired": "bank_id et model_id sont obligatoires",
         "operationIdRequired": "operation_id est obligatoire",
         "missingRequestData": "Données de requête manquantes",
-        "missingBankId": "bank_id manquant"
+        "missingBankId": "bank_id manquant",
+        "fileRequired": "Un fichier est requis"
       },
       "generic": {
         "failed": "Échec",
@@ -1481,7 +1501,9 @@
         "updateTags": "Impossible de mettre à jour les tags du document",
         "delete": "Impossible de supprimer le document",
         "chunks": "Impossible de récupérer les fragments du document",
-        "reprocess": "Impossible de retraiter le document"
+        "reprocess": "Impossible de retraiter le document",
+        "export": "Échec de l'exportation des documents",
+        "import": "Échec de l'importation des documents"
       },
       "files": {
         "upload": "Impossible de téléverser les fichiers"

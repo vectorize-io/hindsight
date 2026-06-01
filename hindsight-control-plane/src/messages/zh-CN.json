@@ -607,7 +607,26 @@
     "retainTracesSummary": "{calls, plural, other {# 次调用}} · {tokens} 个 token",
     "loadingChunks": "正在加载分块...",
     "noChunksFound": "未找到该文档的分块",
-    "clickChunksTabToLoad": "点击分块标签以加载分块"
+    "clickChunksTabToLoad": "点击分块标签以加载分块",
+    "exportButton": "导出",
+    "importButton": "从 zip 导入",
+    "exporting": "正在导出…",
+    "importing": "正在导入…",
+    "exportSuccess": "已导出文档",
+    "importSuccess": "已导入 {imported} 个文档、{facts} 条事实；跳过 {skipped} 个",
+    "importFailed": "导入失败",
+    "importTimeout": "导入耗时超出预期；请稍后再查看",
+    "exportDialogTitle": "导出文档",
+    "exportDialogDescription": "将该库的文档及其抽取的事实下载为 .zip 文件。不包含向量，导入时会使用目标库的模型重新生成。",
+    "exportIncludeObservationsLabel": "包含已整合的观测",
+    "exportIncludeObservationsHint": "同时导出合成的观测。若关闭，目标库会在整合时重新生成。",
+    "importDialogTitle": "导入文档",
+    "importDialogDescription": "上传先前从某个库导出的 .zip 文件。这不是普通的文档上传——事实会在此库中重新嵌入和关联。导入在后台运行。",
+    "actionsButton": "操作",
+    "importConflictLabel": "当文档已存在时",
+    "importConflictSkip": "跳过 — 保留现有文档",
+    "importConflictReplace": "替换 — 用导入的覆盖",
+    "importConflictNewId": "两者都保留 — 以新 id 导入"
   },
   "entitiesView": {
     "viewRelations": "关系",
@@ -1443,7 +1462,8 @@
         "bankAndModelIdRequired": "bank_id 和 model_id 为必填项",
         "operationIdRequired": "operation_id 为必填项",
         "missingRequestData": "缺少请求数据",
-        "missingBankId": "缺少 bank_id"
+        "missingBankId": "缺少 bank_id",
+        "fileRequired": "需要文件"
       },
       "generic": {
         "failed": "失败",
@@ -1481,7 +1501,9 @@
         "updateTags": "更新文档标签失败",
         "delete": "删除文档失败",
         "chunks": "获取文档分块失败",
-        "reprocess": "重新处理文档失败"
+        "reprocess": "重新处理文档失败",
+        "export": "导出文档失败",
+        "import": "导入文档失败"
       },
       "files": {
         "upload": "上传文件失败"

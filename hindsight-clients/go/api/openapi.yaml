@@ -2550,6 +2550,128 @@ paths:
       summary: Export bank template
       tags:
       - Bank Templates
+  /v1/default/banks/{bank_id}/document-transfer:
+    get:
+      description: "Export documents (extracted facts, entity names, causal links,\
+        \ chunks) from a bank as a transfer ZIP archive. Embeddings and database ids\
+        \ are not included — importing re-embeds with the target bank's model and\
+        \ re-resolves entities. Consolidated observations are excluded unless include_observations=true.\
+        \ Pass document_id query params to export specific documents, or omit to export\
+        \ the whole bank."
+      operationId: export_documents
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: Document id(s) to export; omit for all
+        explode: true
+        in: query
+        name: document_id
+        required: false
+        schema:
+          items:
+            type: string
+          nullable: true
+          type: array
+        style: form
+      - description: Also export consolidated observations (restored on import)
+        explode: true
+        in: query
+        name: include_observations
+        required: false
+        schema:
+          default: false
+          description: Also export consolidated observations (restored on import)
+          title: Include Observations
+          type: boolean
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: {}
+            application/zip: {}
+          description: Transfer archive
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Export documents
+      tags:
+      - Document Transfer
+    post:
+      description: "Submit a transfer archive (produced by the export endpoint) for\
+        \ import into a bank. Runs as a background operation: facts are re-embedded\
+        \ with the target bank's embedding model and entities are re-resolved — no\
+        \ LLM extraction. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}\
+        \ for status and the imported/skipped counts in result_metadata. Use on_conflict\
+        \ to control existing document ids: skip (default), replace, or new-id."
+      operationId: import_documents
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: skip | replace | new-id
+        explode: true
+        in: query
+        name: on_conflict
+        required: false
+        schema:
+          default: skip
+          description: skip | replace | new-id
+          title: On Conflict
+          type: string
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_import_documents'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentImportSubmitResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Import documents (async)
+      tags:
+      - Document Transfer
   /v1/bank-template-schema:
     get:
       description: Returns the JSON Schema for the bank template manifest format.
@@ -4436,6 +4558,16 @@ components:
       - files
       - request
       title: Body_file_retain
+    Body_import_documents:
+      properties:
+        file:
+          description: Transfer ZIP archive
+          format: binary
+          title: File
+          type: string
+      required:
+      - file
+      title: Body_import_documents
     Budget:
       description: Budget levels for recall/reflect operations.
       enum:
@@ -4955,6 +5087,27 @@ components:
       - literalism
       - skepticism
       title: DispositionTraits
+    DocumentImportSubmitResponse:
+      description: |-
+        Response for the async document-import endpoint (202).
+
+        The import runs in the background; poll the operations endpoint for status.
+        The imported/skipped counts (documents_imported, facts_imported,
+        observations_imported, etc.) are written to the operation's result_metadata.
+      example:
+        operation_id: operation_id
+        status: pending
+      properties:
+        operation_id:
+          title: Operation Id
+          type: string
+        status:
+          default: pending
+          title: Status
+          type: string
+      required:
+      - operation_id
+      title: DocumentImportSubmitResponse
     DocumentResponse:
       description: Response model for get document endpoint.
       example:
@@ -5257,8 +5410,18 @@ components:
           description: Whether file upload/conversion API is enabled
           title: File Upload Api
           type: boolean
+        document_export_api:
+          description: Whether the document export endpoint is enabled
+          title: Document Export Api
+          type: boolean
+        document_import_api:
+          description: Whether the document import endpoint is enabled
+          title: Document Import Api
+          type: boolean
       required:
       - bank_config_api
+      - document_export_api
+      - document_import_api
       - file_upload_api
       - mcp
       - observations
@@ -7348,6 +7511,8 @@ components:
         api_version: 0.4.0
         features:
           bank_config_api: false
+          document_export_api: true
+          document_import_api: true
           file_upload_api: true
           mcp: true
           observations: false

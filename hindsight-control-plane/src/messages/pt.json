@@ -607,7 +607,26 @@
     "retainTracesSummary": "{calls, plural, one {# chamada} other {# chamadas}} · {tokens} tokens",
     "loadingChunks": "Carregando fragmentos...",
     "noChunksFound": "Nenhum fragmento encontrado para este documento",
-    "clickChunksTabToLoad": "Clique na aba Fragmentos para carregar os fragmentos"
+    "clickChunksTabToLoad": "Clique na aba Fragmentos para carregar os fragmentos",
+    "exportButton": "Exportar",
+    "importButton": "Importar de zip",
+    "exporting": "Exportando…",
+    "importing": "Importando…",
+    "exportSuccess": "Documentos exportados",
+    "importSuccess": "{imported} documento(s), {facts} fato(s) importado(s); {skipped} ignorado(s)",
+    "importFailed": "Falha na importação",
+    "importTimeout": "A importação está demorando mais que o esperado; verifique novamente em breve",
+    "exportDialogTitle": "Exportar documentos",
+    "exportDialogDescription": "Baixe os documentos deste banco e seus fatos extraídos como um arquivo .zip. Embeddings não são incluídos — ao importar, são regenerados com o modelo do banco de destino.",
+    "exportIncludeObservationsLabel": "Incluir observações consolidadas",
+    "exportIncludeObservationsHint": "Exportar também as observações sintetizadas. Se desativado, o banco de destino as regenera durante a consolidação.",
+    "importDialogTitle": "Importar documentos",
+    "importDialogDescription": "Envie um arquivo .zip exportado anteriormente de um banco. Não é um upload de documento comum — os fatos são reincorporados e relinkados neste banco. A importação roda em segundo plano.",
+    "actionsButton": "Ações",
+    "importConflictLabel": "Se um documento já existir",
+    "importConflictSkip": "Ignorar — manter o documento existente",
+    "importConflictReplace": "Substituir — sobrescrever pelo importado",
+    "importConflictNewId": "Manter ambos — importar com novo id"
   },
   "entitiesView": {
     "viewRelations": "Relações",
@@ -1443,7 +1462,8 @@
         "bankAndModelIdRequired": "bank_id e model_id são obrigatórios",
         "operationIdRequired": "operation_id é obrigatório",
         "missingRequestData": "Dados da solicitação ausentes",
-        "missingBankId": "bank_id ausente"
+        "missingBankId": "bank_id ausente",
+        "fileRequired": "É necessário um arquivo"
       },
       "generic": {
         "failed": "Falha",
@@ -1481,7 +1501,9 @@
         "updateTags": "Falha ao atualizar tags do documento",
         "delete": "Falha ao excluir documento",
         "chunks": "Falha ao buscar fragmentos do documento",
-        "reprocess": "Falha ao reprocessar documento"
+        "reprocess": "Falha ao reprocessar documento",
+        "export": "Falha ao exportar documentos",
+        "import": "Falha ao importar documentos"
       },
       "files": {
         "upload": "Falha ao enviar arquivos"
