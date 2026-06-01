@@ -29,67 +29,46 @@ On the Hindsight side, we've been verifying the Windows path for weeks: a [daily
 
 The full Hermes + Hindsight feature set, native:
 
-- **Embedded PostgreSQL** — Hindsight ships with `pg0`, an embedded Postgres distribution. No separate database install, no `winget install postgresql` step. First boot unpacks the binaries and runs `initdb`; subsequent starts are fast.
+- **Three deployment modes** — pick Cloud, Local Embedded, or Local External in the setup wizard. No Docker, no WSL, no separate PostgreSQL install. Local Embedded ships with `pg0` (an embedded Postgres distribution); first boot unpacks the binaries and runs `initdb`, subsequent starts are fast.
 - **Auto-recall and auto-retain** — every coding session starts with relevant memories injected into Hermes's context, and every session retains what you discussed for the next one.
-- **Local-only mode** — your memory bank lives in `~/.hindsight/` on your machine. Nothing leaves the laptop unless you point it at Hindsight Cloud.
+- **Local-only option** — when you pick Local Embedded, your memory bank lives in `~/.hindsight/` on your machine. Nothing leaves the laptop unless you point it at Hindsight Cloud.
 
 The only Windows-specific gotcha is character encoding (more on that below).
 
 ---
 
-## Two-Minute Setup
+## One-Command Setup
 
-You need three things: Python 3.11+, an LLM API key (or a local provider), and Hermes installed.
-
-### 1. Install Hindsight and Hermes
-
-In PowerShell:
-
-```powershell
-# Hindsight API (includes embedded PostgreSQL)
-pip install hindsight-api
-
-# Hermes Agent
-pip install hermes-agent
-```
-
-### 2. Set the UTF-8 environment variables
-
-This is the one Windows-specific step. Hermes and Hindsight log status with checkmarks and box-drawing characters (✓, ─, │). Default Windows uses `cp1252`, which crashes on those glyphs. Force UTF-8 in your PowerShell profile:
-
-```powershell
-# One-time, for this session
-$env:PYTHONUTF8 = "1"
-$env:PYTHONIOENCODING = "utf-8"
-
-# Or permanent — add to $PROFILE
-Add-Content $PROFILE "`$env:PYTHONUTF8 = '1'"
-Add-Content $PROFILE "`$env:PYTHONIOENCODING = 'utf-8'"
-```
-
-This matches what the Hindsight Windows CI uses on every run. Without it, you'll see a `UnicodeEncodeError` the first time the API server tries to log a startup banner.
-
-### 3. Run the Hermes setup wizard
+There's no Windows-specific install dance. From PowerShell:
 
 ```powershell
 hermes memory setup
-# Select "hindsight" when prompted
 ```
 
-The wizard asks you to pick local or cloud mode. For local (everything on your Windows box):
+Pick **hindsight** from the provider list. The wizard then asks you to choose a mode:
 
-- **Provider:** OpenAI, Anthropic, Gemini, Groq, Ollama — your pick
-- **API key:** Pasted at the prompt (masked)
+```
+Select mode
+↑↓ navigate  ENTER/SPACE select  ESC cancel
 
-For cloud, paste your `hsk_...` token from [ui.hindsight.vectorize.io/connect](https://ui.hindsight.vectorize.io/connect).
+→ (●) Cloud           Hindsight Cloud API (lightweight, just needs an API key)
+  (○) Local Embedded  Run Hindsight locally (downloads ~200MB, needs LLM key)
+  (○) Local External  Connect to an existing Hindsight instance
+```
 
-### 4. Confirm it works
+What each mode asks for:
+
+- **Cloud** — your `hsk_...` token from [ui.hindsight.vectorize.io/connect](https://ui.hindsight.vectorize.io/connect). The default API URL (`https://api.hindsight.vectorize.io`) is correct — just accept it.
+- **Local Embedded** — the wizard downloads and runs Hindsight locally (~200MB on first install, including the embedded PostgreSQL binary). You'll be prompted for an LLM provider (OpenAI, Anthropic, Gemini, Groq, Ollama, etc.), an API key for that provider, and an optional model override. Nothing else to install — `uvx` handles fetching `hindsight-embed`, and the daemon spawns automatically.
+- **Local External** — point Hermes at a Hindsight instance you're already running (your own server, a teammate's, a self-hosted box). Provide the API URL and, if the instance requires it, an API key.
+
+Confirm it's wired up:
 
 ```powershell
 hermes memory status
 ```
 
-You should see `provider: hindsight` and `status: ready`. On first run with local mode, the embedded Postgres unpacks and initializes — give it 60–90 seconds on a cold machine.
+You should see `provider: hindsight` and `status: ready`. On Local Embedded, first boot takes 60–90 seconds while pg0 unpacks Postgres and runs `initdb`.
 
 ---
 
@@ -145,15 +124,13 @@ The answers come from your past sessions — including the Windows-specific gotc
 
 ---
 
-## Local Mode: Why It's the Right Default on Windows
+## Which Mode Should You Pick?
 
-For most Windows developers, local mode is the right choice:
+A quick decision tree:
 
-- **No external dependencies** — embedded Postgres, no separate install
-- **No cloud round-trip** — your codebase facts never leave the machine
-- **Offline-friendly** — works on flights and air-gapped networks (you only need network for the LLM provider)
-
-If you want to share memory with a team or work across multiple Windows machines, cloud mode is a one-line config change. Same bank, accessed from anywhere.
+- **Solo dev, want zero ops:** Cloud. One API key, no daemon to think about, memory accessible from any machine you log into.
+- **Solo dev, codebase-sensitive or offline-heavy:** Local Embedded. Memory bank stays on your machine, works on flights and air-gapped networks (you still need the network for the LLM call itself).
+- **Team with a shared Hindsight server:** Local External. Point each developer's Hermes at the same Hindsight instance and share a bank ID — institutional codebase knowledge accumulates across the team.
 
 The Hindsight v0.5.5 release added [native Windows support for embedded mode](/blog/2026/04/28/version-0-5-5), and every subsequent release has been verified on Windows. The [v0.4.21 native Windows post](/blog/2026/03/30/version-0-4-21) has the original walkthrough for running without Docker.
 
@@ -163,8 +140,8 @@ The Hindsight v0.5.5 release added [native Windows support for embedded mode](/b
 
 A few things to watch for, distilled from the Windows CI runs and user reports:
 
-- **UTF-8 encoding** — covered above. Always set `PYTHONUTF8=1`.
-- **First-boot Postgres init time** — 60–90 seconds on a cold Windows machine while `pg0` unpacks Postgres and runs `initdb`. Logs land at `~/.hindsight/profiles/<profile>.log`.
+- **UTF-8 encoding** — Hermes and Hindsight log status with checkmarks and box-drawing characters (✓, ─, │) that crash Windows's default `cp1252` codec. If you see a `UnicodeEncodeError` on first run, set `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8` in your PowerShell profile. The Hindsight Windows CI sets both on every run for the same reason.
+- **First-boot Postgres init time** (Local Embedded only) — 60–90 seconds on a cold Windows machine while `pg0` unpacks Postgres and runs `initdb`. Logs land at `~/.hindsight/profiles/<profile>.log`.
 - **Long file paths** — if your projects live deep in the tree, enable `LongPathsEnabled` in the registry. Hindsight itself stays under the 260-char limit, but some Python wheel installs don't.
 - **Antivirus on the daemon** — Windows Defender occasionally flags the embedded Postgres binary on first unpack. Add `~/.hindsight/` to the exclusion list if you hit slow startup or quarantine warnings.
 
