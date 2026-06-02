@@ -331,6 +331,16 @@
       "icon": "/img/icons/flowise.png"
     },
     {
+      "id": "obsidian",
+      "name": "Obsidian",
+      "description": "Sync your Obsidian vault into Hindsight and chat with an agent grounded on your notes. Your vault stays the source of truth — every answer cites the note it came from.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/obsidian",
+      "icon": "/img/icons/obsidian.svg"
+    },
+    {
       "id": "hindclaw",
       "name": "HindClaw",
       "description": "Production memory infrastructure for AI agents — server-side access control via Hindsight extensions, Terraform provider for users/groups/banks/permissions, and an OpenClaw plugin with auto-managed embed.",

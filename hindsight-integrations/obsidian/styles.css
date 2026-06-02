@@ -1,0 +1,77 @@
+/* Hindsight plugin styles */
+
+.hindsight-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.hindsight-chat__messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--size-4-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-3);
+}
+
+.hindsight-chat__msg {
+  border-radius: var(--radius-m);
+  padding: var(--size-4-2) var(--size-4-3);
+  max-width: 100%;
+}
+
+.hindsight-chat__msg--user {
+  background: var(--background-modifier-hover);
+  align-self: flex-end;
+}
+
+.hindsight-chat__msg--assistant {
+  background: var(--background-secondary);
+  align-self: flex-start;
+}
+
+.hindsight-chat__disclosure {
+  margin-top: var(--size-4-2);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.hindsight-chat__disclosure summary {
+  cursor: pointer;
+}
+
+.hindsight-chat__citation {
+  display: block;
+  padding: 2px 0;
+}
+
+.hindsight-chat__composer {
+  display: flex;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2);
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.hindsight-chat__composer textarea {
+  flex: 1;
+  resize: none;
+  min-height: 2.5em;
+}
+
+.hindsight-chat__pending {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.hindsight-memory__card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: var(--size-4-3);
+  margin-bottom: var(--size-4-3);
+}
+
+.hindsight-memory__stale {
+  color: var(--text-warning);
+  font-size: var(--font-ui-smaller);
+}
