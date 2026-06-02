@@ -5,16 +5,28 @@
  */
 
 import { ItemView, MarkdownRenderer, Notice, type WorkspaceLeaf } from "obsidian";
+import { HINDSIGHT_ICON_ID, HINDSIGHT_MARK_DATA_URI } from "./branding";
 import { runChatTurn } from "./chat";
 import type HindsightPlugin from "./main";
-import type { ReflectResponse } from "./types";
+import { collectDocIds, retrievedNotes } from "./reflect-util";
+import type { ReflectResponse, ReflectToolCall, TagGroup, TagLeaf } from "./types";
 
 export const VIEW_TYPE_CHAT = "hindsight-chat";
+
+const ALL = ""; // sentinel for "no filter" in the dropdowns
+
+function callQuery(call: ReflectToolCall): string {
+  const q = call.input?.query;
+  return typeof q === "string" ? q : "";
+}
 
 export class ChatView extends ItemView {
   private messagesEl!: HTMLElement;
   private input!: HTMLTextAreaElement;
   private sending = false;
+  private vaultFilter = ALL;
+  private folderFilter = ALL;
+  private emptyState: HTMLElement | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -32,7 +44,7 @@ export class ChatView extends ItemView {
   }
 
   getIcon(): string {
-    return "brain-circuit";
+    return HINDSIGHT_ICON_ID;
   }
 
   async onOpen(): Promise<void> {
@@ -40,8 +52,15 @@ export class ChatView extends ItemView {
     root.empty();
     root.addClass("hindsight-chat");
 
-    this.messagesEl = root.createDiv({ cls: "hindsight-chat__messages" });
+    // "New chat" lives in the view's header action bar (top-right).
+    this.addAction("square-pen", "New chat", () => this.newChat());
 
+    this.buildHeader(root);
+    this.messagesEl = root.createDiv({ cls: "hindsight-chat__messages" });
+    this.renderEmptyState();
+
+    // Filters sit just above the ask bar (right-aligned), not at the top.
+    this.buildFilterBar(root);
     const composer = root.createDiv({ cls: "hindsight-chat__composer" });
     this.input = composer.createEl("textarea", {
       attr: { placeholder: "Ask about your vault…", rows: "2" },
@@ -57,7 +76,86 @@ export class ChatView extends ItemView {
     send.addEventListener("click", () => void this.submit());
   }
 
+  private buildHeader(root: HTMLElement): void {
+    const header = root.createDiv({ cls: "hindsight-chat__header" });
+    header.createEl("img", {
+      cls: "hindsight-chat__brand-mark",
+      attr: { src: HINDSIGHT_MARK_DATA_URI, alt: "Hindsight" },
+    });
+    header.createEl("span", { cls: "hindsight-chat__brand-name", text: "Hindsight" });
+  }
+
+  /** Reset the conversation to a blank slate. */
+  newChat(): void {
+    this.messagesEl.empty();
+    this.emptyState = null;
+    this.renderEmptyState();
+    this.input?.focus();
+  }
+
+  private renderEmptyState(): void {
+    this.emptyState = this.messagesEl.createDiv({ cls: "hindsight-chat__empty" });
+    this.emptyState.createEl("img", {
+      cls: "hindsight-chat__empty-mark",
+      attr: { src: HINDSIGHT_MARK_DATA_URI, alt: "" },
+    });
+    this.emptyState.createEl("div", {
+      cls: "hindsight-chat__empty-text",
+      text: "Ask anything about your vault. Answers are grounded on your notes and cite them.",
+    });
+  }
+
+  private buildFilterBar(root: HTMLElement): void {
+    const bar = root.createDiv({ cls: "hindsight-chat__filters" });
+
+    const vaultName = this.app.vault.getName();
+    const vaultSel = bar.createEl("select", { cls: "hindsight-chat__filter" });
+    vaultSel.createEl("option", { text: "All vaults", value: ALL });
+    vaultSel.createEl("option", { text: `Vault: ${vaultName}`, value: vaultName });
+    vaultSel.value = this.vaultFilter;
+    vaultSel.addEventListener("change", () => {
+      this.vaultFilter = vaultSel.value;
+    });
+
+    const folderSel = bar.createEl("select", { cls: "hindsight-chat__filter" });
+    folderSel.createEl("option", { text: "All folders", value: ALL });
+    for (const folder of this.folderOptions()) {
+      folderSel.createEl("option", { text: folder, value: folder });
+    }
+    folderSel.value = this.folderFilter;
+    folderSel.addEventListener("change", () => {
+      this.folderFilter = folderSel.value;
+    });
+  }
+
+  /** Distinct folder paths in the current vault (mirrors the folder: tags we emit). */
+  private folderOptions(): string[] {
+    const folders = new Set<string>();
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const dir = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : "";
+      const parts = dir ? dir.split("/") : [];
+      for (let i = 0; i < parts.length; i++) {
+        folders.add(parts.slice(0, i + 1).join("/"));
+      }
+    }
+    return [...folders].sort();
+  }
+
+  /** Build the reflect scope filter from the dropdown selections (undefined = whole bank). */
+  private scopeTagGroups(): TagGroup[] | undefined {
+    const leaves: TagLeaf[] = [];
+    if (this.vaultFilter) leaves.push({ tags: [`vault:${this.vaultFilter}`], match: "all_strict" });
+    if (this.folderFilter)
+      leaves.push({ tags: [`folder:${this.folderFilter}`], match: "all_strict" });
+    if (leaves.length === 0) return undefined;
+    // Single leaf, or AND the leaves; pass a one-element list so the server's
+    // list-level combination is unambiguous.
+    return leaves.length === 1 ? [leaves[0]] : [{ and: leaves }];
+  }
+
   private addMessage(role: "user" | "assistant", text: string): HTMLElement {
+    this.emptyState?.remove();
+    this.emptyState = null;
     const el = this.messagesEl.createDiv({
       cls: `hindsight-chat__msg hindsight-chat__msg--${role}`,
     });
@@ -66,27 +164,28 @@ export class ChatView extends ItemView {
     return el;
   }
 
-  private renderCitations(container: HTMLElement, response: ReflectResponse): void {
-    const memories = response.based_on?.memories ?? [];
+  private openNote(docId: string): void {
+    void this.app.workspace.openLinkText(this.plugin.stripDocPrefix(docId), "");
+  }
+
+  /** The actual notes pulled in by the reflect agent's tool calls (clickable). */
+  private renderRetrievedNotes(container: HTMLElement, response: ReflectResponse): void {
+    const docIds = retrievedNotes(response);
     const models = response.based_on?.mental_models ?? [];
-    const notePaths = [
-      ...new Set(memories.map((m) => m.document_id).filter((d): d is string => !!d)),
-    ];
-    if (notePaths.length === 0 && models.length === 0) return;
+    if (docIds.length === 0 && models.length === 0) return;
 
     const details = container.createEl("details", { cls: "hindsight-chat__disclosure" });
-    details.createEl("summary", {
-      text: `Sources (${notePaths.length + models.length})`,
-    });
-    for (const path of notePaths) {
+    details.open = true; // notes are the most useful evidence — show by default
+    details.createEl("summary", { text: `Notes retrieved (${docIds.length})` });
+    for (const id of docIds) {
       const link = details.createEl("a", {
         cls: "hindsight-chat__citation",
-        text: path,
+        text: this.plugin.stripDocPrefix(id),
         href: "#",
       });
       link.addEventListener("click", (evt) => {
         evt.preventDefault();
-        void this.app.workspace.openLinkText(this.plugin.stripDocPrefix(path), "");
+        this.openNote(id);
       });
     }
     for (const model of models) {
@@ -103,7 +202,12 @@ export class ChatView extends ItemView {
     const details = container.createEl("details", { cls: "hindsight-chat__disclosure" });
     details.createEl("summary", { text: `Reasoning (${calls.length} steps)` });
     for (const call of calls) {
-      details.createEl("div", { cls: "hindsight-chat__citation", text: `• ${call.tool}` });
+      const ids = new Set<string>();
+      collectDocIds(call.output, ids);
+      const query = callQuery(call);
+      const noteCount = ids.size ? ` — ${ids.size} note${ids.size === 1 ? "" : "s"}` : "";
+      const label = `• ${call.tool}${query ? ` · “${query}”` : ""}${noteCount}`;
+      details.createEl("div", { cls: "hindsight-chat__citation", text: label });
     }
   }
 
@@ -133,12 +237,14 @@ export class ChatView extends ItemView {
           bankId: this.plugin.getBankId(),
           budget: this.plugin.settings.defaultBudget,
           rememberConversations: this.plugin.settings.rememberConversations,
+          tagGroups: this.scopeTagGroups(),
+          debug: this.plugin.settings.debugLogging,
         },
         message
       );
       pending.remove();
       const assistant = this.addMessage("assistant", response.text || "_(no answer)_");
-      this.renderCitations(assistant, response);
+      this.renderRetrievedNotes(assistant, response);
       this.renderReasoning(assistant, response);
     } catch (err) {
       pending.remove();

@@ -1,4 +1,5 @@
-import { type Debouncer, Notice, Plugin, TFile, debounce } from "obsidian";
+import { type Debouncer, Notice, Plugin, TFile, addIcon, debounce } from "obsidian";
+import { HINDSIGHT_ICON_ID, HINDSIGHT_ICON_SVG, HINDSIGHT_MARK_DATA_URI } from "./branding";
 import { ChatView, VIEW_TYPE_CHAT } from "./chat-view";
 import { HindsightClient } from "./client";
 import { DEFAULT_SETTINGS, type HindsightSettings, HindsightSettingTab } from "./settings";
@@ -22,13 +23,33 @@ export default class HindsightPlugin extends Plugin {
     this.rebuildClient();
     this.scheduleFlush = debounce(() => void this.flushDirty(), 4000, false);
 
+    addIcon(HINDSIGHT_ICON_ID, HINDSIGHT_ICON_SVG);
     this.registerView(VIEW_TYPE_CHAT, (leaf) => new ChatView(leaf, this));
-    this.addRibbonIcon("brain-circuit", "Hindsight chat", () => void this.activateChat());
+    // Replace the ribbon glyph with the real Hindsight logo (PNG can't go through addIcon).
+    const ribbon = this.addRibbonIcon(
+      HINDSIGHT_ICON_ID,
+      "Hindsight chat",
+      () => void this.activateChat()
+    );
+    ribbon.empty();
+    ribbon.createEl("img", {
+      cls: "hindsight-ribbon-icon",
+      attr: { src: HINDSIGHT_MARK_DATA_URI, alt: "Hindsight" },
+    });
 
     this.addCommand({
       id: "open-chat",
       name: "Open chat",
       callback: () => void this.activateChat(),
+    });
+    this.addCommand({
+      id: "new-chat",
+      name: "New chat",
+      callback: () => {
+        const view = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT)[0]?.view;
+        if (view instanceof ChatView) view.newChat();
+        else void this.activateChat();
+      },
     });
     this.addCommand({
       id: "sync-vault",

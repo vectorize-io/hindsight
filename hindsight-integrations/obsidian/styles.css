@@ -6,6 +6,68 @@
   height: 100%;
 }
 
+.hindsight-chat__header {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2) var(--size-4-3);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.hindsight-ribbon-icon {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+.hindsight-chat__brand-mark {
+  height: 20px;
+  width: auto;
+  object-fit: contain;
+}
+
+.hindsight-chat__brand-name {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.hindsight-chat__empty {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--size-4-3);
+  text-align: center;
+  color: var(--text-muted);
+  padding: var(--size-4-4);
+}
+
+.hindsight-chat__empty-mark {
+  height: 56px;
+  width: auto;
+  object-fit: contain;
+  opacity: 0.9;
+}
+
+.hindsight-chat__empty-text {
+  max-width: 22em;
+  font-size: var(--font-ui-small);
+}
+
+.hindsight-chat__filters {
+  display: flex;
+  gap: var(--size-4-2);
+  padding: var(--size-4-1) var(--size-4-2);
+  justify-content: flex-end;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.hindsight-chat__filter {
+  flex: 0 1 auto;
+  max-width: 45%;
+  font-size: var(--font-ui-smaller);
+}
+
 .hindsight-chat__messages {
   flex: 1;
   overflow-y: auto;

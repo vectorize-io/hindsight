@@ -14,6 +14,8 @@ export interface HindsightSettings {
   /** DESIGN.md §0.5: OFF by default — keeps Hindsight from becoming a 2nd source of truth. */
   rememberConversations: boolean;
   prefixDocId: boolean;
+  /** Log reflect requests/responses to the console (open devtools to view). */
+  debugLogging: boolean;
 }
 
 export const DEFAULT_SETTINGS: HindsightSettings = {
@@ -28,6 +30,7 @@ export const DEFAULT_SETTINGS: HindsightSettings = {
   // On by default: all vaults share one bank, so document ids must be vault-prefixed
   // to avoid cross-vault collisions (e.g. two vaults both having Notes/todo.md).
   prefixDocId: true,
+  debugLogging: false,
 };
 
 function parseFolders(value: string): string[] {
@@ -151,6 +154,18 @@ export class HindsightSettingTab extends PluginSettingTab {
       .addToggle((t) =>
         t.setValue(this.plugin.settings.prefixDocId).onChange(async (v) => {
           this.plugin.settings.prefixDocId = v;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Debug logging")
+      .setDesc(
+        "Log each chat reflect request (incl. scope filter) and the citation sources to the console. Open devtools with Cmd+Opt+I to view."
+      )
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.debugLogging).onChange(async (v) => {
+          this.plugin.settings.debugLogging = v;
           await this.plugin.saveSettings();
         })
       );

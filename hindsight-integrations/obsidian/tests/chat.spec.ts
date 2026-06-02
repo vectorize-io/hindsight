@@ -38,6 +38,27 @@ describe("runChatTurn", () => {
     expect(res.text).toBe("grounded answer");
   });
 
+  it("forwards the scope tag_groups filter to reflect", async () => {
+    const client = fakeClient(ANSWER);
+    const tagGroups = [{ tags: ["vault:Personal"], match: "all_strict" as const }];
+    await runChatTurn(
+      {
+        client: client as unknown as HindsightClient,
+        bankId: "bank",
+        budget: "low",
+        rememberConversations: false,
+        tagGroups,
+      },
+      "scoped question"
+    );
+
+    expect(client.reflect).toHaveBeenCalledWith(
+      "bank",
+      "scoped question",
+      expect.objectContaining({ tagGroups })
+    );
+  });
+
   it("retains user + assistant turns only when explicitly enabled", async () => {
     const client = fakeClient(ANSWER);
     let n = 0;

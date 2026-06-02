@@ -94,7 +94,9 @@ export class HindsightClient {
       // `facts: {}` makes the server return `based_on`; `tool_calls: {}` returns the trace.
       body.include = { facts: {}, tool_calls: {} };
     }
-    if (options.tags?.length) body.tags = options.tags;
+    // tag_groups and tags are mutually exclusive server-side; prefer tag_groups.
+    if (options.tagGroups?.length) body.tag_groups = options.tagGroups;
+    else if (options.tags?.length) body.tags = options.tags;
     const resp = await this.send("POST", this.bankUrl(bankId, "/reflect"), body);
     return resp.json as ReflectResponse;
   }

@@ -6,6 +6,22 @@
 
 export type Budget = "low" | "mid" | "high";
 
+export type TagMatch = "any" | "all" | "any_strict" | "all_strict";
+
+/** A leaf tag filter. `all_strict` = AND match that also excludes untagged memories. */
+export interface TagLeaf {
+  tags: string[];
+  match?: TagMatch;
+}
+
+/** Compound AND of tag groups (server key is `and`). */
+export interface TagAnd {
+  and: TagGroup[];
+}
+
+/** Subset of the server's TagGroup union — leaves and AND are all the chat needs. */
+export type TagGroup = TagLeaf | TagAnd;
+
 export interface RetainOptions {
   tags?: string[];
   metadata?: Record<string, string>;
@@ -36,6 +52,9 @@ export interface ReflectBasedOn {
 
 export interface ReflectToolCall {
   tool: string;
+  input?: Record<string, unknown>;
+  /** Tool result (included when include.tool_calls.output is true — the default). */
+  output?: Record<string, unknown>;
   duration_ms?: number;
   iteration?: number;
 }
@@ -55,4 +74,6 @@ export interface ReflectOptions {
   /** When true, ask the server to return `based_on` citations + `trace`. */
   includeCitations?: boolean;
   tags?: string[];
+  /** Compound tag filter (mutually exclusive with `tags`). */
+  tagGroups?: TagGroup[];
 }
