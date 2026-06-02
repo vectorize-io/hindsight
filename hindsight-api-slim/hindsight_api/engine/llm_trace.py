@@ -123,6 +123,17 @@ def current_trace_context() -> LLMTraceContext | None:
     return _trace_ctx.get()
 
 
+def trace_context_of(llm_config: Any) -> LLMTraceContext | None:
+    """Return a configured provider's operation trace context, or None.
+
+    Real providers expose ``trace_context()`` (``ConfiguredLLMProvider``); test
+    or mock substitutes may not, so this degrades gracefully rather than raising
+    — tracing is best-effort and must never break an operation.
+    """
+    getter = getattr(llm_config, "trace_context", None)
+    return getter() if callable(getter) else None
+
+
 def record_created_memory_ids(ids: Iterable[str]) -> None:
     """Accumulate output memory_units onto the active operation trace.
 

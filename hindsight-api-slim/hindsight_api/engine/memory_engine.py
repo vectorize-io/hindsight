@@ -47,6 +47,7 @@ from .llm_trace import (
     LLMRequestStatsResponse,
     LLMRequestTokenSums,
     LLMTraceRecorder,
+    trace_context_of,
 )
 from .operation_metadata import (
     BatchRetainChildMetadata,
@@ -3115,7 +3116,7 @@ class MemoryEngine(MemoryEngineInterface):
             created_ids = [uid for group in result[0] for uid in group]
             # Fire-and-forget: the mapping is patched on a background task so it
             # never adds latency to the retain response.
-            self._llm_recorder.attach_memory_ids(retain_llm.trace_context(), created=created_ids)
+            self._llm_recorder.attach_memory_ids(trace_context_of(retain_llm), created=created_ids)
             return result
 
     def recall(

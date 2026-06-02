@@ -36,6 +36,7 @@ from ..llm_trace import (
     record_source_memory_ids,
     reset_trace_context,
     set_trace_context,
+    trace_context_of,
 )
 from ..llm_wrapper import sanitize_llm_output
 from ..memory_engine import Budget, fq_table
@@ -373,7 +374,7 @@ async def run_consolidation_job(
     # sites (deep inside _process_memory_batch) can accumulate the observations
     # this consolidation produced and the source memories it consumed onto the
     # trace — flushed onto every trace row on exit by attach_memory_ids.
-    trace_ctx = llm_config.trace_context()
+    trace_ctx = trace_context_of(llm_config)
     trace_token = set_trace_context(trace_ctx) if trace_ctx is not None else None
     try:
         return await _run_consolidation_job(
