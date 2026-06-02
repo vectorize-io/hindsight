@@ -40,6 +40,7 @@ jobs:
       integrations-pydantic-ai: ${{ steps.filter.outputs.integrations-pydantic-ai }}
       integrations-ag2: ${{ steps.filter.outputs.integrations-ag2 }}
       integrations-autogen: ${{ steps.filter.outputs.integrations-autogen }}
+      integrations-langgraph: ${{ steps.filter.outputs.integrations-langgraph }}
       integrations-llamaindex: ${{ steps.filter.outputs.integrations-llamaindex }}
       integrations-paperclip: ${{ steps.filter.outputs.integrations-paperclip }}
       integrations-opencode: ${{ steps.filter.outputs.integrations-opencode }}
@@ -128,6 +129,8 @@ jobs:
             - 'hindsight-integrations/ag2/**'
           integrations-autogen:
             - 'hindsight-integrations/autogen/**'
+          integrations-langgraph:
+            - 'hindsight-integrations/langgraph/**'
           integrations-llamaindex:
             - 'hindsight-integrations/llamaindex/**'
           integrations-paperclip:
@@ -3095,6 +3098,45 @@ jobs:
       working-directory: ./hindsight-integrations/pydantic-ai
       run: uv run pytest tests -v
 
+  test-langgraph-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-langgraph == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build langgraph integration
+      working-directory: ./hindsight-integrations/langgraph
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/langgraph
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/langgraph
+      # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
+      # (requires_real_llm) needs a live Hindsight server and runs separately.
+      run: uv run pytest tests -v -m "not requires_real_llm"
+
   test-llamaindex-integration:
     needs: [detect-changes]
     if: >-
@@ -4070,6 +4112,7 @@ jobs:
       - test-dify-integration
       - test-flowise-integration
       - test-crewai-integration
+      - test-langgraph-integration
       - test-litellm-integration
       - test-pydantic-ai-integration
       - test-llamaindex-integration
