@@ -166,7 +166,7 @@ for tool_fn in tools:
 | `recall_tags_match` | `"any"` | Tag matching mode (any/all/any_strict/all_strict) |
 | `retain_metadata` | `None` | Metadata dict for retain operations |
 | `retain_document_id` | `None` | Document ID for retain (groups/upserts memories) |
-| `recall_types` | `None` | Fact types to filter (world, experience, opinion, observation) |
+| `recall_types` | `None` | Fact types to filter (world, experience, observation) |
 | `recall_include_entities` | `False` | Include entity information in recall results |
 | `reflect_context` | `None` | Additional context for reflect operations |
 | `reflect_max_tokens` | `max_tokens` | Max tokens for reflect results |

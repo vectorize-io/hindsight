@@ -1,0 +1,8 @@
+{
+  "_comment": "Reference configuration for the Roo Code Hindsight integration. These values are written by install.py into .roo/mcp.json.",
+  "hindsightApiUrl": "http://localhost:8888",
+  "mcpType": "streamable-http",
+  "mcpTimeoutSeconds": 30,
+  "alwaysAllow": ["recall", "retain"],
+  "rulesFile": "hindsight-memory.md"
+}

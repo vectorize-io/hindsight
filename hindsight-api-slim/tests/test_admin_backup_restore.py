@@ -16,10 +16,9 @@ import pytest
 import pytest_asyncio
 
 import hindsight_api.admin.cli as admin_cli
-from hindsight_api.admin.cli import _backup, _restore, BACKUP_TABLES
+from hindsight_api.admin.cli import BACKUP_TABLES, _backup, _restore
 from hindsight_api.extensions import Tenant
 from hindsight_api.migrations import run_migrations
-
 
 # Run these tests sequentially since they do full DB backup/restore
 pytestmark = pytest.mark.xdist_group(name="backup_restore")
@@ -64,6 +63,46 @@ async def backup_test_schema(pg0_db_url, embeddings):
 
 
 @pytest.mark.asyncio
+async def test_backup_tables_covers_entire_schema(backup_test_schema):
+    """BACKUP_TABLES must list every persistent table in the live PG schema.
+
+    A missing entry silently drops that table's data on restore — and because
+    restore runs `TRUNCATE banks CASCADE`, any FK-to-banks child (mental_models,
+    directives, async_operations, webhooks) gets wiped even though it was never
+    backed up. This guard fails whenever a migration adds a table without adding
+    it to BACKUP_TABLES, forcing a conscious decision instead of silent dataloss.
+    """
+    db_url, schema_name, _fq, _embeddings = backup_test_schema
+
+    conn = await asyncpg.connect(db_url)
+    try:
+        rows = await conn.fetch(
+            """
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = $1 AND table_type = 'BASE TABLE'
+            """,
+            schema_name,
+        )
+    finally:
+        await conn.close()
+
+    # alembic_version is migration bookkeeping, not data — never backed up.
+    schema_tables = {r["table_name"] for r in rows} - {"alembic_version"}
+    backup_tables = set(BACKUP_TABLES)
+
+    missing = schema_tables - backup_tables
+    stale = backup_tables - schema_tables
+    assert not missing, (
+        f"Tables exist in the schema but are missing from BACKUP_TABLES "
+        f"(their data would be lost on restore): {sorted(missing)}"
+    )
+    assert not stale, f"BACKUP_TABLES lists tables that no longer exist in the schema: {sorted(stale)}"
+    # No duplicates — a repeated entry would COPY/TRUNCATE the same table twice.
+    assert len(BACKUP_TABLES) == len(set(BACKUP_TABLES)), "BACKUP_TABLES has duplicate entries"
+
+
+@pytest.mark.asyncio
 async def test_backup_restore_roundtrip(backup_test_schema):
     """Test that backup and restore preserves all data correctly."""
     db_url, schema_name, _fq, embeddings = backup_test_schema
@@ -87,13 +126,24 @@ async def test_backup_restore_roundtrip(backup_test_schema):
             "The team uses PostgreSQL for their database.",
         ]:
             await conn.execute(
-                f"""INSERT INTO {_fq('memory_units')}
+                f"""INSERT INTO {_fq("memory_units")}
                     (bank_id, text, fact_type, embedding, event_date)
                     VALUES ($1, $2, 'world', $3::vector, NOW())""",
                 bank_id,
                 text,
                 embedding_str,
             )
+
+        # Insert a directive (FK -> banks). Restore TRUNCATEs banks CASCADE,
+        # which wipes FK-to-banks children, so a directive that survives the
+        # roundtrip proves those tables are actually backed up and restored.
+        await conn.execute(
+            f"""INSERT INTO {_fq("directives")} (bank_id, name, content)
+                VALUES ($1, $2, $3)""",
+            bank_id,
+            "tone",
+            "Always answer concisely.",
+        )
 
         # Get counts before backup
         counts_before = {}
@@ -103,6 +153,7 @@ async def test_backup_restore_roundtrip(backup_test_schema):
         # Verify we have data
         assert counts_before["banks"] > 0
         assert counts_before["memory_units"] > 0
+        assert counts_before["directives"] > 0
 
     finally:
         await conn.close()
@@ -161,6 +212,12 @@ async def test_backup_restore_roundtrip(backup_test_schema):
             )
             text_content = " ".join(r["text"] for r in texts)
             assert "Alice" in text_content or "software" in text_content
+
+            directive_content = await conn.fetchval(
+                f"SELECT content FROM {_fq('directives')} WHERE bank_id = $1",
+                bank_id,
+            )
+            assert directive_content == "Always answer concisely."
         finally:
             await conn.close()
 
@@ -189,7 +246,7 @@ async def test_backup_restore_preserves_all_column_types(backup_test_schema):
         embedding_list = embeddings.encode(["John Smith engineer"])[0]
         embedding_str = "[" + ",".join(str(x) for x in embedding_list) + "]"
         await conn.execute(
-            f"""INSERT INTO {_fq('memory_units')}
+            f"""INSERT INTO {_fq("memory_units")}
                 (bank_id, text, fact_type, embedding, event_date, metadata)
                 VALUES ($1, $2, 'world', $3::vector, NOW(), $4)""",
             bank_id,
@@ -200,7 +257,7 @@ async def test_backup_restore_preserves_all_column_types(backup_test_schema):
 
         # Create an entity
         await conn.execute(
-            f"""INSERT INTO {_fq('entities')}
+            f"""INSERT INTO {_fq("entities")}
                 (bank_id, canonical_name, metadata)
                 VALUES ($1, $2, $3)""",
             bank_id,
@@ -211,12 +268,12 @@ async def test_backup_restore_preserves_all_column_types(backup_test_schema):
         # Get original data
         original_unit = await conn.fetchrow(
             f"""SELECT id, embedding, event_date, created_at, metadata, text
-               FROM {_fq('memory_units')} WHERE bank_id = $1 LIMIT 1""",
+               FROM {_fq("memory_units")} WHERE bank_id = $1 LIMIT 1""",
             bank_id,
         )
         original_entity = await conn.fetchrow(
             f"""SELECT id, first_seen, last_seen, metadata, canonical_name
-               FROM {_fq('entities')} WHERE bank_id = $1 LIMIT 1""",
+               FROM {_fq("entities")} WHERE bank_id = $1 LIMIT 1""",
             bank_id,
         )
         original_bank = await conn.fetchrow(
@@ -252,12 +309,12 @@ async def test_backup_restore_preserves_all_column_types(backup_test_schema):
         try:
             restored_unit = await conn.fetchrow(
                 f"""SELECT id, embedding, event_date, created_at, metadata, text
-                   FROM {_fq('memory_units')} WHERE bank_id = $1 LIMIT 1""",
+                   FROM {_fq("memory_units")} WHERE bank_id = $1 LIMIT 1""",
                 bank_id,
             )
             restored_entity = await conn.fetchrow(
                 f"""SELECT id, first_seen, last_seen, metadata, canonical_name
-                   FROM {_fq('entities')} WHERE bank_id = $1 LIMIT 1""",
+                   FROM {_fq("entities")} WHERE bank_id = $1 LIMIT 1""",
                 bank_id,
             )
             restored_bank = await conn.fetchrow(
@@ -271,7 +328,9 @@ async def test_backup_restore_preserves_all_column_types(backup_test_schema):
         assert restored_unit is not None, "Should have restored memory unit"
         assert restored_unit["id"] == original_unit["id"], "UUID should match exactly"
         assert restored_unit["text"] == original_unit["text"], "Text should match"
-        assert list(restored_unit["embedding"]) == list(original_unit["embedding"]), "Vector embedding should match exactly"
+        assert list(restored_unit["embedding"]) == list(original_unit["embedding"]), (
+            "Vector embedding should match exactly"
+        )
         assert restored_unit["event_date"] == original_unit["event_date"], "Timestamp should match exactly"
         assert restored_unit["created_at"] == original_unit["created_at"], "Created timestamp should match"
         assert restored_unit["metadata"] == original_unit["metadata"], "JSONB metadata should match"
@@ -328,8 +387,9 @@ async def test_run_migration_without_schema_discovers_and_deduplicates_schemas(m
         database_url: str,
         text_search_extension: str = "native",
         schema: str | None = None,
+        pg_search_tokenizer: str | None = None,
     ) -> None:
-        calls["ensure_text_search_extension"].append((database_url, text_search_extension, schema))
+        calls["ensure_text_search_extension"].append((database_url, text_search_extension, pg_search_tokenizer, schema))
 
     monkeypatch.setenv("HINDSIGHT_API_DATABASE_URL", "postgresql://test")
     monkeypatch.setattr(admin_cli, "load_extension", lambda *args, **kwargs: MockTenantExtension())
@@ -353,8 +413,8 @@ async def test_run_migration_without_schema_discovers_and_deduplicates_schemas(m
         ("resolved::postgresql://test", "pgvector", "tenant_demo"),
     ]
     assert calls["ensure_text_search_extension"] == [
-        ("resolved::postgresql://test", "native", "public"),
-        ("resolved::postgresql://test", "native", "tenant_demo"),
+        ("resolved::postgresql://test", "native", "", "public"),
+        ("resolved::postgresql://test", "native", "", "tenant_demo"),
     ]
 
 
@@ -398,8 +458,9 @@ async def test_run_migration_without_schema_runs_optional_post_migration_hooks(m
         database_url: str,
         text_search_extension: str = "native",
         schema: str | None = None,
+        pg_search_tokenizer: str | None = None,
     ) -> None:
-        calls["ensure_text_search_extension"].append((database_url, text_search_extension, schema))
+        calls["ensure_text_search_extension"].append((database_url, text_search_extension, pg_search_tokenizer, schema))
 
     monkeypatch.setattr(admin_cli, "load_extension", lambda *args, **kwargs: MockTenantExtension())
     monkeypatch.setattr(admin_cli, "resolve_database_url", fake_resolve_database_url)
@@ -431,8 +492,8 @@ async def test_run_migration_without_schema_runs_optional_post_migration_hooks(m
         ("resolved::postgresql://test", "pgvector", "tenant_demo"),
     ]
     assert calls["ensure_text_search_extension"] == [
-        ("resolved::postgresql://test", "native", "public"),
-        ("resolved::postgresql://test", "native", "tenant_demo"),
+        ("resolved::postgresql://test", "native", "", "public"),
+        ("resolved::postgresql://test", "native", "", "tenant_demo"),
     ]
 
 
@@ -467,8 +528,9 @@ async def test_run_migration_with_schema_only_runs_requested_schema(monkeypatch)
         database_url: str,
         text_search_extension: str = "native",
         schema: str | None = None,
+        pg_search_tokenizer: str | None = None,
     ) -> None:
-        calls["ensure_text_search_extension"].append((database_url, text_search_extension, schema))
+        calls["ensure_text_search_extension"].append((database_url, text_search_extension, pg_search_tokenizer, schema))
 
     monkeypatch.setattr(admin_cli, "load_extension", lambda *args, **kwargs: MockTenantExtension())
     monkeypatch.setattr(admin_cli, "resolve_database_url", fake_resolve_database_url)
@@ -484,4 +546,4 @@ async def test_run_migration_with_schema_only_runs_requested_schema(monkeypatch)
     assert schemas == ["tenant_demo"]
     assert calls["run_migrations"] == [("resolved::postgresql://test", "tenant_demo")]
     assert calls["ensure_vector_extension"] == [("resolved::postgresql://test", "pgvector", "tenant_demo")]
-    assert calls["ensure_text_search_extension"] == [("resolved::postgresql://test", "native", "tenant_demo")]
+    assert calls["ensure_text_search_extension"] == [("resolved::postgresql://test", "native", "", "tenant_demo")]

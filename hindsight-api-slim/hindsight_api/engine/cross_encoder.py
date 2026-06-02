@@ -17,6 +17,7 @@ import httpx
 
 from ..config import (
     DEFAULT_LITELLM_API_BASE,
+    DEFAULT_RERANKER_ALIBABA_MODEL,
     DEFAULT_RERANKER_COHERE_MODEL,
     DEFAULT_RERANKER_FLASHRANK_CACHE_DIR,
     DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA,
@@ -37,6 +38,8 @@ from ..config import (
     DEFAULT_RERANKER_TEI_HTTP_TIMEOUT,
     DEFAULT_RERANKER_TEI_MAX_CONCURRENT,
     DEFAULT_RERANKER_ZEROENTROPY_MODEL,
+    DEFAULT_ZEROENTROPY_BASE_URL,
+    ENV_RERANKER_ALIBABA_API_KEY,
     ENV_RERANKER_COHERE_API_KEY,
     ENV_RERANKER_COHERE_MODEL,
     ENV_RERANKER_FLASHRANK_CACHE_DIR,
@@ -58,6 +61,43 @@ from ..config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_malloc_trim():
+    """Return a callable that asks glibc to release freed heap pages to the OS.
+
+    Local CPU rerankers (FlashRank/ONNX, SentenceTransformers/torch) allocate
+    large transient numpy/tensor buffers per call. On Linux glibc, those pages
+    are freed at the Python level but kept by the allocator as a high-water
+    mark — RSS grows monotonically across many recalls (see issue #1717).
+    Calling `malloc_trim(0)` after each batch returns those pages to the OS.
+
+    Resolved once at import; returns a no-op on non-glibc platforms (macOS,
+    musl, Windows) where the call is unavailable or unnecessary.
+    """
+    import sys
+
+    if sys.platform != "linux":
+        return lambda: None
+
+    import ctypes
+    import ctypes.util
+
+    libc_path = ctypes.util.find_library("c")
+    if libc_path is None:
+        return lambda: None
+    try:
+        libc = ctypes.CDLL(libc_path)
+        trim = libc.malloc_trim
+    except (OSError, AttributeError):
+        # Not glibc (musl has no malloc_trim) or libc lookup failed.
+        return lambda: None
+    trim.argtypes = [ctypes.c_size_t]
+    trim.restype = ctypes.c_int
+    return lambda: trim(0)
+
+
+_malloc_trim = _resolve_malloc_trim()
 
 
 class CrossEncoderModel(ABC):
@@ -266,25 +306,28 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         """
         import numpy as np
 
-        if self.bucket_batching and len(pairs) > 1:
-            # Sort pairs by approximate token length to create homogeneous batches.
-            # This eliminates padding waste — short pairs aren't padded to the length
-            # of the longest pair in the batch. Quality-identical by construction.
-            lengths = [len(pairs[i][0]) + len(pairs[i][1]) for i in range(len(pairs))]
-            sorted_indices = sorted(range(len(pairs)), key=lambda i: lengths[i])
-            sorted_pairs = [pairs[i] for i in sorted_indices]
+        try:
+            if self.bucket_batching and len(pairs) > 1:
+                # Sort pairs by approximate token length to create homogeneous batches.
+                # This eliminates padding waste — short pairs aren't padded to the length
+                # of the longest pair in the batch. Quality-identical by construction.
+                lengths = [len(pairs[i][0]) + len(pairs[i][1]) for i in range(len(pairs))]
+                sorted_indices = sorted(range(len(pairs)), key=lambda i: lengths[i])
+                sorted_pairs = [pairs[i] for i in sorted_indices]
 
-            sorted_scores = self._model.predict(sorted_pairs, batch_size=self.batch_size, show_progress_bar=False)
-            sorted_scores = sorted_scores.tolist() if hasattr(sorted_scores, "tolist") else list(sorted_scores)
+                sorted_scores = self._model.predict(sorted_pairs, batch_size=self.batch_size, show_progress_bar=False)
+                sorted_scores = sorted_scores.tolist() if hasattr(sorted_scores, "tolist") else list(sorted_scores)
 
-            # Restore original order
-            scores = [0.0] * len(pairs)
-            for new_pos, orig_idx in enumerate(sorted_indices):
-                scores[orig_idx] = sorted_scores[new_pos]
-            return scores
+                # Restore original order
+                scores = [0.0] * len(pairs)
+                for new_pos, orig_idx in enumerate(sorted_indices):
+                    scores[orig_idx] = sorted_scores[new_pos]
+                return scores
 
-        scores = self._model.predict(pairs, batch_size=self.batch_size, show_progress_bar=False)
-        return scores.tolist() if hasattr(scores, "tolist") else list(scores)
+            scores = self._model.predict(pairs, batch_size=self.batch_size, show_progress_bar=False)
+            return scores.tolist() if hasattr(scores, "tolist") else list(scores)
+        finally:
+            _malloc_trim()
 
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
@@ -546,12 +589,14 @@ class _CohereCompatibleRerankClient:
         rerank_url: str,
         timeout: float = 60.0,
         include_top_n: bool = True,
+        include_return_documents: bool = False,
     ):
         self.api_key = api_key
         self.model = model
         self.rerank_url = rerank_url
         self.timeout = timeout
         self.include_top_n = include_top_n
+        self.include_return_documents = include_return_documents
         self._async_client: httpx.AsyncClient | None = None
 
     async def initialize(self) -> None:
@@ -729,7 +774,7 @@ class ZeroEntropyCrossEncoder(CrossEncoderModel):
     See: https://docs.zeroentropy.dev/models
     """
 
-    DEFAULT_BASE_URL = "https://api.zeroentropy.dev"
+    DEFAULT_BASE_URL = DEFAULT_ZEROENTROPY_BASE_URL
     RERANK_PATH = "/v1/models/rerank"
 
     def __init__(
@@ -962,32 +1007,35 @@ class FlashRankCrossEncoder(CrossEncoderModel):
         if not pairs:
             return []
 
-        # Group pairs by query
-        query_groups: dict[str, list[tuple[int, str]]] = {}
-        for idx, (query, text) in enumerate(pairs):
-            if query not in query_groups:
-                query_groups[query] = []
-            query_groups[query].append((idx, text))
+        try:
+            # Group pairs by query
+            query_groups: dict[str, list[tuple[int, str]]] = {}
+            for idx, (query, text) in enumerate(pairs):
+                if query not in query_groups:
+                    query_groups[query] = []
+                query_groups[query].append((idx, text))
 
-        all_scores = [0.0] * len(pairs)
+            all_scores = [0.0] * len(pairs)
 
-        for query, indexed_texts in query_groups.items():
-            # Build passages list for FlashRank
-            passages = [{"id": i, "text": text} for i, (_, text) in enumerate(indexed_texts)]
-            global_indices = [idx for idx, _ in indexed_texts]
+            for query, indexed_texts in query_groups.items():
+                # Build passages list for FlashRank
+                passages = [{"id": i, "text": text} for i, (_, text) in enumerate(indexed_texts)]
+                global_indices = [idx for idx, _ in indexed_texts]
 
-            # Create rerank request
-            request = RerankRequest(query=query, passages=passages)
-            results = self._ranker.rerank(request)
+                # Create rerank request
+                request = RerankRequest(query=query, passages=passages)
+                results = self._ranker.rerank(request)
 
-            # Map scores back to original positions
-            for result in results:
-                local_idx = result["id"]
-                score = result["score"]
-                global_idx = global_indices[local_idx]
-                all_scores[global_idx] = score
+                # Map scores back to original positions
+                for result in results:
+                    local_idx = result["id"]
+                    score = result["score"]
+                    global_idx = global_indices[local_idx]
+                    all_scores[global_idx] = score
 
-        return all_scores
+            return all_scores
+        finally:
+            _malloc_trim()
 
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
@@ -1534,6 +1582,48 @@ class GoogleCrossEncoder(CrossEncoderModel):
         return await loop.run_in_executor(None, self._predict_sync, pairs)
 
 
+class AlibabaCloudCrossEncoder(CrossEncoderModel):
+    """
+    Alibaba Cloud DashScope text reranking API.
+
+    Uses the Cohere-compatible /reranks endpoint, which is the standard interface
+    for qwen3-rerank. Authentication via HINDSIGHT_API_RERANKER_ALIBABA_API_KEY
+    (or DASHSCOPE_API_KEY as a fallback).
+    See: https://help.aliyun.com/zh/model-studio/text-rerank-api
+    """
+
+    RERANK_URL = "https://dashscope.aliyuncs.com/compatible-api/v1/reranks"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_RERANKER_ALIBABA_MODEL,
+        timeout: float = 60.0,
+    ):
+        self.model = model
+        self._client = _CohereCompatibleRerankClient(
+            api_key=api_key,
+            model=model,
+            rerank_url=self.RERANK_URL,
+            timeout=timeout,
+            include_return_documents=False,
+        )
+
+    @property
+    def provider_name(self) -> str:
+        return "alibaba"
+
+    async def initialize(self) -> None:
+        if self._client._async_client is not None:
+            return
+        logger.info(f"Reranker: initializing Alibaba Cloud provider with model {self.model}")
+        await self._client.initialize()
+        logger.info("Reranker: Alibaba Cloud provider initialized")
+
+    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        return await self._client.predict(pairs)
+
+
 def create_cross_encoder_from_env() -> CrossEncoderModel:
     """
     Create a CrossEncoderModel instance based on configuration.
@@ -1576,6 +1666,7 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             api_key=api_key,
             model=config.reranker_cohere_model,
             base_url=config.reranker_cohere_base_url,
+            timeout=config.reranker_cohere_timeout,
         )
     elif provider == "openrouter":
         api_key = config.reranker_openrouter_api_key
@@ -1588,6 +1679,7 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             api_key=api_key,
             model=config.reranker_openrouter_model,
             base_url="https://openrouter.ai/api/v1/rerank",
+            timeout=config.reranker_openrouter_timeout,
         )
     elif provider == "flashrank":
         model = os.environ.get(ENV_RERANKER_FLASHRANK_MODEL, DEFAULT_RERANKER_FLASHRANK_MODEL)
@@ -1602,6 +1694,7 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             api_key=config.reranker_litellm_api_key,
             model=config.reranker_litellm_model,
             max_tokens_per_doc=config.reranker_litellm_max_tokens_per_doc,
+            timeout=config.reranker_litellm_timeout,
         )
     elif provider == "litellm-sdk":
         api_key = config.reranker_litellm_sdk_api_key
@@ -1614,6 +1707,7 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             model=config.reranker_litellm_sdk_model,
             api_base=config.reranker_litellm_sdk_api_base,
             max_tokens_per_doc=config.reranker_litellm_max_tokens_per_doc,
+            timeout=config.reranker_litellm_sdk_timeout,
         )
     elif provider == "zeroentropy":
         api_key = config.reranker_zeroentropy_api_key
@@ -1624,6 +1718,8 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
         return ZeroEntropyCrossEncoder(
             api_key=api_key,
             model=config.reranker_zeroentropy_model,
+            base_url=config.reranker_zeroentropy_base_url,
+            timeout=config.reranker_zeroentropy_timeout,
         )
     elif provider == "siliconflow":
         api_key = config.reranker_siliconflow_api_key
@@ -1635,6 +1731,7 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             api_key=api_key,
             model=config.reranker_siliconflow_model,
             base_url=config.reranker_siliconflow_base_url,
+            timeout=config.reranker_siliconflow_timeout,
         )
     elif provider == "google":
         project_id = config.reranker_google_project_id
@@ -1647,6 +1744,16 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             project_id=project_id,
             model=config.reranker_google_model,
             service_account_key=config.reranker_google_service_account_key,
+            timeout=config.reranker_google_timeout,
+        )
+    elif provider == "alibaba":
+        api_key = config.reranker_alibaba_api_key
+        if not api_key:
+            raise ValueError(f"{ENV_RERANKER_ALIBABA_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'alibaba'")
+        return AlibabaCloudCrossEncoder(
+            api_key=api_key,
+            model=config.reranker_alibaba_model,
+            timeout=config.reranker_alibaba_timeout,
         )
     elif provider == "rrf":
         return RRFPassthroughCrossEncoder()
@@ -1654,5 +1761,5 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
         return JinaMLXCrossEncoder()
     else:
         raise ValueError(
-            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'google', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
+            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'alibaba', 'google', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
         )

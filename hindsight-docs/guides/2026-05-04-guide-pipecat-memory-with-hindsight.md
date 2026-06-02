@@ -44,16 +44,19 @@ pip install hindsight-pipecat
 
 ## Step 2: Connect Pipecat to Hindsight
 
+> ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — free tier, no self-hosting required.
+
 ```python
 from hindsight_pipecat import HindsightMemoryService
 
 memory = HindsightMemoryService(
     bank_id="user-123",
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key="hsk_...",  # or set HINDSIGHT_API_KEY env var
 )
 ```
 
-For [Hindsight Cloud](https://hindsight.vectorize.io), set `hindsight_api_url` to `https://api.hindsight.vectorize.io` and pass your API key.
+If you're self-hosting Hindsight locally instead, set `hindsight_api_url` to `http://localhost:8888` and drop the `api_key`.
 
 ## Step 3: Wire memory into your runtime
 
@@ -63,7 +66,8 @@ from hindsight_pipecat import HindsightMemoryService
 
 memory = HindsightMemoryService(
     bank_id="user-123",
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key="hsk_...",
     recall_budget="mid",
     recall_max_tokens=4096,
 )

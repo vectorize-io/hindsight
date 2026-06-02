@@ -100,8 +100,8 @@ The MCP server operates in two modes depending on the URL:
 
 | Mode | URL | Tools | bank_id |
 |------|-----|-------|---------|
-| **Single-bank** | `/mcp/{bank_id}/` | 26 tools (memory, mental models, directives, documents, operations, tags, bank management) | Implicit from URL |
-| **Multi-bank** | `/mcp/` | All 29 tools including `list_banks`, `create_bank`, `get_bank_stats` | Explicit `bank_id` parameter on each tool |
+| **Single-bank** | `/mcp/{bank_id}/` | 27 tools (memory, mental models, directives, documents, operations, tags, bank management) | Implicit from URL |
+| **Multi-bank** | `/mcp/` | All 30 tools including `list_banks`, `create_bank`, `get_bank_stats` | Explicit `bank_id` parameter on each tool |
 
 **Single-bank mode** (recommended) scopes all operations to the bank in the URL. Tools don't expose a `bank_id` parameter.
 
@@ -144,6 +144,38 @@ Store information to long-term memory.
 
 ---
 
+### sync_retain
+
+Store information to long-term memory and wait for completion. Unlike [`retain`](#retain) (which is asynchronous), `sync_retain` blocks until the memory is fully stored and immediately available for recall — useful for read-after-write flows where you query right after storing.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `content` | string | Yes | The fact or memory to store |
+| `context` | string | No | Category for the memory (default: `general`) |
+| `timestamp` | string | No | ISO 8601 timestamp for when the event occurred |
+| `tags` | list[string] | No | Tags for organizing and filtering this memory |
+| `metadata` | object | No | Key-value metadata to attach (e.g., `{"source": "slack"}`) |
+| `document_id` | string | No | Associate this memory with an existing document |
+
+**Example:**
+```json
+{
+  "name": "sync_retain",
+  "arguments": {
+    "content": "User prefers Python over JavaScript for backend development",
+    "context": "programming_preferences",
+    "tags": ["user:alice", "preferences"]
+  }
+}
+```
+
+**When to use:**
+- You need the memory queryable immediately after storing (read-after-write)
+- A workflow step depends on the stored memory being available before continuing
+- Otherwise prefer `retain` (asynchronous) to avoid blocking on storage
+
+---
+
 ### recall
 
 Search memories to provide personalized responses.
@@ -153,10 +185,10 @@ Search memories to provide personalized responses.
 | `query` | string | Yes | Natural language search query |
 | `max_tokens` | integer | No | Maximum tokens to return (default: 4096) |
 | `budget` | string | No | Search thoroughness: `low`, `mid`, or `high` (default: `high`) |
-| `types` | list[string] | No | Filter by fact type: `world`, `experience`, `opinion`. Defaults to all |
+| `types` | list[string] | No | Filter by fact type: `world`, `experience`, `observation`. Defaults to all |
 | `tags` | list[string] | No | Filter memories by tags |
 | `tags_match` | string | No | Tag matching mode: `any` (default) or `all` |
-| `query_timestamp` | string | No | ISO 8601 timestamp — recall as if asking at this point in time |
+| `query_timestamp` | string | No | ISO 8601 timestamp — recall as if asking at this point in time; anchors relative temporal expressions and recency scoring |
 
 **Example:**
 ```json
@@ -295,6 +327,16 @@ Re-generate a mental model's content from the latest memories. Runs asynchronous
 
 ---
 
+### clear_mental_model
+
+Clear a mental model's content while keeping its definition. After clearing, call `refresh_mental_model` to rebuild it from the latest memories.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `mental_model_id` | string | Yes | The ID of the mental model to clear |
+
+---
+
 ### list_banks (multi-bank mode only)
 
 List all available memory banks.
@@ -354,7 +396,7 @@ Browse stored memories with optional filtering and pagination.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `type` | string | No | Filter by fact type: `world`, `experience`, or `opinion` |
+| `type` | string | No | Filter by fact type: `world`, `experience`, or `observation` |
 | `q` | string | No | Search query to filter memories |
 | `limit` | integer | No | Maximum number of results (default: 100) |
 | `offset` | integer | No | Number of results to skip for pagination (default: 0) |
@@ -499,7 +541,7 @@ Clear all memories from a bank without deleting the bank itself. Optionally filt
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `type` | string | No | Fact type to clear: `world`, `experience`, or `opinion`. If not specified, clears all |
+| `type` | string | No | Fact type to clear: `world`, `experience`, or `observation`. If not specified, clears all |
 
 ---
 

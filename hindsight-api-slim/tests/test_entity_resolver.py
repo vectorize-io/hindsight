@@ -293,6 +293,37 @@ class TestOracleFuzzyEntityResolution:
             assert bob_candidates[0][1] == "Robert Jones"
 
     @pytest.mark.asyncio
+    async def test_oracle_candidate_lookup_batches_entity_texts(self):
+        """The Oracle UTL_MATCH candidate query is split into bounded batches,
+        mirroring the PG trigram path so very wide retain batches don't time out
+        a single JSON_TABLE join on banks with many entities."""
+        resolver = EntityResolver(
+            pool=None,  # type: ignore[arg-type]
+            entity_lookup="oracle_fuzzy",
+            entity_resolution_batch_size=2,
+        )
+        conn = AsyncMock()
+        conn.backend_type = "oracle"
+        conn.fetch = AsyncMock(return_value=[])
+        entities_data = [
+            {"text": f"Entity {idx}", "nearby_entities": [], "event_date": None} for idx in range(5)
+        ]
+
+        with patch.object(resolver, "_resolve_from_candidates", new_callable=AsyncMock, return_value=[]):
+            await resolver._resolve_entities_batch_oracle_fuzzy(
+                conn=conn,
+                bank_id="bank-1",
+                entities_data=entities_data,
+                unit_event_date=None,
+            )
+
+        # 5 entities, batch size 2 → 3 candidate fetches (cooc fetch is skipped since results are empty).
+        assert conn.fetch.call_count == 3
+        batches = [json.loads(call.args[2]) for call in conn.fetch.call_args_list]
+        assert sorted(len(batch) for batch in batches) == [1, 2, 2]
+        assert {entity for batch in batches for entity in batch} == {f"Entity {idx}" for idx in range(5)}
+
+    @pytest.mark.asyncio
     async def test_cooccurrence_query_uses_candidate_ids(self, resolver, mock_conn):
         """When candidates are found, the co-occurrence query should only fetch
         relationships for the candidate entity IDs (not all entities in the bank)."""

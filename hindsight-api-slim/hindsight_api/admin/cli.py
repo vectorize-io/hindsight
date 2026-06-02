@@ -30,8 +30,17 @@ logger = logging.getLogger(__name__)
 
 app = typer.Typer(name="hindsight-admin", help="Hindsight administrative commands")
 
-# Tables to backup/restore in dependency order
-# Import must happen in this order due to foreign key constraints
+# Tables to backup/restore in foreign-key dependency order (parents first).
+# Restore COPYs in this order and TRUNCATEs in reverse, so every child must
+# appear after the tables it references.
+#
+# This must cover EVERY persistent PostgreSQL table in the schema — a missing
+# entry silently drops that table's data on restore (and, worse, restore's
+# `TRUNCATE banks CASCADE` wipes any FK-to-banks child like mental_models even
+# when it was never backed up). test_admin_backup_restore.py asserts this list
+# equals the live schema's tables, so adding a migration that creates a table
+# without adding it here fails CI. Oracle-only tables (e.g. observation_sources)
+# are intentionally absent — admin backup/restore is PostgreSQL-only.
 BACKUP_TABLES = [
     "banks",
     "documents",
@@ -41,6 +50,13 @@ BACKUP_TABLES = [
     "unit_entities",
     "entity_cooccurrences",
     "memory_links",
+    "mental_models",
+    "directives",
+    "async_operations",
+    "webhooks",
+    "file_storage",
+    "audit_log",
+    "graph_maintenance_queue",
 ]
 
 MANIFEST_VERSION = "1"
@@ -268,6 +284,7 @@ async def _run_migration(
         ensure_text_search_extension(
             resolved_url,
             text_search_extension=config.text_search_extension,
+            pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
             schema=schema,
         )
 

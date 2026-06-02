@@ -18,13 +18,18 @@ pip install hindsight-crewai
 
 ## Quick Start
 
+> ✨ **Recommended: [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** — free tier, no self-hosting required. Sign up and grab an API key in under a minute.
+
 ```python
 from hindsight_crewai import configure, HindsightStorage
 from crewai.memory.external.external_memory import ExternalMemory
 from crewai import Agent, Crew, Task
 
-# Step 1: Configure connection
-configure(hindsight_api_url="http://localhost:8888")
+# Step 1: Point CrewAI at Hindsight Cloud
+configure(
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key="hsk_...",  # or set HINDSIGHT_API_KEY env var
+)
 
 # Step 2: Create crew with Hindsight-backed memory
 crew = Crew(
@@ -48,6 +53,16 @@ That's it. CrewAI will automatically:
 - **Store task outputs** to Hindsight after each task completes
 
 Memories persist across crew runs, so your crew learns over time.
+
+### Self-hosting (local development)
+
+If you're running Hindsight locally with `./scripts/dev/start-api.sh`, point at your local server instead:
+
+```python
+configure(hindsight_api_url="http://localhost:8888")
+```
+
+See the [Hindsight installation guide](https://hindsight.vectorize.io/developer/installation) for self-hosting setup.
 
 ## Per-Agent Memory Banks
 
@@ -111,7 +126,7 @@ storage = HindsightStorage(
 from hindsight_crewai import configure
 
 configure(
-    hindsight_api_url="http://localhost:8888",  # Default: production API
+    hindsight_api_url="https://api.hindsight.vectorize.io",  # Hindsight Cloud (default)
     api_key="your-api-key",                     # Or set HINDSIGHT_API_KEY env var
     budget="mid",                               # Recall budget: low/mid/high
     max_tokens=4096,                            # Max tokens for recall results
@@ -143,7 +158,7 @@ See the [CrewAI memory example](https://github.com/vectorize-io/hindsight-cookbo
 
 | Parameter | Default | Description |
 |---|---|---|
-| `hindsight_api_url` | Production API | Hindsight API URL |
+| `hindsight_api_url` | Hindsight Cloud (`https://api.hindsight.vectorize.io`) | Hindsight API URL |
 | `api_key` | `HINDSIGHT_API_KEY` env | API key for authentication |
 | `budget` | `"mid"` | Recall budget level (low/mid/high) |
 | `max_tokens` | `4096` | Maximum tokens for recall results |

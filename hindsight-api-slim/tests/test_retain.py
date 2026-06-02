@@ -1,19 +1,21 @@
 """
 Test retain function and chunk storage.
 """
+
 import asyncio
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from hindsight_api import RequestContext
-from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.memory_engine import Budget, MemoryEngine
+from tests.llm_judge import assert_meets_criteria
 
 logger = logging.getLogger(__name__)
 
 
-@pytest.mark.hs_llm_mat
 @pytest.mark.asyncio
 async def test_retain_with_chunks(memory, request_context):
     """
@@ -114,17 +116,17 @@ async def test_chunks_and_entities_follow_fact_order(memory, request_context):
             {
                 "content": "Alice works at Google as a software engineer. She loves Python and has 10 years of experience.",
                 "document_id": "doc_alice",
-                "context": "Alice's profile"
+                "context": "Alice's profile",
             },
             {
                 "content": "Bob works at Meta as a data scientist. He specializes in machine learning and has published papers.",
                 "document_id": "doc_bob",
-                "context": "Bob's profile"
+                "context": "Bob's profile",
             },
             {
                 "content": "Charlie works at Amazon as a product manager. He leads a team of 15 people and ships features weekly.",
                 "document_id": "doc_charlie",
-                "context": "Charlie's profile"
+                "context": "Charlie's profile",
             },
         ]
 
@@ -192,8 +194,9 @@ async def test_chunks_and_entities_follow_fact_order(memory, request_context):
             print(f"=== Chunk positions in fact order: {chunk_positions} ===")
 
             # Verify chunks are in increasing order (following fact order)
-            assert chunk_positions == sorted(chunk_positions), \
+            assert chunk_positions == sorted(chunk_positions), (
                 f"Chunks should follow fact order! Got positions {chunk_positions} but expected {sorted(chunk_positions)}"
+            )
 
             print("✓ Chunks follow fact order correctly")
 
@@ -211,8 +214,9 @@ async def test_chunks_and_entities_follow_fact_order(memory, request_context):
             print(f"=== Entity positions in fact order: {entity_positions} ===")
 
             # Verify entities are in increasing order (following fact order)
-            assert entity_positions == sorted(entity_positions), \
+            assert entity_positions == sorted(entity_positions), (
                 f"Entities should follow fact order! Got positions {entity_positions} but expected {sorted(entity_positions)}"
+            )
 
             print("✓ Entities follow fact order correctly")
 
@@ -225,11 +229,13 @@ async def test_chunks_and_entities_follow_fact_order(memory, request_context):
 
 
 @pytest.mark.asyncio
-async def test_event_date_storage(memory, request_context):
+@pytest.mark.hs_llm_core
+async def test_event_date_storage(memory_real_llm, request_context):
     """
     Test that event_date is correctly stored as occurred_start.
     Verifies that we can track when events actually happened vs when they were stored.
     """
+    memory = memory_real_llm
     bank_id = f"test_temporal_{datetime.now(timezone.utc).timestamp()}"
 
     try:
@@ -264,13 +270,17 @@ async def test_event_date_storage(memory, request_context):
 
         # Parse the occurred_start (it comes back as ISO string)
         if isinstance(fact.occurred_start, str):
-            occurred_dt = datetime.fromisoformat(fact.occurred_start.replace('Z', '+00:00'))
+            occurred_dt = datetime.fromisoformat(fact.occurred_start.replace("Z", "+00:00"))
         else:
             occurred_dt = fact.occurred_start
 
         # Verify it matches our past event date (allowing for small time differences in extraction)
-        assert occurred_dt.year == past_event_date.year, f"Year should match: {occurred_dt.year} vs {past_event_date.year}"
-        assert occurred_dt.month == past_event_date.month, f"Month should match: {occurred_dt.month} vs {past_event_date.month}"
+        assert occurred_dt.year == past_event_date.year, (
+            f"Year should match: {occurred_dt.year} vs {past_event_date.year}"
+        )
+        assert occurred_dt.month == past_event_date.month, (
+            f"Month should match: {occurred_dt.month} vs {past_event_date.month}"
+        )
 
         print(f"\n✓ Event date correctly stored: {occurred_dt}")
 
@@ -293,17 +303,17 @@ async def test_temporal_ordering(memory, request_context):
             {
                 "content": "Alice joined the team in January 2023.",
                 "event_date": datetime(2023, 1, 10, tzinfo=timezone.utc),
-                "context": "team history"
+                "context": "team history",
             },
             {
                 "content": "Alice got promoted to senior engineer in June 2023.",
                 "event_date": datetime(2023, 6, 15, tzinfo=timezone.utc),
-                "context": "team history"
+                "context": "team history",
             },
             {
                 "content": "Alice started as an intern in July 2022.",
                 "event_date": datetime(2022, 7, 1, tzinfo=timezone.utc),
-                "context": "team history"
+                "context": "team history",
             },
         ]
 
@@ -336,7 +346,7 @@ async def test_temporal_ordering(memory, request_context):
         for fact in result.results:
             if fact.occurred_start:
                 if isinstance(fact.occurred_start, str):
-                    dt = datetime.fromisoformat(fact.occurred_start.replace('Z', '+00:00'))
+                    dt = datetime.fromisoformat(fact.occurred_start.replace("Z", "+00:00"))
                 else:
                     dt = fact.occurred_start
                 occurred_dates.append((dt, fact.text[:50]))
@@ -402,7 +412,7 @@ async def test_mentioned_at_vs_occurred(memory, request_context):
         # Parse occurred_start
         if fact.occurred_start:
             if isinstance(fact.occurred_start, str):
-                occurred_dt = datetime.fromisoformat(fact.occurred_start.replace('Z', '+00:00'))
+                occurred_dt = datetime.fromisoformat(fact.occurred_start.replace("Z", "+00:00"))
             else:
                 occurred_dt = fact.occurred_start
 
@@ -413,7 +423,7 @@ async def test_mentioned_at_vs_occurred(memory, request_context):
         # Parse mentioned_at
         if fact.mentioned_at:
             if isinstance(fact.mentioned_at, str):
-                mentioned_dt = datetime.fromisoformat(fact.mentioned_at.replace('Z', '+00:00'))
+                mentioned_dt = datetime.fromisoformat(fact.mentioned_at.replace("Z", "+00:00"))
             else:
                 mentioned_dt = fact.mentioned_at
 
@@ -479,7 +489,7 @@ async def test_occurred_dates_not_defaulted(memory, request_context):
 
         # Parse mentioned_at
         if isinstance(fact.mentioned_at, str):
-            mentioned_dt = datetime.fromisoformat(fact.mentioned_at.replace('Z', '+00:00'))
+            mentioned_dt = datetime.fromisoformat(fact.mentioned_at.replace("Z", "+00:00"))
         else:
             mentioned_dt = fact.mentioned_at
 
@@ -506,7 +516,7 @@ async def test_occurred_dates_not_defaulted(memory, request_context):
         # At least verify they're not equal to mentioned_at if they are set
         if fact.occurred_start is not None:
             if isinstance(fact.occurred_start, str):
-                occurred_start_dt = datetime.fromisoformat(fact.occurred_start.replace('Z', '+00:00'))
+                occurred_start_dt = datetime.fromisoformat(fact.occurred_start.replace("Z", "+00:00"))
             else:
                 occurred_start_dt = fact.occurred_start
 
@@ -566,7 +576,7 @@ async def test_mentioned_at_from_context_string(memory, request_context):
 
         # Parse mentioned_at
         if isinstance(fact.mentioned_at, str):
-            mentioned_dt = datetime.fromisoformat(fact.mentioned_at.replace('Z', '+00:00'))
+            mentioned_dt = datetime.fromisoformat(fact.mentioned_at.replace("Z", "+00:00"))
         else:
             mentioned_dt = fact.mentioned_at
 
@@ -579,8 +589,9 @@ async def test_mentioned_at_from_context_string(memory, request_context):
         is_from_context = time_diff_from_context < 60
         is_from_now = time_diff_from_now < 60
 
-        assert is_from_context or is_from_now, \
+        assert is_from_context or is_from_now, (
             f"mentioned_at should be either from context ({session_date}) or now(), but got {mentioned_dt}"
+        )
 
         if is_from_context:
             print(f"✓ LLM successfully extracted mentioned_at from context: {mentioned_dt}")
@@ -718,6 +729,7 @@ async def test_retain_omit_timestamp_defaults_to_now(memory, request_context):
 # Context Tracking Tests
 # ============================================================
 
+
 @pytest.mark.asyncio
 async def test_context_preservation(memory, request_context):
     """
@@ -780,18 +792,18 @@ async def test_context_with_batch(memory, request_context):
                 {
                     "content": "Alice completed the authentication module.",
                     "context": "sprint 1 standup",
-                    "event_date": datetime(2024, 1, 10, tzinfo=timezone.utc)
+                    "event_date": datetime(2024, 1, 10, tzinfo=timezone.utc),
                 },
                 {
                     "content": "Bob started working on the database schema.",
                     "context": "sprint 1 planning",
-                    "event_date": datetime(2024, 1, 11, tzinfo=timezone.utc)
+                    "event_date": datetime(2024, 1, 11, tzinfo=timezone.utc),
                 },
                 {
                     "content": "Charlie fixed critical bugs in the payment flow.",
                     "context": "incident response",
-                    "event_date": datetime(2024, 1, 12, tzinfo=timezone.utc)
-                }
+                    "event_date": datetime(2024, 1, 12, tzinfo=timezone.utc),
+                },
             ],
             request_context=request_context,
         )
@@ -811,6 +823,7 @@ async def test_context_with_batch(memory, request_context):
 # ============================================================
 # Metadata Storage Tests
 # ============================================================
+
 
 @pytest.mark.asyncio
 async def test_metadata_storage_and_retrieval(memory, request_context):
@@ -871,6 +884,7 @@ async def test_metadata_storage_and_retrieval(memory, request_context):
 # Batch Processing Edge Cases
 # ============================================================
 
+
 @pytest.mark.asyncio
 async def test_empty_batch(memory, request_context):
     """
@@ -912,7 +926,7 @@ async def test_single_item_batch(memory, request_context):
                 {
                     "content": "Alice shipped the new feature to production.",
                     "context": "deployment log",
-                    "event_date": datetime(2024, 1, 15, tzinfo=timezone.utc)
+                    "event_date": datetime(2024, 1, 15, tzinfo=timezone.utc),
                 }
             ],
             request_context=request_context,
@@ -951,7 +965,7 @@ async def test_mixed_content_batch(memory, request_context):
             contents=[
                 {"content": short_content, "context": "onboarding"},
                 {"content": long_content, "context": "performance review"},
-                {"content": "Charlie is on vacation this week.", "context": "team status"}
+                {"content": "Charlie is on vacation this week.", "context": "team status"},
             ],
             request_context=request_context,
         )
@@ -986,7 +1000,7 @@ async def test_batch_with_missing_optional_fields(memory, request_context):
                 {
                     "content": "Alice finished the project.",
                     "context": "complete record",
-                    "event_date": datetime(2024, 1, 15, tzinfo=timezone.utc)
+                    "event_date": datetime(2024, 1, 15, tzinfo=timezone.utc),
                 },
                 {
                     "content": "Bob started a new task.",
@@ -996,7 +1010,7 @@ async def test_batch_with_missing_optional_fields(memory, request_context):
                     "content": "Charlie reviewed code.",
                     "context": "code review",
                     # No event_date
-                }
+                },
             ],
             request_context=request_context,
         )
@@ -1014,6 +1028,7 @@ async def test_batch_with_missing_optional_fields(memory, request_context):
 # ============================================================
 # Multi-Document Batch Tests
 # ============================================================
+
 
 @pytest.mark.asyncio
 async def test_single_batch_multiple_documents(memory, request_context):
@@ -1179,6 +1194,7 @@ async def test_document_upsert_preserves_created_at(memory, request_context):
 # Chunk Storage Advanced Tests
 # ============================================================
 
+
 @pytest.mark.asyncio
 async def test_chunk_fact_mapping(memory, request_context):
     """
@@ -1236,8 +1252,9 @@ async def test_chunk_fact_mapping(memory, request_context):
             returned_chunk_ids = set(result.chunks.keys())
 
             # All chunk_ids in facts should have corresponding chunk data
-            assert fact_chunk_ids.issubset(returned_chunk_ids) or len(fact_chunk_ids) == 0, \
+            assert fact_chunk_ids.issubset(returned_chunk_ids) or len(fact_chunk_ids) == 0, (
                 "Fact chunk_ids should have corresponding chunk data"
+            )
 
             print(f"  Returned {len(result.chunks)} chunks matching fact references")
 
@@ -1315,8 +1332,7 @@ async def test_chunk_ordering_preservation(memory, request_context):
             # Indices should start from 0 and be sequential
             if len(chunk_indices) > 0:
                 assert min(chunk_indices) == 0, "Chunk indices should start from 0"
-                assert chunk_indices_sorted == list(range(len(chunk_indices))), \
-                    "Chunk indices should be sequential"
+                assert chunk_indices_sorted == list(range(len(chunk_indices))), "Chunk indices should be sequential"
         else:
             print("✓ Content stored (may have created single chunk or no chunks returned)")
 
@@ -1338,7 +1354,8 @@ async def test_chunks_truncation_behavior(memory, request_context):
     try:
         # Create a moderately large document with meaningful content
         # Reduced from * 5 to * 2 for faster execution while still testing truncation
-        large_content = """
+        large_content = (
+            """
         The company's product roadmap for 2024 includes several major initiatives.
         The engineering team is expanding to support these efforts.
 
@@ -1381,7 +1398,9 @@ async def test_chunks_truncation_behavior(memory, request_context):
         The finance team is implementing new budgeting tools for better forecasting.
         They are also working on automated expense reporting and approval workflows.
         This will save approximately 100 hours per month in manual work.
-        """ * 2  # Repeat to create enough content for truncation testing
+        """
+            * 2
+        )  # Repeat to create enough content for truncation testing
 
         unit_ids = await memory.retain_async(
             bank_id=bank_id,
@@ -1407,10 +1426,7 @@ async def test_chunks_truncation_behavior(memory, request_context):
 
         if result.chunks:
             # Check if any chunks show truncation
-            truncated_chunks = [
-                chunk_id for chunk_id, chunk_info in result.chunks.items()
-                if chunk_info.truncated
-            ]
+            truncated_chunks = [chunk_id for chunk_id, chunk_info in result.chunks.items() if chunk_info.truncated]
 
             print(f"✓ Retrieved {len(result.chunks)} chunks")
             if truncated_chunks:
@@ -1428,6 +1444,7 @@ async def test_chunks_truncation_behavior(memory, request_context):
 # ============================================================
 # Memory Links Tests
 # ============================================================
+
 
 @pytest.mark.asyncio
 async def test_temporal_links_creation(memory, request_context):
@@ -1486,7 +1503,7 @@ async def test_temporal_links_creation(memory, request_context):
                   AND link_type = 'temporal'
                 ORDER BY weight DESC
                 """,
-                all_unit_ids
+                all_unit_ids,
             )
 
             logger.info(f"Found {len(temporal_links)} temporal links")
@@ -1496,11 +1513,11 @@ async def test_temporal_links_creation(memory, request_context):
 
             # Verify link properties
             for link in temporal_links:
-                from_id = str(link['from_unit_id'])
-                to_id = str(link['to_unit_id'])
+                from_id = str(link["from_unit_id"])
+                to_id = str(link["to_unit_id"])
                 logger.info(f"  Link: {from_id[:8]}... -> {to_id[:8]}... (weight: {link['weight']:.2f})")
-                assert link['link_type'] == 'temporal', "Link type should be 'temporal'"
-                assert 0.0 <= link['weight'] <= 1.0, "Weight should be between 0 and 1"
+                assert link["link_type"] == "temporal", "Link type should be 'temporal'"
+                assert 0.0 <= link["weight"] <= 1.0, "Weight should be between 0 and 1"
 
             logger.info("Temporal links created successfully with proper weights")
 
@@ -1558,7 +1575,7 @@ async def test_semantic_links_creation(memory, request_context):
                   AND link_type = 'semantic'
                 ORDER BY weight DESC
                 """,
-                all_unit_ids
+                all_unit_ids,
             )
 
             logger.info(f"Found {len(semantic_links)} semantic links")
@@ -1568,13 +1585,13 @@ async def test_semantic_links_creation(memory, request_context):
 
             # Verify link properties
             for link in semantic_links:
-                from_id = str(link['from_unit_id'])
-                to_id = str(link['to_unit_id'])
+                from_id = str(link["from_unit_id"])
+                to_id = str(link["to_unit_id"])
                 logger.info(f"  Link: {from_id[:8]}... -> {to_id[:8]}... (weight: {link['weight']:.3f})")
-                assert link['link_type'] == 'semantic', "Link type should be 'semantic'"
-                assert 0.0 <= link['weight'] <= 1.0, "Weight should be between 0 and 1"
+                assert link["link_type"] == "semantic", "Link type should be 'semantic'"
+                assert 0.0 <= link["weight"] <= 1.0, "Weight should be between 0 and 1"
                 # Semantic links typically have weight >= 0.7 (threshold)
-                assert link['weight'] >= 0.7, f"Semantic links should have weight >= 0.7, got {link['weight']}"
+                assert link["weight"] >= 0.7, f"Semantic links should have weight >= 0.7, got {link['weight']}"
 
             logger.info("Semantic links created successfully between similar content")
 
@@ -1585,39 +1602,32 @@ async def test_semantic_links_creation(memory, request_context):
 @pytest.mark.asyncio
 async def test_entity_links_creation(memory, request_context):
     """
-    Test that entity links are created between facts that mention the same entities.
-
-    Entity links connect facts that reference the same person, place, or concept.
-    This is core functionality and should work consistently.
+    Test that entity edges surface in the /graph response between facts that
+    mention the same entities, and that the /stats endpoint reports a non-zero
+    entity link count. Entity edges are derived on demand from unit_entities;
+    no rows of link_type='entity' are written to memory_links.
     """
     bank_id = f"test_entity_links_{datetime.now(timezone.utc).timestamp()}"
 
     try:
-        # Store facts that mention the same entities
         unit_ids_1 = await memory.retain_async(
             bank_id=bank_id,
             content="Alice joined Google as a software engineer in 2020.",
             context="career history",
             request_context=request_context,
         )
-
-        # Mentions same entity (Alice) - should create entity link
         unit_ids_2 = await memory.retain_async(
             bank_id=bank_id,
             content="Alice led the development of the new authentication system.",
             context="project updates",
             request_context=request_context,
         )
-
-        # Mentions same entity (Google) - should create entity link
         unit_ids_3 = await memory.retain_async(
             bank_id=bank_id,
             content="Google announced new cloud services at their annual conference.",
             context="tech news",
             request_context=request_context,
         )
-
-        # Different entities - no entity link expected
         unit_ids_4 = await memory.retain_async(
             bank_id=bank_id,
             content="Bob works at Meta on machine learning infrastructure.",
@@ -1626,57 +1636,76 @@ async def test_entity_links_creation(memory, request_context):
         )
 
         assert len(unit_ids_1) > 0 and len(unit_ids_2) > 0 and len(unit_ids_3) > 0 and len(unit_ids_4) > 0
+        all_unit_ids = {str(uid) for uid in unit_ids_1 + unit_ids_2 + unit_ids_3 + unit_ids_4}
 
-        logger.info(f"Created {len(unit_ids_1) + len(unit_ids_2) + len(unit_ids_3) + len(unit_ids_4)} facts")
-
-        # Query the memory_links table to verify entity links exist
+        # memory_links should NOT contain entity rows — they are derived on read.
         async with memory._pool.acquire() as conn:
-            all_unit_ids = unit_ids_1 + unit_ids_2 + unit_ids_3 + unit_ids_4
-
-            entity_links = await conn.fetch(
+            stored_entity_links = await conn.fetchval(
                 """
-                SELECT from_unit_id, to_unit_id, link_type, weight, entity_id
-                FROM memory_links
-                WHERE from_unit_id::text = ANY($1)
-                  AND link_type = 'entity'
-                ORDER BY from_unit_id, to_unit_id
+                SELECT COUNT(*) FROM memory_links
+                WHERE bank_id = $1 AND link_type = 'entity'
                 """,
-                all_unit_ids
+                bank_id,
             )
+        assert stored_entity_links == 0, "Entity edges must not be materialized in memory_links"
 
-            logger.info(f"Found {len(entity_links)} entity links")
+        # /graph derives entity edges from unit_entities — pairs that share an entity
+        # should appear as link_type='entity' edges.
+        graph = await memory.get_graph_data(bank_id=bank_id, request_context=request_context)
+        entity_edges = [edge["data"] for edge in graph["edges"] if edge["data"].get("linkType") == "entity"]
+        assert entity_edges, "Graph should surface entity edges for facts sharing an entity"
+        for edge in entity_edges:
+            assert edge["source"] != edge["target"]
+        # At least one edge must connect two facts we retained directly (proves the
+        # derivation works for non-observation units, not just for inherited entities).
+        retained_pair_edges = [
+            edge for edge in entity_edges if edge["source"] in all_unit_ids and edge["target"] in all_unit_ids
+        ]
+        assert retained_pair_edges, "Expected at least one entity edge between two directly retained units"
 
-            # Entity extraction is core functionality and should work
-            assert len(entity_links) > 0, "Should have created entity links between facts with shared entities (Alice, Google)"
+        # /stats should report a non-zero entity count under the same key as before.
+        stats = await memory.get_bank_stats(bank_id=bank_id, request_context=request_context)
+        assert stats["link_counts"].get("entity", 0) > 0, "Stats must report a non-zero entity link count"
 
-            # Verify link properties
-            entities_seen = set()
-            for link in entity_links:
-                entity_id = link['entity_id']
-                entities_seen.add(str(entity_id))
-                from_id = str(link['from_unit_id'])
-                to_id = str(link['to_unit_id'])
-                logger.info(f"  Link: {from_id[:8]}... -> {to_id[:8]}... via entity {str(entity_id)[:8]}...")
-                assert link['link_type'] == 'entity', "Link type should be 'entity'"
-                assert link['weight'] == 1.0, "Entity links should have weight 1.0"
-                assert entity_id is not None, "Entity links must reference an entity_id"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
 
-            logger.info(f"Entity links created successfully for {len(entities_seen)} unique entities")
 
-            # Verify bidirectional links (entity links should be bidirectional)
-            link_pairs = set()
-            for link in entity_links:
-                from_id = str(link['from_unit_id'])
-                to_id = str(link['to_unit_id'])
-                entity_id = str(link['entity_id'])
-                link_pairs.add((from_id, to_id, entity_id))
+@pytest.mark.asyncio
+async def test_graph_entity_edges_cover_all_visible_units(memory, request_context):
+    """
+    Regression test: when a hot entity is shared by more than the per-entity
+    cap (default 10) visible units, every visible unit mentioning that entity
+    must still appear in at least one entity edge. The previous implementation
+    capped the per-entity list to the first 10 units before pairing, leaving
+    units #11+ without any entity edges in /graph.
+    """
+    bank_id = f"test_graph_entity_coverage_{datetime.now(timezone.utc).timestamp()}"
 
-            # Check that for each (A -> B) link, there's a (B -> A) link with same entity
-            for from_id, to_id, entity_id in link_pairs:
-                reverse_exists = (to_id, from_id, entity_id) in link_pairs
-                assert reverse_exists, f"Entity links should be bidirectional: missing reverse link for {from_id[:8]} -> {to_id[:8]}"
+    try:
+        # 15 facts all mentioning the same person — more than max_neighbors_per_unit=10.
+        contents = [
+            {"content": f"Alice completed task #{i} in the authentication module.", "context": "sprint log"}
+            for i in range(15)
+        ]
+        retained_lists = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=contents,
+            request_context=request_context,
+        )
+        retained_unit_ids = {str(uid) for sublist in retained_lists for uid in sublist}
+        assert len(retained_unit_ids) >= 15, f"Expected >=15 units, got {len(retained_unit_ids)}"
 
-            logger.info("Entity links are properly bidirectional")
+        graph = await memory.get_graph_data(bank_id=bank_id, request_context=request_context)
+        entity_edges = [edge["data"] for edge in graph["edges"] if edge["data"].get("linkType") == "entity"]
+        assert entity_edges, "Graph should have entity edges for facts sharing an entity"
+
+        units_in_entity_edges = {edge["source"] for edge in entity_edges} | {edge["target"] for edge in entity_edges}
+        missing = retained_unit_ids - units_in_entity_edges
+        assert not missing, (
+            f"{len(missing)}/{len(retained_unit_ids)} retained units have no entity edges in /graph. "
+            f"The per-entity edge cap must not exclude units beyond the first N from pairing."
+        )
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -1718,7 +1747,7 @@ async def test_people_name_extraction(memory, request_context):
                 WHERE bank_id = $1
                 ORDER BY mention_count DESC, canonical_name
                 """,
-                bank_id
+                bank_id,
             )
 
         logger.info(f"Extracted {len(entities)} entities")
@@ -1726,7 +1755,7 @@ async def test_people_name_extraction(memory, request_context):
             logger.info(f"  - {entity['canonical_name']} (mentions: {entity['mention_count']})")
 
         # Verify we extracted the expected people names
-        entity_names = {e['canonical_name'].lower() for e in entities}
+        entity_names = {e["canonical_name"].lower() for e in entities}
 
         # Check for expected people (names may vary slightly based on LLM extraction)
         expected_people = ["john", "sarah", "bob", "alice", "michael"]
@@ -1737,8 +1766,9 @@ async def test_people_name_extraction(memory, request_context):
                 found_people.append(person)
                 logger.info(f"  Found '{person}' as: {matching}")
 
-        assert len(found_people) >= 3, \
+        assert len(found_people) >= 3, (
             f"Should extract at least 3 people names, found: {found_people}. All entities: {entity_names}"
+        )
 
         logger.info(f"Successfully extracted {len(found_people)} people names: {found_people}")
 
@@ -1782,15 +1812,16 @@ async def test_mention_count_accuracy(memory, request_context):
                 FROM entities
                 WHERE bank_id = $1 AND LOWER(canonical_name) LIKE '%alice%'
                 """,
-                bank_id
+                bank_id,
             )
 
         assert alice_entity is not None, "Alice entity should exist"
         logger.info(f"Alice mention_count after 5 separate retains: {alice_entity['mention_count']}")
 
         # Alice should have mention_count >= 5 (one per content item)
-        assert alice_entity['mention_count'] >= 5, \
+        assert alice_entity["mention_count"] >= 5, (
             f"Alice should have at least 5 mentions, got {alice_entity['mention_count']}"
+        )
 
         logger.info(f"Mention count accuracy verified: {alice_entity['mention_count']} mentions")
 
@@ -1834,15 +1865,16 @@ async def test_mention_count_batch_retain(memory, request_context):
                 FROM entities
                 WHERE bank_id = $1 AND LOWER(canonical_name) LIKE '%bob%'
                 """,
-                bank_id
+                bank_id,
             )
 
         assert bob_entity is not None, "Bob entity should exist after batch retain"
         logger.info(f"Bob mention_count after batch retain of 6 items: {bob_entity['mention_count']}")
 
         # Bob should have mention_count >= 6 (mentioned in each batch item)
-        assert bob_entity['mention_count'] >= 6, \
+        assert bob_entity["mention_count"] >= 6, (
             f"Bob should have at least 6 mentions from batch retain, got {bob_entity['mention_count']}"
+        )
 
         # Now do another batch retain with more Bob mentions
         more_contents = [
@@ -1864,21 +1896,23 @@ async def test_mention_count_batch_retain(memory, request_context):
                 FROM entities
                 WHERE bank_id = $1 AND LOWER(canonical_name) LIKE '%bob%'
                 """,
-                bank_id
+                bank_id,
             )
 
         logger.info(f"Bob mention_count after second batch: {bob_entity_updated['mention_count']}")
 
         # Bob should now have mention_count >= 8 (6 + 2)
-        assert bob_entity_updated['mention_count'] >= 8, \
+        assert bob_entity_updated["mention_count"] >= 8, (
             f"Bob should have at least 8 mentions after second batch, got {bob_entity_updated['mention_count']}"
+        )
 
         # Verify the increment is correct
-        increment = bob_entity_updated['mention_count'] - bob_entity['mention_count']
-        assert increment >= 2, \
-            f"Mention count should have increased by at least 2, but increased by {increment}"
+        increment = bob_entity_updated["mention_count"] - bob_entity["mention_count"]
+        assert increment >= 2, f"Mention count should have increased by at least 2, but increased by {increment}"
 
-        logger.info(f"Batch retain mention count verified: {bob_entity['mention_count']} -> {bob_entity_updated['mention_count']}")
+        logger.info(
+            f"Batch retain mention count verified: {bob_entity['mention_count']} -> {bob_entity_updated['mention_count']}"
+        )
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -1924,7 +1958,7 @@ async def test_causal_links_creation(memory, request_context):
                   AND link_type IN ('causes', 'caused_by', 'enables', 'prevents')
                 ORDER BY link_type, weight DESC
                 """,
-                unit_ids
+                unit_ids,
             )
 
             logger.info(f"Found {len(causal_links)} causal links")
@@ -1933,14 +1967,17 @@ async def test_causal_links_creation(memory, request_context):
                 # Verify link properties
                 causal_types = {}
                 for link in causal_links:
-                    link_type = link['link_type']
+                    link_type = link["link_type"]
                     causal_types[link_type] = causal_types.get(link_type, 0) + 1
-                    from_id = str(link['from_unit_id'])
-                    to_id = str(link['to_unit_id'])
-                    logger.info(f"  Link: {from_id[:8]}... -> {to_id[:8]}... ({link_type}, weight: {link['weight']:.2f})")
-                    assert link['link_type'] in ['causes', 'caused_by', 'enables', 'prevents'], \
+                    from_id = str(link["from_unit_id"])
+                    to_id = str(link["to_unit_id"])
+                    logger.info(
+                        f"  Link: {from_id[:8]}... -> {to_id[:8]}... ({link_type}, weight: {link['weight']:.2f})"
+                    )
+                    assert link["link_type"] in ["causes", "caused_by", "enables", "prevents"], (
                         f"Causal link type must be valid, got '{link['link_type']}'"
-                    assert 0.0 <= link['weight'] <= 1.0, "Weight should be between 0 and 1"
+                    )
+                    assert 0.0 <= link["weight"] <= 1.0, "Weight should be between 0 and 1"
 
                 logger.info("Causal links created successfully:")
                 for link_type, count in causal_types.items():
@@ -2002,11 +2039,12 @@ async def test_all_link_types_together(memory, request_context):
 
         logger.info(f"Created {len(unit_ids_1) + len(unit_ids_2) + len(unit_ids_3)} facts")
 
-        # Query for all link types
+        # Temporal/semantic/causal links live in memory_links; entity links are
+        # derived from unit_entities at read time, so check both surfaces.
         async with memory._pool.acquire() as conn:
             all_unit_ids = unit_ids_1 + unit_ids_2 + unit_ids_3
 
-            all_links = await conn.fetch(
+            stored_links = await conn.fetch(
                 """
                 SELECT link_type, COUNT(*) as count
                 FROM memory_links
@@ -2014,24 +2052,16 @@ async def test_all_link_types_together(memory, request_context):
                 GROUP BY link_type
                 ORDER BY link_type
                 """,
-                all_unit_ids
+                all_unit_ids,
             )
+            stored_by_type = {row["link_type"]: row["count"] for row in stored_links}
 
-            logger.info("Link types created:")
-            link_types_found = {}
-            for row in all_links:
-                link_type = row['link_type']
-                count = row['count']
-                link_types_found[link_type] = count
-                logger.info(f"  - {link_type}: {count} links")
+        assert "temporal" in stored_by_type, "Should have temporal links (facts with nearby dates)"
+        assert "semantic" in stored_by_type, "Should have semantic links (similar content about Python/auth)"
+        assert stored_by_type.get("entity", 0) == 0, "Entity links must not be materialized in memory_links"
 
-            # Should have temporal, semantic, and entity links
-            assert 'temporal' in link_types_found, "Should have temporal links (facts with nearby dates)"
-            assert 'semantic' in link_types_found, "Should have semantic links (similar content about Python/auth)"
-            assert 'entity' in link_types_found, "Should have entity links (all mention Alice)"
-
-            logger.info(f"Successfully created {len(link_types_found)} different link types")
-            logger.info("All major link types (temporal, semantic, entity) are working correctly")
+        stats = await memory.get_bank_stats(bank_id=bank_id, request_context=request_context)
+        assert stats["link_counts"].get("entity", 0) > 0, "Stats must report entity links (all facts mention Alice)"
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -2077,7 +2107,7 @@ async def test_semantic_links_within_same_batch(memory, request_context):
                   AND to_unit_id::text = ANY($1)
                   AND link_type = 'semantic'
                 """,
-                unit_ids
+                unit_ids,
             )
 
             logger.info(f"Found {len(semantic_links)} semantic links within the batch")
@@ -2090,7 +2120,9 @@ async def test_semantic_links_within_same_batch(memory, request_context):
 
             # Log the links for debugging
             for link in semantic_links:
-                logger.info(f"  Semantic link: {str(link['from_unit_id'])[:8]}... -> {str(link['to_unit_id'])[:8]}... (weight: {link['weight']:.3f})")
+                logger.info(
+                    f"  Semantic link: {str(link['from_unit_id'])[:8]}... -> {str(link['to_unit_id'])[:8]}... (weight: {link['weight']:.3f})"
+                )
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -2183,17 +2215,17 @@ async def test_temporal_links_within_same_batch(memory, request_context):
             {
                 "content": "Morning standup: Alice presented the sprint goals.",
                 "context": "daily meeting",
-                "event_date": base_date
+                "event_date": base_date,
             },
             {
                 "content": "Bob demoed the new feature after standup.",
                 "context": "daily meeting",
-                "event_date": base_date + timedelta(hours=1)  # 1 hour later
+                "event_date": base_date + timedelta(hours=1),  # 1 hour later
             },
             {
                 "content": "Charlie reviewed the pull requests in the afternoon.",
                 "context": "daily meeting",
-                "event_date": base_date + timedelta(hours=4)  # 4 hours later
+                "event_date": base_date + timedelta(hours=4),  # 4 hours later
             },
         ]
 
@@ -2219,7 +2251,7 @@ async def test_temporal_links_within_same_batch(memory, request_context):
                   AND to_unit_id::text = ANY($1)
                   AND link_type = 'temporal'
                 """,
-                unit_ids
+                unit_ids,
             )
 
             logger.info(f"Found {len(temporal_links)} temporal links within the batch")
@@ -2232,7 +2264,9 @@ async def test_temporal_links_within_same_batch(memory, request_context):
 
             # Log the links for debugging
             for link in temporal_links:
-                logger.info(f"  Temporal link: {str(link['from_unit_id'])[:8]}... -> {str(link['to_unit_id'])[:8]}... (weight: {link['weight']:.3f})")
+                logger.info(
+                    f"  Temporal link: {str(link['from_unit_id'])[:8]}... -> {str(link['to_unit_id'])[:8]}... (weight: {link['weight']:.3f})"
+                )
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -2287,10 +2321,10 @@ async def test_user_provided_entities(memory, request_context):
                 JOIN unit_entities ue ON e.id = ue.entity_id
                 WHERE ue.unit_id::text = ANY($1)
                 """,
-                unit_ids
+                unit_ids,
             )
 
-            entity_names = {row['canonical_name'].lower() for row in entity_rows}
+            entity_names = {row["canonical_name"].lower() for row in entity_rows}
             logger.info(f"Found entities linked to facts: {[row['canonical_name'] for row in entity_rows]}")
 
             # Verify user-provided entities are present
@@ -2390,7 +2424,7 @@ If the text contains both Italian and English content, extract ONLY the Italian 
 
         logger.info(f"\nExtracted {len(facts)} facts with custom mode (Italian only):")
         for i, fact in enumerate(facts):
-            logger.info(f"  {i+1}. {fact.fact}")
+            logger.info(f"  {i + 1}. {fact.fact}")
 
         assert len(facts) > 0, "Should extract at least one Italian fact"
 
@@ -2398,8 +2432,19 @@ If the text contains both Italian and English content, extract ONLY the Italian 
         all_facts_text = " ".join([f.fact for f in facts])
 
         # Should HAVE Italian content
-        italian_keywords = ["postgresql", "latenza", "query", "alice", "connection pooling", "prestazioni",
-                          "marco", "revisione", "codice", "autenticazione", "oauth"]
+        italian_keywords = [
+            "postgresql",
+            "latenza",
+            "query",
+            "alice",
+            "connection pooling",
+            "prestazioni",
+            "marco",
+            "revisione",
+            "codice",
+            "autenticazione",
+            "oauth",
+        ]
         has_italian = any(keyword in all_facts_text.lower() for keyword in italian_keywords)
         assert has_italian, f"Should extract Italian facts. Got: {all_facts_text}"
 
@@ -2423,8 +2468,9 @@ If the text contains both Italian and English content, extract ONLY the Italian 
         italian_indicators = ["latenza", "prestazioni", "revisione", "codice", "autenticazione"]
         italian_count = sum(1 for ind in italian_indicators if ind in facts_lower)
 
-        assert italian_count >= 1, \
+        assert italian_count >= 1, (
             f"Should extract facts with Italian words. Found {italian_count} Italian indicators in: {all_facts_text}"
+        )
 
         logger.info("✓ Custom extraction mode works with language-specific guidelines")
         logger.info(f"✓ Extracted {len(facts)} Italian facts, found {italian_count} Italian indicators")
@@ -2470,9 +2516,7 @@ def test_apply_strategy():
             "retain_extraction_mode": "verbose",
         },
     }
-    config_with_strategies = base_config.__class__(
-        **{**base_config.__dict__, "retain_strategies": strategies}
-    )
+    config_with_strategies = base_config.__class__(**{**base_config.__dict__, "retain_strategies": strategies})
 
     # Known strategy: overrides applied
     result = apply_strategy(config_with_strategies, "documents")
@@ -2505,9 +2549,19 @@ def test_collapse_to_verbatim_single_fact_per_chunk():
     ]
 
     facts = [
-        ExtractedFact(fact_text="LLM paraphrase of Alice in Paris", fact_type="world", entities=["Alice", "Paris"], chunk_index=0, content_index=0),
-        ExtractedFact(fact_text="LLM first fact about Bob", fact_type="world", entities=["Bob"], chunk_index=1, content_index=0),
-        ExtractedFact(fact_text="LLM second fact about bug", fact_type="world", entities=["bug"], chunk_index=1, content_index=0),
+        ExtractedFact(
+            fact_text="LLM paraphrase of Alice in Paris",
+            fact_type="world",
+            entities=["Alice", "Paris"],
+            chunk_index=0,
+            content_index=0,
+        ),
+        ExtractedFact(
+            fact_text="LLM first fact about Bob", fact_type="world", entities=["Bob"], chunk_index=1, content_index=0
+        ),
+        ExtractedFact(
+            fact_text="LLM second fact about bug", fact_type="world", entities=["bug"], chunk_index=1, content_index=0
+        ),
     ]
 
     result = _collapse_to_verbatim(facts, chunks)
@@ -2613,7 +2667,11 @@ async def test_verbatim_extraction_mode():
         )
 
         llm_config = LLMConfig.from_env()
-        contents = [RetainContent(content=text, event_date=datetime(2024, 3, 10, tzinfo=timezone.utc), context="onboarding notes")]
+        contents = [
+            RetainContent(
+                content=text, event_date=datetime(2024, 3, 10, tzinfo=timezone.utc), context="onboarding notes"
+            )
+        ]
         facts, chunks, _ = await extract_facts_from_contents(
             contents=contents,
             llm_config=llm_config,
@@ -2702,10 +2760,8 @@ async def test_retain_batch_with_per_item_tags_on_document(memory, request_conte
         doc_tags = doc["tags"] or []
         print(f"Document tags: {doc_tags}")
 
-        assert "user:testuser" in doc_tags, \
-            f"Document should have 'user:testuser' tag, but got: {doc_tags}"
-        assert "app-type:taste-ai" in doc_tags, \
-            f"Document should have 'app-type:taste-ai' tag, but got: {doc_tags}"
+        assert "user:testuser" in doc_tags, f"Document should have 'user:testuser' tag, but got: {doc_tags}"
+        assert "app-type:taste-ai" in doc_tags, f"Document should have 'app-type:taste-ai' tag, but got: {doc_tags}"
 
         print("✓ Per-item tags correctly stored on document")
 
@@ -2795,9 +2851,7 @@ def test_strategy_overrides_extraction_mode_for_chunks():
 
     # Build a config that has a strategy overriding to chunks
     strategies = {"fast": {"retain_extraction_mode": "chunks"}}
-    config_with_strategies = base_config.__class__(
-        **{**base_config.__dict__, "retain_strategies": strategies}
-    )
+    config_with_strategies = base_config.__class__(**{**base_config.__dict__, "retain_strategies": strategies})
     strategy_config = apply_strategy(config_with_strategies, "fast")
     assert strategy_config.retain_extraction_mode == "chunks"
 
@@ -2982,9 +3036,7 @@ async def test_semantic_ann_uses_hnsw_index(memory, request_context):
 
             # All weights must meet the similarity threshold
             for link in cross_links:
-                assert link["weight"] >= 0.7, (
-                    f"Semantic link weight {link['weight']:.3f} below threshold 0.7"
-                )
+                assert link["weight"] >= 0.7, f"Semantic link weight {link['weight']:.3f} below threshold 0.7"
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -3037,9 +3089,7 @@ async def test_temporal_links_scoped_by_fact_type(memory, request_context):
         )
         assert len(world_ids_2) > 0, "Should create second world fact(s)"
 
-        logger.info(
-            f"World1: {world_ids}, Experience: {experience_ids}, World2: {world_ids_2}"
-        )
+        logger.info(f"World1: {world_ids}, Experience: {experience_ids}, World2: {world_ids_2}")
 
         async with memory._pool.acquire() as conn:
             # Check that world facts DO have temporal links to each other
@@ -3055,9 +3105,7 @@ async def test_temporal_links_scoped_by_fact_type(memory, request_context):
                 world_all,
             )
             logger.info(f"World-to-world temporal links: {len(world_temporal)}")
-            assert len(world_temporal) > 0, (
-                "World facts with nearby dates should have temporal links to each other"
-            )
+            assert len(world_temporal) > 0, "World facts with nearby dates should have temporal links to each other"
 
             # Check that world facts do NOT have temporal links to experience facts
             cross_type_links = await conn.fetch(
@@ -3121,16 +3169,18 @@ def _make_mock_llm_call():
         facts = []
         for i in range(num_facts):
             sentence = sentences[i] if i < len(sentences) else f"Fact {i}"
-            facts.append({
-                "what": sentence[:200],
-                "when": "2024-06-15",
-                "where": "N/A",
-                "who": "N/A",
-                "why": "N/A",
-                "fact_type": "world",
-                "entities": [{"text": f"Entity{i}"}],
-                "causal_relations": [],
-            })
+            facts.append(
+                {
+                    "what": sentence[:200],
+                    "when": "2024-06-15",
+                    "where": "N/A",
+                    "who": "N/A",
+                    "why": "N/A",
+                    "fact_type": "world",
+                    "entities": [{"text": f"Entity{i}"}],
+                    "causal_relations": [],
+                }
+            )
 
         response_dict = {"facts": facts}
         return_usage = kwargs.get("return_usage", False)
@@ -3231,11 +3281,13 @@ async def test_streaming_chunk_batching_produces_same_facts(memory_mock_llm, req
             # Retain with streaming enabled (batch_size=3, so 10 chunks -> 4 mini-batches)
             result = await memory.retain_batch_async(
                 bank_id=bank_id,
-                contents=[{
-                    "content": content,
-                    "context": "streaming test",
-                    "event_date": datetime(2024, 6, 15, tzinfo=timezone.utc),
-                }],
+                contents=[
+                    {
+                        "content": content,
+                        "context": "streaming test",
+                        "event_date": datetime(2024, 6, 15, tzinfo=timezone.utc),
+                    }
+                ],
                 document_id=document_id,
                 request_context=request_context,
             )
@@ -3257,14 +3309,16 @@ async def test_streaming_chunk_batching_produces_same_facts(memory_mock_llm, req
             # Verify the document was tracked
             doc = await conn.fetchrow(
                 "SELECT id FROM documents WHERE bank_id = $1 AND id = $2",
-                bank_id, document_id,
+                bank_id,
+                document_id,
             )
             assert doc is not None, "Document should be tracked in DB"
 
             # Verify chunks were stored with correct indices
             chunk_count = await conn.fetchval(
                 "SELECT COUNT(*) FROM chunks WHERE bank_id = $1 AND document_id = $2",
-                bank_id, document_id,
+                bank_id,
+                document_id,
             )
             assert chunk_count > 0, "Chunks should be stored in DB"
             logger.info(f"Stored {chunk_count} chunks for document {document_id}")
@@ -3294,11 +3348,13 @@ async def test_streaming_chunk_batching_recovery(memory_mock_llm, request_contex
         with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_call):
             result1 = await memory.retain_batch_async(
                 bank_id=bank_id,
-                contents=[{
-                    "content": content,
-                    "context": "recovery test",
-                    "event_date": datetime(2024, 6, 15, tzinfo=timezone.utc),
-                }],
+                contents=[
+                    {
+                        "content": content,
+                        "context": "recovery test",
+                        "event_date": datetime(2024, 6, 15, tzinfo=timezone.utc),
+                    }
+                ],
                 document_id=document_id,
                 request_context=request_context,
             )
@@ -3318,11 +3374,13 @@ async def test_streaming_chunk_batching_recovery(memory_mock_llm, request_contex
         with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_call):
             result2 = await memory.retain_batch_async(
                 bank_id=bank_id,
-                contents=[{
-                    "content": content,
-                    "context": "recovery test",
-                    "event_date": datetime(2024, 6, 15, tzinfo=timezone.utc),
-                }],
+                contents=[
+                    {
+                        "content": content,
+                        "context": "recovery test",
+                        "event_date": datetime(2024, 6, 15, tzinfo=timezone.utc),
+                    }
+                ],
                 document_id=document_id,
                 request_context=request_context,
             )
@@ -3365,11 +3423,13 @@ async def test_streaming_disabled_for_small_docs(memory_mock_llm, request_contex
             # batch_size=500 >> 2 chunks, so non-streaming path should be used
             result = await memory.retain_batch_async(
                 bank_id=bank_id,
-                contents=[{
-                    "content": content,
-                    "context": "small doc test",
-                    "event_date": datetime(2024, 6, 15, tzinfo=timezone.utc),
-                }],
+                contents=[
+                    {
+                        "content": content,
+                        "context": "small doc test",
+                        "event_date": datetime(2024, 6, 15, tzinfo=timezone.utc),
+                    }
+                ],
                 document_id=document_id,
                 request_context=request_context,
             )
@@ -3382,9 +3442,201 @@ async def test_streaming_disabled_for_small_docs(memory_mock_llm, request_contex
         async with memory._pool.acquire() as conn:
             doc = await conn.fetchrow(
                 "SELECT id FROM documents WHERE bank_id = $1 AND id = $2",
-                bank_id, document_id,
+                bank_id,
+                document_id,
             )
             assert doc is not None, "Document should be tracked"
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.hs_llm_core
+class TestFactExtractionQuality:
+    """Quality tests for the retain → recall pipeline using a real LLM.
+
+    These tests verify that extracted facts carry the right *content*, not just
+    that something was stored.  MockLLM is a structural stub — it cannot validate
+    that the LLM extracted Alice's role vs. Dave's role correctly.  All tests here
+    use memory_real_llm and the LLM judge.
+    """
+
+    @pytest.fixture
+    def memory(self, memory_real_llm):
+        return memory_real_llm
+
+    @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    async def test_extract_multiple_dimensions_from_paragraph(self, memory: MemoryEngine, request_context):
+        """A single paragraph about a person should yield facts covering multiple dimensions.
+
+        Retaining a rich bio should produce facts that collectively mention at least
+        three of: role, employer, specialisation, location, education.
+        """
+        bank_id = f"test-quality-dims-{uuid.uuid4().hex[:8]}"
+        try:
+            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.retain_async(
+                bank_id=bank_id,
+                content=(
+                    "Alice Chen is a senior machine learning engineer at Anthropic. "
+                    "She specialises in reinforcement learning from human feedback (RLHF) "
+                    "and has published three papers on the topic. Alice is based in San Francisco "
+                    "and joined Anthropic in 2022 after completing her PhD at Stanford."
+                ),
+                context="team profile",
+                request_context=request_context,
+            )
+            result = await memory.recall_async(
+                bank_id=bank_id,
+                query="Tell me about Alice Chen",
+                budget=Budget.LOW,
+                request_context=request_context,
+            )
+            assert len(result.results) > 0, "Should recall at least one fact"
+            recalled_text = " ".join(r.text for r in result.results)
+            await assert_meets_criteria(
+                response=recalled_text,
+                criteria=(
+                    "The recalled facts mention at least THREE of the following about Alice Chen: "
+                    "her role or job title, her employer (Anthropic), her specialisation or research area "
+                    "(RLHF / reinforcement learning), her location (San Francisco), or her education (PhD, Stanford)."
+                ),
+                msg=f"Expected multiple profile dimensions to be extracted. Got: {recalled_text[:500]}",
+            )
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    async def test_recall_surfaces_most_relevant_fact(self, memory: MemoryEngine, request_context):
+        """The recall result most relevant to the query should appear at the top.
+
+        Retain several unrelated facts so the retrieval has to discriminate, then
+        verify the top result is semantically on-topic.
+        """
+        bank_id = f"test-quality-relevance-{uuid.uuid4().hex[:8]}"
+        try:
+            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            for content in [
+                "Bob is a software engineer.",
+                "Bob's favourite programming language is Rust.",
+                "Carol manages the infrastructure team.",
+                "The office has a rooftop garden.",
+            ]:
+                await memory.retain_async(bank_id=bank_id, content=content, request_context=request_context)
+
+            result = await memory.recall_async(
+                bank_id=bank_id,
+                query="What programming language does Bob prefer?",
+                budget=Budget.LOW,
+                request_context=request_context,
+            )
+            assert len(result.results) > 0
+            top_fact = result.results[0].text
+            await assert_meets_criteria(
+                response=top_fact,
+                criteria="The fact mentions Bob's preferred or favourite programming language, Rust.",
+                msg=f"Expected top recall result to be about Bob's language preference. Got: {top_fact}",
+            )
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    async def test_recall_isolates_correct_person(self, memory: MemoryEngine, request_context):
+        """A query about one person should not surface facts about an unrelated person."""
+        bank_id = f"test-quality-isolation-{uuid.uuid4().hex[:8]}"
+        try:
+            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            for content in [
+                "Alice works as a data scientist at Netflix.",
+                "Alice holds a master's degree in statistics.",
+                "Dave is a DevOps engineer who manages Kubernetes clusters.",
+                "Dave joined the team six months ago.",
+            ]:
+                await memory.retain_async(bank_id=bank_id, content=content, request_context=request_context)
+
+            result = await memory.recall_async(
+                bank_id=bank_id,
+                query="What is Alice's role and background?",
+                budget=Budget.LOW,
+                request_context=request_context,
+            )
+            assert len(result.results) > 0
+            top_text = " ".join(r.text for r in result.results[:3])
+            await assert_meets_criteria(
+                response=top_text,
+                criteria=(
+                    "The recalled facts are about Alice (data scientist, Netflix, statistics). "
+                    "They do NOT describe Dave's role or background."
+                ),
+                msg=f"Expected recall to return Alice's facts, not Dave's. Got: {top_text[:500]}",
+            )
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    async def test_negation_preserved_in_extraction(self, memory: MemoryEngine, request_context):
+        """Negations in content should survive fact extraction without being reversed."""
+        bank_id = f"test-quality-negation-{uuid.uuid4().hex[:8]}"
+        try:
+            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.retain_async(
+                bank_id=bank_id,
+                content=("Marcus does not have a driver's licence. He relies on public transport to commute to work."),
+                request_context=request_context,
+            )
+            result = await memory.recall_async(
+                bank_id=bank_id,
+                query="Does Marcus drive to work?",
+                budget=Budget.LOW,
+                request_context=request_context,
+            )
+            assert len(result.results) > 0
+            recalled_text = " ".join(r.text for r in result.results)
+            await assert_meets_criteria(
+                response=recalled_text,
+                criteria=(
+                    "The recalled facts accurately convey that Marcus does NOT drive — "
+                    "either that he lacks a driver's licence, or that he uses public transport."
+                ),
+                msg=f"Expected negation to be preserved in extraction. Got: {recalled_text[:500]}",
+            )
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    async def test_technical_specifics_survive_extraction(self, memory: MemoryEngine, request_context):
+        """Technical terms and numbers should survive fact extraction intact."""
+        bank_id = f"test-quality-technical-{uuid.uuid4().hex[:8]}"
+        try:
+            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            await memory.retain_async(
+                bank_id=bank_id,
+                content=(
+                    "The deployment uses a 3-node PostgreSQL cluster with pgvector enabled. "
+                    "Query latency at p99 is 42ms. The HNSW index uses ef_construction=128."
+                ),
+                context="infrastructure notes",
+                request_context=request_context,
+            )
+            result = await memory.recall_async(
+                bank_id=bank_id,
+                query="What is the database configuration?",
+                budget=Budget.LOW,
+                request_context=request_context,
+            )
+            assert len(result.results) > 0
+            recalled_text = " ".join(r.text for r in result.results)
+            await assert_meets_criteria(
+                response=recalled_text,
+                criteria=(
+                    "The recalled facts mention specific technical details: PostgreSQL, pgvector, or the HNSW index."
+                ),
+                msg=f"Expected technical specifics to survive extraction. Got: {recalled_text[:500]}",
+            )
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)

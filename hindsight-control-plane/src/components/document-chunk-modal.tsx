@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useTranslations } from "next-intl";
 import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import {
@@ -18,6 +19,7 @@ interface DocumentChunkModalProps {
 }
 
 export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProps) {
+  const t = useTranslations("documentChunkModal");
   const { currentBank } = useBank();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -32,7 +34,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
       try {
         if (type === "document") {
           if (!currentBank) {
-            setError("No bank selected");
+            setError(t("noBankSelected"));
             return;
           }
           const doc = await client.getDocument(id, currentBank);
@@ -58,11 +60,9 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
         <DialogHeader>
-          <DialogTitle>{type === "document" ? "Document Details" : "Chunk Details"}</DialogTitle>
+          <DialogTitle>{type === "document" ? t("documentTitle") : t("chunkTitle")}</DialogTitle>
           <DialogDescription>
-            {type === "document"
-              ? "View the original document text and metadata"
-              : "View the chunk text and metadata"}
+            {type === "document" ? t("documentDescription") : t("chunkDescription")}
           </DialogDescription>
         </DialogHeader>
 
@@ -71,14 +71,14 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
             <div className="flex items-center justify-center py-20">
               <div className="text-center">
                 <div className="text-4xl mb-2">⏳</div>
-                <div className="text-sm text-muted-foreground">Loading {type}...</div>
+                <div className="text-sm text-muted-foreground">{t("loadingType", { type })}</div>
               </div>
             </div>
           ) : error ? (
             <div className="flex items-center justify-center py-20">
               <div className="text-center text-destructive">
                 <div className="text-4xl mb-2">❌</div>
-                <div className="text-sm">Error: {error}</div>
+                <div className="text-sm">{t("errorPrefix", { message: error })}</div>
               </div>
             </div>
           ) : data ? (
@@ -88,7 +88,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                   <div className="space-y-3">
                     <div className="p-3 bg-muted rounded-lg">
                       <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
-                        Document ID
+                        {t("sectionDocumentId")}
                       </div>
                       <div className="text-sm font-mono break-all text-foreground">{data.id}</div>
                     </div>
@@ -96,7 +96,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                       <div className="grid grid-cols-2 gap-3">
                         <div className="p-3 bg-muted rounded-lg">
                           <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
-                            Created
+                            {t("sectionCreated")}
                           </div>
                           <div className="text-sm text-foreground">
                             {new Date(data.created_at).toLocaleString()}
@@ -104,7 +104,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                         </div>
                         <div className="p-3 bg-muted rounded-lg">
                           <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
-                            Memory Units
+                            {t("sectionMemoryUnits")}
                           </div>
                           <div className="text-sm text-foreground">{data.memory_unit_count}</div>
                         </div>
@@ -113,10 +113,10 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                     {data.original_text && (
                       <div className="p-3 bg-muted rounded-lg">
                         <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
-                          Text Length
+                          {t("sectionTextLength")}
                         </div>
                         <div className="text-sm text-foreground">
-                          {data.original_text.length.toLocaleString()} characters
+                          {t("textLengthChars", { count: data.original_text.length })}
                         </div>
                       </div>
                     )}
@@ -124,7 +124,9 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
 
                   {data.original_text && (
                     <div>
-                      <div className="text-sm font-bold text-foreground mb-2">Original Text</div>
+                      <div className="text-sm font-bold text-foreground mb-2">
+                        {t("sectionOriginalText")}
+                      </div>
                       <div className="p-4 bg-muted rounded-lg border border-border max-h-[300px] overflow-y-auto">
                         <pre className="text-sm whitespace-pre-wrap font-mono text-foreground">
                           {data.original_text}
@@ -138,7 +140,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                   <div className="space-y-3">
                     <div className="p-3 bg-muted rounded-lg">
                       <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
-                        Chunk ID
+                        {t("sectionChunkId")}
                       </div>
                       <div className="text-sm font-mono break-all text-foreground">
                         {data.chunk_id}
@@ -147,7 +149,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                     <div className="grid grid-cols-2 gap-3">
                       <div className="p-3 bg-muted rounded-lg">
                         <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
-                          Document ID
+                          {t("sectionChunkDocumentId")}
                         </div>
                         <div className="text-sm font-mono break-all text-foreground">
                           {data.document_id}
@@ -155,7 +157,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                       </div>
                       <div className="p-3 bg-muted rounded-lg">
                         <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
-                          Chunk Index
+                          {t("sectionChunkIndex")}
                         </div>
                         <div className="text-sm text-foreground">{data.chunk_index}</div>
                       </div>
@@ -163,7 +165,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                     {data.created_at && (
                       <div className="p-3 bg-muted rounded-lg">
                         <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
-                          Created
+                          {t("sectionCreated")}
                         </div>
                         <div className="text-sm text-foreground">
                           {new Date(data.created_at).toLocaleString()}
@@ -173,10 +175,10 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                     {data.chunk_text && (
                       <div className="p-3 bg-muted rounded-lg">
                         <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
-                          Text Length
+                          {t("sectionTextLength")}
                         </div>
                         <div className="text-sm text-foreground">
-                          {data.chunk_text.length.toLocaleString()} characters
+                          {t("textLengthChars", { count: data.chunk_text.length })}
                         </div>
                       </div>
                     )}
@@ -184,7 +186,9 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
 
                   {data.chunk_text && (
                     <div>
-                      <div className="text-sm font-bold text-foreground mb-2">Chunk Text</div>
+                      <div className="text-sm font-bold text-foreground mb-2">
+                        {t("sectionChunkText")}
+                      </div>
                       <div className="p-4 bg-muted rounded-lg border border-border max-h-[300px] overflow-y-auto">
                         <pre className="text-sm whitespace-pre-wrap font-mono text-foreground">
                           {data.chunk_text}

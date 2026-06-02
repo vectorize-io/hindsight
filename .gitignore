@@ -54,6 +54,8 @@ hindsight-clients/rust/target
 !.claude/skills/
 whats-next.md
 TASK.md
+# Parked / draft integrations that aren't ready to ship
+hindsight-integrations/_drafts/
 # Changelog is now tracked in hindsight-docs/src/pages/changelog.md
 # CHANGELOG.md
 

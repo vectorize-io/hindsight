@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 
 export async function GET(
   request: Request,
@@ -18,6 +19,13 @@ export async function GET(
     }
   );
   const data = await res.json();
-  if (!res.ok) return NextResponse.json({ error: data.detail || "Failed" }, { status: res.status });
+  if (!res.ok)
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: data.detail || "Failed to fetch webhook deliveries",
+        errorKey: "api.errors.webhooks.deliveries",
+      }),
+      { status: res.status }
+    );
   return NextResponse.json(data);
 }

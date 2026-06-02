@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { useTranslations } from "next-intl";
 import { client, MentalModel } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -22,6 +23,7 @@ import {
   ChevronLeft,
   ChevronRight,
   MoreVertical,
+  Eraser,
   Pencil,
   RefreshCw,
   Trash2,
@@ -31,6 +33,28 @@ import { CompactMarkdown } from "./compact-markdown";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { DirectiveDetailModal } from "./directive-detail-modal";
 import { formatAbsoluteDateTime as formatDateTime, formatRelativeTime } from "@/lib/relative-time";
+import { useTheme } from "@/lib/theme-context";
+
+const DIFF_PALETTE = {
+  light: {
+    body: "#1a1a1a",
+    removedLineBg: "#ffeef0",
+    addedLineBg: "#e6ffec",
+    removedWordBg: "#fdb8c0",
+    removedWordText: "#67060c",
+    addedWordBg: "#acf2bc",
+    addedWordText: "#0a3622",
+  },
+  dark: {
+    body: "#e6edf3",
+    removedLineBg: "#3d1419",
+    addedLineBg: "#0d2818",
+    removedWordBg: "#7d2530",
+    removedWordText: "#ffd0d6",
+    addedWordBg: "#1a4d2c",
+    addedWordText: "#b8e6c1",
+  },
+} as const;
 
 type BasedOnFact = {
   id: string;
@@ -51,25 +75,34 @@ type HistoryEntry = {
   changed_at: string;
 };
 
-function getFactTypeDisplay(factType: string) {
+function getFactTypeDisplay(factType: string, t?: (key: string) => string) {
   if (factType === "directives") {
-    return { label: "directive", color: "bg-purple-500/10 text-purple-600 dark:text-purple-400" };
+    return {
+      label: t ? t("factTypeDirective") : "directive",
+      color: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
+    };
   }
   if (factType === "mental-models") {
     return {
-      label: "mental model",
+      label: t ? t("factTypeMentalModel") : "mental model",
       color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
     };
   }
   if (factType === "world") {
-    return { label: "world", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" };
+    return {
+      label: t ? t("factTypeWorld") : "world",
+      color: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    };
   }
   if (factType === "experience") {
-    return { label: "experience", color: "bg-green-500/10 text-green-600 dark:text-green-400" };
+    return {
+      label: t ? t("factTypeExperience") : "experience",
+      color: "bg-green-500/10 text-green-600 dark:text-green-400",
+    };
   }
   if (factType === "observation") {
     return {
-      label: "observation",
+      label: t ? t("factTypeObservation") : "observation",
       color: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
     };
   }
@@ -87,6 +120,7 @@ function BasedOnList({
   onViewMemory?: (id: string) => void;
   onViewDirective?: (id: string) => void;
 }) {
+  const t = useTranslations("mentalModelDetailModal");
   const groups = useMemo(() => {
     if (!based_on) return [] as Array<{ factType: string; facts: BasedOnFact[] }>;
     const all = Object.entries(based_on)
@@ -101,13 +135,13 @@ function BasedOnList({
   }, [based_on]);
 
   if (groups.length === 0) {
-    return <p className="text-sm text-muted-foreground italic">No based_on data.</p>;
+    return <p className="text-sm text-muted-foreground italic">{t("noBasedOnData")}</p>;
   }
 
   return (
     <div className="space-y-4">
       {groups.map((group) => {
-        const display = getFactTypeDisplay(group.factType);
+        const display = getFactTypeDisplay(group.factType, t);
         return (
           <div key={group.factType} className="rounded-lg border border-border/60 overflow-hidden">
             <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/40 border-b border-border/60">
@@ -146,7 +180,7 @@ function BasedOnList({
                           else onViewMemory?.(fact.id);
                         }}
                       >
-                        View →
+                        {t("viewArrow")}
                       </button>
                     )}
                   </li>
@@ -300,15 +334,25 @@ function diffLines(a: string, b: string): { left: AnnotatedLine[]; right: Annota
   return { left, right };
 }
 
-function renderSpans(spans: TokenSpan[], side: "left" | "right") {
+type DiffPalette = (typeof DIFF_PALETTE)[keyof typeof DIFF_PALETTE];
+
+function renderSpans(spans: TokenSpan[], side: "left" | "right", palette: DiffPalette) {
+  const removedStyle: React.CSSProperties = {
+    backgroundColor: palette.removedWordBg,
+    color: palette.removedWordText,
+    fontWeight: 600,
+    borderRadius: "2px",
+  };
+  const addedStyle: React.CSSProperties = {
+    backgroundColor: palette.addedWordBg,
+    color: palette.addedWordText,
+    fontWeight: 600,
+    borderRadius: "2px",
+  };
   return spans.map((s, i) => {
     if (s.type === "same") return <span key={i}>{s.text}</span>;
-    const cls =
-      side === "left"
-        ? "bg-red-500/25 text-red-800 dark:text-red-300 rounded-sm px-0.5"
-        : "bg-green-500/25 text-green-800 dark:text-green-300 rounded-sm px-0.5";
     return (
-      <span key={i} className={cls}>
+      <span key={i} style={side === "left" ? removedStyle : addedStyle}>
         {s.text}
       </span>
     );
@@ -316,39 +360,44 @@ function renderSpans(spans: TokenSpan[], side: "left" | "right") {
 }
 
 function SideBySideDiff({ before, after }: { before: string; after: string }) {
+  const t = useTranslations("mentalModelDetailModal");
+  const { theme } = useTheme();
+  const palette = DIFF_PALETTE[theme];
   const { left, right } = diffLines(before, after);
   const hasChanges = left.some((l) => l.type !== "same") || right.some((r) => r.type !== "same");
-  if (!hasChanges) return <span className="text-sm text-muted-foreground italic">unchanged</span>;
+  if (!hasChanges)
+    return <span className="text-sm text-muted-foreground italic">{t("unchanged")}</span>;
 
   return (
-    <div className="grid grid-cols-2 divide-x divide-border border border-border rounded-md overflow-hidden text-xs font-mono">
+    <div
+      className="grid grid-cols-2 divide-x divide-border border border-border rounded-md overflow-hidden text-[13px] font-mono"
+      style={{ color: palette.body }}
+    >
       <div>
-        <div className="px-3 py-1.5 bg-muted text-muted-foreground font-sans font-semibold text-xs uppercase tracking-wide border-b border-border">
-          Before
+        <div className="px-3 py-1.5 bg-muted text-foreground font-sans font-semibold text-xs uppercase tracking-wide border-b border-border">
+          {t("diffBefore")}
         </div>
         {left.map((line, idx) => (
           <div
             key={idx}
-            className={`px-3 py-0.5 whitespace-pre-wrap leading-5 min-h-[1.25rem] ${
-              line.type === "removed" ? "bg-red-500/5" : ""
-            }`}
+            className="px-3 py-0.5 whitespace-pre-wrap leading-5 min-h-[1.25rem]"
+            style={line.type === "removed" ? { backgroundColor: palette.removedLineBg } : undefined}
           >
-            {renderSpans(line.spans, "left")}
+            {renderSpans(line.spans, "left", palette)}
           </div>
         ))}
       </div>
       <div>
-        <div className="px-3 py-1.5 bg-muted text-muted-foreground font-sans font-semibold text-xs uppercase tracking-wide border-b border-border">
-          After
+        <div className="px-3 py-1.5 bg-muted text-foreground font-sans font-semibold text-xs uppercase tracking-wide border-b border-border">
+          {t("diffAfter")}
         </div>
         {right.map((line, idx) => (
           <div
             key={idx}
-            className={`px-3 py-0.5 whitespace-pre-wrap leading-5 min-h-[1.25rem] ${
-              line.type === "added" ? "bg-green-500/5" : ""
-            }`}
+            className="px-3 py-0.5 whitespace-pre-wrap leading-5 min-h-[1.25rem]"
+            style={line.type === "added" ? { backgroundColor: palette.addedLineBg } : undefined}
           >
-            {renderSpans(line.spans, "right")}
+            {renderSpans(line.spans, "right", palette)}
           </div>
         ))}
       </div>
@@ -367,6 +416,7 @@ function BasedOnDiff({
   onViewMemory: (id: string) => void;
   onViewDirective: (id: string) => void;
 }) {
+  const t = useTranslations("mentalModelDetailModal");
   const diff = useMemo(() => {
     const types = new Set<string>([...Object.keys(before ?? {}), ...Object.keys(after ?? {})]);
     const groups: Array<{
@@ -395,7 +445,7 @@ function BasedOnDiff({
   }, [before, after]);
 
   if (diff.length === 0) {
-    return <p className="text-sm text-muted-foreground italic">No based_on data.</p>;
+    return <p className="text-sm text-muted-foreground italic">{t("noBasedOnData")}</p>;
   }
 
   const renderFact = (fact: BasedOnFact, factType: string, mode: "added" | "removed" | "kept") => {
@@ -404,16 +454,16 @@ function BasedOnDiff({
       (factType !== "directives" && factType !== "mental-models" && !!onViewMemory);
     const rowCls =
       mode === "added"
-        ? "bg-green-500/10 border-l-2 border-green-500"
+        ? "bg-green-500/15 dark:bg-green-500/10 border-l-2 border-green-600 dark:border-green-500 text-green-950 dark:text-green-100"
         : mode === "removed"
-          ? "bg-red-500/10 border-l-2 border-red-500 text-muted-foreground line-through decoration-red-500/50"
+          ? "bg-red-500/15 dark:bg-red-500/10 border-l-2 border-red-600 dark:border-red-500 text-red-950 dark:text-red-200 line-through decoration-red-700/70 dark:decoration-red-400/70"
           : "";
     const marker = mode === "added" ? "+" : mode === "removed" ? "−" : " ";
     const markerCls =
       mode === "added"
-        ? "text-green-600 dark:text-green-400"
+        ? "text-green-700 dark:text-green-400"
         : mode === "removed"
-          ? "text-red-600 dark:text-red-400"
+          ? "text-red-700 dark:text-red-400"
           : "text-muted-foreground/40";
     return (
       <li key={`${mode}-${fact.id}`} className={`group flex items-start gap-2 px-3 py-2 ${rowCls}`}>
@@ -434,7 +484,7 @@ function BasedOnDiff({
               else onViewMemory(fact.id);
             }}
           >
-            View →
+            {t("viewArrow")}
           </button>
         )}
       </li>
@@ -444,7 +494,7 @@ function BasedOnDiff({
   return (
     <div className="space-y-4">
       {diff.map((group) => {
-        const display = getFactTypeDisplay(group.factType);
+        const display = getFactTypeDisplay(group.factType, t);
         return (
           <div key={group.factType} className="rounded-lg border border-border/60 overflow-hidden">
             <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/40 border-b border-border/60">
@@ -464,7 +514,9 @@ function BasedOnDiff({
                 </span>
               )}
               {group.kept.length > 0 && (
-                <span className="text-xs text-muted-foreground">{group.kept.length} kept</span>
+                <span className="text-xs text-muted-foreground">
+                  {t("keptCount", { count: group.kept.length })}
+                </span>
               )}
             </div>
             <ul className="divide-y divide-border/40">
@@ -492,6 +544,7 @@ function MentalModelHistoryView({
   onViewMemory: (id: string) => void;
   onViewDirective: (id: string) => void;
 }) {
+  const t = useTranslations("mentalModelDetailModal");
   const [idx, setIdx] = useState(0);
   const entry = history[idx];
   const afterContent = idx === 0 ? currentContent : (history[idx - 1].previous_content ?? "");
@@ -507,9 +560,9 @@ function MentalModelHistoryView({
           <span className="font-semibold text-foreground">v{history.length - idx}</span> →{" "}
           <span className="font-semibold text-foreground">
             v{history.length - idx + 1}
-            {idx === 0 ? " (current)" : ""}
+            {idx === 0 ? t("versionCurrent") : ""}
           </span>{" "}
-          &middot; changed {new Date(entry.changed_at).toLocaleString()}
+          &middot; {t("changedAt", { date: new Date(entry.changed_at).toLocaleString() })}
         </span>
         <div className="flex items-center gap-1">
           <Button
@@ -534,20 +587,20 @@ function MentalModelHistoryView({
       </div>
 
       <div>
-        <SectionLabel>Content diff</SectionLabel>
+        <SectionLabel>{t("contentDiff")}</SectionLabel>
         {entry.previous_content !== null ? (
           <SideBySideDiff before={entry.previous_content} after={afterContent} />
         ) : (
           <div className="border border-border rounded-lg p-3">
             <span className="text-sm text-muted-foreground italic">
-              Previous content not available
+              {t("previousContentNotAvailable")}
             </span>
           </div>
         )}
       </div>
 
       <div>
-        <SectionLabel>Based on diff</SectionLabel>
+        <SectionLabel>{t("basedOnDiff")}</SectionLabel>
         {snapshot?.based_on ? (
           <BasedOnDiff
             before={beforeBasedOn}
@@ -556,9 +609,7 @@ function MentalModelHistoryView({
             onViewDirective={onViewDirective}
           />
         ) : (
-          <p className="text-sm text-muted-foreground italic">
-            Not captured for this version (recorded before reflect snapshots were tracked).
-          </p>
+          <p className="text-sm text-muted-foreground italic">{t("basedOnNotCaptured")}</p>
         )}
       </div>
     </div>
@@ -570,6 +621,7 @@ interface MentalModelDetailModalProps {
   onClose: () => void;
   onEdit?: (m: MentalModel) => void;
   onDelete?: (m: MentalModel) => void;
+  onClear?: (m: MentalModel) => void;
   onRefreshed?: (m: MentalModel) => void;
   initialTab?: "content" | "configuration" | "history";
 }
@@ -579,9 +631,11 @@ export function MentalModelDetailModal({
   onClose,
   onEdit,
   onDelete,
+  onClear,
   onRefreshed,
   initialTab = "content",
 }: MentalModelDetailModalProps) {
+  const t = useTranslations("mentalModelDetailModal");
   const { currentBank } = useBank();
   const [mentalModel, setMentalModel] = useState<MentalModel | null>(null);
   const [loading, setLoading] = useState(false);
@@ -677,9 +731,8 @@ export function MentalModelDetailModal({
           }
           if (attempts >= maxAttempts) {
             setRefreshing(false);
-            toast.error("Refresh timeout", {
-              description:
-                "Refresh is taking longer than expected. Check the operations list for status.",
+            toast.error(t("refreshTimeoutTitle"), {
+              description: t("refreshTimeoutDescription"),
             });
             return;
           }
@@ -710,7 +763,7 @@ export function MentalModelDetailModal({
         <DialogContent className="w-[95vw] max-w-[95vw] h-[92vh] sm:max-w-[95vw] flex flex-col overflow-hidden">
           <DialogHeader className="pr-10">
             <DialogTitle className="flex items-center gap-2">
-              <span className="truncate">{mentalModel?.name ?? "Mental Model"}</span>
+              <span className="truncate">{mentalModel?.name ?? t("mentalModelFallback")}</span>
               {mentalModel && (
                 <Button
                   variant="ghost"
@@ -718,7 +771,7 @@ export function MentalModelDetailModal({
                   className="h-7 w-7 p-0 shrink-0"
                   onClick={handleReload}
                   disabled={reloading}
-                  title="Reload data"
+                  title={t("reloadData")}
                 >
                   <RefreshCw className={`h-3.5 w-3.5 ${reloading ? "animate-spin" : ""}`} />
                 </Button>
@@ -726,7 +779,7 @@ export function MentalModelDetailModal({
               {mentalModel?.trigger?.refresh_after_consolidation && (
                 <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400 text-xs font-medium">
                   <Zap className="w-3 h-3" />
-                  Auto refresh
+                  {t("autoRefresh")}
                 </span>
               )}
             </DialogTitle>
@@ -739,7 +792,7 @@ export function MentalModelDetailModal({
           ) : error ? (
             <div className="flex items-center justify-center flex-1">
               <div className="text-center text-destructive">
-                <div className="text-sm">Error: {error}</div>
+                <div className="text-sm">{t("errorPrefix", { error })}</div>
               </div>
             </div>
           ) : mentalModel ? (
@@ -752,15 +805,15 @@ export function MentalModelDetailModal({
                 <TabsList className="grid grid-cols-3 w-full max-w-md">
                   <TabsTrigger value="content" className="flex items-center gap-1.5">
                     <FileText className="w-3.5 h-3.5" />
-                    Content
+                    {t("tabContent")}
                   </TabsTrigger>
                   <TabsTrigger value="configuration" className="flex items-center gap-1.5">
                     <Settings className="w-3.5 h-3.5" />
-                    Configuration
+                    {t("tabConfiguration")}
                   </TabsTrigger>
                   <TabsTrigger value="history" className="flex items-center gap-1.5">
                     <HistoryIcon className="w-3.5 h-3.5" />
-                    History
+                    {t("tabHistory")}
                   </TabsTrigger>
                 </TabsList>
                 <DropdownMenu>
@@ -770,7 +823,7 @@ export function MentalModelDetailModal({
                       size="sm"
                       className="h-8 w-8 p-0 shrink-0"
                       disabled={refreshing}
-                      aria-label="Actions"
+                      aria-label={t("actionsAriaLabel")}
                     >
                       <MoreVertical className="h-4 w-4" />
                     </Button>
@@ -779,13 +832,19 @@ export function MentalModelDetailModal({
                     {onEdit && (
                       <DropdownMenuItem onClick={() => onEdit(mentalModel)}>
                         <Pencil className="h-4 w-4 mr-2" />
-                        Edit
+                        {t("actionEdit")}
                       </DropdownMenuItem>
                     )}
                     <DropdownMenuItem onClick={handleRefresh} disabled={refreshing}>
                       <RefreshCw className="h-4 w-4 mr-2" />
-                      Refresh Manually
+                      {t("actionRefreshManually")}
                     </DropdownMenuItem>
+                    {onClear && (
+                      <DropdownMenuItem onClick={() => onClear(mentalModel)}>
+                        <Eraser className="h-4 w-4 mr-2" />
+                        {t("actionClearContent")}
+                      </DropdownMenuItem>
+                    )}
                     {onDelete && (
                       <>
                         <DropdownMenuSeparator />
@@ -794,7 +853,7 @@ export function MentalModelDetailModal({
                           className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400 focus:bg-red-500/10"
                         >
                           <Trash2 className="h-4 w-4 mr-2" />
-                          Delete
+                          {t("actionDelete")}
                         </DropdownMenuItem>
                       </>
                     )}
@@ -809,26 +868,26 @@ export function MentalModelDetailModal({
                       <div className="flex items-center gap-1.5">
                         <FileText className="w-3.5 h-3.5" />
                         <span className="font-semibold uppercase tracking-wide">
-                          Stored content
+                          {t("storedContent")}
                         </span>
                         <span className="text-muted-foreground/70">
-                          &middot; {mentalModel.content.length.toLocaleString()} chars
+                          &middot; {t("charsCount", { count: mentalModel.content.length })}
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
                         {mentalModel.is_stale === true ? (
                           <span
                             className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-amber-500/15 text-amber-700 dark:text-amber-400"
-                            title="New memories in this mental model's scope have been ingested since it was last refreshed"
+                            title={t("staleTitle")}
                           >
-                            Stale
+                            {t("stale")}
                           </span>
                         ) : mentalModel.is_stale === false ? (
                           <span
                             className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-green-500/15 text-green-700 dark:text-green-400"
-                            title="No new memories in this mental model's scope since it was last refreshed"
+                            title={t("inSyncTitle")}
                           >
-                            In sync
+                            {t("inSync")}
                           </span>
                         ) : null}
                         <span
@@ -836,7 +895,9 @@ export function MentalModelDetailModal({
                           className="flex items-center gap-1"
                         >
                           <RefreshCw className="w-3 h-3" />
-                          Last refreshed {formatRelativeTime(mentalModel.last_refreshed_at)}
+                          {t("lastRefreshed", {
+                            time: formatRelativeTime(mentalModel.last_refreshed_at),
+                          })}
                         </span>
                       </div>
                     </div>
@@ -844,7 +905,9 @@ export function MentalModelDetailModal({
                   </div>
                   <div>
                     <SectionLabel>
-                      Based On{basedOnCount > 0 ? ` (${basedOnCount})` : ""}
+                      {basedOnCount > 0
+                        ? t("basedOnWithCount", { count: basedOnCount })
+                        : t("basedOn")}
                     </SectionLabel>
                     {mentalModel.reflect_response ? (
                       <BasedOnList
@@ -853,10 +916,7 @@ export function MentalModelDetailModal({
                         onViewDirective={(id) => setViewDirectiveId(id)}
                       />
                     ) : (
-                      <p className="text-sm text-muted-foreground">
-                        No source data available. Click &quot;Refresh&quot; to regenerate with
-                        source tracking.
-                      </p>
+                      <p className="text-sm text-muted-foreground">{t("noSourceData")}</p>
                     )}
                   </div>
                 </TabsContent>
@@ -879,7 +939,7 @@ export function MentalModelDetailModal({
                       onViewDirective={(id) => setViewDirectiveId(id)}
                     />
                   ) : (
-                    <p className="text-sm text-muted-foreground italic">No history recorded yet.</p>
+                    <p className="text-sm text-muted-foreground italic">{t("noHistory")}</p>
                   )}
                 </TabsContent>
               </div>
@@ -943,27 +1003,42 @@ function Pill({ label, color }: { label: string; color?: string }) {
 }
 
 function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
-  const t = mentalModel.trigger ?? { refresh_after_consolidation: false };
-  const factTypes = t.fact_types ?? [];
-  const tagGroups = t.tag_groups ?? [];
-  const excludeIds = t.exclude_mental_model_ids ?? [];
+  const t = useTranslations("mentalModelDetailModal");
+  const trigger = mentalModel.trigger ?? { refresh_after_consolidation: false };
+  const factTypes = trigger.fact_types ?? [];
+  const tagGroups = trigger.tag_groups ?? [];
+  const excludeIds = trigger.exclude_mental_model_ids ?? [];
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <InfoCard title="Identity" icon={<FileText className="w-3.5 h-3.5" />}>
+      <InfoCard title={t("identityTitle")} icon={<FileText className="w-3.5 h-3.5" />}>
         <Metadata
-          label="ID"
+          label={t("labelId")}
           value={
             <code className="text-xs font-mono text-muted-foreground break-all">
               {mentalModel.id}
             </code>
           }
         />
-        <Metadata label="Name" value={mentalModel.name} />
+        <Metadata label={t("labelName")} value={mentalModel.name} />
         {mentalModel.source_query && (
-          <Metadata label="Source Query" value={mentalModel.source_query} />
+          <Metadata
+            label={t("labelSourceQuery")}
+            value={
+              <pre
+                className="text-sm font-mono text-foreground bg-muted/30 border border-border/60 rounded p-2 leading-6 m-0"
+                style={{
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)",
+                }}
+              >
+                {mentalModel.source_query}
+              </pre>
+            }
+          />
         )}
         <Metadata
-          label="Tags"
+          label={t("labelTags")}
           value={
             mentalModel.tags?.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
@@ -976,65 +1051,74 @@ function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
                 ))}
               </div>
             ) : (
-              <span className="text-muted-foreground italic text-sm">none</span>
+              <span className="text-muted-foreground italic text-sm">{t("noTags")}</span>
             )
           }
         />
       </InfoCard>
 
-      <InfoCard title="Timing" icon={<RefreshCw className="w-3.5 h-3.5" />}>
-        <Metadata label="Created" value={formatDateTime(mentalModel.created_at)} />
+      <InfoCard title={t("timingTitle")} icon={<RefreshCw className="w-3.5 h-3.5" />}>
+        <Metadata label={t("labelCreated")} value={formatDateTime(mentalModel.created_at)} />
         <Metadata
-          label="Last Refreshed"
+          label={t("labelLastRefreshed")}
           value={
             <span title={formatDateTime(mentalModel.last_refreshed_at)}>
               {formatRelativeTime(mentalModel.last_refreshed_at)}
             </span>
           }
         />
-        <Metadata label="Max Tokens" value={mentalModel.max_tokens.toLocaleString()} />
+        <Metadata label={t("labelMaxTokens")} value={mentalModel.max_tokens.toLocaleString()} />
       </InfoCard>
 
-      <InfoCard title="Refresh Trigger" icon={<Zap className="w-3.5 h-3.5" />}>
+      <InfoCard title={t("refreshTriggerTitle")} icon={<Zap className="w-3.5 h-3.5" />}>
         <Metadata
-          label="Refresh mode"
+          label={t("labelRefreshMode")}
           value={
-            t.mode === "delta" ? (
-              <Pill label="Delta" color="bg-purple-500/10 text-purple-600 dark:text-purple-400" />
+            trigger.mode === "delta" ? (
+              <Pill
+                label={t("pillDelta")}
+                color="bg-purple-500/10 text-purple-600 dark:text-purple-400"
+              />
             ) : (
-              <Pill label="Full" />
+              <Pill label={t("pillFull")} />
             )
           }
         />
         <Metadata
-          label="Auto-refresh after consolidation"
+          label={t("labelAutoRefreshAfterConsolidation")}
           value={
-            t.refresh_after_consolidation ? (
-              <Pill label="Enabled" color="bg-green-500/10 text-green-600 dark:text-green-400" />
+            trigger.refresh_after_consolidation ? (
+              <Pill
+                label={t("pillEnabled")}
+                color="bg-green-500/10 text-green-600 dark:text-green-400"
+              />
             ) : (
-              <Pill label="Disabled" />
+              <Pill label={t("pillDisabled")} />
             )
           }
         />
         <Metadata
-          label="Fact types"
+          label={t("labelFactTypes")}
           value={
             factTypes.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
                 {factTypes.map((ft) => {
-                  const d = getFactTypeDisplay(ft);
+                  const d = getFactTypeDisplay(ft, t);
                   return <Pill key={ft} label={d.label} color={d.color} />;
                 })}
               </div>
             ) : (
-              <span className="text-muted-foreground italic text-sm">all</span>
+              <span className="text-muted-foreground italic text-sm">{t("factTypesAll")}</span>
             )
           }
         />
-        <Metadata label="Exclude mental models" value={t.exclude_mental_models ? "Yes" : "No"} />
+        <Metadata
+          label={t("labelExcludeMentalModels")}
+          value={trigger.exclude_mental_models ? t("valueYes") : t("valueNo")}
+        />
         {excludeIds.length > 0 && (
           <Metadata
-            label="Excluded IDs"
+            label={t("labelExcludedIds")}
             value={
               <div className="flex flex-wrap gap-1.5">
                 {excludeIds.map((id) => (
@@ -1051,32 +1135,42 @@ function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
         )}
       </InfoCard>
 
-      <InfoCard title="Recall Parameters" icon={<Settings className="w-3.5 h-3.5" />}>
+      <InfoCard title={t("recallParamsTitle")} icon={<Settings className="w-3.5 h-3.5" />}>
         <Metadata
-          label="Include chunks"
-          value={t.include_chunks == null ? "default" : t.include_chunks ? "Yes" : "No"}
-        />
-        <Metadata
-          label="Recall max tokens"
-          value={t.recall_max_tokens != null ? t.recall_max_tokens.toLocaleString() : "default"}
-        />
-        <Metadata
-          label="Recall chunks max tokens"
+          label={t("labelIncludeChunks")}
           value={
-            t.recall_chunks_max_tokens != null
-              ? t.recall_chunks_max_tokens.toLocaleString()
-              : "default"
+            trigger.include_chunks == null
+              ? t("includeChunksDefault")
+              : trigger.include_chunks
+                ? t("valueYes")
+                : t("valueNo")
           }
         />
         <Metadata
-          label="Tags match"
-          value={t.tags_match ? <Pill label={t.tags_match} /> : "default"}
+          label={t("labelRecallMaxTokens")}
+          value={
+            trigger.recall_max_tokens != null
+              ? trigger.recall_max_tokens.toLocaleString()
+              : t("recallMaxTokensDefault")
+          }
+        />
+        <Metadata
+          label={t("labelRecallChunksMaxTokens")}
+          value={
+            trigger.recall_chunks_max_tokens != null
+              ? trigger.recall_chunks_max_tokens.toLocaleString()
+              : t("recallChunksMaxTokensDefault")
+          }
+        />
+        <Metadata
+          label={t("labelTagsMatch")}
+          value={trigger.tags_match ? <Pill label={trigger.tags_match} /> : t("tagsMatchDefault")}
         />
       </InfoCard>
 
       {tagGroups.length > 0 && (
         <div className="md:col-span-2">
-          <InfoCard title="Tag Groups" icon={<Settings className="w-3.5 h-3.5" />}>
+          <InfoCard title={t("tagGroupsTitle")} icon={<Settings className="w-3.5 h-3.5" />}>
             <pre className="text-xs font-mono bg-muted/40 rounded p-3 overflow-x-auto border border-border/60">
               {JSON.stringify(tagGroups, null, 2)}
             </pre>

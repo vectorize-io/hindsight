@@ -24,7 +24,15 @@ import uvicorn
 from . import MemoryEngine, __version__
 from .api import create_app
 from .banner import print_banner
-from .config import DEFAULT_WORKERS, ENV_HOST, ENV_WORKERS, HindsightConfig, _get_raw_config
+from .config import (
+    DEFAULT_ACCESS_LOG,
+    DEFAULT_WORKERS,
+    ENV_ACCESS_LOG,
+    ENV_HOST,
+    ENV_WORKERS,
+    HindsightConfig,
+    _get_raw_config,
+)
 from .daemon import (
     DEFAULT_DAEMON_PORT,
     DEFAULT_IDLE_TIMEOUT,
@@ -65,29 +73,42 @@ def _signal_handler(signum, frame):
     sys.exit(0)
 
 
-def resolve_daemon_host_port(*, args_host: str, args_port: int, config_host: str, config_port: int) -> tuple[str, int]:
+@dataclasses.dataclass(frozen=True)
+class ResolvedDaemonHostPort:
+    host: str
+    port: int
+
+
+def resolve_daemon_host_port(
+    *,
+    args_host: str,
+    args_port: int,
+    explicit_host: bool,
+    explicit_port: bool,
+) -> ResolvedDaemonHostPort:
     """Resolve host/port for daemon mode.
 
     Defaults to 127.0.0.1 for security, but honors explicit user overrides
     via --host flag or HINDSIGHT_API_HOST env var. Uses DEFAULT_DAEMON_PORT
     unless the user specified a custom port.
     """
-    port = args_port if args_port != config_port else DEFAULT_DAEMON_PORT
+    port = args_port if explicit_port else DEFAULT_DAEMON_PORT
     # Only force localhost if the user didn't explicitly set a host
-    if args_host != config_host or os.environ.get(ENV_HOST):
+    if explicit_host or os.environ.get(ENV_HOST):
         host = args_host
     else:
         host = "127.0.0.1"
-    return host, port
+    return ResolvedDaemonHostPort(host=host, port=port)
 
 
-def main():
-    """Main entry point for the CLI."""
-    global _memory
+@dataclasses.dataclass(frozen=True)
+class ParsedCliArgs:
+    args: argparse.Namespace
+    explicit_host: bool
+    explicit_port: bool
 
-    # Load configuration from environment (for CLI args defaults)
-    config = _get_raw_config()
 
+def _parse_cli_args(argv: list[str], config: HindsightConfig) -> ParsedCliArgs:
     parser = argparse.ArgumentParser(
         prog="hindsight-api",
         description="Hindsight API Server",
@@ -95,12 +116,14 @@ def main():
 
     # Server options
     parser.add_argument(
-        "--host", default=config.host, help=f"Host to bind to (default: {config.host}, env: HINDSIGHT_API_HOST)"
+        "--host",
+        default=argparse.SUPPRESS,
+        help=f"Host to bind to (default: {config.host}, env: HINDSIGHT_API_HOST)",
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=config.port,
+        default=argparse.SUPPRESS,
         help=f"Port to bind to (default: {config.port}, env: HINDSIGHT_API_PORT)",
     )
     parser.add_argument(
@@ -120,9 +143,18 @@ def main():
     )
 
     # Access log options
-    parser.add_argument("--access-log", action="store_true", help="Enable access log")
-    parser.add_argument("--no-access-log", dest="access_log", action="store_false", help="Disable access log (default)")
-    parser.set_defaults(access_log=False)
+    parser.add_argument(
+        "--access-log",
+        action="store_true",
+        default=os.getenv(ENV_ACCESS_LOG, "").lower() in ("1", "true", "yes", "on") or DEFAULT_ACCESS_LOG,
+        help=f"Enable access log (env: {ENV_ACCESS_LOG}, default: {DEFAULT_ACCESS_LOG})",
+    )
+    parser.add_argument(
+        "--no-access-log",
+        dest="access_log",
+        action="store_false",
+        help="Disable access log (overrides env and default)",
+    )
 
     # Proxy options
     parser.add_argument(
@@ -149,7 +181,27 @@ def main():
         help=f"Idle timeout in seconds before auto-exit in daemon mode (default: {DEFAULT_IDLE_TIMEOUT})",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+
+    explicit_host = hasattr(args, "host")
+    explicit_port = hasattr(args, "port")
+    if not explicit_host:
+        args.host = config.host
+    if not explicit_port:
+        args.port = config.port
+
+    return ParsedCliArgs(args=args, explicit_host=explicit_host, explicit_port=explicit_port)
+
+
+def main():
+    """Main entry point for the CLI."""
+    global _memory
+
+    # Load configuration from environment (for CLI args defaults)
+    config = _get_raw_config()
+
+    parsed_cli_args = _parse_cli_args(sys.argv[1:], config)
+    args = parsed_cli_args.args
 
     # Daemon mode handling.
     # is_daemon_child is True when we are the re-exec'd child spawned by
@@ -160,12 +212,14 @@ def main():
     is_daemon = args.daemon or is_daemon_child
 
     if is_daemon:
-        args.host, args.port = resolve_daemon_host_port(
+        resolved_daemon_host_port = resolve_daemon_host_port(
             args_host=args.host,
             args_port=args.port,
-            config_host=config.host,
-            config_port=config.port,
+            explicit_host=parsed_cli_args.explicit_host,
+            explicit_port=parsed_cli_args.explicit_port,
         )
+        args.host = resolved_daemon_host_port.host
+        args.port = resolved_daemon_host_port.port
 
         # Detach into background (parent re-execs and exits; child redirects
         # stdio to log file).  No lockfile needed — port binding prevents
@@ -239,8 +293,6 @@ def main():
     # When using workers or reload, we must use import string so each worker can import the app
     use_import_string = args.workers > 1 or args.reload
     # Check for uvloop/winloop availability
-    import sys
-
     loop_impl = "asyncio"
     if sys.platform == "win32":
         try:

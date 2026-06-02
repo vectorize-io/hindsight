@@ -1,0 +1,18 @@
+[project]
+name = "hindsight-gemini-spark"
+version = "0.1.0"
+description = "Hindsight integration for Gemini Spark — config examples and documentation"
+requires-python = ">=3.11"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hindsight_gemini_spark"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pyyaml>=6.0",
+]

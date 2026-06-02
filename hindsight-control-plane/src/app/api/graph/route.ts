@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(request: NextRequest) {
@@ -7,7 +8,13 @@ export async function GET(request: NextRequest) {
     const bankId = searchParams.get("bank_id") || searchParams.get("agent_id");
 
     if (!bankId) {
-      return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "bank_id is required",
+          errorKey: "api.errors.validation.bankIdRequired",
+        }),
+        { status: 400 }
+      );
     }
 
     // Build query params for the dataplane
@@ -39,6 +46,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(data, { status: 200 });
   } catch (error) {
     console.error("Error fetching graph data:", error);
-    return NextResponse.json({ error: "Failed to fetch graph data" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to fetch graph data",
+        errorKey: "api.errors.graph.fetch",
+      }),
+      { status: 500 }
+    );
   }
 }

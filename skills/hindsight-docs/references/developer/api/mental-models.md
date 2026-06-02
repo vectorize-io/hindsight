@@ -400,6 +400,48 @@ Refreshing is useful when:
 
 ---
 
+## Clear a Mental Model
+
+Clear a mental model's content so the next refresh performs a **full re-synthesis** from scratch, regardless of the model's trigger mode.
+
+This is useful for delta-mode models that have accumulated drift over many incremental refreshes. Over time, small inaccuracies can compound as each delta refresh only sees new facts since the last. Clearing and then refreshing produces a clean baseline from all facts.
+
+### Python
+
+```python
+# Section 'clear-mental-model' not found in api/mental-models.py
+```
+
+### Node.js
+
+```javascript
+// Clear a mental model's content, then refresh for a full re-synthesis
+await client.clearMentalModel(BANK_ID, mentalModelId);
+
+// Trigger a fresh full rebuild
+const fullRefreshResult = await client.refreshMentalModel(BANK_ID, mentalModelId);
+
+console.log(`Full refresh operation ID: ${fullRefreshResult.operation_id}`);
+```
+
+### CLI
+
+```bash
+# Section 'clear-mental-model' not found in api/mental-models.sh
+```
+
+### Go
+
+```go
+# Section 'clear-mental-model' not found in api/mental-models.go
+```
+
+The clear operation is synchronous and resets the content to an empty string. The model's configuration (name, source query, trigger settings) is preserved. Since the content is now empty, the next `/refresh` call will always perform a full regeneration — even if the model's trigger mode is set to `delta`.
+
+:::tip
+For long-lived delta-mode mental models, consider scheduling a periodic clear + refresh (e.g. every 48 hours) to keep the content accurate while still benefiting from incremental delta updates in between.
+---
+
 ## Update a Mental Model
 
 Update the mental model's name:

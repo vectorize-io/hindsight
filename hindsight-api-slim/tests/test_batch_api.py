@@ -4,7 +4,7 @@ Test OpenAI Batch API integration for retain fact extraction.
 Tests cover:
 - Normal batch API flow (submit, poll, complete)
 - Crash recovery (resume from existing batch_id)
-- Provider fallback (when batch API not supported)
+- Hard error when provider doesn't support the batch API (no silent fallback)
 - Worker recovery on restart
 """
 import pytest
@@ -332,20 +332,19 @@ async def test_batch_api_crash_recovery(mock_llm_config, test_contents, hindsigh
 
 
 @pytest.mark.asyncio
-async def test_batch_api_fallback_unsupported_provider(mock_llm_config, test_contents, hindsight_config):
-    """Test fallback to sync mode when provider doesn't support batch API."""
+async def test_batch_api_raises_for_unsupported_provider(mock_llm_config, test_contents, hindsight_config):
+    """Batch extraction must surface a hard error (not silently fall back) when
+    the configured provider doesn't support the batch API.
 
-    # Mock provider that doesn't support batch API
+    The silent-fallback behavior was removed in #1463 because it created a
+    mutual-recursion path between sync and batch extraction. Misconfiguration
+    should fail loudly and be caught at startup; this test guards that
+    contract.
+    """
     mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=False)
-    mock_llm_config.provider = "groq"  # Example of provider
+    mock_llm_config.provider = "groq"
 
-    # Patch the sync mode function to verify it's called
-    with patch(
-        "hindsight_api.engine.retain.fact_extraction.extract_facts_from_contents"
-    ) as mock_sync_extract:
-        mock_sync_extract.return_value = ([], [], MagicMock())
-
-        # Call batch API extraction (should fallback to sync)
+    with pytest.raises(RuntimeError, match="does not.*support the batch API"):
         await extract_facts_from_contents_batch_api(
             contents=test_contents,
             llm_config=mock_llm_config,
@@ -356,13 +355,7 @@ async def test_batch_api_fallback_unsupported_provider(mock_llm_config, test_con
             schema=None,
         )
 
-        # Verify fallback occurred
-        mock_sync_extract.assert_called_once()
-
-        # Verify batch API methods were NOT called
-        mock_llm_config._provider_impl.submit_batch.assert_not_called()
-
-        logger.info("✅ Fallback to sync mode test passed")
+    mock_llm_config._provider_impl.submit_batch.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -8,6 +8,17 @@ import PageHero from '@site/src/components/PageHero';
 
 [← Claude Code integration](/sdks/integrations/claude-code)
 
+## [0.7.0](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.7.0)
+
+**Improvements**
+
+- Claude Code integration now defaults recall types to observations to improve memory recall behavior out of the box.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/nicoloboschi.png?size=40" alt="@nicoloboschi" width="18" height="18" style={{borderRadius: "50%"}} />@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/4b19a0fb" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>4b19a0fb</a>
+
+**Bug Fixes**
+
+- Recall context now labels the “Current time” value as UTC to avoid timezone confusion.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/valda" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/valda.png?size=40" alt="@valda" width="18" height="18" style={{borderRadius: "50%"}} />@valda</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/3d6c2ba8" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>3d6c2ba8</a>
+- Windows MCP bootstrap is now idempotent, preventing failures when re-running the setup script.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/ottopichlhoefer" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/ottopichlhoefer.png?size=40" alt="@ottopichlhoefer" width="18" height="18" style={{borderRadius: "50%"}} />@ottopichlhoefer</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/80046797" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>80046797</a>
+
 ## [0.6.5](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.6.5)
 
 **Features**

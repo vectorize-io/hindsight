@@ -1,9 +1,12 @@
 """
 Unit tests for fact extraction retry logic.
 
-Tests the fix for the TypeError when LLM returns invalid JSON across all retries.
-Previously, `raise last_error` would raise None (TypeError) because last_error was
-only set in the BadRequestError handler, not when the LLM returned non-dict JSON.
+When the LLM returns non-dict JSON across all retries, extraction must raise a
+RuntimeError (issue #1833 — never silently return [] and let the retain commit
+the document with 0 facts). This also guards the original TypeError bug: the
+raise must be a real exception, not `raise None` ('exceptions must derive from
+BaseException'), which happened when last_error was only set in the
+BadRequestError handler and not for non-dict JSON responses.
 """
 
 from datetime import datetime, timezone
@@ -43,19 +46,17 @@ def _make_llm_config(mock_response):
 
 
 @pytest.mark.asyncio
-async def test_non_dict_json_all_retries_returns_empty():
+async def test_non_dict_json_all_retries_raises():
     """
-    When LLM returns non-dict JSON on every attempt, extraction should return []
-    without raising TypeError ('exceptions must derive from BaseException').
+    When LLM returns non-dict JSON on every attempt, extraction must RAISE after
+    exhausting retries — never silently return [] (which would let the retain
+    commit the document with 0 facts; see issue #1833).
 
-    This was the bug: the loop ran range(2) times (hardcoded), but comparisons
-    used config.llm_max_retries (default 10). On the last loop iteration (attempt=1),
-    `attempt < 10 - 1` was True, so the code called `continue`, the loop
-    exhausted, and `raise last_error` raised None → TypeError.
+    Regression guard for the original TypeError too: the raise must be a real
+    RuntimeError, not `raise None` ('exceptions must derive from BaseException').
     """
     from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
 
-    # llm_max_retries=3 ensures the bug triggers with the old code (3 != 2 hardcoded)
     config = _make_config(llm_max_retries=3, retain_llm_max_retries=None)
 
     # Mock: always returns a list (non-dict), which is invalid
@@ -65,26 +66,26 @@ async def test_non_dict_json_all_retries_returns_empty():
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
         return_value=("system prompt", MagicMock()),
     ):
-        facts, usage = await _extract_facts_from_chunk(
-            chunk="Alice visited Paris in 2023.",
-            chunk_index=0,
-            total_chunks=1,
-            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
-            context="travel notes",
-            llm_config=llm_config,
-            config=config,
-            agent_name="test-agent",
-        )
+        with pytest.raises(RuntimeError, match="non-dict JSON"):
+            await _extract_facts_from_chunk(
+                chunk="Alice visited Paris in 2023.",
+                chunk_index=0,
+                total_chunks=1,
+                event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                context="travel notes",
+                llm_config=llm_config,
+                config=config,
+                agent_name="test-agent",
+            )
 
-    assert facts == []
+    assert llm_config.call.call_count == 3
 
 
 @pytest.mark.asyncio
-async def test_non_dict_json_with_default_max_retries_returns_empty():
+async def test_non_dict_json_with_default_max_retries_raises():
     """
-    Same scenario with the default llm_max_retries=10 (matching real default config).
-    The old code ran range(2) but checked against 10, always continuing until
-    the loop exhausted, then raised None → TypeError.
+    Same scenario with the default llm_max_retries=10 (matching real default config):
+    must raise after exhausting all retries rather than returning [].
     """
     from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
 
@@ -95,18 +96,19 @@ async def test_non_dict_json_with_default_max_retries_returns_empty():
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
         return_value=("system prompt", MagicMock()),
     ):
-        facts, usage = await _extract_facts_from_chunk(
-            chunk="Some text.",
-            chunk_index=0,
-            total_chunks=1,
-            event_date=datetime(2023, 6, 1, tzinfo=timezone.utc),
-            context="",
-            llm_config=llm_config,
-            config=config,
-            agent_name="agent",
-        )
+        with pytest.raises(RuntimeError, match="non-dict JSON"):
+            await _extract_facts_from_chunk(
+                chunk="Some text.",
+                chunk_index=0,
+                total_chunks=1,
+                event_date=datetime(2023, 6, 1, tzinfo=timezone.utc),
+                context="",
+                llm_config=llm_config,
+                config=config,
+                agent_name="agent",
+            )
 
-    assert facts == []
+    assert llm_config.call.call_count == 10
 
 
 @pytest.mark.asyncio
@@ -125,18 +127,18 @@ async def test_retain_llm_max_retries_overrides_global():
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
         return_value=("system prompt", MagicMock()),
     ):
-        facts, usage = await _extract_facts_from_chunk(
-            chunk="Bob likes Python.",
-            chunk_index=0,
-            total_chunks=1,
-            event_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            context="",
-            llm_config=llm_config,
-            config=config,
-            agent_name="agent",
-        )
+        with pytest.raises(RuntimeError, match="non-dict JSON"):
+            await _extract_facts_from_chunk(
+                chunk="Bob likes Python.",
+                chunk_index=0,
+                total_chunks=1,
+                event_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                context="",
+                llm_config=llm_config,
+                config=config,
+                agent_name="agent",
+            )
 
-    assert facts == []
     # Verify it retried exactly retain_llm_max_retries times
     assert llm_config.call.call_count == 5
 
@@ -184,16 +186,18 @@ async def test_none_event_date_with_valid_facts_no_crash():
 
     config = _make_config(llm_max_retries=1)
 
-    llm_config = _make_llm_config(mock_response={
-        "facts": [
-            {
-                "what": "Alice visited Paris",
-                "when": "2023",
-                "who": "Alice",
-                "why": "vacation",
-            }
-        ]
-    })
+    llm_config = _make_llm_config(
+        mock_response={
+            "facts": [
+                {
+                    "what": "Alice visited Paris",
+                    "when": "2023",
+                    "who": "Alice",
+                    "why": "vacation",
+                }
+            ]
+        }
+    )
 
     with patch(
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",

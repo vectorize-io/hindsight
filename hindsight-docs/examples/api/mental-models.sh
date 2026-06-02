@@ -65,6 +65,14 @@ if [ -n "$MENTAL_MODEL_ID" ]; then
   hindsight mental-model refresh "$BANK_ID" "$MENTAL_MODEL_ID"
   # [/docs:refresh-mental-model]
 
+  # [docs:clear-mental-model]
+  # Clear a mental model's content, then refresh for a full re-synthesis
+  curl -s -X POST "${HINDSIGHT_URL}/v1/default/banks/${BANK_ID}/mental-models/${MENTAL_MODEL_ID}/clear"
+
+  # Trigger a fresh full rebuild
+  hindsight mental-model refresh "$BANK_ID" "$MENTAL_MODEL_ID"
+  # [/docs:clear-mental-model]
+
   # [docs:update-mental-model]
   # Update a mental model's metadata
   hindsight mental-model update "$BANK_ID" "$MENTAL_MODEL_ID" \

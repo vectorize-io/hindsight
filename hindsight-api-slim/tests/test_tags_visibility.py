@@ -1596,3 +1596,131 @@ async def test_list_tags_endpoint_with_source_mental_models(memory, request_cont
         default_response = await client.get(f"/v1/default/banks/{bank_id}/tags")
         assert default_response.status_code == 200, default_response.text
         assert default_response.json()["items"] == []
+
+
+# ============================================================================
+# Regression: reflect must forward tag_groups to internal recall tool calls
+# (issue #1820)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_reflect_with_tag_groups_propagates_to_internal_recall(memory, request_context):
+    """Regression for issue #1820.
+
+    When /reflect is called with tag_groups, the agent's internal recall and
+    search_observations tool calls must forward the tag_groups filter, so the
+    LLM only ever sees tag-scoped data. Without this, mental models can be
+    refreshed (and reflect answers can be synthesized) from untagged stale
+    facts even though the request was scoped via tag_groups.
+    """
+    from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult
+
+    bank_id = f"reflect_tg_{datetime.now().timestamp()}"
+
+    # Seed the bank with one tagged memory and one untagged memory.
+    await memory.retain_batch_async(
+        bank_id=bank_id,
+        contents=[
+            {
+                "content": "The user has a Framework desktop with AMD Strix Halo APU and 128GB VRAM.",
+                "tags": ["hardware", "infrastructure"],
+            },
+            {
+                "content": "The user mentioned owning a MacBook Pro 2022.",
+            },
+        ],
+        request_context=request_context,
+    )
+
+    # Spy on recall_async to capture the kwargs of every internal invocation
+    # (the agent's recall and search_observations tools both reach recall_async
+    # with request_context.internal=True via the closures in reflect_async).
+    original_recall = memory.recall_async
+    internal_calls: list[dict] = []
+
+    async def spy_recall(*args, **kwargs):
+        ctx = kwargs.get("request_context")
+        if ctx is not None and getattr(ctx, "internal", False):
+            internal_calls.append(
+                {
+                    "tag_groups": kwargs.get("tag_groups"),
+                    "fact_type": kwargs.get("fact_type"),
+                }
+            )
+        return await original_recall(*args, **kwargs)
+
+    memory.recall_async = spy_recall
+
+    # Drive the reflect agent deterministically:
+    #   call 1 -> recall, call 2 -> search_observations, call 3 -> done.
+    mock_llm = memory._reflect_llm_config._provider_impl
+    counter = {"n": 0}
+
+    def reflect_callback(messages, scope):
+        counter["n"] += 1
+        n = counter["n"]
+        if n == 1:
+            return LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="r1", name="recall", arguments={"query": "hardware"})],
+                finish_reason="tool_calls",
+            )
+        if n == 2:
+            return LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="s1", name="search_observations", arguments={"query": "hardware"})
+                ],
+                finish_reason="tool_calls",
+            )
+        return LLMToolCallResult(
+            tool_calls=[LLMToolCall(id="d1", name="done", arguments={"answer": "stub"})],
+            finish_reason="tool_calls",
+        )
+
+    mock_llm.set_response_callback(reflect_callback)
+
+    tag_groups = [
+        TagGroupOr(
+            filters=[
+                TagGroupLeaf(tags=["hardware"]),
+                TagGroupLeaf(tags=["infrastructure"]),
+            ]
+        )
+    ]
+
+    await memory.reflect_async(
+        bank_id=bank_id,
+        query="What hardware does the user own?",
+        tag_groups=tag_groups,
+        request_context=request_context,
+    )
+
+    # Both internal recall calls (the recall tool and the search_observations
+    # tool that internally calls recall_async with fact_type=["observation"])
+    # must receive the same tag_groups list as the /reflect request did.
+    assert len(internal_calls) >= 2, (
+        f"Expected at least 2 internal recall_async calls (recall tool + search_observations tool); "
+        f"got {len(internal_calls)}: {internal_calls}"
+    )
+    for call in internal_calls:
+        assert call["tag_groups"] == tag_groups, (
+            f"Internal recall_async lost tag_groups; got {call!r}"
+        )
+
+    # End-to-end: the tool result messages the LLM saw must reference only the
+    # tagged ("Strix Halo") memory, never the untagged ("MacBook Pro") one.
+    # This catches any future regression where tag_groups is silently ignored
+    # at the SQL layer even though kwargs propagation looks correct.
+    tool_messages = [
+        msg
+        for call in mock_llm.get_mock_calls()
+        for msg in call["messages"]
+        if msg.get("role") == "tool"
+    ]
+    tool_payload = "\n".join(msg.get("content", "") for msg in tool_messages)
+    assert "Strix Halo" in tool_payload, (
+        f"Tagged 'Strix Halo' memory must appear in the agent's tool results; got: {tool_payload[:1000]!r}"
+    )
+    assert "MacBook" not in tool_payload, (
+        f"Untagged 'MacBook' memory must NOT appear in the agent's tool results; got: {tool_payload[:1000]!r}"
+    )

@@ -166,7 +166,14 @@ If any new MCP tools were added or existing tools renamed in `hindsight-api-slim
 - **`MCP_TOOL_GROUPS`** in `hindsight-control-plane/src/components/bank-config-view.tsx` — must include the new tool in the appropriate group for the UI tool selector
 - **Tool count assertions** in tests (e.g., `test_mcp_tools.py`) — must be updated to reflect the new count
 
-### 11. Review against other coding standards
+### 11. Check backup/restore table coverage
+
+If a migration adds a new PostgreSQL table (look for `CREATE TABLE` / `op.create_table` in `hindsight-api-slim/hindsight_api/alembic/versions/`):
+- **`BACKUP_TABLES`** in `hindsight-api-slim/hindsight_api/admin/cli.py` — must include the new table, placed after any table it references via foreign key (parents before children). A missing entry is silent data loss: the table is never backed up, and restore's `TRUNCATE banks CASCADE` wipes any FK-to-banks child (e.g. `mental_models`, `directives`) on restore even though it was never saved.
+- The guard test `test_backup_tables_covers_entire_schema` in `tests/test_admin_backup_restore.py` enforces this — flag it as a **must fix** if a new table is absent from `BACKUP_TABLES`.
+- Oracle-only tables (e.g. `observation_sources`) are intentionally excluded — admin backup/restore is PostgreSQL-only.
+
+### 12. Review against other coding standards
 
 Check the diff for violations of the standards listed above:
 - Python files at project root (not allowed)
@@ -178,7 +185,7 @@ Check the diff for violations of the standards listed above:
 - Premature abstractions or speculative helpers
 - Backwards-compatibility hacks (unused vars, re-exports, "removed" comments)
 
-### 12. Report findings
+### 13. Report findings
 
 Present a clear summary organized by severity:
 
@@ -190,6 +197,7 @@ Present a clear summary organized by severity:
 - Multi-item tuple returns (including internal code)
 - Missing tests for new endpoints
 - New integration missing tests, CI job, or release-integration.sh entry
+- New PostgreSQL table missing from `BACKUP_TABLES` in `admin/cli.py` (silent data loss on restore)
 
 **Should fix** — issues that hurt code quality:
 - Dead code / unused imports missed by linter

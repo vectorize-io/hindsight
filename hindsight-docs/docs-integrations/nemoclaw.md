@@ -14,15 +14,16 @@ NemoClaw runs [OpenClaw](https://openclaw.ai) inside an OpenShell sandbox with c
 
 ## Quick Start
 
+:::tip Hindsight Cloud (recommended)
+[Sign up free](https://ui.hindsight.vectorize.io/signup) — get an API key instantly, no infrastructure to run.
+:::
+
 ```bash
 npx @vectorize-io/hindsight-nemoclaw setup \
   --sandbox my-assistant \
-  --api-url https://api.hindsight.vectorize.io \
   --api-token <your-api-key> \
   --bank-prefix my-sandbox
 ```
-
-Get an API key at [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup).
 
 You'll see output like:
 
@@ -79,8 +80,8 @@ hindsight-nemoclaw setup [options]
 
 Options:
   --sandbox <name>       NemoClaw sandbox name (required)
-  --api-url <url>        Hindsight API URL (required)
   --api-token <token>    Hindsight API token (required)
+  --api-url <url>        Hindsight API URL (default: https://api.hindsight.vectorize.io)
   --bank-prefix <prefix> Memory bank prefix (default: "nemoclaw")
   --skip-policy          Skip sandbox network policy update
   --skip-plugin-install  Skip openclaw plugin installation

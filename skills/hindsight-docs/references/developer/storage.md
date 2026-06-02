@@ -55,7 +55,7 @@ pg0 is a single binary containing:
 
 ### Behavior
 
-When no `DATABASE_URL` is configured, Hindsight:
+When no `HINDSIGHT_API_DATABASE_URL` is configured, Hindsight:
 1. Starts an embedded PostgreSQL instance on port 5555
 2. Initializes the schema
 3. Stores data in `~/.hindsight/pg0/`
@@ -65,7 +65,7 @@ When no `DATABASE_URL` is configured, Hindsight:
 | Environment | Database | Configuration |
 |-------------|----------|---------------|
 | Development | pg0 (embedded) | Automatic |
-| Production | PostgreSQL 15+ | `DATABASE_URL` environment variable |
+| Production | PostgreSQL 15+ | `HINDSIGHT_API_DATABASE_URL` environment variable |
 
 ## Requirements
 

@@ -7,7 +7,7 @@ This provider handles all OpenAI API-compatible models including:
 - Groq: Fast inference with seed control and service tiers
 - Ollama: Local models with native streaming API support
 - LMStudio: Local models with OpenAI-compatible API
-- MiniMax: MiniMax-M2.7 models with 1M context window
+- MiniMax: MiniMax-M3 / MiniMax-M2.7 models with 1M context window
 - DeepSeek: deepseek-v4-flash / deepseek-v4-pro / deepseek-chat / deepseek-reasoner via api.deepseek.com
 - Opencode Go: deepseek-v4-flash via https://opencode.ai/zen/go/v1
 
@@ -232,7 +232,7 @@ class OpenAICompatibleLLM(LLMInterface):
     - Groq: Fast inference with seed control and service tiers
     - Ollama: Local models with native streaming API for better structured output
     - LMStudio: Local models with OpenAI-compatible API
-    - MiniMax: MiniMax-M2.7 models via OpenAI-compatible API (https://api.minimax.io/v1)
+    - MiniMax: MiniMax-M3 / MiniMax-M2.7 models via OpenAI-compatible API (https://api.minimax.io/v1)
     - DeepSeek: deepseek-v4-flash / deepseek-v4-pro / deepseek-chat / deepseek-reasoner via https://api.deepseek.com
     - opencode-go: deepseek-v4-flash via https://opencode.ai/zen/go/v1
     """
@@ -270,6 +270,7 @@ class OpenAICompatibleLLM(LLMInterface):
             "openai",
             "groq",
             "ollama",
+            "ollama-cloud",
             "lmstudio",
             "llamacpp",
             "minimax",
@@ -278,6 +279,7 @@ class OpenAICompatibleLLM(LLMInterface):
             "openrouter",
             "zai",
             "opencode-go",
+            "fireworks",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"OpenAICompatibleLLM only supports: {', '.join(valid_providers)}. Got: {self.provider}")
@@ -288,6 +290,8 @@ class OpenAICompatibleLLM(LLMInterface):
                 self.base_url = "https://api.groq.com/openai/v1"
             elif self.provider == "ollama":
                 self.base_url = "http://localhost:11434/v1"
+            elif self.provider == "ollama-cloud":
+                self.base_url = "https://ollama.com/v1"
             elif self.provider == "lmstudio":
                 self.base_url = "http://localhost:1234/v1"
             elif self.provider == "minimax":
@@ -300,21 +304,30 @@ class OpenAICompatibleLLM(LLMInterface):
                 self.base_url = "https://api.z.ai/api/coding/paas/v4"
             elif self.provider == "opencode-go":
                 self.base_url = "https://opencode.ai/zen/go/v1"
+            elif self.provider == "fireworks":
+                # OpenAI-compatible inference host (online path). The batch API
+                # lives on a separate control-plane host — see FireworksLLM.
+                self.base_url = "https://api.fireworks.ai/inference/v1"
 
         # For ollama/lmstudio, use dummy key if not provided
         if self.provider in ("ollama", "lmstudio") and not self.api_key:
             self.api_key = "local"
 
         # Validate API key for cloud providers
-        if self.provider in (
-            "openai",
-            "groq",
-            "minimax",
-            "deepseek",
-            "openrouter",
-            "zai",
-            "opencode-go",
-        ) and not self.api_key:
+        if (
+            self.provider
+            in (
+                "openai",
+                "groq",
+                "minimax",
+                "deepseek",
+                "openrouter",
+                "zai",
+                "opencode-go",
+                "ollama-cloud",
+            )
+            and not self.api_key
+        ):
             raise ValueError(f"API key is required for {self.provider}")
 
         # Service tier configuration (from config, not env vars)
@@ -1069,12 +1082,17 @@ class OpenAICompatibleLLM(LLMInterface):
 
         last_exception = None
 
+        # Pass API key as Bearer token for cloud Ollama endpoints
+        headers: dict[str, str] = {}
+        if self.api_key and self.api_key != "local":
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
         async with httpx.AsyncClient(timeout=300.0) as client:
             for attempt in range(max_retries + 1):
                 if attempt > 0:
                     set_stage(f"llm.ollama_native.{scope}.attempt={attempt + 1}/{max_retries + 1}")
                 try:
-                    response = await client.post(native_url, json=payload)
+                    response = await client.post(native_url, json=payload, headers=headers)
                     response.raise_for_status()
 
                     result = response.json()

@@ -96,21 +96,21 @@ class TestEmbeddingsBatchLengthGuarantee:
         # through — `zip(extracted_facts, embeddings)` would otherwise drop
         # facts and break unit_id alignment downstream.
         backend = MagicMock()
-        backend.encode.return_value = [[0.1, 0.2]]  # only 1 vector for 3 inputs
+        backend.encode_documents.return_value = [[0.1, 0.2]]  # only 1 vector for 3 inputs
 
         with pytest.raises(RuntimeError, match="returned 1 vectors for 3 input texts"):
             asyncio.run(embedding_utils.generate_embeddings_batch(backend, ["a", "b", "c"]))
 
     def test_raises_when_backend_returns_more_embeddings(self):
         backend = MagicMock()
-        backend.encode.return_value = [[0.1], [0.2], [0.3]]
+        backend.encode_documents.return_value = [[0.1], [0.2], [0.3]]
 
         with pytest.raises(RuntimeError, match="returned 3 vectors for 2 input texts"):
             asyncio.run(embedding_utils.generate_embeddings_batch(backend, ["a", "b"]))
 
     def test_passes_through_aligned_embeddings(self):
         backend = MagicMock()
-        backend.encode.return_value = [[0.1], [0.2]]
+        backend.encode_documents.return_value = [[0.1], [0.2]]
 
         result = asyncio.run(embedding_utils.generate_embeddings_batch(backend, ["a", "b"]))
 

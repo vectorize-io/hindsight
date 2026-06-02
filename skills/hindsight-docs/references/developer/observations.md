@@ -46,6 +46,34 @@ After `retain()` completes, the consolidation engine runs automatically:
 3. **Observation creation/update** — New observations are created or existing ones refined
 4. **Evidence tracking** — Each observation maintains references to supporting facts
 
+### Disabling Auto-Consolidation
+
+Set `HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION=false` (or configure per-bank via the [bank config API](api/memory-banks.md#observations-configuration)) to prevent consolidation from running automatically after retain, delete, and update operations. When disabled, consolidation only runs when you explicitly call the [consolidate endpoint](#trigger-consolidation).
+
+This is useful when you want full control over consolidation timing — for example, batching many retains before consolidating, or running consolidation only for specific scopes.
+
+### Targeted Consolidation
+
+By default, consolidation processes **all** unconsolidated memories in a bank. You can scope it to specific tag sets using the `observation_scopes` parameter on the consolidate endpoint:
+
+```python
+# Consolidate only memories tagged with user:alice
+client.consolidate(
+    bank_id="my-bank",
+    observation_scopes=[["user:alice"]]
+)
+
+# Consolidate memories for alice OR the engineering team
+client.consolidate(
+    bank_id="my-bank",
+    observation_scopes=[["user:alice"], ["team:engineering"]]
+)
+```
+
+Each scope is a list of tags. A memory matches a scope if its tags **contain all** tags in that scope. For example, scope `["user:alice"]` matches memories tagged `["user:alice", "team:eng"]`.
+
+When `observation_scopes` is omitted, all unconsolidated memories are processed (backward compatible).
+
 ### Evidence-Based Evolution
 
 Observations evolve as new evidence arrives:
@@ -210,9 +238,28 @@ This resets the consolidation state for all source memories in the bank, so the 
 
 ---
 
+## Trigger Consolidation {#trigger-consolidation}
+
+Use the consolidate endpoint to manually trigger consolidation:
+
+```http
+POST /v1/default/banks/{bank_id}/consolidate
+Content-Type: application/json
+
+{
+  "observation_scopes": [["user:alice"], ["team:engineering"]]
+}
+```
+
+The request body is optional. When omitted (or sent as an empty body), all unconsolidated memories in the bank are processed.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `observation_scopes` | `list[list[str]]` \| `null` | Optional list of tag scopes. Only memories whose tags contain all tags in at least one scope are processed. Omit for a full-bank sweep. |
+
 ## Configuration
 
-Observation consolidation runs automatically. You can monitor consolidation via the [Operations API](./api/operations).
+Observation consolidation runs automatically by default. You can disable auto-consolidation with [`HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION`](configuration.md#observations) and trigger it on-demand via the [consolidate endpoint](#trigger-consolidation). Monitor consolidation progress via the [Operations API](./api/operations).
 
 ---
 

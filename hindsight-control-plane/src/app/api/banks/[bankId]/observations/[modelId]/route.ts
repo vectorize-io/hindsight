@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(
@@ -9,7 +10,13 @@ export async function GET(
     const { bankId, modelId } = await params;
 
     if (!bankId || !modelId) {
-      return NextResponse.json({ error: "bank_id and model_id are required" }, { status: 400 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "bank_id and model_id are required",
+          errorKey: "api.errors.validation.bankAndModelIdRequired",
+        }),
+        { status: 400 }
+      );
     }
 
     const response = await fetch(
@@ -20,13 +27,25 @@ export async function GET(
     if (!response.ok) {
       const errorText = await response.text();
       console.error("API error getting observation:", errorText);
-      return NextResponse.json({ error: "Failed to get observation" }, { status: response.status });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "Failed to get observation",
+          errorKey: "api.errors.observations.fetch",
+        }),
+        { status: response.status }
+      );
     }
 
     const data = await response.json();
     return NextResponse.json(data, { status: 200 });
   } catch (error) {
-    console.error("Error getting mental model:", error);
-    return NextResponse.json({ error: "Failed to get mental model" }, { status: 500 });
+    console.error("Error getting observation:", error);
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to get observation",
+        errorKey: "api.errors.observations.fetch",
+      }),
+      { status: 500 }
+    );
   }
 }

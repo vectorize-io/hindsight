@@ -888,13 +888,16 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     extract_causal_links = config.retain_extract_causal_links
 
     # Build retain_mission section if set - injected before the mode-specific guidelines
+    # Escape braces so user-supplied text survives str.format() on the prompt template.
+    from hindsight_api.engine.prompt_utils import escape_for_prompt
+
     retain_mission = getattr(config, "retain_mission", None)
     if retain_mission:
         retain_mission_section = (
             f"══════════════════════════════════════════════════════════════════════════\n"
             f"FOCUS — What to retain for this bank\n"
             f"══════════════════════════════════════════════════════════════════════════\n\n"
-            f"{retain_mission}\n\n"
+            f"{escape_for_prompt(retain_mission)}\n\n"
         )
     else:
         retain_mission_section = ""
@@ -910,7 +913,7 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
             base_prompt = CUSTOM_FACT_EXTRACTION_PROMPT
             prompt = base_prompt.format(
                 retain_mission_section=retain_mission_section,
-                custom_instructions=config.retain_custom_instructions,
+                custom_instructions=escape_for_prompt(config.retain_custom_instructions),
             )
     elif extraction_mode == "verbose":
         prompt = VERBOSE_FACT_EXTRACTION_PROMPT.format(
@@ -946,6 +949,16 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     labels_section = _build_labels_prompt_section(labels_cfg, free_form_entities)
     if labels_section:
         prompt = prompt + labels_section
+
+    # Force the LLM to emit fact text in the configured language, regardless of
+    # the source content's language. Same directive is applied to consolidation
+    # and reflect so HINDSIGHT_API_LLM_OUTPUT_LANGUAGE has a uniform effect
+    # across the pipeline. This is independent of the BM25 indexing language
+    # (HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE) by design — search
+    # tokenization and LLM output language are separate concerns.
+    from ..prompt_utils import output_language_directive
+
+    prompt = prompt + output_language_directive(getattr(config, "llm_output_language", None))
 
     response_schema = base_response_class
 
@@ -1129,11 +1142,14 @@ async def _extract_facts_from_chunk(
                     )
                     continue
                 else:
-                    logger.warning(
-                        f"LLM returned non-dict JSON after {llm_max_retries} attempts: {type(extraction_response_json).__name__}. "
-                        f"Raw: {str(extraction_response_json)[:500]}"
+                    # A non-dict response is malformed (the schema is {"facts": [...]}).
+                    # Raise instead of returning [] so the failure propagates to the
+                    # worker's retry machinery and ultimately fails loudly — never
+                    # silently commit the document with 0 facts. See issue #1833.
+                    raise RuntimeError(
+                        f"Fact extraction failed: LLM returned non-dict JSON after {llm_max_retries} attempts "
+                        f"({type(extraction_response_json).__name__}). Raw: {str(extraction_response_json)[:500]}"
                     )
-                    return [], usage
 
             raw_facts = extraction_response_json.get("facts", [])
 
@@ -1662,8 +1678,11 @@ async def extract_facts_from_contents_batch_api(
 
     # Check if provider supports batch API
     if not await llm_config._provider_impl.supports_batch_api():
-        logger.warning(f"Batch API not supported for provider {llm_config.provider}, falling back to sync mode")
-        return await extract_facts_from_contents(contents, llm_config, agent_name, config, pool, operation_id, schema)
+        raise RuntimeError(
+            f"retain_batch_enabled=True but provider '{llm_config.provider}' does not "
+            f"support the batch API. This should have been caught at startup — check "
+            f"HINDSIGHT_API_RETAIN_BATCH_ENABLED and your LLM provider configuration."
+        )
 
     # Check if we're resuming an existing batch (crash recovery)
     batch_id = None
@@ -2195,7 +2214,9 @@ async def extract_facts_from_contents(
         fact_extraction_tasks.append(task)
 
     # Step 2: Wait for all fact extractions to complete.
-    # Use return_exceptions=True so one content item failure doesn't discard the rest.
+    # return_exceptions=True so a failing item doesn't cancel its still-running
+    # siblings (which would leave orphaned LLM calls / partial work); we await
+    # them all, then propagate.
     all_fact_results = await asyncio.gather(*fact_extraction_tasks, return_exceptions=True)
 
     # Step 3: Flatten and convert to typed objects
@@ -2206,14 +2227,18 @@ async def extract_facts_from_contents(
     global_chunk_idx = 0
     global_fact_idx = 0
 
-    # Filter out failed content items
+    # Never silently drop a document's memory. Any extraction failure (provider
+    # rate-limit / timeout / 5xx, malformed response, token-limit, etc.)
+    # propagates so the streaming producer surfaces it and the worker's
+    # RetryTaskAt machinery retries the task — and ultimately fails it *loudly*
+    # if the problem persists. Swallowing the error and substituting an empty
+    # result here used to commit the document with 0 facts and mark the
+    # operation `completed`, losing the memory with no signal. See issue #1833.
     valid_results = []
     for content, result in zip(contents, all_fact_results):
         if isinstance(result, Exception):
-            logger.warning(f"Content extraction failed (skipping): {type(result).__name__}: {result}")
-            valid_results.append((content, ([], [], TokenUsage())))
-        else:
-            valid_results.append((content, result))
+            raise result
+        valid_results.append((content, result))
 
     for content_index, (content, (facts_from_llm, chunks_from_llm, content_usage)) in enumerate(valid_results):
         total_usage = total_usage + content_usage

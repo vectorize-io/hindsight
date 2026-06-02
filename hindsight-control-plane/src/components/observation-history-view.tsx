@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -63,9 +64,11 @@ function diffWords(a: string, b: string): { type: "same" | "removed" | "added"; 
 }
 
 function TextDiff({ before, after }: { before: string; after: string }) {
+  const t = useTranslations("observationHistory");
   const parts = diffWords(before, after);
   const hasChanges = parts.some((p) => p.type !== "same");
-  if (!hasChanges) return <span className="text-sm text-muted-foreground italic">unchanged</span>;
+  if (!hasChanges)
+    return <span className="text-sm text-muted-foreground italic">{t("unchanged")}</span>;
   return (
     <span className="text-sm leading-relaxed">
       {parts.map((part, idx) =>
@@ -92,11 +95,12 @@ function TextDiff({ before, after }: { before: string; after: string }) {
 }
 
 function TagsDiff({ before, after }: { before: string[]; after: string[] }) {
+  const tr = useTranslations("observationHistory");
   const removed = before.filter((t) => !after.includes(t));
   const added = after.filter((t) => !before.includes(t));
   const kept = before.filter((t) => after.includes(t));
   if (removed.length === 0 && added.length === 0)
-    return <span className="text-sm text-muted-foreground italic">unchanged</span>;
+    return <span className="text-sm text-muted-foreground italic">{tr("unchanged")}</span>;
   return (
     <div className="flex gap-1 flex-wrap">
       {kept.map((t, idx) => (
@@ -159,6 +163,7 @@ function DateDiff({
 }
 
 function SourceFactItem({ fact }: { fact: NonNullable<HistoryEntry["source_facts"]>[number] }) {
+  const t = useTranslations("observationHistory");
   const typeColors =
     fact.type === "experience"
       ? "bg-green-500/10 text-green-700 dark:text-green-400"
@@ -180,7 +185,7 @@ function SourceFactItem({ fact }: { fact: NonNullable<HistoryEntry["source_facts
         )}
         {fact.is_new && (
           <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-green-500/15 text-green-700 dark:text-green-400 border border-green-500/30">
-            new
+            {t("new")}
           </span>
         )}
         {fact.context && (
@@ -190,7 +195,7 @@ function SourceFactItem({ fact }: { fact: NonNullable<HistoryEntry["source_facts
       {fact.text ? (
         <p className="text-xs text-foreground leading-relaxed">{fact.text}</p>
       ) : (
-        <p className="text-xs text-muted-foreground italic">(memory no longer available)</p>
+        <p className="text-xs text-muted-foreground italic">{t("memoryNoLongerAvailable")}</p>
       )}
     </div>
   );
@@ -203,6 +208,7 @@ export function ObservationHistoryView({
   history: HistoryEntry[];
   current: CurrentState;
 }) {
+  const t = useTranslations("observationHistory");
   // index 0 = most recent change
   const entries = [...history].reverse();
   const [idx, setIdx] = useState(0);
@@ -222,8 +228,8 @@ export function ObservationHistoryView({
       {/* Navigation header */}
       <div className="flex items-center justify-between">
         <span className="text-xs text-muted-foreground">
-          Change <span className="font-semibold text-foreground">{history.length - idx}</span> of{" "}
-          {history.length} &middot; {new Date(entry.changed_at).toLocaleString()}
+          {t("changeOf", { current: history.length - idx, total: history.length })} &middot;{" "}
+          {new Date(entry.changed_at).toLocaleString()}
         </span>
         <div className="flex items-center gap-1">
           <Button
@@ -250,29 +256,35 @@ export function ObservationHistoryView({
       {/* Change card */}
       <div className="border border-border rounded-lg p-3 space-y-3">
         <div>
-          <div className="text-xs font-bold text-muted-foreground uppercase mb-1">Text</div>
+          <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
+            {t("sectionText")}
+          </div>
           <TextDiff before={entry.previous_text} after={afterText} />
         </div>
 
         <div>
-          <div className="text-xs font-bold text-muted-foreground uppercase mb-1">Tags</div>
+          <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
+            {t("sectionTags")}
+          </div>
           <TagsDiff before={entry.previous_tags} after={afterTags} />
         </div>
 
         <div className="space-y-1">
-          <div className="text-xs font-bold text-muted-foreground uppercase mb-1">Dates</div>
+          <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
+            {t("sectionDates")}
+          </div>
           <DateDiff
-            label="Occurred start"
+            label={t("occurredStart")}
             before={entry.previous_occurred_start}
             after={afterOccurredStart}
           />
           <DateDiff
-            label="Occurred end"
+            label={t("occurredEnd")}
             before={entry.previous_occurred_end}
             after={afterOccurredEnd}
           />
           <DateDiff
-            label="Mentioned at"
+            label={t("mentionedAt")}
             before={entry.previous_mentioned_at}
             after={afterMentionedAt}
           />
@@ -281,7 +293,7 @@ export function ObservationHistoryView({
         {entry.source_facts && entry.source_facts.length > 0 && (
           <div>
             <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-              Source Facts ({entry.source_facts.length})
+              {t("sourceFacts", { count: entry.source_facts.length })}
             </div>
             <div className="space-y-1.5">
               {entry.source_facts.map((fact) => (

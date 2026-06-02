@@ -509,11 +509,16 @@ class TestComputeSemanticLinksAnnPgBouncerSafety:
         )
 
     @pytest.mark.asyncio
-    async def test_uses_set_local_for_ef_search(self, mock_conn):
-        """hnsw.ef_search must be set with SET LOCAL so the change is scoped
-        to the transaction. Without SET LOCAL, the setting would leak onto
-        the pooled backend and affect subsequent recall queries that land
-        on the same backend."""
+    @pytest.mark.parametrize(
+        ("ext", "guc"),
+        [("pgvector", "hnsw.ef_search"), ("vchord", "vchordrq.probes")],
+    )
+    async def test_uses_set_local_for_ann_tuning(self, mock_conn, monkeypatch, ext, guc):
+        """The per-backend ANN tuning GUC must be set with SET LOCAL so the
+        change is scoped to the transaction. Without SET LOCAL, the setting
+        would leak onto the pooled backend and affect subsequent recall
+        queries that land on the same backend."""
+        monkeypatch.setenv("HINDSIGHT_API_VECTOR_EXTENSION", ext)
         emb = [0.1] * 384
         await compute_semantic_links_ann(
             conn=mock_conn,
@@ -524,11 +529,11 @@ class TestComputeSemanticLinksAnnPgBouncerSafety:
         )
 
         executed_sql = [call.args[0] for call in mock_conn.execute.call_args_list]
-        ef_statements = [s for s in executed_sql if "hnsw.ef_search" in s]
-        assert ef_statements, "ef_search must be tuned down for retain ANN"
-        for stmt in ef_statements:
+        tuning_statements = [s for s in executed_sql if guc in s]
+        assert tuning_statements, f"{guc} must be tuned for retain ANN under ext={ext}"
+        for stmt in tuning_statements:
             assert stmt.strip().startswith("SET LOCAL"), (
-                f"hnsw.ef_search must use SET LOCAL, got: {stmt}"
+                f"{guc} must use SET LOCAL, got: {stmt}"
             )
         # And there must not be a RESET — SET LOCAL handles it at commit.
-        assert not any("RESET hnsw.ef_search" in s for s in executed_sql)
+        assert not any(f"RESET {guc}" in s for s in executed_sql)

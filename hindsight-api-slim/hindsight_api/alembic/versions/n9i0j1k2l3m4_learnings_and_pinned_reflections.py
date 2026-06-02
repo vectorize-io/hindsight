@@ -16,6 +16,11 @@ from collections.abc import Sequence
 from alembic import context, op
 from sqlalchemy import text
 
+from hindsight_api._pg_search import (
+    PG_SEARCH_TOKENIZER_ENV,
+    normalize_pg_search_tokenizer,
+    pg_search_bm25_columns,
+)
 from hindsight_api.alembic._dialect import run_for_dialect
 
 # revision identifiers, used by Alembic.
@@ -87,7 +92,7 @@ def _vector_index_using_clause(ext: str) -> str:
     if ext == "pg_diskann":
         return "USING diskann (embedding vector_cosine_ops) WITH (max_neighbors = 50)"
     if ext == "vchord":
-        return "USING vchordrq (embedding vector_l2_ops)"
+        return "USING vchordrq (embedding vector_cosine_ops)"
     if ext == "scann":
         return "USING scann (embedding cosine) WITH (mode = 'AUTO')"
     return "USING hnsw (embedding vector_cosine_ops)"
@@ -95,9 +100,15 @@ def _vector_index_using_clause(ext: str) -> str:
 
 def _detect_text_search_extension() -> str:
     """
-    Detect or validate text search extension: 'native', 'vchord', or 'pg_textsearch'.
-    Respects HINDSIGHT_API_TEXT_SEARCH_EXTENSION env var.
+    Detect or validate text search extension: 'native', 'vchord', 'pg_textsearch',
+    'pgroonga', or 'pg_search'. Respects HINDSIGHT_API_TEXT_SEARCH_EXTENSION env var.
     Creates the extension if needed.
+
+    pgroonga is treated as native here so this migration still creates valid
+    tsvector columns; ensure_text_search_extension() at startup converts the
+    reflections table (renamed from pinned_reflections in p1k2l3m4n5o6) to
+    pgroonga structures. The learnings table is dropped in p1k2l3m4n5o6 so its
+    transient native-style column never reaches steady state.
     """
     text_search_extension = os.getenv("HINDSIGHT_API_TEXT_SEARCH_EXTENSION", "native").lower()
 
@@ -125,12 +136,31 @@ def _detect_text_search_extension() -> str:
                 # Extension truly doesn't exist - re-raise the error
                 raise
         return "pg_textsearch"
+    elif text_search_extension == "pg_search":
+        # ParadeDB pg_search — true BM25 over base columns, Citus-compatible.
+        try:
+            op.execute("CREATE EXTENSION IF NOT EXISTS pg_search CASCADE")
+        except Exception:
+            conn = op.get_bind()
+            result = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'pg_search'")).fetchone()
+            if not result:
+                raise
+        return "pg_search"
     elif text_search_extension == "native":
+        return "native"
+    elif text_search_extension == "pgroonga":
+        # Treat as native here; ensure_text_search_extension() converts the
+        # reflections table to pgroonga structures at runtime.
         return "native"
     else:
         raise ValueError(
-            f"Invalid HINDSIGHT_API_TEXT_SEARCH_EXTENSION: {text_search_extension}. Must be 'native', 'vchord', or 'pg_textsearch'"
+            f"Invalid HINDSIGHT_API_TEXT_SEARCH_EXTENSION: {text_search_extension}. "
+            "Must be 'native', 'vchord', 'pg_textsearch', 'pgroonga', or 'pg_search'"
         )
+
+
+def _pg_search_tokenizer() -> str:
+    return normalize_pg_search_tokenizer(os.getenv(PG_SEARCH_TOKENIZER_ENV))
 
 
 def _pg_upgrade() -> None:
@@ -200,6 +230,18 @@ def _pg_upgrade() -> None:
             CREATE INDEX idx_learnings_text_search ON {schema}learnings
             USING bm25(text) WITH (text_config='english')
         """)
+    elif text_search_ext == "pg_search":
+        # ParadeDB pg_search: dummy TEXT column; BM25 index is built directly over (id, text)
+        # with key_field='id' (matches the table's primary key).
+        bm25_cols = pg_search_bm25_columns("id", ("text",), _pg_search_tokenizer())
+        op.execute(f"""
+            ALTER TABLE {schema}learnings ADD COLUMN search_vector TEXT
+        """)
+        op.execute(f"""
+            CREATE INDEX idx_learnings_text_search ON {schema}learnings
+            USING bm25 ({bm25_cols})
+            WITH (key_field='id')
+        """)
     else:  # native
         # Native PostgreSQL: tsvector with automatic generation
         op.execute(f"""
@@ -263,6 +305,18 @@ def _pg_upgrade() -> None:
             CREATE INDEX idx_pinned_reflections_text_search ON {schema}pinned_reflections
             USING bm25(content)
             WITH (text_config='english')
+        """)
+    elif text_search_ext == "pg_search":
+        # ParadeDB pg_search: dummy TEXT column; BM25 index over (id, name, content)
+        # with key_field='id'.
+        bm25_cols = pg_search_bm25_columns("id", ("name", "content"), _pg_search_tokenizer())
+        op.execute(f"""
+            ALTER TABLE {schema}pinned_reflections ADD COLUMN search_vector TEXT
+        """)
+        op.execute(f"""
+            CREATE INDEX idx_pinned_reflections_text_search ON {schema}pinned_reflections
+            USING bm25 ({bm25_cols})
+            WITH (key_field='id')
         """)
     else:  # native
         # Native PostgreSQL: tsvector with automatic generation

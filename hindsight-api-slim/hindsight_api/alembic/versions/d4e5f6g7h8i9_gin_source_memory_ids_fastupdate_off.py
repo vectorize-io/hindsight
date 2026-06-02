@@ -33,26 +33,27 @@ def _get_schema_prefix() -> str:
 
 def _pg_upgrade() -> None:
     schema = _get_schema_prefix()
-    # DROP + CREATE CONCURRENTLY must run outside a transaction block.
-    op.execute("COMMIT")
-    op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}idx_memory_units_source_memory_ids")
-    op.execute(
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_units_source_memory_ids "
-        f"ON {schema}memory_units USING GIN (source_memory_ids) "
-        f"WITH (fastupdate=off) "
-        f"WHERE source_memory_ids IS NOT NULL"
-    )
+    # DROP + CREATE CONCURRENTLY must run outside a transaction block; an
+    # autocommit_block runs them outside Alembic's migration transaction.
+    with op.get_context().autocommit_block():
+        op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}idx_memory_units_source_memory_ids")
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_units_source_memory_ids "
+            f"ON {schema}memory_units USING GIN (source_memory_ids) "
+            f"WITH (fastupdate=off) "
+            f"WHERE source_memory_ids IS NOT NULL"
+        )
 
 
 def _pg_downgrade() -> None:
     schema = _get_schema_prefix()
-    op.execute("COMMIT")
-    op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}idx_memory_units_source_memory_ids")
-    op.execute(
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_units_source_memory_ids "
-        f"ON {schema}memory_units USING GIN (source_memory_ids) "
-        f"WHERE source_memory_ids IS NOT NULL"
-    )
+    with op.get_context().autocommit_block():
+        op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}idx_memory_units_source_memory_ids")
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_units_source_memory_ids "
+            f"ON {schema}memory_units USING GIN (source_memory_ids) "
+            f"WHERE source_memory_ids IS NOT NULL"
+        )
 
 
 def upgrade() -> None:

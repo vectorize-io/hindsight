@@ -99,7 +99,7 @@ hindsight-api
 ## Docker
 
 ```bash
-docker run --rm -it -p 8888:8888 \
+docker run -it --name hindsight --restart unless-stopped -p 8888:8888 \
   -e HINDSIGHT_API_LLM_API_KEY=$OPENAI_API_KEY \
   -v $HOME/.hindsight-docker:/home/hindsight/.pg0 \
   ghcr.io/vectorize-io/hindsight:latest

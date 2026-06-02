@@ -40,6 +40,7 @@ from hindsight_api.extensions.operation_validator import (
     # Core operations
     OperationValidationError,
     OperationValidatorExtension,
+    PrecheckContext,
     RecallContext,
     RecallResult,
     ReflectContext,
@@ -72,6 +73,7 @@ __all__ = [
     "DeferOperation",
     "OperationValidationError",
     "OperationValidatorExtension",
+    "PrecheckContext",
     "RecallContext",
     "RecallResult",
     "ReflectContext",

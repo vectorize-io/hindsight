@@ -9,6 +9,7 @@ import os
 import re
 import time
 import uuid
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
@@ -27,9 +28,12 @@ except ImportError:
 from ..config import (
     DEFAULT_LLM_MAX_CONCURRENT,
     DEFAULT_LLM_TIMEOUT,
+    ENV_CONSOLIDATION_LLM_MAX_CONCURRENT,
     ENV_LLM_GROQ_SERVICE_TIER,
     ENV_LLM_MAX_CONCURRENT,
     ENV_LLM_TIMEOUT,
+    ENV_REFLECT_LLM_MAX_CONCURRENT,
+    ENV_RETAIN_LLM_MAX_CONCURRENT,
 )
 from ..metrics import get_metrics_collector
 from .response_models import TokenUsage
@@ -42,13 +46,75 @@ logger = logging.getLogger(__name__)
 # Disable httpx logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-# Global semaphore to limit concurrent LLM requests across all instances
-# Set HINDSIGHT_API_LLM_MAX_CONCURRENT=1 for local LLMs (LM Studio, Ollama)
+# Global semaphore to limit concurrent LLM requests across all instances.
+# Set HINDSIGHT_API_LLM_MAX_CONCURRENT=1 for local LLMs (LM Studio, Ollama).
 _llm_max_concurrent = int(os.getenv(ENV_LLM_MAX_CONCURRENT, str(DEFAULT_LLM_MAX_CONCURRENT)))
 _global_llm_semaphore = asyncio.Semaphore(_llm_max_concurrent)
 
 
-def sanitize_llm_output(text: str | None) -> str | None:
+def _build_per_op_semaphores() -> dict[str, asyncio.Semaphore]:
+    """Build the per-operation semaphore registry from env vars.
+
+    Each per-op cap is composed with — not a substitute for — the global cap:
+    a call that matches a configured operation must acquire both its per-op
+    semaphore and the global semaphore. This lets operators reserve headroom
+    in the global pool by capping individual operations (e.g. cap retain at 2
+    of 4 global slots so the live chat path always has 2 slots available).
+
+    Operations without a configured env var are absent from the registry and
+    therefore only constrained by the global cap.
+    """
+    semaphores: dict[str, asyncio.Semaphore] = {}
+    for op, env_var in (
+        ("retain", ENV_RETAIN_LLM_MAX_CONCURRENT),
+        ("reflect", ENV_REFLECT_LLM_MAX_CONCURRENT),
+        ("consolidation", ENV_CONSOLIDATION_LLM_MAX_CONCURRENT),
+    ):
+        raw = os.getenv(env_var)
+        if raw is None or raw == "":
+            continue
+        value = int(raw)
+        if value <= 0:
+            raise ValueError(f"{env_var} must be a positive integer, got {raw!r}")
+        semaphores[op] = asyncio.Semaphore(value)
+    return semaphores
+
+
+_per_op_llm_semaphores: dict[str, asyncio.Semaphore] = _build_per_op_semaphores()
+
+
+def _scope_to_operation(scope: str) -> str | None:
+    """Map a call scope to its per-operation concurrency bucket.
+
+    Returns None for scopes that don't belong to a tracked operation
+    (verification probes, bank_mission, memory_think, mental_model_delta_ops),
+    which then run under the global cap only.
+    """
+    if scope.startswith("retain"):
+        return "retain"
+    if scope.startswith("reflect"):
+        return "reflect"
+    if scope.startswith("consolidation"):
+        return "consolidation"
+    return None
+
+
+def _semaphores_for_scope(scope: str) -> list[asyncio.Semaphore]:
+    """Return the semaphores a call with the given scope must acquire.
+
+    Always includes the global semaphore; includes the per-op semaphore when
+    one is configured for the scope's operation bucket.
+    """
+    op = _scope_to_operation(scope)
+    per_op = _per_op_llm_semaphores.get(op) if op is not None else None
+    if per_op is None:
+        return [_global_llm_semaphore]
+    # Per-op acquired first so contention queues on the narrower cap before
+    # holding a global slot.
+    return [per_op, _global_llm_semaphore]
+
+
+def sanitize_text(text: str | None) -> str | None:
     """
     Sanitize text by removing characters that break downstream systems.
 
@@ -60,14 +126,23 @@ def sanitize_llm_output(text: str | None) -> str | None:
 
     Surrogate characters are used in UTF-16 encoding but cannot be encoded
     in UTF-8. They can appear in Python strings from improperly decoded data
-    (e.g., from JavaScript or broken files). Control characters commonly appear
-    in LLM output embedded inside JSON string values.
+    (e.g., from JavaScript or broken files): a client may serialize a half-emoji
+    split at a boundary as a lone ``\\udXXX`` escape. Such input crashes the
+    SentenceTransformers/cross-encoder Rust tokenizers and stdout logging, so
+    user content is sanitized at the retain/recall/reflect ingress (see issue
+    #1875). Control characters commonly appear in LLM output embedded inside
+    JSON string values.
     """
     if text is None:
         return None
     if not text:
         return text
     return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ud800-\udfff]", "", text)
+
+
+# Back-compat alias: this helper was originally introduced to scrub LLM *output*;
+# it now also scrubs user *input* at ingress, hence the broader name.
+sanitize_llm_output = sanitize_text
 
 
 class OutputTooLongError(Exception):
@@ -183,6 +258,7 @@ def create_llm_provider(
         AnthropicLLM,
         ClaudeCodeLLM,
         CodexLLM,
+        FireworksLLM,
         GeminiLLM,
         LiteLLMLLM,
         LiteLLMRouterLLM,
@@ -308,10 +384,24 @@ def create_llm_provider(
             extra_args=config.llamacpp_extra_args,
         )
 
+    elif provider_lower == "fireworks":
+        # Fireworks online inference is OpenAI-compatible; FireworksLLM adds the
+        # native (non-OpenAI) batch API on top. The existing LiteLLM
+        # ``fireworks_ai/...`` online path (provider="litellm") is untouched.
+        return FireworksLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
+        )
+
     elif provider_lower in (
         "openai",
         "groq",
         "ollama",
+        "ollama-cloud",
         "lmstudio",
         "minimax",
         "deepseek",
@@ -409,6 +499,7 @@ class LLMProvider:
             "openai",
             "groq",
             "ollama",
+            "ollama-cloud",
             "gemini",
             "anthropic",
             "lmstudio",
@@ -427,6 +518,7 @@ class LLMProvider:
             "openrouter",
             "zai",
             "opencode-go",
+            "fireworks",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")
@@ -437,6 +529,8 @@ class LLMProvider:
                 self.base_url = "https://api.groq.com/openai/v1"
             elif self.provider == "ollama":
                 self.base_url = "http://localhost:11434/v1"
+            elif self.provider == "ollama-cloud":
+                self.base_url = "https://ollama.com/v1"
             elif self.provider == "lmstudio":
                 self.base_url = "http://localhost:1234/v1"
             elif self.provider == "minimax":
@@ -629,7 +723,10 @@ class LLMProvider:
         structured = "+structured" if response_format is not None else ""
         set_stage(f"llm.{self.provider}.{scope}{structured}")
 
-        async with _global_llm_semaphore:
+        async with AsyncExitStack() as stack:
+            for sem in _semaphores_for_scope(scope):
+                await stack.enter_async_context(sem)
+
             # Delegate to provider implementation
             result = await self._provider_impl.call(
                 messages=messages,
@@ -654,7 +751,7 @@ class LLMProvider:
                     # Sync the mock calls from provider implementation to wrapper
                     self._mock_calls = self._provider_impl.get_mock_calls()
 
-            return result
+        return result
 
     async def call_with_tools(
         self,
@@ -689,7 +786,10 @@ class LLMProvider:
 
         set_stage(f"llm.{self.provider}.{scope}+tools")
 
-        async with _global_llm_semaphore:
+        async with AsyncExitStack() as stack:
+            for sem in _semaphores_for_scope(scope):
+                await stack.enter_async_context(sem)
+
             # Delegate to provider implementation
             result = await self._provider_impl.call_with_tools(
                 messages=messages,
@@ -712,7 +812,7 @@ class LLMProvider:
                     # Sync the mock calls from provider implementation to wrapper
                     self._mock_calls = self._provider_impl.get_mock_calls()
 
-            return result
+        return result
 
     def set_response_callback(self, fn: Any) -> None:
         """Set a callback invoked on each call() instead of the fixed mock response."""
@@ -841,12 +941,14 @@ class LLMProvider:
         """Create provider from environment variables using config.py constants."""
         from ..config import (
             DEFAULT_LLM_PROVIDER,
+            DEFAULT_LLM_REASONING_EFFORT,
             ENV_LLM_API_KEY,
             ENV_LLM_BASE_URL,
             ENV_LLM_DEFAULT_HEADERS,
             ENV_LLM_EXTRA_BODY,
             ENV_LLM_MODEL,
             ENV_LLM_PROVIDER,
+            ENV_LLM_REASONING_EFFORT,
             _get_default_model_for_provider,
         )
 
@@ -870,7 +972,7 @@ class LLMProvider:
             api_key=api_key,
             base_url=base_url,
             model=model,
-            reasoning_effort="low",
+            reasoning_effort=os.getenv(ENV_LLM_REASONING_EFFORT, DEFAULT_LLM_REASONING_EFFORT),
             extra_body=extra_body,
             default_headers=default_headers,
         )

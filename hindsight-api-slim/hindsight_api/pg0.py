@@ -24,6 +24,7 @@ class EmbeddedPostgres:
         password: str = DEFAULT_PASSWORD,
         database: str = DEFAULT_DATABASE,
         name: str = "hindsight",
+        config: dict[str, str] | None = None,
         **kwargs,
     ):
         self.port = port  # None means pg0 will auto-assign
@@ -31,6 +32,11 @@ class EmbeddedPostgres:
         self.password = password
         self.database = database
         self.name = name
+        # Extra postgresql.conf settings forwarded to Pg0 (e.g. ``max_connections``).
+        # Useful when tests spawn many xdist workers that each open a pool against
+        # the same pg0 instance — the postgres default of 100 max_connections is
+        # easy to exhaust under that fan-out.
+        self.config = config
         self._pg0: Pg0 | None = None
 
     def _get_pg0(self) -> Pg0:
@@ -51,6 +57,8 @@ class EmbeddedPostgres:
             # Only set port if explicitly specified
             if self.port is not None:
                 kwargs["port"] = self.port
+            if self.config is not None:
+                kwargs["config"] = self.config
             self._pg0 = Pg0(**kwargs)
         return self._pg0
 

@@ -10,6 +10,7 @@ import pytest
 
 from hindsight_api.engine.memory_engine import MemoryEngine, fq_table
 from hindsight_api.engine.retain import embedding_utils
+from tests.llm_judge import assert_meets_criteria, evaluate
 
 
 @pytest.fixture
@@ -313,6 +314,76 @@ class TestDirectiveTags:
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_list_directives_by_tag_groups(self, memory: MemoryEngine, request_context):
+        """Regression for #1829: list_directives must respect tag_groups.
+
+        Mirrors the OR-with-untagged scoping that tagged directives already
+        get with flat `tags`: untagged directives always apply, tagged
+        directives only when their tags satisfy the tag_groups expression.
+        """
+        from hindsight_api.engine.search.tags import TagGroupLeaf, TagGroupOr
+
+        bank_id = f"test-directive-tag-groups-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        await memory.create_directive(
+            bank_id=bank_id,
+            name="Untagged Rule",
+            content="Applies everywhere",
+            request_context=request_context,
+        )
+        await memory.create_directive(
+            bank_id=bank_id,
+            name="Hardware Rule",
+            content="Hardware-scoped rule",
+            tags=["hardware"],
+            request_context=request_context,
+        )
+        await memory.create_directive(
+            bank_id=bank_id,
+            name="Compliance Rule",
+            content="Compliance-scoped rule",
+            tags=["compliance"],
+            request_context=request_context,
+        )
+
+        # tag_groups = [hardware OR infrastructure] should admit untagged and Hardware,
+        # exclude Compliance.
+        scoped = await memory.list_directives(
+            bank_id=bank_id,
+            tag_groups=[
+                TagGroupOr(
+                    filters=[
+                        TagGroupLeaf(tags=["hardware"]),
+                        TagGroupLeaf(tags=["infrastructure"]),
+                    ]
+                )
+            ],
+            request_context=request_context,
+        )
+        names = {d["name"] for d in scoped}
+        assert names == {"Untagged Rule", "Hardware Rule"}, names
+
+        # Isolation mode with tag_groups still applies (only untagged + tag-matching).
+        isolated = await memory.list_directives(
+            bank_id=bank_id,
+            tag_groups=[TagGroupLeaf(tags=["hardware"])],
+            request_context=request_context,
+            isolation_mode=True,
+        )
+        assert {d["name"] for d in isolated} == {"Untagged Rule", "Hardware Rule"}
+
+        # Without any tag filter and isolation_mode=True, only untagged should come back —
+        # confirming this code path isn't accidentally short-circuited when tag_groups is empty.
+        untagged_only = await memory.list_directives(
+            bank_id=bank_id,
+            request_context=request_context,
+            isolation_mode=True,
+        )
+        assert {d["name"] for d in untagged_only} == {"Untagged Rule"}
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     async def test_list_all_directives_without_filter(self, memory: MemoryEngine, request_context):
         """Test that listing directives without tags returns ALL directives (both tagged and untagged)."""
         bank_id = f"test-directive-list-all-{uuid.uuid4().hex[:8]}"
@@ -378,8 +449,10 @@ class TestReflect:
 class TestDirectivesInReflect:
     """Test that directives are followed during reflect operations."""
 
-    async def test_reflect_follows_language_directive(self, memory: MemoryEngine, request_context):
+    @pytest.mark.hs_llm_core
+    async def test_reflect_follows_language_directive(self, memory_real_llm: MemoryEngine, request_context):
         """Test that reflect follows a directive to respond in a specific language."""
+        memory = memory_real_llm
         bank_id = f"test-directive-reflect-{uuid.uuid4().hex[:8]}"
 
         # Ensure bank exists
@@ -405,25 +478,8 @@ class TestDirectivesInReflect:
             request_context=request_context,
         )
 
-        # Check that the response contains French words/patterns
-        # Common French words that would appear when talking about someone's job
-        french_indicators = [
-            "elle",
-            "travaille",
-            "une",
-            "qui",
-            "chez",
-            "logiciel",
-            "ingénieur",
-            "ingénieure",
-            "développeur",
-            "développeuse",
-            "ingénierie",
-            "française",
-        ]
-
         # Run reflect query (retry once since small LLMs may not always follow language directives)
-        french_word_count = 0
+        result = None
         for _attempt in range(2):
             result = await memory.reflect_async(
                 bank_id=bank_id,
@@ -433,15 +489,19 @@ class TestDirectivesInReflect:
             assert result.text is not None
             assert len(result.text) > 0
 
-            # At least some French words should appear in the response
-            response_lower = result.text.lower()
-            french_word_count = sum(1 for word in french_indicators if word in response_lower)
-            if french_word_count >= 2:
+            # Use LLM judge to check if response is in French
+            verdict = await evaluate(
+                response=result.text,
+                criteria="The response is written primarily in French (not English).",
+            )
+            if verdict.meets_criteria:
                 break
 
-        assert (
-            french_word_count >= 2
-        ), f"Expected French response, but got: {result.text[:200]}"
+        await assert_meets_criteria(
+            response=result.text,
+            criteria="The response is written primarily in French (not English).",
+            msg=f"Expected French response, but got: {result.text[:200]}",
+        )
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -656,6 +716,113 @@ class TestDirectivesPromptInjection:
         critical_rules_pos = prompt.find("## CRITICAL RULES")
         assert directives_pos < critical_rules_pos
 
+    def test_system_prompt_includes_temporal_reasoning(self):
+        """The reflect system prompt must teach the LLM how to interpret the
+        temporal fields (`mentioned_at`, `occurred_start`, `occurred_end`)
+        that ride along on every recall / search_observations result. Without
+        this guidance the LLM ignores the timestamps and picks conflicting
+        facts on surface cues (e.g. a baked-in 'When:' label) — see the
+        horse-test where it picked an older count over a newer one.
+        """
+        from hindsight_api.engine.reflect.prompts import build_system_prompt_for_tools
+
+        prompt = build_system_prompt_for_tools(
+            bank_profile={"name": "Test Bank", "mission": "Test mission"},
+        )
+
+        assert "## Temporal Reasoning" in prompt
+        # Names of the actual JSON fields the LLM will see
+        assert "`mentioned_at`" in prompt
+        assert "`occurred_start`" in prompt
+        assert "`occurred_end`" in prompt
+        # Core supersession rule
+        assert "LATEST `mentioned_at` is authoritative" in prompt
+        assert "SUPERSEDE" in prompt
+        # Goes before the retrieval strategy so the LLM has the interpretation
+        # rules in hand before it starts calling tools.
+        assert prompt.find("## Temporal Reasoning") < prompt.find("## HIERARCHICAL RETRIEVAL STRATEGY")
+
+    def test_system_prompt_includes_conflicts_and_ambiguity(self):
+        """The reflect system prompt must give the LLM explicit permission to
+        say 'this is ambiguous' instead of fabricating a confident answer when
+        the data is internally inconsistent in ways the temporal rule does
+        not resolve. Without this the LLM smooths over conflicts in prose.
+        """
+        from hindsight_api.engine.reflect.prompts import build_system_prompt_for_tools
+
+        prompt = build_system_prompt_for_tools(
+            bank_profile={"name": "Test Bank", "mission": "Test mission"},
+        )
+
+        assert "## Conflicts and Ambiguity" in prompt
+        # The two-case distinction (resolvable vs unresolvable) must be present
+        # so the LLM knows when to apply the temporal rule vs when to surface
+        # the conflict instead.
+        assert "RESOLVABLE conflict" in prompt
+        assert "UNRESOLVABLE ambiguity" in prompt
+        # Explicit permission to acknowledge ambiguity is the whole point of
+        # this section — guard the language that gives it.
+        assert "SAY SO" in prompt
+        assert "Acknowledging ambiguity is a successful answer" in prompt
+        # Anti-confabulation guard: don't pick / average / smooth over.
+        assert "Do NOT pick a value arbitrarily" in prompt
+        # Sequencing: ambiguity rules must come AFTER temporal (so the LLM
+        # first tries the resolution rule, then falls back to acknowledgment)
+        # and BEFORE the retrieval strategy.
+        assert prompt.find("## Temporal Reasoning") < prompt.find("## Conflicts and Ambiguity")
+        assert prompt.find("## Conflicts and Ambiguity") < prompt.find("## HIERARCHICAL RETRIEVAL STRATEGY")
+
+    def test_system_prompt_includes_showing_your_reasoning(self):
+        """The prompt must require the LLM to show step-by-step reasoning for
+        conflict-resolution / event-application answers, so the reader (and
+        we) can audit the temporal rule + arithmetic. Without this the LLM
+        commits to wrong answers confidently with no traceable derivation
+        (e.g. silently double-counting an event that pre-dates the latest
+        count statement)."""
+        from hindsight_api.engine.reflect.prompts import build_system_prompt_for_tools
+
+        prompt = build_system_prompt_for_tools(
+            bank_profile={"name": "Test Bank", "mission": "Test mission"},
+        )
+
+        assert "## Showing Your Reasoning" in prompt
+        # The mandatory reasoning steps must all be referenced — these
+        # are the scaffolding that prevents double-counting and unjustified
+        # answers.
+        assert "List the relevant facts in `mentioned_at` order" in prompt
+        assert "Identify the authoritative fact" in prompt
+        assert "List candidate events to apply on top" in prompt
+        # Step 4 is the forcing function that prevents the double-count bug
+        # we saw in horse run #1 — the LLM must explicitly compare each
+        # candidate event's date against the authoritative date.
+        assert "Sanity-check each candidate event against the authoritative date" in prompt
+        assert "single most common mistake" in prompt
+        assert "Show the arithmetic or derivation explicitly" in prompt
+        # The escape hatch back to ambiguity acknowledgement must be present.
+        assert "UNRESOLVABLE ambiguity per the section above" in prompt
+        # Sequence: comes AFTER Conflicts so the LLM already has the
+        # ambiguity escape hatch in hand, BEFORE retrieval so it shapes
+        # what the agent looks for.
+        assert prompt.find("## Conflicts and Ambiguity") < prompt.find("## Showing Your Reasoning")
+        assert prompt.find("## Showing Your Reasoning") < prompt.find("## HIERARCHICAL RETRIEVAL STRATEGY")
+
+    def test_how_to_reason_no_longer_pushes_unconditional_best_answer(self):
+        """The original 'use what IS stated to give the best answer' bullet
+        was nudging the LLM to fabricate confidence under conflict. The
+        updated bullet must pair best-effort with uncertainty-surfacing.
+        """
+        from hindsight_api.engine.reflect.prompts import build_system_prompt_for_tools
+
+        prompt = build_system_prompt_for_tools(
+            bank_profile={"name": "Test Bank", "mission": "Test mission"},
+        )
+
+        # The unconditional original phrasing must be gone.
+        assert "use what IS stated to give the best answer" not in prompt
+        # The new phrasing pairs best-effort with explicit uncertainty.
+        assert "best-effort answer AND surface any uncertainty" in prompt
+        assert "never invent confidence the data doesn't support" in prompt
+
 
 class TestMentalModelHistory:
     """Test mental model history persistence."""
@@ -693,10 +860,17 @@ class TestMentalModelHistory:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_history_snapshots_previous_reflect_response(
-        self, memory: MemoryEngine, request_context
-    ):
-        """Each history entry snapshots the reflect_response that produced previous_content."""
+    async def test_history_snapshots_previous_reflect_response(self, memory: MemoryEngine, request_context):
+        """Each history entry stores only the slim {based_on: ...} slice of
+        previous_reflect_response.
+
+        Rationale: the only consumer of `previous_reflect_response` in history
+        is the control-plane UI's "based_on diff" view. Storing the full reflect
+        response (including `text`, fact bodies, scoring) made each UPDATE
+        rewrite ~10-20 MB of TOAST per refresh and prevented HOT updates. The
+        slim shape keeps row size bounded so HOT updates apply and dead tuples
+        self-clean inline.
+        """
         bank_id = f"test-mm-history-reflect-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
@@ -728,12 +902,67 @@ class TestMentalModelHistory:
 
         history = await memory.get_mental_model_history(bank_id, mm["id"], request_context=request_context)
         assert len(history) == 2
-        # Most recent first: replacing v2 snapshotted rr_v1 (the reflect that produced v2).
+        # Most recent first: replacing v2 snapshotted rr_v1's based_on (the only slice
+        # the UI consumes). The bulky `text` and `mental_models` fields are dropped.
         assert history[0]["previous_content"] == "v2"
-        assert history[0]["previous_reflect_response"] == rr_v1
+        assert history[0]["previous_reflect_response"] == {"based_on": rr_v1["based_on"]}
         # The first update replaced v1, which had no reflect_response stored yet.
         assert history[1]["previous_content"] == "v1"
         assert history[1]["previous_reflect_response"] is None
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_history_snapshots_omit_reflect_response_when_based_on_missing(
+        self, memory: MemoryEngine, request_context
+    ):
+        """If a reflect_response has no `based_on` (older snapshots, malformed
+        payloads), the slim path stores None rather than an empty shell."""
+        bank_id = f"test-mm-history-no-based-on-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Test Model",
+            source_query="What is the test?",
+            content="v1",
+            request_context=request_context,
+        )
+
+        # reflect_response with no based_on field — will become the "previous"
+        # reflect_response when v3 is written, producing slim None.
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            content="v2",
+            reflect_response={"text": "v1", "mental_models": []},
+            request_context=request_context,
+        )
+        # reflect_response with based_on={} — will become the "previous"
+        # reflect_response when v4 is written, producing slim {"based_on": {}}.
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            content="v3",
+            reflect_response={"text": "v2", "based_on": {}},
+            request_context=request_context,
+        )
+        # One more update so that the based_on={} reflect_response becomes
+        # the *previous* state captured in a history entry.
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            content="v4",
+            request_context=request_context,
+        )
+
+        history = await memory.get_mental_model_history(bank_id, mm["id"], request_context=request_context)
+        assert len(history) == 3
+        # Most recent: v3→v4, previous rr had based_on={} → stored as {"based_on": {}}
+        assert history[0]["previous_reflect_response"] == {"based_on": {}}
+        # Second: v2→v3, previous rr had no based_on field → stored as None
+        assert history[1]["previous_reflect_response"] is None
+        # Third: v1→v2, no reflect_response on the row yet → stored as None
+        assert history[2]["previous_reflect_response"] is None
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -801,10 +1030,50 @@ class TestMentalModelHistory:
         bank_id = f"test-mm-history-missing-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
-        result = await memory.get_mental_model_history(
-            bank_id, "nonexistent-id", request_context=request_context
-        )
+        result = await memory.get_mental_model_history(bank_id, "nonexistent-id", request_context=request_context)
         assert result is None
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_history_capped_to_max_entries(self, memory: MemoryEngine, request_context, monkeypatch):
+        """History array is trimmed to the most recent N entries on each write.
+
+        Without a cap, sustained updates grow the jsonb array unboundedly and
+        eventually cross Postgres's 256MB jsonb hard limit, after which any
+        further UPDATE fails with SQLSTATE 54000 and the row is stuck.
+        """
+        from hindsight_api.config import clear_config_cache
+
+        monkeypatch.setenv("HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES", "3")
+        clear_config_cache()
+
+        bank_id = f"test-mm-history-cap-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Test Model",
+            source_query="What is the test?",
+            content="v1",
+            request_context=request_context,
+        )
+
+        # 5 content updates → 5 history entries appended → trimmed to last 3
+        for i in range(2, 7):
+            await memory.update_mental_model(
+                bank_id=bank_id,
+                mental_model_id=mm["id"],
+                content=f"v{i}",
+                request_context=request_context,
+            )
+
+        history = await memory.get_mental_model_history(bank_id, mm["id"], request_context=request_context)
+        # Most recent first ordering (per test_history_ordered_most_recent_first):
+        # the trimmed window keeps the newest 3 — v5, v4, v3 — and drops v2, v1.
+        assert len(history) == 3
+        assert history[0]["previous_content"] == "v5"
+        assert history[1]["previous_content"] == "v4"
+        assert history[2]["previous_content"] == "v3"
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -855,9 +1124,7 @@ class TestMentalModelStaleness:
         assert got["is_stale"] is False
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_untagged_mm_stale_on_any_new_memory(
-        self, memory: MemoryEngine, request_context
-    ):
+    async def test_untagged_mm_stale_on_any_new_memory(self, memory: MemoryEngine, request_context):
         bank_id = f"test-mm-stale-untagged-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
@@ -868,9 +1135,7 @@ class TestMentalModelStaleness:
         assert got["is_stale"] is True
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_tagged_mm_ignores_out_of_scope_memory(
-        self, memory: MemoryEngine, request_context
-    ):
+    async def test_tagged_mm_ignores_out_of_scope_memory(self, memory: MemoryEngine, request_context):
         bank_id = f"test-mm-stale-oos-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
@@ -887,9 +1152,7 @@ class TestMentalModelStaleness:
         assert got["is_stale"] is False
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_tagged_mm_stale_on_overlapping_memory(
-        self, memory: MemoryEngine, request_context
-    ):
+    async def test_tagged_mm_stale_on_overlapping_memory(self, memory: MemoryEngine, request_context):
         bank_id = f"test-mm-stale-overlap-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
@@ -905,9 +1168,7 @@ class TestMentalModelStaleness:
         assert got["is_stale"] is True
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_tags_match_all_strict_requires_all_tags(
-        self, memory: MemoryEngine, request_context
-    ):
+    async def test_tags_match_all_strict_requires_all_tags(self, memory: MemoryEngine, request_context):
         """tags_match='all_strict' → memory must contain ALL MM tags (and be tagged)."""
         bank_id = f"test-mm-stale-all-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -932,9 +1193,7 @@ class TestMentalModelStaleness:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_tags_match_any_strict_excludes_untagged(
-        self, memory: MemoryEngine, request_context
-    ):
+    async def test_tags_match_any_strict_excludes_untagged(self, memory: MemoryEngine, request_context):
         """tags_match='any_strict' → untagged memory does NOT keep MM in scope."""
         bank_id = f"test-mm-stale-anystrict-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -957,9 +1216,7 @@ class TestMentalModelStaleness:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_fact_type_filter_narrows_scope(
-        self, memory: MemoryEngine, request_context
-    ):
+    async def test_fact_type_filter_narrows_scope(self, memory: MemoryEngine, request_context):
         bank_id = f"test-mm-stale-fact-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
         mm = await memory.create_mental_model(
@@ -982,9 +1239,7 @@ class TestMentalModelStaleness:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_tool_search_mental_models_returns_is_stale_per_mm(
-        self, memory: MemoryEngine, request_context
-    ):
+    async def test_tool_search_mental_models_returns_is_stale_per_mm(self, memory: MemoryEngine, request_context):
         """Regression: tool_search_mental_models must compute is_stale per-MM via scope,
         not via a bank-wide pending_consolidation short-circuit."""
         from hindsight_api.engine.reflect.tools import tool_search_mental_models
@@ -1012,12 +1267,8 @@ class TestMentalModelStaleness:
 
         pool = await memory._get_pool()
         async with pool.acquire() as conn:
-            embedding = (
-                await embedding_utils.generate_embeddings_batch(memory.embeddings, ["q"])
-            )[0]
-            result = await tool_search_mental_models(
-                memory, conn, bank_id, "q", embedding, max_results=10
-            )
+            embedding = (await embedding_utils.generate_embeddings_batch(memory.embeddings, ["q"]))[0]
+            result = await tool_search_mental_models(memory, conn, bank_id, "q", embedding, max_results=10)
         by_id = {m["id"]: m for m in result["mental_models"]}
         assert by_id[fresh["id"]]["is_stale"] is False
         assert by_id[stale["id"]]["is_stale"] is True
@@ -1025,12 +1276,16 @@ class TestMentalModelStaleness:
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
+@pytest.mark.hs_llm_core
 class TestMentalModelRefreshTagSecurity:
     """Test that mental model refresh respects tag-based security boundaries."""
 
-    async def test_refresh_with_tags_only_accesses_same_tagged_models(
-        self, memory: MemoryEngine, request_context
-    ):
+    @pytest.fixture
+    def memory(self, memory_real_llm):
+        """Override to use real LLM for this class."""
+        return memory_real_llm
+
+    async def test_refresh_with_tags_only_accesses_same_tagged_models(self, memory: MemoryEngine, request_context):
         """Test that refreshing a mental model with tags can only access other models with the same tags.
 
         This is a security test to ensure that mental models with tags (e.g., user:alice)
@@ -1045,9 +1300,18 @@ class TestMentalModelRefreshTagSecurity:
         await memory.retain_batch_async(
             bank_id=bank_id,
             contents=[
-                {"content": "Alice works on the frontend React project. Alice's favorite color is blue.", "tags": ["user:alice"]},
-                {"content": "Alice prefers working in the morning. Alice drinks coffee every day.", "tags": ["user:alice"]},
-                {"content": "Bob works on the backend API services. Bob's favorite language is Python.", "tags": ["user:bob"]},
+                {
+                    "content": "Alice works on the frontend React project. Alice's favorite color is blue.",
+                    "tags": ["user:alice"],
+                },
+                {
+                    "content": "Alice prefers working in the morning. Alice drinks coffee every day.",
+                    "tags": ["user:alice"],
+                },
+                {
+                    "content": "Bob works on the backend API services. Bob's favorite language is Python.",
+                    "tags": ["user:bob"],
+                },
                 {"content": "Bob prefers working at night. Bob drinks tea every day.", "tags": ["user:bob"]},
                 {"content": "The company has 100 employees and is growing fast.", "tags": []},  # No tags
             ],
@@ -1105,34 +1369,25 @@ class TestMentalModelRefreshTagSecurity:
 
         # SECURITY CHECK: The refreshed content should ONLY include information from
         # memories/models tagged with user:alice, NOT from user:bob or untagged
-        refreshed_content = refreshed["content"].lower()
-
-        # Should include Alice's content (either from facts or mental models)
-        assert "alice" in refreshed_content, \
-            "Refreshed model should access memories/models with matching tags (user:alice)"
-
-        # MUST NOT include Bob's content (security violation)
-        # Use word boundary matching to avoid false positives (e.g., "team" contains "tea")
-        import re
-        def contains_word(text: str, word: str) -> bool:
-            """Check if text contains word as a whole word (not substring)."""
-            return bool(re.search(rf'\b{re.escape(word)}\b', text, re.IGNORECASE))
-
-        assert not contains_word(refreshed_content, "bob") and \
-               not contains_word(refreshed_content, "python") and \
-               not contains_word(refreshed_content, "tea"), \
-            f"SECURITY VIOLATION: Refreshed model accessed memories/models with different tags (user:bob). Content: {refreshed['content']}"
-
-        # MUST NOT include untagged content (security violation)
-        assert "100 employees" not in refreshed_content and "growing fast" not in refreshed_content, \
-            f"SECURITY VIOLATION: Refreshed model accessed untagged memories/models. Content: {refreshed['content']}"
+        await assert_meets_criteria(
+            response=refreshed["content"],
+            criteria=(
+                "The content mentions Alice and her work (frontend, React, morning preference, coffee). "
+                "It does NOT mention Bob, Python (as a programming language Bob uses), tea, "
+                "100 employees, or 'growing fast'. Minor phrasing variations are acceptable."
+            ),
+            context=(
+                "Alice's data: frontend React engineer, works mornings, drinks coffee, favorite color blue. "
+                "Bob's data (MUST NOT appear): backend Python engineer, works at night, drinks tea. "
+                "Untagged data (MUST NOT appear): company has 100 employees, growing fast."
+            ),
+            msg="SECURITY VIOLATION: Refreshed model accessed data from other tags or untagged memories",
+        )
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_consolidation_only_refreshes_matching_tagged_models(
-        self, memory: MemoryEngine, request_context
-    ):
+    async def test_consolidation_only_refreshes_matching_tagged_models(self, memory: MemoryEngine, request_context):
         """Test that consolidation only triggers refresh for mental models with matching tags.
 
         This is a security test to ensure that when tagged memories are consolidated,
@@ -1201,28 +1456,26 @@ class TestMentalModelRefreshTagSecurity:
         await memory.wait_for_background_tasks()
 
         # Check that mental models were refreshed appropriately
-        mm_alice_after = await memory.get_mental_model(
-            bank_id, mm_alice["id"], request_context=request_context
-        )
-        mm_bob_after = await memory.get_mental_model(
-            bank_id, mm_bob["id"], request_context=request_context
-        )
-        mm_untagged_after = await memory.get_mental_model(
-            bank_id, mm_untagged["id"], request_context=request_context
-        )
+        mm_alice_after = await memory.get_mental_model(bank_id, mm_alice["id"], request_context=request_context)
+        mm_bob_after = await memory.get_mental_model(bank_id, mm_bob["id"], request_context=request_context)
+        mm_untagged_after = await memory.get_mental_model(bank_id, mm_untagged["id"], request_context=request_context)
 
         # SECURITY CHECK: Only Alice's mental model and untagged model should be refreshed
         # Alice's model should be refreshed (tags match)
-        assert mm_alice_after["last_refreshed_at"] != alice_initial or mm_alice_after["content"] != mm_alice["content"], \
-            "Alice's mental model should be refreshed when user:alice memories are consolidated"
+        assert (
+            mm_alice_after["last_refreshed_at"] != alice_initial or mm_alice_after["content"] != mm_alice["content"]
+        ), "Alice's mental model should be refreshed when user:alice memories are consolidated"
 
         # Bob's model should NOT be refreshed (tags don't match)
-        assert mm_bob_after["last_refreshed_at"] == bob_initial, \
+        assert mm_bob_after["last_refreshed_at"] == bob_initial, (
             "SECURITY VIOLATION: Bob's mental model was refreshed even though user:bob memories were not consolidated"
+        )
 
         # Untagged model should be refreshed (untagged models are always refreshed)
-        assert mm_untagged_after["last_refreshed_at"] != untagged_initial or mm_untagged_after["content"] != mm_untagged["content"], \
-            "Untagged mental model should be refreshed after any consolidation"
+        assert (
+            mm_untagged_after["last_refreshed_at"] != untagged_initial
+            or mm_untagged_after["content"] != mm_untagged["content"]
+        ), "Untagged mental model should be refreshed after any consolidation"
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -1286,12 +1539,22 @@ class TestMentalModelRefreshTagSecurity:
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
+@pytest.mark.hs_llm_core
+# All tests in this class drive the reflect agent against Gemini 2.5 Flash Lite,
+# which occasionally bails out of the loop with "I don't have information."
+# instead of synthesising the retrieved memories.  Apply @pytest.mark.flaky at
+# class scope so every method gets the same retry budget; the judge assertions
+# still catch persistent breakage.
+@pytest.mark.flaky(reruns=2, reruns_delay=2)
 class TestMentalModelTriggerTagsConfig:
     """Test trigger-level tags_match and tag_groups configuration for mental model refresh."""
 
-    async def test_trigger_tags_match_any_includes_untagged_content(
-        self, memory: MemoryEngine, request_context
-    ):
+    @pytest.fixture
+    def memory(self, memory_real_llm):
+        """Override to use real LLM for this class."""
+        return memory_real_llm
+
+    async def test_trigger_tags_match_any_includes_untagged_content(self, memory: MemoryEngine, request_context):
         """Test that setting trigger.tags_match='any' allows a tagged model to see untagged memories.
 
         This is the fix for #786: by default, tagged models use all_strict which excludes
@@ -1304,7 +1567,10 @@ class TestMentalModelTriggerTagsConfig:
         await memory.retain_batch_async(
             bank_id=bank_id,
             contents=[
-                {"content": "Alice is a frontend engineer who specializes in React and TypeScript.", "tags": ["living"]},
+                {
+                    "content": "Alice is a frontend engineer who specializes in React and TypeScript.",
+                    "tags": ["living"],
+                },
                 {"content": "The company headquarters is located in San Francisco, California.", "tags": []},
                 {"content": "Annual revenue reached 50 million dollars last year.", "tags": []},
             ],
@@ -1330,23 +1596,23 @@ class TestMentalModelTriggerTagsConfig:
             request_context=request_context,
         )
 
-        refreshed_content = refreshed["content"].lower()
-
-        # Should include tagged content
-        assert "alice" in refreshed_content or "react" in refreshed_content or "frontend" in refreshed_content, (
-            f"Refreshed model should include tagged memories. Content: {refreshed['content']}"
-        )
-
-        # Should ALSO include untagged content (the fix for #786)
-        assert "san francisco" in refreshed_content or "50 million" in refreshed_content or "headquarters" in refreshed_content or "revenue" in refreshed_content, (
-            f"With tags_match='any', refreshed model should include untagged memories. Content: {refreshed['content']}"
+        await assert_meets_criteria(
+            response=refreshed["content"],
+            criteria=(
+                "The content includes BOTH: "
+                "(1) tagged content about Alice (frontend engineer, React, TypeScript), AND "
+                "(2) untagged content about the company (San Francisco headquarters or 50 million revenue). "
+                "Both categories of information must be present."
+            ),
+            context=(
+                "Tagged memories [living]: Alice is a frontend engineer (React, TypeScript). "
+                "Untagged memories: company HQ in San Francisco, annual revenue 50 million."
+            ),
         )
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_trigger_tags_match_default_preserves_strict_isolation(
-        self, memory: MemoryEngine, request_context
-    ):
+    async def test_trigger_tags_match_default_preserves_strict_isolation(self, memory: MemoryEngine, request_context):
         """Test that without trigger.tags_match, tagged models still use all_strict (backward compat)."""
         bank_id = f"test-trigger-default-strict-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -1379,28 +1645,24 @@ class TestMentalModelTriggerTagsConfig:
             request_context=request_context,
         )
 
-        refreshed_content = refreshed["content"].lower()
-
-        import re
-
-        def contains_word(text: str, word: str) -> bool:
-            return bool(re.search(rf"\b{re.escape(word)}\b", text, re.IGNORECASE))
-
-        # MUST NOT include Bob's content (security boundary preserved)
-        assert not contains_word(refreshed_content, "bob") and not contains_word(refreshed_content, "python"), (
-            f"Default behavior should still enforce all_strict isolation. Content: {refreshed['content']}"
-        )
-
-        # MUST NOT include untagged content (strict excludes untagged)
-        assert "200 employees" not in refreshed_content, (
-            f"Default behavior should exclude untagged content. Content: {refreshed['content']}"
+        await assert_meets_criteria(
+            response=refreshed["content"],
+            criteria=(
+                "The content does NOT mention Bob, Python (as Bob's language), or 200 employees. "
+                "It should only contain information about Alice (frontend, React). "
+                "Minor phrasing variations are acceptable."
+            ),
+            context=(
+                "Alice's data (should appear): frontend engineer, React. "
+                "Bob's data (MUST NOT appear): backend engineer, Python. "
+                "Untagged data (MUST NOT appear): 200 employees worldwide."
+            ),
+            msg="Default all_strict isolation was violated",
         )
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_trigger_tag_groups_override_flat_tags(
-        self, memory: MemoryEngine, request_context
-    ):
+    async def test_trigger_tag_groups_override_flat_tags(self, memory: MemoryEngine, request_context):
         """Test that trigger.tag_groups overrides the model's flat tags for refresh filtering.
 
         When tag_groups is set, the model's own tags are NOT used for filtering during refresh,
@@ -1455,9 +1717,9 @@ class TestMentalModelTriggerTagsConfig:
         )
 
         # Should include shared content (via tag_groups OR expression)
-        assert "typescript" in refreshed_content or "shared" in refreshed_content or "frontend code" in refreshed_content, (
-            f"Should include shared memories via tag_groups. Content: {refreshed['content']}"
-        )
+        assert (
+            "typescript" in refreshed_content or "shared" in refreshed_content or "frontend code" in refreshed_content
+        ), f"Should include shared memories via tag_groups. Content: {refreshed['content']}"
 
         import re
 
@@ -1471,9 +1733,7 @@ class TestMentalModelTriggerTagsConfig:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_trigger_tags_match_with_no_model_tags(
-        self, memory: MemoryEngine, request_context
-    ):
+    async def test_trigger_tags_match_with_no_model_tags(self, memory: MemoryEngine, request_context):
         """Test that trigger.tags_match on an untagged model still works correctly."""
         bank_id = f"test-trigger-untagged-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -1507,7 +1767,9 @@ class TestMentalModelTriggerTagsConfig:
 
         # Should include both tagged and untagged content (default "any" for untagged models)
         has_tagged = "alice" in refreshed_content or "react" in refreshed_content
-        has_untagged = "seattle" in refreshed_content or "pike place" in refreshed_content or "downtown" in refreshed_content
+        has_untagged = (
+            "seattle" in refreshed_content or "pike place" in refreshed_content or "downtown" in refreshed_content
+        )
         assert has_tagged or has_untagged, (
             f"Untagged model should see all content with default 'any' matching. Content: {refreshed['content']}"
         )
@@ -1582,36 +1844,48 @@ class TestMentalModelRefreshMaxTokens:
         await memory.retain_batch_async(
             bank_id=bank_id,
             contents=[
-                {"content": (
-                    "Alice is the staff frontend engineer. She owns the design system, "
-                    "leads accessibility reviews, mentors three junior engineers, and runs "
-                    "the weekly UI guild meeting every Thursday at 2pm Pacific."
-                )},
-                {"content": (
-                    "Bob is the backend tech lead. He owns the payments service, the "
-                    "billing reconciliation pipeline, and the on-call rotation for the "
-                    "platform team. He is the primary reviewer for any database migration."
-                )},
-                {"content": (
-                    "Carol manages the data platform. Her team operates the warehouse, "
-                    "the streaming ingestion layer, and the metrics pipeline that feeds "
-                    "the executive dashboards refreshed every fifteen minutes."
-                )},
-                {"content": (
-                    "The team holds a company-wide demo every other Friday. Engineering "
-                    "presents shipped work, design walks through prototypes, and product "
-                    "shares roadmap updates for the upcoming quarter."
-                )},
-                {"content": (
-                    "Dan is the security lead. He runs the quarterly threat-modeling "
-                    "exercises, owns the incident response runbook, and coordinates the "
-                    "annual external penetration test with the vendor."
-                )},
-                {"content": (
-                    "Erin runs developer experience. She maintains the local-dev tooling, "
-                    "the CI pipelines, the release automation, and the internal "
-                    "documentation portal that everyone uses to onboard new hires."
-                )},
+                {
+                    "content": (
+                        "Alice is the staff frontend engineer. She owns the design system, "
+                        "leads accessibility reviews, mentors three junior engineers, and runs "
+                        "the weekly UI guild meeting every Thursday at 2pm Pacific."
+                    )
+                },
+                {
+                    "content": (
+                        "Bob is the backend tech lead. He owns the payments service, the "
+                        "billing reconciliation pipeline, and the on-call rotation for the "
+                        "platform team. He is the primary reviewer for any database migration."
+                    )
+                },
+                {
+                    "content": (
+                        "Carol manages the data platform. Her team operates the warehouse, "
+                        "the streaming ingestion layer, and the metrics pipeline that feeds "
+                        "the executive dashboards refreshed every fifteen minutes."
+                    )
+                },
+                {
+                    "content": (
+                        "The team holds a company-wide demo every other Friday. Engineering "
+                        "presents shipped work, design walks through prototypes, and product "
+                        "shares roadmap updates for the upcoming quarter."
+                    )
+                },
+                {
+                    "content": (
+                        "Dan is the security lead. He runs the quarterly threat-modeling "
+                        "exercises, owns the incident response runbook, and coordinates the "
+                        "annual external penetration test with the vendor."
+                    )
+                },
+                {
+                    "content": (
+                        "Erin runs developer experience. She maintains the local-dev tooling, "
+                        "the CI pipelines, the release automation, and the internal "
+                        "documentation portal that everyone uses to onboard new hires."
+                    )
+                },
             ],
             request_context=request_context,
         )
@@ -1727,8 +2001,301 @@ class TestMentalModelTriggerSchema:
         assert t2.fact_types == ["world"]
 
     def test_trigger_tag_groups_rejects_invalid(self):
-        from hindsight_api.api.http import MentalModelTrigger
         from pydantic import ValidationError
+
+        from hindsight_api.api.http import MentalModelTrigger
 
         with pytest.raises(ValidationError):
             MentalModelTrigger(tag_groups=[{"invalid_key": "bad"}])
+
+
+class TestClearMentalModel:
+    """Test clear_mental_model resets content so next refresh is full."""
+
+    async def test_clear_resets_content(self, memory: MemoryEngine, request_context):
+        """Clear sets content to empty string and nulls structured/tracking fields."""
+        bank_id = f"test-mm-clear-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Test Model",
+            source_query="What do we know?",
+            content="Some existing content",
+            request_context=request_context,
+        )
+        assert mm["content"] == "Some existing content"
+
+        cleared = await memory.clear_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            request_context=request_context,
+        )
+        assert cleared is not None
+        assert cleared["content"] == ""
+        assert cleared["id"] == mm["id"]
+        assert cleared["name"] == "Test Model"
+
+        # Re-fetch to confirm persistence
+        fetched = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
+        assert fetched["content"] == ""
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_clear_nonexistent_returns_none(self, memory: MemoryEngine, request_context):
+        """Clearing a non-existent mental model returns None."""
+        bank_id = f"test-mm-clear-none-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        result = await memory.clear_mental_model(
+            bank_id=bank_id,
+            mental_model_id="nonexistent-id",
+            request_context=request_context,
+        )
+        assert result is None
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+class TestMentalModelRefreshFactTypeFilter:
+    """Regression for #1724.
+
+    `trigger.fact_types=["experience"]` on a mental model must match the same
+    facts that direct recall with `types=["experience"]` matches, given the
+    same tag scope. The reported symptom is that refresh returns empty content
+    ("I cannot find any information…") while direct recall returns 70+ rows.
+    """
+
+    @staticmethod
+    def _to_embedding_str(embedding: list[float]) -> str:
+        return "[" + ",".join(str(v) for v in embedding) + "]"
+
+    @staticmethod
+    async def _insert_fact(
+        memory: MemoryEngine,
+        bank_id: str,
+        *,
+        text: str,
+        fact_type: str,
+        tags: list[str] | None,
+        embedding_str: str,
+    ) -> str:
+        from datetime import datetime, timezone
+
+        pool = await memory._get_pool()
+        fact_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        async with pool.acquire() as conn:
+            await conn.execute(
+                f"""
+                INSERT INTO {fq_table("memory_units")}
+                    (id, bank_id, text, event_date, fact_type, tags, embedding, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6::varchar[], $7::vector, $4, $4)
+                """,
+                fact_id,
+                bank_id,
+                text,
+                now,
+                fact_type,
+                tags or [],
+                embedding_str,
+            )
+        return fact_id
+
+    @staticmethod
+    def _install_recall_then_done_mock_llm(memory: MemoryEngine):
+        """Replace `_reflect_llm_config` with a MockLLM that drives the agent
+        through a deterministic recall → done loop.
+
+        On each tool-call step the mock looks at the running message list. If a
+        `recall` tool result is already there, it emits `done(memory_ids=[…])`
+        with the returned IDs. Otherwise it emits a single `recall(q=…)` call.
+        Forced `tool_choice` from the agent is intentionally ignored — we want
+        to exercise the recall path the user actually sees facts on.
+        """
+        import json
+        from unittest.mock import MagicMock
+
+        from hindsight_api.engine.providers.mock_llm import MockLLM
+        from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult
+
+        mock_llm = MockLLM(provider="mock", api_key="", base_url="", model="mock-model")
+
+        def callback(messages, scope):
+            # The non-tool-calling "reflect" scope is only entered as a fallback
+            # synthesis path (e.g. when the agent hits max_iterations). The
+            # caller awaits `response.strip()`, so we must return a plain string
+            # here, not an LLMToolCallResult.
+            if scope != "reflect_tool_call":
+                return "experience facts summary"
+
+            recall_memory_ids: list[str] = []
+            for m in messages:
+                if m.get("role") != "tool":
+                    continue
+                try:
+                    payload = json.loads(m.get("content") or "{}")
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                memories = payload.get("memories")
+                if isinstance(memories, list):
+                    for mem in memories:
+                        mid = mem.get("id") if isinstance(mem, dict) else None
+                        if mid:
+                            recall_memory_ids.append(mid)
+
+            if recall_memory_ids:
+                return LLMToolCallResult(
+                    tool_calls=[
+                        LLMToolCall(
+                            id="done-1",
+                            name="done",
+                            arguments={
+                                "answer": "Found experience facts.",
+                                "memory_ids": recall_memory_ids,
+                            },
+                        )
+                    ],
+                    finish_reason="tool_calls",
+                )
+
+            return LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="recall-1",
+                        name="recall",
+                        arguments={"query": "experiences"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            )
+
+        mock_llm.set_response_callback(callback)
+
+        wrapper = MagicMock()
+        wrapper.with_config.return_value = mock_llm
+        memory._reflect_llm_config = wrapper
+        return mock_llm
+
+    async def test_refresh_with_fact_types_experience_grounds_on_experience_facts(
+        self, memory: MemoryEngine, request_context
+    ):
+        bank_id = f"test-mm-refresh-ft-exp-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        text = "I visited Paris in 2023 and it was amazing."
+        embeddings = await embedding_utils.generate_embeddings_batch(memory.embeddings, [text])
+        embedding_str = self._to_embedding_str(embeddings[0])
+        fact_id = await self._insert_fact(
+            memory,
+            bank_id,
+            text=text,
+            fact_type="experience",
+            tags=["episodic-trace"],
+            embedding_str=embedding_str,
+        )
+
+        # Control: direct recall with the same filter must find the fact.
+        direct = await memory.recall_async(
+            bank_id=bank_id,
+            query="experiences",
+            fact_type=["experience"],
+            tags=["episodic-trace"],
+            tags_match="any",
+            request_context=request_context,
+        )
+        assert any(str(r.id) == fact_id for r in direct.results), (
+            "control: direct recall with types=['experience'] should find the seeded fact, "
+            "otherwise the test setup is broken and the refresh comparison is meaningless"
+        )
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="experience-summary",
+            source_query="summarize the experience-type content",
+            content="",
+            tags=["episodic-trace"],
+            trigger={
+                "refresh_after_consolidation": False,
+                "tags_match": "any",
+                "fact_types": ["experience"],
+            },
+            request_context=request_context,
+        )
+
+        self._install_recall_then_done_mock_llm(memory)
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            request_context=request_context,
+        )
+
+        assert refreshed is not None
+        based_on = (refreshed.get("reflect_response") or {}).get("based_on") or {}
+        experience_based_on = based_on.get("experience") or []
+        assert any(f.get("id") == fact_id for f in experience_based_on), (
+            "Refresh with trigger.fact_types=['experience'] did not ground on the seeded "
+            "experience fact. Direct recall with the same filter does — see the control "
+            "assertion above. "
+            f"based_on={based_on!r}"
+        )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    def test_system_prompt_does_not_advertise_disabled_tools(self):
+        """Reproduces the root cause of #1724.
+
+        When `trigger.fact_types=["experience"]` (or any value not containing
+        "observation") is set on a mental model, `reflect_async` builds the
+        agent with `include_observations=False` — i.e. `search_observations`
+        is omitted from the tool list. The agent's system prompt is built
+        independently and still tells the LLM to "try search_observations
+        first". Lower-capability LLMs (e.g. Groq gpt-oss-20b as reported in
+        the issue) follow that instruction, the agent rejects the
+        hallucinated call ("Tool 'search_observations' is not available"),
+        and the loop bails out with empty content even though the bank has
+        matching experience facts.
+
+        The contract this test enforces: every tool the system prompt
+        instructs the LLM to call must be present in the tool list returned
+        by `get_reflect_tools` for the same configuration.
+        """
+        from hindsight_api.engine.reflect.prompts import build_system_prompt_for_tools
+        from hindsight_api.engine.reflect.tools_schema import get_reflect_tools
+
+        # Configuration matching the issue's repro: fact_types=["experience"]
+        # → include_observations=False, include_recall=True, has_mental_models=False
+        # (a fresh bank with only the model-under-refresh, which is excluded).
+        include_observations = False
+        include_recall = True
+        has_mental_models = False
+
+        tools = get_reflect_tools(
+            include_mental_models=has_mental_models,
+            include_observations=include_observations,
+            include_recall=include_recall,
+        )
+        tool_names = {t["function"]["name"] for t in tools if t.get("type") == "function"}
+        # Sanity: the tools wiring is doing what we expect.
+        assert "search_observations" not in tool_names, (
+            "test premise broken — search_observations is unexpectedly in the tools list"
+        )
+
+        prompt = build_system_prompt_for_tools(
+            bank_profile={"name": "Test", "mission": ""},
+            has_mental_models=has_mental_models,
+            include_observations=include_observations,
+        )
+
+        # The bug: prompt instructs the LLM to call search_observations even
+        # though the tool is unavailable. The fix gates the relevant retrieval
+        # and workflow text on include_observations.
+        assert "search_observations" not in prompt, (
+            "System prompt mentions search_observations but the tool is not in the "
+            "agent's tool list. This is the root cause of #1724: the LLM is told to "
+            "use a tool that has been disabled, then either hallucinates the call "
+            "(rejected by the agent) or gives up with 'I cannot find any information…'."
+        )

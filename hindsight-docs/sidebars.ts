@@ -204,6 +204,12 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'link',
+          href: '/sdks/integrations/grok-build',
+          label: 'Grok Build',
+          customProps: { icon: '/img/icons/terminal.svg' },
+        },
+        {
+          type: 'link',
           href: '/sdks/integrations/codex',
           label: 'OpenAI Codex CLI',
           customProps: { icon: '/img/icons/terminal.svg' },
@@ -303,6 +309,12 @@ const sidebars: SidebarsConfig = {
           href: '/sdks/integrations/llamaindex',
           label: 'LlamaIndex',
           customProps: { icon: '/img/icons/llamaindex.png' },
+        },
+        {
+          type: 'link',
+          href: '/sdks/integrations/google-adk',
+          label: 'Google ADK',
+          customProps: { icon: '/img/icons/google-adk.png' },
         },
         {
           type: 'link',

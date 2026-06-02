@@ -225,6 +225,7 @@ async def retrieve_semantic_bm25_combined(
                     groups_clause=groups_clause,
                     arm_index=i,
                     text_search_extension=text_ext,
+                    bm25_language=config.text_search_extension_native_language,
                     extra_where=created_range_clause,
                 )
             )
@@ -465,6 +466,8 @@ async def retrieve_temporal_combined(
                 best_date = ep["mentioned_at"]
 
             if best_date:
+                if best_date.tzinfo is None:
+                    best_date = best_date.replace(tzinfo=UTC)
                 days_from_mid = abs((best_date - mid_date).total_seconds() / 86400)
                 temporal_proximity = 1.0 - min(days_from_mid / (total_days / 2), 1.0) if total_days > 0 else 1.0
             else:
@@ -558,6 +561,8 @@ async def retrieve_temporal_combined(
                     neighbor_best_date = n["mentioned_at"]
 
                 if neighbor_best_date:
+                    if neighbor_best_date.tzinfo is None:
+                        neighbor_best_date = neighbor_best_date.replace(tzinfo=UTC)
                     days_from_mid = abs((neighbor_best_date - mid_date).total_seconds() / 86400)
                     neighbor_temporal_proximity = (
                         1.0 - min(days_from_mid / (total_days / 2), 1.0) if total_days > 0 else 1.0

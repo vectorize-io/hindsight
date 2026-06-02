@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(
@@ -9,7 +10,13 @@ export async function GET(
     const { bankId, directiveId } = await params;
 
     if (!bankId || !directiveId) {
-      return NextResponse.json({ error: "bank_id and directive_id are required" }, { status: 400 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "bank_id and directive_id are required",
+          errorKey: "api.errors.validation.bankAndDirectiveIdRequired",
+        }),
+        { status: 400 }
+      );
     }
 
     const response = await fetch(
@@ -20,14 +27,26 @@ export async function GET(
     if (!response.ok) {
       const errorText = await response.text();
       console.error("API error getting directive:", errorText);
-      return NextResponse.json({ error: "Failed to get directive" }, { status: response.status });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "Failed to get directive",
+          errorKey: "api.errors.directives.fetch",
+        }),
+        { status: response.status }
+      );
     }
 
     const data = await response.json();
     return NextResponse.json(data, { status: 200 });
   } catch (error) {
     console.error("Error getting directive:", error);
-    return NextResponse.json({ error: "Failed to get directive" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to get directive",
+        errorKey: "api.errors.directives.fetch",
+      }),
+      { status: 500 }
+    );
   }
 }
 
@@ -39,7 +58,13 @@ export async function PATCH(
     const { bankId, directiveId } = await params;
 
     if (!bankId || !directiveId) {
-      return NextResponse.json({ error: "bank_id and directive_id are required" }, { status: 400 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "bank_id and directive_id are required",
+          errorKey: "api.errors.validation.bankAndDirectiveIdRequired",
+        }),
+        { status: 400 }
+      );
     }
 
     const body = await request.json();
@@ -57,7 +82,10 @@ export async function PATCH(
       const errorText = await response.text();
       console.error("API error updating directive:", errorText);
       return NextResponse.json(
-        { error: errorText || "Failed to update directive" },
+        localizeApiErrorPayload(request, {
+          error: errorText || "Failed to update directive",
+          errorKey: "api.errors.directives.update",
+        }),
         { status: response.status }
       );
     }
@@ -66,7 +94,13 @@ export async function PATCH(
     return NextResponse.json(data, { status: 200 });
   } catch (error) {
     console.error("Error updating directive:", error);
-    return NextResponse.json({ error: "Failed to update directive" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to update directive",
+        errorKey: "api.errors.directives.update",
+      }),
+      { status: 500 }
+    );
   }
 }
 
@@ -78,7 +112,13 @@ export async function DELETE(
     const { bankId, directiveId } = await params;
 
     if (!bankId || !directiveId) {
-      return NextResponse.json({ error: "bank_id and directive_id are required" }, { status: 400 });
+      return NextResponse.json(
+        localizeApiErrorPayload(request, {
+          error: "bank_id and directive_id are required",
+          errorKey: "api.errors.validation.bankAndDirectiveIdRequired",
+        }),
+        { status: 400 }
+      );
     }
 
     const response = await fetch(
@@ -90,7 +130,10 @@ export async function DELETE(
       const errorText = await response.text();
       console.error("API error deleting directive:", errorText);
       return NextResponse.json(
-        { error: errorText || "Failed to delete directive" },
+        localizeApiErrorPayload(request, {
+          error: errorText || "Failed to delete directive",
+          errorKey: "api.errors.directives.delete",
+        }),
         { status: response.status }
       );
     }
@@ -98,6 +141,12 @@ export async function DELETE(
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error) {
     console.error("Error deleting directive:", error);
-    return NextResponse.json({ error: "Failed to delete directive" }, { status: 500 });
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Failed to delete directive",
+        errorKey: "api.errors.directives.delete",
+      }),
+      { status: 500 }
+    );
   }
 }

@@ -24,6 +24,7 @@ on:
           - recall
           - recall-with-observations
           - consolidation
+          - graph-maintenance
         default: ""
       locomo_conversations:
         description: "LoComo conversation IDs (space-separated). Blank = curated set (conv-26 conv-30 conv-43)."

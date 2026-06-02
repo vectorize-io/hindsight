@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import { Input } from "@/components/ui/input";
 import { Tag, X } from "lucide-react";
 import { client } from "@/lib/api";
@@ -26,12 +27,14 @@ export function TagFilterInput({
   onChange,
   bankId,
   fetchSuggestions,
-  placeholder = "Filter by tag…",
+  placeholder,
   className,
   matchMode,
   onMatchModeChange,
   showMatchToggleAt = DEFAULT_SHOW_MATCH_TOGGLE_AT,
 }: TagFilterInputProps) {
+  const t = useTranslations("common");
+  const resolvedPlaceholder = placeholder ?? t("filterByTagPlaceholder");
   const [input, setInput] = useState("");
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
@@ -65,7 +68,7 @@ export function TagFilterInput({
       try {
         const results = await fetcher(input.trim());
         if (cancelled) return;
-        const filtered = results.filter((t) => !value.includes(t));
+        const filtered = results.filter((tag) => !value.includes(tag));
         setSuggestions(filtered);
         setActiveIndex(filtered.length > 0 ? 0 : -1);
       } catch {
@@ -100,7 +103,7 @@ export function TagFilterInput({
   };
 
   const removeTag = (tag: string) => {
-    onChange(value.filter((t) => t !== tag));
+    onChange(value.filter((existing) => existing !== tag));
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -150,7 +153,7 @@ export function TagFilterInput({
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={handleKeyDown}
-          placeholder={placeholder}
+          placeholder={resolvedPlaceholder}
           className="pl-8 h-9"
         />
         {open && suggestions.length > 0 && (
@@ -191,7 +194,7 @@ export function TagFilterInput({
                 type="button"
                 onClick={() => removeTag(tag)}
                 className="opacity-50 hover:opacity-100 transition-opacity ml-0.5"
-                aria-label={`Remove tag ${tag}`}
+                aria-label={t("removeTag", { tag })}
               >
                 <X className="w-3 h-3" />
               </button>
@@ -202,7 +205,7 @@ export function TagFilterInput({
             onClick={() => onChange([])}
             className="text-xs text-muted-foreground hover:text-foreground underline"
           >
-            Clear
+            {t("clear")}
           </button>
         </div>
       )}
@@ -217,9 +220,9 @@ export function TagFilterInput({
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground"
             }`}
-            title="Match any selected tag"
+            title={t("matchAnyTooltip")}
           >
-            any
+            {t("matchAny")}
           </button>
           <button
             type="button"
@@ -229,9 +232,9 @@ export function TagFilterInput({
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground"
             }`}
-            title="Match all selected tags"
+            title={t("matchAllTooltip")}
           >
-            all
+            {t("matchAll")}
           </button>
         </div>
       )}

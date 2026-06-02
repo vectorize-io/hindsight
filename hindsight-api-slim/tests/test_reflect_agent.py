@@ -701,6 +701,7 @@ class TestDirectiveLeakageOnEmptyBank:
             await memory.delete_bank(bank_id, request_context=request_context)
 
 
+@pytest.mark.hs_llm_core
 class TestContextOverflowIntegration:
     """Integration test: real LLM with a very small max_context_tokens.
 
@@ -708,6 +709,11 @@ class TestContextOverflowIntegration:
     tool result that exceeds the tiny budget, then synthesize from it via a second
     real LLM call — all without raising a context_length_exceeded error.
     """
+
+    @pytest.fixture
+    def memory(self, memory_real_llm):
+        """Override to use real LLM for this class."""
+        return memory_real_llm
 
     @pytest.mark.asyncio
     async def test_reflect_completes_with_tiny_context_budget(self, memory, request_context):

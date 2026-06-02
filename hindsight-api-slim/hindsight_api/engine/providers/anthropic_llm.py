@@ -93,7 +93,6 @@ class AnthropicLLM(LLMInterface):
             await self.call(
                 messages=test_messages,
                 max_completion_tokens=10,
-                temperature=0.0,
                 scope="verification",
                 max_retries=0,
             )
@@ -178,9 +177,6 @@ class AnthropicLLM(LLMInterface):
 
         if system_prompt:
             call_params["system"] = system_prompt
-
-        if temperature is not None:
-            call_params["temperature"] = temperature
 
         last_exception = None
 
@@ -397,9 +393,6 @@ class AnthropicLLM(LLMInterface):
         }
         if system_prompt:
             call_params["system"] = system_prompt
-
-        if temperature is not None:
-            call_params["temperature"] = temperature
 
         last_exception = None
         for attempt in range(max_retries + 1):

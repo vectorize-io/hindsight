@@ -23,7 +23,10 @@ from hindsight_api import MemoryEngine, RequestContext
 _GEMINI_KEY = os.getenv("HINDSIGHT_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 _OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 _RUN = os.getenv("HINDSIGHT_RUN_GEMINI_EVALS") == "1" and (bool(_GEMINI_KEY) or bool(_OPENAI_KEY))
-pytestmark = pytest.mark.skipif(not _RUN, reason="Set HINDSIGHT_RUN_GEMINI_EVALS=1 + LLM API key")
+pytestmark = [
+    pytest.mark.skipif(not _RUN, reason="Set HINDSIGHT_RUN_GEMINI_EVALS=1 + LLM API key"),
+    pytest.mark.hs_llm_core,
+]
 
 # ---------------------------------------------------------------------------
 # Test documents — short but representative
@@ -95,10 +98,11 @@ class TestDeltaEditorialFusion:
 
     async def test_delta_fuses_seo_and_brand_voice(
         self,
-        memory: MemoryEngine,
+        memory_real_llm: MemoryEngine,
         request_context: RequestContext,
     ):
         bank_id = f"test-editorial-{uuid.uuid4().hex[:8]}"
+        memory = memory_real_llm
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
         try:

@@ -283,12 +283,12 @@ class LinkExpansionRetriever(GraphRetriever):
         score transformations.  The three CTEs share one connection slot — important
         for asyncpg which does not allow concurrent queries on the same connection.
 
-        Index coverage (requires migration d2e3f4a5b6c7):
-          entity:   idx_memory_links_entity_covering (from_unit_id) INCLUDE (to_unit_id, entity_id)
-                    WHERE link_type = 'entity'  → index-only scan, no heap reads
-          semantic incoming:
-                    idx_memory_links_to_type_weight (to_unit_id, link_type, weight DESC)
-                    → replaces costly BitmapAnd of two separate scans
+        Index coverage:
+          entity:   idx_unit_entities_entity_unit (entity_id, unit_id) — entity
+                    expansion traverses unit_entities, not memory_links.
+          semantic: idx_memory_links_from_type_weight / _to_type_weight
+                    (from_unit_id|to_unit_id, link_type, weight DESC) serve both
+                    outgoing and incoming sides as single composite index scans.
         """
         config = get_config()
         ml = fq_table("memory_links")

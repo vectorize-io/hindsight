@@ -16,7 +16,15 @@ from typing import Any, Final
 
 from .db_utils import acquire_with_retry
 from .memory_engine import fq_table
-from .retain.entity_labels import build_labels_lookup as _build_labels_lookup_from_config
+from .retain.entity_labels import (
+    build_labels_lookup as _build_labels_lookup_from_config,
+)
+from .retain.entity_labels import (
+    is_label_entity as _is_label_entity,
+)
+from .retain.entity_labels import (
+    parse_entity_labels as _parse_entity_labels,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +97,12 @@ class EntityResolver:
     Resolves entities to canonical IDs with disambiguation.
     """
 
-    def __init__(self, pool: Any, entity_lookup: str = "full"):
+    def __init__(
+        self,
+        pool: Any,
+        entity_lookup: str = "full",
+        entity_resolution_batch_size: int = 100,
+    ):
         """
         Initialize entity resolver.
 
@@ -98,9 +111,14 @@ class EntityResolver:
             entity_lookup: Lookup strategy — "full" loads all bank entities then
                 matches in Python; "trigram" uses pg_trgm GIN index to fetch only
                 similar candidates per entity name (much faster for large banks).
+            entity_resolution_batch_size: Number of unique entity names to include
+                in each pg_trgm candidate lookup query.
         """
         self.pool = pool
         self.entity_lookup = entity_lookup
+        if entity_resolution_batch_size < 1:
+            raise ValueError("entity_resolution_batch_size must be >= 1")
+        self.entity_resolution_batch_size = entity_resolution_batch_size
         self._pg_trgm_checked = False
         # Backend-specific operations — accessed via pool.ops (Django pattern).
         self._ops = pool.ops if pool is not None else None
@@ -199,6 +217,11 @@ class EntityResolver:
         """Build a set of valid 'key:value' entity label strings for fast lookup."""
         return _build_labels_lookup_from_config(entity_labels)
 
+    @staticmethod
+    def _chunked(values: list[str], size: int) -> list[list[str]]:
+        """Split values into fixed-size batches."""
+        return [values[i : i + size] for i in range(0, len(values), size)]
+
     async def resolve_entities_batch(
         self,
         bank_id: str,
@@ -228,14 +251,15 @@ class EntityResolver:
             return []
 
         taxonomy_lookup = self._build_labels_lookup(entity_labels)
+        labels_cfg = _parse_entity_labels(entity_labels)
         if conn is None:
             async with acquire_with_retry(self.pool) as conn:
                 return await self._resolve_entities_batch_impl(
-                    conn, bank_id, entities_data, context, unit_event_date, taxonomy_lookup
+                    conn, bank_id, entities_data, context, unit_event_date, taxonomy_lookup, labels_cfg
                 )
         else:
             return await self._resolve_entities_batch_impl(
-                conn, bank_id, entities_data, context, unit_event_date, taxonomy_lookup
+                conn, bank_id, entities_data, context, unit_event_date, taxonomy_lookup, labels_cfg
             )
 
     async def _resolve_entities_batch_impl(
@@ -246,13 +270,16 @@ class EntityResolver:
         context: str,
         unit_event_date,
         taxonomy_lookup: set[str] | None = None,
+        labels_cfg=None,
     ) -> list[str]:
         if self.entity_lookup == "trigram":
             # Route to backend-specific fuzzy strategy.
             # Non-PG backends (Oracle) use UTL_MATCH instead of pg_trgm.
             backend_strategy = self._ops.get_entity_resolution_strategy()
             if backend_strategy == "oracle_fuzzy":
-                return await self._resolve_entities_batch_oracle_fuzzy(conn, bank_id, entities_data, unit_event_date)
+                return await self._resolve_entities_batch_oracle_fuzzy(
+                    conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg
+                )
             # Auto-detect pg_trgm availability on first call and fall back to
             # "full" strategy if the extension is not installed.  See #626.
             if not self._pg_trgm_checked:
@@ -266,12 +293,24 @@ class EntityResolver:
                         "https://github.com/vectorize-io/hindsight/issues/626"
                     )
                     self.entity_lookup = "full"
-                    return await self._resolve_entities_batch_full(conn, bank_id, entities_data, unit_event_date)
-            return await self._resolve_entities_batch_trigram(conn, bank_id, entities_data, unit_event_date)
-        return await self._resolve_entities_batch_full(conn, bank_id, entities_data, unit_event_date)
+                    return await self._resolve_entities_batch_full(
+                        conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg
+                    )
+            return await self._resolve_entities_batch_trigram(
+                conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg
+            )
+        return await self._resolve_entities_batch_full(
+            conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg
+        )
 
     async def _resolve_entities_batch_full(
-        self, conn, bank_id: str, entities_data: list[dict], unit_event_date
+        self,
+        conn,
+        bank_id: str,
+        entities_data: list[dict],
+        unit_event_date,
+        taxonomy_lookup: set[str] | None = None,
+        labels_cfg=None,
     ) -> list[str]:
         """Original strategy: load all bank entities then match in Python."""
         # Query ALL candidates for this bank
@@ -338,11 +377,24 @@ class EntityResolver:
             all_candidates[entity_text] = matching
 
         return await self._resolve_from_candidates(
-            conn, bank_id, entities_data, unit_event_date, all_candidates, cooccurrence_map
+            conn,
+            bank_id,
+            entities_data,
+            unit_event_date,
+            all_candidates,
+            cooccurrence_map,
+            taxonomy_lookup,
+            labels_cfg,
         )
 
     async def _resolve_entities_batch_trigram(
-        self, conn, bank_id: str, entities_data: list[dict], unit_event_date
+        self,
+        conn,
+        bank_id: str,
+        entities_data: list[dict],
+        unit_event_date,
+        taxonomy_lookup: set[str] | None = None,
+        labels_cfg=None,
     ) -> list[str]:
         """
         Trigram strategy: fetch only similar candidates per entity name using pg_trgm.
@@ -353,7 +405,7 @@ class EntityResolver:
         """
         entity_texts = list(set(e["text"] for e in entities_data))
 
-        # Fetch candidates for all unique entity texts in a single batched query.
+        # Fetch candidates for unique entity texts in bounded batches.
         # Uses the GIN trigram index on LOWER(canonical_name) for case-insensitive
         # similarity lookup. Previous version also had LIKE '%...' substring fallbacks,
         # but those forced full sequential scans of the entities table and caused
@@ -361,21 +413,32 @@ class EntityResolver:
         # to 0.15 (from default 0.3) catches most substring relationships while
         # staying fully index-based.
         await conn.execute("SET pg_trgm.similarity_threshold = 0.15")
-        rows = await conn.fetch(
-            f"""
-            SELECT DISTINCT ON (e.id)
-                e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
-                q.query_text
-            FROM unnest($2::text[]) AS q(query_text)
-            JOIN {fq_table("entities")} e ON (
-                e.bank_id = $1
-                AND LOWER(e.canonical_name) % LOWER(q.query_text)
-            )
-            """,
-            bank_id,
-            entity_texts,
-        )
-        await conn.execute("RESET pg_trgm.similarity_threshold")
+        try:
+            rows = []
+            for entity_text_batch in self._chunked(entity_texts, self.entity_resolution_batch_size):
+                rows.extend(
+                    await conn.fetch(
+                        f"""
+                        SELECT DISTINCT ON (e.id)
+                            e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
+                            q.query_text
+                        FROM unnest($2::text[]) AS q(query_text)
+                        JOIN {fq_table("entities")} e ON (
+                            e.bank_id = $1
+                            AND LOWER(e.canonical_name) % LOWER(q.query_text)
+                        )
+                        """,
+                        bank_id,
+                        entity_text_batch,
+                    )
+                )
+        finally:
+            # asyncpg returns connections to the pool with session state intact,
+            # so the lowered threshold would leak to future borrowers without RESET.
+            try:
+                await conn.execute("RESET pg_trgm.similarity_threshold")
+            except Exception:
+                logger.warning("Failed to reset pg_trgm similarity threshold after candidate lookup", exc_info=True)
 
         # Group candidates by query_text
         all_candidates: dict[str, list] = {t: [] for t in entity_texts}
@@ -418,11 +481,24 @@ class EntityResolver:
                     cooccurrence_map[eid2].add(id_to_name[eid1])
 
         return await self._resolve_from_candidates(
-            conn, bank_id, entities_data, unit_event_date, all_candidates, cooccurrence_map
+            conn,
+            bank_id,
+            entities_data,
+            unit_event_date,
+            all_candidates,
+            cooccurrence_map,
+            taxonomy_lookup,
+            labels_cfg,
         )
 
     async def _resolve_entities_batch_oracle_fuzzy(
-        self, conn: Any, bank_id: str, entities_data: list[dict], unit_event_date: datetime | None
+        self,
+        conn: Any,
+        bank_id: str,
+        entities_data: list[dict],
+        unit_event_date: datetime | None,
+        taxonomy_lookup: set[str] | None = None,
+        labels_cfg=None,
     ) -> list[str]:
         """
         Oracle strategy: fetch similar candidates using UTL_MATCH.JARO_WINKLER_SIMILARITY.
@@ -436,23 +512,28 @@ class EntityResolver:
         entities_table = fq_table("entities")
 
         try:
-            # Batch all entity texts into a single query using JSON_TABLE to
+            # Batch entity texts into bounded sub-queries using JSON_TABLE to
             # expand the list into rows. UTL_MATCH.JARO_WINKLER_SIMILARITY
             # returns 0-100; threshold 70 ≈ pg_trgm similarity 0.15.
-            entity_texts_json = json.dumps(entity_texts)
-            rows = await conn.fetch(
-                f"""
-                SELECT e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
-                       q.query_text
-                FROM JSON_TABLE($2, '$[*]' COLUMNS (query_text VARCHAR2(4000) PATH '$')) q
-                JOIN {entities_table} e ON (
-                    e.bank_id = $1
-                    AND UTL_MATCH.JARO_WINKLER_SIMILARITY(LOWER(e.canonical_name), LOWER(q.query_text)) > 70
+            # Bounded batches mirror the PG trigram path so very wide retain
+            # batches don't time out a single JOIN on large banks.
+            rows = []
+            for entity_text_batch in self._chunked(entity_texts, self.entity_resolution_batch_size):
+                rows.extend(
+                    await conn.fetch(
+                        f"""
+                        SELECT e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
+                               q.query_text
+                        FROM JSON_TABLE($2, '$[*]' COLUMNS (query_text VARCHAR2(4000) PATH '$')) q
+                        JOIN {entities_table} e ON (
+                            e.bank_id = $1
+                            AND UTL_MATCH.JARO_WINKLER_SIMILARITY(LOWER(e.canonical_name), LOWER(q.query_text)) > 70
+                        )
+                        """,
+                        bank_id,
+                        json.dumps(entity_text_batch),
+                    )
                 )
-                """,
-                bank_id,
-                entity_texts_json,
-            )
         except Exception as e:
             # UTL_MATCH may not be available (ORA-06550, ORA-00904, etc.)
             # Catch broadly because Oracle error types vary depending on driver.
@@ -506,7 +587,14 @@ class EntityResolver:
                     cooccurrence_map[eid2].add(id_to_name[eid1])
 
         return await self._resolve_from_candidates(
-            conn, bank_id, entities_data, unit_event_date, all_candidates, cooccurrence_map
+            conn,
+            bank_id,
+            entities_data,
+            unit_event_date,
+            all_candidates,
+            cooccurrence_map,
+            taxonomy_lookup,
+            labels_cfg,
         )
 
     async def _resolve_from_candidates(
@@ -517,6 +605,8 @@ class EntityResolver:
         unit_event_date,
         all_candidates: dict[str, list],
         cooccurrence_map: dict[str, set[str]],
+        taxonomy_lookup: set[str] | None = None,
+        labels_cfg=None,
     ) -> list[str]:
         """Shared scoring + upsert logic used by both lookup strategies."""
 
@@ -533,9 +623,32 @@ class EntityResolver:
 
             candidates = all_candidates.get(entity_text, [])
 
+            # Label entities (from entity_labels config) use exact matching only.
+            # Their canonical names are user-defined (e.g., "use:use-001"),
+            # so fuzzy resolution must NOT merge distinct label values that
+            # happen to be textually similar (GH-1558).
+            is_label = bool(
+                labels_cfg and taxonomy_lookup and _is_label_entity(entity_text, labels_cfg, taxonomy_lookup)
+            )
+
             if not candidates:
                 # Will create new entity
                 entities_to_create.append(_EntityToCreate(idx=idx, name=entity_text, event_date=entity_event_date))
+                continue
+
+            if is_label:
+                # Exact case-insensitive match only for label entities
+                exact_match = None
+                entity_text_lower = entity_text.lower()
+                for candidate_id, canonical_name, metadata, last_seen, mention_count in candidates:
+                    if canonical_name.lower() == entity_text_lower:
+                        exact_match = candidate_id
+                        break
+                if exact_match:
+                    entity_ids[idx] = exact_match
+                    entities_to_update.append(_EntityStat(entity_id=exact_match, event_date=entity_event_date))
+                else:
+                    entities_to_create.append(_EntityToCreate(idx=idx, name=entity_text, event_date=entity_event_date))
                 continue
 
             # Score candidates

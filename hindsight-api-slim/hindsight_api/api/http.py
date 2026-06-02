@@ -15,8 +15,14 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi.middleware.gzip import GZipMiddleware
 
-from hindsight_api.engine.audit import AuditEntry, AuditLogger
+from hindsight_api.engine.audit import (
+    AuditEntry,
+    AuditLogger,
+    AuditLogListResponse,
+    AuditLogStatsResponse,
+)
 from hindsight_api.extensions import AuthenticationError
 
 
@@ -151,7 +157,11 @@ class RecallRequest(BaseModel):
     max_tokens: int = 4096
     trace: bool = False
     query_timestamp: str | None = Field(
-        default=None, description="ISO format date string (e.g., '2023-05-30T23:40:00')"
+        default=None,
+        description=(
+            "ISO format date string (e.g., '2023-05-30T23:40:00'). Used as the query-time anchor for "
+            "relative temporal expressions and recency scoring."
+        ),
     )
     include: IncludeOptions = FieldWithDefault(
         IncludeOptions,
@@ -465,6 +475,13 @@ class MemoryItem(BaseModel):
         default=None,
         description="Optional tags for visibility scoping. Memories with tags can be filtered during recall.",
     )
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("content cannot be empty")
+        return v
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -2180,6 +2197,19 @@ class OperationResponse(BaseModel):
     )
 
 
+class ConsolidationRequest(BaseModel):
+    """Request model for consolidation trigger endpoint."""
+
+    observation_scopes: list[list[str]] | None = Field(
+        default=None,
+        description=(
+            "Optional list of tag scopes to consolidate. Each scope is a list of tags. "
+            "Only unconsolidated memories whose tags contain all tags in at least one scope "
+            "will be processed. If omitted, all unconsolidated memories are processed."
+        ),
+    )
+
+
 class ConsolidationResponse(BaseModel):
     """Response model for consolidation trigger endpoint."""
 
@@ -2649,6 +2679,7 @@ def create_app(
                 tenant_extension=memory._tenant_extension,
                 max_slots=config.worker_max_slots,
                 slot_reservations=config.worker_slot_reservations,
+                consolidation_bank_priority=config.worker_consolidation_bank_priority or None,
             )
             poller_task = asyncio.create_task(poller.run())
             logging.info(f"Worker poller started (worker_id={worker_id})")
@@ -2720,6 +2751,8 @@ def create_app(
     # This is required for mounted sub-applications where lifespan may not fire
     app.state.memory = memory
     app.state.audit_logger = memory.audit_logger
+
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     # ---------------------------------------------------------------------------
     # Patch OpenAPI schema: align ValidationError with Pydantic v2 error format
@@ -2884,6 +2917,57 @@ def _register_routes(app: FastAPI):
             else:
                 api_key = authorization.strip()
         return RequestContext(api_key=api_key)
+
+    def precheck_for(operation: str):
+        """
+        Build a FastAPI dependency that runs ``OperationValidator.precheck``.
+
+        FastAPI resolves dependencies before deserialising the route's body
+        parameter. Wiring this dependency on the billable POST routes lets
+        an extension reject a request — e.g. with HTTP 402 when a tenant's
+        balance is exhausted — without the request body ever being read or
+        materialised in memory.
+
+        The dependency intentionally:
+        - authenticates the tenant (so ``request_context.tenant_id`` is
+          resolved before the precheck runs);
+        - falls through silently when no validator is configured or the
+          validator's default no-op precheck is in effect;
+        - converts a rejection ``ValidationResult`` into the corresponding
+          ``HTTPException`` directly (the per-route ``OperationValidationError``
+          catch blocks don't see exceptions raised in dependencies, so we
+          translate here instead of relying on each handler's try/except).
+
+        Args:
+            operation: Short identifier for the route, e.g. ``"retain"``.
+
+        Returns:
+            A FastAPI dependency callable suitable for ``Depends(...)``.
+        """
+
+        async def _precheck_dep(
+            bank_id: str,
+            request_context: RequestContext = Depends(get_request_context),
+        ) -> None:
+            validator = getattr(app.state.memory, "_operation_validator", None)
+            if validator is None:
+                return
+            from hindsight_api.extensions import PrecheckContext
+
+            await app.state.memory._authenticate_tenant(request_context)
+            ctx = PrecheckContext(
+                operation=operation,
+                bank_id=bank_id,
+                request_context=request_context,
+            )
+            result = await validator.precheck(ctx)
+            if not result.allowed:
+                raise HTTPException(
+                    status_code=result.status_code,
+                    detail=result.reason or "Operation not allowed",
+                )
+
+        return _precheck_dep
 
     # Global exception handler for authentication errors
     @app.exception_handler(AuthenticationError)
@@ -3142,7 +3226,10 @@ def _register_routes(app: FastAPI):
     )
     @audited("recall")
     async def api_recall(
-        bank_id: str, request: RecallRequest, request_context: RequestContext = Depends(get_request_context)
+        bank_id: str,
+        request: RecallRequest,
+        request_context: RequestContext = Depends(get_request_context),
+        _precheck: None = Depends(precheck_for("recall")),
     ):
         """Run a recall and return results with trace."""
         import time
@@ -3330,7 +3417,10 @@ def _register_routes(app: FastAPI):
     )
     @audited("reflect")
     async def api_reflect(
-        bank_id: str, request: ReflectRequest, request_context: RequestContext = Depends(get_request_context)
+        bank_id: str,
+        request: ReflectRequest,
+        request_context: RequestContext = Depends(get_request_context),
+        _precheck: None = Depends(precheck_for("reflect")),
     ):
         metrics = get_metrics_collector()
 
@@ -3828,6 +3918,7 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         body: CreateMentalModelRequest,
         request_context: RequestContext = Depends(get_request_context),
+        _precheck: None = Depends(precheck_for("mental_model_create")),
     ):
         """Create a mental model (async - returns operation_id)."""
         try:
@@ -3876,6 +3967,7 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         mental_model_id: str,
         request_context: RequestContext = Depends(get_request_context),
+        _precheck: None = Depends(precheck_for("mental_model_refresh")),
     ):
         """Refresh a mental model by re-running its source query (async)."""
         try:
@@ -3899,6 +3991,48 @@ def _register_routes(app: FastAPI):
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(
                 f"Error in POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh: {error_detail}"
+            )
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear",
+        response_model=MentalModelResponse,
+        summary="Clear mental model content",
+        description=(
+            "Clear a mental model's content so the next refresh performs a full re-synthesis. "
+            "This is useful for delta-mode models that have accumulated drift over many "
+            "incremental refreshes. After clearing, call the /refresh endpoint to trigger "
+            "a clean full rebuild."
+        ),
+        operation_id="clear_mental_model",
+        tags=["Mental Models"],
+    )
+    @audited("clear_mental_model", request_param=None)
+    async def api_clear_mental_model(
+        bank_id: str,
+        mental_model_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Clear a mental model's content."""
+        try:
+            mental_model = await app.state.memory.clear_mental_model(
+                bank_id=bank_id,
+                mental_model_id=mental_model_id,
+                request_context=request_context,
+            )
+            if mental_model is None:
+                raise HTTPException(status_code=404, detail=f"Mental model '{mental_model_id}' not found")
+            return MentalModelResponse(**mental_model)
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(
+                f"Error in POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear: {error_detail}"
             )
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -5395,11 +5529,20 @@ def _register_routes(app: FastAPI):
         operation_id="trigger_consolidation",
         tags=["Banks"],
     )
-    @audited("consolidation", request_param=None)
-    async def api_trigger_consolidation(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
+    @audited("consolidation")
+    async def api_trigger_consolidation(
+        bank_id: str,
+        request: ConsolidationRequest | None = None,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
         """Trigger consolidation for a bank (async)."""
         try:
-            result = await app.state.memory.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+            observation_scopes = request.observation_scopes if request else None
+            result = await app.state.memory.submit_async_consolidation(
+                bank_id=bank_id,
+                request_context=request_context,
+                observation_scopes=observation_scopes,
+            )
             return ConsolidationResponse(
                 operation_id=result["operation_id"],
                 deduplicated=result.get("deduplicated", False),
@@ -5722,7 +5865,10 @@ def _register_routes(app: FastAPI):
     )
     @audited("retain")
     async def api_retain(
-        bank_id: str, request: RetainRequest, request_context: RequestContext = Depends(get_request_context)
+        bank_id: str,
+        request: RetainRequest,
+        request_context: RequestContext = Depends(get_request_context),
+        _precheck: None = Depends(precheck_for("retain")),
     ):
         """Retain memories with optional async processing."""
         metrics = get_metrics_collector()
@@ -5807,9 +5953,8 @@ def _register_routes(app: FastAPI):
                             strategy=group_strategy,
                             request_context=request_context,
                             return_usage=True,
-                            outbox_callback=app.state.memory._build_retain_outbox_callback(
+                            outbox_callback_factory=app.state.memory._build_retain_outbox_callback_factory(
                                 bank_id=bank_id,
-                                contents=contents,
                                 operation_id=None,
                                 schema=_current_schema.get(),
                             ),
@@ -5892,6 +6037,7 @@ def _register_routes(app: FastAPI):
         files: list[UploadFile] = File(..., description="Files to upload and convert"),
         request: str = Form(..., description="JSON string with FileRetainRequest model"),
         request_context: RequestContext = Depends(get_request_context),
+        _precheck: None = Depends(precheck_for("files_retain")),
     ):
         """Upload and convert files to memories."""
         from hindsight_api.config import get_config
@@ -6061,48 +6207,8 @@ def _register_routes(app: FastAPI):
             raise HTTPException(status_code=500, detail=str(e))
 
     # ---- Audit Logs ----
-
-    class AuditLogEntry(BaseModel):
-        """A single audit log entry."""
-
-        id: str
-        action: str
-        transport: str
-        bank_id: str | None
-        started_at: str | None
-        ended_at: str | None
-        duration_ms: int | None = Field(
-            default=None,
-            description="Server-computed duration in milliseconds (started_at → ended_at). Null if not yet completed.",
-        )
-        request: dict[str, Any] | None
-        response: dict[str, Any] | None
-        metadata: dict[str, Any]
-
-    class AuditLogListResponse(BaseModel):
-        """Response model for list audit logs endpoint."""
-
-        bank_id: str
-        total: int
-        limit: int
-        offset: int
-        items: list[AuditLogEntry]
-
-    class AuditLogStatsBucket(BaseModel):
-        """A single time bucket in audit log stats."""
-
-        time: str
-        actions: dict[str, int]
-        total: int
-
-    class AuditLogStatsResponse(BaseModel):
-        """Response model for audit log stats endpoint."""
-
-        bank_id: str
-        period: str
-        trunc: str
-        start: str
-        buckets: list[AuditLogStatsBucket]
+    # Response models live in engine/audit.py so the MemoryEngine read methods
+    # (list_audit_logs / audit_log_stats) can build and return them directly.
 
     @app.get(
         "/v1/default/banks/{bank_id}/audit-logs",
@@ -6124,120 +6230,19 @@ def _register_routes(app: FastAPI):
     ):
         """List audit log entries for a bank."""
         try:
-            from hindsight_api.engine.memory_engine import fq_table
-
-            pool = await app.state.memory._get_backend()
-
-            # Read endpoint: verify bank exists without auto-creating it.
-            if (
-                await app.state.memory.get_bank_profile(
-                    bank_id, request_context=request_context, create_if_missing=False
-                )
-                is None
-            ):
+            result = await app.state.memory.list_audit_logs(
+                bank_id,
+                request_context=request_context,
+                action=action,
+                transport=transport,
+                start_date=datetime.fromisoformat(start_date.replace("Z", "+00:00")) if start_date else None,
+                end_date=datetime.fromisoformat(end_date.replace("Z", "+00:00")) if end_date else None,
+                limit=limit,
+                offset=offset,
+            )
+            if result is None:
                 raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
-
-            from hindsight_api.engine.db_utils import acquire_with_retry
-
-            async with acquire_with_retry(pool) as conn:
-                where_clauses = ["bank_id = $1"]
-                params: list[Any] = [bank_id]
-                idx = 2
-
-                if action:
-                    where_clauses.append(f"action = ${idx}")
-                    params.append(action)
-                    idx += 1
-
-                if transport:
-                    where_clauses.append(f"transport = ${idx}")
-                    params.append(transport)
-                    idx += 1
-
-                if start_date:
-                    parsed_start = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
-                    where_clauses.append(f"started_at >= ${idx}")
-                    params.append(parsed_start)
-                    idx += 1
-
-                if end_date:
-                    parsed_end = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
-                    where_clauses.append(f"started_at < ${idx}")
-                    params.append(parsed_end)
-                    idx += 1
-
-                where_sql = " AND ".join(where_clauses)
-                table = fq_table("audit_log")
-
-                # Get total count
-                count_row = await conn.fetchrow(
-                    f"SELECT COUNT(*) as total FROM {table} WHERE {where_sql}",
-                    *params,
-                )
-                total = count_row["total"] if count_row else 0
-
-                # Get paginated results
-                params.append(limit)
-                params.append(offset)
-                rows = await conn.fetch(
-                    f"""
-                    SELECT id, action, transport, bank_id, started_at, ended_at,
-                           request, response, metadata
-                    FROM {table}
-                    WHERE {where_sql}
-                    ORDER BY started_at DESC
-                    LIMIT ${idx} OFFSET ${idx + 1}
-                    """,
-                    *params,
-                )
-
-                items = []
-                for row in rows:
-                    duration_ms = None
-                    started = row["started_at"]
-                    ended = row["ended_at"]
-                    if started and ended and hasattr(started, "total_seconds"):
-                        duration_ms = int((ended - started).total_seconds() * 1000)
-                    elif started and ended:
-                        try:
-                            duration_ms = int((ended - started).total_seconds() * 1000)
-                        except (TypeError, AttributeError):
-                            pass
-
-                    def _safe_iso(val):
-                        if val is None:
-                            return None
-                        return val.isoformat() if hasattr(val, "isoformat") else str(val)
-
-                    def _safe_json(val):
-                        if val is None:
-                            return None
-                        if isinstance(val, dict):
-                            return val
-                        return json.loads(val) if isinstance(val, str) else val
-
-                    items.append(
-                        {
-                            "id": str(row["id"]),
-                            "action": row["action"],
-                            "transport": row["transport"],
-                            "bank_id": row["bank_id"],
-                            "started_at": _safe_iso(started),
-                            "ended_at": _safe_iso(ended),
-                            "duration_ms": duration_ms,
-                            "request": _safe_json(row["request"]),
-                            "response": _safe_json(row["response"]),
-                            "metadata": _safe_json(row["metadata"]) or {},
-                        }
-                    )
-
-                return {
-                    "bank_id": bank_id,
-                    "total": total,
-                    "limit": limit,
-                    "offset": offset,
-                    "items": items,
-                }
+            return result
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
@@ -6264,72 +6269,15 @@ def _register_routes(app: FastAPI):
     ):
         """Get audit log counts grouped by time bucket."""
         try:
-            from hindsight_api.engine.db_utils import acquire_with_retry
-            from hindsight_api.engine.memory_engine import fq_table
-
-            pool = await app.state.memory._get_backend()
-            # Read endpoint: verify bank exists without auto-creating it.
-            if (
-                await app.state.memory.get_bank_profile(
-                    bank_id, request_context=request_context, create_if_missing=False
-                )
-                is None
-            ):
+            result = await app.state.memory.audit_log_stats(
+                bank_id,
+                request_context=request_context,
+                action=action,
+                period=period,
+            )
+            if result is None:
                 raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
-
-            # Determine time range (always per-day buckets)
-            from datetime import timedelta as _td
-
-            now = datetime.now(timezone.utc)
-            trunc = "day"
-            if period == "1d":
-                start = now - _td(days=1)
-            elif period == "30d":
-                start = now - _td(days=30)
-            else:  # 7d default
-                start = now - _td(days=7)
-
-            table = fq_table("audit_log")
-
-            async with acquire_with_retry(pool) as conn:
-                where_clauses = ["bank_id = $1", "started_at >= $2"]
-                params: list[Any] = [bank_id, start]
-                idx = 3
-
-                if action:
-                    where_clauses.append(f"action = ${idx}")
-                    params.append(action)
-                    idx += 1
-
-                where_sql = " AND ".join(where_clauses)
-
-                rows = await conn.fetch(
-                    f"""
-                    SELECT date_trunc('{trunc}', started_at) AS bucket,
-                           action,
-                           COUNT(*) AS count
-                    FROM {table}
-                    WHERE {where_sql}
-                    GROUP BY bucket, action
-                    ORDER BY bucket ASC
-                    """,
-                    *params,
-                )
-
-                buckets: dict[str, dict[str, int]] = {}
-                for row in rows:
-                    bucket_key = row["bucket"].isoformat()
-                    if bucket_key not in buckets:
-                        buckets[bucket_key] = {}
-                    buckets[bucket_key][row["action"]] = row["count"]
-
-                return {
-                    "bank_id": bank_id,
-                    "period": period,
-                    "trunc": trunc,
-                    "start": start.isoformat(),
-                    "buckets": [{"time": k, "actions": v, "total": sum(v.values())} for k, v in buckets.items()],
-                }
+            return result
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):

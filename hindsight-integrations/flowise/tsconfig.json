@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["ES2022"],
+    "rootDir": "./",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "useUnknownInCatchVariables": false
+  },
+  "include": ["nodes/**/*.ts", "credentials/**/*.ts", "src/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules"]
+}
