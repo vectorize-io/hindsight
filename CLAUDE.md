@@ -337,7 +337,7 @@ npm install
 ```
 
 Required env vars:
-- `HINDSIGHT_API_LLM_PROVIDER`: openai, openai-codex, claude-code, anthropic, gemini, groq, minimax, deepseek, zai, opencode-go, ollama, lmstudio, llamacpp, vertexai, bedrock, litellm, litellmrouter, volcano, openrouter, none
+- `HINDSIGHT_API_LLM_PROVIDER`: openai, openai-codex, claude-code, anthropic, gemini, groq, minimax, deepseek, zai, opencode-go, fireworks, ollama, ollama-cloud, lmstudio, llamacpp, vertexai, bedrock, litellm, litellmrouter, volcano, openrouter, none
 - `HINDSIGHT_API_LLM_API_KEY`: Your API key
 - `HINDSIGHT_API_LLM_MODEL`: Model name (e.g., gpt-4o-mini, claude-sonnet-4-20250514)
 
