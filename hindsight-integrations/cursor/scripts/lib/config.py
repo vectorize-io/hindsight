@@ -8,6 +8,11 @@ import json
 import os
 import sys
 
+# Default URL when no configuration is supplied — points at the hosted backend.
+# Users who self-host override via ``hindsightApiUrl`` or set
+# ``useLocalDaemon: True`` to fall back to the auto-managed local daemon path.
+DEFAULT_HINDSIGHT_API_URL = "https://api.hindsight.vectorize.io"
+
 DEFAULTS = {
     # Recall
     "autoRecall": True,
@@ -37,6 +42,11 @@ DEFAULTS = {
     "daemonIdleTimeout": 300,
     "embedVersion": "latest",
     "embedPackagePath": None,
+    # If False (default), an empty ``hindsightApiUrl`` falls back to the hosted
+    # backend (``DEFAULT_HINDSIGHT_API_URL``) — matches the cross-integration
+    # cloud-default convention. Self-hosters who want the plugin to auto-start
+    # a local daemon (the historical behaviour) opt in by setting True.
+    "useLocalDaemon": False,
     # Workaround for Cursor's broken sessionStart additionalContext path.
     # See scripts/lib/rules_file.py for the upstream bug link.
     "useRulesFileFallback": True,
@@ -78,6 +88,7 @@ ENV_OVERRIDES = {
     "HINDSIGHT_RETAIN_CONTEXT": ("retainContext", str),
     "HINDSIGHT_DYNAMIC_BANK_ID": ("dynamicBankId", bool),
     "HINDSIGHT_BANK_MISSION": ("bankMission", str),
+    "HINDSIGHT_USE_LOCAL_DAEMON": ("useLocalDaemon", bool),
     "HINDSIGHT_USE_RULES_FILE_FALLBACK": ("useRulesFileFallback", bool),
     "HINDSIGHT_APPEND_TO_GITIGNORE": ("appendToGitignore", bool),
     "HINDSIGHT_LLM_PROVIDER": ("llmProvider", str),

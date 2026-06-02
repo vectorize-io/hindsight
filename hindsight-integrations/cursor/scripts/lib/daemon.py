@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.request
 
+from .config import DEFAULT_HINDSIGHT_API_URL
 from .llm import detect_llm_config, get_llm_env_vars
 from .state import read_state, write_state
 
@@ -68,51 +69,62 @@ def _check_health(base_url: str, timeout: int = 2) -> bool:
 
 
 def get_api_url(config: dict, debug_fn=None, allow_daemon_start: bool = False) -> str:
-    """Determine the API URL, optionally starting daemon if needed.
+    """Determine the API URL.
 
-    Connection mode priority:
-      1. External API (hindsightApiUrl configured)
-      2. Existing local server (check port health)
-      3. Auto-managed daemon (only if allow_daemon_start=True)
+    Resolution order:
+      1. ``hindsightApiUrl`` configured → use it (explicit override wins).
+      2. A local server is already healthy on the configured port → use it
+         (preserves the "developer already started a daemon" path).
+      3. ``useLocalDaemon: True`` (opt-in) AND ``allow_daemon_start=True``
+         (recall path does not auto-start daemons) → auto-start the embed
+         daemon and use it.
+      4. Otherwise → fall back to ``DEFAULT_HINDSIGHT_API_URL`` (hosted
+         backend). API key is not required at this point — a missing key
+         only fails when an actual request is made.
+
+    The cross-integration convention (PR-level "default-to-Cloud" goal) wants
+    a fresh install with no configuration to reach the hosted backend.
+    Self-hosters opt back into the local-daemon path by setting
+    ``useLocalDaemon: True`` (or by setting an explicit ``hindsightApiUrl``).
     """
-    # Mode 1: External API
+    # Mode 1: explicit external API
     external_url = config.get("hindsightApiUrl")
     if external_url:
         if debug_fn:
-            debug_fn(f"Using external API: {external_url}")
+            debug_fn(f"Using configured API URL: {external_url}")
         return external_url
 
-    # Mode 2 & 3: Local server
     port = config.get("apiPort", 9077)
     base_url = f"http://127.0.0.1:{port}"
 
+    # Mode 2: a server is already running locally
     if _check_health(base_url):
         if debug_fn:
-            debug_fn(f"Existing server healthy on port {port}")
+            debug_fn(f"Found running local server on port {port}")
         return base_url
 
-    # Mode 3: Auto-start daemon
-    if not allow_daemon_start:
-        raise RuntimeError(
-            f"No Hindsight server on port {port}. Set hindsightApiUrl for external "
-            f"API, start hindsight-embed manually, or wait for the retain hook to "
-            f"auto-start the daemon."
-        )
-
-    if debug_fn:
-        debug_fn(f"No server on port {port}, attempting daemon start")
-
-    try:
-        _ensure_daemon_running(config, port, debug_fn)
-    except Exception as e:
+    # Mode 3: opt-in auto-managed daemon
+    if config.get("useLocalDaemon", False) and allow_daemon_start:
         if debug_fn:
-            debug_fn(f"Daemon start failed: {e}")
-        raise RuntimeError(
-            "No Hindsight server available. Set hindsightApiUrl for external API, "
-            "or ensure hindsight-embed is installed for local daemon mode."
-        ) from e
+            debug_fn(
+                f"useLocalDaemon=True, no server on port {port} — starting daemon"
+            )
+        try:
+            _ensure_daemon_running(config, port, debug_fn)
+            return base_url
+        except Exception as e:
+            if debug_fn:
+                debug_fn(
+                    f"Daemon start failed ({e}); falling back to {DEFAULT_HINDSIGHT_API_URL}"
+                )
+            # Fall through to default-URL fallback rather than raising —
+            # the plugin should keep working even if the local daemon path
+            # is unavailable.
 
-    return base_url
+    # Mode 4: cloud-default fallback
+    if debug_fn:
+        debug_fn(f"Falling back to default API URL: {DEFAULT_HINDSIGHT_API_URL}")
+    return DEFAULT_HINDSIGHT_API_URL
 
 
 def _ensure_daemon_running(config: dict, port: int, debug_fn=None):

@@ -172,11 +172,15 @@ def main():
     bank_id = derive_bank_id(hook_input, config)
     ensure_bank_mission(client, bank_id, config, debug_fn=_dbg)
 
-    # Document ID: session_id for idempotent upserts, timestamped for chunks
-    if retain_mode == "chunked" and retain_every_n > 1:
-        document_id = f"{session_id}-{int(time.time() * 1000)}"
-    else:
-        document_id = session_id
+    # Document ID: unique per retain so successive retains within one session
+    # accumulate across distinct documents instead of upserting a single one.
+    # The previous design used document_id=session_id in full-session mode,
+    # which silently dropped earlier turns whenever a multi-turn session
+    # re-retained — the V2 audit's 5-turn driver surfaced this as the
+    # "5-turn → 1 topic" failure mode. Timestamps are millisecond-grained
+    # so back-to-back retains in the same wall-clock millisecond stay distinct
+    # via session_id.
+    document_id = f"{session_id}-{int(time.time() * 1000)}"
 
     # Resolve template variables in tags and metadata
     template_vars = {
