@@ -32,6 +32,19 @@ function loadPackageVersion(): string {
 
 const USER_AGENT = `hindsight-openclaw/${loadPackageVersion()}`;
 
+export const DEFAULT_RETAIN_CONTEXT =
+  "This content is an AI-assistant conversation transcript from OpenClaw. " +
+  "The [context] block at the beginning of each turn contains routing identifiers: " +
+  "'sender' is an opaque user ID (not a human name), 'channel' is a chat identifier, " +
+  "'provider' is the messaging platform name (e.g. feishu, slack). " +
+  "These are operational routing metadata, not semantic actors or people. " +
+  "Messages with role 'assistant' are from the AI assistant; first-person statements " +
+  "in assistant messages refer to the AI, not the human user. " +
+  "Messages with role 'user' are from the human user. " +
+  "Bank IDs, session keys, agent IDs, thread IDs, source systems, " +
+  "and tags in metadata are also operational routing identifiers, " +
+  "not human names, project names, or organizations.";
+
 // Logger adapter that routes the embed wrapper's output through openclaw's
 // batched structured logger so messages share the same prefix and respect
 // the configured log level.
@@ -114,6 +127,7 @@ function scopeClient(c: HindsightClient, bankId: string): BankScopedClient {
     async retain(req) {
       await c.retain(bankId, req.content, {
         documentId: req.documentId,
+        context: req.context,
         metadata: toStringMetadata(req.metadata),
         tags: req.tags,
         updateMode: req.updateMode,
@@ -284,6 +298,7 @@ async function flushRetainQueue(): Promise<void> {
       try {
         await client.retain(item.bankId, item.content, {
           documentId: item.documentId,
+          context: item.context,
           metadata: toStringMetadata(item.metadata),
           tags: item.tags,
           updateMode: item.updateMode,
@@ -1462,6 +1477,10 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
       typeof config.retainSource === "string" && config.retainSource.trim().length > 0
         ? config.retainSource.trim()
         : undefined,
+    retainContext:
+      typeof config.retainContext === "string" && config.retainContext.trim().length > 0
+        ? config.retainContext
+        : DEFAULT_RETAIN_CONTEXT,
     excludeProviders: Array.isArray(config.excludeProviders)
       ? Array.from(
           new Set([
@@ -2715,6 +2734,10 @@ export function buildRetainRequest(
   return {
     content: transcript,
     documentId: documentId,
+    context:
+      typeof pluginConfig.retainContext === "string" && pluginConfig.retainContext.trim().length > 0
+        ? pluginConfig.retainContext
+        : DEFAULT_RETAIN_CONTEXT,
     metadata: {
       retained_at: new Date(now).toISOString(),
       message_count: String(messageCount),

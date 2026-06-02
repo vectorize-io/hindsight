@@ -96,6 +96,7 @@ export interface PluginConfig {
   bankIdPrefix?: string; // Prefix for bank IDs (e.g. 'prod' -> 'prod-slack-C123')
   retainTags?: string[]; // Tags applied to all retained documents after trimming and deduplication; auto-retain merges these with inline per-message retain-tag directives (e.g. ['source_system:openclaw', 'agent:agentname'])
   retainSource?: string; // Source written into retained document metadata (default: 'openclaw')
+  retainContext?: string; // Interpretation guidance sent via the retain API context field. Defaults to built-in OpenClaw transcript/routing metadata guidance.
   excludeProviders?: string[]; // Message providers to exclude from recall/retain (e.g. ['telegram', 'discord'])
   autoRecall?: boolean; // Auto-recall memories on every prompt (default: true). Set to false when agent has its own recall tool.
   dynamicBankGranularity?: Array<"agent" | "provider" | "channel" | "user">; // Fields for bank ID derivation. Default: ['agent', 'channel', 'user']
@@ -165,6 +166,7 @@ export type {
 export interface RetainRequest {
   content: string;
   documentId?: string;
+  context?: string;
   metadata?: Record<string, unknown>;
   tags?: string[];
   /**
