@@ -23,7 +23,7 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -56,6 +56,12 @@ class LLMTraceContext:
     metadata: dict[str, Any] = field(default_factory=dict)
     trace_id: str | None = None
     operation_span_id: str | None = None
+    # Memory_units this operation produced/consumed, accumulated at the DB-write
+    # sites and flushed onto every row of the trace at operation end (see
+    # LLMTraceRecorder.attach_memory_ids). Lets a retain/consolidation trace map
+    # to the memories it created (outputs) and consumed (source inputs).
+    created_memory_ids: list[str] = field(default_factory=list)
+    source_memory_ids: list[str] = field(default_factory=list)
 
 
 _trace_ctx: ContextVar[LLMTraceContext | None] = ContextVar("hindsight_llm_trace_ctx", default=None)
@@ -115,6 +121,28 @@ def current_call_metadata() -> dict[str, Any] | None:
 def current_trace_context() -> LLMTraceContext | None:
     """Return the active trace attribution, or None outside a traced context."""
     return _trace_ctx.get()
+
+
+def record_created_memory_ids(ids: Iterable[str]) -> None:
+    """Accumulate output memory_units onto the active operation trace.
+
+    No-op outside a traced operation context (e.g. tracing disabled). Child
+    asyncio tasks inherit the same ``LLMTraceContext`` object, so appends from
+    parallel consolidation batches land on one shared list.
+    """
+    ctx = _trace_ctx.get()
+    if ctx is not None:
+        ctx.created_memory_ids.extend(str(i) for i in ids)
+
+
+def record_source_memory_ids(ids: Iterable[str]) -> None:
+    """Accumulate consumed/source memory_units onto the active operation trace.
+
+    No-op outside a traced operation context.
+    """
+    ctx = _trace_ctx.get()
+    if ctx is not None:
+        ctx.source_memory_ids.extend(str(i) for i in ids)
 
 
 # ── serialization helpers ─────────────────────────────────────────────────────
@@ -291,6 +319,10 @@ class LLMTraceRecorder:
         self._retention_days = retention_days
         self._max_chars = max_chars
         self._sweep_task: asyncio.Task | None = None
+        # In-flight fire-and-forget write tasks, tracked so attach_memory_ids can
+        # await them before its post-operation UPDATE (otherwise the UPDATE could
+        # race ahead of the INSERTs it needs to patch).
+        self._pending: set[asyncio.Task] = set()
 
     def is_enabled(self, scope: str) -> bool:
         """Whether tracing is active for the given call scope."""
@@ -371,10 +403,13 @@ class LLMTraceRecorder:
     def _record_fire_and_forget(self, record: LLMRequestRecord) -> None:
         """Schedule a trace write as a background task."""
         try:
-            asyncio.create_task(self._safe_write(record))
+            task = asyncio.create_task(self._safe_write(record))
         except RuntimeError:
             # No running event loop (e.g. during shutdown)
             logger.debug("Cannot schedule llm trace write: no running event loop")
+            return
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
 
     async def _safe_write(self, record: LLMRequestRecord) -> None:
         """Write a trace row. Errors are logged, never raised."""
@@ -424,6 +459,58 @@ class LLMTraceRecorder:
                 )
         except Exception as e:
             logger.warning(f"LLM trace write failed for scope={record.scope}: {e}")
+
+    async def _flush_pending(self) -> None:
+        """Await all in-flight trace writes so their rows exist before an UPDATE."""
+        pending = [t for t in self._pending if not t.done()]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    async def attach_memory_ids(
+        self,
+        trace_ctx: LLMTraceContext | None,
+        *,
+        created: list[str] | None = None,
+        source: list[str] | None = None,
+    ) -> None:
+        """Map a finished operation's memory_units onto every row of its trace.
+
+        Merges the explicitly passed ids with any accumulated on the context
+        (``record_created_memory_ids`` / ``record_source_memory_ids``), de-dupes
+        preserving order, and patches ``metadata.memory_ids`` (outputs created)
+        and ``metadata.source_memory_ids`` (inputs consumed) on all rows sharing
+        the trace_id. No-op when tracing is off or nothing was produced.
+        """
+        if not self._enabled or trace_ctx is None or not trace_ctx.trace_id:
+            return
+        created_ids = list(dict.fromkeys([*(created or []), *trace_ctx.created_memory_ids]))
+        source_ids = list(dict.fromkeys([*(source or []), *trace_ctx.source_memory_ids]))
+        patch: dict[str, Any] = {}
+        if created_ids:
+            patch["memory_ids"] = created_ids
+        if source_ids:
+            patch["source_memory_ids"] = source_ids
+        if not patch:
+            return
+
+        # The trace-row INSERTs are fire-and-forget; flush them so this UPDATE
+        # patches rows that already exist rather than racing ahead of them.
+        await self._flush_pending()
+        pool = self._pool_getter()
+        if pool is None:
+            return
+        try:
+            schema = self._schema_getter()
+            table = f"{schema}.llm_requests"
+            async with acquire_with_retry(pool, max_retries=1) as conn:
+                await conn.execute(
+                    f"UPDATE {table} SET metadata = metadata || $3::jsonb WHERE bank_id = $1 AND trace_id = $2",
+                    trace_ctx.bank_id,
+                    trace_ctx.trace_id,
+                    json.dumps(patch),
+                )
+        except Exception as e:
+            logger.warning(f"LLM trace memory_id attach failed for trace={trace_ctx.trace_id}: {e}")
 
     # ── retention sweep ───────────────────────────────────────────────────────
 

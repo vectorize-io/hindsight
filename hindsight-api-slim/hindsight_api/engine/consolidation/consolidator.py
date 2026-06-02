@@ -31,6 +31,12 @@ from pydantic import BaseModel, field_validator
 
 from ...config import get_config
 from ..db_utils import acquire_with_retry
+from ..llm_trace import (
+    record_created_memory_ids,
+    record_source_memory_ids,
+    reset_trace_context,
+    set_trace_context,
+)
 from ..llm_wrapper import sanitize_llm_output
 from ..memory_engine import Budget, fq_table
 from ..retain import embedding_utils
@@ -363,6 +369,32 @@ async def run_consolidation_job(
     # to every call without leaking across operations.
     llm_config = memory_engine._consolidation_llm_config.with_config(config, bank_id=bank_id, operation="consolidation")
 
+    # Bind the operation trace context for the whole run so the create/update DB
+    # sites (deep inside _process_memory_batch) can accumulate the observations
+    # this consolidation produced and the source memories it consumed onto the
+    # trace — flushed onto every trace row on exit by attach_memory_ids.
+    trace_ctx = llm_config.trace_context()
+    trace_token = set_trace_context(trace_ctx) if trace_ctx is not None else None
+    try:
+        return await _run_consolidation_job(
+            memory_engine, bank_id, request_context, config, llm_config, operation_id, observation_scopes
+        )
+    finally:
+        if trace_token is not None:
+            reset_trace_context(trace_token)
+            await memory_engine._llm_recorder.attach_memory_ids(trace_ctx)
+
+
+async def _run_consolidation_job(
+    memory_engine: "MemoryEngine",
+    bank_id: str,
+    request_context: "RequestContext",
+    config: Any,
+    llm_config: Any,
+    operation_id: str | None = None,
+    observation_scopes: list[list[str]] | None = None,
+) -> dict[str, Any]:
+    """Core consolidation flow. See ``run_consolidation_job`` for the public entrypoint."""
     perf = ConsolidationPerfLog(bank_id)
     max_memories_per_batch = config.consolidation_batch_size
     max_memories_per_round = config.consolidation_max_memories_per_round
@@ -984,6 +1016,9 @@ async def _process_memory_batch(
     """
     import asyncio
 
+    # Map the source memories this batch consumes onto the consolidation trace.
+    record_source_memory_ids([str(m["id"]) for m in memories])
+
     # 1. Parallel recalls — one per fact
     # When obs_tags_override is set, use it as the observation scope for all facts.
     t0 = time.time()
@@ -1265,6 +1300,8 @@ async def _execute_update_action(
     if perf:
         perf.record_timing("db_write", time.time() - t0)
 
+    # Map the updated observation onto the consolidation trace as a produced memory.
+    record_created_memory_ids([observation_id])
     logger.debug(f"Updated observation {observation_id} from {len(source_memory_ids)} source memories")
 
 
@@ -1287,7 +1324,7 @@ async def _execute_create_action(
     Tags are inherited from the source facts (determined algorithmically, not by LLM)
     to maintain visibility scope.
     """
-    await _create_observation_directly(
+    created = await _create_observation_directly(
         conn=conn,
         memory_engine=memory_engine,
         bank_id=bank_id,
@@ -1300,6 +1337,10 @@ async def _execute_create_action(
         mentioned_at=mentioned_at,
         perf=perf,
     )
+    # Map the new observation onto the consolidation trace as a produced memory.
+    new_id = created.get("observation_id")
+    if new_id:
+        record_created_memory_ids([new_id])
     logger.debug(f"Created observation from {len(source_memory_ids)} source memories")
 
 

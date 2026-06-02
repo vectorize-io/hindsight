@@ -1156,6 +1156,14 @@ class ConfiguredLLMProvider:
             _safety_settings_ctx.reset(token)
             self._reset_trace_context(trace_token)
 
+    def trace_context(self) -> Any | None:
+        """The operation-level LLM trace context (or None when untraced).
+
+        Lets the engine attach the operation's produced/consumed memory_ids to
+        this run's trace rows once they're known (after the LLM calls).
+        """
+        return object.__getattribute__(self, "_trace_ctx")
+
     def _bind_trace_context(self) -> Any | None:
         """Bind bank/operation attribution for the duration of one call."""
         trace_ctx = object.__getattribute__(self, "_trace_ctx")

@@ -369,6 +369,37 @@ async def test_delta_reretain_binds_document_id(trace_api_client, bank_id):
 
 
 @pytest.mark.asyncio
+async def test_memory_ids_mapped_to_retain_and_consolidation(trace_api_client, bank_id):
+    """A retain trace maps to the facts it created; a consolidation trace maps to
+    the source memories it consumed (and any observations it produced). These are
+    attached to every row of the trace after the operation completes.
+    """
+    await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
+    resp = await trace_api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={"items": [{"content": "Alice works at Google as a senior engineer.", "context": "people"}]},
+    )
+    assert resp.status_code == 200
+    # retain + the consolidation it triggers are fire-and-forget; give the trace
+    # writes and the post-operation memory_id UPDATE room under parallel load.
+    await asyncio.sleep(2.0)
+
+    data = (await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests")).json()
+    by_op = {item["operation"]: item for item in data["items"]}
+
+    # Retain maps to the created fact unit_ids (outputs).
+    retain = by_op["retain"]
+    created = retain["metadata"].get("memory_ids")
+    assert created, f"retain trace should map to created facts, metadata={retain['metadata']}"
+
+    # Consolidation maps to the source memories consumed (inputs). The retained
+    # fact is what gets consolidated, so it appears among the sources.
+    if "consolidation" in by_op:
+        sources = by_op["consolidation"]["metadata"].get("source_memory_ids")
+        assert sources, "consolidation trace should map to the source memories it consumed"
+
+
+@pytest.mark.asyncio
 async def test_filter_by_status_and_operation(trace_api_client, bank_id):
     await trace_api_client.put(f"/v1/default/banks/{bank_id}", json={"name": "Trace Bank"})
     await trace_api_client.post(
@@ -491,3 +522,10 @@ async def test_real_llm_retain_and_consolidation_traced(memory_real_llm):
             assert entry["output_tokens"] and entry["output_tokens"] > 0, f"no output tokens for {operation}"
             assert entry["total_tokens"] == entry["input_tokens"] + entry["output_tokens"]
             assert entry["input"] is not None  # the prompt messages were captured
+
+        # The operations map to the memory_units they touched: retain to the
+        # facts it created, consolidation to the source memories it consumed.
+        assert by_op["retain"][0]["metadata"].get("memory_ids"), "retain trace missing created memory_ids"
+        assert by_op["consolidation"][0]["metadata"].get("source_memory_ids"), (
+            "consolidation trace missing source_memory_ids"
+        )

@@ -1015,7 +1015,9 @@
     "traceFilterClear": "クリア",
     "groupByRun": "グループ化",
     "groupByRunHint": "LLM呼び出しを操作実行ごとにグループ化",
-    "entryCount": "{count, plural, one {#件のエントリ} other {#件のエントリ}}"
+    "entryCount": "{count, plural, one {#件のエントリ} other {#件のエントリ}}",
+    "memoriesCreated": "作成されたメモリ ({count}):",
+    "memoriesSource": "ソースメモリ ({count}):"
   },
   "observationHistory": {
     "unchanged": "変更なし",

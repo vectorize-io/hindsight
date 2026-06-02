@@ -1015,7 +1015,9 @@
     "traceFilterClear": "지우기",
     "groupByRun": "그룹화",
     "groupByRunHint": "LLM 호출을 작업 실행별로 그룹화",
-    "entryCount": "{count, plural, one {항목 #개} other {항목 #개}}"
+    "entryCount": "{count, plural, one {항목 #개} other {항목 #개}}",
+    "memoriesCreated": "생성된 메모리 ({count}):",
+    "memoriesSource": "소스 메모리 ({count}):"
   },
   "observationHistory": {
     "unchanged": "변경 없음",

@@ -3085,10 +3085,11 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Create parent span for retain operation
         with create_operation_span("retain", bank_id):
-            return await orchestrator.retain_batch(
+            retain_llm = self._retain_llm_config.with_config(resolved_config, bank_id=bank_id, operation="retain")
+            result = await orchestrator.retain_batch(
                 pool=self._backend,
                 embeddings_model=self.embeddings,
-                llm_config=self._retain_llm_config.with_config(resolved_config, bank_id=bank_id, operation="retain"),
+                llm_config=retain_llm,
                 entity_resolver=self.entity_resolver,
                 format_date_fn=self._format_readable_date,
                 bank_id=bank_id,
@@ -3106,6 +3107,12 @@ class MemoryEngine(MemoryEngineInterface):
                 document_body_override=document_body_override,
                 chunk_index_offset=chunk_index_offset,
             )
+            # Map the created facts onto this retain's trace so the trace view can
+            # show which memories the ingestion produced. result[0] is the
+            # per-content-item list of created unit ids (see retain_batch).
+            created_ids = [uid for group in result[0] for uid in group]
+            await self._llm_recorder.attach_memory_ids(retain_llm.trace_context(), created=created_ids)
+            return result
 
     def recall(
         self,

@@ -1015,7 +1015,9 @@
     "traceFilterClear": "Limpiar",
     "groupByRun": "Agrupar",
     "groupByRunHint": "Agrupar las llamadas al LLM por ejecución de operación",
-    "entryCount": "{count, plural, one {# entrada} other {# entradas}}"
+    "entryCount": "{count, plural, one {# entrada} other {# entradas}}",
+    "memoriesCreated": "Memorias creadas ({count}):",
+    "memoriesSource": "Memorias de origen ({count}):"
   },
   "observationHistory": {
     "unchanged": "sin cambios",

@@ -1015,7 +1015,9 @@
     "traceFilterClear": "清除",
     "groupByRun": "分组",
     "groupByRunHint": "按操作运行对 LLM 调用进行分组",
-    "entryCount": "{count, plural, one {# 条记录} other {# 条记录}}"
+    "entryCount": "{count, plural, one {# 条记录} other {# 条记录}}",
+    "memoriesCreated": "已创建记忆 ({count}):",
+    "memoriesSource": "来源记忆 ({count}):"
   },
   "observationHistory": {
     "unchanged": "未更改",

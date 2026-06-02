@@ -1015,7 +1015,9 @@
     "traceFilterClear": "清除",
     "groupByRun": "分組",
     "groupByRunHint": "依操作執行分組 LLM 呼叫",
-    "entryCount": "{count, plural, one {# 條記錄} other {# 條記錄}}"
+    "entryCount": "{count, plural, one {# 條記錄} other {# 條記錄}}",
+    "memoriesCreated": "已建立記憶 ({count}):",
+    "memoriesSource": "來源記憶 ({count}):"
   },
   "observationHistory": {
     "unchanged": "未更改",

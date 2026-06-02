@@ -78,6 +78,31 @@ function formatTokens(n: number): string {
   return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
 }
 
+// Pull a list of memory_unit ids out of trace metadata (memory_ids /
+// source_memory_ids). Tolerates missing / non-array values.
+function metadataIdList(
+  metadata: Record<string, unknown> | null | undefined,
+  key: string
+): string[] {
+  const raw = metadata?.[key];
+  return Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string") : [];
+}
+
+// Trace-level mapping of the memory_units an operation produced/consumed,
+// rendered as truncated mono chips with the full id on hover.
+function MemoryIdList({ label, ids }: { label: string; ids: string[] }) {
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+      <span className="text-muted-foreground">{label}</span>
+      {ids.map((id) => (
+        <code key={id} title={id} className="font-mono text-xs text-foreground">
+          {id.slice(0, 8)}
+        </code>
+      ))}
+    </div>
+  );
+}
+
 function formatDateTime(ts: string | null): string {
   if (!ts) return "—";
   const date = new Date(ts);
@@ -392,6 +417,16 @@ export function TraceDialog({
   const outputTokens = spans.reduce((sum, r) => sum + (r.output_tokens ?? 0), 0);
   const anyError = spans.some((s) => s.status === "error");
   const op = entry?.operation ?? spans[0]?.operation ?? "—";
+  // memory_ids / source_memory_ids are attached identically to every row of a
+  // trace, so read them from whichever row carries them.
+  const traceMeta =
+    spans.find(
+      (s) =>
+        metadataIdList(s.metadata, "memory_ids").length ||
+        metadataIdList(s.metadata, "source_memory_ids").length
+    )?.metadata ?? entry?.metadata;
+  const createdMemoryIds = metadataIdList(traceMeta, "memory_ids");
+  const sourceMemoryIds = metadataIdList(traceMeta, "source_memory_ids");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -417,6 +452,22 @@ export function TraceDialog({
             {entry?.trace_id && <code className="font-mono">{entry.trace_id.slice(0, 8)}</code>}
           </div>
         </DialogHeader>
+        {(createdMemoryIds.length > 0 || sourceMemoryIds.length > 0) && (
+          <div className="shrink-0 flex flex-col gap-1 border-t border-border pt-2 text-xs">
+            {createdMemoryIds.length > 0 && (
+              <MemoryIdList
+                label={t("memoriesCreated", { count: createdMemoryIds.length })}
+                ids={createdMemoryIds}
+              />
+            )}
+            {sourceMemoryIds.length > 0 && (
+              <MemoryIdList
+                label={t("memoriesSource", { count: sourceMemoryIds.length })}
+                ids={sourceMemoryIds}
+              />
+            )}
+          </div>
+        )}
         <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[minmax(240px,5fr)_7fr] gap-4">
           <div className="overflow-y-auto md:border-r border-border md:pr-3 space-y-0.5">
             {loading ? (

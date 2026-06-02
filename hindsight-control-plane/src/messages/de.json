@@ -1015,7 +1015,9 @@
     "traceFilterClear": "Löschen",
     "groupByRun": "Gruppieren",
     "groupByRunHint": "LLM-Aufrufe nach Vorgangsausführung gruppieren",
-    "entryCount": "{count, plural, one {# Eintrag} other {# Einträge}}"
+    "entryCount": "{count, plural, one {# Eintrag} other {# Einträge}}",
+    "memoriesCreated": "Erstellte Erinnerungen ({count}):",
+    "memoriesSource": "Quell-Erinnerungen ({count}):"
   },
   "observationHistory": {
     "unchanged": "unverändert",
