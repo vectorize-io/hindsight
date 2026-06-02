@@ -214,6 +214,8 @@ if TYPE_CHECKING:
     from hindsight_api.extensions import OperationValidatorExtension, TenantExtension
     from hindsight_api.models import RequestContext
 
+    from .audit import AuditLogListResponse, AuditLogStatsResponse
+
 
 from enum import Enum
 
@@ -6259,6 +6261,167 @@ class MemoryEngine(MemoryEngineInterface):
         )
 
         return result
+
+    # ==================== Audit log read methods ====================
+
+    async def list_audit_logs(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+        action: str | None = None,
+        transport: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> "AuditLogListResponse | None":
+        """List audit log entries for a bank, newest first.
+
+        Returns None when the bank does not exist (the HTTP layer maps this to a
+        404). Authentication and tenant-schema resolution happen inside
+        ``get_bank_profile`` before any query runs, so the SELECT below is scoped
+        to the authenticated tenant's schema.
+        """
+        from .audit import AuditLogEntry, AuditLogListResponse
+
+        if await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False) is None:
+            return None
+
+        where_clauses = ["bank_id = $1"]
+        params: list[Any] = [bank_id]
+        idx = 2
+        for column, value in (("action", action), ("transport", transport)):
+            if value:
+                where_clauses.append(f"{column} = ${idx}")
+                params.append(value)
+                idx += 1
+        if start_date is not None:
+            where_clauses.append(f"started_at >= ${idx}")
+            params.append(start_date)
+            idx += 1
+        if end_date is not None:
+            where_clauses.append(f"started_at < ${idx}")
+            params.append(end_date)
+            idx += 1
+
+        where_sql = " AND ".join(where_clauses)
+        table = fq_table("audit_log")
+
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            count_row = await conn.fetchrow(f"SELECT COUNT(*) AS total FROM {table} WHERE {where_sql}", *params)
+            total = count_row["total"] if count_row else 0
+
+            params.append(limit)
+            params.append(offset)
+            rows = await conn.fetch(
+                f"""
+                SELECT id, action, transport, bank_id, started_at, ended_at,
+                       request, response, metadata
+                FROM {table}
+                WHERE {where_sql}
+                ORDER BY started_at DESC
+                LIMIT ${idx} OFFSET ${idx + 1}
+                """,
+                *params,
+            )
+
+            items = []
+            for row in rows:
+                started = row["started_at"]
+                ended = row["ended_at"]
+                duration_ms = int((ended - started).total_seconds() * 1000) if started and ended else None
+                items.append(
+                    AuditLogEntry(
+                        id=str(row["id"]),
+                        action=row["action"],
+                        transport=row["transport"],
+                        bank_id=row["bank_id"],
+                        started_at=started.isoformat() if started else None,
+                        ended_at=ended.isoformat() if ended else None,
+                        duration_ms=duration_ms,
+                        request=conn.parse_json(row["request"]) if row["request"] is not None else None,
+                        response=conn.parse_json(row["response"]) if row["response"] is not None else None,
+                        metadata=conn.parse_json(row["metadata"]) if row["metadata"] is not None else {},
+                    )
+                )
+
+        return AuditLogListResponse(bank_id=bank_id, total=total, limit=limit, offset=offset, items=items)
+
+    async def audit_log_stats(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+        action: str | None = None,
+        period: str = "7d",
+    ) -> "AuditLogStatsResponse | None":
+        """Audit log counts grouped by day and action, for charting.
+
+        Returns None when the bank does not exist (mapped to 404 by the HTTP
+        layer). Auth/tenant resolution happen in ``get_bank_profile``.
+        """
+        from .audit import AuditLogStatsBucket, AuditLogStatsResponse
+
+        if await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False) is None:
+            return None
+
+        now = datetime.now(timezone.utc)
+        trunc = "day"
+        if period == "1d":
+            start = now - timedelta(days=1)
+        elif period == "30d":
+            start = now - timedelta(days=30)
+        else:  # 7d default
+            start = now - timedelta(days=7)
+
+        where_clauses = ["bank_id = $1", "started_at >= $2"]
+        params: list[Any] = [bank_id, start]
+        idx = 3
+        if action:
+            where_clauses.append(f"action = ${idx}")
+            params.append(action)
+            idx += 1
+        where_sql = " AND ".join(where_clauses)
+        table = fq_table("audit_log")
+
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            rows = await conn.fetch(
+                f"""
+                SELECT date_trunc('{trunc}', started_at) AS bucket,
+                       action,
+                       COUNT(*) AS count
+                FROM {table}
+                WHERE {where_sql}
+                GROUP BY bucket, action
+                ORDER BY bucket ASC
+                """,
+                *params,
+            )
+
+        # Aggregate per bucket: counts by action name (dynamic keys, so a plain
+        # dict here; materialized into typed models below).
+        actions_by_bucket: dict[str, dict[str, int]] = {}
+        order: list[str] = []
+        for row in rows:
+            key = row["bucket"].isoformat()
+            if key not in actions_by_bucket:
+                actions_by_bucket[key] = {}
+                order.append(key)
+            actions_by_bucket[key][row["action"]] = row["count"]
+
+        return AuditLogStatsResponse(
+            bank_id=bank_id,
+            period=period,
+            trunc=trunc,
+            start=start.isoformat(),
+            buckets=[
+                AuditLogStatsBucket(time=k, actions=actions_by_bucket[k], total=sum(actions_by_bucket[k].values()))
+                for k in order
+            ],
+        )
 
     # ==================== bank profile Methods ====================
 

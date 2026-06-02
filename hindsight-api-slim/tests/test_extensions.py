@@ -636,6 +636,30 @@ class TestMemoryEngineTenantAuth:
             )
 
     @pytest.mark.asyncio
+    async def test_list_audit_logs_fails_with_invalid_api_key(self, memory_with_tenant):
+        """Audit log listing goes through tenant auth like other ops."""
+        memory = memory_with_tenant
+
+        with pytest.raises(AuthenticationError) as exc_info:
+            await memory.list_audit_logs(
+                "test-bank",
+                request_context=RequestContext(api_key="wrong-key"),
+            )
+
+        assert "Invalid API key" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_audit_log_stats_fails_with_invalid_api_key(self, memory_with_tenant):
+        """Audit log stats goes through tenant auth like other ops."""
+        memory = memory_with_tenant
+
+        with pytest.raises(AuthenticationError):
+            await memory.audit_log_stats(
+                "test-bank",
+                request_context=RequestContext(api_key="wrong-key"),
+            )
+
+    @pytest.mark.asyncio
     async def test_no_tenant_request_needed_without_extension(self, memory):
         """Operations work with empty RequestContext when no tenant extension configured."""
         # Should not raise - no tenant extension configured, just pass empty RequestContext

@@ -17,7 +17,12 @@ from typing import Any, Literal
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
 
-from hindsight_api.engine.audit import AuditEntry, AuditLogger
+from hindsight_api.engine.audit import (
+    AuditEntry,
+    AuditLogger,
+    AuditLogListResponse,
+    AuditLogStatsResponse,
+)
 from hindsight_api.extensions import AuthenticationError
 
 
@@ -6202,48 +6207,8 @@ def _register_routes(app: FastAPI):
             raise HTTPException(status_code=500, detail=str(e))
 
     # ---- Audit Logs ----
-
-    class AuditLogEntry(BaseModel):
-        """A single audit log entry."""
-
-        id: str
-        action: str
-        transport: str
-        bank_id: str | None
-        started_at: str | None
-        ended_at: str | None
-        duration_ms: int | None = Field(
-            default=None,
-            description="Server-computed duration in milliseconds (started_at → ended_at). Null if not yet completed.",
-        )
-        request: dict[str, Any] | None
-        response: dict[str, Any] | None
-        metadata: dict[str, Any]
-
-    class AuditLogListResponse(BaseModel):
-        """Response model for list audit logs endpoint."""
-
-        bank_id: str
-        total: int
-        limit: int
-        offset: int
-        items: list[AuditLogEntry]
-
-    class AuditLogStatsBucket(BaseModel):
-        """A single time bucket in audit log stats."""
-
-        time: str
-        actions: dict[str, int]
-        total: int
-
-    class AuditLogStatsResponse(BaseModel):
-        """Response model for audit log stats endpoint."""
-
-        bank_id: str
-        period: str
-        trunc: str
-        start: str
-        buckets: list[AuditLogStatsBucket]
+    # Response models live in engine/audit.py so the MemoryEngine read methods
+    # (list_audit_logs / audit_log_stats) can build and return them directly.
 
     @app.get(
         "/v1/default/banks/{bank_id}/audit-logs",
@@ -6265,120 +6230,19 @@ def _register_routes(app: FastAPI):
     ):
         """List audit log entries for a bank."""
         try:
-            from hindsight_api.engine.memory_engine import fq_table
-
-            pool = await app.state.memory._get_backend()
-
-            # Read endpoint: verify bank exists without auto-creating it.
-            if (
-                await app.state.memory.get_bank_profile(
-                    bank_id, request_context=request_context, create_if_missing=False
-                )
-                is None
-            ):
+            result = await app.state.memory.list_audit_logs(
+                bank_id,
+                request_context=request_context,
+                action=action,
+                transport=transport,
+                start_date=datetime.fromisoformat(start_date.replace("Z", "+00:00")) if start_date else None,
+                end_date=datetime.fromisoformat(end_date.replace("Z", "+00:00")) if end_date else None,
+                limit=limit,
+                offset=offset,
+            )
+            if result is None:
                 raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
-
-            from hindsight_api.engine.db_utils import acquire_with_retry
-
-            async with acquire_with_retry(pool) as conn:
-                where_clauses = ["bank_id = $1"]
-                params: list[Any] = [bank_id]
-                idx = 2
-
-                if action:
-                    where_clauses.append(f"action = ${idx}")
-                    params.append(action)
-                    idx += 1
-
-                if transport:
-                    where_clauses.append(f"transport = ${idx}")
-                    params.append(transport)
-                    idx += 1
-
-                if start_date:
-                    parsed_start = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
-                    where_clauses.append(f"started_at >= ${idx}")
-                    params.append(parsed_start)
-                    idx += 1
-
-                if end_date:
-                    parsed_end = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
-                    where_clauses.append(f"started_at < ${idx}")
-                    params.append(parsed_end)
-                    idx += 1
-
-                where_sql = " AND ".join(where_clauses)
-                table = fq_table("audit_log")
-
-                # Get total count
-                count_row = await conn.fetchrow(
-                    f"SELECT COUNT(*) as total FROM {table} WHERE {where_sql}",
-                    *params,
-                )
-                total = count_row["total"] if count_row else 0
-
-                # Get paginated results
-                params.append(limit)
-                params.append(offset)
-                rows = await conn.fetch(
-                    f"""
-                    SELECT id, action, transport, bank_id, started_at, ended_at,
-                           request, response, metadata
-                    FROM {table}
-                    WHERE {where_sql}
-                    ORDER BY started_at DESC
-                    LIMIT ${idx} OFFSET ${idx + 1}
-                    """,
-                    *params,
-                )
-
-                items = []
-                for row in rows:
-                    duration_ms = None
-                    started = row["started_at"]
-                    ended = row["ended_at"]
-                    if started and ended and hasattr(started, "total_seconds"):
-                        duration_ms = int((ended - started).total_seconds() * 1000)
-                    elif started and ended:
-                        try:
-                            duration_ms = int((ended - started).total_seconds() * 1000)
-                        except (TypeError, AttributeError):
-                            pass
-
-                    def _safe_iso(val):
-                        if val is None:
-                            return None
-                        return val.isoformat() if hasattr(val, "isoformat") else str(val)
-
-                    def _safe_json(val):
-                        if val is None:
-                            return None
-                        if isinstance(val, dict):
-                            return val
-                        return json.loads(val) if isinstance(val, str) else val
-
-                    items.append(
-                        {
-                            "id": str(row["id"]),
-                            "action": row["action"],
-                            "transport": row["transport"],
-                            "bank_id": row["bank_id"],
-                            "started_at": _safe_iso(started),
-                            "ended_at": _safe_iso(ended),
-                            "duration_ms": duration_ms,
-                            "request": _safe_json(row["request"]),
-                            "response": _safe_json(row["response"]),
-                            "metadata": _safe_json(row["metadata"]) or {},
-                        }
-                    )
-
-                return {
-                    "bank_id": bank_id,
-                    "total": total,
-                    "limit": limit,
-                    "offset": offset,
-                    "items": items,
-                }
+            return result
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
@@ -6405,72 +6269,15 @@ def _register_routes(app: FastAPI):
     ):
         """Get audit log counts grouped by time bucket."""
         try:
-            from hindsight_api.engine.db_utils import acquire_with_retry
-            from hindsight_api.engine.memory_engine import fq_table
-
-            pool = await app.state.memory._get_backend()
-            # Read endpoint: verify bank exists without auto-creating it.
-            if (
-                await app.state.memory.get_bank_profile(
-                    bank_id, request_context=request_context, create_if_missing=False
-                )
-                is None
-            ):
+            result = await app.state.memory.audit_log_stats(
+                bank_id,
+                request_context=request_context,
+                action=action,
+                period=period,
+            )
+            if result is None:
                 raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
-
-            # Determine time range (always per-day buckets)
-            from datetime import timedelta as _td
-
-            now = datetime.now(timezone.utc)
-            trunc = "day"
-            if period == "1d":
-                start = now - _td(days=1)
-            elif period == "30d":
-                start = now - _td(days=30)
-            else:  # 7d default
-                start = now - _td(days=7)
-
-            table = fq_table("audit_log")
-
-            async with acquire_with_retry(pool) as conn:
-                where_clauses = ["bank_id = $1", "started_at >= $2"]
-                params: list[Any] = [bank_id, start]
-                idx = 3
-
-                if action:
-                    where_clauses.append(f"action = ${idx}")
-                    params.append(action)
-                    idx += 1
-
-                where_sql = " AND ".join(where_clauses)
-
-                rows = await conn.fetch(
-                    f"""
-                    SELECT date_trunc('{trunc}', started_at) AS bucket,
-                           action,
-                           COUNT(*) AS count
-                    FROM {table}
-                    WHERE {where_sql}
-                    GROUP BY bucket, action
-                    ORDER BY bucket ASC
-                    """,
-                    *params,
-                )
-
-                buckets: dict[str, dict[str, int]] = {}
-                for row in rows:
-                    bucket_key = row["bucket"].isoformat()
-                    if bucket_key not in buckets:
-                        buckets[bucket_key] = {}
-                    buckets[bucket_key][row["action"]] = row["count"]
-
-                return {
-                    "bank_id": bank_id,
-                    "period": period,
-                    "trunc": trunc,
-                    "start": start.isoformat(),
-                    "buckets": [{"time": k, "actions": v, "total": sum(v.values())} for k, v in buckets.items()],
-                }
+            return result
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
