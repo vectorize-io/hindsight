@@ -1420,7 +1420,7 @@ class TestInjectionPathPassesApiKey:
         )
         assert key == "hsk_test_key_for_cloud_auth_regression_pin", (
             f"inject path did not forward configured api_key to _get_client: got key={key!r}. "
-            "This regression silently breaks Hindsight Cloud reads (401)."
+            "This regression silently breaks reads against the hosted backend (401)."
         )
 
 

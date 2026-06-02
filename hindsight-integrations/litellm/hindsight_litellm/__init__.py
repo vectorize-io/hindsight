@@ -306,8 +306,9 @@ def _inject_memories(
     memory_context = ""
 
     # Create fresh client for this operation (closed in finally block).
-    # Thread api_key explicitly — Hindsight Cloud rejects un-keyed recall/reflect
-    # with 401 even when the retain path of the same package authenticates fine.
+    # Thread api_key explicitly — the hosted backend rejects un-keyed
+    # recall/reflect with 401 even when the retain path of the same package
+    # authenticates fine.
     client = None
     try:
         client = _get_client(config.hindsight_api_url, config.api_key)
