@@ -1373,6 +1373,57 @@ class TestInjectionMode:
         assert "TypeScript" not in system_msg["content"]
 
 
+class TestInjectionPathPassesApiKey:
+    """Regression pin: ``_inject_memories`` must pass ``config.api_key`` to ``_get_client``.
+
+    Without this, the inject path constructs an un-keyed Hindsight client and any
+    Cloud read (recall/reflect) fails with HTTP 401 even when the storage path of
+    the same package authenticates fine — the bug the 2026-06-02 audit caught.
+    The retain path threads api_key correctly via wrappers.py; the inject path
+    in __init__.py did not.
+    """
+
+    def setup_method(self):
+        reset_config()
+
+    def teardown_method(self):
+        cleanup()
+
+    def test_inject_path_passes_configured_api_key_to_get_client(self):
+        """Configure with api_key + url → _inject_memories must call _get_client(url, api_key)."""
+        from unittest.mock import MagicMock, patch
+        from hindsight_litellm import _inject_memories
+
+        configure(
+            hindsight_api_url="https://api.hindsight.vectorize.io",
+            api_key="hsk_test_key_for_cloud_auth_regression_pin",
+        )
+        set_defaults(bank_id="test")
+
+        mock_result = MagicMock(text="User likes Haskell", type="world")
+        mock_client = MagicMock()
+        mock_client.recall.return_value = [mock_result]
+
+        messages = [{"role": "user", "content": "What do I like?"}]
+        with patch("hindsight_litellm._get_client", return_value=mock_client) as gc:
+            _inject_memories(messages)
+
+        gc.assert_called()
+        call_args = gc.call_args
+        # Tolerate positional or keyword forms — both end up at the same callsite.
+        url = call_args.kwargs.get("api_url") or (call_args.args[0] if call_args.args else None)
+        key = call_args.kwargs.get("api_key") or (
+            call_args.args[1] if len(call_args.args) > 1 else None
+        )
+        assert url == "https://api.hindsight.vectorize.io", (
+            f"inject path did not forward configured URL to _get_client: got url={url!r}"
+        )
+        assert key == "hsk_test_key_for_cloud_auth_regression_pin", (
+            f"inject path did not forward configured api_key to _get_client: got key={key!r}. "
+            "This regression silently breaks Hindsight Cloud reads (401)."
+        )
+
+
 class TestQueryField:
     """Tests for the query field in HindsightCallSettings."""
 
