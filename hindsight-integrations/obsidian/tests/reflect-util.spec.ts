@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { retrievedNotes } from "../src/reflect-util";
+import { retrievedNotes, retrievedNotesDetailed } from "../src/reflect-util";
 import type { ReflectResponse } from "../src/types";
 
 describe("retrievedNotes", () => {
@@ -34,5 +34,38 @@ describe("retrievedNotes", () => {
 
   it("returns empty when nothing was retrieved", () => {
     expect(retrievedNotes({ text: "hi" })).toEqual([]);
+  });
+});
+
+describe("retrievedNotesDetailed", () => {
+  it("pairs each note with its retrieved text snippets", () => {
+    const response: ReflectResponse = {
+      text: "answer",
+      trace: {
+        tool_calls: [
+          {
+            tool: "recall",
+            input: { query: "acme" },
+            output: {
+              results: [{ id: "a", text: "Acme cares about SOC2", document_id: "Work/acme.md" }],
+            },
+          },
+          {
+            tool: "search_observations",
+            input: { query: "worried" },
+            output: {
+              source_facts: {
+                f1: { id: "f1", text: "felt scattered", document_id: "Personal/journal.md" },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    expect(retrievedNotesDetailed(response)).toEqual([
+      { docId: "Personal/journal.md", snippets: ["felt scattered"] },
+      { docId: "Work/acme.md", snippets: ["Acme cares about SOC2"] },
+    ]);
   });
 });

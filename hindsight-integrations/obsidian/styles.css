@@ -108,6 +108,29 @@
   padding: 2px 0;
 }
 
+.hindsight-chat__note {
+  padding: 2px 0;
+}
+
+.hindsight-chat__snippet {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  padding-left: var(--size-4-2);
+  border-left: 2px solid var(--background-modifier-border);
+  margin: 1px 0 4px;
+}
+
+.hindsight-chat__actions {
+  display: flex;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-2);
+}
+
+.hindsight-chat__action {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 8px;
+}
+
 .hindsight-chat__composer {
   display: flex;
   gap: var(--size-4-2);

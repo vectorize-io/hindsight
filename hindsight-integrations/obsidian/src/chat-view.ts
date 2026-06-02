@@ -8,8 +8,10 @@ import { ItemView, MarkdownRenderer, Notice, type WorkspaceLeaf } from "obsidian
 import { HINDSIGHT_ICON_ID, HINDSIGHT_MARK_DATA_URI } from "./branding";
 import { runChatTurn } from "./chat";
 import type HindsightPlugin from "./main";
-import { collectDocIds, retrievedNotes } from "./reflect-util";
+import { collectDocIds, retrievedNotesDetailed } from "./reflect-util";
 import type { ReflectResponse, ReflectToolCall, TagGroup, TagLeaf } from "./types";
+
+const SNIPPET_MAX = 160;
 
 export const VIEW_TYPE_CHAT = "hindsight-chat";
 
@@ -159,7 +161,9 @@ export class ChatView extends ItemView {
     const el = this.messagesEl.createDiv({
       cls: `hindsight-chat__msg hindsight-chat__msg--${role}`,
     });
-    void MarkdownRenderer.render(this.app, text, el, "", this);
+    // sourcePath = the active note so any [[wikilinks]] in the answer resolve.
+    const sourcePath = this.app.workspace.getActiveFile()?.path ?? "";
+    void MarkdownRenderer.render(this.app, text, el, sourcePath, this);
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
     return el;
   }
@@ -168,25 +172,44 @@ export class ChatView extends ItemView {
     void this.app.workspace.openLinkText(this.plugin.stripDocPrefix(docId), "");
   }
 
-  /** The actual notes pulled in by the reflect agent's tool calls (clickable). */
+  /** Actions under an assistant answer. */
+  private renderActions(container: HTMLElement, text: string): void {
+    const actions = container.createDiv({ cls: "hindsight-chat__actions" });
+
+    const copy = actions.createEl("button", { cls: "hindsight-chat__action", text: "Copy" });
+    copy.addEventListener("click", () => {
+      void navigator.clipboard.writeText(text);
+      new Notice("Hindsight: answer copied");
+    });
+  }
+
+  /** The actual notes pulled in by the reflect agent's tool calls, with snippets. */
   private renderRetrievedNotes(container: HTMLElement, response: ReflectResponse): void {
-    const docIds = retrievedNotes(response);
+    const notes = retrievedNotesDetailed(response);
     const models = response.based_on?.mental_models ?? [];
-    if (docIds.length === 0 && models.length === 0) return;
+    if (notes.length === 0 && models.length === 0) return;
 
     const details = container.createEl("details", { cls: "hindsight-chat__disclosure" });
     details.open = true; // notes are the most useful evidence — show by default
-    details.createEl("summary", { text: `Notes retrieved (${docIds.length})` });
-    for (const id of docIds) {
-      const link = details.createEl("a", {
+    details.createEl("summary", { text: `Notes retrieved (${notes.length})` });
+    for (const note of notes) {
+      const item = details.createDiv({ cls: "hindsight-chat__note" });
+      const link = item.createEl("a", {
         cls: "hindsight-chat__citation",
-        text: this.plugin.stripDocPrefix(id),
+        text: this.plugin.stripDocPrefix(note.docId),
         href: "#",
       });
       link.addEventListener("click", (evt) => {
         evt.preventDefault();
-        this.openNote(id);
+        this.openNote(note.docId);
       });
+      const snippet = note.snippets[0];
+      if (snippet) {
+        item.createDiv({
+          cls: "hindsight-chat__snippet",
+          text: snippet.length > SNIPPET_MAX ? `${snippet.slice(0, SNIPPET_MAX)}…` : snippet,
+        });
+      }
     }
     for (const model of models) {
       details.createEl("span", {
@@ -246,6 +269,7 @@ export class ChatView extends ItemView {
       const assistant = this.addMessage("assistant", response.text || "_(no answer)_");
       this.renderRetrievedNotes(assistant, response);
       this.renderReasoning(assistant, response);
+      if (response.text) this.renderActions(assistant, response.text);
     } catch (err) {
       pending.remove();
       const detail = err instanceof Error ? err.message : String(err);

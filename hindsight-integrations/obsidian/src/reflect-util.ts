@@ -29,3 +29,42 @@ export function retrievedNotes(response: ReflectResponse): string[] {
   }
   return [...ids].sort();
 }
+
+export interface RetrievedNote {
+  docId: string;
+  /** The matched fact/chunk snippets that came from this note (for preview). */
+  snippets: string[];
+}
+
+/**
+ * Like `retrievedNotes`, but also pairs each note with the text snippets that
+ * were retrieved from it. Walks the tool outputs for objects that carry both a
+ * `document_id` and a sibling `text` (recall results, expanded memories,
+ * observation source_facts).
+ */
+export function retrievedNotesDetailed(response: ReflectResponse): RetrievedNote[] {
+  const byDoc = new Map<string, Set<string>>();
+
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const v of value) visit(v);
+      return;
+    }
+    if (value && typeof value === "object") {
+      const obj = value as Record<string, unknown>;
+      const id = obj.document_id;
+      if (typeof id === "string" && id) {
+        const snippets = byDoc.get(id) ?? new Set<string>();
+        if (typeof obj.text === "string" && obj.text.trim()) snippets.add(obj.text.trim());
+        byDoc.set(id, snippets);
+      }
+      for (const v of Object.values(obj)) visit(v);
+    }
+  };
+
+  for (const call of response.trace?.tool_calls ?? []) visit(call.output);
+
+  return [...byDoc.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([docId, snippets]) => ({ docId, snippets: [...snippets] }));
+}
