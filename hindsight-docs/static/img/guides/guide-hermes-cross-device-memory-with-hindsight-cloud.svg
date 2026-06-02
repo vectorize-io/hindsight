@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-label="Guide: Give Hermes Cross-Device Memory with Hindsight Cloud">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1220"/>
+      <stop offset="100%" stop-color="#172554"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <circle cx="1320" cy="170" r="220" fill="#1d4ed8" opacity="0.22"/>
+  <circle cx="1450" cy="740" r="300" fill="#7c3aed" opacity="0.18"/>
+  <rect x="80" y="112" width="240" height="46" rx="23" fill="url(#accent)"/>
+  <text x="112" y="142" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="800" fill="#08111f">GUIDE</text>
+  <text x="80" y="230" font-family="Inter, Arial, sans-serif" font-size="44" font-weight="700" fill="#ffffff">Give Hermes Cross-Device Memory</text><text x="80" y="294" font-family="Inter, Arial, sans-serif" font-size="44" font-weight="700" fill="#ffffff">with Hindsight Cloud</text>
+  <rect x="80" y="535" width="1060" height="4" rx="2" fill="url(#accent)"/>
+  <text x="80" y="620" font-family="Inter, Arial, sans-serif" font-size="28" fill="#bfdbfe">Hermes Agent + Hindsight</text>
+  <text x="80" y="700" font-family="Inter, Arial, sans-serif" font-size="22" fill="#93c5fd">Persistent memory guides</text>
+</svg>
