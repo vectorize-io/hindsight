@@ -123,8 +123,8 @@ class HindsightMemory(BaseMemory):
 
         Mirrors what ``create_hindsight_tools`` does for the tools factory:
         when neither ``client`` nor ``hindsight_api_url`` is supplied, falls
-        back to ``DEFAULT_HINDSIGHT_API_URL`` (Hindsight Cloud) and reads
-        ``HINDSIGHT_API_KEY`` from the environment. Equivalent to
+        back to ``DEFAULT_HINDSIGHT_API_URL`` and reads ``HINDSIGHT_API_KEY``
+        from the environment. Equivalent to
         ``from_client(resolve_client(...), bank_id, ...)`` but spells out the
         common cloud-default and env-var paths so callers don't have to wire
         them themselves.
