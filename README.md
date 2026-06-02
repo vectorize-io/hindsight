@@ -71,7 +71,7 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 >API: http://localhost:8888
 >UI: http://localhost:9999
 
-You can modify the LLM provider by setting `HINDSIGHT_API_LLM_PROVIDER`. Supported options are `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `ollama`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `none`. The documentation provides more details on [supported models](https://hindsight.vectorize.io/developer/models).
+You can modify the LLM provider by setting `HINDSIGHT_API_LLM_PROVIDER`. Supported options are `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `none`. The documentation provides more details on [supported models](https://hindsight.vectorize.io/developer/models).
 
 
 
