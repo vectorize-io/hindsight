@@ -17,6 +17,8 @@ from llama_index.core.bridge.pydantic import Field, PrivateAttr
 from llama_index.core.llms import ChatMessage, MessageRole
 from llama_index.core.memory.types import BaseMemory
 
+from ._client import resolve_client
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -99,9 +101,59 @@ class HindsightMemory(BaseMemory):
         return "HindsightMemory"
 
     @classmethod
-    def from_defaults(cls, **kwargs: Any) -> "HindsightMemory":
-        """Create from defaults. Prefer ``from_client()`` instead."""
-        raise NotImplementedError("Use HindsightMemory.from_client() or HindsightMemory.from_url() instead.")
+    def from_defaults(
+        cls,
+        bank_id: str,
+        *,
+        client: Optional[Hindsight] = None,
+        hindsight_api_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        mission: Optional[str] = None,
+        context: str = "llamaindex",
+        budget: str = "mid",
+        max_tokens: int = 4096,
+        tags: Optional[list[str]] = None,
+        recall_tags: Optional[list[str]] = None,
+        recall_tags_match: str = "any",
+        system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+        chat_history_limit: int = 100,
+        **kwargs: Any,
+    ) -> "HindsightMemory":
+        """Create a HindsightMemory using the shared client-resolution path.
+
+        Mirrors what ``create_hindsight_tools`` does for the tools factory:
+        when neither ``client`` nor ``hindsight_api_url`` is supplied, falls
+        back to ``DEFAULT_HINDSIGHT_API_URL`` (Hindsight Cloud) and reads
+        ``HINDSIGHT_API_KEY`` from the environment. Equivalent to
+        ``from_client(resolve_client(...), bank_id, ...)`` but spells out the
+        common cloud-default and env-var paths so callers don't have to wire
+        them themselves.
+
+        Args:
+            bank_id: Memory bank ID (required).
+            client: Pre-configured Hindsight client. Wins over URL/key.
+            hindsight_api_url: API URL. Defaults to the configured value or
+                ``DEFAULT_HINDSIGHT_API_URL``.
+            api_key: API key. Defaults to the configured value or
+                ``HINDSIGHT_API_KEY`` env var.
+            mission, context, budget, max_tokens, tags, recall_tags,
+                recall_tags_match, system_prompt, chat_history_limit:
+                Passed to ``from_client``.
+        """
+        resolved = resolve_client(client, hindsight_api_url, api_key)
+        return cls.from_client(
+            client=resolved,
+            bank_id=bank_id,
+            mission=mission,
+            context=context,
+            budget=budget,
+            max_tokens=max_tokens,
+            tags=tags,
+            recall_tags=recall_tags,
+            recall_tags_match=recall_tags_match,
+            system_prompt=system_prompt,
+            chat_history_limit=chat_history_limit,
+        )
 
     @classmethod
     def from_client(

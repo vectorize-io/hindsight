@@ -68,9 +68,42 @@ class TestHindsightMemoryCreation:
                 base_url="http://localhost:8888", timeout=30.0
             )
 
-    def test_from_defaults_raises(self):
-        with pytest.raises(NotImplementedError):
-            HindsightMemory.from_defaults()
+    def test_from_defaults_uses_cloud_default_when_nothing_supplied(self):
+        """Parity with create_hindsight_tools: no URL/key → DEFAULT_HINDSIGHT_API_URL.
+
+        Pins the cloud-default constructor that the 2026-06-02 audit asked for
+        — HindsightMemory used to require an explicit client or explicit URL,
+        leaving callers to wire the cloud-default themselves while the tools
+        factory did it for them.
+        """
+        from hindsight_llamaindex.config import DEFAULT_HINDSIGHT_API_URL
+        with patch("hindsight_llamaindex._client.Hindsight") as mock_cls:
+            mock_cls.return_value = _mock_client()
+            memory = HindsightMemory.from_defaults(bank_id="test-bank")
+            assert memory.bank_id == "test-bank"
+            kwargs = mock_cls.call_args.kwargs
+            assert kwargs.get("base_url") == DEFAULT_HINDSIGHT_API_URL
+
+    def test_from_defaults_threads_api_key_into_constructed_client(self):
+        """When api_key is provided, resolve_client must include it."""
+        with patch("hindsight_llamaindex._client.Hindsight") as mock_cls:
+            mock_cls.return_value = _mock_client()
+            HindsightMemory.from_defaults(
+                bank_id="test-bank",
+                api_key="hsk_test_key_42",
+            )
+            kwargs = mock_cls.call_args.kwargs
+            assert kwargs.get("api_key") == "hsk_test_key_42"
+
+    def test_from_defaults_explicit_client_wins(self):
+        """When client is given, no new Hindsight is constructed."""
+        client = _mock_client()
+        with patch("hindsight_llamaindex._client.Hindsight") as mock_cls:
+            memory = HindsightMemory.from_defaults(
+                bank_id="test-bank", client=client
+            )
+            assert memory.bank_id == "test-bank"
+            mock_cls.assert_not_called()
 
     def test_class_name(self):
         assert HindsightMemory.class_name() == "HindsightMemory"
