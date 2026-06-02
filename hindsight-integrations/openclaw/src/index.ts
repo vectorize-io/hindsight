@@ -36,7 +36,7 @@ export const DEFAULT_RETAIN_CONTEXT =
   "This content is an AI-assistant conversation transcript from OpenClaw. " +
   "The [context] block at the beginning of each turn contains routing identifiers: " +
   "'sender' is an opaque user ID (not a human name), 'channel' is a chat identifier, " +
-  "'provider' is the messaging platform name (e.g. feishu, slack). " +
+  "'provider' is the messaging platform name. " +
   "These are operational routing metadata, not semantic actors or people. " +
   "Messages with role 'assistant' are from the AI assistant; first-person statements " +
   "in assistant messages refer to the AI, not the human user. " +

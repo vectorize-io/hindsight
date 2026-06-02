@@ -388,14 +388,7 @@ describe("buildRetainRequest", () => {
   });
 
   it("includes the default retain context guidance", () => {
-    const request = buildRetainRequest(
-      "hello world",
-      1,
-      {},
-      {},
-      1700000000000,
-      { turnIndex: 1 }
-    );
+    const request = buildRetainRequest("hello world", 1, {}, {}, 1700000000000, { turnIndex: 1 });
 
     expect(request.context).toBe(DEFAULT_RETAIN_CONTEXT);
   });

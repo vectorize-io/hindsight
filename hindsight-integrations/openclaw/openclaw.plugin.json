@@ -62,25 +62,14 @@
       "llmProvider": {
         "type": "string",
         "description": "LLM provider for Hindsight memory (e.g. 'openai', 'anthropic', 'gemini', 'groq', 'ollama', 'openai-codex', 'claude-code').",
-        "enum": [
-          "openai",
-          "anthropic",
-          "gemini",
-          "groq",
-          "ollama",
-          "openai-codex",
-          "claude-code"
-        ]
+        "enum": ["openai", "anthropic", "gemini", "groq", "ollama", "openai-codex", "claude-code"]
       },
       "llmModel": {
         "type": "string",
         "description": "LLM model to use (e.g. 'gpt-4o-mini', 'claude-3-5-haiku-20241022'). Used with llmProvider."
       },
       "llmApiKey": {
-        "type": [
-          "string",
-          "object"
-        ],
+        "type": ["string", "object"],
         "description": "API key for the LLM provider used by the Hindsight memory daemon. Set via 'openclaw config set ... --ref-source env --ref-id OPENAI_API_KEY' to reference an env var without storing plaintext."
       },
       "llmBaseUrl": {
@@ -101,10 +90,7 @@
         "description": "External Hindsight API URL (e.g. 'https://mcp.hindsight.devcraft.team'). When set, skips local daemon and connects directly to this API."
       },
       "hindsightApiToken": {
-        "type": [
-          "string",
-          "object"
-        ],
+        "type": ["string", "object"],
         "description": "API token for external Hindsight API authentication. Required if the external API has authentication enabled."
       },
       "dynamicBankId": {
@@ -135,7 +121,7 @@
       "retainContext": {
         "type": "string",
         "description": "Interpretation guidance sent via the Hindsight retain API context field. It tells the extraction LLM that OpenClaw sender/channel/provider values, bank IDs, session keys, source systems, and tags are operational routing metadata, not human names, project names, or organizations.",
-        "default": "This content is an AI-assistant conversation transcript from OpenClaw. The [context] block at the beginning of each turn contains routing identifiers: 'sender' is an opaque user ID (not a human name), 'channel' is a chat identifier, 'provider' is the messaging platform name (e.g. feishu, slack). These are operational routing metadata, not semantic actors or people. Messages with role 'assistant' are from the AI assistant; first-person statements in assistant messages refer to the AI, not the human user. Messages with role 'user' are from the human user. Bank IDs, session keys, agent IDs, thread IDs, source systems, and tags in metadata are also operational routing identifiers, not human names, project names, or organizations."
+        "default": "This content is an AI-assistant conversation transcript from OpenClaw. The [context] block at the beginning of each turn contains routing identifiers: 'sender' is an opaque user ID (not a human name), 'channel' is a chat identifier, 'provider' is the messaging platform name. These are operational routing metadata, not semantic actors or people. Messages with role 'assistant' are from the AI assistant; first-person statements in assistant messages refer to the AI, not the human user. Messages with role 'user' are from the human user. Bank IDs, session keys, agent IDs, thread IDs, source systems, and tags in metadata are also operational routing identifiers, not human names, project names, or organizations."
       },
       "autoRecall": {
         "type": "boolean",
@@ -148,27 +134,16 @@
           "type": "string"
         },
         "description": "Message providers to exclude from recall and retain (e.g. ['heartbeat', 'telegram', 'discord'])",
-        "default": [
-          "heartbeat"
-        ]
+        "default": ["heartbeat"]
       },
       "dynamicBankGranularity": {
         "type": "array",
         "items": {
           "type": "string",
-          "enum": [
-            "agent",
-            "channel",
-            "user",
-            "provider"
-          ]
+          "enum": ["agent", "channel", "user", "provider"]
         },
         "description": "Fields used to derive bank ID. Controls memory isolation granularity. Default: ['agent', 'channel', 'user'].",
-        "default": [
-          "agent",
-          "channel",
-          "user"
-        ]
+        "default": ["agent", "channel", "user"]
       },
       "autoRetain": {
         "type": "boolean",
@@ -179,26 +154,15 @@
         "type": "array",
         "items": {
           "type": "string",
-          "enum": [
-            "user",
-            "assistant",
-            "system",
-            "tool"
-          ]
+          "enum": ["user", "assistant", "system", "tool"]
         },
         "description": "Message roles to include in retained transcript. Default: ['user', 'assistant'].",
-        "default": [
-          "user",
-          "assistant"
-        ]
+        "default": ["user", "assistant"]
       },
       "retainFormat": {
         "type": "string",
         "description": "Serialization format for retained conversation content. 'json' (default) emits a structured array of {role, content} messages, matching the Claude Code integration. 'text' emits the legacy '[role: x] ... [x:end]' markers.",
-        "enum": [
-          "json",
-          "text"
-        ],
+        "enum": ["json", "text"],
         "default": "json"
       },
       "retainToolCalls": {
@@ -226,20 +190,13 @@
       "retainDocumentScope": {
         "type": "string",
         "description": "Granularity of the retained document_id. 'session' (default) groups all retains under a single document per OpenClaw session. 'turn' produces a new document per retain.",
-        "enum": [
-          "session",
-          "turn"
-        ],
+        "enum": ["session", "turn"],
         "default": "session"
       },
       "recallBudget": {
         "type": "string",
         "description": "Recall effort level. Higher budgets use more retrieval strategies for better results but take longer.",
-        "enum": [
-          "low",
-          "mid",
-          "high"
-        ],
+        "enum": ["low", "mid", "high"],
         "default": "mid"
       },
       "recallMaxTokens": {
@@ -252,33 +209,19 @@
         "type": "array",
         "items": {
           "type": "string",
-          "enum": [
-            "world",
-            "experience",
-            "observation"
-          ]
+          "enum": ["world", "experience", "observation"]
         },
         "description": "Memory types to recall. Defaults to ['observation'] — surfaces only the consolidated, deduplicated view; raw world/experience facts can drive the same answer multiple times when many memories say the same thing.",
-        "default": [
-          "observation"
-        ]
+        "default": ["observation"]
       },
       "recallRoles": {
         "type": "array",
         "items": {
           "type": "string",
-          "enum": [
-            "user",
-            "assistant",
-            "system",
-            "tool"
-          ]
+          "enum": ["user", "assistant", "system", "tool"]
         },
         "description": "Roles to include when composing contextual recall query. Default: ['user', 'assistant'].",
-        "default": [
-          "user",
-          "assistant"
-        ]
+        "default": ["user", "assistant"]
       },
       "recallContextTurns": {
         "type": "integer",
@@ -310,11 +253,7 @@
       },
       "recallInjectionPosition": {
         "type": "string",
-        "enum": [
-          "prepend",
-          "append",
-          "user"
-        ],
+        "enum": ["prepend", "append", "user"],
         "description": "Where to inject recalled memories. 'prepend' = start of system prompt (default), 'append' = end of system prompt (preserves prompt cache), 'user' = before user message.",
         "default": "prepend"
       },
@@ -326,13 +265,7 @@
       "logLevel": {
         "type": "string",
         "description": "Console log verbosity. 'off' = no output, 'error' = errors only, 'warning' = errors + warnings, 'info' = key events + periodic summaries, 'debug' = all details.",
-        "enum": [
-          "off",
-          "error",
-          "warning",
-          "info",
-          "debug"
-        ],
+        "enum": ["off", "error", "warning", "info", "debug"],
         "default": "info"
       },
       "logSummaryIntervalMs": {
