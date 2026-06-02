@@ -11,6 +11,7 @@ import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -1192,19 +1193,29 @@ async def _streaming_retain_batch(
                 async with conn.transaction():
                     # --- Document ownership gate ---
                     # Lock the document row to serialize all concurrent writers.
-                    # SELECT ... FOR UPDATE doesn't lock non-existent rows, so we
-                    # first ensure the row exists with a lightweight upsert, THEN lock it.
-                    # The content_hash='__pending__' placeholder is immediately overwritten
-                    # by handle_document_tracking or upsert_document_metadata below.
-                    await conn.execute(
+                    #
+                    # We do this with a SINGLE upsert that both creates the row (if
+                    # absent) and locks it (if present) atomically. The earlier
+                    # two-step form — INSERT ... ON CONFLICT DO NOTHING followed by a
+                    # separate SELECT ... FOR UPDATE — could deadlock under concurrent
+                    # same-document retains: DO NOTHING takes no row lock on an
+                    # existing row, so writers interleaved the speculative-insert
+                    # ShareLock with the later FOR UPDATE and cascade-DELETE in
+                    # inconsistent orders, producing 3-way lock cycles in
+                    # handle_document_tracking. ON CONFLICT DO UPDATE always takes the
+                    # row lock as part of the same statement, so all writers serialize
+                    # on the document row in a single, consistent step.
+                    #
+                    # The SET is a no-op self-assignment (content_hash unchanged) used
+                    # only to acquire the lock; the real hash is written immediately
+                    # below by handle_document_tracking / upsert_document_metadata.
+                    # ``RETURNING`` yields the pre-existing hash (or '__pending__' for a
+                    # freshly inserted row).
+                    existing_hash = await conn.fetchval(
                         f"INSERT INTO {fq_table('documents')} (id, bank_id, original_text, content_hash) "
                         f"VALUES ($1, $2, '', '__pending__') "
-                        f"ON CONFLICT (id, bank_id) DO NOTHING",
-                        effective_doc_id,
-                        bank_id,
-                    )
-                    existing_hash = await conn.fetchval(
-                        f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2 FOR UPDATE",
+                        f"ON CONFLICT (id, bank_id) DO UPDATE SET content_hash = {fq_table('documents')}.content_hash "
+                        f"RETURNING content_hash",
                         effective_doc_id,
                         bank_id,
                     )
@@ -1511,6 +1522,35 @@ async def _streaming_retain_batch(
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class _ChunkDiff:
+    """Classification of chunk indices when diffing new content vs stored chunks."""
+
+    unchanged: list[int]
+    changed: list[int]
+    new: list[int]
+    removed: list[int]
+
+
+def _classify_chunk_diff(existing_by_index: dict[int, Any], new_hashes: dict[int, str]) -> _ChunkDiff:
+    """Classify chunk indices by comparing freshly computed ``new_hashes``
+    (index -> content hash) against the currently stored chunks
+    (``existing_by_index``: index -> chunk row)."""
+    diff = _ChunkDiff(unchanged=[], changed=[], new=[], removed=[])
+    for idx, new_hash in new_hashes.items():
+        existing = existing_by_index.get(idx)
+        if existing and existing.content_hash == new_hash:
+            diff.unchanged.append(idx)
+        elif existing:
+            diff.changed.append(idx)
+        else:
+            diff.new.append(idx)
+    for idx in existing_by_index:
+        if idx not in new_hashes:
+            diff.removed.append(idx)
+    return diff
+
+
 async def _try_delta_retain(
     pool: Any,
     embeddings_model,
@@ -1580,18 +1620,11 @@ async def _try_delta_retain(
     existing_by_index = {c.chunk_index: c for c in existing_chunks}
     new_hashes = {idx: chunk_storage.compute_chunk_hash(text) for idx, text in new_chunks_with_contents.items()}
 
-    unchanged_indices, changed_indices, new_indices, removed_indices = [], [], [], []
-    for idx, new_hash in new_hashes.items():
-        existing = existing_by_index.get(idx)
-        if existing and existing.content_hash == new_hash:
-            unchanged_indices.append(idx)
-        elif existing:
-            changed_indices.append(idx)
-        else:
-            new_indices.append(idx)
-    for idx in existing_by_index:
-        if idx not in new_hashes:
-            removed_indices.append(idx)
+    diff = _classify_chunk_diff(existing_by_index, new_hashes)
+    unchanged_indices = diff.unchanged
+    changed_indices = diff.changed
+    new_indices = diff.new
+    removed_indices = diff.removed
 
     log_buffer.append(
         f"[delta] Chunk diff: {len(unchanged_indices)} unchanged, "
@@ -1637,6 +1670,63 @@ async def _try_delta_retain(
             outbox_callback,
             document_body_override=document_body_override,
         )
+
+    # Freshness recheck BEFORE the (expensive) LLM extraction.
+    #
+    # We snapshotted the document hash and chunks outside any lock. A concurrent
+    # retain for the same document may have committed a new version while we were
+    # chunking and diffing. Re-read the current hash; if it changed, recompute the
+    # diff against the now-committed chunk state. If the concurrent writer already
+    # produced content identical to ours, there is nothing left to extract — skip
+    # the LLM call entirely (metadata-only). If it still differs, fall back to the
+    # streaming path (which dedups per-chunk and re-locks the document).
+    #
+    # This narrows — but cannot fully close — the race window: a writer can still
+    # commit during our extraction. The post-extraction hash gate inside the write
+    # transaction remains the correctness backstop; this check exists purely to
+    # avoid burning LLM tokens on work a concurrent request already did.
+    async with acquire_with_retry(pool) as conn:
+        recheck_hash = await conn.fetchval(
+            f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+            effective_doc_id,
+            bank_id,
+        )
+    if recheck_hash is not None and doc_hash_at_load is not None and recheck_hash != doc_hash_at_load:
+        log_buffer.append(
+            f"[delta] Document {effective_doc_id} changed before extraction "
+            f"(concurrent retain) — rechecking diff against current state"
+        )
+        async with acquire_with_retry(pool) as conn:
+            current_chunks = await chunk_storage.load_existing_chunks(conn, bank_id, effective_doc_id)
+        if not current_chunks or any(c.content_hash is None for c in current_chunks):
+            log_buffer.append("[delta] Recheck: current chunks unavailable — falling back to full retain")
+            logger.info("\n" + "\n".join(log_buffer) + "\n")
+            return None
+        current_by_index = {c.chunk_index: c for c in current_chunks}
+        recheck = _classify_chunk_diff(current_by_index, new_hashes)
+        if not (recheck.changed or recheck.new or recheck.removed):
+            log_buffer.append(
+                "[delta] Recheck: concurrent retain already stored identical content — "
+                "skipping extraction, updating metadata only"
+            )
+            return await _delta_metadata_only(
+                pool,
+                bank_id,
+                contents_dicts,
+                contents,
+                effective_doc_id,
+                document_tags,
+                log_buffer,
+                start_time,
+                outbox_callback,
+                document_body_override=document_body_override,
+            )
+        log_buffer.append(
+            f"[delta] Recheck: {len(recheck.changed) + len(recheck.new) + len(recheck.removed)} chunks still differ — "
+            f"falling back to full retain"
+        )
+        logger.info("\n" + "\n".join(log_buffer) + "\n")
+        return None
 
     # Extract facts and generate embeddings (shared pipeline). Attribute these
     # extraction calls to the document so the delta re-retain's trace also binds
