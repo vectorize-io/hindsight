@@ -3520,38 +3520,42 @@ async def test_enable_auto_consolidation_flag(memory: MemoryEngine, request_cont
 
 
 def test_consolidation_prompt_split_is_cacheable_and_complete():
-    """The split consolidation prompt: stable system prefix + per-batch user message.
+    """The split consolidation prompt: bank-agnostic system prefix + per-batch user.
 
-    The system prefix must be byte-identical across batches (the property that
-    lets it be served from a Gemini context cache), carry only stable
-    instructions, and the per-batch data (facts, observations, capacity note)
-    must live in the user message — never in the cached prefix.
+    The system prefix must be byte-identical across batches AND across banks (the
+    property that lets a single Gemini context cache serve every bank), carry only
+    stable instructions, and the per-batch/per-bank data (mission, facts,
+    observations, capacity note) must live in the user message — never in the
+    cached prefix.
     """
     from hindsight_api.engine.consolidation.prompts import (
         build_consolidation_input,
         build_consolidation_system_prompt,
     )
 
-    sys1 = build_consolidation_system_prompt(observations_mission="Track widgets.")
-    sys2 = build_consolidation_system_prompt(observations_mission="Track widgets.")
-    # Byte-stable across calls → cacheable prefix.
-    assert sys1 == sys2
+    sys_prompt = build_consolidation_system_prompt()
+    # Byte-stable across calls and independent of any mission → one cache for all banks.
+    assert sys_prompt == build_consolidation_system_prompt()
     # Instructions only: no per-batch placeholders leaked into the prefix.
-    assert "{facts_text}" not in sys1
-    assert "{observations_text}" not in sys1
-    # The mission is included and the JSON examples are unescaped (single braces),
-    # i.e. .format() ran — no raw {{ }} templating reaches the model.
-    assert "Track widgets." in sys1
-    assert '{"creates"' in sys1
-    assert "{{" not in sys1
+    assert "{facts_text}" not in sys_prompt
+    assert "{observations_text}" not in sys_prompt
+    # JSON examples are unescaped (single braces), i.e. .format() ran.
+    assert '{"creates"' in sys_prompt
+    assert "{{" not in sys_prompt
     # The stable observation-format boilerplate lives in the cached prefix.
-    assert "proof_count" in sys1
+    assert "proof_count" in sys_prompt
 
-    user_a = build_consolidation_input(facts_text="[id-a] Fact A.", observations_text="[]")
-    user_b = build_consolidation_input(facts_text="[id-b] Fact B.", observations_text="[]")
-    # Per-batch data lives in the user message and varies; it is NOT in the prefix.
+    # Two banks with DIFFERENT missions share the identical cached prefix; the
+    # mission rides in the per-batch user message instead.
+    user_a = build_consolidation_input(
+        facts_text="[id-a] Fact A.", observations_text="[]", observations_mission="Track widgets."
+    )
+    user_b = build_consolidation_input(
+        facts_text="[id-b] Fact B.", observations_text="[]", observations_mission="Track gadgets."
+    )
+    assert "Track widgets." in user_a
+    assert "Track widgets." not in sys_prompt  # mission NOT in the cached prefix
     assert "Fact A." in user_a
-    assert "Fact A." not in sys1
     assert user_a != user_b
     # The format boilerplate is NOT re-sent per batch (it's in the cached prefix).
     assert "proof_count" not in user_a
@@ -3561,4 +3565,4 @@ def test_consolidation_prompt_split_is_cacheable_and_complete():
         facts_text="[id] F.", observations_text="[]", observation_capacity_note="OBSERVATION LIMIT REACHED"
     )
     assert "OBSERVATION LIMIT REACHED" in capped
-    assert "OBSERVATION LIMIT REACHED" not in sys1
+    assert "OBSERVATION LIMIT REACHED" not in sys_prompt

@@ -2770,30 +2770,39 @@ async def test_retain_batch_with_per_item_tags_on_document(memory, request_conte
         print(f"\n=== Cleaned up bank: {bank_id} ===")
 
 
-def test_retain_mission_injected_into_prompt():
-    """Test that retain_mission is injected as a FOCUS section into any extraction mode."""
+def test_retain_mission_in_user_preamble_not_cached_prefix():
+    """retain_mission rides in the per-request user-message preamble, NOT the
+    system prompt — so the cached system prefix stays bank-agnostic and a single
+    Gemini context cache can serve every bank. Independent of extraction mode."""
     from unittest.mock import MagicMock
 
-    from hindsight_api.engine.retain.fact_extraction import _build_extraction_prompt_and_schema
+    from hindsight_api.engine.retain.fact_extraction import (
+        _build_extraction_prompt_and_schema,
+        _retain_mission_preamble,
+    )
 
     spec = "Focus on technical decisions and architecture choices only."
 
-    # Test with concise mode
     config = MagicMock()
     config.retain_extraction_mode = "concise"
     config.retain_mission = spec
     config.retain_custom_instructions = None
     config.retain_extract_causal_links = False
 
+    # The mission is absent from the (cacheable, bank-agnostic) system prompt...
     prompt, _ = _build_extraction_prompt_and_schema(config)
-    assert spec in prompt
-    assert "FOCUS" in prompt
+    assert spec not in prompt
+    assert "FOCUS" not in prompt
+    # ...and present in the per-request user-message preamble instead.
+    preamble = _retain_mission_preamble(config)
+    assert spec in preamble
+    assert "FOCUS" in preamble
 
-    # retain_mission is injected into verbose mode as well
+    # Mode-independent: verbose mode → same mission-free prompt, same preamble.
     config.retain_extraction_mode = "verbose"
     prompt_verbose, _ = _build_extraction_prompt_and_schema(config)
-    assert spec in prompt_verbose
-    assert "FOCUS" in prompt_verbose
+    assert spec not in prompt_verbose
+    assert spec in _retain_mission_preamble(config)
 
 
 def test_retain_mission_absent_when_not_set():

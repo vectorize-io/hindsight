@@ -1579,19 +1579,20 @@ async def _consolidate_batch_with_llm(
                 f"(out of {max_observations_per_scope}). Prefer UPDATE over CREATE when possible."
             )
 
-    # Split the prompt: a stable system instruction (mission + rules + decision
-    # guide + output format) that is byte-identical across batches, and a
-    # per-batch user message (capacity note + facts + existing observations).
-    # The split lets the system prefix be served from a Gemini context cache —
-    # the capacity note and response_schema (both batch-variable) are kept OUT
-    # of the cached prefix so it never busts within a run.
+    # Split the prompt: a bank-agnostic system instruction (rules + input format +
+    # decision guide + output format) that is byte-identical across batches AND
+    # across banks, and a per-batch user message (mission + capacity note + facts +
+    # existing observations). The split lets the system prefix be served from a
+    # single Gemini context cache shared by every bank — the bank mission, capacity
+    # note, and response_schema (all bank/batch-variable) are kept OUT of the
+    # cached prefix so one cache serves all and it never busts within a run.
     system_prompt = build_consolidation_system_prompt(
-        config.observations_mission,
         llm_output_language=getattr(config, "llm_output_language", None),
     )
     user_content = build_consolidation_input(
         facts_text=facts_lines,
         observations_text=observations_text,
+        observations_mission=config.observations_mission,
         observation_capacity_note=observation_capacity_note,
     )
 
