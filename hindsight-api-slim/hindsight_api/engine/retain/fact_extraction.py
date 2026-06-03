@@ -1025,7 +1025,13 @@ def _build_user_message(
 
     narrator_section = ""
     if agent_name:
-        narrator_section = f'\nNarrator: {agent_name} (AI agent — first-person statements like "I did X" are the agent\'s own actions; classify as "assistant")'
+        narrator_section = (
+            f"\nNarrator: {agent_name} (the AI agent whose memory this is). By default, "
+            f'first-person statements like "I did X" are {agent_name}\'s own actions → classify as '
+            f'"assistant". BUT the Context above takes precedence: if it identifies a different '
+            f"first-person speaker (e.g. a user or customer in a transcript), attribute those "
+            f'statements to that speaker and classify them as "world", not "assistant".'
+        )
 
     return f"""Extract facts from the following text chunk.
 
