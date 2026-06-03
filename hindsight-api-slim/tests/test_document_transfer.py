@@ -93,6 +93,83 @@ async def _import(memory, bank_id, archive, request_context, on_conflict="skip")
     return status["result_metadata"]
 
 
+def test_export_bank_covers_schema():
+    """Every bank-scoped table must be classified by export_bank — logical, carried,
+    history, or explicitly skipped — so a future migration can't silently drop one."""
+    from hindsight_api.admin.cli import BACKUP_TABLES
+    from hindsight_api.engine.transfer.export import (
+        _BANK_ROW_TABLES,
+        _HISTORY_TABLES,
+        _LOGICAL_TABLES,
+        _SKIP_TABLES,
+    )
+
+    buckets = [set(_LOGICAL_TABLES), set(_BANK_ROW_TABLES), set(_HISTORY_TABLES), set(_SKIP_TABLES)]
+    classified = set().union(*buckets)
+    assert classified == set(BACKUP_TABLES), (
+        f"export-bank classification drifted from BACKUP_TABLES: "
+        f"missing={set(BACKUP_TABLES) - classified}, extra={classified - set(BACKUP_TABLES)}"
+    )
+    # No table may appear in two buckets.
+    assert sum(len(b) for b in buckets) == len(classified), "a table is classified in more than one bucket"
+
+
+@pytest.mark.asyncio
+async def test_export_bank_contents(memory, request_context):
+    """export_bank produces a whole-bank archive: docs + bank config + webhooks,
+    no embeddings, with history gated behind include_history."""
+    from hindsight_api.engine.transfer import export_bank
+
+    bank = _unique_bank("export_bank")
+    webhook_id = uuid.uuid4()
+    try:
+        await _retain(memory, bank, "Carol lives in Paris.", request_context, "doc-1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"INSERT INTO {fq_table('webhooks')} "
+                f"(id, bank_id, url, secret, event_types, enabled, created_at, updated_at) "
+                f"VALUES ($1, $2, $3, NULL, $4, true, NOW(), NOW())",
+                webhook_id,
+                bank,
+                "https://example.com/hook",
+                ["retain.completed"],
+            )
+
+        # Without history.
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, bank, include_history=False)
+        with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+            names = set(zf.namelist())
+            manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
+            bank_rows = json.loads(zf.read("banks.json"))
+            webhooks = json.loads(zf.read("webhooks.json"))
+
+        assert manifest.archive_type == "bank"
+        assert manifest.document_count == 1
+        assert manifest.webhook_count == 1
+        assert "mental_models.json" in names and "directives.json" in names
+        assert any(d.endswith(".json") and d.startswith("documents/") for d in names)
+        # No history files unless requested.
+        assert not any(n.startswith("history/") for n in names)
+        # The bank row and webhook are carried.
+        assert [r["bank_id"] for r in bank_rows] == [bank]
+        assert webhooks[0]["bank_id"] == bank and webhooks[0]["url"] == "https://example.com/hook"
+        # No embeddings anywhere — the target instance regenerates them.
+        assert "embedding" not in archive.decode("utf-8", errors="ignore")
+
+        # With history.
+        async with acquire_with_retry(backend) as conn:
+            archive_h = await export_bank(conn, bank, include_history=True)
+        with zipfile.ZipFile(io.BytesIO(archive_h)) as zf:
+            names_h = set(zf.namelist())
+            manifest_h = TransferManifest.model_validate_json(zf.read("manifest.json"))
+        assert manifest_h.includes_history is True
+        assert "history/audit_log.json" in names_h and "history/llm_requests.json" in names_h
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
 @pytest.mark.asyncio
 async def test_export_import_roundtrip_without_llm(memory, request_context, monkeypatch):
     """Export from one bank and import into another without re-running the LLM."""

@@ -17,7 +17,9 @@ import asyncpg
 import typer
 
 from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig
+from ..engine.memory_engine import _current_schema
 from ..engine.schema import fq_table_explicit as _fq_table
+from ..engine.transfer import export_bank
 from ..extensions import TenantExtension, load_extension
 from ..pg0 import parse_pg0_url, resolve_database_url
 
@@ -329,6 +331,67 @@ def run_db_migration(
     )
 
     typer.echo(f"Database migrations completed successfully for {len(schemas)} schema(s)")
+
+
+async def _run_export_bank(db_url: str, bank_id: str, output: Path, schema: str, include_history: bool) -> int:
+    """Resolve the database URL and export a whole bank to a ZIP archive."""
+    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    if is_pg0:
+        typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
+    resolved_url = await resolve_database_url(db_url)
+
+    conn = await asyncpg.connect(resolved_url)
+    try:
+        # asyncpg returns jsonb as text by default; decode to Python objects so
+        # carried rows (e.g. retain_params, metadata) serialize cleanly.
+        for type_name in ("json", "jsonb"):
+            await conn.set_type_codec(type_name, encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
+        # export_bank resolves table names via fq_table (the _current_schema
+        # contextvar); set it so the raw connection targets the right schema.
+        _current_schema.set(schema)
+        data = await export_bank(conn, bank_id, include_history=include_history)
+    finally:
+        await conn.close()
+
+    output.write_bytes(data)
+    return len(data)
+
+
+@app.command(name="export-bank")
+def export_bank_command(
+    bank_id: str = typer.Option(..., "--bank", "-b", help="Bank id to export."),
+    output: Path = typer.Option(..., "--output", "-o", help="Path to write the .zip archive."),
+    schema: str | None = typer.Option(
+        None,
+        "--schema",
+        "-s",
+        help="Database schema the bank lives in. Defaults to the configured base schema.",
+    ),
+    include_history: bool = typer.Option(
+        False,
+        "--include-history",
+        help="Also export operational history (audit_log, llm_requests). Off by default.",
+    ),
+):
+    """Export an entire bank to a portable ZIP (no embeddings — regenerated on import).
+
+    Carries documents, facts, observations, bank config, mental models, directives
+    and webhooks so the bank can be imported into a new instance configured with a
+    different embedding model / vector / text-search backend.
+    """
+    config = HindsightConfig.from_env()
+
+    if not config.database_url:
+        typer.echo("Error: Database URL not configured.", err=True)
+        typer.echo("Set HINDSIGHT_API_DATABASE_URL environment variable.", err=True)
+        raise typer.Exit(1)
+
+    target_schema = schema or config.database_schema or DEFAULT_DATABASE_SCHEMA
+    typer.echo(f"Exporting bank '{bank_id}' from schema '{target_schema}'...")
+
+    size = asyncio.run(_run_export_bank(config.database_url, bank_id, output, target_schema, include_history))
+
+    typer.echo(f"Exported bank '{bank_id}' to {output} ({size} bytes)")
 
 
 async def _decommission_worker(db_url: str, worker_id: str, schema: str = "public") -> int:

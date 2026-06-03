@@ -12,7 +12,7 @@ excluded from export — they are derived by consolidation and are regenerated i
 the target bank.
 """
 
-from .export import export_documents
+from .export import export_bank, export_documents
 from .importer import ImportResult, import_documents
 from .schema import (
     SCHEMA_VERSION,
@@ -35,6 +35,7 @@ __all__ = [
     "TransferManifest",
     "TransferObservation",
     "TransferObservationSource",
+    "export_bank",
     "export_documents",
     "import_documents",
 ]
