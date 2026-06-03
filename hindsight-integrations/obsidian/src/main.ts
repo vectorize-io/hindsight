@@ -4,7 +4,7 @@ import { ChatView, VIEW_TYPE_CHAT } from "./chat-view";
 import { HindsightClient } from "./client";
 import { DEFAULT_SETTINGS, type HindsightSettings, HindsightSettingTab } from "./settings";
 import { SyncEngine, type SyncConfig, type SyncIndex, type SyncVault } from "./sync";
-import { renderSyncStatus } from "./status-bar";
+import { type SyncStatus, renderSyncStatus } from "./status-bar";
 
 interface PluginData {
   settings: HindsightSettings;
@@ -85,22 +85,30 @@ export default class HindsightPlugin extends Plugin {
     this.updateStatusBar();
   }
 
-  /** Recompute and paint the status-bar indicator from current sync state. */
+  /** Current sync state, consumed by the status bar and the chat header. */
+  getSyncStatus(): SyncStatus {
+    return {
+      configured: this.engine !== null,
+      syncing: this.syncing,
+      pending: this.dirty.size,
+      lastSyncAt: this.lastSyncAt,
+      error: this.lastSyncError,
+    };
+  }
+
+  /** Recompute and paint the sync indicators (status bar + any open chat views). */
   private updateStatusBar(): void {
-    if (!this.statusBarEl) return;
-    const view = renderSyncStatus(
-      {
-        configured: this.engine !== null,
-        syncing: this.syncing,
-        pending: this.dirty.size,
-        lastSyncAt: this.lastSyncAt,
-        error: this.lastSyncError,
-      },
-      Date.now()
-    );
-    this.statusBarEl.setText(view.text);
-    this.statusBarEl.setAttribute("aria-label", view.tooltip);
-    this.statusBarEl.title = view.tooltip;
+    const status = this.getSyncStatus();
+    if (this.statusBarEl) {
+      const view = renderSyncStatus(status, Date.now());
+      this.statusBarEl.setText(view.text);
+      this.statusBarEl.setAttribute("aria-label", view.tooltip);
+      this.statusBarEl.title = view.tooltip;
+    }
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT)) {
+      const view = leaf.view;
+      if (view instanceof ChatView) view.refreshSyncStatus();
+    }
   }
 
   /**
@@ -163,7 +171,7 @@ export default class HindsightPlugin extends Plugin {
     await workspace.revealLeaf(leaf);
   }
 
-  private async syncVault(): Promise<void> {
+  async syncVault(): Promise<void> {
     if (!this.engine) {
       new Notice("Hindsight: configure an API URL first.");
       return;

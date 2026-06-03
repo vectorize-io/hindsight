@@ -35,36 +35,47 @@ export function relativeTime(thenMs: number, nowMs: number): string {
   return `${day}d ago`;
 }
 
-/** Compute the status-bar label + tooltip from the current sync state. */
-export function renderSyncStatus(s: SyncStatus, nowMs: number): SyncStatusView {
+/**
+ * Compute a sync indicator's label + tooltip from the current state.
+ *
+ * `brand` prefixes the label (default "Hindsight" for the status bar, where the
+ * item stands alone). Pass "" for the chat header, which already shows the
+ * Hindsight wordmark next to it.
+ */
+export function renderSyncStatus(
+  s: SyncStatus,
+  nowMs: number,
+  brand = "Hindsight"
+): SyncStatusView {
+  const p = brand ? `${brand} ` : "";
   const pendingNote = s.pending > 0 ? ` · ${s.pending} pending` : "";
 
   if (!s.configured) {
     return {
-      text: "Hindsight ⚙ set API URL",
+      text: `${p}⚙ set API URL`,
       tooltip: "Configure an API URL in settings to enable vault sync.",
     };
   }
   if (s.syncing > 0) {
     return {
-      text: `Hindsight ⟳ syncing…${s.pending > 0 ? ` (${s.pending})` : ""}`,
+      text: `${p}⟳ syncing…${s.pending > 0 ? ` (${s.pending})` : ""}`,
       tooltip: `Syncing your vault to Hindsight…${pendingNote}`,
     };
   }
   if (s.error) {
     return {
-      text: "Hindsight ⚠ sync failed",
+      text: `${p}⚠ sync failed`,
       tooltip: "Last sync failed — see the developer console. Click to retry.",
     };
   }
   if (s.lastSyncAt !== null) {
     return {
-      text: `Hindsight ✓ ${relativeTime(s.lastSyncAt, nowMs)}`,
+      text: `${p}✓ ${relativeTime(s.lastSyncAt, nowMs)}`,
       tooltip: `Last synced ${relativeTime(s.lastSyncAt, nowMs)}${pendingNote}. Click to sync now.`,
     };
   }
   return {
-    text: "Hindsight ✓ not synced yet",
+    text: `${p}✓ not synced yet`,
     tooltip: "No sync yet. Click to sync your vault now.",
   };
 }

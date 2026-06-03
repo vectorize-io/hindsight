@@ -9,6 +9,7 @@ import { HINDSIGHT_ICON_ID, HINDSIGHT_MARK_DATA_URI } from "./branding";
 import { runChatTurn } from "./chat";
 import type HindsightPlugin from "./main";
 import { collectDocIds, retrievedNotesDetailed } from "./reflect-util";
+import { renderSyncStatus } from "./status-bar";
 import type { ReflectResponse, ReflectToolCall, TagGroup, TagLeaf } from "./types";
 
 const SNIPPET_MAX = 160;
@@ -32,6 +33,7 @@ export class ChatView extends ItemView {
   private vaultFilter = ALL;
   private folderFilter = ALL;
   private emptyState: HTMLElement | null = null;
+  private syncStatusEl: HTMLElement | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -97,6 +99,19 @@ export class ChatView extends ItemView {
       attr: { src: HINDSIGHT_MARK_DATA_URI, alt: "Hindsight" },
     });
     header.createEl("span", { cls: "hindsight-chat__brand-name", text: "Hindsight" });
+    // Sync status, mirroring the bottom status bar; click to sync now.
+    this.syncStatusEl = header.createEl("span", { cls: "hindsight-chat__sync mod-clickable" });
+    this.syncStatusEl.addEventListener("click", () => void this.plugin.syncVault());
+    this.refreshSyncStatus();
+  }
+
+  /** Repaint the header sync pill from the plugin's current sync state. */
+  refreshSyncStatus(): void {
+    if (!this.syncStatusEl) return;
+    const view = renderSyncStatus(this.plugin.getSyncStatus(), Date.now(), "");
+    this.syncStatusEl.setText(view.text);
+    this.syncStatusEl.setAttribute("aria-label", view.tooltip);
+    this.syncStatusEl.title = view.tooltip;
   }
 
   /** Reset the conversation to a blank slate. */

@@ -59,4 +59,10 @@ describe("renderSyncStatus", () => {
     const v = renderSyncStatus({ ...base, syncing: 1, error: true }, NOW);
     expect(v.text).toContain("syncing");
   });
+
+  it("drops the brand prefix when asked (chat header reuse)", () => {
+    const v = renderSyncStatus({ ...base, lastSyncAt: NOW - 120_000 }, NOW, "");
+    expect(v.text).toBe("✓ 2m ago");
+    expect(v.text).not.toContain("Hindsight");
+  });
 });

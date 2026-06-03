@@ -31,6 +31,18 @@
   letter-spacing: 0.01em;
 }
 
+.hindsight-chat__sync {
+  margin-left: auto;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.hindsight-chat__sync:hover {
+  color: var(--text-normal);
+}
+
 .hindsight-chat__empty {
   margin: auto;
   display: flex;
