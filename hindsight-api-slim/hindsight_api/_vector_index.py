@@ -54,23 +54,20 @@ _INDEX_TYPE_KEYWORDS = {
 #   pre-dispatcher code (internal benchmarks tuned around our embedding count
 #   and recall floor; see the link_utils / pool init call sites for the
 #   latency-vs-recall framing).
-# - vchord exposes vchordrq.probes (no default; see VectorChord issue #392)
-#   and vchordrq.epsilon (default 1.9). probes = 10 / 30 are starting
-#   defaults pending a workload-specific sweep — vchordrq's recall curve
-#   shape differs from HNSW's, so the pgvector numbers don't translate
-#   directly. Revisit with a per-cluster benchmark once we have production
-#   recall data; until then these are deliberately conservative on the
-#   high-recall path. We leave epsilon at its default; tightening it is a
-#   separate trade-off.
+# - vchord exposes vchordrq.probes, but its shape must match the index's
+#   build.internal.lists hierarchy. VectorChord 1.1 added per-index fallback
+#   parameters for this reason: a session GUC overrides every vchordrq index,
+#   and a single value can be invalid for listless or mixed-layout indexes.
+#   Hindsight's built-in vchord clause does not set lists, so the safe default
+#   is no session-level probe override; deployments that partition vchordrq
+#   indexes should attach probes to the index storage parameters instead.
 # - pgvectorscale / pg_diskann / scann do not expose an equivalent per-statement
 #   knob in the engine today, so the dispatcher returns no statements for them.
 _ANN_TUNING_LOW_LATENCY: dict[str, tuple[tuple[str, str], ...]] = {
     "pgvector": (("hnsw.ef_search", "60"),),
-    "vchord": (("vchordrq.probes", "10"),),
 }
 _ANN_TUNING_HIGH_RECALL: dict[str, tuple[tuple[str, str], ...]] = {
     "pgvector": (("hnsw.ef_search", "200"),),
-    "vchord": (("vchordrq.probes", "30"),),
 }
 
 _EXTENSION_INSTALL_SQL = {

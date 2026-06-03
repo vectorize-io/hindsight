@@ -17,6 +17,7 @@ from hindsight_api.engine.reflect.agent import (
     _clean_answer_text,
     _clean_done_answer,
     _count_messages_tokens,
+    _generate_structured_output,
     _is_context_overflow_error,
     _is_done_tool,
     _normalize_tool_name,
@@ -138,6 +139,41 @@ class TestCleanDoneAnswer:
         assert "Point 1" in cleaned
         assert "Point 2" in cleaned
         assert "mental_model_ids" not in cleaned
+
+
+class TestStructuredOutputExtraction:
+    """Test final structured-output extraction calls."""
+
+    @pytest.mark.asyncio
+    async def test_structured_output_uses_strict_schema(self):
+        """Reflect structured extraction requests strict schema enforcement."""
+        llm = MagicMock()
+        llm.call = AsyncMock(
+            return_value=(
+                {"summary": "Alice prefers Python.", "tags": ["python"]},
+                TokenUsage(input_tokens=12, output_tokens=8, total_tokens=20),
+            )
+        )
+        response_schema = {
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string", "description": "Short answer summary"},
+                "tags": {"type": "array", "description": "Relevant tags"},
+            },
+            "required": ["summary"],
+        }
+
+        structured_output, input_tokens, output_tokens = await _generate_structured_output(
+            answer="Alice prefers Python for backend work.",
+            response_schema=response_schema,
+            llm_config=llm,
+            reflect_id="test-reflect",
+        )
+
+        assert structured_output == {"summary": "Alice prefers Python.", "tags": ["python"]}
+        assert input_tokens == 12
+        assert output_tokens == 8
+        assert llm.call.await_args.kwargs["strict_schema"] is True
 
 
 class TestToolNameNormalization:

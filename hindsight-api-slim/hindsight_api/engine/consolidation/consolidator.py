@@ -1608,6 +1608,7 @@ async def _consolidate_batch_with_llm(
                 "messages": [{"role": "user", "content": prompt}],
                 "response_format": response_model,
                 "scope": "consolidation",
+                "strict_schema": True,
             }
             if inner_max_retries is not None:
                 call_kwargs["max_retries"] = inner_max_retries
