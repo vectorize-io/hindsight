@@ -16,9 +16,17 @@ describe("normalizeNote", () => {
   });
 
   it("lifts block-list tags and aliases, dedupes, and strips the frontmatter", () => {
-    const raw = ["---", "tags:", "  - alpha", "  - beta", "  - alpha", "aliases:", "  - Alpha", "---", "body text"].join(
-      "\n",
-    );
+    const raw = [
+      "---",
+      "tags:",
+      "  - alpha",
+      "  - beta",
+      "  - alpha",
+      "aliases:",
+      "  - Alpha",
+      "---",
+      "body text",
+    ].join("\n");
     const note = normalizeNote(raw, "");
     expect(note.tags).toEqual(["alpha", "beta", "Alpha"]);
     expect(note.body).toBe("body text");

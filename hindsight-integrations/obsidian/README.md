@@ -19,15 +19,15 @@ A hard rule of this plugin: **Hindsight is never a second source of truth.**
 - **Implicit scoping** — every note is auto-tagged on ingest with its **vault**, **folder** (and sub-folders), and **created/updated dates**. You never think about scope until you recall — then filter by any combination (vault + folder + date) via Hindsight's `tag_groups`. Multiple vaults share one bank and stay separable by their `vault:` tag.
 - **Same data from UI and API** — the Obsidian chat panel and your external automations (n8n, Hermes, etc.) hit the same bank with the same tags, so they see exactly the same scoped view.
 - **Grounded chat** — a side panel that answers questions over your notes via Hindsight `reflect`. Each answer lists the **notes retrieved** (click to open) and a **reasoning** disclosure showing what each step queried. Scope a question with the **vault / folder** dropdowns above the ask bar, start a fresh thread with **New chat**, and flip on **Debug logging** to see the exact `reflect` request + retrieved notes in the console.
-- **Manual or automatic** — sync on every edit, or run *Sync vault now* on demand.
+- **Manual or automatic** — sync on every edit, or run _Sync vault now_ on demand.
 
 ### Scoping
 
-| Dimension | Tag(s) | Example recall filter |
-| --- | --- | --- |
-| Vault | `vault:<name>` | only the Work vault |
+| Dimension            | Tag(s)                               | Example recall filter    |
+| -------------------- | ------------------------------------ | ------------------------ |
+| Vault                | `vault:<name>`                       | only the Work vault      |
 | Folder (+ ancestors) | `folder:Work`, `folder:Work/Clients` | everything under `Work/` |
-| Date | `created:2026-03`, `updated:2026-06` | notes updated this month |
+| Date                 | `created:2026-03`, `updated:2026-06` | notes updated this month |
 
 Your own frontmatter `tags`/`aliases` are carried through too.
 
@@ -49,16 +49,16 @@ hindsight-api
 
 Open **Settings → Hindsight**:
 
-| Setting | Default | Description |
-| --- | --- | --- |
-| API URL | `https://api.hindsight.vectorize.io` | Hindsight server (use `http://localhost:8888` for self-hosted) |
-| API key | — | Hindsight Cloud API key |
-| Bank name | `obsidian` | Shared bank for all your vaults (separated by `vault:` tags) |
-| Include / exclude folders | — | Limit which notes sync |
-| Sync on edit | on | Re-ingest notes automatically as you edit |
-| Default chat depth | low | Reflect budget for chat answers |
-| Remember conversations | **off** | When on, chat turns are stored in Hindsight (creates memory outside your vault) |
-| Prefix document IDs | on | Vault-prefixes ids so shared-bank vaults don't collide; turn off only for a single-vault setup |
+| Setting                   | Default                              | Description                                                                                    |
+| ------------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| API URL                   | `https://api.hindsight.vectorize.io` | Hindsight server (use `http://localhost:8888` for self-hosted)                                 |
+| API key                   | —                                    | Hindsight Cloud API key                                                                        |
+| Bank name                 | `obsidian`                           | Shared bank for all your vaults (separated by `vault:` tags)                                   |
+| Include / exclude folders | —                                    | Limit which notes sync                                                                         |
+| Sync on edit              | on                                   | Re-ingest notes automatically as you edit                                                      |
+| Default chat depth        | low                                  | Reflect budget for chat answers                                                                |
+| Remember conversations    | **off**                              | When on, chat turns are stored in Hindsight (creates memory outside your vault)                |
+| Prefix document IDs       | on                                   | Vault-prefixes ids so shared-bank vaults don't collide; turn off only for a single-vault setup |
 
 ## Commands
 
