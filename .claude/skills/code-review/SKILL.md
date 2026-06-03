@@ -140,6 +140,13 @@ For each new or significantly changed function/endpoint/class:
 
 Flag any new logic that lacks test coverage.
 
+**LLM-behaviour changes need a real-LLM judge test, not MockLLM.** If the change alters how the model interprets a prompt — fact/observation extraction, `fact_type` (world/experience) classification, speaker attribution, instruction-following, prompt wording — there MUST be a test marked `pytest.mark.hs_llm_core` that runs the real pipeline and asserts via `tests.llm_judge.assert_meets_criteria` (not string/enum matching). Flag these as findings:
+- A prompt/classification change verified only by MockLLM or string assertions (MockLLM echoes input — such tests pass spuriously). **Should fix.**
+- A test that hard-asserts `fact_type == "world"/"experience"` (or other model-decided output) instead of judging it — non-deterministic, will flake across providers/runs. **Should fix** (move the classification check into the judge `criteria`; keep only genuinely deterministic structural asserts direct).
+- Deterministic mechanics (prompt assembly, suppression/branching logic) that are covered *only* by a slow LLM test — these should also have fast non-LLM unit tests. **Note.**
+
+See CLAUDE.md → Key Conventions → Testing for the full pattern.
+
 ### 7. Check API consistency
 
 If any files in `hindsight-api-slim/hindsight_api/api/` were changed:
