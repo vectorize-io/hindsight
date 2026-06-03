@@ -71,4 +71,44 @@ describe("HindsightClient", () => {
     const client = new HindsightClient("https://api.example.com");
     await expect(client.reflect("b", "q")).rejects.toThrow(/HTTP 500: boom/);
   });
+
+  it("propagates a transport rejection (network/timeout)", async () => {
+    mock.mockRejectedValue(new Error("net::ERR_CONNECTION_REFUSED"));
+    const client = new HindsightClient("https://api.example.com");
+    await expect(client.reflect("b", "q")).rejects.toThrow(/ERR_CONNECTION_REFUSED/);
+  });
+
+  it("reflect sends tag_groups when provided", async () => {
+    const client = new HindsightClient("https://api.example.com");
+    await client.reflect("b", "q", {
+      tagGroups: [{ tags: ["vault:notes"], match: "all_strict" }],
+      tags: ["ignored"],
+    });
+    const body = JSON.parse(lastCall().body ?? "{}");
+    expect(body.tag_groups).toEqual([{ tags: ["vault:notes"], match: "all_strict" }]);
+    expect(body.tags).toBeUndefined();
+  });
+
+  it("reflect falls back to tags when only tags are given", async () => {
+    const client = new HindsightClient("https://api.example.com");
+    await client.reflect("b", "q", { tags: ["work"] });
+    const body = JSON.parse(lastCall().body ?? "{}");
+    expect(body.tags).toEqual(["work"]);
+    expect(body.tag_groups).toBeUndefined();
+  });
+
+  it("reflect sends neither tags nor tag_groups when both are empty", async () => {
+    const client = new HindsightClient("https://api.example.com");
+    await client.reflect("b", "q", { tags: [], tagGroups: [] });
+    const body = JSON.parse(lastCall().body ?? "{}");
+    expect(body.tags).toBeUndefined();
+    expect(body.tag_groups).toBeUndefined();
+  });
+
+  it("retain omits the tags field when no tags are given", async () => {
+    const client = new HindsightClient("https://api.example.com");
+    await client.retain("b", "Note.md", "body");
+    const body = JSON.parse(lastCall().body ?? "{}");
+    expect(body.items[0].tags).toBeUndefined();
+  });
 });

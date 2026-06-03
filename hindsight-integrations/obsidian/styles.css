@@ -133,6 +133,7 @@
 
 .hindsight-chat__composer {
   display: flex;
+  align-items: flex-end;
   gap: var(--size-4-2);
   padding: var(--size-4-2);
   border-top: 1px solid var(--background-modifier-border);
@@ -142,6 +143,8 @@
   flex: 1;
   resize: none;
   min-height: 2.5em;
+  max-height: 240px;
+  overflow-y: auto;
 }
 
 .hindsight-chat__pending {

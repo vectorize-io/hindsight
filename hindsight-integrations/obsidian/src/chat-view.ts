@@ -13,6 +13,9 @@ import type { ReflectResponse, ReflectToolCall, TagGroup, TagLeaf } from "./type
 
 const SNIPPET_MAX = 160;
 
+// px — the composer grows with the message up to this height, then scrolls.
+const INPUT_MAX_HEIGHT = 240;
+
 export const VIEW_TYPE_CHAT = "hindsight-chat";
 
 const ALL = ""; // sentinel for "no filter" in the dropdowns
@@ -75,7 +78,16 @@ export class ChatView extends ItemView {
         void this.submit();
       }
     });
+    // Grow the box to fit multi-line input (Shift+Enter), capped by CSS max-height.
+    this.input.addEventListener("input", () => this.autoGrowInput());
     send.addEventListener("click", () => void this.submit());
+  }
+
+  /** Resize the composer to fit its content, up to INPUT_MAX_HEIGHT (then it scrolls). */
+  private autoGrowInput(): void {
+    const el = this.input;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, INPUT_MAX_HEIGHT)}px`;
   }
 
   private buildHeader(root: HTMLElement): void {
@@ -247,6 +259,7 @@ export class ChatView extends ItemView {
 
     this.sending = true;
     this.input.value = "";
+    this.autoGrowInput();
     this.addMessage("user", message);
     const pending = this.messagesEl.createDiv({
       cls: "hindsight-chat__msg hindsight-chat__msg--assistant hindsight-chat__pending",
