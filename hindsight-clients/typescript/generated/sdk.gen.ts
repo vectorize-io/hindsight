@@ -59,6 +59,9 @@ import type {
   ExportBankTemplateData,
   ExportBankTemplateErrors,
   ExportBankTemplateResponses,
+  ExportDocumentsData,
+  ExportDocumentsErrors,
+  ExportDocumentsResponses,
   FileRetainData,
   FileRetainErrors,
   FileRetainResponses,
@@ -116,6 +119,9 @@ import type {
   ImportBankTemplateData,
   ImportBankTemplateErrors,
   ImportBankTemplateResponses,
+  ImportDocumentsData,
+  ImportDocumentsErrors,
+  ImportDocumentsResponses,
   ListAuditLogsData,
   ListAuditLogsErrors,
   ListAuditLogsResponses,
@@ -971,6 +977,37 @@ export const exportBankTemplate = <ThrowOnError extends boolean = false>(
     ExportBankTemplateErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/export", ...options });
+
+/**
+ * Export documents
+ *
+ * Export documents (extracted facts, entity names, causal links, chunks) from a bank as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Consolidated observations are excluded unless include_observations=true. Pass document_id query params to export specific documents, or omit to export the whole bank.
+ */
+export const exportDocuments = <ThrowOnError extends boolean = false>(
+  options: Options<ExportDocumentsData, ThrowOnError>
+) =>
+  (options.client ?? client).get<ExportDocumentsResponses, ExportDocumentsErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/document-transfer",
+    ...options,
+  });
+
+/**
+ * Import documents (async)
+ *
+ * Submit a transfer archive (produced by the export endpoint) for import into a bank. Runs as a background operation: facts are re-embedded with the target bank's embedding model and entities are re-resolved — no LLM extraction. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the imported/skipped counts in result_metadata. Use on_conflict to control existing document ids: skip (default), replace, or new-id.
+ */
+export const importDocuments = <ThrowOnError extends boolean = false>(
+  options: Options<ImportDocumentsData, ThrowOnError>
+) =>
+  (options.client ?? client).post<ImportDocumentsResponses, ImportDocumentsErrors, ThrowOnError>({
+    ...formDataBodySerializer,
+    url: "/v1/default/banks/{bank_id}/document-transfer",
+    ...options,
+    headers: {
+      "Content-Type": null,
+      ...options.headers,
+    },
+  });
 
 /**
  * Get bank template JSON Schema

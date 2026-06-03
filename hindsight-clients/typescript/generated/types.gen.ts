@@ -799,6 +799,18 @@ export type BodyFileRetain = {
 };
 
 /**
+ * Body_import_documents
+ */
+export type BodyImportDocuments = {
+  /**
+   * File
+   *
+   * Transfer ZIP archive
+   */
+  file: Blob | File;
+};
+
+/**
  * Budget
  *
  * Budget levels for recall/reflect operations.
@@ -1324,6 +1336,26 @@ export type DispositionTraits = {
 };
 
 /**
+ * DocumentImportSubmitResponse
+ *
+ * Response for the async document-import endpoint (202).
+ *
+ * The import runs in the background; poll the operations endpoint for status.
+ * The imported/skipped counts (documents_imported, facts_imported,
+ * observations_imported, etc.) are written to the operation's result_metadata.
+ */
+export type DocumentImportSubmitResponse = {
+  /**
+   * Operation Id
+   */
+  operation_id: string;
+  /**
+   * Status
+   */
+  status?: string;
+};
+
+/**
  * DocumentResponse
  *
  * Response model for get document endpoint.
@@ -1632,6 +1664,18 @@ export type FeaturesInfo = {
    * Whether file upload/conversion API is enabled
    */
   file_upload_api: boolean;
+  /**
+   * Document Export Api
+   *
+   * Whether the document export endpoint is enabled
+   */
+  document_export_api: boolean;
+  /**
+   * Document Import Api
+   *
+   * Whether the document import endpoint is enabled
+   */
+  document_import_api: boolean;
 };
 
 /**
@@ -5685,6 +5729,96 @@ export type ExportBankTemplateResponses = {
 
 export type ExportBankTemplateResponse =
   ExportBankTemplateResponses[keyof ExportBankTemplateResponses];
+
+export type ExportDocumentsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Document Id
+     *
+     * Document id(s) to export; omit for all
+     */
+    document_id?: Array<string> | null;
+    /**
+     * Include Observations
+     *
+     * Also export consolidated observations (restored on import)
+     */
+    include_observations?: boolean;
+  };
+  url: "/v1/default/banks/{bank_id}/document-transfer";
+};
+
+export type ExportDocumentsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ExportDocumentsError = ExportDocumentsErrors[keyof ExportDocumentsErrors];
+
+export type ExportDocumentsResponses = {
+  /**
+   * Transfer archive
+   */
+  200: unknown;
+};
+
+export type ImportDocumentsData = {
+  body: BodyImportDocuments;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * On Conflict
+     *
+     * skip | replace | new-id
+     */
+    on_conflict?: string;
+  };
+  url: "/v1/default/banks/{bank_id}/document-transfer";
+};
+
+export type ImportDocumentsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ImportDocumentsError = ImportDocumentsErrors[keyof ImportDocumentsErrors];
+
+export type ImportDocumentsResponses = {
+  /**
+   * Successful Response
+   */
+  202: DocumentImportSubmitResponse;
+};
+
+export type ImportDocumentsResponse = ImportDocumentsResponses[keyof ImportDocumentsResponses];
 
 export type GetBankTemplateSchemaData = {
   body?: never;

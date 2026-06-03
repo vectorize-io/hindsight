@@ -3713,6 +3713,176 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/document-transfer": {
+      "get": {
+        "tags": [
+          "Document Transfer"
+        ],
+        "summary": "Export documents",
+        "description": "Export documents (extracted facts, entity names, causal links, chunks) from a bank as a transfer ZIP archive. Embeddings and database ids are not included \u2014 importing re-embeds with the target bank's model and re-resolves entities. Consolidated observations are excluded unless include_observations=true. Pass document_id query params to export specific documents, or omit to export the whole bank.",
+        "operationId": "export_documents",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Document id(s) to export; omit for all",
+              "title": "Document Id"
+            },
+            "description": "Document id(s) to export; omit for all"
+          },
+          {
+            "name": "include_observations",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Also export consolidated observations (restored on import)",
+              "default": false,
+              "title": "Include Observations"
+            },
+            "description": "Also export consolidated observations (restored on import)"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transfer archive",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/zip": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Document Transfer"
+        ],
+        "summary": "Import documents (async)",
+        "description": "Submit a transfer archive (produced by the export endpoint) for import into a bank. Runs as a background operation: facts are re-embedded with the target bank's embedding model and entities are re-resolved \u2014 no LLM extraction. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the imported/skipped counts in result_metadata. Use on_conflict to control existing document ids: skip (default), replace, or new-id.",
+        "operationId": "import_documents",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "on_conflict",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "skip | replace | new-id",
+              "default": "skip",
+              "title": "On Conflict"
+            },
+            "description": "skip | replace | new-id"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_documents"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentImportSubmitResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/bank-template-schema": {
       "get": {
         "tags": [
@@ -6688,6 +6858,21 @@
         ],
         "title": "Body_file_retain"
       },
+      "Body_import_documents": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File",
+            "description": "Transfer ZIP archive"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_documents"
+      },
       "Budget": {
         "type": "string",
         "enum": [
@@ -7500,6 +7685,25 @@
           "skepticism": 3
         }
       },
+      "DocumentImportSubmitResponse": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "pending"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id"
+        ],
+        "title": "DocumentImportSubmitResponse",
+        "description": "Response for the async document-import endpoint (202).\n\nThe import runs in the background; poll the operations endpoint for status.\nThe imported/skipped counts (documents_imported, facts_imported,\nobservations_imported, etc.) are written to the operation's result_metadata."
+      },
       "DocumentResponse": {
         "properties": {
           "id": {
@@ -8015,6 +8219,16 @@
             "type": "boolean",
             "title": "File Upload Api",
             "description": "Whether file upload/conversion API is enabled"
+          },
+          "document_export_api": {
+            "type": "boolean",
+            "title": "Document Export Api",
+            "description": "Whether the document export endpoint is enabled"
+          },
+          "document_import_api": {
+            "type": "boolean",
+            "title": "Document Import Api",
+            "description": "Whether the document import endpoint is enabled"
           }
         },
         "type": "object",
@@ -8023,7 +8237,9 @@
           "mcp",
           "worker",
           "bank_config_api",
-          "file_upload_api"
+          "file_upload_api",
+          "document_export_api",
+          "document_import_api"
         ],
         "title": "FeaturesInfo",
         "description": "Feature flags indicating which capabilities are enabled."
@@ -11558,6 +11774,8 @@
           "api_version": "0.4.0",
           "features": {
             "bank_config_api": false,
+            "document_export_api": true,
+            "document_import_api": true,
             "file_upload_api": true,
             "mcp": true,
             "observations": false,

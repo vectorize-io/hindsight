@@ -607,7 +607,26 @@
     "retainTracesSummary": "{calls, plural, one {# call} other {# calls}} · {tokens} tokens",
     "loadingChunks": "Loading chunks...",
     "noChunksFound": "No chunks found for this document",
-    "clickChunksTabToLoad": "Click the Chunks tab to load chunks"
+    "clickChunksTabToLoad": "Click the Chunks tab to load chunks",
+    "exportButton": "Export",
+    "importButton": "Import from zip",
+    "exporting": "Exporting…",
+    "importing": "Importing…",
+    "exportSuccess": "Documents exported",
+    "importSuccess": "Imported {imported} document(s), {facts} fact(s); {skipped} skipped",
+    "importFailed": "Import failed",
+    "importTimeout": "Import is taking longer than expected; check back shortly",
+    "exportDialogTitle": "Export documents",
+    "exportDialogDescription": "Download this bank's documents and their extracted facts as a .zip archive. Embeddings aren't included — importing re-embeds with the target bank's model.",
+    "exportIncludeObservationsLabel": "Include consolidated observations",
+    "exportIncludeObservationsHint": "Also export synthesized observations. If left off, the target bank regenerates them during consolidation.",
+    "importDialogTitle": "Import documents",
+    "importDialogDescription": "Upload a .zip archive previously exported from a bank. This isn't a regular document upload — facts are re-embedded and re-linked in this bank. The import runs in the background.",
+    "actionsButton": "Actions",
+    "importConflictLabel": "If a document already exists",
+    "importConflictSkip": "Skip — keep the existing document",
+    "importConflictReplace": "Replace — overwrite with the imported one",
+    "importConflictNewId": "Keep both — import under a new id"
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -1443,7 +1462,8 @@
         "bankAndModelIdRequired": "bank_id and model_id are required",
         "operationIdRequired": "operation_id is required",
         "missingRequestData": "Missing request data",
-        "missingBankId": "Missing bank_id"
+        "missingBankId": "Missing bank_id",
+        "fileRequired": "file is required"
       },
       "generic": {
         "failed": "Failed",
@@ -1481,7 +1501,9 @@
         "updateTags": "Failed to update document tags",
         "delete": "Failed to delete document",
         "chunks": "Failed to fetch document chunks",
-        "reprocess": "Failed to reprocess document"
+        "reprocess": "Failed to reprocess document",
+        "export": "Failed to export documents",
+        "import": "Failed to import documents"
       },
       "files": {
         "upload": "Failed to upload files"

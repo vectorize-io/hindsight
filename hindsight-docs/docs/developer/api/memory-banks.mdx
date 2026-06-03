@@ -487,3 +487,69 @@ Use directives for rules that must never be violated:
 | **Enforcement** | Strict — responses are rejected if violated | Flexible — shapes interpretation |
 | **Use case** | Compliance, guardrails, constraints | Personality, character, tone |
 | **Example** | "Never recommend specific stocks" | High skepticism: questions claims |
+
+---
+
+## Document export & import
+
+Move documents — and the facts already extracted from them — between banks **without re-running the LLM**. Useful for testing a different embedding model, or copying data between banks/instances without paying for re-extraction. The archive carries documents, raw chunks, and extracted facts (entities by canonical name, causal links) — but **no embeddings or database ids**. On import, facts are re-embedded with the *target* bank's model and entities/links are recomputed against it, so imported documents are integrated with whatever already exists there.
+
+### Export documents
+
+`GET /v1/default/banks/{bank_id}/document-transfer` — synchronous; streams a ZIP archive.
+
+```bash
+# whole bank
+curl -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/my-bank/document-transfer" -o my-bank.zip
+
+# specific documents, including consolidated observations
+curl -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/my-bank/document-transfer?document_id=doc-1&include_observations=true" -o subset.zip
+```
+
+| Query param | Description |
+|-------------|-------------|
+| `document_id` | Repeatable. Export only these documents; omit for the whole bank. |
+| `include_observations` | Also export consolidated observations (default `false`). Only valid for a **whole-bank** export — combining it with `document_id` returns `400`. |
+
+### Import documents
+
+`POST /v1/default/banks/{bank_id}/document-transfer` — multipart upload (`file` = the ZIP). Runs as a **background operation** (re-embedding + entity resolution can take a while), so it returns `202` with an `operation_id`; poll the bank's operations endpoint for status and the result counts in `result_metadata`.
+
+```bash
+curl -H "Authorization: Bearer $API_KEY" -F "file=@my-bank.zip" \
+  "$HINDSIGHT_URL/v1/default/banks/other-bank/document-transfer?on_conflict=replace"
+# -> {"operation_id": "…", "status": "pending"}
+
+curl -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/other-bank/operations/$OPERATION_ID"
+# -> {"status":"completed","result_metadata":{"documents_imported":3,"facts_imported":42,"observations_imported":5,...}}
+```
+
+`on_conflict` controls what happens when a document id already exists in the target bank:
+
+| Mode | Behavior |
+|------|----------|
+| `skip` (default) | Leave the existing document untouched. |
+| `replace` | Delete the existing document's data and re-import. |
+| `new-id` | Import a copy under a freshly generated id. |
+
+### Observations
+
+Consolidated observations are excluded by default — the target bank regenerates them from the imported facts during consolidation. Pass `include_observations=true` to carry them instead: they're restored with no LLM, their source references remapped to the imported facts (which are marked consolidated so the target won't re-consolidate them).
+
+Because an observation can be derived from facts spanning several documents, `include_observations` is only supported on a **whole-bank export** (omit `document_id`); combining it with a document subset returns `400`.
+
+:::warning Imported observations are inserted as-is — no merge
+They are not merged or deduplicated against observations already in the target bank (consolidation merges related observations; import does not). Prefer importing observations into a fresh/empty bank, or omit `include_observations` and let the target consolidate the imported facts itself.
+:::
+
+### Enabling / disabling
+
+Both endpoints are gated by server-level flags (default `true`). A disabled endpoint returns `404`, and `/version` reports the state under `features.document_export_api` / `features.document_import_api` (the control plane hides the buttons accordingly).
+
+| Variable | Gates |
+|----------|-------|
+| `HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API` | `GET …/document-transfer` |
+| `HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API` | `POST …/document-transfer` |

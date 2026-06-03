@@ -607,7 +607,26 @@
     "retainTracesSummary": "{calls, plural, one {# Aufruf} other {# Aufrufe}} · {tokens} Tokens",
     "loadingChunks": "Fragmente werden geladen...",
     "noChunksFound": "Keine Fragmente für dieses Dokument gefunden",
-    "clickChunksTabToLoad": "Klicken Sie auf den Tab „Fragmente“, um Fragmente zu laden"
+    "clickChunksTabToLoad": "Klicken Sie auf den Tab „Fragmente“, um Fragmente zu laden",
+    "exportButton": "Exportieren",
+    "importButton": "Aus ZIP importieren",
+    "exporting": "Exportieren…",
+    "importing": "Importieren…",
+    "exportSuccess": "Dokumente exportiert",
+    "importSuccess": "{imported} Dokument(e), {facts} Fakt(en) importiert; {skipped} übersprungen",
+    "importFailed": "Import fehlgeschlagen",
+    "importTimeout": "Der Import dauert länger als erwartet; bitte später erneut prüfen",
+    "exportDialogTitle": "Dokumente exportieren",
+    "exportDialogDescription": "Lade die Dokumente dieses Banks und ihre extrahierten Fakten als .zip-Archiv herunter. Embeddings sind nicht enthalten – beim Import werden sie mit dem Modell des Ziel-Banks neu erzeugt.",
+    "exportIncludeObservationsLabel": "Konsolidierte Beobachtungen einschließen",
+    "exportIncludeObservationsHint": "Auch synthetisierte Beobachtungen exportieren. Andernfalls erzeugt der Ziel-Bank sie bei der Konsolidierung neu.",
+    "importDialogTitle": "Dokumente importieren",
+    "importDialogDescription": "Lade ein zuvor aus einem Bank exportiertes .zip-Archiv hoch. Dies ist kein normaler Dokument-Upload – Fakten werden in diesem Bank neu eingebettet und verknüpft. Der Import läuft im Hintergrund.",
+    "actionsButton": "Aktionen",
+    "importConflictLabel": "Wenn ein Dokument bereits existiert",
+    "importConflictSkip": "Überspringen — vorhandenes Dokument behalten",
+    "importConflictReplace": "Ersetzen — durch das importierte überschreiben",
+    "importConflictNewId": "Beide behalten — unter neuer id importieren"
   },
   "entitiesView": {
     "viewRelations": "Beziehungen",
@@ -1443,7 +1462,8 @@
         "bankAndModelIdRequired": "bank_id und model_id sind erforderlich",
         "operationIdRequired": "operation_id ist erforderlich",
         "missingRequestData": "Anfragedaten fehlen",
-        "missingBankId": "bank_id fehlt"
+        "missingBankId": "bank_id fehlt",
+        "fileRequired": "Eine Datei ist erforderlich"
       },
       "generic": {
         "failed": "Fehlgeschlagen",
@@ -1481,7 +1501,9 @@
         "updateTags": "Dokument-Tags konnten nicht aktualisiert werden",
         "delete": "Dokument konnte nicht gelöscht werden",
         "chunks": "Dokument-Chunks konnten nicht abgerufen werden",
-        "reprocess": "Dokument konnte nicht erneut verarbeitet werden"
+        "reprocess": "Dokument konnte nicht erneut verarbeitet werden",
+        "export": "Dokumente konnten nicht exportiert werden",
+        "import": "Dokumente konnten nicht importiert werden"
       },
       "files": {
         "upload": "Dateien konnten nicht hochgeladen werden"

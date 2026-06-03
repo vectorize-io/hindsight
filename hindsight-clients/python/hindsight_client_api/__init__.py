@@ -21,6 +21,7 @@ from hindsight_client_api.api.audit_api import AuditApi
 from hindsight_client_api.api.bank_templates_api import BankTemplatesApi
 from hindsight_client_api.api.banks_api import BanksApi
 from hindsight_client_api.api.directives_api import DirectivesApi
+from hindsight_client_api.api.document_transfer_api import DocumentTransferApi
 from hindsight_client_api.api.documents_api import DocumentsApi
 from hindsight_client_api.api.entities_api import EntitiesApi
 from hindsight_client_api.api.files_api import FilesApi
@@ -80,6 +81,7 @@ from hindsight_client_api.models.delete_response import DeleteResponse
 from hindsight_client_api.models.directive_list_response import DirectiveListResponse
 from hindsight_client_api.models.directive_response import DirectiveResponse
 from hindsight_client_api.models.disposition_traits import DispositionTraits
+from hindsight_client_api.models.document_import_submit_response import DocumentImportSubmitResponse
 from hindsight_client_api.models.document_response import DocumentResponse
 from hindsight_client_api.models.entity_detail_response import EntityDetailResponse
 from hindsight_client_api.models.entity_graph_response import EntityGraphResponse

@@ -31,6 +31,10 @@ type FeaturesInfo struct {
 	BankConfigApi bool `json:"bank_config_api"`
 	// Whether file upload/conversion API is enabled
 	FileUploadApi bool `json:"file_upload_api"`
+	// Whether the document export endpoint is enabled
+	DocumentExportApi bool `json:"document_export_api"`
+	// Whether the document import endpoint is enabled
+	DocumentImportApi bool `json:"document_import_api"`
 }
 
 type _FeaturesInfo FeaturesInfo
@@ -39,13 +43,15 @@ type _FeaturesInfo FeaturesInfo
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi bool, fileUploadApi bool) *FeaturesInfo {
+func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi bool, fileUploadApi bool, documentExportApi bool, documentImportApi bool) *FeaturesInfo {
 	this := FeaturesInfo{}
 	this.Observations = observations
 	this.Mcp = mcp
 	this.Worker = worker
 	this.BankConfigApi = bankConfigApi
 	this.FileUploadApi = fileUploadApi
+	this.DocumentExportApi = documentExportApi
+	this.DocumentImportApi = documentImportApi
 	return &this
 }
 
@@ -177,6 +183,54 @@ func (o *FeaturesInfo) SetFileUploadApi(v bool) {
 	o.FileUploadApi = v
 }
 
+// GetDocumentExportApi returns the DocumentExportApi field value
+func (o *FeaturesInfo) GetDocumentExportApi() bool {
+	if o == nil {
+		var ret bool
+		return ret
+	}
+
+	return o.DocumentExportApi
+}
+
+// GetDocumentExportApiOk returns a tuple with the DocumentExportApi field value
+// and a boolean to check if the value has been set.
+func (o *FeaturesInfo) GetDocumentExportApiOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return &o.DocumentExportApi, true
+}
+
+// SetDocumentExportApi sets field value
+func (o *FeaturesInfo) SetDocumentExportApi(v bool) {
+	o.DocumentExportApi = v
+}
+
+// GetDocumentImportApi returns the DocumentImportApi field value
+func (o *FeaturesInfo) GetDocumentImportApi() bool {
+	if o == nil {
+		var ret bool
+		return ret
+	}
+
+	return o.DocumentImportApi
+}
+
+// GetDocumentImportApiOk returns a tuple with the DocumentImportApi field value
+// and a boolean to check if the value has been set.
+func (o *FeaturesInfo) GetDocumentImportApiOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return &o.DocumentImportApi, true
+}
+
+// SetDocumentImportApi sets field value
+func (o *FeaturesInfo) SetDocumentImportApi(v bool) {
+	o.DocumentImportApi = v
+}
+
 func (o FeaturesInfo) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -192,6 +246,8 @@ func (o FeaturesInfo) ToMap() (map[string]interface{}, error) {
 	toSerialize["worker"] = o.Worker
 	toSerialize["bank_config_api"] = o.BankConfigApi
 	toSerialize["file_upload_api"] = o.FileUploadApi
+	toSerialize["document_export_api"] = o.DocumentExportApi
+	toSerialize["document_import_api"] = o.DocumentImportApi
 	return toSerialize, nil
 }
 
@@ -205,6 +261,8 @@ func (o *FeaturesInfo) UnmarshalJSON(data []byte) (err error) {
 		"worker",
 		"bank_config_api",
 		"file_upload_api",
+		"document_export_api",
+		"document_import_api",
 	}
 
 	allProperties := make(map[string]interface{})

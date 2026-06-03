@@ -607,7 +607,26 @@
     "retainTracesSummary": "{calls, plural, one {# llamada} other {# llamadas}} · {tokens} tokens",
     "loadingChunks": "Cargando fragmentos...",
     "noChunksFound": "No se encontraron fragmentos para este documento",
-    "clickChunksTabToLoad": "Haz clic en la pestaña Fragmentos para cargar los fragmentos"
+    "clickChunksTabToLoad": "Haz clic en la pestaña Fragmentos para cargar los fragmentos",
+    "exportButton": "Exportar",
+    "importButton": "Importar desde zip",
+    "exporting": "Exportando…",
+    "importing": "Importando…",
+    "exportSuccess": "Documentos exportados",
+    "importSuccess": "Se importaron {imported} documento(s), {facts} hecho(s); {skipped} omitido(s)",
+    "importFailed": "La importación falló",
+    "importTimeout": "La importación está tardando más de lo esperado; vuelve a comprobar en breve",
+    "exportDialogTitle": "Exportar documentos",
+    "exportDialogDescription": "Descarga los documentos de este banco y sus hechos extraídos como un archivo .zip. No incluye embeddings: al importar se regeneran con el modelo del banco de destino.",
+    "exportIncludeObservationsLabel": "Incluir observaciones consolidadas",
+    "exportIncludeObservationsHint": "Exportar también las observaciones sintetizadas. Si se desactiva, el banco de destino las regenera durante la consolidación.",
+    "importDialogTitle": "Importar documentos",
+    "importDialogDescription": "Sube un archivo .zip exportado previamente de un banco. No es una carga de documentos normal: los hechos se vuelven a incrustar y enlazar en este banco. La importación se ejecuta en segundo plano.",
+    "actionsButton": "Acciones",
+    "importConflictLabel": "Si un documento ya existe",
+    "importConflictSkip": "Omitir — conservar el documento existente",
+    "importConflictReplace": "Reemplazar — sobrescribir con el importado",
+    "importConflictNewId": "Conservar ambos — importar con un nuevo id"
   },
   "entitiesView": {
     "viewRelations": "Relaciones",
@@ -1443,7 +1462,8 @@
         "bankAndModelIdRequired": "bank_id y model_id son obligatorios",
         "operationIdRequired": "operation_id es obligatorio",
         "missingRequestData": "Faltan datos de la solicitud",
-        "missingBankId": "Falta bank_id"
+        "missingBankId": "Falta bank_id",
+        "fileRequired": "Se requiere un archivo"
       },
       "generic": {
         "failed": "Error",
@@ -1481,7 +1501,9 @@
         "updateTags": "No se pudieron actualizar las etiquetas del documento",
         "delete": "No se pudo eliminar el documento",
         "chunks": "No se pudieron obtener los fragmentos del documento",
-        "reprocess": "No se pudo reprocesar el documento"
+        "reprocess": "No se pudo reprocesar el documento",
+        "export": "No se pudieron exportar los documentos",
+        "import": "No se pudieron importar los documentos"
       },
       "files": {
         "upload": "No se pudieron subir los archivos"

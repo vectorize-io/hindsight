@@ -1450,6 +1450,18 @@ class ReprocessDocumentResponse(BaseModel):
     items_count: int
 
 
+class DocumentImportSubmitResponse(BaseModel):
+    """Response for the async document-import endpoint (202).
+
+    The import runs in the background; poll the operations endpoint for status.
+    The imported/skipped counts (documents_imported, facts_imported,
+    observations_imported, etc.) are written to the operation's result_metadata.
+    """
+
+    operation_id: str
+    status: str = "pending"
+
+
 class DeleteResponse(BaseModel):
     """Response model for delete operations."""
 
@@ -2368,6 +2380,8 @@ class FeaturesInfo(BaseModel):
     worker: bool = Field(description="Whether the background worker is enabled")
     bank_config_api: bool = Field(description="Whether per-bank configuration API is enabled")
     file_upload_api: bool = Field(description="Whether file upload/conversion API is enabled")
+    document_export_api: bool = Field(description="Whether the document export endpoint is enabled")
+    document_import_api: bool = Field(description="Whether the document import endpoint is enabled")
 
 
 class VersionResponse(BaseModel):
@@ -2383,6 +2397,8 @@ class VersionResponse(BaseModel):
                     "worker": True,
                     "bank_config_api": False,
                     "file_upload_api": True,
+                    "document_export_api": True,
+                    "document_import_api": True,
                 },
             }
         }
@@ -3029,6 +3045,8 @@ def _register_routes(app: FastAPI):
                 worker=config.worker_enabled,
                 bank_config_api=config.enable_bank_config_api,
                 file_upload_api=config.enable_file_upload_api,
+                document_export_api=config.enable_document_export_api,
+                document_import_api=config.enable_document_import_api,
             ),
         )
 
@@ -5269,6 +5287,124 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in GET /v1/default/banks/{bank_id}/export: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # =====================================================================
+    # Document Transfer (Export / Import between banks — no LLM re-extraction)
+    # =====================================================================
+
+    @app.get(
+        # Dedicated path (not under /documents/) to avoid colliding with the
+        # greedy GET /documents/{document_id:path} route, which would otherwise
+        # capture "export"/"import" as a document id.
+        "/v1/default/banks/{bank_id}/document-transfer",
+        summary="Export documents",
+        description="Export documents (extracted facts, entity names, causal links, chunks) from a bank as a "
+        "transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target "
+        "bank's model and re-resolves entities. Consolidated observations are excluded unless include_observations=true. "
+        "Pass document_id query params to export specific documents, or omit to export the whole bank.",
+        operation_id="export_documents",
+        tags=["Document Transfer"],
+        responses={200: {"content": {"application/zip": {}}, "description": "Transfer archive"}},
+    )
+    async def api_export_documents(
+        bank_id: str,
+        document_id: list[str] | None = Query(default=None, description="Document id(s) to export; omit for all"),
+        include_observations: bool = Query(
+            default=False, description="Also export consolidated observations (restored on import)"
+        ),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Export documents from a bank into a transfer ZIP archive."""
+        from fastapi.responses import Response
+
+        try:
+            if not get_config().enable_document_export_api:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Document export API is disabled. "
+                    "Set HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API=true to enable.",
+                )
+            profile = await app.state.memory.get_bank_profile(
+                bank_id, request_context=request_context, create_if_missing=False
+            )
+            if profile is None:
+                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
+
+            try:
+                archive = await app.state.memory.export_documents_async(
+                    bank_id,
+                    request_context,
+                    list(document_id) if document_id else None,
+                    include_observations=include_observations,
+                )
+            except ValueError as e:
+                # e.g. include_observations combined with a document_id subset.
+                raise HTTPException(status_code=400, detail=str(e))
+            return Response(
+                content=archive,
+                media_type="application/zip",
+                headers={"Content-Disposition": f'attachment; filename="{bank_id}-documents.zip"'},
+            )
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/document-transfer: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/document-transfer",
+        response_model=DocumentImportSubmitResponse,
+        status_code=202,
+        summary="Import documents (async)",
+        description="Submit a transfer archive (produced by the export endpoint) for import into a bank. Runs as a "
+        "background operation: facts are re-embedded with the target bank's embedding model and entities are "
+        "re-resolved — no LLM extraction. Returns an operation_id; poll "
+        "GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the imported/skipped counts in "
+        "result_metadata. Use on_conflict to control existing document ids: skip (default), replace, or new-id.",
+        operation_id="import_documents",
+        tags=["Document Transfer"],
+    )
+    @audited("import_documents", request_param=None)
+    async def api_import_documents(
+        bank_id: str,
+        file: UploadFile = File(..., description="Transfer ZIP archive"),
+        on_conflict: str = Query(default="skip", description="skip | replace | new-id"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Submit a transfer archive for async import into a bank."""
+        try:
+            if not get_config().enable_document_import_api:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Document import API is disabled. "
+                    "Set HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API=true to enable.",
+                )
+            if on_conflict not in ("skip", "replace", "new-id"):
+                raise HTTPException(
+                    status_code=400, detail=f"Invalid on_conflict '{on_conflict}' (expected skip|replace|new-id)"
+                )
+            archive_bytes = await file.read()
+            try:
+                submission = await app.state.memory.import_documents_async(
+                    bank_id, archive_bytes, request_context, on_conflict
+                )
+            except ValueError as e:
+                # Invalid archive / unsupported schema version — fail fast.
+                raise HTTPException(status_code=400, detail=str(e))
+            return DocumentImportSubmitResponse(operation_id=submission["operation_id"])
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            logger.error(f"Error in POST /v1/default/banks/{bank_id}/document-transfer: {traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(

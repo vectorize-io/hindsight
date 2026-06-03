@@ -112,6 +112,25 @@ RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
 RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
 
 
+def _resolve_narrator(profile_name: str, bank_id: str) -> str | None:
+    """Resolve the narrator (memory owner) used to prime fact extraction.
+
+    The narrator is injected as a "Narrator: {name}" line in fact extraction and
+    is stamped into the who-dimension of every first-person fact — and the
+    observations later consolidated from those facts. That is correct for a named
+    agent retaining its own logs, but harmful when ``name`` is just the bank_id:
+    on auto-create the bank ``name`` defaults to ``bank_id``, which is typically a
+    routing key (e.g. ``my-agent::channel-456::user-789``), not a speaker. Priming
+    extraction with a routing key embeds that string into stored fact text and
+    pollutes downstream observations (issue #1680). Suppress it in that case.
+
+    Returns the narrator name, or ``None`` to omit the Narrator line entirely.
+    """
+    if profile_name == bank_id:
+        return None
+    return profile_name
+
+
 def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None):
     """Build retain_params and merged_tags from content dicts."""
     if doc_contents is not None:
@@ -440,7 +459,9 @@ async def retain_batch(
 
     # Get bank profile
     profile = await bank_utils.get_bank_profile(pool, bank_id)
-    agent_name = profile["name"]
+    # Suppress the narrator when name == bank_id (auto-create default) — see
+    # _resolve_narrator for why a routing-key narrator pollutes extraction (#1680).
+    agent_name = _resolve_narrator(profile["name"], bank_id)
 
     # Convert dicts to RetainContent objects
     contents = _build_contents(contents_dicts, document_tags)

@@ -1025,7 +1025,19 @@ def _build_user_message(
 
     narrator_section = ""
     if agent_name:
-        narrator_section = f'\nNarrator: {agent_name} (AI agent — first-person statements like "I did X" are the agent\'s own actions; classify as "assistant")'
+        narrator_section = (
+            f"\nNarrator: {agent_name} (the AI agent whose memory this is). By default, "
+            f'first-person statements like "I did X" are {agent_name}\'s own actions → classify as '
+            f'"assistant".'
+        )
+        # Only defer to the Context when one was actually provided — otherwise this
+        # clause points at a "Context: none" line and just adds noise.
+        if context:
+            narrator_section += (
+                " BUT the Context above takes precedence: if it identifies a different "
+                "first-person speaker (e.g. a user or customer in a transcript), attribute those "
+                'statements to that speaker and classify them as "world", not "assistant".'
+            )
 
     return f"""Extract facts from the following text chunk.
 
