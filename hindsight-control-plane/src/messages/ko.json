@@ -405,7 +405,56 @@
     "subBatchesCount": "하위 배치 ({count})",
     "rawPayload": "원시 페이로드",
     "loadRaw": "원시 데이터 로드",
-    "rawPayloadHelp": "작업이 제출된 전체 매개변수를 표시합니다 (클 수 있음)."
+    "rawPayloadHelp": "작업이 제출된 전체 매개변수를 표시합니다 (클 수 있음).",
+    "operationCount": "{count}개 작업",
+    "unknown": "알 수 없음",
+    "notAvailable": "N/A",
+    "operationDetailsLoadError": "작업 세부 정보를 불러오지 못했습니다",
+    "status": {
+      "all": "전체",
+      "pending": "대기 중",
+      "processing": "처리 중",
+      "completed": "완료됨",
+      "failed": "실패함",
+      "cancelled": "취소됨"
+    },
+    "operationType": {
+      "all": "모든 유형",
+      "retain": "Retain",
+      "consolidation": "통합",
+      "refreshMentalModel": "멘탈 모델 새로고침",
+      "fileConvertRetain": "파일 변환 및 Retain",
+      "webhookDelivery": "Webhook 전달",
+      "graphMaintenance": "그래프 유지관리"
+    },
+    "table": {
+      "id": "작업 ID",
+      "type": "유형",
+      "created": "생성일",
+      "status": "상태",
+      "index": "인덱스",
+      "items": "항목"
+    },
+    "action": {
+      "cancel": "취소",
+      "retry": "다시 시도"
+    },
+    "pagination": "총 {total}개 중 {start}-{end}개 표시",
+    "paginationPrevious": "이전",
+    "paginationNext": "다음",
+    "emptyState": "작업이 없습니다",
+    "emptyStateWithStatus": "{status} 작업이 없습니다",
+    "field": {
+      "status": "상태",
+      "type": "유형",
+      "created": "생성일",
+      "updated": "업데이트됨",
+      "completed": "완료됨"
+    },
+    "metadata": "메타데이터",
+    "error": "오류",
+    "rawPayloadParentHelp": "이 작업은 상위 작업입니다. 원시 페이로드는 각 하위 배치에 저장됩니다. 하위 작업을 열어 페이로드를 확인하세요.",
+    "rawPayloadEmpty": "이 작업에 저장된 원시 페이로드가 없습니다."
   },
   "dataView": {
     "loadingMemories": "메모리 불러오는 중...",
@@ -1284,7 +1333,8 @@
     "legendMany": "많음",
     "linkTypeSemantic": "의미",
     "linkTypeTemporal": "시간",
-    "linkTypeEntity": "엔티티"
+    "linkTypeEntity": "엔티티",
+    "linkTypeCausal": "인과"
   },
   "metadata": {
     "title": "Hindsight Cloud",

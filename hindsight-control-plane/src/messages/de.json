@@ -405,7 +405,56 @@
     "subBatchesCount": "Teilbatches ({count})",
     "rawPayload": "Rohdaten-Payload",
     "loadRaw": "Rohdaten laden",
-    "rawPayloadHelp": "Zeigt die vollständigen Parameter, mit denen der Vorgang eingereicht wurde (kann groß sein)."
+    "rawPayloadHelp": "Zeigt die vollständigen Parameter, mit denen der Vorgang eingereicht wurde (kann groß sein).",
+    "operationCount": "{count} Vorgänge",
+    "unknown": "Unbekannt",
+    "notAvailable": "N/V",
+    "operationDetailsLoadError": "Vorgangsdetails konnten nicht geladen werden",
+    "status": {
+      "all": "Alle",
+      "pending": "Ausstehend",
+      "processing": "In Bearbeitung",
+      "completed": "Abgeschlossen",
+      "failed": "Fehlgeschlagen",
+      "cancelled": "Abgebrochen"
+    },
+    "operationType": {
+      "all": "Alle Typen",
+      "retain": "Retain",
+      "consolidation": "Konsolidierung",
+      "refreshMentalModel": "Mental-Model-Aktualisierung",
+      "fileConvertRetain": "Datei konvertieren und Retain",
+      "webhookDelivery": "Webhook-Zustellung",
+      "graphMaintenance": "Graph-Wartung"
+    },
+    "table": {
+      "id": "Vorgangs-ID",
+      "type": "Typ",
+      "created": "Erstellt",
+      "status": "Status",
+      "index": "Index",
+      "items": "Elemente"
+    },
+    "action": {
+      "cancel": "Abbrechen",
+      "retry": "Wiederholen"
+    },
+    "pagination": "Zeige {start}-{end} von {total}",
+    "paginationPrevious": "Zurück",
+    "paginationNext": "Weiter",
+    "emptyState": "Keine Vorgänge",
+    "emptyStateWithStatus": "Keine Vorgänge mit Status {status}",
+    "field": {
+      "status": "Status",
+      "type": "Typ",
+      "created": "Erstellt",
+      "updated": "Aktualisiert",
+      "completed": "Abgeschlossen"
+    },
+    "metadata": "Metadaten",
+    "error": "Fehler",
+    "rawPayloadParentHelp": "Dies ist ein übergeordneter Vorgang: Die Rohdaten-Payload wird in jedem Teilbatch gespeichert. Öffnen Sie einen untergeordneten Vorgang, um seine Payload zu prüfen.",
+    "rawPayloadEmpty": "Für diesen Vorgang ist keine Rohdaten-Payload gespeichert."
   },
   "dataView": {
     "loadingMemories": "Erinnerungen werden geladen...",
@@ -1284,7 +1333,8 @@
     "legendMany": "viele",
     "linkTypeSemantic": "semantisch",
     "linkTypeTemporal": "zeitlich",
-    "linkTypeEntity": "Entität"
+    "linkTypeEntity": "Entität",
+    "linkTypeCausal": "kausal"
   },
   "metadata": {
     "title": "Hindsight Cloud",

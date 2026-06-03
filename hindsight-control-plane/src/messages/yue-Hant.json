@@ -405,7 +405,56 @@
     "subBatchesCount": "子批次（{count}）",
     "rawPayload": "原始載荷",
     "loadRaw": "載入原始資料",
-    "rawPayloadHelp": "顯示送出此作業時使用的完整參數（可能較大）。"
+    "rawPayloadHelp": "顯示送出此作業時使用的完整參數（可能較大）。",
+    "operationCount": "{count} 個操作",
+    "unknown": "未知",
+    "notAvailable": "不適用",
+    "operationDetailsLoadError": "未能載入操作詳情",
+    "status": {
+      "all": "全部",
+      "pending": "待處理",
+      "processing": "處理中",
+      "completed": "已完成",
+      "failed": "失敗",
+      "cancelled": "已取消"
+    },
+    "operationType": {
+      "all": "所有類型",
+      "retain": "保留",
+      "consolidation": "整合",
+      "refreshMentalModel": "心智模型重新整理",
+      "fileConvertRetain": "檔案轉換並 Retain",
+      "webhookDelivery": "Webhook 投遞",
+      "graphMaintenance": "圖譜維護"
+    },
+    "table": {
+      "id": "操作 ID",
+      "type": "類型",
+      "created": "建立時間",
+      "status": "狀態",
+      "index": "索引",
+      "items": "項目"
+    },
+    "action": {
+      "cancel": "取消",
+      "retry": "重試"
+    },
+    "pagination": "顯示第 {start}-{end} 項，共 {total} 項",
+    "paginationPrevious": "上一頁",
+    "paginationNext": "下一頁",
+    "emptyState": "暫時未有操作",
+    "emptyStateWithStatus": "暫時未有{status}操作",
+    "field": {
+      "status": "狀態",
+      "type": "類型",
+      "created": "建立時間",
+      "updated": "更新時間",
+      "completed": "完成時間"
+    },
+    "metadata": "元資料",
+    "error": "錯誤",
+    "rawPayloadParentHelp": "呢個係父級操作，原始載荷會儲存在每個子批次。開啟子操作就可以查看佢嘅載荷。",
+    "rawPayloadEmpty": "此操作未有儲存原始載荷。"
   },
   "dataView": {
     "loadingMemories": "載入中記憶...",
@@ -1284,7 +1333,8 @@
     "legendMany": "多",
     "linkTypeSemantic": "語義",
     "linkTypeTemporal": "時間",
-    "linkTypeEntity": "實體"
+    "linkTypeEntity": "實體",
+    "linkTypeCausal": "因果"
   },
   "metadata": {
     "title": "Hindsight Cloud",

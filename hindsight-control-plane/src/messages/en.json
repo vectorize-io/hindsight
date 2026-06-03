@@ -405,7 +405,56 @@
     "subBatchesCount": "Sub-batches ({count})",
     "rawPayload": "Raw payload",
     "loadRaw": "Load raw",
-    "rawPayloadHelp": "Shows the full parameters the operation was submitted with (may be large)."
+    "rawPayloadHelp": "Shows the full parameters the operation was submitted with (may be large).",
+    "operationCount": "{count, plural, one {# operation} other {# operations}}",
+    "unknown": "Unknown",
+    "notAvailable": "N/A",
+    "operationDetailsLoadError": "Failed to load operation details",
+    "status": {
+      "all": "All",
+      "pending": "Pending",
+      "processing": "Processing",
+      "completed": "Completed",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
+    "operationType": {
+      "all": "All types",
+      "retain": "Retain",
+      "consolidation": "Consolidation",
+      "refreshMentalModel": "Mental Model Refresh",
+      "fileConvertRetain": "File Convert & Retain",
+      "webhookDelivery": "Webhook Delivery",
+      "graphMaintenance": "Graph Maintenance"
+    },
+    "table": {
+      "id": "Operation ID",
+      "type": "Type",
+      "created": "Created",
+      "status": "Status",
+      "index": "Index",
+      "items": "Items"
+    },
+    "action": {
+      "cancel": "Cancel",
+      "retry": "Retry"
+    },
+    "pagination": "Showing {start}-{end} of {total}",
+    "paginationPrevious": "Previous",
+    "paginationNext": "Next",
+    "emptyState": "No operations",
+    "emptyStateWithStatus": "No {status} operations",
+    "field": {
+      "status": "Status",
+      "type": "Type",
+      "created": "Created",
+      "updated": "Updated",
+      "completed": "Completed"
+    },
+    "metadata": "Metadata",
+    "error": "Error",
+    "rawPayloadParentHelp": "This is a parent operation — the raw payload is stored on each sub-batch. Open a child operation to inspect its payload.",
+    "rawPayloadEmpty": "No raw payload stored for this operation."
   },
   "dataView": {
     "loadingMemories": "Loading memories...",
@@ -1284,7 +1333,8 @@
     "legendMany": "many",
     "linkTypeSemantic": "semantic",
     "linkTypeTemporal": "temporal",
-    "linkTypeEntity": "entity"
+    "linkTypeEntity": "entity",
+    "linkTypeCausal": "causal"
   },
   "metadata": {
     "title": "Hindsight Cloud",

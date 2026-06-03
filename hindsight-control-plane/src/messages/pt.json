@@ -405,7 +405,56 @@
     "subBatchesCount": "Sublotes ({count})",
     "rawPayload": "Payload bruto",
     "loadRaw": "Carregar bruto",
-    "rawPayloadHelp": "Mostra os parâmetros completos com os quais a operação foi enviada (pode ser grande)."
+    "rawPayloadHelp": "Mostra os parâmetros completos com os quais a operação foi enviada (pode ser grande).",
+    "operationCount": "{count} operações",
+    "unknown": "Desconhecido",
+    "notAvailable": "N/D",
+    "operationDetailsLoadError": "Falha ao carregar os detalhes da operação",
+    "status": {
+      "all": "Todos",
+      "pending": "Pendente",
+      "processing": "Em processamento",
+      "completed": "Concluída",
+      "failed": "Falha",
+      "cancelled": "Cancelada"
+    },
+    "operationType": {
+      "all": "Todos os tipos",
+      "retain": "Retain",
+      "consolidation": "Consolidação",
+      "refreshMentalModel": "Atualização do modelo mental",
+      "fileConvertRetain": "Converter arquivo e Retain",
+      "webhookDelivery": "Entrega de webhook",
+      "graphMaintenance": "Manutenção do grafo"
+    },
+    "table": {
+      "id": "ID da operação",
+      "type": "Tipo",
+      "created": "Criada",
+      "status": "Status",
+      "index": "Índice",
+      "items": "Itens"
+    },
+    "action": {
+      "cancel": "Cancelar",
+      "retry": "Tentar novamente"
+    },
+    "pagination": "Mostrando {start}-{end} de {total}",
+    "paginationPrevious": "Anterior",
+    "paginationNext": "Próximo",
+    "emptyState": "Nenhuma operação",
+    "emptyStateWithStatus": "Nenhuma operação com status {status}",
+    "field": {
+      "status": "Status",
+      "type": "Tipo",
+      "created": "Criada",
+      "updated": "Atualizada",
+      "completed": "Concluída"
+    },
+    "metadata": "Metadados",
+    "error": "Erro",
+    "rawPayloadParentHelp": "Esta é uma operação pai: o payload bruto é armazenado em cada sublote. Abra uma operação filha para inspecionar seu payload.",
+    "rawPayloadEmpty": "Nenhum payload bruto armazenado para esta operação."
   },
   "dataView": {
     "loadingMemories": "Carregando memórias...",
@@ -1284,7 +1333,8 @@
     "legendMany": "muitas",
     "linkTypeSemantic": "semântico",
     "linkTypeTemporal": "temporal",
-    "linkTypeEntity": "entidade"
+    "linkTypeEntity": "entidade",
+    "linkTypeCausal": "causal"
   },
   "metadata": {
     "title": "Hindsight Cloud",

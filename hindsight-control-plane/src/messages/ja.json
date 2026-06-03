@@ -405,7 +405,56 @@
     "subBatchesCount": "サブバッチ ({count})",
     "rawPayload": "生のペイロード",
     "loadRaw": "生データを読み込む",
-    "rawPayloadHelp": "操作が送信された完全なパラメータを表示します (大きい場合があります)。"
+    "rawPayloadHelp": "操作が送信された完全なパラメータを表示します (大きい場合があります)。",
+    "operationCount": "{count} 件の操作",
+    "unknown": "不明",
+    "notAvailable": "N/A",
+    "operationDetailsLoadError": "操作の詳細を読み込めませんでした",
+    "status": {
+      "all": "すべて",
+      "pending": "保留中",
+      "processing": "処理中",
+      "completed": "完了",
+      "failed": "失敗",
+      "cancelled": "キャンセル済み"
+    },
+    "operationType": {
+      "all": "すべてのタイプ",
+      "retain": "Retain",
+      "consolidation": "統合",
+      "refreshMentalModel": "メンタルモデル更新",
+      "fileConvertRetain": "ファイル変換と Retain",
+      "webhookDelivery": "Webhook 配信",
+      "graphMaintenance": "グラフメンテナンス"
+    },
+    "table": {
+      "id": "操作 ID",
+      "type": "タイプ",
+      "created": "作成日時",
+      "status": "ステータス",
+      "index": "インデックス",
+      "items": "項目"
+    },
+    "action": {
+      "cancel": "キャンセル",
+      "retry": "再試行"
+    },
+    "pagination": "{total} 件中 {start}-{end} 件を表示",
+    "paginationPrevious": "前へ",
+    "paginationNext": "次へ",
+    "emptyState": "操作がありません",
+    "emptyStateWithStatus": "{status} の操作がありません",
+    "field": {
+      "status": "ステータス",
+      "type": "タイプ",
+      "created": "作成日時",
+      "updated": "更新日時",
+      "completed": "完了日時"
+    },
+    "metadata": "メタデータ",
+    "error": "エラー",
+    "rawPayloadParentHelp": "これは親操作です。生のペイロードは各サブバッチに保存されています。子操作を開いてペイロードを確認してください。",
+    "rawPayloadEmpty": "この操作に保存された生のペイロードはありません。"
   },
   "dataView": {
     "loadingMemories": "メモリを読み込み中...",
@@ -1284,7 +1333,8 @@
     "legendMany": "多",
     "linkTypeSemantic": "セマンティック",
     "linkTypeTemporal": "時間",
-    "linkTypeEntity": "エンティティ"
+    "linkTypeEntity": "エンティティ",
+    "linkTypeCausal": "因果"
   },
   "metadata": {
     "title": "Hindsight Cloud",

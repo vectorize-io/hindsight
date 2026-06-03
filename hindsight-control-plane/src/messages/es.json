@@ -405,7 +405,56 @@
     "subBatchesCount": "Sublotes ({count})",
     "rawPayload": "Carga útil sin procesar",
     "loadRaw": "Cargar sin procesar",
-    "rawPayloadHelp": "Muestra los parámetros completos con los que se envió la operación (puede ser grande)."
+    "rawPayloadHelp": "Muestra los parámetros completos con los que se envió la operación (puede ser grande).",
+    "operationCount": "{count} operaciones",
+    "unknown": "Desconocido",
+    "notAvailable": "N/D",
+    "operationDetailsLoadError": "No se pudieron cargar los detalles de la operación",
+    "status": {
+      "all": "Todos",
+      "pending": "Pendiente",
+      "processing": "En proceso",
+      "completed": "Completada",
+      "failed": "Fallida",
+      "cancelled": "Cancelada"
+    },
+    "operationType": {
+      "all": "Todos los tipos",
+      "retain": "Retener",
+      "consolidation": "Consolidación",
+      "refreshMentalModel": "Actualización del modelo mental",
+      "fileConvertRetain": "Convertir archivo y retener",
+      "webhookDelivery": "Entrega de webhook",
+      "graphMaintenance": "Mantenimiento del grafo"
+    },
+    "table": {
+      "id": "ID de operación",
+      "type": "Tipo",
+      "created": "Creada",
+      "status": "Estado",
+      "index": "Índice",
+      "items": "Elementos"
+    },
+    "action": {
+      "cancel": "Cancelar",
+      "retry": "Reintentar"
+    },
+    "pagination": "Mostrando {start}-{end} de {total}",
+    "paginationPrevious": "Anterior",
+    "paginationNext": "Siguiente",
+    "emptyState": "No hay operaciones",
+    "emptyStateWithStatus": "No hay operaciones con estado {status}",
+    "field": {
+      "status": "Estado",
+      "type": "Tipo",
+      "created": "Creada",
+      "updated": "Actualizada",
+      "completed": "Completada"
+    },
+    "metadata": "Metadatos",
+    "error": "Error",
+    "rawPayloadParentHelp": "Esta es una operación principal: la carga útil sin procesar se almacena en cada sublote. Abre una operación secundaria para inspeccionar su carga útil.",
+    "rawPayloadEmpty": "No hay carga útil sin procesar almacenada para esta operación."
   },
   "dataView": {
     "loadingMemories": "Cargando memorias...",
@@ -1284,7 +1333,8 @@
     "legendMany": "muchos",
     "linkTypeSemantic": "semántico",
     "linkTypeTemporal": "temporal",
-    "linkTypeEntity": "entidad"
+    "linkTypeEntity": "entidad",
+    "linkTypeCausal": "causal"
   },
   "metadata": {
     "title": "Hindsight Cloud",

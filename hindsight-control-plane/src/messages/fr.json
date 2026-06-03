@@ -405,7 +405,56 @@
     "subBatchesCount": "Sous-lots ({count})",
     "rawPayload": "Charge utile brute",
     "loadRaw": "Charger brut",
-    "rawPayloadHelp": "Affiche les paramètres complets avec lesquels l'opération a été soumise (peut être volumineux)."
+    "rawPayloadHelp": "Affiche les paramètres complets avec lesquels l'opération a été soumise (peut être volumineux).",
+    "operationCount": "{count} opérations",
+    "unknown": "Inconnu",
+    "notAvailable": "N/A",
+    "operationDetailsLoadError": "Impossible de charger les détails de l'opération",
+    "status": {
+      "all": "Tout",
+      "pending": "En attente",
+      "processing": "En cours",
+      "completed": "Terminée",
+      "failed": "Échouée",
+      "cancelled": "Annulée"
+    },
+    "operationType": {
+      "all": "Tous les types",
+      "retain": "Retain",
+      "consolidation": "Consolidation",
+      "refreshMentalModel": "Actualisation du modèle mental",
+      "fileConvertRetain": "Conversion de fichier et Retain",
+      "webhookDelivery": "Livraison de webhook",
+      "graphMaintenance": "Maintenance du graphe"
+    },
+    "table": {
+      "id": "ID d'opération",
+      "type": "Type",
+      "created": "Créée",
+      "status": "Statut",
+      "index": "Index",
+      "items": "Éléments"
+    },
+    "action": {
+      "cancel": "Annuler",
+      "retry": "Réessayer"
+    },
+    "pagination": "Affichage de {start}-{end} sur {total}",
+    "paginationPrevious": "Précédent",
+    "paginationNext": "Suivant",
+    "emptyState": "Aucune opération",
+    "emptyStateWithStatus": "Aucune opération {status}",
+    "field": {
+      "status": "Statut",
+      "type": "Type",
+      "created": "Créée",
+      "updated": "Mise à jour",
+      "completed": "Terminée"
+    },
+    "metadata": "Métadonnées",
+    "error": "Erreur",
+    "rawPayloadParentHelp": "Il s'agit d'une opération parente : la charge utile brute est stockée dans chaque sous-lot. Ouvrez une opération enfant pour inspecter sa charge utile.",
+    "rawPayloadEmpty": "Aucune charge utile brute stockée pour cette opération."
   },
   "dataView": {
     "loadingMemories": "Chargement des souvenirs...",
@@ -1284,7 +1333,8 @@
     "legendMany": "beaucoup",
     "linkTypeSemantic": "sémantique",
     "linkTypeTemporal": "temporel",
-    "linkTypeEntity": "entité"
+    "linkTypeEntity": "entité",
+    "linkTypeCausal": "causal"
   },
   "metadata": {
     "title": "Hindsight Cloud",
