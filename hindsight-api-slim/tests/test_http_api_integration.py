@@ -1344,6 +1344,12 @@ async def test_patch_config_persists_override_for_uncreated_bank(api_client, fie
     assert body["config"][field] is False
     assert body["overrides"].get(field) is False
 
+    # The auto-created bank must have a name (defaults to bank_id). A NULL name
+    # would 500 the profile endpoint, whose response types name as a required str.
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == test_bank_id
+
 
 @pytest.mark.hs_llm_core
 @pytest.mark.asyncio
