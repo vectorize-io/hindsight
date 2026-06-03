@@ -4,10 +4,12 @@ import { ChatView, VIEW_TYPE_CHAT } from "./chat-view";
 import { HindsightClient } from "./client";
 import { DEFAULT_SETTINGS, type HindsightSettings, HindsightSettingTab } from "./settings";
 import { SyncEngine, type SyncConfig, type SyncIndex, type SyncVault } from "./sync";
+import { renderSyncStatus } from "./status-bar";
 
 interface PluginData {
   settings: HindsightSettings;
   syncIndex: SyncIndex;
+  lastSyncAt: number | null;
 }
 
 export default class HindsightPlugin extends Plugin {
@@ -17,6 +19,11 @@ export default class HindsightPlugin extends Plugin {
   private engine: SyncEngine | null = null;
   private dirty = new Set<string>();
   private scheduleFlush!: Debouncer<[], void>;
+  // Sync-status indicator state (surfaced in the status bar).
+  private statusBarEl: HTMLElement | null = null;
+  private syncing = 0;
+  private lastSyncAt: number | null = null;
+  private lastSyncError = false;
 
   async onload(): Promise<void> {
     await this.loadPluginData();
@@ -69,6 +76,52 @@ export default class HindsightPlugin extends Plugin {
 
     this.addSettingTab(new HindsightSettingTab(this.app, this));
     this.registerVaultWatchers();
+
+    // Persistent sync indicator: click to sync now, refreshed so "x ago" stays live.
+    this.statusBarEl = this.addStatusBarItem();
+    this.statusBarEl.addClass("mod-clickable");
+    this.statusBarEl.addEventListener("click", () => void this.syncVault());
+    this.registerInterval(window.setInterval(() => this.updateStatusBar(), 30_000));
+    this.updateStatusBar();
+  }
+
+  /** Recompute and paint the status-bar indicator from current sync state. */
+  private updateStatusBar(): void {
+    if (!this.statusBarEl) return;
+    const view = renderSyncStatus(
+      {
+        configured: this.engine !== null,
+        syncing: this.syncing,
+        pending: this.dirty.size,
+        lastSyncAt: this.lastSyncAt,
+        error: this.lastSyncError,
+      },
+      Date.now()
+    );
+    this.statusBarEl.setText(view.text);
+    this.statusBarEl.setAttribute("aria-label", view.tooltip);
+    this.statusBarEl.title = view.tooltip;
+  }
+
+  /**
+   * Run a sync operation while reflecting its progress in the status bar:
+   * shows "syncing…", then a fresh "synced" timestamp or an error state.
+   */
+  private async withSync<T>(op: () => Promise<T>): Promise<T> {
+    this.syncing += 1;
+    this.lastSyncError = false;
+    this.updateStatusBar();
+    try {
+      const result = await op();
+      this.lastSyncAt = Date.now();
+      return result;
+    } catch (err) {
+      this.lastSyncError = true;
+      throw err;
+    } finally {
+      this.syncing -= 1;
+      this.updateStatusBar();
+    }
   }
 
   // ── Public accessors used by views ──────────────────────────────────────
@@ -117,7 +170,8 @@ export default class HindsightPlugin extends Plugin {
     }
     new Notice("Hindsight: syncing vault…");
     try {
-      const s = await this.engine.reconcile();
+      const engine = this.engine;
+      const s = await this.withSync(() => engine.reconcile());
       await this.savePluginData();
       new Notice(
         `Hindsight: ${s.added} added, ${s.updated} updated, ${s.deleted} deleted, ${s.unchanged} unchanged.`
@@ -130,7 +184,8 @@ export default class HindsightPlugin extends Plugin {
   private async ingestOne(file: TFile): Promise<void> {
     if (!this.engine) return;
     try {
-      const outcome = await this.engine.ingestFile(file, { force: true });
+      const engine = this.engine;
+      const outcome = await this.withSync(() => engine.ingestFile(file, { force: true }));
       await this.savePluginData();
       new Notice(`Hindsight: note ${outcome}.`);
     } catch (err) {
@@ -146,6 +201,7 @@ export default class HindsightPlugin extends Plugin {
     const onUpsert = (file: unknown): void => {
       if (!this.settings.syncOnEdit || !isMd(file)) return;
       this.dirty.add(file.path);
+      this.updateStatusBar(); // reflect the new pending count immediately
       this.scheduleFlush();
     };
     this.registerEvent(this.app.vault.on("create", onUpsert));
@@ -154,32 +210,39 @@ export default class HindsightPlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
         if (!this.settings.syncOnEdit || !isMd(file) || !this.engine) return;
-        this.engine.handleDelete(file.path).catch((err) => this.reportError(err));
+        const engine = this.engine;
+        this.withSync(() => engine.handleDelete(file.path)).catch((err) => this.reportError(err));
       })
     );
 
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
         if (!this.settings.syncOnEdit || !isMd(file) || !this.engine) return;
-        this.engine.handleRename(file, oldPath).catch((err) => this.reportError(err));
+        const engine = this.engine;
+        this.withSync(() => engine.handleRename(file, oldPath)).catch((err) =>
+          this.reportError(err)
+        );
       })
     );
   }
 
   private async flushDirty(): Promise<void> {
-    if (!this.engine) return;
+    if (!this.engine || this.dirty.size === 0) return;
+    const engine = this.engine;
     const paths = [...this.dirty];
     this.dirty.clear();
-    for (const path of paths) {
-      const file = this.app.vault.getAbstractFileByPath(path);
-      if (file instanceof TFile) {
-        try {
-          await this.engine.ingestFile(file);
-        } catch (err) {
-          this.reportError(err);
+    await this.withSync(async () => {
+      for (const path of paths) {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (file instanceof TFile) {
+          try {
+            await engine.ingestFile(file);
+          } catch (err) {
+            this.reportError(err);
+          }
         }
       }
-    }
+    });
   }
 
   // ── Wiring / persistence ────────────────────────────────────────────────
@@ -201,6 +264,7 @@ export default class HindsightPlugin extends Plugin {
           (idx) => this.saveIndex(idx)
         )
       : null;
+    this.updateStatusBar();
   }
 
   private syncConfig(): SyncConfig {
@@ -217,10 +281,15 @@ export default class HindsightPlugin extends Plugin {
     const data = (await this.loadData()) as Partial<PluginData> | null;
     this.settings = { ...DEFAULT_SETTINGS, ...(data?.settings ?? {}) };
     this.syncIndex = data?.syncIndex ?? {};
+    this.lastSyncAt = data?.lastSyncAt ?? null;
   }
 
   private async savePluginData(): Promise<void> {
-    const data: PluginData = { settings: this.settings, syncIndex: this.syncIndex };
+    const data: PluginData = {
+      settings: this.settings,
+      syncIndex: this.syncIndex,
+      lastSyncAt: this.lastSyncAt,
+    };
     await this.saveData(data);
   }
 
