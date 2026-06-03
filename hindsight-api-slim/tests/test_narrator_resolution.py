@@ -30,13 +30,13 @@ class TestResolveNarrator:
 
 
 class TestNarratorInjection:
-    def _msg(self, agent_name):
+    def _msg(self, agent_name, context="agent log"):
         return _build_user_message(
             chunk="I shipped the fix.",
             chunk_index=0,
             total_chunks=1,
             event_date=datetime(2024, 6, 1),
-            context="agent log",
+            context=context,
             metadata=None,
             agent_name=agent_name,
         )
@@ -49,6 +49,15 @@ class TestNarratorInjection:
     def test_narrator_line_present_for_named_agent(self):
         msg = self._msg("Aria")
         assert "Narrator: Aria" in msg
+
+    def test_context_precedence_clause_only_when_context_set(self):
+        """The 'Context above takes precedence' clause appears only with a context."""
+        with_context = self._msg("Aria", context="chat with a customer")
+        assert "Context above takes precedence" in with_context
+
+        without_context = self._msg("Aria", context="")
+        assert "Narrator: Aria" in without_context  # base narrator still present
+        assert "Context above takes precedence" not in without_context
 
     def test_routing_key_never_reaches_prompt_via_resolution(self):
         """End-to-end of the fix: resolve then build → routing key absent from prompt."""
