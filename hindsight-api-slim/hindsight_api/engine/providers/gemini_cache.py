@@ -176,7 +176,6 @@ class GeminiCacheManager:
                 cache_name = await self._create_cache(
                     model=model,
                     system_instruction=system_instruction,
-                    response_schema=response_schema,
                     tools=tools,
                 )
             except _CacheNotEligible as e:
@@ -215,7 +214,6 @@ class GeminiCacheManager:
         *,
         model: str,
         system_instruction: str,
-        response_schema: Any | None,
         tools: list[dict[str, Any]] | None = None,
     ) -> str | None:
         """Wrap ``client.aio.caches.create`` with the config we want.
@@ -227,13 +225,17 @@ class GeminiCacheManager:
         # Lazy import so this module doesn't require the SDK at import time.
         from google.genai import types as genai_types
 
+        # A CachedContent only holds reusable *input* — system_instruction,
+        # contents, tools, ttl. ``response_schema``/``response_mime_type`` are
+        # generation-time output constraints and the SDK rejects them here
+        # (``CreateCachedContentConfig`` forbids those fields). They are applied
+        # per-request on the GenerateContentConfig instead — see the call sites,
+        # which set them alongside ``cached_content``. ``response_schema`` is
+        # still part of the fingerprint so a schema change keys a fresh cache.
         config_kwargs: dict[str, Any] = {
             "system_instruction": system_instruction,
             "ttl": f"{self._ttl_seconds}s",
         }
-        if response_schema is not None:
-            config_kwargs["response_schema"] = response_schema
-            config_kwargs["response_mime_type"] = "application/json"
         if tools:
             # OpenAI-style {"function": {...}} entries must be converted to
             # Gemini's Tool/FunctionDeclaration shape before caching.

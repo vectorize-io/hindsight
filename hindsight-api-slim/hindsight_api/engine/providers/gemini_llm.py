@@ -193,10 +193,11 @@ class GeminiLLM(LLMInterface):
             return_usage: If True, return tuple (result, TokenUsage).
             cached_content_name: Optional CachedContent resource name (from
                 ``GeminiCacheManager.get_or_create``). When set, the
-                system_instruction and response_schema are assumed to live
-                in the cache; this call will skip resending them and the
-                cached prefix is billed at the cached-input rate instead
-                of the standard input rate. Pass ``None`` to use the
+                system_instruction is assumed to live in the cache; this call
+                skips resending it and the cached prefix is billed at the
+                cached-input rate instead of the standard input rate. The
+                response_schema is still sent per-request (it is not cacheable).
+                Pass ``None`` to use the
                 normal uncached path.
 
         Returns:
@@ -230,9 +231,10 @@ class GeminiLLM(LLMInterface):
             else:
                 gemini_contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=content)]))
 
-        # Add JSON schema instruction if response_format is provided.
-        # When the cache is in use, the response_schema was baked into
-        # the cache; the model will already enforce it on the response.
+        # Add the JSON schema as a textual hint in the system_instruction. When a
+        # cache is in use the system_instruction is the cache (re-sending it is
+        # rejected), so the hint lives in the cached prefix instead — structured
+        # output is still enforced below via response_schema regardless.
         if not using_cache and response_format is not None and hasattr(response_format, "model_json_schema"):
             schema = response_format.model_json_schema()
             schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
@@ -241,18 +243,20 @@ class GeminiLLM(LLMInterface):
             else:
                 system_instruction = schema_msg
 
-        # Build generation config. When a cache is in use, the SDK
-        # rejects re-sending system_instruction and response_schema
-        # alongside ``cached_content`` — the cache IS the prefix.
+        # Build generation config. ``cached_content`` and ``system_instruction``
+        # are mutually exclusive (the cache IS the prefix; the SDK rejects
+        # re-sending it). ``response_schema``/``response_mime_type`` are
+        # request-level output constraints — NOT cacheable — so they're set on
+        # every structured call, including cached ones where they ride alongside
+        # ``cached_content``.
         config_kwargs: dict[str, Any] = {}
         if using_cache:
             config_kwargs["cached_content"] = cached_content_name
-        else:
-            if system_instruction:
-                config_kwargs["system_instruction"] = system_instruction
-            if response_format is not None:
-                config_kwargs["response_mime_type"] = "application/json"
-                config_kwargs["response_schema"] = response_format
+        elif system_instruction:
+            config_kwargs["system_instruction"] = system_instruction
+        if response_format is not None:
+            config_kwargs["response_mime_type"] = "application/json"
+            config_kwargs["response_schema"] = response_format
         if temperature is not None:
             config_kwargs["temperature"] = temperature
         # Gemini's equivalent of OpenAI-style max_completion_tokens is max_output_tokens.

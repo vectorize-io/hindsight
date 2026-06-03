@@ -735,6 +735,7 @@ class LLMProvider:
         skip_validation: bool = False,
         strict_schema: bool = False,
         return_usage: bool = False,
+        cached_content_name: str | None = None,
     ) -> Any:
         """
         Make an LLM API call with retry logic.
@@ -791,6 +792,11 @@ class LLMProvider:
                 for sem in _semaphores_for_scope(scope):
                     await stack.enter_async_context(sem)
 
+                # Only gemini/vertexai's call() accepts cached_content_name; it's
+                # only ever set for those providers (others never produce a cache
+                # name), so forward it only when present to keep other providers'
+                # signatures untouched.
+                cache_kwarg = {"cached_content_name": cached_content_name} if cached_content_name is not None else {}
                 try:
                     # Delegate to provider implementation
                     result = await self._provider_impl.call(
@@ -805,6 +811,7 @@ class LLMProvider:
                         skip_validation=skip_validation,
                         strict_schema=strict_schema,
                         return_usage=return_usage,
+                        **cache_kwarg,
                     )
                 except Exception as e:
                     get_span_recorder().record_llm_call(
@@ -844,6 +851,7 @@ class LLMProvider:
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
         tool_choice: str | dict[str, Any] = "auto",
+        cached_content_name: str | None = None,
     ) -> "LLMToolCallResult":
         """
         Make an LLM API call with tool/function calling support.
@@ -884,6 +892,10 @@ class LLMProvider:
                 for sem in _semaphores_for_scope(scope):
                     await stack.enter_async_context(sem)
 
+                # Only gemini/vertexai's call_with_tools() accepts
+                # cached_content_name; forward it only when present so other
+                # providers' signatures stay untouched (same pattern as call()).
+                cache_kwarg = {"cached_content_name": cached_content_name} if cached_content_name is not None else {}
                 try:
                     # Delegate to provider implementation
                     result = await self._provider_impl.call_with_tools(
@@ -896,6 +908,7 @@ class LLMProvider:
                         initial_backoff=initial_backoff,
                         max_backoff=max_backoff,
                         tool_choice=tool_choice,
+                        **cache_kwarg,
                     )
                 except Exception as e:
                     get_span_recorder().record_llm_call(
