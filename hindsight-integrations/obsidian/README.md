@@ -20,6 +20,7 @@ A hard rule of this plugin: **Hindsight is never a second source of truth.**
 - **Same data from UI and API** — the Obsidian chat panel and your external automations (n8n, Hermes, etc.) hit the same bank with the same tags, so they see exactly the same scoped view.
 - **Grounded chat** — a side panel that answers questions over your notes via Hindsight `reflect`. Each answer lists the **notes retrieved** (click to open) and a **reasoning** disclosure showing what each step queried. Scope a question with the **vault / folder** dropdowns above the ask bar, start a fresh thread with **New chat**, and flip on **Debug logging** to see the exact `reflect` request + retrieved notes in the console.
 - **Manual or automatic** — sync on every edit, or run _Sync vault now_ on demand.
+- **Always-visible sync status** — a live indicator in the status bar (and the chat header) shows how many notes are synced, when the last sync ran, and any pending edits — e.g. `Hindsight ✓ 412 notes · 2m ago`. A refresh button beside it (which spins while syncing) triggers a sync on click, so nothing happens invisibly.
 
 ### Scoping
 
