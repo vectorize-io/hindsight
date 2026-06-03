@@ -43,7 +43,7 @@ That's what `hindsight-vapi` does.
 
 ## How It Works
 
-Vapi doesn't expose a per-turn hook in its server architecture — there's no equivalent to Pipecat's `FrameProcessor`. So memory is injected **once per call** at call start, then the call runs as usual, and the transcript is retained at the end.
+Vapi doesn't expose a per-turn hook in its server architecture. So memory is injected **once per call** at call start, then the call runs as usual, and the transcript is retained at the end.
 
 ```text
 Incoming call
@@ -235,27 +235,11 @@ The common thread: the value of memory shows up the **second** time someone call
 
 ---
 
-## What's Different About Vapi vs. Pipecat
-
-If you've used the [Pipecat integration](/blog/2026/04/28/pipecat-voice-ai-persistent-memory), the mental model shifts in one important way: **Vapi is once-per-call, Pipecat is per-turn**.
-
-| | Pipecat | Vapi |
-|---|---|---|
-| Memory injection point | Every user turn (FrameProcessor) | Once per call (assistant-request webhook) |
-| Retention timing | After every turn (async) | After call ends (fire-and-forget) |
-| Integration shape | Pipeline component | HTTP webhook |
-| Per-turn latency added | 50–300 ms (recall budget dependent) | Zero |
-| Best fit | Long, evolving conversations | Bounded calls with strong cross-call continuity |
-
-Neither is "better" — they fit different shapes. Vapi calls are typically transactional (book the appointment, resolve the ticket, take the order); per-turn memory injection would be overkill and would slow down the first response. Vapi's once-per-call model fits the call structure exactly.
-
----
-
 ## Production Notes
 
 A few things to know once you're past the prototype:
 
-**Latency.** Recall on `assistant-request` runs before Vapi starts the call, so it doesn't add to per-turn latency once the call is live. Expect recall to add roughly 50–300 ms depending on `recall_budget` and memory size — the same envelope as the Pipecat integration's per-turn lookup, with more headroom here because it happens once at the start instead of on every turn.
+**Latency.** Recall on `assistant-request` runs before Vapi starts the call, so it doesn't add to per-turn latency once the call is live. Expect recall to add roughly 50–300 ms depending on `recall_budget` and memory size — and because it happens once at the start of the call rather than mid-conversation, the budget is forgiving.
 
 **Privacy and retention.** If you need to delete memories for a specific caller (right-to-be-forgotten, account closure), the Hindsight Python client exposes `delete_bank` / `adelete_bank`, and the REST API serves the same operation under `DELETE /v1/default/banks/{bank_id}`. If you key banks by phone number or account ID, deletion is a single call.
 
@@ -282,7 +266,6 @@ Two events. One endpoint. Memory that compounds across every call to your Vapi a
 - **Run the local example**: `python examples/interactive_webhook.py --bank demo-user` in `hindsight-integrations/vapi/` simulates Vapi events end-to-end (with `:script`, `:end <transcript>`, `:call <number>`, `:memories` commands)
 - **Tune `recall_budget`**: start with `"mid"`, drop to `"low"` if you're optimizing first-response latency
 - **Pick a bank-scoping strategy** that matches your customer model — per-caller, per-assistant, or per-account
-- **Compare with [Pipecat integration](/blog/2026/04/28/pipecat-voice-ai-persistent-memory)** if your pipeline benefits from per-turn memory injection
 - **Browse the [full integration list](https://hindsight.vectorize.io/integrations/)** — Hermes, OpenAI Agents, n8n, Paperclip, and 30+ others all have the same memory layer underneath
 
 ---
@@ -290,6 +273,5 @@ Two events. One endpoint. Memory that compounds across every call to your Vapi a
 **Further reading:**
 
 - [What Is Agent Memory?](https://vectorize.io/what-is-agent-memory/) — foundational concepts
-- [Pipecat Voice AI Persistent Memory](/blog/2026/04/28/pipecat-voice-ai-persistent-memory) — the per-turn voice integration
 - [Hindsight Vapi Integration docs](https://hindsight.vectorize.io/integrations/vapi) — full configuration reference
 - [Best AI Agent Memory Systems in 2026](https://vectorize.io/articles/best-ai-agent-memory-systems/) — full landscape comparison
