@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write  # for PyPI trusted publishing
+      contents: write  # for creating GitHub releases (Obsidian plugin assets)
 
     steps:
     - uses: actions/checkout@v6
@@ -111,6 +112,26 @@ jobs:
       if: steps.type.outputs.type == 'typescript'
       working-directory: ./hindsight-integrations/${{ steps.info.outputs.integration }}
       run: npm run build
+
+    # ── Obsidian plugin — attach BRAT / community-store install assets ───────
+    # Obsidian plugins install from GitHub *release assets* (main.js,
+    # manifest.json, styles.css), not from npm — the npm publish below only
+    # gives us a versioned artifact. BRAT and the community store read these
+    # three files off the release for the tag.
+    - name: Attach Obsidian release assets
+      if: steps.type.outputs.type == 'typescript' && steps.info.outputs.integration == 'obsidian'
+      working-directory: ./hindsight-integrations/obsidian
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        TAG="${{ steps.info.outputs.tag }}"
+        if gh release view "$TAG" >/dev/null 2>&1; then
+          gh release upload "$TAG" main.js manifest.json styles.css --clobber
+        else
+          gh release create "$TAG" main.js manifest.json styles.css \
+            --title "Obsidian plugin v${{ steps.info.outputs.version }}" \
+            --notes "Hindsight Obsidian plugin v${{ steps.info.outputs.version }}. Install via BRAT (point it at this release) or copy main.js/manifest.json/styles.css into <vault>/.obsidian/plugins/hindsight/."
+        fi
 
     - name: Publish TypeScript package to npm
       if: steps.type.outputs.type == 'typescript'
