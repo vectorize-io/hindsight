@@ -147,7 +147,7 @@ vapi.calls.create(
 )
 ```
 
-`build_assistant_overrides()` runs the same recall logic as the inbound path and returns the same `assistantOverrides` payload — just on demand, with a query you provide (caller name, account ID, call topic). For the retention side, `end-of-call-report` fires on outbound calls too, so the transcript is retained automatically once the call ends.
+`build_assistant_overrides()` runs the same recall logic as the inbound path and returns the same `assistantOverrides` payload — just on demand, with a query you provide (caller name, account ID, call topic). The retention side is unchanged: whenever Vapi delivers an `end-of-call-report` to your webhook (inbound or outbound), the handler retains the transcript automatically.
 
 ---
 
@@ -255,9 +255,9 @@ Neither is "better" — they fit different shapes. Vapi calls are typically tran
 
 A few things to know once you're past the prototype:
 
-**Latency.** Recall on `assistant-request` runs before Vapi starts the call. With `recall_budget="mid"` and a Cloud endpoint, that's typically well under 500 ms — invisible to the caller. If you see drag, profile your network round trip first; recall itself is rarely the bottleneck.
+**Latency.** Recall on `assistant-request` runs before Vapi starts the call, so it doesn't add to per-turn latency once the call is live. Expect recall to add roughly 50–300 ms depending on `recall_budget` and memory size — the same envelope as the Pipecat integration's per-turn lookup, with more headroom here because it happens once at the start instead of on every turn.
 
-**Privacy and retention.** If you need to delete memories for a specific caller (right-to-be-forgotten, account closure), the Hindsight Cloud dashboard exposes per-bank delete. If you key banks by phone number or account ID, deletion is one click. The Python client also exposes a `delete_bank` API for programmatic cleanup.
+**Privacy and retention.** If you need to delete memories for a specific caller (right-to-be-forgotten, account closure), the Hindsight Python client exposes `delete_bank` / `adelete_bank`, and the REST API serves the same operation under `DELETE /v1/default/banks/{bank_id}`. If you key banks by phone number or account ID, deletion is a single call.
 
 **Failure isolation.** Both recall and retention swallow exceptions internally and log them — a failing Hindsight call never breaks the Vapi call. If recall errors, the assistant just runs without injected memories (no worse than not having the integration). If retention errors, you lose that one transcript; the next call still works fine.
 
@@ -279,7 +279,7 @@ Two events. One endpoint. Memory that compounds across every call to your Vapi a
 ## Next Steps
 
 - **Try it on a free Hindsight Cloud account**: [sign up](https://ui.hindsight.vectorize.io/signup), grab a key, point your FastAPI webhook at the Cloud URL
-- **Run the local example**: `python examples/interactive_webhook.py` in `hindsight-integrations/vapi/` simulates Vapi events end-to-end
+- **Run the local example**: `python examples/interactive_webhook.py --bank demo-user` in `hindsight-integrations/vapi/` simulates Vapi events end-to-end (with `:script`, `:end <transcript>`, `:call <number>`, `:memories` commands)
 - **Tune `recall_budget`**: start with `"mid"`, drop to `"low"` if you're optimizing first-response latency
 - **Pick a bank-scoping strategy** that matches your customer model — per-caller, per-assistant, or per-account
 - **Compare with [Pipecat integration](/blog/2026/04/28/pipecat-voice-ai-persistent-memory)** if your pipeline benefits from per-turn memory injection
