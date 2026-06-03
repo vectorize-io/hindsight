@@ -149,6 +149,10 @@
     "clearObservationsDetailedWarning": "所有观察记忆都将永久删除。此操作无法撤销。",
     "observationsNotEnabled": "观察未启用",
     "observationsDisabledMessage": "此服务器上的观察整合已禁用。请设置 <envVar></envVar> 以启用。",
+    "auditLogsNotEnabled": "审计日志未启用",
+    "auditLogsDisabledMessage": "此服务器上的审计日志已禁用。请设置 <envVar></envVar> 以启用。",
+    "llmRequestsNotEnabled": "LLM Requests 未启用",
+    "llmRequestsDisabledMessage": "此服务器上的 LLM 请求追踪已禁用。请设置 <envVar></envVar> 以启用。",
     "deleteWillDeleteDetails": "这将删除 {memories, plural, other {# 条记忆}}、{documents, plural, other {# 个文档}} 和 {links, plural, other {# 个链接}}。",
     "deleteWillDeleteObservations": "这将删除 {count, plural, other {# 个观察}}。"
   },

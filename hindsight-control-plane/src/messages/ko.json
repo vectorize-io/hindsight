@@ -149,6 +149,10 @@
     "clearObservationsDetailedWarning": "모든 관찰 메모리가 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
     "observationsNotEnabled": "관찰이 활성화되지 않음",
     "observationsDisabledMessage": "이 서버에서는 관찰 통합이 비활성화되어 있습니다. 활성화하려면 <envVar></envVar>를 설정하세요.",
+    "auditLogsNotEnabled": "감사 로그가 활성화되지 않음",
+    "auditLogsDisabledMessage": "이 서버에서는 감사 로깅이 비활성화되어 있습니다. 활성화하려면 <envVar></envVar>를 설정하세요.",
+    "llmRequestsNotEnabled": "LLM 요청이 활성화되지 않음",
+    "llmRequestsDisabledMessage": "이 서버에서는 LLM 요청 추적이 비활성화되어 있습니다. 활성화하려면 <envVar></envVar>를 설정하세요.",
     "deleteWillDeleteDetails": "{memories, plural, other {# 메모리}}, {documents, plural, other {# 문서}}, {links, plural, other {# 링크}}가 삭제됩니다.",
     "deleteWillDeleteObservations": "{count, plural, other {# 관찰}}이 삭제됩니다."
   },

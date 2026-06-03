@@ -1288,6 +1288,8 @@ export class ControlPlaneClient {
         file_upload_api: boolean;
         document_export_api: boolean;
         document_import_api: boolean;
+        audit_log: boolean;
+        llm_trace: boolean;
       };
     }>("/api/version");
   }

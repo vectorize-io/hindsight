@@ -149,6 +149,10 @@
     "clearObservationsDetailedWarning": "Tous les souvenirs d'observation seront définitivement supprimés. Cette action est irréversible.",
     "observationsNotEnabled": "Observations non activées",
     "observationsDisabledMessage": "La consolidation des observations est désactivée sur ce serveur. Définissez <envVar></envVar> pour l'activer.",
+    "auditLogsNotEnabled": "Journaux d'audit non activés",
+    "auditLogsDisabledMessage": "La journalisation d'audit est désactivée sur ce serveur. Définissez <envVar></envVar> pour l'activer.",
+    "llmRequestsNotEnabled": "Requêtes LLM non activées",
+    "llmRequestsDisabledMessage": "Le traçage des requêtes LLM est désactivé sur ce serveur. Définissez <envVar></envVar> pour l'activer.",
     "deleteWillDeleteDetails": "Cela supprimera {memories, plural, one {# mémoire} other {# mémoires}}, {documents, plural, one {# document} other {# documents}} et {links, plural, one {# lien} other {# liens}}.",
     "deleteWillDeleteObservations": "Cela supprimera {count, plural, one {# observation} other {# observations}}."
   },

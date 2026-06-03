@@ -149,6 +149,10 @@
     "clearObservationsDetailedWarning": "All observation memories will be permanently deleted. This action cannot be undone.",
     "observationsNotEnabled": "Observations Not Enabled",
     "observationsDisabledMessage": "Observations consolidation is disabled on this server. Set <envVar></envVar> to enable.",
+    "auditLogsNotEnabled": "Audit Logs Not Enabled",
+    "auditLogsDisabledMessage": "Audit logging is disabled on this server. Set <envVar></envVar> to enable.",
+    "llmRequestsNotEnabled": "LLM Requests Not Enabled",
+    "llmRequestsDisabledMessage": "LLM request tracing is disabled on this server. Set <envVar></envVar> to enable.",
     "deleteWillDeleteDetails": "This will delete {memories, plural, one {# memory} other {# memories}}, {documents, plural, one {# document} other {# documents}}, and {links, plural, one {# link} other {# links}}.",
     "deleteWillDeleteObservations": "This will delete {count, plural, one {# observation} other {# observations}}."
   },

@@ -149,6 +149,10 @@
     "clearObservationsDetailedWarning": "Alle Beobachtungs-Erinnerungen werden dauerhaft gelöscht. Diese Aktion kann nicht rückgängig gemacht werden.",
     "observationsNotEnabled": "Beobachtungen nicht aktiviert",
     "observationsDisabledMessage": "Die Beobachtungskonsolidierung ist auf diesem Server deaktiviert. Setzen Sie <envVar></envVar>, um sie zu aktivieren.",
+    "auditLogsNotEnabled": "Audit-Protokolle nicht aktiviert",
+    "auditLogsDisabledMessage": "Die Audit-Protokollierung ist auf diesem Server deaktiviert. Setzen Sie <envVar></envVar>, um sie zu aktivieren.",
+    "llmRequestsNotEnabled": "LLM Requests nicht aktiviert",
+    "llmRequestsDisabledMessage": "Das Tracing von LLM-Anfragen ist auf diesem Server deaktiviert. Setzen Sie <envVar></envVar>, um es zu aktivieren.",
     "deleteWillDeleteDetails": "Dadurch werden {memories, plural, one {# Erinnerung} other {# Erinnerungen}}, {documents, plural, one {# Dokument} other {# Dokumente}} und {links, plural, one {# Verknüpfung} other {# Verknüpfungen}} gelöscht.",
     "deleteWillDeleteObservations": "Dadurch werden {count, plural, one {# Beobachtung} other {# Beobachtungen}} gelöscht."
   },

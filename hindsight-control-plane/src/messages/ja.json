@@ -149,6 +149,10 @@
     "clearObservationsDetailedWarning": "すべての観測メモリが完全に削除されます。この操作は元に戻せません。",
     "observationsNotEnabled": "観測は有効になっていません",
     "observationsDisabledMessage": "このサーバーでは観測の統合が無効になっています。有効にするには <envVar></envVar> を設定してください。",
+    "auditLogsNotEnabled": "監査ログは有効になっていません",
+    "auditLogsDisabledMessage": "このサーバーでは監査ログが無効になっています。有効にするには <envVar></envVar> を設定してください。",
+    "llmRequestsNotEnabled": "LLMリクエストは有効になっていません",
+    "llmRequestsDisabledMessage": "このサーバーではLLMリクエストのトレースが無効になっています。有効にするには <envVar></envVar> を設定してください。",
     "deleteWillDeleteDetails": "{memories, plural, other {# 件のメモリ}}、{documents, plural, other {# 件のドキュメント}}、および {links, plural, other {# 件のリンク}} が削除されます。",
     "deleteWillDeleteObservations": "{count, plural, other {# 件の観測}} が削除されます。"
   },

@@ -149,6 +149,10 @@
     "clearObservationsDetailedWarning": "Todas as memórias de observação serão permanentemente excluídas. Esta ação não pode ser desfeita.",
     "observationsNotEnabled": "Observações não habilitadas",
     "observationsDisabledMessage": "A consolidação de observações está desabilitada neste servidor. Defina <envVar></envVar> para habilitar.",
+    "auditLogsNotEnabled": "Registros de auditoria não habilitados",
+    "auditLogsDisabledMessage": "O registro de auditoria está desabilitado neste servidor. Defina <envVar></envVar> para habilitar.",
+    "llmRequestsNotEnabled": "Requisições LLM não habilitadas",
+    "llmRequestsDisabledMessage": "O rastreamento de requisições LLM está desabilitado neste servidor. Defina <envVar></envVar> para habilitar.",
     "deleteWillDeleteDetails": "Isso excluirá {memories, plural, one {# memória} other {# memórias}}, {documents, plural, one {# documento} other {# documentos}} e {links, plural, one {# link} other {# links}}.",
     "deleteWillDeleteObservations": "Isso excluirá {count, plural, one {# observação} other {# observações}}."
   },

@@ -2382,6 +2382,8 @@ class FeaturesInfo(BaseModel):
     file_upload_api: bool = Field(description="Whether file upload/conversion API is enabled")
     document_export_api: bool = Field(description="Whether the document export endpoint is enabled")
     document_import_api: bool = Field(description="Whether the document import endpoint is enabled")
+    audit_log: bool = Field(description="Whether audit logging is enabled")
+    llm_trace: bool = Field(description="Whether per-bank LLM request tracing is enabled")
 
 
 class VersionResponse(BaseModel):
@@ -3047,6 +3049,8 @@ def _register_routes(app: FastAPI):
                 file_upload_api=config.enable_file_upload_api,
                 document_export_api=config.enable_document_export_api,
                 document_import_api=config.enable_document_import_api,
+                audit_log=config.audit_log_enabled,
+                llm_trace=config.llm_trace_enabled,
             ),
         )
 
