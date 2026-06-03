@@ -105,6 +105,7 @@ async def import_documents(
     archive_bytes: bytes,
     on_conflict: OnConflict = "skip",
     ops: Any = None,
+    outbox_callback_factory: Any = None,
 ) -> ImportResult:
     """Import every document in ``archive_bytes`` into ``bank_id``.
 
@@ -156,6 +157,7 @@ async def import_documents(
             document=document,
             target_id=target_id,
             ops=ops,
+            outbox_callback_factory=outbox_callback_factory,
         )
         result.documents_imported += 1
         result.facts_imported += len(unit_ids)
@@ -220,9 +222,18 @@ async def _import_one_document(
     document: TransferDocument,
     target_id: str,
     ops: Any,
+    outbox_callback_factory: Any = None,
 ) -> list[str]:
     """Re-embed and insert a single document; returns the new unit ids in fact order."""
     log_buffer: list[str] = []
+
+    # Fire the same retain.completed webhook retain emits, transactionally inside
+    # this document's insert. Factory returns None when no webhook manager exists.
+    outbox_callback = (
+        outbox_callback_factory([{"document_id": target_id, "tags": list(document.tags)}])
+        if outbox_callback_factory
+        else None
+    )
 
     extracted_facts = [_to_extracted_fact(fact) for fact in document.facts]
 
@@ -292,6 +303,7 @@ async def _import_one_document(
                 unit_to_entity_ids=phase1.entities.unit_to_entity_ids,
                 semantic_ann_links=phase1.semantic_ann_links,
                 skip_semantic_links=False,
+                outbox_callback=outbox_callback,
                 ops=ops,
             )
 

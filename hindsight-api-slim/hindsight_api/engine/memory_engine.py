@@ -3254,13 +3254,27 @@ class MemoryEngine(MemoryEngineInterface):
         on_conflict: str,
         request_context: "RequestContext",
     ) -> "ImportResult":
-        """Run the deterministic import inline (shared by the worker handler)."""
+        """Run the deterministic import inline (shared by the worker handler).
+
+        After inserting, runs the same post-retain side effects as a normal
+        retain so imported documents aren't second-class citizens:
+          * retain.completed webhooks (one per imported document, fired
+            transactionally inside each document's insert);
+          * auto-consolidation (so imported facts get observations — when the
+            archive already carried observations, their sources are marked
+            consolidated, so consolidation safely skips them);
+          * graph maintenance (replace/new-id imports cascade-delete old data and
+            enqueue relink work).
+        """
         from .transfer import import_documents
 
         backend = await self._get_backend()
         await bank_utils.get_or_create_bank_profile(backend, bank_id)
         resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
-        return await import_documents(
+        outbox_factory = self._build_retain_outbox_callback_factory(
+            bank_id=bank_id, operation_id=None, schema=_current_schema.get()
+        )
+        result = await import_documents(
             backend=backend,
             embeddings_model=self.embeddings,
             entity_resolver=self.entity_resolver,
@@ -3269,7 +3283,20 @@ class MemoryEngine(MemoryEngineInterface):
             bank_id=bank_id,
             archive_bytes=archive_bytes,
             on_conflict=on_conflict,
+            outbox_callback_factory=outbox_factory,
         )
+
+        if resolved_config.enable_observations and resolved_config.enable_auto_consolidation:
+            try:
+                await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+            except Exception as e:
+                logger.warning(f"Failed to submit consolidation after import for bank {bank_id}: {e}")
+        try:
+            await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
+        except Exception as e:
+            logger.warning(f"Failed to submit graph maintenance after import for bank {bank_id}: {e}")
+
+        return result
 
     def recall(
         self,

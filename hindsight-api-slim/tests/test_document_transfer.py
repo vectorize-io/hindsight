@@ -102,10 +102,13 @@ async def test_export_import_roundtrip_without_llm(memory, request_context, monk
         assert result["documents_skipped"] == 0
         assert result["facts_imported"] == parsed.manifest.fact_count
 
-        # Facts landed in the destination bank with matching text.
+        # Facts landed in the destination bank with matching text. Import triggers
+        # consolidation, which may synthesize observation units in the destination,
+        # so filter those out — the imported facts are world/experience only.
         units = await memory.list_memory_units(dst, request_context=request_context)
-        assert units["total"] == result["facts_imported"]
-        assert {item["text"] for item in units["items"]} == exported_texts
+        imported_units = [item for item in units["items"] if item["fact_type"] != "observation"]
+        assert len(imported_units) == result["facts_imported"]
+        assert {item["text"] for item in imported_units} == exported_texts
 
         # Entities were re-resolved in the destination bank.
         entities = await memory.list_entities(dst, request_context=request_context)
@@ -296,6 +299,29 @@ async def test_export_import_observations(memory, request_context):
                 dst_sources,
             )
             assert consolidated == 2
+    finally:
+        await memory.delete_bank(src, request_context=request_context)
+        await memory.delete_bank(dst, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_import_triggers_consolidation(memory, request_context):
+    """Importing (without observations) triggers consolidation in the target bank,
+    so observations get generated there — same as a normal retain."""
+    src = _unique_bank("transfer_consol_src")
+    dst = _unique_bank("transfer_consol_dst")
+    try:
+        await _retain(memory, src, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
+        # Export WITHOUT observations: the archive carries only world/experience facts.
+        archive = await memory.export_documents_async(src, request_context)
+        assert parse_archive(archive).observations == []
+
+        # Import into a fresh bank. The post-import consolidation trigger runs
+        # inline (SyncTaskBackend) and the mock LLM produces observations.
+        await _import(memory, dst, archive, request_context)
+
+        obs = await memory.list_memory_units(dst, fact_type="observation", request_context=request_context)
+        assert obs["total"] > 0, "import should have triggered consolidation to generate observations"
     finally:
         await memory.delete_bank(src, request_context=request_context)
         await memory.delete_bank(dst, request_context=request_context)
