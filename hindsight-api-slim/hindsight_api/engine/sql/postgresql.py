@@ -183,13 +183,19 @@ class PostgreSQLDialect(SQLDialect):
         arm_index: int = 0,
         text_search_extension: str = "native",
         bm25_language: str = "english",
+        bm25_min_score: float = 0.0,
         extra_where: str = "",
     ) -> str:
         if text_search_extension == "vchord":
-            # <&> returns a distance (lower = more relevant), negate for score
+            # <&> returns the NEGATIVE BM25 score (lower = more relevant), negate
+            # for a positive score where higher = more relevant.
             bm25_score_expr = f"-(search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize({text_param}, 'llmlingua2')))"
             bm25_order_by = f"{bm25_score_expr} DESC"
-            bm25_where_filter = ""
+            # Unlike native tsvector (which has a boolean `@@` match gate), the
+            # VectorChord operator ranks *every* document, so a bare ORDER BY ...
+            # LIMIT pads the result with zero-score, non-matching rows. Gate on the
+            # score so only genuine term matches survive into fusion/reranking.
+            bm25_where_filter = f"AND -(search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize({text_param}, 'llmlingua2'))) > {bm25_min_score:g}"
         elif text_search_extension == "pg_textsearch":
             bm25_score_expr = f"-({text_param} <@> to_bm25query({text_param}, 'idx_memory_units_text_search'))"
             bm25_order_by = f"text <@> to_bm25query({text_param}, 'idx_memory_units_text_search') ASC"

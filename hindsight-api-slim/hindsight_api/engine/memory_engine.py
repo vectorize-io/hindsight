@@ -3654,6 +3654,28 @@ class MemoryEngine(MemoryEngineInterface):
                     key=lambda r: r.combined_score if hasattr(r, "combined_score") else 0, reverse=True
                 )
 
+            # Cap each source independently before fusion so a single
+            # over-expanding backend (e.g. VectorChord returning hundreds of
+            # weak candidates) cannot fill the reranker's global budget on its
+            # own and crowd the other arms out of the final candidate pool.
+            per_source_cap = get_config().recall_max_candidates_per_source
+            if per_source_cap > 0:
+                from .search.fusion import cap_per_source
+
+                pre_cap_counts = (len(semantic_results), len(bm25_results), len(graph_results))
+                semantic_results = cap_per_source(semantic_results, per_source_cap)
+                bm25_results = cap_per_source(bm25_results, per_source_cap)
+                graph_results = cap_per_source(graph_results, per_source_cap)
+                if temporal_results:
+                    temporal_results = cap_per_source(temporal_results, per_source_cap)
+                if pre_cap_counts != (len(semantic_results), len(bm25_results), len(graph_results)):
+                    logger.debug(
+                        f"[RECALL {recall_id}] Per-source cap ({per_source_cap}) applied: "
+                        f"semantic {pre_cap_counts[0]}->{len(semantic_results)}, "
+                        f"bm25 {pre_cap_counts[1]}->{len(bm25_results)}, "
+                        f"graph {pre_cap_counts[2]}->{len(graph_results)}"
+                    )
+
             retrieval_duration = time.time() - retrieval_start
 
             step_duration = time.time() - step_start

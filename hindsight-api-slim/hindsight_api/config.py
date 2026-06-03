@@ -493,6 +493,10 @@ ENV_RECALL_BUDGET_ADAPTIVE_HIGH = "HINDSIGHT_API_RECALL_BUDGET_ADAPTIVE_HIGH"
 ENV_RECALL_BUDGET_MIN = "HINDSIGHT_API_RECALL_BUDGET_MIN"
 ENV_RECALL_BUDGET_MAX = "HINDSIGHT_API_RECALL_BUDGET_MAX"
 
+# Recall candidate gating (per-source cap + BM25 score floor)
+ENV_BM25_MIN_SCORE = "HINDSIGHT_API_BM25_MIN_SCORE"
+ENV_RECALL_MAX_CANDIDATES_PER_SOURCE = "HINDSIGHT_API_RECALL_MAX_CANDIDATES_PER_SOURCE"
+
 # Audit log settings
 ENV_AUDIT_LOG_ENABLED = "HINDSIGHT_API_AUDIT_LOG_ENABLED"
 ENV_AUDIT_LOG_ACTIONS = "HINDSIGHT_API_AUDIT_LOG_ACTIONS"
@@ -598,6 +602,14 @@ DEFAULT_RERANKER_LITELLM_TIMEOUT = 60.0
 DEFAULT_RERANKER_LITELLM_SDK_TIMEOUT = 60.0
 DEFAULT_RERANKER_GOOGLE_TIMEOUT = 60.0
 DEFAULT_RERANKER_MAX_CANDIDATES = 300
+# Minimum BM25 score a row must exceed to enter fusion. 0.0 gates out
+# zero-score (non-matching) rows on backends — notably VectorChord — whose
+# operator ranks every document rather than pre-filtering to term matches.
+DEFAULT_BM25_MIN_SCORE = 0.0
+# Per-source candidate cap applied to each retrieval arm (semantic, BM25, graph,
+# temporal) before RRF, so a single over-expanding backend cannot fill the
+# reranker's global candidate budget on its own. 0 disables the cap.
+DEFAULT_RECALL_MAX_CANDIDATES_PER_SOURCE = 0
 DEFAULT_RERANKER_FLASHRANK_MODEL = "ms-marco-MiniLM-L-12-v2"  # Best balance of speed and quality
 DEFAULT_RERANKER_FLASHRANK_CACHE_DIR = None  # Use default cache directory
 DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA = False  # Disable ONNX CPU memory arena to bound RSS
@@ -1170,6 +1182,8 @@ class HindsightConfig:
     reranker_tei_max_concurrent: int
     reranker_tei_http_timeout: float
     reranker_max_candidates: int
+    bm25_min_score: float
+    recall_max_candidates_per_source: int
     reranker_cohere_api_key: str | None
     reranker_cohere_model: str
     reranker_cohere_base_url: str | None
@@ -1894,6 +1908,10 @@ class HindsightConfig:
                 os.getenv(ENV_RERANKER_TEI_HTTP_TIMEOUT, str(DEFAULT_RERANKER_TEI_HTTP_TIMEOUT))
             ),
             reranker_max_candidates=int(os.getenv(ENV_RERANKER_MAX_CANDIDATES, str(DEFAULT_RERANKER_MAX_CANDIDATES))),
+            bm25_min_score=float(os.getenv(ENV_BM25_MIN_SCORE, str(DEFAULT_BM25_MIN_SCORE))),
+            recall_max_candidates_per_source=int(
+                os.getenv(ENV_RECALL_MAX_CANDIDATES_PER_SOURCE, str(DEFAULT_RECALL_MAX_CANDIDATES_PER_SOURCE))
+            ),
             # Cohere reranker (with backward-compatible fallback to shared API key)
             reranker_cohere_api_key=os.getenv(ENV_RERANKER_COHERE_API_KEY) or os.getenv(ENV_COHERE_API_KEY),
             reranker_cohere_model=os.getenv(ENV_RERANKER_COHERE_MODEL, DEFAULT_RERANKER_COHERE_MODEL),

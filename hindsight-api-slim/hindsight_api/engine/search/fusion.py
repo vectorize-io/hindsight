@@ -7,6 +7,27 @@ from typing import Any
 from .types import MergedCandidate, RetrievalResult
 
 
+def cap_per_source(results: list[RetrievalResult], cap: int) -> list[RetrievalResult]:
+    """Truncate a single retrieval arm to its top-``cap`` results.
+
+    Applied per source (semantic, BM25, graph, temporal) before fusion so that
+    one over-expanding backend cannot crowd out the others when the merged pool
+    is later trimmed to the reranker's global candidate budget. The caller is
+    responsible for sorting ``results`` by relevance first; this only slices.
+
+    Args:
+        results: Results for a single source, already sorted best-first.
+        cap: Maximum results to keep. ``0`` (or negative) disables the cap.
+
+    Returns:
+        The original list when the cap is disabled or not exceeded, otherwise a
+        truncated copy of the top ``cap`` results.
+    """
+    if cap <= 0 or len(results) <= cap:
+        return results
+    return results[:cap]
+
+
 def reciprocal_rank_fusion(result_lists: list[list[RetrievalResult]], k: int = 60) -> list[MergedCandidate]:
     """
     Merge multiple ranked result lists using Reciprocal Rank Fusion.

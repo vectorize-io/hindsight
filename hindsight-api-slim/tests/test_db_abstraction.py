@@ -232,6 +232,28 @@ class TestPostgreSQLDialect:
         assert "to_bm25query" in arm
         assert "tokenize" in arm
 
+    def test_build_bm25_arm_vchord_gates_zero_score_by_default(self, d):
+        """VectorChord ranks every doc, so a score gate must filter non-matches.
+
+        The negated `<&>` score is BM25 (>= 0); the default 0 floor keeps only
+        rows with a genuine query-term match, mirroring native tsvector's `@@`.
+        """
+        arm = d.build_bm25_arm(
+            table="t", cols="id", fact_type="world",
+            bank_id_param="$2", limit_param="$3", text_param="$4",
+            text_search_extension="vchord",
+        )
+        assert "-(search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize($4, 'llmlingua2'))) > 0" in arm
+
+    def test_build_bm25_arm_vchord_honors_custom_min_score(self, d):
+        arm = d.build_bm25_arm(
+            table="t", cols="id", fact_type="world",
+            bank_id_param="$2", limit_param="$3", text_param="$4",
+            text_search_extension="vchord",
+            bm25_min_score=2.5,
+        )
+        assert "> 2.5" in arm
+
     def test_build_bm25_arm_pgroonga(self, d):
         arm = d.build_bm25_arm(
             table="schema.memory_units", cols="id, text", fact_type="world",

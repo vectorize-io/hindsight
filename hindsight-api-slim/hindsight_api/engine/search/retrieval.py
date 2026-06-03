@@ -226,6 +226,7 @@ async def retrieve_semantic_bm25_combined(
                     arm_index=i,
                     text_search_extension=text_ext,
                     bm25_language=config.text_search_extension_native_language,
+                    bm25_min_score=config.bm25_min_score,
                     extra_where=created_range_clause,
                 )
             )

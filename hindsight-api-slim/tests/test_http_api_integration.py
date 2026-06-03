@@ -1315,6 +1315,36 @@ async def test_unknown_params_not_rejected(api_client):
     assert "X-Ignored-Params" not in response.headers
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["enable_observations", "enable_auto_consolidation"])
+async def test_patch_config_persists_override_for_uncreated_bank(api_client, field):
+    """PATCH config must persist the override even when the bank was never retained.
+
+    Banks are created lazily on first retain, so a PATCH that precedes any
+    ingestion previously UPDATE-d zero rows and silently no-op'd while returning
+    200 (issue #1940). The endpoint must auto-create the bank and round-trip the
+    override in the same response.
+    """
+    test_bank_id = f"patch_uncreated_{field}_{datetime.now().timestamp()}"
+
+    # PATCH config without ever creating the bank (no PUT, no retain).
+    response = await api_client.patch(
+        f"/v1/default/banks/{test_bank_id}/config",
+        json={"updates": {field: False}},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["config"][field] is False
+    assert body["overrides"].get(field) is False
+
+    # GET reads back the persisted override (proves it was written, not just echoed).
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/config")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["config"][field] is False
+    assert body["overrides"].get(field) is False
+
+
 @pytest.mark.hs_llm_core
 @pytest.mark.asyncio
 async def test_full_api_workflow_llm_quality(api_client_real_llm):
