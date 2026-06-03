@@ -4,7 +4,7 @@
  * note — DESIGN.md §0.5) and a reasoning disclosure.
  */
 
-import { ItemView, MarkdownRenderer, Notice, type WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, Notice, type WorkspaceLeaf, setIcon } from "obsidian";
 import { HINDSIGHT_ICON_ID, HINDSIGHT_MARK_DATA_URI } from "./branding";
 import { runChatTurn } from "./chat";
 import type HindsightPlugin from "./main";
@@ -34,6 +34,7 @@ export class ChatView extends ItemView {
   private folderFilter = ALL;
   private emptyState: HTMLElement | null = null;
   private syncStatusEl: HTMLElement | null = null;
+  private syncButtonEl: HTMLElement | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -99,19 +100,26 @@ export class ChatView extends ItemView {
       attr: { src: HINDSIGHT_MARK_DATA_URI, alt: "Hindsight" },
     });
     header.createEl("span", { cls: "hindsight-chat__brand-name", text: "Hindsight" });
-    // Sync status, mirroring the bottom status bar; click to sync now.
-    this.syncStatusEl = header.createEl("span", { cls: "hindsight-chat__sync mod-clickable" });
-    this.syncStatusEl.addEventListener("click", () => void this.plugin.syncVault());
+    // Sync status (label) + an explicit refresh button that triggers a sync.
+    this.syncStatusEl = header.createEl("span", { cls: "hindsight-chat__sync" });
+    this.syncButtonEl = header.createEl("span", {
+      cls: "hindsight-chat__sync-btn clickable-icon",
+      attr: { "aria-label": "Sync vault now" },
+    });
+    setIcon(this.syncButtonEl, "refresh-cw");
+    this.syncButtonEl.addEventListener("click", () => void this.plugin.syncVault());
     this.refreshSyncStatus();
   }
 
-  /** Repaint the header sync pill from the plugin's current sync state. */
+  /** Repaint the header sync label + refresh button from the current sync state. */
   refreshSyncStatus(): void {
     if (!this.syncStatusEl) return;
-    const view = renderSyncStatus(this.plugin.getSyncStatus(), Date.now(), "");
+    const status = this.plugin.getSyncStatus();
+    const view = renderSyncStatus(status, Date.now(), "");
     this.syncStatusEl.setText(view.text);
-    this.syncStatusEl.setAttribute("aria-label", view.tooltip);
     this.syncStatusEl.title = view.tooltip;
+    this.syncButtonEl?.setAttribute("aria-label", view.tooltip);
+    this.syncButtonEl?.toggleClass("is-syncing", status.syncing > 0);
   }
 
   /** Reset the conversation to a blank slate. */

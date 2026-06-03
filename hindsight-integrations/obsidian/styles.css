@@ -36,11 +36,40 @@
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
   white-space: nowrap;
-  cursor: pointer;
 }
 
-.hindsight-chat__sync:hover {
-  color: var(--text-normal);
+/* Explicit refresh button — the clear "sync now" affordance. */
+.hindsight-chat__sync-btn {
+  --icon-size: 16px;
+  flex: 0 0 auto;
+}
+
+.hindsight-statusbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.hindsight-statusbar__icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.hindsight-statusbar__icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Spin the refresh icon while a sync is in flight. */
+.hindsight-chat__sync-btn.is-syncing svg,
+.hindsight-statusbar__icon.is-syncing svg {
+  animation: hindsight-spin 0.9s linear infinite;
+}
+
+@keyframes hindsight-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .hindsight-chat__empty {

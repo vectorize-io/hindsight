@@ -1,4 +1,4 @@
-import { type Debouncer, Notice, Plugin, TFile, addIcon, debounce } from "obsidian";
+import { type Debouncer, Notice, Plugin, TFile, addIcon, debounce, setIcon } from "obsidian";
 import { HINDSIGHT_ICON_ID, HINDSIGHT_ICON_SVG, HINDSIGHT_MARK_DATA_URI } from "./branding";
 import { ChatView, VIEW_TYPE_CHAT } from "./chat-view";
 import { HindsightClient } from "./client";
@@ -21,6 +21,8 @@ export default class HindsightPlugin extends Plugin {
   private scheduleFlush!: Debouncer<[], void>;
   // Sync-status indicator state (surfaced in the status bar).
   private statusBarEl: HTMLElement | null = null;
+  private statusTextEl: HTMLElement | null = null;
+  private statusIconEl: HTMLElement | null = null;
   private syncing = 0;
   private lastSyncAt: number | null = null;
   private lastSyncError = false;
@@ -77,9 +79,13 @@ export default class HindsightPlugin extends Plugin {
     this.addSettingTab(new HindsightSettingTab(this.app, this));
     this.registerVaultWatchers();
 
-    // Persistent sync indicator: click to sync now, refreshed so "x ago" stays live.
+    // Persistent sync indicator: text + a refresh button, click to sync now,
+    // refreshed on a timer so "x ago" stays live.
     this.statusBarEl = this.addStatusBarItem();
-    this.statusBarEl.addClass("mod-clickable");
+    this.statusBarEl.addClass("mod-clickable", "hindsight-statusbar");
+    this.statusTextEl = this.statusBarEl.createSpan();
+    this.statusIconEl = this.statusBarEl.createSpan({ cls: "hindsight-statusbar__icon" });
+    setIcon(this.statusIconEl, "refresh-cw");
     this.statusBarEl.addEventListener("click", () => void this.syncVault());
     this.registerInterval(window.setInterval(() => this.updateStatusBar(), 30_000));
     this.updateStatusBar();
@@ -100,11 +106,12 @@ export default class HindsightPlugin extends Plugin {
   /** Recompute and paint the sync indicators (status bar + any open chat views). */
   private updateStatusBar(): void {
     const status = this.getSyncStatus();
-    if (this.statusBarEl) {
+    if (this.statusBarEl && this.statusTextEl) {
       const view = renderSyncStatus(status, Date.now());
-      this.statusBarEl.setText(view.text);
+      this.statusTextEl.setText(view.text);
       this.statusBarEl.setAttribute("aria-label", view.tooltip);
       this.statusBarEl.title = view.tooltip;
+      this.statusIconEl?.toggleClass("is-syncing", status.syncing > 0);
     }
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT)) {
       const view = leaf.view;
