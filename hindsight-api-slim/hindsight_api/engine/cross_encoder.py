@@ -1678,7 +1678,7 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
         return CohereCrossEncoder(
             api_key=api_key,
             model=config.reranker_openrouter_model,
-            base_url="https://openrouter.ai/api/v1/rerank",
+            base_url=config.reranker_openrouter_base_url,
             timeout=config.reranker_openrouter_timeout,
         )
     elif provider == "flashrank":

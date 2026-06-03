@@ -143,6 +143,7 @@ ENV_LLM_GROQ_SERVICE_TIER = "HINDSIGHT_API_LLM_GROQ_SERVICE_TIER"
 ENV_LLM_OPENAI_SERVICE_TIER = "HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER"
 ENV_LLM_EXTRA_BODY = "HINDSIGHT_API_LLM_EXTRA_BODY"
 ENV_LLM_DEFAULT_HEADERS = "HINDSIGHT_API_LLM_DEFAULT_HEADERS"
+ENV_LLM_SEND_BANK_AS_USER = "HINDSIGHT_API_LLM_SEND_BANK_AS_USER"
 
 # LiteLLM Router chain — provider-specific config consumed by the "litellmrouter"
 # provider. Each entry is a deployment; the Router tries them in declared order and
@@ -240,6 +241,7 @@ ENV_EMBEDDINGS_OPENROUTER_API_KEY = "HINDSIGHT_API_EMBEDDINGS_OPENROUTER_API_KEY
 ENV_EMBEDDINGS_OPENROUTER_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENROUTER_MODEL"
 ENV_RERANKER_OPENROUTER_API_KEY = "HINDSIGHT_API_RERANKER_OPENROUTER_API_KEY"
 ENV_RERANKER_OPENROUTER_MODEL = "HINDSIGHT_API_RERANKER_OPENROUTER_MODEL"
+ENV_RERANKER_OPENROUTER_BASE_URL = "HINDSIGHT_API_RERANKER_OPENROUTER_BASE_URL"
 
 # ZeroEntropy configuration (embeddings)
 ENV_EMBEDDINGS_ZEROENTROPY_API_KEY = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY"
@@ -563,6 +565,7 @@ DEFAULT_LLM_INITIAL_BACKOFF = 1.0  # Initial backoff in seconds for retry expone
 DEFAULT_LLM_MAX_BACKOFF = 60.0  # Max backoff cap in seconds for retry exponential backoff
 DEFAULT_LLM_TIMEOUT = 120.0  # seconds
 DEFAULT_LLM_REASONING_EFFORT = "low"
+DEFAULT_LLM_SEND_BANK_AS_USER = False  # Opt-in: tag provider calls with user=<bank_id>
 
 # Vertex AI defaults
 DEFAULT_LLM_VERTEXAI_PROJECT_ID = None  # Required for Vertex AI
@@ -625,6 +628,7 @@ DEFAULT_RERANKER_COHERE_MODEL = "rerank-english-v3.0"
 # OpenRouter defaults
 DEFAULT_EMBEDDINGS_OPENROUTER_MODEL = "perplexity/pplx-embed-v1-0.6b"
 DEFAULT_RERANKER_OPENROUTER_MODEL = "cohere/rerank-v3.5"
+DEFAULT_RERANKER_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/rerank"
 
 # ZeroEntropy defaults
 DEFAULT_EMBEDDINGS_ZEROENTROPY_MODEL = "zembed-1"
@@ -1085,6 +1089,11 @@ class HindsightConfig:
     llm_default_headers: (
         dict | None
     )  # Custom headers passed as default_headers to provider SDK clients (e.g. {"X-Component-Id": "hindsight"} for proxies / request tracing)
+    # Tags outbound OpenAI-compatible LLM + embedding calls with `user=<bank_id>` for
+    # per-bank cost attribution. Downstream cost gateways (OpenRouter usage accounting,
+    # LiteLLM, Helicone) key attribution on the OpenAI `user` field. Opt-in; never
+    # overrides a `user` the caller already set.
+    llm_send_bank_as_user: bool
 
     # LiteLLM Router chain (provider-specific; consumed by the "litellmrouter" provider).
     # List of deployment dicts evaluated in order with fallback on transient errors.
@@ -1199,6 +1208,7 @@ class HindsightConfig:
     reranker_cohere_timeout: float
     reranker_openrouter_api_key: str | None
     reranker_openrouter_model: str
+    reranker_openrouter_base_url: str
     reranker_openrouter_timeout: float
     reranker_litellm_api_base: str
     reranker_litellm_api_key: str | None
@@ -1432,6 +1442,7 @@ class HindsightConfig:
         "embeddings_tei_base_url",
         "reranker_tei_base_url",
         "reranker_cohere_base_url",
+        "reranker_openrouter_base_url",
         "embeddings_zeroentropy_base_url",
         "reranker_zeroentropy_base_url",
         "reranker_siliconflow_base_url",
@@ -1692,6 +1703,8 @@ class HindsightConfig:
             llm_openai_service_tier=os.getenv(ENV_LLM_OPENAI_SERVICE_TIER, DEFAULT_LLM_OPENAI_SERVICE_TIER),
             llm_extra_body=json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null")),
             llm_default_headers=json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null")),
+            llm_send_bank_as_user=os.getenv(ENV_LLM_SEND_BANK_AS_USER, str(DEFAULT_LLM_SEND_BANK_AS_USER)).lower()
+            in ("true", "1"),
             llm_litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
             # Vertex AI
             llm_vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or DEFAULT_LLM_VERTEXAI_PROJECT_ID,
@@ -1933,6 +1946,9 @@ class HindsightConfig:
             or os.getenv(ENV_OPENROUTER_API_KEY)
             or os.getenv(ENV_LLM_API_KEY),
             reranker_openrouter_model=os.getenv(ENV_RERANKER_OPENROUTER_MODEL, DEFAULT_RERANKER_OPENROUTER_MODEL),
+            reranker_openrouter_base_url=os.getenv(
+                ENV_RERANKER_OPENROUTER_BASE_URL, DEFAULT_RERANKER_OPENROUTER_BASE_URL
+            ),
             reranker_openrouter_timeout=float(
                 os.getenv(ENV_RERANKER_OPENROUTER_TIMEOUT, str(DEFAULT_RERANKER_OPENROUTER_TIMEOUT))
             ),
