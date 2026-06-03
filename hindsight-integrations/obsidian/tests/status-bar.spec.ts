@@ -5,6 +5,7 @@ const base: SyncStatus = {
   configured: true,
   syncing: 0,
   pending: 0,
+  synced: 0,
   lastSyncAt: null,
   error: false,
 };
@@ -39,14 +40,22 @@ describe("renderSyncStatus", () => {
     expect(v.text).toContain("sync failed");
   });
 
-  it("shows the last-synced relative time when idle", () => {
-    const v = renderSyncStatus({ ...base, lastSyncAt: NOW - 120_000 }, NOW);
-    expect(v.text).toBe("Hindsight ✓ 2m ago");
-    expect(v.tooltip).toContain("Last synced 2m ago");
+  it("shows the synced note count and relative time when idle", () => {
+    const v = renderSyncStatus({ ...base, synced: 412, lastSyncAt: NOW - 120_000 }, NOW);
+    expect(v.text).toBe("Hindsight ✓ 412 notes · 2m ago");
+    expect(v.tooltip).toContain("412 notes synced");
+    expect(v.tooltip).toContain("last synced 2m ago");
   });
 
-  it("notes pending edits in the idle tooltip", () => {
-    const v = renderSyncStatus({ ...base, lastSyncAt: NOW - 1_000, pending: 2 }, NOW);
+  it("singularises a one-note vault", () => {
+    const v = renderSyncStatus({ ...base, synced: 1, lastSyncAt: NOW - 1_000 }, NOW);
+    expect(v.text).toContain("1 note ");
+    expect(v.text).not.toContain("1 notes");
+  });
+
+  it("surfaces pending edits in place of the timestamp when idle", () => {
+    const v = renderSyncStatus({ ...base, synced: 10, lastSyncAt: NOW - 1_000, pending: 2 }, NOW);
+    expect(v.text).toContain("2 pending");
     expect(v.tooltip).toContain("2 pending");
   });
 
@@ -61,8 +70,8 @@ describe("renderSyncStatus", () => {
   });
 
   it("drops the brand prefix when asked (chat header reuse)", () => {
-    const v = renderSyncStatus({ ...base, lastSyncAt: NOW - 120_000 }, NOW, "");
-    expect(v.text).toBe("✓ 2m ago");
+    const v = renderSyncStatus({ ...base, synced: 8, lastSyncAt: NOW - 120_000 }, NOW, "");
+    expect(v.text).toBe("✓ 8 notes · 2m ago");
     expect(v.text).not.toContain("Hindsight");
   });
 });

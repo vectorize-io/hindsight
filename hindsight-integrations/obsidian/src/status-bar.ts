@@ -12,10 +12,17 @@ export interface SyncStatus {
   syncing: number;
   /** Notes edited but not yet flushed to Hindsight. */
   pending: number;
+  /** Total notes currently tracked in the local sync index. */
+  synced: number;
   /** Epoch ms of the last successful sync, or null if none yet. */
   lastSyncAt: number | null;
   /** Whether the most recent sync attempt failed. */
   error: boolean;
+}
+
+/** "1 note" / "412 notes". */
+function notes(n: number): string {
+  return `${n} note${n === 1 ? "" : "s"}`;
 }
 
 export interface SyncStatusView {
@@ -59,19 +66,21 @@ export function renderSyncStatus(
   if (s.syncing > 0) {
     return {
       text: `${p}⟳ syncing…${s.pending > 0 ? ` (${s.pending})` : ""}`,
-      tooltip: `Syncing your vault to Hindsight…${pendingNote}`,
+      tooltip: `Syncing your vault to Hindsight… ${notes(s.synced)} tracked${pendingNote}.`,
     };
   }
   if (s.error) {
     return {
       text: `${p}⚠ sync failed`,
-      tooltip: "Last sync failed — see the developer console. Click to retry.",
+      tooltip: `Last sync failed — see the developer console. ${notes(s.synced)} tracked. Click to retry.`,
     };
   }
   if (s.lastSyncAt !== null) {
+    const rel = relativeTime(s.lastSyncAt, nowMs);
+    const tail = s.pending > 0 ? `${s.pending} pending` : rel;
     return {
-      text: `${p}✓ ${relativeTime(s.lastSyncAt, nowMs)}`,
-      tooltip: `Last synced ${relativeTime(s.lastSyncAt, nowMs)}${pendingNote}. Click to sync now.`,
+      text: `${p}✓ ${notes(s.synced)} · ${tail}`,
+      tooltip: `${notes(s.synced)} synced · last synced ${rel}${pendingNote}. Click to sync now.`,
     };
   }
   return {

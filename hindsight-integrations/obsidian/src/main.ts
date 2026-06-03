@@ -91,6 +91,7 @@ export default class HindsightPlugin extends Plugin {
       configured: this.engine !== null,
       syncing: this.syncing,
       pending: this.dirty.size,
+      synced: Object.keys(this.syncIndex).length,
       lastSyncAt: this.lastSyncAt,
       error: this.lastSyncError,
     };
