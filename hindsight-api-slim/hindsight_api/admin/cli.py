@@ -394,6 +394,79 @@ def export_bank_command(
     typer.echo(f"Exported bank '{bank_id}' to {output} ({size} bytes)")
 
 
+async def _run_import_bank(
+    archive_path: Path, schema: str, target_bank_id: str | None, on_conflict: str, include_history: bool
+):
+    """Boot a MemoryEngine (for the target's embedding model) and restore a bank archive."""
+    # MemoryEngine is heavy (loads embeddings); import it lazily so other admin
+    # commands don't pay for it. _current_schema is imported at module top.
+    from ..engine.memory_engine import MemoryEngine
+    from ..models import RequestContext
+
+    archive_bytes = archive_path.read_bytes()
+    # run_migrations=True so a fresh target instance is provisioned at this
+    # instance's embedding dimension / vector / text-search backend before restore.
+    engine = MemoryEngine(run_migrations=True)
+    await engine.initialize()
+    try:
+        _current_schema.set(schema)
+        context = RequestContext(internal=True, user_initiated=True)
+        return await engine.import_bank_async(
+            archive_bytes,
+            context,
+            target_bank_id=target_bank_id,
+            on_conflict=on_conflict,
+            include_history=include_history,
+        )
+    finally:
+        await engine.close()
+
+
+@app.command(name="import-bank")
+def import_bank_command(
+    archive: Path = typer.Option(..., "--archive", "-a", help="Path to the .zip produced by export-bank."),
+    schema: str | None = typer.Option(
+        None, "--schema", "-s", help="Target schema. Defaults to the configured base schema."
+    ),
+    target_bank: str | None = typer.Option(
+        None, "--target-bank", help="Override the bank id (defaults to the archive's source bank)."
+    ),
+    on_conflict: str = typer.Option(
+        "skip", "--on-conflict", help="Document conflict handling: skip | replace | new-id."
+    ),
+    include_history: bool = typer.Option(
+        False, "--include-history", help="Also restore operational history if present in the archive."
+    ),
+):
+    """Restore a whole bank from an export-bank archive into THIS instance.
+
+    Re-embeds facts with this instance's configured embedding model and rebuilds
+    links and indexes — the import half of a cross-instance migration. Run against
+    an instance configured with the desired embedding / vector / text-search backend.
+    """
+    if on_conflict not in ("skip", "replace", "new-id"):
+        typer.echo(f"Error: invalid --on-conflict '{on_conflict}'; expected skip|replace|new-id.", err=True)
+        raise typer.Exit(1)
+
+    config = HindsightConfig.from_env()
+    if not config.database_url:
+        typer.echo("Error: Database URL not configured.", err=True)
+        typer.echo("Set HINDSIGHT_API_DATABASE_URL environment variable.", err=True)
+        raise typer.Exit(1)
+
+    target_schema = schema or config.database_schema or DEFAULT_DATABASE_SCHEMA
+    typer.echo(f"Importing bank archive '{archive}' into schema '{target_schema}'...")
+
+    result = asyncio.run(_run_import_bank(archive, target_schema, target_bank, on_conflict, include_history))
+
+    typer.echo(
+        f"Imported bank '{result.bank_id}': {result.documents_imported} doc(s), "
+        f"{result.facts_imported} fact(s), {result.observations_imported} observation(s), "
+        f"{result.mental_models_imported} mental model(s), {result.directives_imported} directive(s), "
+        f"{result.webhooks_imported} webhook(s), {result.history_rows_imported} history row(s)"
+    )
+
+
 async def _decommission_worker(db_url: str, worker_id: str, schema: str = "public") -> int:
     """Release all tasks owned by a worker, setting them back to pending status."""
     is_pg0, instance_name, _ = parse_pg0_url(db_url)

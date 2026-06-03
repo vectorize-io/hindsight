@@ -170,6 +170,162 @@ async def test_export_bank_contents(memory, request_context):
         await memory.delete_bank(bank, request_context=request_context)
 
 
+def _as_json(value):
+    """Normalize a jsonb column value (str or already-decoded) to a Python object."""
+    return json.loads(value) if isinstance(value, str) else value
+
+
+async def _bank_content_snapshot(memory, bank_id):
+    """Capture the meaningful (non-embedding, non-volatile) content of a bank for
+    exact round-trip comparison across export → import."""
+    backend = await memory._get_backend()
+    async with acquire_with_retry(backend) as conn:
+        bank = await conn.fetchrow(
+            f"SELECT name, disposition, mission, config FROM {fq_table('banks')} WHERE bank_id = $1", bank_id
+        )
+        docs = await conn.fetch(
+            f"SELECT id, original_text, tags FROM {fq_table('documents')} WHERE bank_id = $1", bank_id
+        )
+        facts = await conn.fetch(
+            f"SELECT text, fact_type, context FROM {fq_table('memory_units')} "
+            f"WHERE bank_id = $1 AND fact_type != 'observation'",
+            bank_id,
+        )
+        obs = await conn.fetch(
+            f"SELECT text, proof_count FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = 'observation'",
+            bank_id,
+        )
+        ents = await conn.fetch(f"SELECT canonical_name FROM {fq_table('entities')} WHERE bank_id = $1", bank_id)
+        links = await conn.fetch(
+            f"SELECT link_type, count(*) AS c FROM {fq_table('memory_links')} WHERE bank_id = $1 GROUP BY link_type",
+            bank_id,
+        )
+        hooks = await conn.fetch(
+            f"SELECT url, event_types, enabled FROM {fq_table('webhooks')} WHERE bank_id = $1", bank_id
+        )
+        dirs = await conn.fetch(
+            f"SELECT name, content, priority, is_active FROM {fq_table('directives')} WHERE bank_id = $1", bank_id
+        )
+        mms = await conn.fetch(
+            f"SELECT subtype, name, description, tags FROM {fq_table('mental_models')} WHERE bank_id = $1", bank_id
+        )
+        null_emb = await conn.fetchval(
+            f"SELECT count(*) FROM {fq_table('memory_units')} "
+            f"WHERE bank_id = $1 AND fact_type != 'observation' AND embedding IS NULL",
+            bank_id,
+        )
+    return {
+        "bank": (bank["name"], _as_json(bank["disposition"]), bank["mission"], _as_json(bank["config"])),
+        "documents": sorted((d["id"], d["original_text"], tuple(sorted(d["tags"] or []))) for d in docs),
+        "facts": sorted((f["text"], f["fact_type"], f["context"]) for f in facts),
+        "observations": sorted((o["text"], o["proof_count"]) for o in obs),
+        "entities": sorted(e["canonical_name"].lower() for e in ents),
+        "links": {row["link_type"]: row["c"] for row in links},
+        "webhooks": sorted((h["url"], tuple(h["event_types"] or []), h["enabled"]) for h in hooks),
+        "directives": sorted((d["name"], d["content"], d["priority"], d["is_active"]) for d in dirs),
+        "mental_models": sorted(
+            (m["subtype"], m["name"], m["description"], tuple(sorted(m["tags"] or []))) for m in mms
+        ),
+        "null_embeddings": null_emb,
+    }
+
+
+@pytest.mark.asyncio
+async def test_bank_export_import_exact_roundtrip(memory, request_context):
+    """A whole-bank archive restores EXACT bank content (config, docs, facts,
+    observations, entities, links, webhooks, directives, mental models) with facts
+    re-embedded. Uses export → delete → import so ids round-trip without collisions
+    (mirroring a fresh target instance)."""
+    bank = _unique_bank("bank_exact")
+    try:
+        await _retain(memory, bank, "Alice works at Google. Bob works at Microsoft.", request_context, "doc-1")
+        await _retain(memory, bank, "Carol lives in Paris.", request_context, "doc-2")
+
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"UPDATE {fq_table('banks')} SET name = $2, disposition = $3::jsonb, "
+                f"mission = $4, config = $5::jsonb WHERE bank_id = $1",
+                bank,
+                "My Bank",
+                json.dumps({"skepticism": 5, "literalism": 2, "empathy": 4}),
+                "Be terse and precise.",
+                json.dumps({"reflect_mission": "be terse"}),
+            )
+            await conn.execute(
+                f"INSERT INTO {fq_table('webhooks')} "
+                f"(id, bank_id, url, secret, event_types, enabled, created_at, updated_at) "
+                f"VALUES ($1, $2, $3, NULL, $4, true, NOW(), NOW())",
+                uuid.uuid4(),
+                bank,
+                "https://example.com/hook",
+                ["retain.completed", "consolidation.completed"],
+            )
+            await conn.execute(
+                f"INSERT INTO {fq_table('directives')} "
+                f"(id, bank_id, name, content, priority, is_active, tags, created_at, updated_at) "
+                f"VALUES ($1, $2, $3, $4, $5, true, $6, NOW(), NOW())",
+                uuid.uuid4(),
+                bank,
+                "tone",
+                "Always be concise.",
+                7,
+                ["style"],
+            )
+        await memory.create_mental_model(
+            bank,
+            name="Work model",
+            source_query="where do people work",
+            content="User tracks where people work.",
+            mental_model_id="mm-1",
+            tags=["people"],
+            request_context=request_context,
+        )
+
+        before = await _bank_content_snapshot(memory, bank)
+        # Sanity: the source genuinely has rich content in every section we carry.
+        assert before["facts"] and before["entities"] and before["links"]
+        assert before["webhooks"] and before["directives"] and before["mental_models"]
+        assert before["bank"][0] == "My Bank"
+
+        archive = await memory.export_bank_async(bank, request_context)
+        # Delete then restore into the same id — exact round-trip, no PK collisions.
+        await memory.delete_bank(bank, request_context=request_context)
+        result = await memory.import_bank_async(archive, request_context)
+        assert result.bank_id == bank
+        assert result.webhooks_imported == 1
+        assert result.directives_imported == 1
+        assert result.mental_models_imported == 1
+
+        after = await _bank_content_snapshot(memory, bank)
+        # Semantic links are an ANN-approximate retrieval index regenerated from the
+        # (re-embedded) facts; their count depends on whether ANN runs incrementally
+        # per document (import) or as a final whole-bank pass (original retain), so
+        # compare them loosely. Everything else — source data and deterministic
+        # temporal links — must match exactly.
+        after_semantic = after["links"].pop("semantic", 0)
+        before["links"].pop("semantic", None)
+        assert after == before
+        assert after_semantic > 0, "semantic links should be regenerated on import"
+        # Facts were re-embedded on import (no NULL vectors).
+        assert after["null_embeddings"] == 0
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_import_bank_rejects_documents_archive(memory, request_context):
+    """A documents-only archive must be rejected by the bank importer."""
+    bank = _unique_bank("bank_reject")
+    try:
+        await _retain(memory, bank, "Alice works at Google.", request_context, "doc-1")
+        docs_archive = await memory.export_documents_async(bank, request_context)
+        with pytest.raises(ValueError, match="whole-bank archive"):
+            await memory.import_bank_async(docs_archive, request_context)
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
 @pytest.mark.asyncio
 async def test_export_import_roundtrip_without_llm(memory, request_context, monkeypatch):
     """Export from one bank and import into another without re-running the LLM."""

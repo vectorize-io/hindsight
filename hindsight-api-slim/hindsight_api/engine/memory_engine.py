@@ -225,7 +225,7 @@ if TYPE_CHECKING:
     from hindsight_api.models import RequestContext
 
     from .audit import AuditLogListResponse, AuditLogStatsResponse
-    from .transfer import ImportResult
+    from .transfer import BankImportResult, ImportResult
 
 
 from enum import Enum
@@ -3222,6 +3222,63 @@ class MemoryEngine(MemoryEngineInterface):
 
         await self._get_backend()
         return await export_documents(self._backend, bank_id, document_ids, include_observations=include_observations)
+
+    async def export_bank_async(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+        *,
+        include_history: bool = False,
+    ) -> bytes:
+        """Export an entire bank (docs, facts, observations, config, mental models,
+        directives, webhooks) into a portable ZIP. See :func:`transfer.export_bank`.
+
+        Embeddings are never written — they are regenerated on import — so the
+        archive is portable across embedding models / vector / text-search backends.
+        """
+        from .transfer import export_bank
+
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            return await export_bank(conn, bank_id, include_history=include_history)
+
+    async def import_bank_async(
+        self,
+        archive_bytes: bytes,
+        request_context: "RequestContext",
+        *,
+        target_bank_id: str | None = None,
+        on_conflict: str = "skip",
+        include_history: bool = False,
+    ) -> "BankImportResult":
+        """Restore a whole bank from an :func:`transfer.export_bank` archive.
+
+        Re-embeds facts with this instance's embedding model and rebuilds links and
+        indexes; restores bank config, mental models, directives and webhooks as
+        exported (no consolidation/webhooks — a migration restores exact state).
+        """
+        from .transfer import import_bank
+        from .transfer.importer import parse_bank_archive
+
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        # Parse up front so a bad archive fails fast and we can resolve the
+        # target bank's config before the restore.
+        parsed = parse_bank_archive(archive_bytes)
+        bank_id = target_bank_id or parsed.manifest.source_bank_id
+        resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+        return await import_bank(
+            backend=backend,
+            embeddings_model=self.embeddings,
+            entity_resolver=self.entity_resolver,
+            config=resolved_config,
+            format_date_fn=self._format_readable_date,
+            archive_bytes=archive_bytes,
+            target_bank_id=target_bank_id,
+            on_conflict=on_conflict,
+            include_history=include_history,
+        )
 
     async def import_documents_async(
         self,
