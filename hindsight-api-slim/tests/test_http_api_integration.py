@@ -1104,6 +1104,8 @@ async def test_version_endpoint_returns_correct_version(api_client):
     assert isinstance(features["observations"], bool)
     assert isinstance(features["mcp"], bool)
     assert isinstance(features["worker"], bool)
+    assert isinstance(features["audit_log"], bool)
+    assert isinstance(features["llm_trace"], bool)
 
     print(f"Version endpoint returned: api_version={result['api_version']}, features={features}")
 
