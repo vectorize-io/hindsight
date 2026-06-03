@@ -288,7 +288,10 @@ async def test_bank_export_import_exact_roundtrip(memory, request_context):
         assert before["webhooks"] and before["directives"] and before["mental_models"]
         assert before["bank"][0] == "My Bank"
 
-        archive = await memory.export_bank_async(bank, request_context)
+        from hindsight_api.engine.transfer import export_bank
+
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, bank)
         # Delete then restore into the same id — exact round-trip, no PK collisions.
         await memory.delete_bank(bank, request_context=request_context)
         result = await memory.import_bank_async(archive, request_context)

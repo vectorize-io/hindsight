@@ -3223,26 +3223,6 @@ class MemoryEngine(MemoryEngineInterface):
         await self._get_backend()
         return await export_documents(self._backend, bank_id, document_ids, include_observations=include_observations)
 
-    async def export_bank_async(
-        self,
-        bank_id: str,
-        request_context: "RequestContext",
-        *,
-        include_history: bool = False,
-    ) -> bytes:
-        """Export an entire bank (docs, facts, observations, config, mental models,
-        directives, webhooks) into a portable ZIP. See :func:`transfer.export_bank`.
-
-        Embeddings are never written — they are regenerated on import — so the
-        archive is portable across embedding models / vector / text-search backends.
-        """
-        from .transfer import export_bank
-
-        await self._authenticate_tenant(request_context)
-        backend = await self._get_backend()
-        async with acquire_with_retry(backend) as conn:
-            return await export_bank(conn, bank_id, include_history=include_history)
-
     async def import_bank_async(
         self,
         archive_bytes: bytes,
