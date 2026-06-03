@@ -9,7 +9,9 @@ Implements:
 """
 
 import asyncio
+import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -25,6 +27,19 @@ from .tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags
 from .types import GraphRetrievalTimings, RetrievalResult
 
 logger = logging.getLogger(__name__)
+
+
+# Circuit-breaker threshold for retrieve_temporal_combined. When the planner
+# estimates more than this many rows match the temporal WHERE clause, Phase 1's
+# sort spills to disk AND the resulting top-50-per-fact_type sample stops being
+# representative — the date ranking has no signal across that many candidates.
+# In that regime we skip temporal retrieval entirely; semantic+BM25 still runs
+# and the caller already handles an empty temporal result.
+#
+# 50,000 is the lowest threshold that doesn't false-positive on healthy banks
+# under postgres's default work_mem (4MB ≈ 120k sort tuples), accounting for
+# the planner's tendency to over-estimate row counts on partial-index filters.
+TEMPORAL_RECALL_MAX_ESTIMATED_ROWS = int(os.getenv("HINDSIGHT_API_TEMPORAL_RECALL_MAX_ESTIMATED_ROWS", "50000"))
 
 
 def tokenize_query(query_text: str) -> list[str]:
@@ -308,6 +323,90 @@ async def retrieve_semantic_bm25_combined(
     return result_dict
 
 
+async def _estimate_temporal_filter_rows(
+    conn,
+    *,
+    bank_id: str,
+    fact_types: list[str],
+    start_date: datetime,
+    end_date: datetime,
+    tags_clause: str,
+    groups_clause: str,
+    created_range_clause: str,
+    params_for_filter: list,
+) -> int | None:
+    """Ask the planner how many rows the temporal Phase 1 filter would match.
+
+    Runs ``EXPLAIN (FORMAT JSON)`` on a stripped-down ``SELECT 1`` that contains
+    only the filter — no sort, no embedding distance, no CTEs. The planner walks
+    its statistics and returns an estimated row count in a few milliseconds with
+    no row I/O.
+
+    Returns the estimate, or ``None`` if EXPLAIN couldn't be parsed (in which
+    case the caller proceeds with the temporal query as-is — safer to run a
+    potentially-slow query than to silently skip on an instrumentation bug).
+    """
+    # Skip the gate on non-postgres backends (Oracle plan format differs and
+    # the safety net is opt-in per dialect).
+    backend = getattr(conn, "backend_type", "postgresql")
+    if backend != "postgresql":
+        return None
+
+    # Reuse the exact same WHERE clause as the real query so the planner
+    # estimate matches the filter's actual selectivity. The params layout
+    # mirrors retrieve_temporal_combined: $2=bank_id, $3=fact_types, $4=start,
+    # $5=end, then tags/groups/created_range at the appropriate offsets.
+    # We don't reference $1 ($6 etc.) in the estimate query since they're
+    # embedding/threshold params that don't influence the filter row count.
+    explain_sql = f"""
+        EXPLAIN (FORMAT JSON)
+        SELECT 1
+        FROM {fq_table("memory_units")}
+        WHERE bank_id = $2
+          AND fact_type = ANY($3)
+          AND embedding IS NOT NULL
+          AND (
+              (occurred_start IS NOT NULL AND occurred_end IS NOT NULL
+               AND occurred_start <= $5 AND occurred_end >= $4)
+              OR
+              (mentioned_at IS NOT NULL AND mentioned_at BETWEEN $4 AND $5)
+              OR
+              (occurred_start IS NOT NULL AND occurred_start BETWEEN $4 AND $5)
+              OR
+              (occurred_end IS NOT NULL AND occurred_end BETWEEN $4 AND $5)
+          )
+          {tags_clause}
+          {groups_clause}
+          {created_range_clause}
+    """
+    try:
+        rows = await conn.fetch(explain_sql, *params_for_filter)
+    except Exception:
+        # Any failure (permission, parser drift, dialect quirk) should fail
+        # open — don't block legitimate queries because the safety net broke.
+        logger.exception("temporal filter row estimate failed; proceeding without gate")
+        return None
+
+    # asyncpg returns one row per plan-line in text mode, but a single row with
+    # a json-encoded value in FORMAT JSON. Handle both forms defensively.
+    if not rows:
+        return None
+    first = rows[0]
+    plan_field = first[0] if hasattr(first, "__getitem__") else None
+    if isinstance(plan_field, str):
+        try:
+            plan_field = json.loads(plan_field)
+        except json.JSONDecodeError:
+            return None
+    if not plan_field:
+        return None
+    try:
+        plan = plan_field[0] if isinstance(plan_field, list) else plan_field
+        return int(plan["Plan"]["Plan Rows"])
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+
+
 async def retrieve_temporal_combined(
     conn,
     query_emb_str: str,
@@ -374,6 +473,33 @@ async def retrieve_temporal_combined(
         params.append(tags)
     params.extend(groups_params)
     params.extend(created_range_params)
+
+    # Circuit breaker: ask the planner how many rows the temporal filter would
+    # match. Above the threshold, Phase 1's sort spills to disk and the top-50
+    # sample stops being representative — see TEMPORAL_RECALL_MAX_ESTIMATED_ROWS.
+    # The planner estimate is cheap (~milliseconds, no row read) and accurate
+    # for the catastrophic cases we want to block (verified at ~99.7%); it tends
+    # to over-estimate on healthy filters, which is the safe direction (would
+    # only over-block, never under-block).
+    estimated_rows = await _estimate_temporal_filter_rows(
+        conn,
+        bank_id=bank_id,
+        fact_types=fact_types,
+        start_date=start_date,
+        end_date=end_date,
+        tags_clause=tags_clause,
+        groups_clause=groups_clause,
+        created_range_clause=created_range_clause,
+        params_for_filter=params,
+    )
+    if estimated_rows is not None and estimated_rows > TEMPORAL_RECALL_MAX_ESTIMATED_ROWS:
+        logger.warning(
+            "retrieve_temporal_combined: skipping — planner estimates %d candidate rows "
+            "(limit %d). Semantic+BM25 will carry the recall for this query.",
+            estimated_rows,
+            TEMPORAL_RECALL_MAX_ESTIMATED_ROWS,
+        )
+        return {ft: [] for ft in fact_types}
 
     # Two-phase entry point query:
     # Phase 1 (date_ranked): rank by date only — no embedding computation — for all units in
