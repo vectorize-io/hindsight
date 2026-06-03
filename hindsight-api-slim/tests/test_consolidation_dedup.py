@@ -20,17 +20,25 @@ def _shown(*observations: _FakeObs) -> dict[str, _FakeObs]:
     return {_norm_obs_text(o.text): o for o in observations}
 
 
-def test_norm_obs_text_collapses_whitespace_and_case() -> None:
-    assert _norm_obs_text("  The  User  likes BASIL.\n") == "the user likes basil."
+def test_norm_obs_text_collapses_whitespace_preserves_case() -> None:
+    # Whitespace (incl. newlines) collapses; case is preserved.
+    assert _norm_obs_text("  The  User  likes BASIL.\n") == "The User likes BASIL."
     assert _norm_obs_text(None) == ""
 
 
 def test_create_matching_shown_observation_is_duplicate() -> None:
     shown = _shown(_FakeObs(id="11111111-aaaa", text="User waters the herbs early in the morning."))
-    # Same text with different whitespace/case still matches.
-    target = _duplicate_create_target("user waters the herbs early in the morning.", shown, set())
+    # Same text with only-whitespace differences still matches.
+    target = _duplicate_create_target("User waters the   herbs early in the morning.", shown, set())
     assert target is not None
     assert target.startswith("shown observation 11111111")
+
+
+def test_create_differing_only_in_case_is_not_duplicate() -> None:
+    # Case-folding would lose information (e.g. acronyms), so a case-only difference
+    # is treated as novel rather than silently dropped.
+    shown = _shown(_FakeObs(id="22222222-bbbb", text="The user prefers TLS."))
+    assert _duplicate_create_target("The user prefers tls.", shown, set()) is None
 
 
 def test_create_matching_inresponse_update_is_duplicate() -> None:

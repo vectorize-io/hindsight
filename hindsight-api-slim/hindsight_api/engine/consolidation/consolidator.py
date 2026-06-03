@@ -54,8 +54,14 @@ logger = logging.getLogger(__name__)
 
 
 def _norm_obs_text(text: str) -> str:
-    """Whitespace/case-normalised observation text for exact-duplicate matching."""
-    return " ".join((text or "").split()).strip().lower()
+    """Whitespace-normalised observation text for exact-duplicate matching.
+
+    Collapses runs of whitespace only; case is preserved. The reconciliation guard
+    drops a CREATE on the premise that an exact-text match loses no information — but
+    case-folding would also drop a create differing only in case (e.g. "TLS" vs "tls"),
+    which *does* lose information, so we match case-sensitively.
+    """
+    return " ".join((text or "").split()).strip()
 
 
 def _duplicate_create_target(
