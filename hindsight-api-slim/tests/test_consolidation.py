@@ -3040,10 +3040,13 @@ def _make_mock_llm_one_obs_per_fact():
     def callback(messages, scope):
         if scope != "consolidation":
             return _ConsolidationBatchResponse()
-        # Parse all fact UUIDs from the prompt — one create per fact
+        # Parse all fact UUIDs from the prompt — one create per fact. Read only
+        # the user message(s): consolidation sends the facts there, while the
+        # stable (cacheable) system message carries example UUIDs in its OUTPUT
+        # FORMAT samples that must not be mistaken for real facts.
         import re
 
-        prompt = messages[0]["content"] if messages else ""
+        prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
         fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
         creates = [_CreateAction(text=f"Observation about fact {fid[:8]}", source_fact_ids=[fid]) for fid in fact_ids]
         return _ConsolidationBatchResponse(creates=creates)
@@ -3145,7 +3148,9 @@ async def test_max_observations_per_scope_allows_updates_at_capacity(memory: Mem
             call_count += 1
             import re
 
-            prompt = messages[0]["content"] if messages else ""
+            # Facts live in the user message; the system message (stable, cached)
+            # carries example UUIDs in its OUTPUT samples — read user only.
+            prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
             fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
             if call_count == 1 and fact_ids:
                 # First call: create an observation
@@ -3512,3 +3517,44 @@ async def test_enable_auto_consolidation_flag(memory: MemoryEngine, request_cont
     finally:
         memory._config_resolver._global_config = original_global_config
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+def test_consolidation_prompt_split_is_cacheable_and_complete():
+    """The split consolidation prompt: stable system prefix + per-batch user message.
+
+    The system prefix must be byte-identical across batches (the property that
+    lets it be served from a Gemini context cache), carry only stable
+    instructions, and the per-batch data (facts, observations, capacity note)
+    must live in the user message — never in the cached prefix.
+    """
+    from hindsight_api.engine.consolidation.prompts import (
+        build_consolidation_input,
+        build_consolidation_system_prompt,
+    )
+
+    sys1 = build_consolidation_system_prompt(observations_mission="Track widgets.")
+    sys2 = build_consolidation_system_prompt(observations_mission="Track widgets.")
+    # Byte-stable across calls → cacheable prefix.
+    assert sys1 == sys2
+    # Instructions only: no per-batch placeholders leaked into the prefix.
+    assert "{facts_text}" not in sys1
+    assert "{observations_text}" not in sys1
+    # The mission is included and the JSON examples are unescaped (single braces),
+    # i.e. .format() ran — no raw {{ }} templating reaches the model.
+    assert "Track widgets." in sys1
+    assert '{"creates"' in sys1
+    assert "{{" not in sys1
+
+    user_a = build_consolidation_input(facts_text="[id-a] Fact A.", observations_text="[]")
+    user_b = build_consolidation_input(facts_text="[id-b] Fact B.", observations_text="[]")
+    # Per-batch data lives in the user message and varies; it is NOT in the prefix.
+    assert "Fact A." in user_a
+    assert "Fact A." not in sys1
+    assert user_a != user_b
+
+    # The capacity note is per-batch too — kept out of the cached prefix.
+    capped = build_consolidation_input(
+        facts_text="[id] F.", observations_text="[]", observation_capacity_note="OBSERVATION LIMIT REACHED"
+    )
+    assert "OBSERVATION LIMIT REACHED" in capped
+    assert "OBSERVATION LIMIT REACHED" not in sys1
