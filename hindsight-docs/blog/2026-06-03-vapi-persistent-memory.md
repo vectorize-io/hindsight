@@ -1,5 +1,5 @@
 ---
-title: "Vapi Persistent Memory: Phone Agents That Remember Every Caller"
+title: "Voice Agents That Remember: Adding Memory to Vapi with Hindsight"
 authors: [benfrank241]
 slug: "2026/06/03/vapi-persistent-memory"
 date: 2026-06-03T12:00
@@ -9,7 +9,7 @@ image: /img/blog/vapi-persistent-memory.png
 hide_table_of_contents: true
 ---
 
-![Vapi Persistent Memory with Hindsight](/img/blog/vapi-persistent-memory.png)
+![Voice Agents That Remember: Vapi + Hindsight](/img/blog/vapi-persistent-memory.png)
 
 [Vapi](https://vapi.ai) makes it remarkably easy to ship a production phone agent — managed STT, streaming TTS, telephony, transfers, and an LLM loop, all behind a single dashboard and API. The part it leaves to you is the memory.
 
