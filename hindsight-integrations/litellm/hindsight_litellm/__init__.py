@@ -1182,6 +1182,7 @@ def _store_conversation_from_text(conversation_text: str, model: str, bank_id_ov
                 document_id=effective_doc_id,
                 tags=defaults.tags if defaults else None,
                 metadata={"source": "litellm", "model": model},
+                sync=True,
             )
             if config.verbose:
                 _storage_logger.info(f"Stored streamed conversation to bank: {effective_bank_id}")
@@ -1253,6 +1254,7 @@ def _store_conversation(
                 document_id=effective_doc_id,
                 tags=defaults.tags if defaults else None,
                 metadata={"source": "litellm", "model": model},
+                sync=True,
             )
             if config.verbose:
                 _storage_logger.info(f"Stored conversation to bank: {effective_bank_id}")

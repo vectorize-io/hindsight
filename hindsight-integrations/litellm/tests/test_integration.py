@@ -717,6 +717,48 @@ class TestStreamingResponseHandling:
         # Should not raise
         _store_conversation(messages, stream_response, "gpt-4o-mini")
 
+    def test_sync_storage_forwards_sync_true_to_retain(self):
+        """Regression: sync_storage=True must call retain(..., sync=True).
+
+        Without sync=True, the inner retain() dispatches to a daemon thread
+        and returns immediately, so the POST never lands on the server before
+        a short-lived process exits — cross-process drop-in silently fails.
+        """
+        from unittest.mock import patch, MagicMock
+        import hindsight_litellm
+
+        configure(hindsight_api_url="http://localhost:8888", sync_storage=True, store_conversations=True)
+        set_defaults(bank_id="test-bank")
+
+        messages = [{"role": "user", "content": "Hi"}]
+        response = MagicMock()
+        response.choices = [MagicMock()]
+        response.choices[0].message.content = "Hello back."
+        response.choices[0].message.tool_calls = None
+
+        with patch.object(hindsight_litellm, "retain") as mock_retain:
+            hindsight_litellm._store_conversation(messages, response, "gpt-4o-mini")
+            mock_retain.assert_called_once()
+            assert mock_retain.call_args.kwargs.get("sync") is True, (
+                "sync_storage=True must forward sync=True to retain() so the POST "
+                "completes before the function returns"
+            )
+
+    def test_sync_storage_streamed_forwards_sync_true_to_retain(self):
+        """Regression: streamed sync_storage path must also pass sync=True."""
+        from unittest.mock import patch
+        import hindsight_litellm
+
+        configure(hindsight_api_url="http://localhost:8888", sync_storage=True, store_conversations=True)
+        set_defaults(bank_id="test-bank")
+
+        with patch.object(hindsight_litellm, "retain") as mock_retain:
+            hindsight_litellm._store_conversation_from_text(
+                "USER: hi\n\nASSISTANT: hello", "gpt-4o-mini"
+            )
+            mock_retain.assert_called_once()
+            assert mock_retain.call_args.kwargs.get("sync") is True
+
     def test_wrapped_completion_returns_stream_wrapper(self):
         """Test that completion() wraps streaming responses for deferred storage."""
         from unittest.mock import patch, MagicMock
