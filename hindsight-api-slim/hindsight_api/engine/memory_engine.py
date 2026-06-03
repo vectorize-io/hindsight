@@ -29,6 +29,7 @@ from ..config import (
     DEFAULT_RECALL_INCLUDE_CHUNKS,
     DEFAULT_RECALL_MAX_TOKENS,
     DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS,
+    HindsightConfig,
     get_config,
 )
 from ..db_url import to_libpq_url
@@ -3041,28 +3042,43 @@ class MemoryEngine(MemoryEngineInterface):
             except Exception as e:
                 logger.warning(f"Post-retain hook error (non-fatal): {e}")
 
-        # Trigger consolidation as a tracked async operation if enabled
-        # Resolve bank-specific config to check if observations are enabled for this bank
-        config = await self._config_resolver.resolve_full_config(bank_id, request_context)
-        if config.enable_observations and config.enable_auto_consolidation:
-            try:
-                await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
-            except Exception as e:
-                # Log but don't fail the retain - consolidation is non-critical
-                logger.warning(f"Failed to submit consolidation task for bank {bank_id}: {e}")
-
-        # Trigger graph maintenance if a document upsert in this retain
-        # enqueued any cleanup work. submit_async_graph_maintenance
-        # short-circuits when the queue is empty, so a regular non-upsert
-        # retain pays a single cheap indexed SELECT here.
-        try:
-            await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
-        except Exception as e:
-            logger.warning(f"Failed to submit graph maintenance task for bank {bank_id}: {e}")
+        # Same async side effects every fact insert triggers (retain or import).
+        await self._submit_post_insert_maintenance(bank_id, request_context)
 
         if return_usage:
             return result, total_usage
         return result
+
+    async def _submit_post_insert_maintenance(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+        config: HindsightConfig | None = None,
+    ) -> None:
+        """Submit the async side effects that follow any fact insert (retain or import).
+
+        Shared by the retain pipeline and the document-import pipeline so imported
+        documents aren't second-class citizens:
+          * auto-consolidation (when observations + auto-consolidation are enabled
+            for the bank) so freshly inserted facts get observations;
+          * graph maintenance, which short-circuits when no cleanup work was
+            enqueued, so a plain insert pays a single cheap indexed SELECT here.
+
+        Both are non-critical: failures are logged, never raised, so they can't
+        fail the operation that produced the facts. Pass ``config`` when the caller
+        already resolved it to avoid a redundant lookup.
+        """
+        if config is None:
+            config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+        if config.enable_observations and config.enable_auto_consolidation:
+            try:
+                await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+            except Exception as e:
+                logger.warning(f"Failed to submit consolidation task for bank {bank_id}: {e}")
+        try:
+            await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
+        except Exception as e:
+            logger.warning(f"Failed to submit graph maintenance task for bank {bank_id}: {e}")
 
     async def _resolve_retain_chunk_size(
         self,
@@ -3286,15 +3302,8 @@ class MemoryEngine(MemoryEngineInterface):
             outbox_callback_factory=outbox_factory,
         )
 
-        if resolved_config.enable_observations and resolved_config.enable_auto_consolidation:
-            try:
-                await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
-            except Exception as e:
-                logger.warning(f"Failed to submit consolidation after import for bank {bank_id}: {e}")
-        try:
-            await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
-        except Exception as e:
-            logger.warning(f"Failed to submit graph maintenance after import for bank {bank_id}: {e}")
+        # Same async side effects every fact insert triggers (retain or import).
+        await self._submit_post_insert_maintenance(bank_id, request_context, config=resolved_config)
 
         return result
 
