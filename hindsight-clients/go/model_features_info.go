@@ -35,6 +35,10 @@ type FeaturesInfo struct {
 	DocumentExportApi bool `json:"document_export_api"`
 	// Whether the document import endpoint is enabled
 	DocumentImportApi bool `json:"document_import_api"`
+	// Whether audit logging is enabled
+	AuditLog bool `json:"audit_log"`
+	// Whether per-bank LLM request tracing is enabled
+	LlmTrace bool `json:"llm_trace"`
 }
 
 type _FeaturesInfo FeaturesInfo
@@ -43,7 +47,7 @@ type _FeaturesInfo FeaturesInfo
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi bool, fileUploadApi bool, documentExportApi bool, documentImportApi bool) *FeaturesInfo {
+func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi bool, fileUploadApi bool, documentExportApi bool, documentImportApi bool, auditLog bool, llmTrace bool) *FeaturesInfo {
 	this := FeaturesInfo{}
 	this.Observations = observations
 	this.Mcp = mcp
@@ -52,6 +56,8 @@ func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi boo
 	this.FileUploadApi = fileUploadApi
 	this.DocumentExportApi = documentExportApi
 	this.DocumentImportApi = documentImportApi
+	this.AuditLog = auditLog
+	this.LlmTrace = llmTrace
 	return &this
 }
 
@@ -231,6 +237,54 @@ func (o *FeaturesInfo) SetDocumentImportApi(v bool) {
 	o.DocumentImportApi = v
 }
 
+// GetAuditLog returns the AuditLog field value
+func (o *FeaturesInfo) GetAuditLog() bool {
+	if o == nil {
+		var ret bool
+		return ret
+	}
+
+	return o.AuditLog
+}
+
+// GetAuditLogOk returns a tuple with the AuditLog field value
+// and a boolean to check if the value has been set.
+func (o *FeaturesInfo) GetAuditLogOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return &o.AuditLog, true
+}
+
+// SetAuditLog sets field value
+func (o *FeaturesInfo) SetAuditLog(v bool) {
+	o.AuditLog = v
+}
+
+// GetLlmTrace returns the LlmTrace field value
+func (o *FeaturesInfo) GetLlmTrace() bool {
+	if o == nil {
+		var ret bool
+		return ret
+	}
+
+	return o.LlmTrace
+}
+
+// GetLlmTraceOk returns a tuple with the LlmTrace field value
+// and a boolean to check if the value has been set.
+func (o *FeaturesInfo) GetLlmTraceOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return &o.LlmTrace, true
+}
+
+// SetLlmTrace sets field value
+func (o *FeaturesInfo) SetLlmTrace(v bool) {
+	o.LlmTrace = v
+}
+
 func (o FeaturesInfo) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -248,6 +302,8 @@ func (o FeaturesInfo) ToMap() (map[string]interface{}, error) {
 	toSerialize["file_upload_api"] = o.FileUploadApi
 	toSerialize["document_export_api"] = o.DocumentExportApi
 	toSerialize["document_import_api"] = o.DocumentImportApi
+	toSerialize["audit_log"] = o.AuditLog
+	toSerialize["llm_trace"] = o.LlmTrace
 	return toSerialize, nil
 }
 
@@ -263,6 +319,8 @@ func (o *FeaturesInfo) UnmarshalJSON(data []byte) (err error) {
 		"file_upload_api",
 		"document_export_api",
 		"document_import_api",
+		"audit_log",
+		"llm_trace",
 	}
 
 	allProperties := make(map[string]interface{})

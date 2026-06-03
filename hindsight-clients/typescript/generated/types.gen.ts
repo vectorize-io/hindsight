@@ -1676,6 +1676,18 @@ export type FeaturesInfo = {
    * Whether the document import endpoint is enabled
    */
   document_import_api: boolean;
+  /**
+   * Audit Log
+   *
+   * Whether audit logging is enabled
+   */
+  audit_log: boolean;
+  /**
+   * Llm Trace
+   *
+   * Whether per-bank LLM request tracing is enabled
+   */
+  llm_trace: boolean;
 };
 
 /**

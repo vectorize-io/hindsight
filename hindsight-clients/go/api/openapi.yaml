@@ -5418,11 +5418,21 @@ components:
           description: Whether the document import endpoint is enabled
           title: Document Import Api
           type: boolean
+        audit_log:
+          description: Whether audit logging is enabled
+          title: Audit Log
+          type: boolean
+        llm_trace:
+          description: Whether per-bank LLM request tracing is enabled
+          title: Llm Trace
+          type: boolean
       required:
+      - audit_log
       - bank_config_api
       - document_export_api
       - document_import_api
       - file_upload_api
+      - llm_trace
       - mcp
       - observations
       - worker

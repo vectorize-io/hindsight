@@ -33,7 +33,9 @@ class FeaturesInfo(BaseModel):
     file_upload_api: StrictBool = Field(description="Whether file upload/conversion API is enabled")
     document_export_api: StrictBool = Field(description="Whether the document export endpoint is enabled")
     document_import_api: StrictBool = Field(description="Whether the document import endpoint is enabled")
-    __properties: ClassVar[List[str]] = ["observations", "mcp", "worker", "bank_config_api", "file_upload_api", "document_export_api", "document_import_api"]
+    audit_log: StrictBool = Field(description="Whether audit logging is enabled")
+    llm_trace: StrictBool = Field(description="Whether per-bank LLM request tracing is enabled")
+    __properties: ClassVar[List[str]] = ["observations", "mcp", "worker", "bank_config_api", "file_upload_api", "document_export_api", "document_import_api", "audit_log", "llm_trace"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -92,7 +94,9 @@ class FeaturesInfo(BaseModel):
             "bank_config_api": obj.get("bank_config_api"),
             "file_upload_api": obj.get("file_upload_api"),
             "document_export_api": obj.get("document_export_api"),
-            "document_import_api": obj.get("document_import_api")
+            "document_import_api": obj.get("document_import_api"),
+            "audit_log": obj.get("audit_log"),
+            "llm_trace": obj.get("llm_trace")
         })
         return _obj
 

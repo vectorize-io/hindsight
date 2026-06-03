@@ -8229,6 +8229,16 @@
             "type": "boolean",
             "title": "Document Import Api",
             "description": "Whether the document import endpoint is enabled"
+          },
+          "audit_log": {
+            "type": "boolean",
+            "title": "Audit Log",
+            "description": "Whether audit logging is enabled"
+          },
+          "llm_trace": {
+            "type": "boolean",
+            "title": "Llm Trace",
+            "description": "Whether per-bank LLM request tracing is enabled"
           }
         },
         "type": "object",
@@ -8239,7 +8249,9 @@
           "bank_config_api",
           "file_upload_api",
           "document_export_api",
-          "document_import_api"
+          "document_import_api",
+          "audit_log",
+          "llm_trace"
         ],
         "title": "FeaturesInfo",
         "description": "Feature flags indicating which capabilities are enabled."
