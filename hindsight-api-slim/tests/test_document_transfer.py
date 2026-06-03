@@ -6,6 +6,7 @@ extraction (the LLM) — it replays the deterministic pipeline and re-embeds.
 """
 
 import io
+import json
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -21,6 +22,38 @@ from hindsight_api.engine.schema import fq_table
 from hindsight_api.engine.transfer import import_documents
 from hindsight_api.engine.transfer.importer import parse_archive
 from hindsight_api.engine.transfer.schema import SCHEMA_VERSION, TransferManifest
+from hindsight_api.extensions import (
+    OperationValidatorExtension,
+    RecallContext,
+    ReflectContext,
+    RetainContext,
+    RetainResult,
+    ValidationResult,
+)
+from hindsight_api.webhooks.manager import WebhookManager
+
+
+class _RetainResultCapture(OperationValidatorExtension):
+    """Records each RetainResult the engine reports via on_retain_complete.
+
+    The pre-operation validators are required by the abstract base; they always
+    accept so they don't interfere with the operations under test.
+    """
+
+    def __init__(self) -> None:
+        self.results: list[RetainResult] = []
+
+    async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def validate_recall(self, ctx: RecallContext) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def validate_reflect(self, ctx: ReflectContext) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def on_retain_complete(self, result: RetainResult) -> None:
+        self.results.append(result)
 
 
 @pytest_asyncio.fixture
@@ -323,6 +356,96 @@ async def test_import_triggers_consolidation(memory, request_context):
         obs = await memory.list_memory_units(dst, fact_type="observation", request_context=request_context)
         assert obs["total"] > 0, "import should have triggered consolidation to generate observations"
     finally:
+        await memory.delete_bank(src, request_context=request_context)
+        await memory.delete_bank(dst, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_import_fires_retain_complete_hook(memory, request_context):
+    """Import fires the post-retain extension hook once per imported document,
+    mirroring retain — with zero LLM tokens (import runs no extraction)."""
+    src = _unique_bank("transfer_hook_src")
+    dst = _unique_bank("transfer_hook_dst")
+    await _retain(memory, src, "Alice works at Google.", request_context, "doc-1")
+    await _retain(memory, src, "Bob works at Microsoft.", request_context, "doc-2")
+    archive = await memory.export_documents_async(src, request_context)
+
+    capture = _RetainResultCapture()
+    original_validator = memory._operation_validator
+    memory._operation_validator = capture
+    try:
+        result = await _import(memory, dst, archive, request_context)
+        assert result["documents_imported"] == 2
+
+        # One hook call per imported document.
+        assert len(capture.results) == 2
+        by_doc = {r.document_id: r for r in capture.results}
+        assert set(by_doc) == {"doc-1", "doc-2"}
+        for res in capture.results:
+            assert res.bank_id == dst
+            assert res.success is True
+            # Import runs no LLM extraction: token counts are zero and
+            # processed_content_tokens is 0 ("nothing went through extraction").
+            assert res.llm_input_tokens == 0
+            assert res.llm_output_tokens == 0
+            assert res.llm_total_tokens == 0
+            assert res.processed_content_tokens == 0
+            # unit_ids are reported per content item, with the created facts.
+            assert res.unit_ids and res.unit_ids[0]
+    finally:
+        memory._operation_validator = original_validator
+        await memory.delete_bank(src, request_context=request_context)
+        await memory.delete_bank(dst, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_import_queues_retain_webhook(memory, request_context):
+    """Import queues a retain.completed webhook delivery per document, like retain."""
+    src = _unique_bank("transfer_wh_src")
+    dst = _unique_bank("transfer_wh_dst")
+    webhook_id = uuid.uuid4()
+    await _retain(memory, src, "Carol lives in Paris.", request_context, "doc-wh")
+    archive = await memory.export_documents_async(src, request_context)
+
+    # The destination bank is created lazily by import; create it now so the
+    # webhook row's FK to banks is satisfied, then subscribe it to retain.completed.
+    backend = await memory._get_backend()
+    async with acquire_with_retry(backend) as conn:
+        await conn.execute(
+            f"INSERT INTO {fq_table('banks')} (bank_id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            dst,
+            dst,
+        )
+        await conn.execute(
+            f"INSERT INTO {fq_table('webhooks')} "
+            f"(id, bank_id, url, secret, event_types, enabled, created_at, updated_at) "
+            f"VALUES ($1, $2, $3, NULL, $4, true, NOW(), NOW())",
+            webhook_id,
+            dst,
+            "https://example.com/retain-hook",
+            ["retain.completed"],
+        )
+
+    original_manager = memory._webhook_manager
+    memory._webhook_manager = WebhookManager(backend=memory._backend, global_webhooks=[])
+    try:
+        await _import(memory, dst, archive, request_context)
+
+        async with acquire_with_retry(backend) as conn:
+            rows = await conn.fetch(
+                f"SELECT task_payload FROM {fq_table('async_operations')} "
+                f"WHERE operation_type = 'webhook_delivery' AND bank_id = $1 "
+                f"AND task_payload->>'event_type' = 'retain.completed'",
+                dst,
+            )
+        assert len(rows) == 1, "import should queue one retain.completed delivery for the imported document"
+        payload = rows[0]["task_payload"]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        inner = json.loads(payload["payload"])
+        assert inner.get("data", {}).get("document_id") == "doc-wh"
+    finally:
+        memory._webhook_manager = original_manager
         await memory.delete_bank(src, request_context=request_context)
         await memory.delete_bank(dst, request_context=request_context)
 

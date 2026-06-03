@@ -3302,6 +3302,35 @@ class MemoryEngine(MemoryEngineInterface):
             outbox_callback_factory=outbox_factory,
         )
 
+        # Fire the post-retain extension hook (usage tracking / metrics /
+        # notifications) once per imported document, mirroring retain. Import runs
+        # no LLM extraction, so token counts are zero and processed_content_tokens
+        # is 0 ("nothing went through the extraction pipeline") — extensions that
+        # meter LLM/extraction cost therefore correctly bill an import as free.
+        if self._operation_validator:
+            from hindsight_api.extensions import RetainResult
+
+            for doc in result.imported_documents:
+                try:
+                    await self._operation_validator.on_retain_complete(
+                        RetainResult(
+                            bank_id=bank_id,
+                            contents=[{"content": doc.content}],
+                            request_context=request_context,
+                            document_id=doc.document_id,
+                            fact_type_override=None,
+                            unit_ids=[doc.unit_ids],
+                            success=True,
+                            error=None,
+                            llm_input_tokens=0,
+                            llm_output_tokens=0,
+                            llm_total_tokens=0,
+                            processed_content_tokens=0,
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(f"Post-import hook error (non-fatal): {e}")
+
         # Same async side effects every fact insert triggers (retain or import).
         await self._submit_post_insert_maintenance(bank_id, request_context, config=resolved_config)
 

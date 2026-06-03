@@ -43,6 +43,21 @@ _VALID_CONFLICT_MODES: tuple[OnConflict, ...] = ("skip", "replace", "new-id")
 
 
 @dataclass
+class ImportedDocument:
+    """A single document successfully imported, with the units it produced.
+
+    Carried back so the engine can fire the post-retain extension hook
+    (usage tracking / metrics / notifications) once per imported document,
+    mirroring how retain reports each completed document.
+    """
+
+    document_id: str
+    unit_ids: list[str]
+    content: str
+    tags: list[str]
+
+
+@dataclass
 class ImportResult:
     """Outcome of importing a transfer archive into a bank."""
 
@@ -55,6 +70,9 @@ class ImportResult:
     skipped_document_ids: list[str] = field(default_factory=list)
     # Original id -> freshly generated id, for documents imported under "new-id".
     remapped_document_ids: dict[str, str] = field(default_factory=dict)
+    # Per-document outcomes, for the engine's post-retain hook. Not serialized
+    # into operation result_metadata (the worker handler writes counts only).
+    imported_documents: list[ImportedDocument] = field(default_factory=list)
 
 
 @dataclass
@@ -161,6 +179,14 @@ async def import_documents(
         )
         result.documents_imported += 1
         result.facts_imported += len(unit_ids)
+        result.imported_documents.append(
+            ImportedDocument(
+                document_id=target_id,
+                unit_ids=unit_ids,
+                content=document.original_text or "",
+                tags=list(document.tags),
+            )
+        )
         for ordinal, unit_id in enumerate(unit_ids):
             ref_map[(document.id, ordinal)] = unit_id
 
