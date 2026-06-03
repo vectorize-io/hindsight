@@ -204,14 +204,42 @@ class TestPut:
 
 
 class TestGet:
-    def test_get_without_input_returns_history(self):
+    def test_get_without_input_falls_back_to_last_user_message(self):
+        """Workflow-based agents (llama_index.core.agent.workflow.ReActAgent
+        and friends) call ``memory.aget()`` without passing ``input=``. Without
+        a fallback, automatic recall would never fire for those agents. We
+        recall using the most recent user message in local history instead.
+        """
+        client = _mock_client()
+        client.recall.return_value = _mock_recall_response(["User likes Python"])
+        memory = HindsightMemory.from_client(client=client, bank_id="test")
+        memory.put(ChatMessage(role=MessageRole.USER, content="what do I like?"))
+        memory.put(ChatMessage(role=MessageRole.ASSISTANT, content="ack"))
+
+        messages = memory.get()  # no input — fall back to last user msg
+        client.recall.assert_called_once()
+        assert client.recall.call_args[1]["query"] == "what do I like?"
+        # System (with recalled memories) + 2 history messages
+        assert len(messages) == 3
+        assert messages[0].role == MessageRole.SYSTEM
+        assert "User likes Python" in str(messages[0].content)
+
+    def test_get_without_input_and_empty_history_skips_recall(self):
         client = _mock_client()
         memory = HindsightMemory.from_client(client=client, bank_id="test")
-        memory.put(ChatMessage(role=MessageRole.USER, content="hello"))
-        memory.put(ChatMessage(role=MessageRole.ASSISTANT, content="hi there"))
-
         messages = memory.get()
-        assert len(messages) == 2
+        assert len(messages) == 0
+        client.recall.assert_not_called()
+
+    def test_get_without_input_and_no_user_msg_skips_recall(self):
+        """History with only system/assistant messages and no user message
+        should not fire recall — there's no semantically meaningful query
+        to look up."""
+        client = _mock_client()
+        memory = HindsightMemory.from_client(client=client, bank_id="test")
+        memory.put(ChatMessage(role=MessageRole.ASSISTANT, content="standalone"))
+        messages = memory.get()
+        assert len(messages) == 1
         client.recall.assert_not_called()
 
     def test_get_with_input_recalls_memories(self):

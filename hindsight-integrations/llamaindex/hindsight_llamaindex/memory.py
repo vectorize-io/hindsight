@@ -371,16 +371,33 @@ class HindsightMemory(BaseMemory):
 
     # -- BaseMemory interface --
 
+    def _recall_query(self, input: Optional[str]) -> Optional[str]:
+        """Pick the recall query: explicit input wins; otherwise the most
+        recent USER message in local history. Workflow-based LlamaIndex agents
+        (``llama_index.core.agent.workflow.ReActAgent`` and friends) call
+        ``aget()`` without an ``input`` kwarg on the main path, so without
+        this fallback automatic recall would never fire for them.
+        """
+        if input:
+            return input
+        for msg in reversed(self._chat_history):
+            if msg.role == MessageRole.USER:
+                content = str(msg.content) if msg.content else ""
+                if content.strip():
+                    return content
+        return None
+
     def get(self, input: Optional[str] = None, **kwargs: Any) -> list[ChatMessage]:
         """Get chat history, enriched with recalled Hindsight memories.
 
-        If ``input`` is provided, relevant memories are recalled and
-        prepended as a system message.
+        Recalls using ``input`` if supplied, otherwise the most recent user
+        message in local history.
         """
         messages: list[ChatMessage] = []
 
-        if input:
-            memories_text = self._recall_memories(input)
+        query = self._recall_query(input)
+        if query:
+            memories_text = self._recall_memories(query)
             if memories_text:
                 system_content = self.system_prompt.format(memories=memories_text)
                 messages.append(ChatMessage(role=MessageRole.SYSTEM, content=system_content))
@@ -392,8 +409,9 @@ class HindsightMemory(BaseMemory):
         """Async version of get()."""
         messages: list[ChatMessage] = []
 
-        if input:
-            memories_text = await self._arecall_memories(input)
+        query = self._recall_query(input)
+        if query:
+            memories_text = await self._arecall_memories(query)
             if memories_text:
                 system_content = self.system_prompt.format(memories=memories_text)
                 messages.append(ChatMessage(role=MessageRole.SYSTEM, content=system_content))
