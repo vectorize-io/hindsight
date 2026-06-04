@@ -381,6 +381,26 @@ describe("system transform hook", () => {
     expect(state.recalledSessions.has("sess-1")).toBe(false);
   });
 
+  it("appends to existing system section instead of creating a new one", async () => {
+    const client = makeClient();
+    client.recall.mockResolvedValue({
+      results: [{ text: "User is a developer", type: "world" }],
+    });
+    const state = makeState();
+    state.recalledSessions.add("sess-1");
+    // Simulate an existing system prompt already present
+    const output = { system: ["You are a helpful coding assistant."] as string[] };
+    const hooks = createHooks(client, "bank", makeConfig(), state, makeOpencodeClient());
+
+    await hooks["experimental.chat.system.transform"]({ sessionID: "sess-1", model: {} }, output);
+
+    // Should still have only one system entry (appended, not pushed)
+    expect(output.system.length).toBe(1);
+    expect(output.system[0]).toContain("You are a helpful coding assistant.");
+    expect(output.system[0]).toContain("hindsight_memories");
+    expect(output.system[0]).toContain("User is a developer");
+  });
+
   it("skips when autoRecall is false", async () => {
     const client = makeClient();
     const state = makeState();

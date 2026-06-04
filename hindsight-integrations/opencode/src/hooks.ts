@@ -314,7 +314,14 @@ export function createHooks(
       }
 
       if (context) {
-        output.system.push(context);
+        // Append to the existing system section instead of adding a new one,
+        // because not all LLMs support multiple system sections.
+        const existing = output.system[0];
+        if (existing) {
+          output.system[0] = `${existing}\n\n${context}`;
+        } else {
+          output.system[0] = context;
+        }
         debugLog(config, `Injected recall context for session ${sessionId}`);
       }
     } catch (e) {
