@@ -8344,6 +8344,11 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
         backend = await self._get_backend()
+        # The current reflect() caller reads only last_consolidated_at and
+        # pending_consolidation, but `failed` is part of this method's published
+        # contract (see interface.get_bank_freshness) so the returned shape stays
+        # a strict subset of get_bank_stats. All three come from one scan, so
+        # keeping `failed` costs nothing extra.
         async with acquire_with_retry(backend) as conn:
             row = await conn.fetchrow(
                 f"""
