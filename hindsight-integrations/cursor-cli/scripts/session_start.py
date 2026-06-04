@@ -16,6 +16,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from lib.bank import derive_bank_id
 from lib.client import HindsightClient
 from lib.config import debug_log, load_config
 from lib.daemon import get_api_url, prestart_daemon_background
@@ -52,7 +53,12 @@ def main():
 
     # Emit a small context note so the user can see the integration is live.
     # Cursor's sessionStart accepts {env, additional_context}.
-    bank_id = config.get("bankId") or "cursor-cli"
+    # Use the same derive_bank_id() the other hooks use so the banner
+    # names the exact bank recall/retain will target — otherwise users
+    # (and agents) call `hindsight memory reflect <wrong-bank>` and hit
+    # empty results.
+    bank_id = derive_bank_id(hook_input, config)
+    debug_log(config, f"Resolved bank_id: {bank_id}")
     note = (
         f"Hindsight memory integration is active for this session. "
         f"Bank: {bank_id}. Relevant memories will be auto-injected before each prompt."
