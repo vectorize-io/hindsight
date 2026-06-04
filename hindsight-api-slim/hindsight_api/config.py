@@ -1755,6 +1755,21 @@ class HindsightConfig:
                     " and ".join(missing),
                 )
 
+        if self.embeddings_provider == "onnx":
+            try:
+                import importlib
+
+                importlib.import_module("onnxruntime")
+                importlib.import_module("transformers")
+            except ImportError:
+                logger.warning(
+                    "ONNX embeddings provider configured, but 'onnxruntime' and/or "
+                    "'transformers' is not installed. The API will fail at model init time. Either:\n"
+                    "  1. Install ONNX deps: pip install hindsight-api-slim[local-onnx]\n"
+                    "  2. Use a different embeddings provider, e.g. HINDSIGHT_API_EMBEDDINGS_PROVIDER=local "
+                    "or openai"
+                )
+
         # Validate that sum of per-operation slot reservations does not exceed max_slots
         total_reserved = sum(self.worker_slot_reservations.values())
         if total_reserved > self.worker_max_slots:

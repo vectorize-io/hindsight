@@ -280,11 +280,20 @@ class OnnxEmbeddings(Embeddings):
     ):
         self.model_id = model_id
         self.model_path = model_path
+        if model_path and tokenizer_name_or_path is None:
+            logger.warning(
+                "Embeddings: ONNX model_path is set without tokenizer_name_or_path; "
+                "falling back to tokenizer from model_id %s. Set "
+                "HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH when using local ONNX artifacts.",
+                model_id,
+            )
         self.tokenizer_name_or_path = tokenizer_name_or_path or model_id
         self.onnx_file = onnx_file
         self.configured_dimensions = dimensions
         self.max_tokens = max_tokens
         self.pooling = pooling.lower()
+        if self.pooling not in {"mean", "cls"}:
+            raise ValueError("ONNX embeddings pooling must be 'mean' or 'cls'")
         self.normalize = normalize
         self.query_prefix = query_prefix
         self.passage_prefix = passage_prefix
@@ -339,11 +348,15 @@ class OnnxEmbeddings(Embeddings):
             self.model_id,
             model_path,
         )
+        logger.info(
+            "Embeddings: ONNX query_prefix=%r passage_prefix=%r pooling=%s normalize=%s",
+            self.query_prefix,
+            self.passage_prefix,
+            self.pooling,
+            self.normalize,
+        )
         self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name_or_path)
         self._session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
-
-        if self.pooling not in {"mean", "cls"}:
-            raise ValueError("ONNX embeddings pooling must be 'mean' or 'cls'")
 
         detected = len(self.encode(["test"])[0])
         if self.configured_dimensions is not None and detected != self.configured_dimensions:

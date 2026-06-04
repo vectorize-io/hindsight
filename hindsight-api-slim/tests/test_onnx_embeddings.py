@@ -44,6 +44,16 @@ class FakeOnnxSession:
         return [token_embeddings]
 
 
+class FakePooledOnnxSession:
+    def get_inputs(self):
+        return [SimpleNamespace(name="input_ids"), SimpleNamespace(name="attention_mask")]
+
+    def run(self, output_names, inputs):
+        batch = inputs["input_ids"].shape[0]
+        assert output_names == ["sentence_embedding"]
+        return [np.array([[3.0, 4.0]] * batch, dtype=np.float32)]
+
+
 def test_onnx_embeddings_mean_pooling_normalizes_and_filters_inputs():
     emb = OnnxEmbeddings(model_id="intfloat/multilingual-e5-small", dimensions=2, max_tokens=17)
     emb._tokenizer = FakeTokenizer()
@@ -54,6 +64,52 @@ def test_onnx_embeddings_mean_pooling_normalizes_and_filters_inputs():
 
     assert result == [pytest.approx([0.6, 0.8])]
     assert emb._tokenizer.calls[-1]["max_length"] == 17
+
+
+def test_onnx_embeddings_cls_pooling_and_normalize_false():
+    emb = OnnxEmbeddings(
+        model_id="intfloat/multilingual-e5-small",
+        dimensions=2,
+        pooling="cls",
+        normalize=False,
+    )
+    emb._tokenizer = FakeTokenizer()
+    emb._session = FakeOnnxSession()
+    emb._dimension = 2
+
+    result = emb.encode(["hello"])
+
+    assert result == [pytest.approx([3.0, 4.0])]
+
+
+def test_onnx_embeddings_output_name_uses_pre_pooled_2d_output():
+    emb = OnnxEmbeddings(
+        model_id="intfloat/multilingual-e5-small",
+        dimensions=2,
+        output_name="sentence_embedding",
+    )
+    emb._tokenizer = FakeTokenizer()
+    emb._session = FakePooledOnnxSession()
+    emb._dimension = 2
+
+    result = emb.encode(["hello"])
+
+    assert result == [pytest.approx([0.6, 0.8])]
+
+
+def test_onnx_embeddings_rejects_invalid_pooling_before_initialize():
+    with pytest.raises(ValueError, match="pooling"):
+        OnnxEmbeddings(model_id="intfloat/multilingual-e5-small", pooling="max")
+
+
+def test_onnx_embeddings_warns_when_local_model_path_has_no_tokenizer(caplog):
+    emb = OnnxEmbeddings(
+        model_id="intfloat/multilingual-e5-small",
+        model_path="/models/custom/onnx/model.onnx",
+    )
+
+    assert emb.tokenizer_name_or_path == "intfloat/multilingual-e5-small"
+    assert "model_path is set without tokenizer_name_or_path" in caplog.text
 
 
 def test_onnx_embeddings_query_and_document_prefixes_are_asymmetric():
@@ -73,6 +129,22 @@ def test_onnx_embeddings_query_and_document_prefixes_are_asymmetric():
 
     assert tokenizer.calls[0]["texts"] == ["query: weather"]
     assert tokenizer.calls[1]["texts"] == ["passage: weather"]
+
+
+@pytest.mark.asyncio
+async def test_onnx_embeddings_dimension_mismatch_raises_value_error():
+    emb = OnnxEmbeddings(
+        model_id="intfloat/multilingual-e5-small",
+        model_path="/models/e5/onnx/model.onnx",
+        tokenizer_name_or_path="/models/e5",
+        dimensions=3,
+    )
+    fake_transformers = SimpleNamespace(AutoTokenizer=SimpleNamespace(from_pretrained=MagicMock(return_value=FakeTokenizer())))
+    fake_onnxruntime = SimpleNamespace(InferenceSession=MagicMock(return_value=FakeOnnxSession()))
+
+    with patch.dict(sys.modules, {"transformers": fake_transformers, "onnxruntime": fake_onnxruntime}):
+        with pytest.raises(ValueError, match="does not match model output"):
+            await emb.initialize()
 
 
 @pytest.mark.asyncio
