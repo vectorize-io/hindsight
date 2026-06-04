@@ -35,6 +35,7 @@ jobs:
       integrations-chat: ${{ steps.filter.outputs.integrations-chat }}
       integrations-claude-code: ${{ steps.filter.outputs.integrations-claude-code }}
       integrations-codex: ${{ steps.filter.outputs.integrations-codex }}
+      integrations-cursor-cli: ${{ steps.filter.outputs.integrations-cursor-cli }}
       integrations-crewai: ${{ steps.filter.outputs.integrations-crewai }}
       integrations-litellm: ${{ steps.filter.outputs.integrations-litellm }}
       integrations-pydantic-ai: ${{ steps.filter.outputs.integrations-pydantic-ai }}
@@ -117,6 +118,8 @@ jobs:
             - 'hindsight-integrations/claude-code/**'
           integrations-codex:
             - 'hindsight-integrations/codex/**'
+          integrations-cursor-cli:
+            - 'hindsight-integrations/cursor-cli/**'
           integrations-crewai:
             - 'hindsight-integrations/crewai/**'
           integrations-litellm:
@@ -441,6 +444,32 @@ jobs:
 
     - name: Run tests
       working-directory: ./hindsight-integrations/codex
+      run: python -m pytest tests/ -v
+
+  test-cursor-cli-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-cursor-cli == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+
+    - name: Install pytest
+      run: pip install pytest
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/cursor-cli
       run: python -m pytest tests/ -v
 
   build-ai-sdk-integration:
@@ -3991,6 +4020,7 @@ jobs:
       - smoke-openclaw-install
       - test-claude-code-integration
       - test-codex-integration
+      - test-cursor-cli-integration
       - build-ai-sdk-integration
       - test-ai-sdk-integration-deno
       - test-opencode-integration
