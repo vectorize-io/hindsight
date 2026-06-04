@@ -24,6 +24,7 @@ import io
 import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -38,13 +39,16 @@ from lib.content import (
     truncate_recall_query,
 )
 from lib.daemon import get_api_url
+from lib.state import write_state
+
+LAST_RECALL_STATE = "last_recall.json"
 
 
 def main():
     if sys.platform == "win32":
-        sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", errors="replace")
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+        sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8', errors='replace')
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
     config = load_config()
 
@@ -52,6 +56,7 @@ def main():
         debug_log(config, "Auto-recall disabled, exiting")
         return
 
+    # Read hook input from stdin
     try:
         hook_input = json.load(sys.stdin)
     except (json.JSONDecodeError, EOFError):
@@ -60,7 +65,8 @@ def main():
 
     debug_log(config, f"Hook input keys: {list(hook_input.keys())}")
 
-    prompt = (hook_input.get("prompt") or "").strip()
+    # Extract user query — accept both "prompt" and "user_prompt" defensively
+    prompt = (hook_input.get("prompt") or hook_input.get("user_prompt") or "").strip()
     if not prompt or len(prompt) < 5:
         debug_log(config, "Prompt too short for recall, skipping")
         return
@@ -71,7 +77,7 @@ def main():
     try:
         api_url = get_api_url(config, debug_fn=_dbg, allow_daemon_start=False)
     except RuntimeError as e:
-        debug_log(config, f"Skipping recall: {e}")
+        print(f"[Hindsight] {e}", file=sys.stderr)
         return
 
     api_token = config.get("hindsightApiToken")
@@ -92,10 +98,7 @@ def main():
     if recall_context_turns > 1:
         transcript_path = hook_input.get("transcript_path", "")
         messages = read_transcript(transcript_path)
-        debug_log(
-            config,
-            f"Multi-turn context: {recall_context_turns} turns, {len(messages)} messages",
-        )
+        debug_log(config, f"Multi-turn context: {recall_context_turns} turns, {len(messages)} messages")
         query = compose_recall_query(prompt, messages, recall_context_turns, recall_roles)
     else:
         query = prompt
@@ -103,16 +106,14 @@ def main():
     query = truncate_recall_query(query, prompt, recall_max_query_chars)
     if len(query) > recall_max_query_chars:
         query = query[:recall_max_query_chars]
-    query = query.encode("utf-8", errors="ignore").decode("utf-8")
+
+    query = query.encode('utf-8', errors='ignore').decode('utf-8')
 
     current_time = format_current_time()
     preamble = config.get("recallPromptPreamble", "")
     recall_timeout = config.get("recallTimeout", 10)
 
-    debug_log(
-        config,
-        f"Recalling from bank '{bank_id}', query length: {len(query)}, timeout: {recall_timeout}",
-    )
+    debug_log(config, f"Recalling from bank '{bank_id}', query length: {len(query)}, timeout: {recall_timeout}")
     try:
         response = client.recall(
             bank_id=bank_id,
@@ -133,12 +134,24 @@ def main():
 
     debug_log(config, f"Injecting {len(results)} memories")
 
+    memories_formatted = format_memories(results)
+
     context_message = (
         f"<hindsight_memories>\n"
         f"{preamble}\n"
         f"Current time - {current_time}\n\n"
-        f"{format_memories(results)}\n"
+        f"{memories_formatted}\n"
         f"</hindsight_memories>"
+    )
+
+    write_state(
+        LAST_RECALL_STATE,
+        {
+            "context": context_message,
+            "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "bank_id": bank_id,
+            "result_count": len(results),
+        },
     )
 
     # Cursor's beforeSubmitPrompt output schema:
@@ -158,6 +171,7 @@ if __name__ == "__main__":
         print(f"[Hindsight] Unexpected error in recall: {e}", file=sys.stderr)
         try:
             from lib.config import load_config
+
             sys.exit(2 if load_config().get("debug") else 0)
         except Exception:
             sys.exit(0)

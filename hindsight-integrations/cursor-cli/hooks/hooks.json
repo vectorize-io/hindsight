@@ -18,12 +18,6 @@
         "command": "python3 \"__SCRIPTS_DIR__/retain.py\"",
         "timeout": 30
       }
-    ],
-    "preCompact": [
-      {
-        "command": "python3 \"__SCRIPTS_DIR__/pre_compact.py\"",
-        "timeout": 12
-      }
     ]
   }
 }

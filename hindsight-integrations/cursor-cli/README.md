@@ -4,14 +4,13 @@ Long-term memory for [Cursor CLI](https://cursor.com/docs/cli) — remembers you
 
 ## How it works
 
-Four Cursor CLI hooks keep memory in sync automatically:
+Three Cursor CLI hooks keep memory in sync automatically:
 
 | Hook | Action |
 |------|--------|
 | `sessionStart` | Confirms Hindsight is reachable and pre-warms the local daemon if needed |
 | `beforeSubmitPrompt` | Recalls relevant memories and injects them as `additional_context` |
 | `stop` | Retains the conversation to long-term memory |
-| `preCompact` | Notes which memories will survive context-window compaction |
 
 ## Requirements
 
@@ -120,8 +119,6 @@ export HINDSIGHT_DEBUG=true
 **Recall** — before each prompt, Hindsight searches your memory bank for facts relevant to what you're about to ask. Found memories are injected as `additional_context` so the agent has continuity across sessions.
 
 **Retain** — after each turn, Cursor's conversation transcript is stored to Hindsight. The memory engine extracts facts, relationships, and experiences — so you don't need to re-explain your stack, preferences, or past decisions.
-
-**PreCompact** — before context window compaction, Hindsight recalls the memories that will still be relevant and surfaces a note so you can see what's being held in long-term memory.
 
 ## Dynamic bank IDs
 

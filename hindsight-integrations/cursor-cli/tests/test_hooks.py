@@ -409,59 +409,13 @@ class TestRetainHook:
 
 
 class TestSessionStartHook:
-    def test_emits_additional_context_when_server_reachable(self, monkeypatch, tmp_path):
-        health_response = FakeHTTPResponse({}, status=200)
+    def test_no_output_when_server_reachable(self, monkeypatch, tmp_path):
+        """sessionStart is fire-and-forget: no banner, no additional_context.
 
-        def health_then_empty(req, timeout=None):
-            if "/health" in req.full_url:
-                return health_response
-            return FakeHTTPResponse({})
-
-        hook_input = make_hook_input()
-        # Force the hook to actually probe the server instead of short-
-        # circuiting on HINDSIGHT_API_URL.
-        output = _run_hook(
-            "session_start", hook_input, monkeypatch, tmp_path,
-            urlopen_side_effect=health_then_empty,
-            set_default_api_url=False,
-        )
-        data = json.loads(output)
-        assert "additional_context" in data
-        assert "Hindsight" in data["additional_context"]
-
-    def test_emits_no_output_when_server_unreachable(self, monkeypatch, tmp_path):
-        def raise_error(req, timeout=None):
-            raise OSError("connection refused")
-
-        hook_input = make_hook_input()
-        # Force the hook to actually probe the server instead of short-
-        # circuiting on HINDSIGHT_API_URL.
-        output = _run_hook(
-            "session_start", hook_input, monkeypatch, tmp_path,
-            urlopen_side_effect=raise_error,
-            set_default_api_url=False,
-        )
-        # Fire-and-forget — we may or may not have output, but we must not raise.
-        # In the no-server path we deliberately emit nothing so the agent
-        # doesn't see a misleading "Hindsight is active" note.
-        assert output.strip() == ""
-
-    def test_both_disabled_produces_no_output(self, monkeypatch, tmp_path):
-        hook_input = make_hook_input()
-        output = _run_hook(
-            "session_start", hook_input, monkeypatch, tmp_path,
-            user_config={"autoRecall": False, "autoRetain": False},
-        )
-        assert output.strip() == ""
-
-    def test_banner_shows_derived_bank_when_dynamic_enabled(self, monkeypatch, tmp_path):
-        """Regression: session banner must reflect the dynamic bank, not the static default.
-
-        Before the fix, session_start used `config.get("bankId") or "cursor-cli"`
-        so dynamicBankId: true with granularity ["project"] still surfaced
-        "cursor-cli" in the banner, while recall.py / retain.py / pre_compact.py
-        used the derived bank. That mismatch caused users (and agents) to call
-        `hindsight memory reflect cursor-cli` against an empty bank.
+        Mirrors codex and claude-code: the hook just health-checks and
+        pre-warms the daemon. Any user-facing output here is invented
+        surface and a divergence risk — the recall output is the only
+        agent-visible channel.
         """
         health_response = FakeHTTPResponse({}, status=200)
 
@@ -470,125 +424,31 @@ class TestSessionStartHook:
                 return health_response
             return FakeHTTPResponse({})
 
-        monkeypatch.delenv("CURSOR_PROJECT_DIR", raising=False)
-        hook_input = make_hook_input(
-            workspace_roots=["/home/user/hindsight"],
-        )
-        output = _run_hook(
-            "session_start", hook_input, monkeypatch, tmp_path,
-            urlopen_side_effect=health_then_empty,
-            set_default_api_url=False,
-            user_config={
-                "dynamicBankId": True,
-                "dynamicBankGranularity": ["project"],
-                "bankIdPrefix": "korayem-cli-agents",
-                "bankId": None,
-            },
-        )
-        data = json.loads(output)
-        assert "Bank: korayem-cli-agents-hindsight" in data["additional_context"]
-        assert "Bank: cursor-cli" not in data["additional_context"]
-
-    def test_banner_respects_static_bank_when_dynamic_disabled(self, monkeypatch, tmp_path):
-        """No regression: explicit bankId is preserved when dynamicBankId is off."""
-        health_response = FakeHTTPResponse({}, status=200)
-
-        def health_then_empty(req, timeout=None):
-            if "/health" in req.full_url:
-                return health_response
-            return FakeHTTPResponse({})
-
-        monkeypatch.delenv("CURSOR_PROJECT_DIR", raising=False)
         hook_input = make_hook_input()
         output = _run_hook(
             "session_start", hook_input, monkeypatch, tmp_path,
             urlopen_side_effect=health_then_empty,
             set_default_api_url=False,
-            user_config={
-                "dynamicBankId": False,
-                "bankId": "my-explicit-bank",
-            },
-        )
-        data = json.loads(output)
-        assert "Bank: my-explicit-bank" in data["additional_context"]
-
-    def test_banner_respects_hindsight_bank_id_env_override(self, monkeypatch, tmp_path):
-        """No regression: HINDSIGHT_BANK_ID env override is reflected in banner."""
-        health_response = FakeHTTPResponse({}, status=200)
-
-        def health_then_empty(req, timeout=None):
-            if "/health" in req.full_url:
-                return health_response
-            return FakeHTTPResponse({})
-
-        monkeypatch.delenv("CURSOR_PROJECT_DIR", raising=False)
-        hook_input = make_hook_input()
-        output = _run_hook(
-            "session_start", hook_input, monkeypatch, tmp_path,
-            urlopen_side_effect=health_then_empty,
-            set_default_api_url=False,
-            user_config={
-                "dynamicBankId": False,
-                "bankId": "env-override-bank",
-            },
-        )
-        data = json.loads(output)
-        assert "Bank: env-override-bank" in data["additional_context"]
-
-
-# ---------------------------------------------------------------------------
-# preCompact hook
-# ---------------------------------------------------------------------------
-
-
-class TestPreCompactHook:
-    def test_emits_user_message_with_memory_count(self, monkeypatch, tmp_path):
-        messages = [
-            {"role": "user", "content": "Tell me about my project"},
-            {"role": "assistant", "content": "Sure, what would you like to know?"},
-        ]
-        transcript = make_transcript_file(tmp_path, messages)
-        response = FakeHTTPResponse({"results": [make_memory("anything"), make_memory("more")]})
-
-        hook_input = make_hook_input(transcript_path=transcript)
-        output = _run_hook(
-            "pre_compact", hook_input, monkeypatch, tmp_path,
-            urlopen_side_effect=lambda *a, **kw: response,
-        )
-
-        data = json.loads(output)
-        assert "user_message" in data
-        assert "2" in data["user_message"]
-        assert "Hindsight" in data["user_message"]
-
-    def test_emits_no_output_when_no_memories(self, monkeypatch, tmp_path):
-        messages = [{"role": "user", "content": "hi"}]
-        transcript = make_transcript_file(tmp_path, messages)
-        hook_input = make_hook_input(transcript_path=transcript)
-        output = _run_hook(
-            "pre_compact", hook_input, monkeypatch, tmp_path,
-            urlopen_side_effect=lambda *a, **kw: FakeHTTPResponse({"results": []}),
         )
         assert output.strip() == ""
 
-    def test_graceful_on_api_error(self, monkeypatch, tmp_path):
-        messages = [{"role": "user", "content": "hi there"}]
-        transcript = make_transcript_file(tmp_path, messages)
-        hook_input = make_hook_input(transcript_path=transcript)
-
-        def raise_error(*a, **kw):
+    def test_no_output_when_server_unreachable(self, monkeypatch, tmp_path):
+        def raise_error(req, timeout=None):
             raise OSError("connection refused")
 
-        output = _run_hook(
-            "pre_compact", hook_input, monkeypatch, tmp_path,
-            urlopen_side_effect=raise_error,
-        )
-        assert output.strip() == ""
-
-    def test_disabled_auto_recall_skips_preCompact(self, monkeypatch, tmp_path):
         hook_input = make_hook_input()
         output = _run_hook(
-            "pre_compact", hook_input, monkeypatch, tmp_path,
-            user_config={"autoRecall": False},
+            "session_start", hook_input, monkeypatch, tmp_path,
+            urlopen_side_effect=raise_error,
+            set_default_api_url=False,
+        )
+        # Fire-and-forget — never raise. Output is empty in both paths.
+        assert output.strip() == ""
+
+    def test_both_disabled_produces_no_output(self, monkeypatch, tmp_path):
+        hook_input = make_hook_input()
+        output = _run_hook(
+            "session_start", hook_input, monkeypatch, tmp_path,
+            user_config={"autoRecall": False, "autoRetain": False},
         )
         assert output.strip() == ""

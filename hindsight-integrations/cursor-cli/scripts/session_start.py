@@ -5,9 +5,8 @@ Fires once when a Cursor composer conversation begins. Verifies the
 Hindsight server is reachable, and kicks off a background daemon
 pre-start if not — so it's ready by the first recall or retain hook.
 
-Cursor's `sessionStart` is documented as fire-and-forget. We still
-emit a small `additional_context` note so the user can confirm the
-integration is live. The full recall happens on `beforeSubmitPrompt`.
+Cursor's `sessionStart` is documented as fire-and-forget. The full
+recall happens on `beforeSubmitPrompt`.
 """
 
 import json
@@ -16,7 +15,6 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from lib.bank import derive_bank_id
 from lib.client import HindsightClient
 from lib.config import debug_log, load_config
 from lib.daemon import get_api_url, prestart_daemon_background
@@ -29,6 +27,7 @@ def main():
         debug_log(config, "Both autoRecall and autoRetain disabled, skipping session start")
         return
 
+    # Consume stdin
     try:
         hook_input = json.load(sys.stdin)
     except (json.JSONDecodeError, EOFError):
@@ -50,23 +49,6 @@ def main():
         debug_log(config, f"Hindsight not running, initiating background pre-start: {e}")
         prestart_daemon_background(config, debug_fn=_dbg)
         return
-
-    # Emit a small context note so the user can see the integration is live.
-    # Cursor's sessionStart accepts {env, additional_context}.
-    # Use the same derive_bank_id() the other hooks use so the banner
-    # names the exact bank recall/retain will target — otherwise users
-    # (and agents) call `hindsight memory reflect <wrong-bank>` and hit
-    # empty results.
-    bank_id = derive_bank_id(hook_input, config)
-    debug_log(config, f"Resolved bank_id: {bank_id}")
-    note = (
-        f"Hindsight memory integration is active for this session. "
-        f"Bank: {bank_id}. Relevant memories will be auto-injected before each prompt."
-    )
-    output = {
-        "additional_context": note,
-    }
-    json.dump(output, sys.stdout)
 
 
 if __name__ == "__main__":
