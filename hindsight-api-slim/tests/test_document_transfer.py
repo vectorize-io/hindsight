@@ -330,6 +330,25 @@ async def test_import_bank_rejects_documents_archive(memory, request_context):
 
 
 @pytest.mark.asyncio
+async def test_import_bank_refuses_existing_bank(memory, request_context):
+    """import-bank restores a whole bank, not a merge — it must refuse an existing target."""
+    from hindsight_api.engine.transfer import export_bank
+
+    bank = _unique_bank("bank_exists")
+    try:
+        await _retain(memory, bank, "Alice works at Google.", request_context, "doc-1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, bank)
+        # The source bank still exists — importing the archive back must refuse
+        # (restoring into the same id after delete is covered by the exact round-trip test).
+        with pytest.raises(ValueError, match="already exists"):
+            await memory.import_bank_async(archive, request_context)
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_export_import_roundtrip_without_llm(memory, request_context, monkeypatch):
     """Export from one bank and import into another without re-running the LLM."""
     src = _unique_bank("transfer_src")

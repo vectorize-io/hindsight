@@ -290,7 +290,6 @@ hindsight-admin import-bank --archive <FILE.zip> [OPTIONS]
 | `--archive`, `-a` | Path to the `.zip` produced by `export-bank`. | (required) |
 | `--schema`, `-s` | Target schema. | base schema |
 | `--target-bank` | Override the bank id (defaults to the archive's source bank). | source bank |
-| `--on-conflict` | Document conflict handling: `skip` \| `replace` \| `new-id`. | `skip` |
 | `--include-history` | Also restore history if present in the archive. | `false` |
 
 **Examples:**
@@ -300,6 +299,10 @@ hindsight-admin import-bank --archive my-bank.zip
 ```
 
 Run this against an instance configured with the **target** embedding model / vector extension / text-search backend — that's what re-embedding uses.
+
+:::warning Target bank must not exist
+Import restores a **whole bank** (config, facts, mental models, …) — it is **not a merge**. If a bank with the target id already exists, the command fails. Delete that bank first, or use `--target-bank` to restore under a fresh id.
+:::
 
 ---
 

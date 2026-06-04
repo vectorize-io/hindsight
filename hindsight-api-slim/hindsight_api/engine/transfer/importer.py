@@ -328,7 +328,6 @@ async def import_bank(
     format_date_fn: Any,
     archive_bytes: bytes,
     target_bank_id: str | None = None,
-    on_conflict: OnConflict = "skip",
     include_history: bool = False,
     ops: Any = None,
 ) -> BankImportResult:
@@ -338,10 +337,12 @@ async def import_bank(
     entities and search/vector indexes — the path for migrating a bank to an instance
     configured with a different embedding model / vector / text-search backend.
 
-    A migration restores *exact* state, so unlike the document import this fires no
-    retain webhooks and triggers no consolidation/graph maintenance: observations and
-    mental models are restored as exported, not regenerated. ``target_bank_id``
-    overrides the bank id (defaults to the archive's source bank).
+    The **target bank must not already exist**: import restores a complete bank
+    (config + facts + mental models + …) and is not a merge. If a bank with the
+    target id is present, this raises — delete it first or pass ``target_bank_id``
+    for a fresh id. A migration restores *exact* state, so unlike the document
+    import it fires no retain webhooks and triggers no consolidation/graph
+    maintenance: observations and mental models are restored as exported.
     """
     if ops is None:
         ops = backend.ops
@@ -358,6 +359,15 @@ async def import_bank(
                     row["bank_id"] = bank_id
 
     async with acquire_with_retry(backend) as conn:
+        # Refuse to import into an existing bank — this restores a whole bank, it
+        # does not merge. Merging would silently mix the archive's config/mental
+        # models/webhooks with whatever is already there (and global-unique ids
+        # like webhooks/directives would collide).
+        if await conn.fetchval(f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1", bank_id):
+            raise ValueError(
+                f"Target bank '{bank_id}' already exists; import-bank restores into a fresh bank "
+                f"(it is not a merge). Delete the bank first, or pass a different target bank id."
+            )
         # Bank row first — children (documents, mental_models, …) FK to it.
         await _restore_rows(conn, "banks", parsed.bank_rows.get("banks", []))
     # Ensure the bank's per-bank vector indexes exist (no-op for global-index
@@ -372,7 +382,6 @@ async def import_bank(
         format_date_fn=format_date_fn,
         bank_id=bank_id,
         archive_bytes=archive_bytes,
-        on_conflict=on_conflict,
         ops=ops,
         outbox_callback_factory=None,
     )

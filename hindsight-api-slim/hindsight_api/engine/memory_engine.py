@@ -3229,14 +3229,14 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         *,
         target_bank_id: str | None = None,
-        on_conflict: str = "skip",
         include_history: bool = False,
     ) -> "BankImportResult":
         """Restore a whole bank from an :func:`transfer.export_bank` archive.
 
         Re-embeds facts with this instance's embedding model and rebuilds links and
         indexes; restores bank config, mental models, directives and webhooks as
-        exported (no consolidation/webhooks — a migration restores exact state).
+        exported (no consolidation/webhooks — a migration restores exact state). The
+        target bank must not already exist (import restores a whole bank, not a merge).
         """
         from .transfer import import_bank
         from .transfer.importer import parse_bank_archive
@@ -3256,7 +3256,6 @@ class MemoryEngine(MemoryEngineInterface):
             format_date_fn=self._format_readable_date,
             archive_bytes=archive_bytes,
             target_bank_id=target_bank_id,
-            on_conflict=on_conflict,
             include_history=include_history,
         )
 

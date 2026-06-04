@@ -402,9 +402,7 @@ def export_bank_command(
     typer.echo(f"Exported bank '{bank_id}' to {output} ({size} bytes)")
 
 
-async def _run_import_bank(
-    archive_path: Path, schema: str, target_bank_id: str | None, on_conflict: str, include_history: bool
-):
+async def _run_import_bank(archive_path: Path, schema: str, target_bank_id: str | None, include_history: bool):
     """Boot a MemoryEngine (for the target's embedding model) and restore a bank archive."""
     # MemoryEngine is heavy (loads embeddings); import it lazily so other admin
     # commands don't pay for it. _current_schema is imported at module top.
@@ -423,7 +421,6 @@ async def _run_import_bank(
             archive_bytes,
             context,
             target_bank_id=target_bank_id,
-            on_conflict=on_conflict,
             include_history=include_history,
         )
     finally:
@@ -439,9 +436,6 @@ def import_bank_command(
     target_bank: str | None = typer.Option(
         None, "--target-bank", help="Override the bank id (defaults to the archive's source bank)."
     ),
-    on_conflict: str = typer.Option(
-        "skip", "--on-conflict", help="Document conflict handling: skip | replace | new-id."
-    ),
     include_history: bool = typer.Option(
         False, "--include-history", help="Also restore operational history if present in the archive."
     ),
@@ -451,11 +445,8 @@ def import_bank_command(
     Re-embeds facts with this instance's configured embedding model and rebuilds
     links and indexes — the import half of a cross-instance migration. Run against
     an instance configured with the desired embedding / vector / text-search backend.
+    The target bank must not already exist (import restores a whole bank, not a merge).
     """
-    if on_conflict not in ("skip", "replace", "new-id"):
-        typer.echo(f"Error: invalid --on-conflict '{on_conflict}'; expected skip|replace|new-id.", err=True)
-        raise typer.Exit(1)
-
     config = HindsightConfig.from_env()
     if not config.database_url:
         typer.echo("Error: Database URL not configured.", err=True)
@@ -465,7 +456,7 @@ def import_bank_command(
     target_schema = schema or config.database_schema or DEFAULT_DATABASE_SCHEMA
     typer.echo(f"Importing bank archive '{archive}' into schema '{target_schema}'...")
 
-    result = asyncio.run(_run_import_bank(archive, target_schema, target_bank, on_conflict, include_history))
+    result = asyncio.run(_run_import_bank(archive, target_schema, target_bank, include_history))
 
     typer.echo(
         f"Imported bank '{result.bank_id}': {result.documents_imported} doc(s), "
