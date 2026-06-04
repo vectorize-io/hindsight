@@ -15,6 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { JsonViewer } from "@/components/ui/json-viewer";
 import {
   Select,
   SelectContent,
@@ -503,27 +504,27 @@ export function AuditLogsView() {
               {selectedLog.request && (
                 <div>
                   <h4 className="text-sm font-semibold mb-2">{t("detailRequest")}</h4>
-                  <pre className="bg-muted p-3 rounded-md text-xs overflow-x-auto max-h-[200px] overflow-y-auto">
-                    {JSON.stringify(selectedLog.request, null, 2)}
-                  </pre>
+                  <JsonViewer
+                    value={selectedLog.request}
+                    className="bg-muted max-h-[300px] overflow-y-auto"
+                  />
                 </div>
               )}
 
               {selectedLog.response && (
                 <div>
                   <h4 className="text-sm font-semibold mb-2">{t("detailResponse")}</h4>
-                  <pre className="bg-muted p-3 rounded-md text-xs overflow-x-auto max-h-[200px] overflow-y-auto">
-                    {JSON.stringify(selectedLog.response, null, 2)}
-                  </pre>
+                  <JsonViewer
+                    value={selectedLog.response}
+                    className="bg-muted max-h-[300px] overflow-y-auto"
+                  />
                 </div>
               )}
 
               {selectedLog.metadata && Object.keys(selectedLog.metadata).length > 0 && (
                 <div>
                   <h4 className="text-sm font-semibold mb-2">{t("detailMetadata")}</h4>
-                  <pre className="bg-muted p-3 rounded-md text-xs overflow-x-auto">
-                    {JSON.stringify(selectedLog.metadata, null, 2)}
-                  </pre>
+                  <JsonViewer value={selectedLog.metadata} />
                 </div>
               )}
             </div>

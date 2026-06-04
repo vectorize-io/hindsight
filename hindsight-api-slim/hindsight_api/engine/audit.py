@@ -16,9 +16,57 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from ..engine.db_utils import acquire_with_retry
 
 logger = logging.getLogger(__name__)
+
+
+class AuditLogEntry(BaseModel):
+    """A single audit log entry."""
+
+    id: str
+    action: str
+    transport: str
+    bank_id: str | None
+    started_at: str | None
+    ended_at: str | None
+    duration_ms: int | None = Field(
+        default=None,
+        description="Server-computed duration in milliseconds (started_at → ended_at). Null if not yet completed.",
+    )
+    request: dict[str, Any] | None
+    response: dict[str, Any] | None
+    metadata: dict[str, Any]
+
+
+class AuditLogListResponse(BaseModel):
+    """Response model for list audit logs endpoint."""
+
+    bank_id: str
+    total: int
+    limit: int
+    offset: int
+    items: list[AuditLogEntry]
+
+
+class AuditLogStatsBucket(BaseModel):
+    """A single time bucket in audit log stats."""
+
+    time: str
+    actions: dict[str, int]
+    total: int
+
+
+class AuditLogStatsResponse(BaseModel):
+    """Response model for audit log stats endpoint."""
+
+    bank_id: str
+    period: str
+    trunc: str
+    start: str
+    buckets: list[AuditLogStatsBucket]
 
 
 @dataclass

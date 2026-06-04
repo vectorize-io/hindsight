@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/hindsight-control-plane",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Control plane for Hindsight - Semantic memory system",
   "bin": {
     "hindsight-control-plane": "./bin/cli.js"
@@ -12,7 +12,7 @@
   ],
   "scripts": {
     "dev": "next dev --turbopack -p ${PORT:-9999}",
-    "build": "next build && npm run build:standalone",
+    "build": "NODE_ENV=production next build && npm run build:standalone",
     "build:standalone": "rm -rf standalone && SERVER_JS=$(find .next/standalone -path '*/node_modules' -prune -o -name 'server.js' -print | head -1) && test -n \"$SERVER_JS\" || (echo 'Error: server.js not found in .next/standalone - standalone build failed' && exit 1) && STANDALONE_ROOT=$(dirname \"$SERVER_JS\") && cp -r \"$STANDALONE_ROOT\" standalone && cp -r .next/standalone/node_modules standalone/node_modules && mkdir -p standalone/.next && cp -r .next/static standalone/.next/static && mkdir -p standalone/public && (cp -r public/* standalone/public/ 2>/dev/null || true)",
     "start": "next start",
     "lint": "next lint",

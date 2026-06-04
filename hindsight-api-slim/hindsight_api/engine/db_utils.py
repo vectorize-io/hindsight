@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -101,6 +101,14 @@ async def acquire_with_retry(backend_or_pool: Any, max_retries: int = DEFAULT_MA
     """
     Async context manager to acquire a database connection with retry logic.
 
+    Retries the *acquire* itself when it raises a retryable error (connection
+    drop, timeout, deadlock detected during acquire). Exceptions raised by
+    user code inside the ``async with`` block are NOT retried — they propagate
+    as-is. Wrapping retry around the yield would violate the
+    ``@asynccontextmanager`` single-yield contract and surface as
+    ``RuntimeError("generator didn't stop after athrow()")`` on every
+    retryable inner error, masking the real cause.
+
     Accepts either a DatabaseBackend or a raw asyncpg.Pool for backward compatibility.
 
     Usage:
@@ -109,7 +117,7 @@ async def acquire_with_retry(backend_or_pool: Any, max_retries: int = DEFAULT_MA
 
     Args:
         backend_or_pool: A DatabaseBackend instance or asyncpg.Pool
-        max_retries: Maximum number of retry attempts
+        max_retries: Maximum number of retry attempts for the acquire step
 
     Yields:
         A DatabaseConnection (if backend) or asyncpg.Connection (if pool)
@@ -117,31 +125,32 @@ async def acquire_with_retry(backend_or_pool: Any, max_retries: int = DEFAULT_MA
     from .db.base import DatabaseBackend
 
     if isinstance(backend_or_pool, DatabaseBackend) or getattr(backend_or_pool, "_wraps_backend", False):
-        # Use the backend's acquire context manager with retry
         start = time.time()
-        last_exception = None
-        for attempt in range(max_retries + 1):
-            try:
-                async with backend_or_pool.acquire() as conn:
-                    acquire_time = time.time() - start
-                    if acquire_time > 0.05:
-                        logger.warning(f"[DB POOL] Slow acquire: {acquire_time:.3f}s")
-                    yield conn
-                    return
-            except Exception as e:
-                if not _is_retryable(e):
-                    raise
-                last_exception = e
-                if attempt < max_retries:
-                    delay = min(DEFAULT_BASE_DELAY * (2**attempt), DEFAULT_MAX_DELAY)
-                    logger.warning(
-                        f"Database acquire failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
-                        f"Retrying in {delay:.1f}s..."
-                    )
-                    await asyncio.sleep(delay)
-                else:
-                    logger.error(f"Database acquire failed after {max_retries + 1} attempts: {e}")
-        raise last_exception
+        async with AsyncExitStack() as stack:
+            conn: Any = None
+            for attempt in range(max_retries + 1):
+                try:
+                    conn = await stack.enter_async_context(backend_or_pool.acquire())
+                    break
+                except Exception as e:
+                    if not _is_retryable(e):
+                        raise
+                    if attempt < max_retries:
+                        delay = min(DEFAULT_BASE_DELAY * (2**attempt), DEFAULT_MAX_DELAY)
+                        logger.warning(
+                            f"Database acquire failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                            f"Retrying in {delay:.1f}s..."
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error(f"Database acquire failed after {max_retries + 1} attempts: {e}")
+                        raise
+
+            acquire_time = time.time() - start
+            if acquire_time > 0.05:
+                logger.warning(f"[DB POOL] Slow acquire: {acquire_time:.3f}s")
+
+            yield conn
     else:
         # Legacy path: raw asyncpg.Pool
         pool = backend_or_pool

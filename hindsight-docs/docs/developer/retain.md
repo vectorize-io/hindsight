@@ -55,13 +55,22 @@ This means search results include the full context, not disconnected fragments.
 
 ## Two Types of Facts
 
-Hindsight distinguishes between **world** facts (about others) and **experience** (conversations and events):
+Every fact is classified by **whose perspective it captures** — the agent that owns the bank, or the outside world:
 
-| Type            | Description                       | Example |
-|-----------------|-----------------------------------|---------|
-| **world**       | Facts about people, places, things | "Alice works at Google" |
-| **experience** | Conversations and events         | "I recommended Python to Alice" |
+| Type           | What it captures                                                              | Example |
+|----------------|------------------------------------------------------------------------------|---------|
+| **experience** | The bank's own agent acting, observing, or interacting — its first-person history | "I recommended Python to Alice" |
+| **world**      | Facts about other people, places, things, and events                          | "Alice works at Google" |
 
+The split is decided by **who is speaking**, not by grammar. A first-person statement is an `experience` only when the speaker *is* the bank's agent. The same words said by someone else are a `world` fact about that person:
+
+- Agent's own log — "I patched the auth bug" → **experience** (the agent did it).
+- A user talking to the agent — "I bought a Tesla" → **world** (a fact about the *user*, not the agent).
+
+Two things steer this correctly:
+
+- **Set a human-readable bank `name`** (the agent's name). It identifies who "the agent" is. If left unset it defaults to the `bank_id`; a `bank_id` that is a routing key (e.g. `my-agent::channel-456::user-789`) is not a usable speaker name, so give the bank a real name.
+- **Describe the speaker in each item's `context`** when retaining transcripts or third-party content. For a chat log, a context like *"Customer Maria is speaking"* ensures her first-person statements are stored as `world` facts about Maria rather than mistaken for the agent's own experiences. The `context` takes precedence over the bank name when the two disagree.
 
 **Note:** Observations are consolidated automatically in the background after `retain()` operations complete. This consolidation process synthesizes patterns from new facts into the bank's knowledge base.
 

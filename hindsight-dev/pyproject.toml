@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-dev"
-version = "0.7.1"
+version = "0.7.2"
 description = "Development utilities for Hindsight"
 requires-python = ">=3.11"
 dependencies = [
-    "hindsight-api==0.7.1",
+    "hindsight-api==0.7.2",
     "python-fasthtml>=0.12.33",
     "streamlit>=1.54.0",
     "openai>=1.0.0",
@@ -40,6 +40,7 @@ check-openapi-compatibility = "hindsight_dev.check_openapi_compatibility:main"
 cli-coverage-check = "hindsight_dev.cli_coverage_check:main"
 client-coverage-check = "hindsight_dev.client_coverage_check:main"
 perf-test = "benchmarks.perf.system_perf:main"
+find-duplicate-observations = "hindsight_dev.obs_dedup.cli:main"
 
 [dependency-groups]
 dev = [

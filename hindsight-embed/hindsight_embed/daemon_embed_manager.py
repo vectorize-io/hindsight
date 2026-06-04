@@ -11,6 +11,7 @@ import os
 import platform
 import re
 import subprocess
+import sys
 import sysconfig
 import time
 from pathlib import Path
@@ -157,12 +158,40 @@ class DaemonEmbedManager(EmbedManager):
         except Exception:
             return False
 
-    def _find_api_command(self) -> list[str]:
-        """Find the command to run hindsight-api."""
-        # Check if we're in development mode
+    def _dev_api_command(self) -> list[str] | None:
+        """Return the dev-mode launch command when running inside the monorepo."""
         dev_api_path = Path(__file__).parent.parent.parent / "hindsight-api-slim"
         if dev_api_path.exists() and (dev_api_path / "pyproject.toml").exists():
             return ["uv", "run", "--project", str(dev_api_path), "--extra", "all", "hindsight-api"]
+        return None
+
+    @staticmethod
+    def _windows_gui_interpreter() -> str | None:
+        """Path to the GUI-subsystem Python (pythonw.exe), or None.
+
+        Returns None on non-Windows, or when pythonw.exe can't be located next
+        to the running interpreter.
+
+        On Windows 11 with Windows Terminal as the default terminal app,
+        spawning the console-subsystem (CUI, subsystem 3) hindsight-api.exe
+        launcher makes ConPTY pop a visible terminal tab on daemon start, even
+        with DETACHED_PROCESS / CREATE_NO_WINDOW (issue #1885). Launching the
+        daemon through the GUI-subsystem (subsystem 2) pythonw.exe interpreter
+        never allocates a console, so no window appears. pythonw.exe sits next
+        to sys.executable, whose environment is the one we just confirmed has
+        hindsight-api installed, so `pythonw.exe -m hindsight_api.main` resolves.
+        """
+        if platform.system() != "Windows":
+            return None
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        return str(pythonw) if pythonw.exists() else None
+
+    def _find_api_command(self) -> list[str]:
+        """Find the command to run hindsight-api."""
+        # Check if we're in development mode
+        dev_command = self._dev_api_command()
+        if dev_command is not None:
+            return dev_command
 
         # Prefer a hindsight-api entry point installed alongside hindsight-embed.
         # Try two strategies:
@@ -177,9 +206,18 @@ class DaemonEmbedManager(EmbedManager):
         scripts_dir = Path(sysconfig.get_path("scripts"))
         candidate = scripts_dir / binary_name
         if candidate.exists():
+            # The console exe lives in sys.executable's scripts dir, so
+            # hindsight_api is importable by the GUI interpreter; prefer it on
+            # Windows to avoid ConPTY popping a terminal tab (issue #1885).
+            gui_python = self._windows_gui_interpreter()
+            if gui_python is not None:
+                return [gui_python, "-m", "hindsight_api.main"]
             return [str(candidate)]
 
-        # --target installs place binaries alongside site-packages contents
+        # --target installs place binaries alongside site-packages contents.
+        # The running interpreter usually can't import hindsight_api here (it's
+        # under the --target dir, not on sys.path), so we can't substitute
+        # pythonw.exe; run the console exe directly.
         package_root = Path(__file__).parent.parent
         for bin_dir in ("bin", "Scripts"):
             candidate = package_root / bin_dir / binary_name

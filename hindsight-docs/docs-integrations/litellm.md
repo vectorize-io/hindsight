@@ -107,7 +107,7 @@ hindsight_litellm.set_defaults(
 
     # Optional - Memory retrieval
     budget="mid",                  # Budget level: "low", "mid", "high"
-    fact_types=["world", "opinion"],  # Filter fact types to retrieve
+    fact_types=["world", "observation"],  # Filter fact types to retrieve
     max_memories=10,               # Maximum memories to inject (None = unlimited)
     max_memory_tokens=4096,        # Maximum tokens for memory context
     include_entities=True,         # Include entity observations in recall
@@ -159,7 +159,7 @@ hindsight_litellm.set_bank_mission(
 ```python
 # Recall mode - raw memories
 hindsight_litellm.set_defaults(bank_id="my-agent", use_reflect=False)
-# Injects: "1. [WORLD] User prefers Python\n2. [OPINION] User dislikes Java..."
+# Injects: "1. [WORLD] User prefers Python\n2. [OBSERVATION] User dislikes Java..."
 
 # Reflect mode - synthesized context
 hindsight_litellm.set_defaults(bank_id="my-agent", use_reflect=True)

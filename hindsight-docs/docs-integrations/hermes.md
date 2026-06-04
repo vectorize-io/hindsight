@@ -116,7 +116,7 @@ All settings are in `~/.hermes/hindsight/config.json`. Every setting can also be
 | `llm_api_key` | — | `HINDSIGHT_LLM_API_KEY` | API key for the chosen LLM provider |
 | `llm_model` | provider default | `HINDSIGHT_LLM_MODEL` | Model override (auto-defaults per provider) |
 
-Default models per provider: `openai` → `gpt-4o-mini`, `anthropic` → `claude-haiku-4-5`, `gemini` → `gemini-2.5-flash`, `groq` → `openai/gpt-oss-120b`, `minimax` → `MiniMax-M2.7`, `ollama` → `gemma3:12b`.
+Default models per provider: `openai` → `gpt-4o-mini`, `anthropic` → `claude-haiku-4-5`, `gemini` → `gemini-2.5-flash`, `groq` → `openai/gpt-oss-120b`, `minimax` → `MiniMax-M3`, `ollama` → `gemma3:12b`.
 
 ### Memory Bank
 

@@ -38,11 +38,17 @@ class MockTenantExtension(TenantExtension):
         return self.tenant_config
 
 
+class _FakeBankOps:
+    async def create_bank_vector_indexes(self, *args, **kwargs):
+        return None
+
+
 class FakeBankConfigBackend:
     """Minimal backend for ConfigResolver bank-config tests."""
 
     def __init__(self):
         self.config: dict[str, object] = {}
+        self.ops = _FakeBankOps()
 
     def acquire(self):
         return FakeBankConfigConnection(self)
@@ -60,6 +66,11 @@ class FakeBankConfigConnection:
 
     async def fetchrow(self, query, bank_id):
         return {"config": self.backend.config}
+
+    async def fetchval(self, query, *args):
+        # ensure_bank_exists INSERT ... ON CONFLICT DO NOTHING RETURNING bank_id.
+        # Return None to simulate the bank already existing (no index creation).
+        return None
 
     async def execute(self, query, updates_json, bank_id):
         self.backend.config.update(json.loads(updates_json))

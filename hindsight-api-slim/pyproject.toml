@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-api-slim"
-version = "0.7.1"
+version = "0.7.2"
 description = "Hindsight: Agent Memory That Works Like Human Memory"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,7 +18,11 @@ dependencies = [
     "fastapi[standard]>=0.120.3",
     "uvicorn>=0.38.0",
     "wsproto>=1.0.0",
-    "sqlalchemy>=2.0.44",
+    # Cap below 2.1: SQLAlchemy 2.1 switches the default `postgresql://` DBAPI
+    # from psycopg2 to psycopg (v3), which we don't ship — a bare install would
+    # fail migrations with "No module named 'psycopg'". Pin to the tested 2.0
+    # line (which keeps psycopg2 the default driver) until psycopg3 is adopted.
+    "sqlalchemy>=2.0.44,<2.1",
     "alembic>=1.17.1",
     "pgvector>=0.4.1",
     "greenlet>=3.2.4,<3.4.0", # 3.4.0 lacks arm64 wheels for manylinux_2_41
@@ -93,7 +97,7 @@ local-llm = [
     "huggingface-hub>=0.20.0",
 ]
 embedded-db = [
-    "pg0-embedded>=0.14.0",
+    "pg0-embedded>=0.14.2",
 ]
 oracle = [
     "oracledb>=2.5.0",
@@ -143,6 +147,8 @@ markers = [
     "oracle: Oracle 23ai integration tests (require ORACLE_TEST_DSN env var)",
     "hs_llm_mat: LLM minimum acceptance tests — run in CI matrix across multiple providers",
     "hs_llm_core: Core pipeline tests that need a real LLM but only one provider",
+    "integration: Live external-API integration tests (require provider credentials; skipped without)",
+    "slow: Slow tests (minutes); not run in fast CI",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

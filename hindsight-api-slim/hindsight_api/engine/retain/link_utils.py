@@ -599,23 +599,35 @@ async def compute_semantic_links_ann(
             t_query = time_mod.time()
             seed_count = sum(1 for ft in fact_types if ft == fact_type)
             logger.debug(f"[ANN] Querying fact_type={fact_type}: {seed_count} seeds")
+            # Cast each seed's text embedding to `vector` exactly once in a
+            # MATERIALIZED CTE. Casting inside the LATERAL (s.emb_text::vector)
+            # re-parses the ~5KB embedding string for every candidate row the
+            # probe touches — seeds × bank_units text-parses per batch, which
+            # dominated the whole job on small banks (see #1919: ~50 seeds over
+            # ~1k units took 1.5-3.7s, ~25-48x slower than casting once). The
+            # stable `vector` column also lets the planner consider an HNSW
+            # index scan, which a cast expression inhibits.
             ft_rows = await conn.fetch(
                 f"""
+                WITH seeds AS MATERIALIZED (
+                    SELECT unit_id, emb_text::vector AS emb
+                    FROM _ann_seeds
+                    WHERE fact_type = $2
+                )
                 SELECT s.unit_id       AS from_id,
                        n.id::text      AS to_id,
                        n.similarity
-                FROM _ann_seeds s
+                FROM seeds s
                 CROSS JOIN LATERAL (
                     SELECT mu.id,
-                           1 - (mu.embedding <=> s.emb_text::vector) AS similarity
+                           1 - (mu.embedding <=> s.emb) AS similarity
                     FROM {fq_table("memory_units")} mu
                     WHERE mu.bank_id = $1
                       AND mu.fact_type = $2
                       AND mu.embedding IS NOT NULL
-                    ORDER BY mu.embedding <=> s.emb_text::vector
+                    ORDER BY mu.embedding <=> s.emb
                     LIMIT $3
                 ) n
-                WHERE s.fact_type = $2
                 """,
                 bank_id,
                 fact_type,

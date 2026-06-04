@@ -408,6 +408,7 @@ class SQLDialect(ABC):
         arm_index: int = 0,
         text_search_extension: str = "native",
         bm25_language: str = "english",
+        bm25_min_score: float = 0.0,
         extra_where: str = "",
     ) -> str:
         """Build a BM25/full-text search subquery arm.
@@ -430,6 +431,11 @@ class SQLDialect(ABC):
                                    "pg_textsearch", "pgroonga"). Only relevant for PostgreSQL.
             bm25_language: PostgreSQL text search dictionary used by the native
                            backend (e.g. "english", "french"). Ignored by other backends.
+            bm25_min_score: Minimum BM25 relevance score a row must exceed to be
+                            returned. Gates out non-matching rows on backends whose
+                            operator (e.g. VectorChord) ranks every document instead
+                            of pre-filtering to query-term matches. Backends that
+                            already apply a boolean match gate ignore this.
             extra_where: Optional additional WHERE clause fragment (e.g. time range filter).
         """
         ...

@@ -232,16 +232,39 @@ class TestPostgreSQLDialect:
         assert "to_bm25query" in arm
         assert "tokenize" in arm
 
+    def test_build_bm25_arm_vchord_gates_zero_score_by_default(self, d):
+        """VectorChord ranks every doc, so a score gate must filter non-matches.
+
+        The negated `<&>` score is BM25 (>= 0); the default 0 floor keeps only
+        rows with a genuine query-term match, mirroring native tsvector's `@@`.
+        """
+        arm = d.build_bm25_arm(
+            table="t", cols="id", fact_type="world",
+            bank_id_param="$2", limit_param="$3", text_param="$4",
+            text_search_extension="vchord",
+        )
+        assert "-(search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize($4, 'llmlingua2'))) > 0" in arm
+
+    def test_build_bm25_arm_vchord_honors_custom_min_score(self, d):
+        arm = d.build_bm25_arm(
+            table="t", cols="id", fact_type="world",
+            bank_id_param="$2", limit_param="$3", text_param="$4",
+            text_search_extension="vchord",
+            bm25_min_score=2.5,
+        )
+        assert "> 2.5" in arm
+
     def test_build_bm25_arm_pgroonga(self, d):
         arm = d.build_bm25_arm(
             table="schema.memory_units", cols="id, text", fact_type="world",
             bank_id_param="$2", limit_param="$3", text_param="$4",
             text_search_extension="pgroonga",
         )
-        # pgroonga uses the &@~ operator + pgroonga_score for ranking. The
-        # configured bm25_language is intentionally NOT used here — pgroonga's
-        # tokenizer is set at index creation, not query time.
-        assert "&@~ $4" in arm
+        # pgroonga uses the &@~ operator + pgroonga_score for ranking. Escape
+        # the query parameter so literal text containing pgroonga operators is
+        # not parsed as query syntax.
+        assert "&@~ pgroonga_query_escape($4)" in arm
+        assert "&@~ $4" not in arm
         assert "pgroonga_score(tableoid, ctid)" in arm
         assert "to_tsquery" not in arm
 
@@ -281,8 +304,8 @@ class TestPostgreSQLDialect:
         assert result == "hello world"
 
     def test_prepare_bm25_text_pgroonga(self, d):
-        # pgroonga accepts raw query text via &@~ and parses it with its own
-        # query syntax; we pass the original query through unchanged.
+        # Keep the user's text unchanged here; the SQL builder escapes the bind
+        # parameter at query time before invoking pgroonga's query parser.
         result = d.prepare_bm25_text(["hello", "world"], "hello world", text_search_extension="pgroonga")
         assert result == "hello world"
 
@@ -455,6 +478,14 @@ class TestOracleQueryRewriter:
         assert "JSON_VALUE" in query
         assert "'true'" in query
         assert "->>" not in query
+
+    def test_for_no_key_update_rewrite(self):
+        """FOR NO KEY UPDATE (PG-only) maps to plain FOR UPDATE on Oracle."""
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("SELECT 1 FROM banks WHERE bank_id = $1 FOR NO KEY UPDATE")
+        assert "FOR UPDATE" in query
+        assert "NO KEY" not in query
 
     def test_jsonb_arrow_text_quoted(self):
         """Verify ->> works with quoted column names."""
