@@ -201,13 +201,14 @@ class PostgreSQLDialect(SQLDialect):
             bm25_order_by = f"text <@> to_bm25query({text_param}, 'idx_memory_units_text_search') ASC"
             bm25_where_filter = ""
         elif text_search_extension == "pgroonga":
-            # &@~ accepts pgroonga's query syntax (raw query text). pgroonga_score
-            # returns a non-negative relevance score (higher = better).
+            # &@~ accepts pgroonga's query syntax. Escape the bind parameter so
+            # literal memory text containing operators like ">" or "(" is not
+            # parsed as a malformed query expression.
             bm25_score_expr = "pgroonga_score(tableoid, ctid)"
             bm25_order_by = f"{bm25_score_expr} DESC"
             bm25_where_filter = (
                 f"AND (COALESCE(text, '') || ' ' || COALESCE(context, '') || ' ' || COALESCE(text_signals, '')) "
-                f"&@~ {text_param}"
+                f"&@~ pgroonga_query_escape({text_param})"
             )
         elif text_search_extension == "pg_search":
             # ParadeDB pg_search: BM25 index over (id, text, context, text_signals)

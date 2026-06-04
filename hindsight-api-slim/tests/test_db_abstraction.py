@@ -260,10 +260,11 @@ class TestPostgreSQLDialect:
             bank_id_param="$2", limit_param="$3", text_param="$4",
             text_search_extension="pgroonga",
         )
-        # pgroonga uses the &@~ operator + pgroonga_score for ranking. The
-        # configured bm25_language is intentionally NOT used here — pgroonga's
-        # tokenizer is set at index creation, not query time.
-        assert "&@~ $4" in arm
+        # pgroonga uses the &@~ operator + pgroonga_score for ranking. Escape
+        # the query parameter so literal text containing pgroonga operators is
+        # not parsed as query syntax.
+        assert "&@~ pgroonga_query_escape($4)" in arm
+        assert "&@~ $4" not in arm
         assert "pgroonga_score(tableoid, ctid)" in arm
         assert "to_tsquery" not in arm
 
@@ -303,8 +304,8 @@ class TestPostgreSQLDialect:
         assert result == "hello world"
 
     def test_prepare_bm25_text_pgroonga(self, d):
-        # pgroonga accepts raw query text via &@~ and parses it with its own
-        # query syntax; we pass the original query through unchanged.
+        # Keep the user's text unchanged here; the SQL builder escapes the bind
+        # parameter at query time before invoking pgroonga's query parser.
         result = d.prepare_bm25_text(["hello", "world"], "hello world", text_search_extension="pgroonga")
         assert result == "hello world"
 
