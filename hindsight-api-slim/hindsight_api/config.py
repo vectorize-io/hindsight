@@ -448,6 +448,7 @@ ENV_LLAMACPP_GPU_LAYERS = "HINDSIGHT_API_LLAMACPP_GPU_LAYERS"
 ENV_LLAMACPP_CONTEXT_SIZE = "HINDSIGHT_API_LLAMACPP_CONTEXT_SIZE"
 ENV_LLAMACPP_CHAT_FORMAT = "HINDSIGHT_API_LLAMACPP_CHAT_FORMAT"
 ENV_LLAMACPP_NO_GRAMMAR = "HINDSIGHT_API_LLAMACPP_NO_GRAMMAR"
+ENV_LLM_STRICT_SCHEMA = "HINDSIGHT_API_LLM_STRICT_SCHEMA"
 ENV_LLAMACPP_EXTRA_ARGS = "HINDSIGHT_API_LLAMACPP_EXTRA_ARGS"
 
 # Optimization flags
@@ -575,6 +576,7 @@ DEFAULT_LLAMACPP_GPU_LAYERS = -1  # -1 = offload all layers to GPU (Metal/CUDA)
 DEFAULT_LLAMACPP_CONTEXT_SIZE = 8192
 DEFAULT_LLAMACPP_CHAT_FORMAT = None  # None = auto-detect from GGUF metadata
 DEFAULT_LLAMACPP_NO_GRAMMAR = False  # True = disable JSON grammar enforcement (faster but less reliable)
+DEFAULT_LLM_STRICT_SCHEMA = False  # True = use strict json_schema (grammar-enforced) for structured output on json-schema-capable openai-compatible backends (OpenAI, llama.cpp, vLLM); avoids fragile soft json_object parsing on weaker models
 DEFAULT_LLAMACPP_EXTRA_ARGS = None  # Space-separated extra CLI args for llama.cpp server
 
 DEFAULT_LLM_MAX_CONCURRENT = 32
@@ -1183,6 +1185,7 @@ class HindsightConfig:
     llamacpp_context_size: int  # Context window size
     llamacpp_chat_format: str | None  # Chat template format (None = auto-detect from GGUF)
     llamacpp_no_grammar: bool  # Disable JSON grammar enforcement (faster, less reliable)
+    llm_strict_schema: bool  # Use strict json_schema grammar for structured output on capable openai-compatible backends
     llamacpp_extra_args: str | None  # Space-separated extra CLI args for llama.cpp server
 
     # Per-operation LLM configuration (None = use default LLM config)
@@ -1791,6 +1794,7 @@ class HindsightConfig:
             llamacpp_chat_format=os.getenv(ENV_LLAMACPP_CHAT_FORMAT) or DEFAULT_LLAMACPP_CHAT_FORMAT,
             llamacpp_no_grammar=os.getenv(ENV_LLAMACPP_NO_GRAMMAR, str(DEFAULT_LLAMACPP_NO_GRAMMAR)).lower()
             in ("true", "1"),
+            llm_strict_schema=os.getenv(ENV_LLM_STRICT_SCHEMA, str(DEFAULT_LLM_STRICT_SCHEMA)).lower() in ("true", "1"),
             llamacpp_extra_args=os.getenv(ENV_LLAMACPP_EXTRA_ARGS) or DEFAULT_LLAMACPP_EXTRA_ARGS,
             # Per-operation LLM config (None = use default)
             retain_llm_provider=os.getenv(ENV_RETAIN_LLM_PROVIDER) or None,

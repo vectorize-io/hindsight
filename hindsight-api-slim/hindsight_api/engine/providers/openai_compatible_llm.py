@@ -535,7 +535,17 @@ class OpenAICompatibleLLM(LLMInterface):
             if hasattr(response_format, "model_json_schema"):
                 schema = response_format.model_json_schema()
 
-            if strict_schema and schema is not None:
+            # Opt-in (HINDSIGHT_API_LLM_STRICT_SCHEMA): backends that support
+            # response_format json_schema (OpenAI, llama.cpp, vLLM, ...) should
+            # grammar-enforce output. The soft json_object path below lets weaker
+            # instruction-followers emit prose, markdown fences, or invalid JSON
+            # that fails parsing; strict json_schema makes the output valid by
+            # construction.
+            from hindsight_api.config import get_config
+
+            use_strict_schema = strict_schema or get_config().llm_strict_schema
+
+            if use_strict_schema and schema is not None:
                 # Use OpenAI's strict JSON schema enforcement
                 call_params["response_format"] = {
                     "type": "json_schema",
