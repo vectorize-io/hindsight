@@ -308,6 +308,66 @@ async def retrieve_semantic_bm25_combined(
     return result_dict
 
 
+# Temporal entry-point selection tuning.
+_TEMPORAL_POOL_SIZE = 60  # ANN candidates fetched per fact_type before coverage selection
+_TEMPORAL_ENTRY_POINTS = 10  # entry points kept per fact_type after coverage selection
+_TEMPORAL_COVERAGE_BUCKETS = 8  # time-buckets the window is divided into for coverage
+
+
+def _coalesce_date(row: Any) -> datetime | None:
+    """The unit's effective time — matches COALESCE(occurred_start, mentioned_at, occurred_end)."""
+    return row["occurred_start"] or row["mentioned_at"] or row["occurred_end"]
+
+
+def _select_with_temporal_coverage(
+    pool: list,
+    start_date: datetime,
+    end_date: datetime,
+    limit: int,
+    n_buckets: int,
+) -> list:
+    """Pick `limit` entry points from a similarity-ranked pool, spread across the window.
+
+    The window [start_date, end_date] is split into `n_buckets` equal time-buckets.
+    Candidates are taken round-robin across the buckets that contain them — the
+    best-similarity item from each populated bucket first, then the second-best from each,
+    and so on — so every populated slice of the window is represented before any slice
+    contributes a second item. Within a tier, higher-similarity items lead. When the
+    in-window dates are degenerate (all in one bucket — e.g. a batch stamped with a single
+    date) this collapses to plain similarity order.
+    """
+    if len(pool) <= limit:
+        return list(pool)
+
+    ranked = sorted(pool, key=lambda r: r["similarity"], reverse=True)
+    span = (end_date - start_date).total_seconds()
+
+    def _bucket(row: Any) -> int:
+        d = _coalesce_date(row)
+        if d is None or span <= 0:
+            return 0
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=UTC)
+        frac = (d - start_date).total_seconds() / span
+        return max(0, min(int(frac * n_buckets), n_buckets - 1))
+
+    buckets: dict[int, list] = {}
+    for row in ranked:  # ranked is similarity-desc, so each bucket list inherits that order
+        buckets.setdefault(_bucket(row), []).append(row)
+
+    selected: list = []
+    tier = 0
+    while len(selected) < limit and any(len(b) > tier for b in buckets.values()):
+        # The tier-th best item from every bucket that still has one, strongest first.
+        tier_rows = [b[tier] for b in buckets.values() if len(b) > tier]
+        tier_rows.sort(key=lambda r: r["similarity"], reverse=True)
+        for row in tier_rows:
+            if len(selected) < limit:
+                selected.append(row)
+        tier += 1
+    return selected
+
+
 async def retrieve_temporal_combined(
     conn,
     query_emb_str: str,
@@ -375,63 +435,73 @@ async def retrieve_temporal_combined(
     params.extend(groups_params)
     params.extend(created_range_params)
 
-    # Two-phase entry point query:
-    # Phase 1 (date_ranked): rank by date only — no embedding computation — for all units in
-    #   the temporal window. This lets the planner use date indexes for filtering.
-    # Phase 2 (sim_ranked): join back to memory_units for only the top-50-per-type candidates
-    #   and compute embedding similarity for that small set (≤ 50 × len(fact_types) rows).
-    # This avoids computing embedding distances for potentially thousands of date-range rows.
-    entry_points = await conn.fetch(
+    # Entry-point selection: similarity-gated, window-filtered, then narrowed for coverage.
+    #
+    # For each fact_type, ANN-rank the units whose time overlaps the window
+    # (ORDER BY embedding <=> query) and keep a pool of the most relevant
+    # (_TEMPORAL_POOL_SIZE). The planner serves this from the per-(bank, fact_type) vector
+    # index when the window is broad — the dense-metadata case, where the window matches
+    # most rows — and from the partial date indexes plus an exact sort when the window is
+    # narrow. Either way the work is bounded; neither path is a scan-and-sort of the whole
+    # match set.
+    #
+    # Selecting by *similarity* (not recency) is deliberate. The earlier form ranked the
+    # entire match set by COALESCE(occurred_start, mentioned_at, occurred_end) and kept the
+    # 50 most recent: that biased results toward the end of the window and, on banks with
+    # dense/near-uniform dates (e.g. a retain batch stamped with one date), the date key was
+    # degenerate so the "50 most recent" became a near-random sample that could drop the
+    # single most relevant in-window memory — and it degraded to a full scan + disk-spilling
+    # sort (30s+ on a 660k-row bank). The pool is then narrowed to _TEMPORAL_ENTRY_POINTS per
+    # fact_type by _select_with_temporal_coverage so the entry points span the window's range
+    # rather than clustering in one slice.
+    pool_rows = await conn.fetch(
         f"""
-        WITH date_ranked AS MATERIALIZED (
-            SELECT id, fact_type,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY fact_type
-                       ORDER BY COALESCE(occurred_start, mentioned_at, occurred_end) DESC NULLS LAST
-                   ) AS rn
-            FROM {fq_table("memory_units")}
-            WHERE bank_id = $2
-              AND fact_type = ANY($3)
-              AND embedding IS NOT NULL
+        SELECT dr.id, dr.text, dr.context, dr.event_date, dr.occurred_start, dr.occurred_end, dr.mentioned_at, dr.fact_type, dr.proof_count, dr.document_id, dr.chunk_id, dr.tags, dr.metadata, dr.similarity
+        FROM unnest($3::text[]) AS ft(fact_type)
+        CROSS JOIN LATERAL (
+            SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start, mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.proof_count, mu.document_id, mu.chunk_id, mu.tags, mu.metadata,
+                   1 - (mu.embedding <=> $1::vector) AS similarity
+            FROM {fq_table("memory_units")} mu
+            WHERE mu.bank_id = $2
+              AND mu.fact_type = ft.fact_type
+              AND mu.embedding IS NOT NULL
               AND (
-                  (occurred_start IS NOT NULL AND occurred_end IS NOT NULL
-                   AND occurred_start <= $5 AND occurred_end >= $4)
+                  (mu.occurred_start IS NOT NULL AND mu.occurred_end IS NOT NULL
+                   AND mu.occurred_start <= $5 AND mu.occurred_end >= $4)
                   OR
-                  (mentioned_at IS NOT NULL AND mentioned_at BETWEEN $4 AND $5)
+                  (mu.mentioned_at IS NOT NULL AND mu.mentioned_at BETWEEN $4 AND $5)
                   OR
-                  (occurred_start IS NOT NULL AND occurred_start BETWEEN $4 AND $5)
+                  (mu.occurred_start IS NOT NULL AND mu.occurred_start BETWEEN $4 AND $5)
                   OR
-                  (occurred_end IS NOT NULL AND occurred_end BETWEEN $4 AND $5)
+                  (mu.occurred_end IS NOT NULL AND mu.occurred_end BETWEEN $4 AND $5)
               )
+              AND (1 - (mu.embedding <=> $1::vector)) >= $6
               {tags_clause}
               {groups_clause}
               {created_range_clause}
-        ),
-        sim_ranked AS (
-            SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start, mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.proof_count, mu.document_id, mu.chunk_id, mu.tags, mu.metadata,
-                   1 - (mu.embedding <=> $1::vector) AS similarity,
-                   ROW_NUMBER() OVER (PARTITION BY mu.fact_type ORDER BY mu.embedding <=> $1::vector) AS sim_rn
-            FROM date_ranked dr
-            JOIN {fq_table("memory_units")} mu ON mu.id = dr.id
-            WHERE dr.rn <= 50
-              AND (1 - (mu.embedding <=> $1::vector)) >= $6
-        )
-        SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at, fact_type, proof_count, document_id, chunk_id, tags, metadata, similarity
-        FROM sim_ranked
-        WHERE sim_rn <= 10
+            ORDER BY mu.embedding <=> $1::vector
+            LIMIT {_TEMPORAL_POOL_SIZE}
+        ) dr
         """,
         *params,
     )
 
-    if not entry_points:
+    if not pool_rows:
         return {ft: [] for ft in fact_types}
 
-    # Group entry points by fact type
-    entries_by_ft: dict[str, list] = {ft: [] for ft in fact_types}
-    for ep in entry_points:
-        ft = ep["fact_type"]
-        if ft in entries_by_ft:
-            entries_by_ft[ft].append(ep)
+    # Group the ANN pool by fact type, then narrow each to coverage-spread entry points.
+    pool_by_ft: dict[str, list] = {ft: [] for ft in fact_types}
+    for row in pool_rows:
+        ft = row["fact_type"]
+        if ft in pool_by_ft:
+            pool_by_ft[ft].append(row)
+
+    entries_by_ft: dict[str, list] = {
+        ft: _select_with_temporal_coverage(
+            rows, start_date, end_date, _TEMPORAL_ENTRY_POINTS, _TEMPORAL_COVERAGE_BUCKETS
+        )
+        for ft, rows in pool_by_ft.items()
+    }
 
     # Calculate shared temporal parameters
     total_days = (end_date - start_date).total_seconds() / 86400
