@@ -49,6 +49,12 @@ LLM_DURATION_BUCKETS = (0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 15.0, 30.0, 60
 # HTTP request duration buckets (millisecond-level for fast endpoints)
 HTTP_DURATION_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0)
 
+# How often the backlog / queue-depth gauge caches are refreshed (seconds).
+# The counts are aggregate COUNT queries, so a background task refreshes a
+# cache and the observable gauges read from it — keeping the /metrics scrape
+# path synchronous (the same reason the db-pool gauges read cached state).
+BACKLOG_METRICS_REFRESH_SECONDS = 30
+
 
 def get_token_bucket(token_count: int) -> str:
     """
@@ -335,6 +341,13 @@ class MetricsCollector(MetricsCollectorBase):
         # DB pool metrics holder (set via set_db_pool)
         self._db_pool: "asyncpg.Pool | None" = None
 
+        # Backlog / queue-depth gauge caches, refreshed by a background task
+        # (see _setup_backlog_metrics) so the scrape path stays synchronous.
+        self._async_ops_counts: dict[tuple, int] = {}
+        self._consolidation_backlog: dict[tuple, int] = {}
+        self._consolidation_failed: dict[tuple, int] = {}
+        self._backlog_task = None
+
     @contextmanager
     def record_operation(
         self,
@@ -591,6 +604,7 @@ class MetricsCollector(MetricsCollectorBase):
         """
         self._db_pool = pool
         self._setup_db_pool_metrics()
+        self._setup_backlog_metrics()
 
     def _setup_db_pool_metrics(self):
         """Set up observable gauges for database pool metrics."""
@@ -655,6 +669,165 @@ class MetricsCollector(MetricsCollectorBase):
             description="Maximum pool size",
             unit="{connections}",
         )
+
+    def _setup_backlog_metrics(self):
+        """Observable gauges for the async-operation queue and the
+        consolidation backlog.
+
+        These mirror fields the bank-stats endpoint already computes
+        (``operations_by_status``, ``pending_consolidation``,
+        ``failed_consolidation``) but expose them as scrapable gauges, so
+        queue depth and backlog can be trended and alerted on instead of only
+        polled per-bank over HTTP. The two motivating questions both come for
+        free here: "is the worker keeping up?" (async-op queue) and "is the
+        knowledge base caught up?" (consolidation backlog) — including the
+        ``processing`` state, which is the only signal that surfaces a hung
+        operation stuck holding a worker slot.
+
+        Counts are aggregate ``COUNT`` queries, so a background task refreshes
+        a cache every ``BACKLOG_METRICS_REFRESH_SECONDS`` and these callbacks
+        read it — keeping the scrape path synchronous, the same approach as
+        the db-pool gauges above.
+        """
+        if self._backlog_task is not None:
+            return  # already started for this collector
+
+        def get_async_operations(_options):
+            for (tenant, operation_type, status, bank_id), value in list(self._async_ops_counts.items()):
+                attrs = {"tenant": tenant, "operation_type": operation_type, "status": status}
+                if bank_id is not None:
+                    attrs["bank_id"] = bank_id
+                yield metrics.Observation(value, attrs)
+
+        def get_consolidation_backlog(_options):
+            for (tenant, bank_id), value in list(self._consolidation_backlog.items()):
+                attrs = {"tenant": tenant}
+                if bank_id is not None:
+                    attrs["bank_id"] = bank_id
+                yield metrics.Observation(value, attrs)
+
+        def get_consolidation_failed(_options):
+            for (tenant, bank_id), value in list(self._consolidation_failed.items()):
+                attrs = {"tenant": tenant}
+                if bank_id is not None:
+                    attrs["bank_id"] = bank_id
+                yield metrics.Observation(value, attrs)
+
+        self.meter.create_observable_gauge(
+            name="hindsight.async_operations",
+            callbacks=[get_async_operations],
+            description="Async operations in a non-terminal state, by operation_type and status "
+            "(pending=queued backlog, processing=in-flight, failed=stranded)",
+            unit="{operations}",
+        )
+        self.meter.create_observable_gauge(
+            name="hindsight.consolidation.backlog",
+            callbacks=[get_consolidation_backlog],
+            description="Source memories (experience/world) not yet consolidated into observations",
+            unit="{memories}",
+        )
+        self.meter.create_observable_gauge(
+            name="hindsight.consolidation.failed",
+            callbacks=[get_consolidation_failed],
+            description="Source memories whose consolidation permanently failed "
+            "(recoverable via the consolidation recovery endpoint)",
+            unit="{memories}",
+        )
+
+        # Drive the caches from a background task on the running loop.
+        # set_db_pool runs during async startup, so a loop is normally present;
+        # if not, the gauges simply stay empty rather than crashing collection.
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("No running event loop; backlog metrics disabled")
+            return
+        self._backlog_task = loop.create_task(self._backlog_refresh_loop())
+
+    async def _backlog_refresh_loop(self):
+        """Periodically refresh the backlog / queue-depth caches."""
+        import asyncio
+
+        while True:
+            try:
+                await self._refresh_backlog()
+            except Exception:
+                logger.debug("Backlog metrics refresh failed", exc_info=True)
+            await asyncio.sleep(BACKLOG_METRICS_REFRESH_SECONDS)
+
+    async def _refresh_backlog(self):
+        """Recount the async-operation queue and consolidation backlog across
+        every provisioned Hindsight schema.
+
+        Per-bank labels are gated behind ``metrics_include_bank_id`` (off by
+        default) to keep cardinality bounded; when off, counts are aggregated
+        per tenant/schema. All SQL here is PostgreSQL-specific (``FILTER``,
+        ``information_schema``), which is consistent with this collector
+        already being bound to an asyncpg pool.
+        """
+        if self._db_pool is None:
+            return
+
+        async_ops: dict[tuple, int] = {}
+        backlog: dict[tuple, int] = {}
+        failed: dict[tuple, int] = {}
+        per_bank = self._include_bank_id
+
+        async with self._db_pool.acquire() as conn:
+            # memory_units is the central per-tenant table; its presence marks a
+            # provisioned Hindsight schema.
+            schema_rows = await conn.fetch(
+                "SELECT table_schema FROM information_schema.tables WHERE table_name = 'memory_units'"
+            )
+            for schema_row in schema_rows:
+                schema = schema_row["table_schema"]
+                bank_sel = "bank_id, " if per_bank else ""
+                bank_grp = ", bank_id" if per_bank else ""
+
+                # Worker queue depth — mirrors operations_by_status, split by
+                # operation_type. Terminal states (completed/cancelled) are
+                # excluded on purpose: a gauge of finished work grows without
+                # bound and says nothing about current load.
+                # Index: idx_async_operations_status.
+                try:
+                    rows = await conn.fetch(
+                        f"SELECT operation_type, status, {bank_sel}COUNT(*) AS count "
+                        f'FROM "{schema}".async_operations '
+                        "WHERE status IN ('pending', 'processing', 'failed') "
+                        f"GROUP BY operation_type, status{bank_grp}"
+                    )
+                    for row in rows:
+                        bank = row["bank_id"] if per_bank else None
+                        key = (schema, row["operation_type"] or "unknown", row["status"], bank)
+                        async_ops[key] = async_ops.get(key, 0) + int(row["count"])
+                except Exception:
+                    logger.debug("Async-ops queue query failed for schema %s", schema, exc_info=True)
+
+                # Consolidation backlog (source memories) — lifted from the
+                # bank-stats endpoint. The partial index
+                # idx_memory_units_unconsolidated backs the pending count.
+                try:
+                    rows = await conn.fetch(
+                        f"SELECT {bank_sel}"
+                        "COUNT(*) FILTER (WHERE consolidated_at IS NULL "
+                        "AND fact_type IN ('experience', 'world')) AS pending, "
+                        "COUNT(*) FILTER (WHERE consolidation_failed_at IS NOT NULL "
+                        "AND fact_type IN ('experience', 'world')) AS failed "
+                        f'FROM "{schema}".memory_units' + (" GROUP BY bank_id" if per_bank else "")
+                    )
+                    for row in rows:
+                        bank = row["bank_id"] if per_bank else None
+                        key = (schema, bank)
+                        backlog[key] = backlog.get(key, 0) + int(row["pending"])
+                        failed[key] = failed.get(key, 0) + int(row["failed"])
+                except Exception:
+                    logger.debug("Consolidation backlog query failed for schema %s", schema, exc_info=True)
+
+        self._async_ops_counts = async_ops
+        self._consolidation_backlog = backlog
+        self._consolidation_failed = failed
 
 
 # Global metrics collector instance (defaults to no-op)
