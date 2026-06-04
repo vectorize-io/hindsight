@@ -245,7 +245,7 @@ Where:
 - **rank_i(d)** = position of document *d* in strategy *i* (1-indexed)
 - The sum runs over all strategies where *d* appears
 
-**All four strategies are weighted equally.** There are no per-strategy weight multipliers — importance comes from rank position, not the source.
+**Within RRF, all four strategies are weighted equally** — fusion uses rank position, not the source, so no strategy gets an implicit multiplier. You can, however, deliberately bias a source with [`HINDSIGHT_API_RECALL_STRATEGY_BOOSTS`](./configuration): that boost is applied at a separate stage — before the reranking pre-filter cap and again after reranking — not inside the RRF fusion above.
 
 **Why RRF over raw score merging?** Each retrieval strategy produces scores on a different scale (cosine similarity, BM25 tf-idf, graph activation). These scores aren't comparable — a BM25 score of 12.5 and a cosine similarity of 0.85 don't mean the same thing. RRF sidesteps this by using only rank positions, making it robust across any scoring system without requiring calibration.
 
@@ -267,7 +267,7 @@ The first memory ranks higher because it has **consensus** across strategies.
 
 RRF gives a good initial ranking, but it's based on positions, not on deep query-document understanding. The cross-encoder evaluates each candidate against the query as a pair, producing a relevance score.
 
-**Pre-filtering:** Before reranking, candidates are trimmed to the top **300** (by RRF score) to limit computational cost. This is configurable via `HINDSIGHT_API_RERANKER_MAX_CANDIDATES`.
+**Pre-filtering:** Before reranking, candidates are trimmed to the top **300** (by RRF score) to limit computational cost. This is configurable via `HINDSIGHT_API_RERANKER_MAX_CANDIDATES`. If [`HINDSIGHT_API_RECALL_STRATEGY_BOOSTS`](./configuration) is set, the boost is applied to the RRF scores before this cut, so candidates from a favoured source are more likely to survive it.
 
 **Why rerank after RRF?** RRF is position-based — it knows a memory ranked well across strategies, but it never actually reads the query and the memory together. The cross-encoder does: it takes the query and each candidate as a pair and produces a relevance score based on their full interaction. This catches nuances that position-based fusion misses, like a memory that ranked #1 in keyword search because it matched a common term but is actually irrelevant to the query's intent.
 
