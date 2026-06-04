@@ -4,13 +4,14 @@ Long-term memory for [Cursor CLI](https://cursor.com/docs/cli) — remembers you
 
 ## How it works
 
-Three Cursor CLI hooks keep memory in sync automatically:
+Four Cursor CLI hooks keep memory in sync automatically:
 
 | Hook | Action |
 |------|--------|
 | `sessionStart` | Confirms Hindsight is reachable and pre-warms the local daemon if needed |
 | `beforeSubmitPrompt` | Recalls relevant memories and injects them as `additional_context` |
-| `stop` | Retains the conversation to long-term memory |
+| `stop` | Retains the conversation to long-term memory every configured N turns |
+| `sessionEnd` | Forces a final retain so short sessions are still stored |
 
 ## Requirements
 
@@ -57,13 +58,8 @@ The installer:
 
 ### 3. Restart Cursor CLI
 
-Open a new session — you should see:
-
-```
-Hindsight memory integration is active for this session. Bank: cursor-cli.
-```
-
-If you don't see that note, check `~/.cursor/hooks.json` exists and that `python3` is on `$PATH` from your shell.
+Open a new session. If memories are not recalled or retained, check
+`~/.cursor/hooks.json` exists and that `python3` is on `$PATH` from your shell.
 
 ### Uninstall
 
@@ -118,7 +114,7 @@ export HINDSIGHT_DEBUG=true
 
 **Recall** — before each prompt, Hindsight searches your memory bank for facts relevant to what you're about to ask. Found memories are injected as `additional_context` so the agent has continuity across sessions.
 
-**Retain** — after each turn, Cursor's conversation transcript is stored to Hindsight. The memory engine extracts facts, relationships, and experiences — so you don't need to re-explain your stack, preferences, or past decisions.
+**Retain** — after configured turns and again when the session ends, Cursor's conversation transcript is stored to Hindsight. The memory engine extracts facts, relationships, and experiences — so you don't need to re-explain your stack, preferences, or past decisions.
 
 ## Dynamic bank IDs
 

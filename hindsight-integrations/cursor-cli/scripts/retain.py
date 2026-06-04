@@ -42,21 +42,14 @@ from lib.daemon import get_api_url
 from lib.state import increment_turn_count
 
 
-def main():
+def run_retain(hook_input: dict, force: bool = False) -> None:
     config = load_config()
 
     if not config.get("autoRetain"):
         debug_log(config, "Auto-retain disabled, exiting")
         return
 
-    # Read hook input from stdin
-    try:
-        hook_input = json.load(sys.stdin)
-    except (json.JSONDecodeError, EOFError):
-        print("[Hindsight] Failed to read hook input", file=sys.stderr)
-        return
-
-    debug_log(config, f"Stop hook input keys: {list(hook_input.keys())}")
+    debug_log(config, f"Retain hook input keys: {list(hook_input.keys())} force={force}")
 
     # Common fields provide conversation_id (== session_id) and transcript_path.
     # Older or alternative payloads may use "session_id" instead.
@@ -82,8 +75,8 @@ def main():
     retain_full_window = False
     messages_to_retain = all_messages
 
-    # Respect retainEveryNTurns in both modes
-    if retain_every_n > 1:
+    # Respect retainEveryNTurns in both modes, unless force=True (sessionEnd final retain).
+    if retain_every_n > 1 and not force:
         turn_count = increment_turn_count(session_id)
         if turn_count % retain_every_n != 0:
             next_at = ((turn_count // retain_every_n) + 1) * retain_every_n
@@ -185,6 +178,17 @@ def main():
         debug_log(config, f"Retain response: {json.dumps(response)[:200]}")
     except Exception as e:
         print(f"[Hindsight] Retain failed: {e}", file=sys.stderr)
+
+
+def main():
+    # Read hook input from stdin
+    try:
+        hook_input = json.load(sys.stdin)
+    except (json.JSONDecodeError, EOFError):
+        print("[Hindsight] Failed to read hook input", file=sys.stderr)
+        return
+
+    run_retain(hook_input, force=False)
 
 
 if __name__ == "__main__":

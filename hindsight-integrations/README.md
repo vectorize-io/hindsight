@@ -11,7 +11,7 @@ Each integration lives in its own subdirectory with its own README, configuratio
 | [**Claude Code**](./claude-code) | Hooks-based memory for Anthropic's Claude Code. Auto-retains every session, recalls context on each prompt. | `npx hindsight-cc` |
 | [**OpenCode**](./opencode) | TypeScript plugin with retain/recall/reflect tools, auto-retain on idle, memory injection on session start, compaction preservation. | Add `@vectorize-io/opencode-hindsight` to `opencode.json` |
 | [**Codex CLI**](./codex) | Python hook scripts for OpenAI's Codex CLI. Auto-recall on `UserPromptSubmit`, auto-retain on `Stop`. | `curl -fsSL https://hindsight.vectorize.io/get-codex \| bash` |
-| [**Cursor CLI**](./cursor-cli) | Python hook scripts for Cursor CLI. Auto-recall on `beforeSubmitPrompt`, auto-retain on `stop`, compaction preservation on `preCompact`. | `./scripts/install.sh` |
+| [**Cursor CLI**](./cursor-cli) | Python hook scripts for Cursor CLI. Auto-recall on `beforeSubmitPrompt`, auto-retain on `stop`, final flush on `sessionEnd`. | `./scripts/install.sh` |
 | [**Roo Code**](./roo-code) | Persistent memory for Roo Code VS Code extension. | See README |
 | [**Hermes (OpenAI Agents SDK)**](./hermes) | Memory layer for OpenAI Agents SDK. | See README |
 | [**Grok Build**](./grok-build) | Hooks for Grok Build (xAI). | See README |

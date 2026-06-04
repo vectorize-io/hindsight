@@ -18,6 +18,12 @@
         "command": "python3 \"__SCRIPTS_DIR__/retain.py\"",
         "timeout": 30
       }
+    ],
+    "sessionEnd": [
+      {
+        "command": "python3 \"__SCRIPTS_DIR__/session_end.py\"",
+        "timeout": 30
+      }
     ]
   }
 }

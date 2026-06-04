@@ -136,7 +136,7 @@ def _ensure_daemon_running(config, port, debug_fn=None):
     llm_env = get_llm_env_vars(llm_config)
 
     daemon_env = dict(llm_env)
-    idle_timeout = config.get("daemonIdleTimeout", 300)
+    idle_timeout = config.get("daemonIdleTimeout", 0)
     daemon_env["HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT"] = str(idle_timeout)
 
     if platform.system() == "Darwin":
@@ -245,7 +245,7 @@ def prestart_daemon_background(config, debug_fn=None):
     llm_env = get_llm_env_vars(llm_config)
     daemon_env = dict(os.environ)
     daemon_env.update(llm_env)
-    idle_timeout = config.get("daemonIdleTimeout", 300)
+    idle_timeout = config.get("daemonIdleTimeout", 0)
     daemon_env["HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT"] = str(idle_timeout)
     if platform.system() == "Darwin":
         daemon_env["HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"] = "1"

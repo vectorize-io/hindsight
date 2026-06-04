@@ -404,6 +404,63 @@ class TestRetainHook:
 
 
 # ---------------------------------------------------------------------------
+# sessionEnd hook
+# ---------------------------------------------------------------------------
+
+
+class TestSessionEndHook:
+    def test_forces_final_retain_below_every_n_turns_threshold(self, monkeypatch, tmp_path):
+        messages = [{"role": "user", "content": "short session"}, {"role": "assistant", "content": "saved"}]
+        transcript = make_transcript_file(tmp_path, messages)
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({"status": "accepted"})
+
+        hook_input = make_hook_input(
+            transcript_path=transcript,
+            conversation_id="conv-session-end",
+            reason="completed",
+        )
+        output = _run_hook(
+            "session_end",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture,
+            user_config={"retainEveryNTurns": 10},
+        )
+
+        assert output.strip() == ""
+        assert "body" in captured, "sessionEnd final retain was not called"
+        item = captured["body"]["items"][0]
+        assert "short session" in item["content"]
+        assert item["document_id"] == "conv-session-end"
+
+    def test_no_final_retain_without_transcript_path(self, monkeypatch, tmp_path):
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url:
+                captured["called"] = True
+            return FakeHTTPResponse({})
+
+        hook_input = make_hook_input(transcript_path="", reason="user_close")
+        _run_hook(
+            "session_end",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture,
+            user_config={"retainEveryNTurns": 10},
+        )
+
+        assert "called" not in captured
+
+
+# ---------------------------------------------------------------------------
 # sessionStart hook
 # ---------------------------------------------------------------------------
 
