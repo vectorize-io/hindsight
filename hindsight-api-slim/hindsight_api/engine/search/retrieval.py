@@ -499,7 +499,13 @@ async def retrieve_temporal_combined(
             tag_groups, spreading_groups_param_start, table_alias="mu."
         )
 
-        while frontier and budget_remaining > 0 and iteration < max_iterations:
+        # Multi-hop temporal spreading expands a batch of seed ids with
+        # ``FROM unnest($2::uuid[])``, which has no Oracle equivalent. On backends
+        # without unnest, skip the spread: the temporal entry points are still
+        # returned above, and the semantic/keyword/graph retrievers cover the rest.
+        supports_unnest = getattr(conn, "backend_type", "postgresql") != "oracle"
+
+        while frontier and budget_remaining > 0 and iteration < max_iterations and supports_unnest:
             iteration += 1
             batch_ids = frontier[:batch_size]
             frontier = frontier[batch_size:]

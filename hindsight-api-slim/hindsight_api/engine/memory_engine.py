@@ -9367,9 +9367,10 @@ class MemoryEngine(MemoryEngineInterface):
             # If content is changing, fetch current content + reflect_response to record history
             previous_content: str | None = None
             previous_reflect_response: dict[str, Any] | None = None
+            previous_history: list[Any] = []
             if content is not None:
                 current_row = await conn.fetchrow(
-                    f"SELECT content, reflect_response FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    f"SELECT content, reflect_response, history FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
                     bank_id,
                     mental_model_id,
                 )
@@ -9380,6 +9381,11 @@ class MemoryEngine(MemoryEngineInterface):
                         previous_reflect_response = json.loads(raw_rr) if raw_rr else None
                     else:
                         previous_reflect_response = raw_rr
+                    raw_history = current_row["history"]
+                    if isinstance(raw_history, str):
+                        raw_history = json.loads(raw_history) if raw_history else []
+                    if isinstance(raw_history, list):
+                        previous_history = raw_history
 
             # Build dynamic update
             updates = []
@@ -9416,34 +9422,44 @@ class MemoryEngine(MemoryEngineInterface):
                         based_on = previous_reflect_response.get("based_on")
                         if based_on is not None:
                             slim_reflect_response = {"based_on": based_on}
-                    history_entry = json.dumps(
-                        [
-                            {
-                                "previous_content": previous_content,
-                                "previous_reflect_response": slim_reflect_response,
-                                "changed_at": datetime.now(timezone.utc).isoformat(),
-                            }
-                        ]
-                    )
+                    new_history_entry = {
+                        "previous_content": previous_content,
+                        "previous_reflect_response": slim_reflect_response,
+                        "changed_at": datetime.now(timezone.utc).isoformat(),
+                    }
                     max_entries = get_config().mental_model_history_max_entries
-                    history_param_idx = param_idx
-                    param_idx += 1
-                    max_entries_param_idx = param_idx
-                    param_idx += 1
-                    updates.append(
-                        "history = ("
-                        "  SELECT COALESCE(jsonb_agg(elem ORDER BY idx), '[]'::jsonb) "
-                        "  FROM jsonb_array_elements("
-                        f"    COALESCE(history, '[]'::jsonb) || ${history_param_idx}::jsonb"
-                        "  ) WITH ORDINALITY a(elem, idx) "
-                        "  WHERE idx > GREATEST("
-                        "    jsonb_array_length(COALESCE(history, '[]'::jsonb)) + 1"
-                        f"    - ${max_entries_param_idx}, 0"
-                        "  )"
-                        ")"
-                    )
-                    params.append(history_entry)
-                    params.append(max_entries)
+                    if self._database_backend_type == "oracle":
+                        # Oracle has no jsonb_agg / jsonb_array_elements WITH ORDINALITY,
+                        # so the PG read-modify-write below cannot be rewritten. Compute the
+                        # trimmed history in Python (we already fetched the current array) and
+                        # bind it as a single JSON value. Trimming keeps the most recent
+                        # ``max_entries`` entries — identical semantics to the PG GREATEST/idx
+                        # window: keep [] when max_entries == 0, else the last max_entries.
+                        combined = previous_history + [new_history_entry]
+                        trimmed = [] if max_entries == 0 else combined[-max_entries:]
+                        updates.append(f"history = ${param_idx}")
+                        params.append(json.dumps(trimmed))
+                        param_idx += 1
+                    else:
+                        history_entry = json.dumps([new_history_entry])
+                        history_param_idx = param_idx
+                        param_idx += 1
+                        max_entries_param_idx = param_idx
+                        param_idx += 1
+                        updates.append(
+                            "history = ("
+                            "  SELECT COALESCE(jsonb_agg(elem ORDER BY idx), '[]'::jsonb) "
+                            "  FROM jsonb_array_elements("
+                            f"    COALESCE(history, '[]'::jsonb) || ${history_param_idx}::jsonb"
+                            "  ) WITH ORDINALITY a(elem, idx) "
+                            "  WHERE idx > GREATEST("
+                            "    jsonb_array_length(COALESCE(history, '[]'::jsonb)) + 1"
+                            f"    - ${max_entries_param_idx}, 0"
+                            "  )"
+                            ")"
+                        )
+                        params.append(history_entry)
+                        params.append(max_entries)
                 # Also update embedding (convert to string for asyncpg vector type)
                 embedding_text = f"{name or ''} {content}"
                 embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [embedding_text])
