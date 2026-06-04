@@ -245,6 +245,90 @@ hindsight-admin worker-status --schema tenant_acme
 
 ---
 
+### export-bank
+
+Export an entire bank to a portable ZIP archive — documents, facts, observations, bank configuration, mental models, directives, and webhooks. Embeddings are **never** included; they are regenerated on import. This is the source half of a cross-instance migration (e.g. moving to a different embedding model, vector extension, or text-search backend). PostgreSQL only.
+
+```bash
+hindsight-admin export-bank --bank <BANK_ID> --output <FILE.zip> [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--bank`, `-b` | Bank id to export. | (required) |
+| `--output`, `-o` | Path to write the `.zip` archive. | (required) |
+| `--schema`, `-s` | Schema the bank lives in. | base schema |
+| `--include-history` | Also export operational history (`audit_log`, `llm_requests`). | `false` |
+
+**Examples:**
+
+```bash
+hindsight-admin export-bank --bank my-bank --output my-bank.zip
+
+# include operational history
+hindsight-admin export-bank --bank my-bank --output my-bank.zip --include-history
+```
+
+Read-only — safe to run against a live instance.
+
+---
+
+### import-bank
+
+Restore a whole-bank archive (produced by `export-bank`) into **this** instance. Facts are re-embedded with this instance's configured embedding model and links/indexes are rebuilt; bank configuration, mental models, directives, and webhooks are restored exactly. No LLM fact-extraction runs, and because a migration restores state, it does **not** fire webhooks or re-run consolidation. PostgreSQL only.
+
+```bash
+hindsight-admin import-bank --archive <FILE.zip> [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--archive`, `-a` | Path to the `.zip` produced by `export-bank`. | (required) |
+| `--schema`, `-s` | Target schema. | base schema |
+| `--target-bank` | Override the bank id (defaults to the archive's source bank). | source bank |
+| `--on-conflict` | Document conflict handling: `skip` \| `replace` \| `new-id`. | `skip` |
+| `--include-history` | Also restore history if present in the archive. | `false` |
+
+**Examples:**
+
+```bash
+hindsight-admin import-bank --archive my-bank.zip
+```
+
+Run this against an instance configured with the **target** embedding model / vector extension / text-search backend — that's what re-embedding uses.
+
+---
+
+## Migrating a bank to a new instance
+
+Changing a bank's **embedding model** (e.g. a 384-dim encoder → a 1024-dim one), **vector extension** (pgvector / vchord / pgvectorscale), or **text-search backend** can't be done in place on a populated bank — the stored vectors and indexes are tied to those settings. Because every embedding and index is a deterministic function of text already on disk, the supported path is to **move the bank to a fresh instance configured with the new settings and re-derive everything there — with no LLM re-extraction**.
+
+`export-bank` / `import-bank` carry documents, facts, observations, bank config, mental models, directives, and webhooks — but never embeddings, which the target instance regenerates with its own model.
+
+**Blue-green runbook:**
+
+1. Stand up a **new instance** on a fresh database, configured with the new embedding model / vector extension / text-search backend.
+2. Quiesce writes to the source bank (maintenance window) and run `hindsight-admin backup` for safety.
+3. Export from the source, then import into the target:
+   ```bash
+   # on the source instance:
+   hindsight-admin export-bank --bank my-bank --output my-bank.zip
+   # on the target instance (configured with the new settings):
+   hindsight-admin import-bank --archive my-bank.zip
+   ```
+4. Verify on the target: run representative recall queries and compare results.
+5. Cut traffic over to the new instance. The old instance stays as an instant rollback until you're confident.
+
+:::note Why a new instance, not in-place
+The embedding model is server-level, and a bank's `memory_units.embedding` column has a single dimension shared across the schema, so a different-dimension or different-backend bank needs its own instance/database. The old vectors are never mutated, which makes rollback trivial.
+:::
+
+---
+
 ## Recovering stuck or zombie operations
 
 A "zombie" operation is one stuck in `processing` indefinitely because the worker that claimed it is gone. The most common cause is an unstable `HINDSIGHT_API_WORKER_ID`: when it defaults to the container hostname, a Docker restart produces a new container ID, the new worker doesn't recognize the old worker's claims as its own, and those tasks are stranded.
