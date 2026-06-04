@@ -346,6 +346,8 @@ ENV_RECALL_MAX_QUERY_TOKENS = "HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS"
 ENV_MENTAL_MODEL_REFRESH_CONCURRENCY = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_CONCURRENCY"
 ENV_LINK_EXPANSION_PER_ENTITY_LIMIT = "HINDSIGHT_API_LINK_EXPANSION_PER_ENTITY_LIMIT"
 ENV_LINK_EXPANSION_TIMEOUT = "HINDSIGHT_API_LINK_EXPANSION_TIMEOUT"
+ENV_BANK_STATS_CACHE_TTL_SECONDS = "HINDSIGHT_API_BANK_STATS_CACHE_TTL_SECONDS"
+ENV_BANK_STATS_CACHE_MAX_ENTRIES = "HINDSIGHT_API_BANK_STATS_CACHE_MAX_ENTRIES"
 
 # OpenTelemetry tracing configuration
 ENV_OTEL_TRACES_ENABLED = "HINDSIGHT_API_OTEL_TRACES_ENABLED"
@@ -362,6 +364,16 @@ ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY = "HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOU
 
 # Gemini safety settings
 ENV_LLM_GEMINI_SAFETY_SETTINGS = "HINDSIGHT_API_LLM_GEMINI_SAFETY_SETTINGS"
+
+# Gemini prompt caching. When enabled, retain fact-extraction reuses a
+# CachedContent prefix for the static system_instruction + response_schema,
+# cutting per-call input cost on workloads with many small documents.
+# Provider-agnostic prompt-prefix caching. Providers that support it (currently
+# Gemini/Vertex via CachedContent) reuse the large, fixed, bank-agnostic system
+# prefix at the cached-input rate; providers that don't simply ignore it. On by
+# default — the prefix is bank-agnostic so a single cache is shared across all
+# banks, and creation soft-fails to an uncached call, so it never breaks a request.
+ENV_LLM_PROMPT_CACHE_ENABLED = "HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED"
 
 # Retain settings
 ENV_RETAIN_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"
@@ -501,6 +513,14 @@ ENV_RECALL_BUDGET_MAX = "HINDSIGHT_API_RECALL_BUDGET_MAX"
 # Recall candidate gating (per-source cap + BM25 score floor)
 ENV_BM25_MIN_SCORE = "HINDSIGHT_API_BM25_MIN_SCORE"
 ENV_RECALL_MAX_CANDIDATES_PER_SOURCE = "HINDSIGHT_API_RECALL_MAX_CANDIDATES_PER_SOURCE"
+# Per-strategy recall boost. Prioritises specific retrieval arms (semantic,
+# bm25, graph, temporal) on recall via a human priority level — e.g.
+# "graph:high" to strongly favour graph hits, or "graph:high,semantic:low".
+# Valid levels: low | medium | high. The level (not a raw number) is the knob
+# because the boost is applied on two different score scales — see
+# engine/search/recall_boost.py for the level -> magnitude mapping and rationale.
+# Empty disables the feature.
+ENV_RECALL_STRATEGY_BOOSTS = "HINDSIGHT_API_RECALL_STRATEGY_BOOSTS"
 
 # Audit log settings
 ENV_AUDIT_LOG_ENABLED = "HINDSIGHT_API_AUDIT_LOG_ENABLED"
@@ -615,6 +635,56 @@ DEFAULT_BM25_MIN_SCORE = 0.0
 # temporal) before RRF, so a single over-expanding backend cannot fill the
 # reranker's global candidate budget on its own. 0 disables the cap.
 DEFAULT_RECALL_MAX_CANDIDATES_PER_SOURCE = 0
+# Per-strategy recall boost, as a comma-separated "strategy:level" list (e.g.
+# "graph:high,semantic:low"). Empty disables the feature. See
+# ENV_RECALL_STRATEGY_BOOSTS for the full rationale.
+DEFAULT_RECALL_STRATEGY_BOOSTS = ""
+# Retrieval arms that can be boosted; mirrors fusion.py source_names.
+RECALL_STRATEGY_NAMES = ("semantic", "bm25", "graph", "temporal")
+# User-facing priority levels. Kept in sync with recall_boost.BOOST_LEVELS by a
+# guard test; defined here (not imported) so config stays free of the heavy
+# engine.search import graph.
+RECALL_BOOST_LEVELS = ("low", "medium", "high")
+# Level applied when a strategy is listed without one (e.g. "graph" or "graph:").
+DEFAULT_RECALL_BOOST_LEVEL = "medium"
+
+
+def _parse_strategy_boosts(raw: str | None) -> dict[str, str]:
+    """Parse a "strategy:level,strategy:level" string into a boost map.
+
+    A strategy listed without a level (``"graph"`` or ``"graph:"``) defaults to
+    ``medium``. Only the strategies you list are boosted; any strategy you omit
+    keeps its normal, unboosted weight. Unknown strategy names, unknown levels,
+    and malformed entries are skipped with a warning so a typo degrades to a
+    no-op boost rather than breaking recall.
+    """
+    if not raw or not raw.strip():
+        return {}
+    boosts: dict[str, str] = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        name, _sep, level = entry.partition(":")
+        name = name.strip().lower()
+        level = level.strip().lower() or DEFAULT_RECALL_BOOST_LEVEL
+        if name not in RECALL_STRATEGY_NAMES:
+            logger.warning(
+                "Ignoring unknown recall strategy %r in boost (valid: %s)", name, ", ".join(RECALL_STRATEGY_NAMES)
+            )
+            continue
+        if level not in RECALL_BOOST_LEVELS:
+            logger.warning(
+                "Ignoring unknown recall boost level %r for %r (valid: %s)",
+                level,
+                name,
+                ", ".join(RECALL_BOOST_LEVELS),
+            )
+            continue
+        boosts[name] = level
+    return boosts
+
+
 DEFAULT_RERANKER_FLASHRANK_MODEL = "ms-marco-MiniLM-L-12-v2"  # Best balance of speed and quality
 DEFAULT_RERANKER_FLASHRANK_CACHE_DIR = None  # Use default cache directory
 DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA = False  # Disable ONNX CPU memory arena to bound RSS
@@ -690,6 +760,8 @@ DEFAULT_RECALL_MAX_QUERY_TOKENS = 500  # Maximum tokens allowed in recall query
 DEFAULT_MENTAL_MODEL_REFRESH_CONCURRENCY = 8  # Max concurrent mental model refreshes
 DEFAULT_LINK_EXPANSION_PER_ENTITY_LIMIT = 200  # Max target units per entity in graph expansion
 DEFAULT_LINK_EXPANSION_TIMEOUT = 10.0  # Timeout (seconds) for entity expansion query
+DEFAULT_BANK_STATS_CACHE_TTL_SECONDS = 60.0  # TTL for get_bank_stats result cache; 0 disables
+DEFAULT_BANK_STATS_CACHE_MAX_ENTRIES = 1024  # LRU bound across (schema, bank) keys
 
 # Retain settings
 DEFAULT_RETAIN_MAX_COMPLETION_TOKENS = 64000  # Max tokens for fact extraction LLM call
@@ -708,6 +780,7 @@ DEFAULT_RETAIN_BATCH_TOKENS = 10_000  # ~40KB of text  # Max chars per sub-batch
 DEFAULT_RETAIN_ENTITY_LOOKUP = "trigram"  # "full" or "trigram"
 DEFAULT_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE = 100  # Unique entity names per pg_trgm candidate lookup query
 DEFAULT_RETAIN_BATCH_ENABLED = False  # Use LLM Batch API for fact extraction (only when async=True)
+DEFAULT_LLM_PROMPT_CACHE_ENABLED = True  # Reuse the fixed system prefix via provider prompt caching
 DEFAULT_RETAIN_BATCH_POLL_INTERVAL_SECONDS = 60  # Batch API polling interval in seconds
 
 # File storage defaults
@@ -1100,6 +1173,10 @@ class HindsightConfig:
     # Gemini safety settings (None = use Gemini defaults; list of dicts with category/threshold)
     llm_gemini_safety_settings: list | None
 
+    # Gemini prompt caching toggle. When True, retain extraction reuses a
+    # CachedContent prefix for its system prompt + response schema.
+    llm_prompt_cache_enabled: bool
+
     # Built-in llama.cpp configuration (for provider=llamacpp)
     llamacpp_model_path: str | None  # Path to GGUF file (None = auto-download default)
     llamacpp_gpu_layers: int  # -1 = all layers on GPU, 0 = CPU only
@@ -1193,6 +1270,7 @@ class HindsightConfig:
     reranker_max_candidates: int
     bm25_min_score: float
     recall_max_candidates_per_source: int
+    recall_strategy_boosts: dict[str, str]
     reranker_cohere_api_key: str | None
     reranker_cohere_model: str
     reranker_cohere_base_url: str | None
@@ -1248,6 +1326,8 @@ class HindsightConfig:
     mental_model_refresh_concurrency: int
     link_expansion_per_entity_limit: int
     link_expansion_timeout: float
+    bank_stats_cache_ttl_seconds: float
+    bank_stats_cache_max_entries: int
 
     # Retain settings
     retain_max_completion_tokens: int
@@ -1700,6 +1780,10 @@ class HindsightConfig:
             or DEFAULT_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY,
             # Gemini safety settings (JSON-encoded list of {category, threshold} dicts)
             llm_gemini_safety_settings=json.loads(os.getenv(ENV_LLM_GEMINI_SAFETY_SETTINGS, "null")),
+            llm_prompt_cache_enabled=os.getenv(
+                ENV_LLM_PROMPT_CACHE_ENABLED, str(DEFAULT_LLM_PROMPT_CACHE_ENABLED)
+            ).lower()
+            in ("1", "true", "yes", "on"),
             # Built-in llama.cpp configuration
             llamacpp_model_path=os.getenv(ENV_LLAMACPP_MODEL_PATH) or None,
             llamacpp_gpu_layers=int(os.getenv(ENV_LLAMACPP_GPU_LAYERS, str(DEFAULT_LLAMACPP_GPU_LAYERS))),
@@ -1923,6 +2007,9 @@ class HindsightConfig:
             recall_max_candidates_per_source=int(
                 os.getenv(ENV_RECALL_MAX_CANDIDATES_PER_SOURCE, str(DEFAULT_RECALL_MAX_CANDIDATES_PER_SOURCE))
             ),
+            recall_strategy_boosts=_parse_strategy_boosts(
+                os.getenv(ENV_RECALL_STRATEGY_BOOSTS, DEFAULT_RECALL_STRATEGY_BOOSTS)
+            ),
             # Cohere reranker (with backward-compatible fallback to shared API key)
             reranker_cohere_api_key=os.getenv(ENV_RERANKER_COHERE_API_KEY) or os.getenv(ENV_COHERE_API_KEY),
             reranker_cohere_model=os.getenv(ENV_RERANKER_COHERE_MODEL, DEFAULT_RERANKER_COHERE_MODEL),
@@ -2012,6 +2099,12 @@ class HindsightConfig:
                 os.getenv(ENV_LINK_EXPANSION_PER_ENTITY_LIMIT, str(DEFAULT_LINK_EXPANSION_PER_ENTITY_LIMIT))
             ),
             link_expansion_timeout=float(os.getenv(ENV_LINK_EXPANSION_TIMEOUT, str(DEFAULT_LINK_EXPANSION_TIMEOUT))),
+            bank_stats_cache_ttl_seconds=float(
+                os.getenv(ENV_BANK_STATS_CACHE_TTL_SECONDS, str(DEFAULT_BANK_STATS_CACHE_TTL_SECONDS))
+            ),
+            bank_stats_cache_max_entries=int(
+                os.getenv(ENV_BANK_STATS_CACHE_MAX_ENTRIES, str(DEFAULT_BANK_STATS_CACHE_MAX_ENTRIES))
+            ),
             # Optimization flags
             skip_llm_verification=os.getenv(ENV_SKIP_LLM_VERIFICATION, "false").lower() == "true",
             lazy_reranker=os.getenv(ENV_LAZY_RERANKER, "false").lower() == "true",

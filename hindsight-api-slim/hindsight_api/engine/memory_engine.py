@@ -39,6 +39,7 @@ from ..utils import mask_network_location
 from ..worker.exceptions import DeferOperation, RetryTaskAt
 from ..worker.stage import set_stage
 from .audit import AuditLogger, audit_context
+from .bank_stats_cache import BankStatsCache
 from .db import DatabaseBackend, create_database_backend
 from .db_budget import budgeted_operation
 from .llm_trace import (
@@ -225,7 +226,7 @@ if TYPE_CHECKING:
     from hindsight_api.models import RequestContext
 
     from .audit import AuditLogListResponse, AuditLogStatsResponse
-    from .transfer import ImportResult
+    from .transfer import BankImportResult, ImportResult
 
 
 from enum import Enum
@@ -255,7 +256,17 @@ from .retain.types import RetainContentDict
 from .search import think_utils
 from .search.reranking import CrossEncoderReranker, apply_combined_scoring
 from .search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause
+from .search.types import ScoredResult
 from .task_backend import TaskBackend
+
+# Recall ranking strategy: how the per-arm (semantic/bm25/graph/temporal) results are
+# fused and reranked into the final order.
+#   "cross_encoder" — RRF fusion + cross-encoder rerank (default, user-facing recall).
+#   "rrf"           — RRF fusion, no cross-encoder (RRF score is the order).
+#   "interleave"    — round-robin interleave fusion, no cross-encoder. Guarantees each
+#                     arm's top hits a slot (used by consolidation dedup recall, where RRF
+#                     buried the near-identical twin below budget). See interleave_fusion.
+RecallReranking = Literal["cross_encoder", "rrf", "interleave"]
 from .token_encoding import get_token_encoding
 
 RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
@@ -956,6 +967,15 @@ class MemoryEngine(MemoryEngineInterface):
 
             tenant_extension = DefaultTenantExtension(config={})
         self._tenant_extension = tenant_extension
+
+        # Cache for get_bank_stats — short TTL + concurrent-loader coalescing.
+        # The query joins memory_links to memory_units and can be a multi-second
+        # parallel scan on large banks; a single polling client used to be able
+        # to pin the primary by issuing several concurrent calls.
+        self._bank_stats_cache = BankStatsCache(
+            ttl_seconds=config.bank_stats_cache_ttl_seconds,
+            max_entries=config.bank_stats_cache_max_entries,
+        )
 
     @property
     def audit_logger(self) -> AuditLogger:
@@ -3213,6 +3233,42 @@ class MemoryEngine(MemoryEngineInterface):
         await self._get_backend()
         return await export_documents(self._backend, bank_id, document_ids, include_observations=include_observations)
 
+    async def import_bank_async(
+        self,
+        archive_bytes: bytes,
+        request_context: "RequestContext",
+        *,
+        target_bank_id: str | None = None,
+        include_history: bool = False,
+    ) -> "BankImportResult":
+        """Restore a whole bank from an :func:`transfer.export_bank` archive.
+
+        Re-embeds facts with this instance's embedding model and rebuilds links and
+        indexes; restores bank config, mental models, directives and webhooks as
+        exported (no consolidation/webhooks — a migration restores exact state). The
+        target bank must not already exist (import restores a whole bank, not a merge).
+        """
+        from .transfer import import_bank
+        from .transfer.importer import parse_bank_archive
+
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        # Parse up front so a bad archive fails fast and we can resolve the
+        # target bank's config before the restore.
+        parsed = parse_bank_archive(archive_bytes)
+        bank_id = target_bank_id or parsed.manifest.source_bank_id
+        resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+        return await import_bank(
+            backend=backend,
+            embeddings_model=self.embeddings,
+            entity_resolver=self.entity_resolver,
+            config=resolved_config,
+            format_date_fn=self._format_readable_date,
+            archive_bytes=archive_bytes,
+            target_bank_id=target_bank_id,
+            include_history=include_history,
+        )
+
     async def import_documents_async(
         self,
         bank_id: str,
@@ -3402,6 +3458,7 @@ class MemoryEngine(MemoryEngineInterface):
         created_before: datetime | None = None,
         _connection_budget: int | None = None,
         _quiet: bool = False,
+        reranking: RecallReranking = "cross_encoder",
     ) -> RecallResultModel:
         """
         Recall memories using N*4-way parallel retrieval (N fact types × 4 retrieval methods).
@@ -3558,6 +3615,7 @@ class MemoryEngine(MemoryEngineInterface):
                             include_source_facts=include_source_facts,
                             max_source_facts_tokens=max_source_facts_tokens,
                             max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
+                            reranking=reranking,
                         )
                         break  # Success - exit retry loop
                     except Exception as e:
@@ -3689,6 +3747,7 @@ class MemoryEngine(MemoryEngineInterface):
         include_source_facts: bool = False,
         max_source_facts_tokens: int = 4096,
         max_source_facts_tokens_per_observation: int = -1,
+        reranking: RecallReranking = "cross_encoder",
     ) -> RecallResultModel:
         """
         Search implementation with modular retrieval and reranking.
@@ -4027,9 +4086,13 @@ class MemoryEngine(MemoryEngineInterface):
                     if _dur > 0:
                         tracer.add_phase_metric(f"retrieval_{_method}", _dur)
 
-            # Step 3: Merge with RRF
+            # Step 3: Merge ranked lists. RRF by default; interleave (round-robin) when
+            # requested by consolidation dedup recall — RRF averages a strong-in-one-arm
+            # result down and buried the near-identical "twin" observation below budget
+            # (semantic #1 -> outside the shown set), whereas interleave guarantees each
+            # arm's top hits a slot. See interleave_fusion docstring.
             step_start = time.time()
-            from .search.fusion import reciprocal_rank_fusion
+            from .search.fusion import interleave_fusion, reciprocal_rank_fusion
 
             fusion_span = tracer_otel.start_span("hindsight.recall_fusion")
             fusion_span.set_attribute("hindsight.bank_id", bank_id)
@@ -4040,16 +4103,16 @@ class MemoryEngine(MemoryEngineInterface):
 
             try:
                 # Merge 3 or 4 result lists depending on temporal constraint
+                result_lists = [semantic_results, bm25_results, graph_results]
                 if temporal_results:
-                    merged_candidates = reciprocal_rank_fusion(
-                        [semantic_results, bm25_results, graph_results, temporal_results]
-                    )
-                else:
-                    merged_candidates = reciprocal_rank_fusion([semantic_results, bm25_results, graph_results])
+                    result_lists.append(temporal_results)
+                fuse = interleave_fusion if reranking == "interleave" else reciprocal_rank_fusion
+                merged_candidates = fuse(result_lists)
 
                 step_duration = time.time() - step_start
                 log_buffer.append(
-                    f"  [3] RRF merge: {len(merged_candidates)} unique candidates in {step_duration:.3f}s"
+                    f"  [3] {'interleave' if reranking == 'interleave' else 'RRF'} merge: "
+                    f"{len(merged_candidates)} unique candidates in {step_duration:.3f}s"
                 )
             finally:
                 fusion_span.set_attribute("hindsight.merged_count", len(merged_candidates))
@@ -4074,26 +4137,48 @@ class MemoryEngine(MemoryEngineInterface):
 
             scored_results: list = []
             pre_filtered_count = 0
+            rerank_kind = "cross-encoder"
             try:
-                # Ensure reranker is initialized (for lazy initialization mode)
-                await reranker_instance.ensure_initialized()
-
-                # Pre-filter candidates to reduce reranking cost (RRF already provides good ranking)
-                # This is especially important for remote rerankers with network latency
+                # Pre-filter candidates by RRF before the (optional) cross-encoder.
+                # RRF already provides good ranking; this caps cross-encoder cost.
                 reranker_max_candidates = get_config().reranker_max_candidates
                 if len(merged_candidates) > reranker_max_candidates:
-                    # Sort by RRF score and take top candidates
-                    merged_candidates.sort(key=lambda mc: mc.rrf_score, reverse=True)
+                    # Sort by RRF score (boosted per-strategy if configured) and take top
+                    # candidates. The weighted-RRF boost keeps boosted-arm candidates from
+                    # being trimmed out of the reranker's global budget.
+                    from .search.recall_boost import boosted_rrf_score
+
+                    strategy_boosts = get_config().recall_strategy_boosts
+                    merged_candidates.sort(key=lambda mc: boosted_rrf_score(mc, strategy_boosts), reverse=True)
                     pre_filtered_count = len(merged_candidates) - reranker_max_candidates
                     merged_candidates = merged_candidates[:reranker_max_candidates]
 
-                # Rerank using cross-encoder
-                scored_results = await reranker_instance.rerank(query, merged_candidates)
+                if reranking == "cross_encoder":
+                    # Ensure reranker is initialized (for lazy initialization mode)
+                    await reranker_instance.ensure_initialized()
+                    scored_results = await reranker_instance.rerank(query, merged_candidates)
+                else:
+                    # "rrf" / "interleave": skip the cross-encoder and keep the fusion order
+                    # (rrf_score is descending by fusion position for both). The cross-encoder
+                    # was observed to demote a near-identical existing observation (the dedup
+                    # "twin") far below the budget cutoff (semantic rank #1 -> reranked #37),
+                    # causing the LLM to never see it and create a duplicate.
+                    rerank_kind = f"{reranking}-passthrough"
+                    scored_results = [
+                        ScoredResult(
+                            candidate=mc,
+                            cross_encoder_score=0.0,
+                            cross_encoder_score_normalized=0.0,
+                            weight=0.0,
+                        )
+                        for mc in sorted(merged_candidates, key=lambda mc: mc.rrf_score, reverse=True)
+                    ]
 
                 step_duration = time.time() - step_start
                 pre_filter_note = f" (pre-filtered {pre_filtered_count})" if pre_filtered_count > 0 else ""
                 log_buffer.append(
-                    f"  [4] Reranking: {len(scored_results)} candidates scored in {step_duration:.3f}s{pre_filter_note}"
+                    f"  [4] Reranking [{rerank_kind}]: {len(scored_results)} candidates "
+                    f"scored in {step_duration:.3f}s{pre_filter_note}"
                 )
             finally:
                 rerank_span.set_attribute("hindsight.scored_count", len(scored_results))
@@ -4106,16 +4191,35 @@ class MemoryEngine(MemoryEngineInterface):
             # is_passthrough_reranker tells the scoring code to seed CE scores
             # from RRF rank — only meaningful when the configured reranker is
             # the slim/passthrough one that returns a constant score per pair.
-            if scored_results:
+            if scored_results and reranking == "interleave":
+                # Interleave order is authoritative for dedup recall: do NOT re-sort by the
+                # recency/temporal boosts — that re-sort is precisely what buried the twin
+                # under RRF. Seed weight from the interleave-position rrf_score so the order
+                # survives Step 5 truncation and the Step 6 token-budget cut.
+                for sr in scored_results:
+                    sr.weight = sr.candidate.rrf_score
+                log_buffer.append("  [4.6] Interleave order preserved (combined scoring skipped)")
+            elif scored_results:
                 ce = reranker_instance.cross_encoder
-                is_passthrough = ce is not None and ce.provider_name == "rrf"
+                # "rrf" mode is passthrough by construction; so is a configured "rrf" CE.
+                is_passthrough = (reranking == "rrf") or (ce is not None and ce.provider_name == "rrf")
                 apply_combined_scoring(
                     scored_results,
                     now=_recall_scoring_now(question_date),
                     is_passthrough_reranker=is_passthrough,
                 )
+                # Per-strategy additive boost: nudge candidates surfaced by a
+                # prioritised retrieval arm up the final ordering.
+                strategy_boosts = get_config().recall_strategy_boosts
+                if strategy_boosts:
+                    from .search.recall_boost import additive_strategy_boost
+
+                    for sr in scored_results:
+                        sr.weight += additive_strategy_boost(sr.candidate.source_ranks, strategy_boosts)
                 scored_results.sort(key=lambda x: x.weight, reverse=True)
                 log_buffer.append("  [4.6] Combined scoring: ce * recency_boost(0.2) * temporal_boost(0.2)")
+                if strategy_boosts:
+                    log_buffer.append(f"  [4.7] Strategy boosts applied: {strategy_boosts}")
 
             # Add reranked results to tracer AFTER combined scoring (so normalized values are included)
             if tracer:
@@ -4128,7 +4232,7 @@ class MemoryEngine(MemoryEngineInterface):
                 tracer.add_phase_metric(
                     "reranking",
                     step_duration,
-                    {"reranker_type": "cross-encoder", "candidates_reranked": len(scored_results)},
+                    {"reranker_type": rerank_kind, "candidates_reranked": len(scored_results)},
                 )
 
             # Step 5: Truncate to thinking_budget * 2 for token filtering
@@ -5197,6 +5301,10 @@ class MemoryEngine(MemoryEngineInterface):
             # (DROP INDEX on memory_units conflicts with RowExclusiveLock from DELETE inside tx)
             if bank_internal_id:
                 await bank_utils.drop_bank_vector_indexes(conn, bank_internal_id, ops=self._backend.ops)
+
+        # Drop any cached stats for this bank — counts have changed and the
+        # TTL would otherwise serve pre-delete values for up to a minute.
+        await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
 
         if invalidated_obs > 0:
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)
@@ -7336,10 +7444,12 @@ class MemoryEngine(MemoryEngineInterface):
         # (not held during LLM calls which can be slow)
         backend = await self._get_backend()
 
-        # Get bank stats for freshness info
-        bank_stats = await self.get_bank_stats(bank_id, request_context=request_context)
-        last_consolidated_at = bank_stats.last_consolidated_at if hasattr(bank_stats, "last_consolidated_at") else None
-        pending_consolidation = bank_stats.pending_consolidation if hasattr(bank_stats, "pending_consolidation") else 0
+        # Pull only the consolidation freshness — get_bank_stats also computes
+        # link aggregations that reflect() does not use and which can take many
+        # seconds on large banks.
+        freshness = await self.get_bank_freshness(bank_id, request_context=request_context)
+        last_consolidated_at = freshness.get("last_consolidated_at")
+        pending_consolidation = freshness.get("pending_consolidation", 0)
 
         # Create tool callbacks that acquire connections only when needed
         from .retain import embedding_utils
@@ -8078,13 +8188,28 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
-        """Get statistics about memory nodes and links for a bank."""
+        """Get statistics about memory nodes and links for a bank.
+
+        Results are served from a short-TTL per-process cache so a polling
+        client cannot drive the link/unit aggregations multiple times per
+        second; concurrent misses on the same bank are coalesced onto a
+        single in-flight loader.
+        """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
             from hindsight_api.extensions import BankReadContext
 
             ctx = BankReadContext(bank_id=bank_id, operation="get_bank_stats", request_context=request_context)
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+
+        schema = get_current_schema()
+        return await self._bank_stats_cache.get_or_load(
+            schema,
+            bank_id,
+            lambda: self._compute_bank_stats(bank_id),
+        )
+
+    async def _compute_bank_stats(self, bank_id: str) -> dict[str, Any]:
         backend = await self._get_backend()
 
         async with acquire_with_retry(backend) as conn:
@@ -8099,27 +8224,34 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id,
             )
 
-            # Link stats — filter on ml.bank_id (indexed) instead of joining through mu.bank_id.
-            # With the idx_memory_links_bank_link_type index this turns a full-table hash join
-            # into an indexed scan + PK lookups.  link_counts and link_counts_by_fact_type are
-            # derived in Python from the breakdown.
-            non_entity_breakdown = await conn.fetch(
+            # Non-entity link counts — no join, group by link_type only. With a
+            # (bank_id, link_type) index this is an index-only scan; without one
+            # it is at worst a single seq scan over memory_links rather than the
+            # multi-second hash join through memory_units that this used to be.
+            # The previous shape produced a (fact_type, link_type) matrix; only
+            # the hindsight-cli `bank stats` renderer still consumes the
+            # per-fact-type slice, and it tolerates empty maps (the section
+            # prints with no rows). Response keys are kept populated below for
+            # schema stability so existing SDK deserializers don't break.
+            non_entity_link_rows = await conn.fetch(
                 f"""
-                SELECT mu.fact_type, ml.link_type, COUNT(*) as count
-                FROM {fq_table("memory_links")} ml
-                JOIN {fq_table("memory_units")} mu ON ml.from_unit_id = mu.id
-                WHERE ml.bank_id = $1 AND ml.link_type <> 'entity'
-                GROUP BY mu.fact_type, ml.link_type
+                SELECT link_type, COUNT(*) as count
+                FROM {fq_table("memory_links")}
+                WHERE bank_id = $1 AND link_type <> 'entity'
+                GROUP BY link_type
                 """,
                 bank_id,
             )
 
-            # Entity links are derived from unit_entities (no longer stored in memory_links).
-            # Replicate the historical writer cap: each unit linked bidirectionally to up to
-            # MAX_LINKS_PER_ENTITY others sharing each entity. Count per (unit, entity) the
-            # outgoing rows the writer would have produced — by fact_type of the source unit.
+            # Entity links are derived from unit_entities (no longer stored in
+            # memory_links). Replicate the historical writer cap: each unit
+            # linked bidirectionally to up to MAX_LINKS_PER_ENTITY others sharing
+            # each entity. Aggregated to a single scalar — the per-fact-type
+            # slice doubled the join cost and only fed link_counts_by_fact_type
+            # / link_breakdown, which the UI ignores and the CLI renders into
+            # sections that degrade gracefully when empty.
             max_links_per_entity = 10
-            entity_breakdown = await conn.fetch(
+            entity_total_row = await conn.fetchrow(
                 f"""
                 WITH per_entity AS (
                     SELECT ue.entity_id, COUNT(*) AS n
@@ -8128,34 +8260,17 @@ class MemoryEngine(MemoryEngineInterface):
                     WHERE mu.bank_id = $1
                     GROUP BY ue.entity_id
                 )
-                SELECT mu.fact_type, SUM(LEAST(pe.n - 1, $2))::bigint AS count
-                FROM {fq_table("unit_entities")} ue
-                JOIN {fq_table("memory_units")} mu ON mu.id = ue.unit_id
-                JOIN per_entity pe ON pe.entity_id = ue.entity_id
-                WHERE mu.bank_id = $1
-                GROUP BY mu.fact_type
+                SELECT COALESCE(SUM(LEAST(n - 1, $2)), 0)::bigint AS count
+                FROM per_entity
                 """,
                 bank_id,
                 max_links_per_entity,
             )
+            entity_link_total = int(entity_total_row["count"] or 0) if entity_total_row else 0
 
-            link_breakdown_stats = [
-                {"fact_type": row["fact_type"], "link_type": row["link_type"], "count": row["count"]}
-                for row in non_entity_breakdown
-            ]
-            link_breakdown_stats.extend(
-                {"fact_type": row["fact_type"], "link_type": "entity", "count": int(row["count"] or 0)}
-                for row in entity_breakdown
-                if (row["count"] or 0) > 0
-            )
-
-            link_counts: dict[str, int] = {}
-            link_counts_by_fact_type: dict[str, int] = {}
-            for row in link_breakdown_stats:
-                link_counts[row["link_type"]] = link_counts.get(row["link_type"], 0) + row["count"]
-                link_counts_by_fact_type[row["fact_type"]] = (
-                    link_counts_by_fact_type.get(row["fact_type"], 0) + row["count"]
-                )
+            link_counts: dict[str, int] = {row["link_type"]: row["count"] for row in non_entity_link_rows}
+            if entity_link_total > 0:
+                link_counts["entity"] = entity_link_total
 
             ops_stats = await conn.fetch(
                 f"""
@@ -8186,15 +8301,20 @@ class MemoryEngine(MemoryEngineInterface):
             ops_by_status = {row["status"]: row["count"] for row in ops_stats}
             last_consolidated_at = consolidation_row["last_consolidated_at"] if consolidation_row else None
 
+            # link_counts_by_fact_type and link_breakdown are retained in the
+            # response shape but no longer populated — producing them required
+            # the expensive memory_links⇒memory_units join we just deleted. The
+            # UI does not read them; hindsight-cli `bank stats` does, and after
+            # this change its "Links by Fact Type" section prints empty and the
+            # "Detailed Link Breakdown" section is skipped (`is_empty()` guard).
+            # Drop these keys, and the matching CLI rendering, once downstream
+            # SDKs are regenerated.
             return {
                 "bank_id": bank_id,
                 "node_counts": node_counts,
                 "link_counts": link_counts,
-                "link_counts_by_fact_type": link_counts_by_fact_type,
-                "link_breakdown": [
-                    {"fact_type": row["fact_type"], "link_type": row["link_type"], "count": row["count"]}
-                    for row in link_breakdown_stats
-                ],
+                "link_counts_by_fact_type": {},
+                "link_breakdown": [],
                 "operations": ops_by_status,
                 "total_documents": doc_count_row["count"] if doc_count_row else 0,
                 "last_consolidated_at": last_consolidated_at.isoformat() if last_consolidated_at else None,
@@ -8202,6 +8322,54 @@ class MemoryEngine(MemoryEngineInterface):
                 "failed_consolidation": consolidation_row["failed"] if consolidation_row else 0,
                 "total_observations": node_counts.get("observation", 0),
             }
+
+    async def get_bank_freshness(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Cheap subset of bank stats consumed by reflect().
+
+        Returns only the consolidation freshness fields: when the bank was last
+        consolidated and how many units are pending or failed. reflect() calls
+        this on every invocation, so it must not pay for any cross-table joins
+        or link aggregations.
+        """
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankReadContext
+
+            ctx = BankReadContext(bank_id=bank_id, operation="get_bank_stats", request_context=request_context)
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+
+        backend = await self._get_backend()
+        # The current reflect() caller reads only last_consolidated_at and
+        # pending_consolidation, but `failed` is part of this method's published
+        # contract (see interface.get_bank_freshness) so the returned shape stays
+        # a strict subset of get_bank_stats. All three come from one scan, so
+        # keeping `failed` costs nothing extra.
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"""
+                SELECT
+                    MAX(consolidated_at) as last_consolidated_at,
+                    COUNT(*) FILTER (WHERE consolidated_at IS NULL AND fact_type IN ('experience', 'world')) as pending,
+                    COUNT(*) FILTER (WHERE consolidation_failed_at IS NOT NULL AND fact_type IN ('experience', 'world')) as failed
+                FROM {fq_table("memory_units")}
+                WHERE bank_id = $1
+                """,
+                bank_id,
+            )
+
+        if row is None:
+            return {"last_consolidated_at": None, "pending_consolidation": 0, "failed_consolidation": 0}
+        last = row["last_consolidated_at"]
+        return {
+            "last_consolidated_at": last.isoformat() if last else None,
+            "pending_consolidation": row["pending"] or 0,
+            "failed_consolidation": row["failed"] or 0,
+        }
 
     async def get_memories_timeseries(
         self,

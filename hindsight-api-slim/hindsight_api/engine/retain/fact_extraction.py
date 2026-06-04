@@ -10,7 +10,7 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
@@ -887,20 +887,15 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     extraction_mode = config.retain_extraction_mode
     extract_causal_links = config.retain_extract_causal_links
 
-    # Build retain_mission section if set - injected before the mode-specific guidelines
-    # Escape braces so user-supplied text survives str.format() on the prompt template.
+    # The per-bank retain mission is NOT baked into this system prompt: it would
+    # make the prompt bank-specific and force a separate Gemini context cache per
+    # mission (one per bank). Instead the prompt is bank-agnostic so a single
+    # CachedContent serves every bank, and the mission rides in the per-request
+    # user message via _retain_mission_preamble(). The {retain_mission_section}
+    # placeholder is kept (templates still reference it) but always empty here.
     from hindsight_api.engine.prompt_utils import escape_for_prompt
 
-    retain_mission = getattr(config, "retain_mission", None)
-    if retain_mission:
-        retain_mission_section = (
-            f"══════════════════════════════════════════════════════════════════════════\n"
-            f"FOCUS — What to retain for this bank\n"
-            f"══════════════════════════════════════════════════════════════════════════\n\n"
-            f"{escape_for_prompt(retain_mission)}\n\n"
-        )
-    else:
-        retain_mission_section = ""
+    retain_mission_section = ""
 
     # Select base prompt based on extraction mode
     if extraction_mode == "custom":
@@ -997,6 +992,26 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     return prompt, response_schema
 
 
+def _retain_mission_preamble(config) -> str:
+    """The bank's retain mission, formatted for the per-request user message.
+
+    Kept OUT of the cached system prompt (which must stay bank-agnostic so one
+    CachedContent serves every bank — otherwise each distinct mission spawns its
+    own cache) and prepended to the user message instead. Returns "" when unset.
+    No brace-escaping needed: unlike the system template, the user message is
+    used verbatim, not passed through str.format().
+    """
+    retain_mission = getattr(config, "retain_mission", None)
+    if not retain_mission:
+        return ""
+    return (
+        "══════════════════════════════════════════════════════════════════════════\n"
+        "FOCUS — What to retain for this bank (takes priority over the general guidelines)\n"
+        "══════════════════════════════════════════════════════════════════════════\n\n"
+        f"{retain_mission}\n\n"
+    )
+
+
 def _build_user_message(
     chunk: str,
     chunk_index: int,
@@ -1005,8 +1020,14 @@ def _build_user_message(
     context: str,
     metadata: dict[str, str] | None = None,
     agent_name: str | None = None,
+    mission_preamble: str = "",
 ) -> str:
-    """Build user message for fact extraction."""
+    """Build user message for fact extraction.
+
+    ``mission_preamble`` (the bank's retain mission, possibly empty) is prepended
+    so the bank-specific focus lives in the variable user turn rather than the
+    cached, bank-agnostic system prompt.
+    """
     from .orchestrator import parse_datetime_flexible
 
     sanitized_chunk = _sanitize_text(chunk)
@@ -1039,7 +1060,7 @@ def _build_user_message(
                 'statements to that speaker and classify them as "world", not "assistant".'
             )
 
-    return f"""Extract facts from the following text chunk.
+    return f"""{mission_preamble}Extract facts from the following text chunk.
 
 Chunk: {chunk_index + 1}/{total_chunks}
 Event Date: {event_date_str}
@@ -1106,8 +1127,38 @@ async def _extract_facts_from_chunk(
     extraction_mode = config.retain_extraction_mode
     extract_causal_links = config.retain_extract_causal_links
 
-    # Build user message using helper function
-    user_message = _build_user_message(chunk, chunk_index, total_chunks, event_date, context, metadata, agent_name)
+    # Build user message — the bank mission rides here (not in the cached prefix).
+    user_message = _build_user_message(
+        chunk,
+        chunk_index,
+        total_chunks,
+        event_date,
+        context,
+        metadata,
+        agent_name,
+        mission_preamble=_retain_mission_preamble(config),
+    )
+
+    # Opt into context caching when the provider supports it. The prompt and
+    # response_schema are bank-agnostic (the mission lives in the user message),
+    # so one cached prefix serves every bank; reusing it across many small-payload
+    # retain calls dramatically lowers per-call input
+    # cost. ``get_or_create_cached_prefix`` returns None when caching is
+    # disabled, unsupported, or the prefix is too small; the LLM call
+    # transparently falls back to the uncached path in that case.
+    cached_prefix_name: str | None = None
+    provider_impl = getattr(llm_config, "_provider_impl", None)
+    if provider_impl is not None and provider_impl.supports_prompt_caching():
+        try:
+            cached_prefix_name = await provider_impl.get_or_create_cached_prefix(
+                system_instruction=prompt,
+                response_schema=response_schema,
+            )
+        except Exception:
+            # Caching is a soft optimisation — never let a cache-side
+            # error block a retain operation.
+            logger.exception("Cache prefix lookup failed; falling back to uncached call")
+            cached_prefix_name = None
 
     # Retry logic for JSON validation errors
     # Use retain-specific overrides if set, otherwise fall back to global LLM config
@@ -1128,7 +1179,7 @@ async def _extract_facts_from_chunk(
                 config.retain_llm_max_backoff if config.retain_llm_max_backoff is not None else config.llm_max_backoff
             )
 
-            extraction_response_json, call_usage = await llm_config.call(
+            call_kwargs: dict[str, Any] = dict(
                 messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_message}],
                 response_format=response_schema,
                 scope="retain_extract_facts",
@@ -1140,6 +1191,10 @@ async def _extract_facts_from_chunk(
                 skip_validation=True,  # Get raw JSON, we'll validate leniently
                 return_usage=True,
             )
+            if cached_prefix_name is not None:
+                call_kwargs["cached_prefix"] = cached_prefix_name
+
+            extraction_response_json, call_usage = await llm_config.call(**call_kwargs)
             usage = usage + call_usage  # Aggregate usage across retries
 
             # Lenient parsing of facts from raw JSON
@@ -1743,6 +1798,7 @@ async def extract_facts_from_contents_batch_api(
                 item.context,
                 item.metadata or None,
                 agent_name,
+                mission_preamble=_retain_mission_preamble(config),
             )
 
             # Build request body using helper function

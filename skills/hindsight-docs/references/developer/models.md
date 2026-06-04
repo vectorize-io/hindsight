@@ -69,6 +69,37 @@ See [Configuration](./configuration#llm-provider) for setup examples.
 Set `HINDSIGHT_API_LLM_PROVIDER=litellmrouter` to run the default LLM through [LiteLLM's Router](https://docs.litellm.ai/docs/routing) — ordered fallback across deployments, load-balanced same-tier routing, weighted picks, per-deployment `rpm`/`tpm` limits, and cooldowns are all available via the [`Router` config](https://docs.litellm.ai/docs/routing#fallbacks). Hindsight passes the JSON config through verbatim.
 
 See [Configuration](./configuration#llm-router-litellm-router) for setup.
+### Provider Capabilities
+
+Beyond basic generation, some providers support optional features that lower cost or latency. Hindsight uses each feature automatically when the configured provider supports it.
+
+| Provider | Batch API | Explicit prompt caching |
+|----------|:---------:|:-----------------------:|
+| OpenAI (`openai`) | ✅ | — |
+| Anthropic (`anthropic`) | — | — |
+| Google Gemini (`gemini`) | — | ✅ |
+| Vertex AI (`vertexai`) | — | ✅ |
+| Groq (`groq`) | ✅ | — |
+| Ollama (`ollama`) | — | — |
+| Ollama Cloud (`ollama-cloud`) | — | — |
+| LM Studio (`lmstudio`) | — | — |
+| llama.cpp (`llamacpp`) | — | — |
+| MiniMax (`minimax`) | — | — |
+| DeepSeek (`deepseek`) | — | — |
+| z.ai (`zai`) | — | — |
+| opencode-go (`opencode-go`) | — | — |
+| Volcano Engine (`volcano`) | — | — |
+| OpenRouter (`openrouter`) | — | — |
+| OpenAI Codex (`openai-codex`) | — | — |
+| Claude Code (`claude-code`) | — | — |
+| AWS Bedrock (`bedrock`) | — | — |
+| LiteLLM (100+) (`litellm`) | — | — |
+
+- **Batch API** — submits bulk retain extraction through the provider's asynchronous batch endpoint, typically at ~50% lower cost. Used automatically when available; otherwise calls run synchronously.
+- **Explicit prompt caching** — reuses the large, fixed system prefix that retain (fact extraction), consolidation, and the reflect tool-loop send on every call, billing it at the provider's cached-input rate. On Gemini/Vertex this uses the `CachedContent` API. **On by default**; disable with `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED=false`. Hindsight structures these prompts so the cached prefix is **bank-agnostic** — one cache is shared across all banks rather than one per bank/mission, and creation soft-fails to an uncached call, so it never breaks a request.
+
+:::note
+A blank "Explicit prompt caching" cell does not mean a provider has no caching. OpenAI, for example, caches a stable leading prompt prefix **automatically** server-side, so it benefits with no configuration; Anthropic supports caching via `cache_control` breakpoints which can be wired up through the same provider hook. The column tracks only Hindsight's explicit `get_or_create_cached_prefix` hook, which Gemini/Vertex implement today.
 ### Benchmarks
 
 Not sure which model to use? The **[Model Leaderboard](https://benchmarks.hindsight.vectorize.io/)** benchmarks models across accuracy, speed, cost, and reliability for retain, reflect, and observation consolidation so you can pick the right trade-off for your use case.

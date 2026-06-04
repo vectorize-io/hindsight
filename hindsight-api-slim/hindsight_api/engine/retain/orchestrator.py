@@ -1213,30 +1213,17 @@ async def _streaming_retain_batch(
             async with acquire_with_retry(pool) as conn:
                 async with conn.transaction():
                     # --- Document ownership gate ---
-                    # Lock the document row to serialize all concurrent writers.
-                    #
-                    # We do this with a SINGLE upsert that both creates the row (if
-                    # absent) and locks it (if present) atomically. The earlier
-                    # two-step form — INSERT ... ON CONFLICT DO NOTHING followed by a
-                    # separate SELECT ... FOR UPDATE — could deadlock under concurrent
-                    # same-document retains: DO NOTHING takes no row lock on an
-                    # existing row, so writers interleaved the speculative-insert
-                    # ShareLock with the later FOR UPDATE and cascade-DELETE in
-                    # inconsistent orders, producing 3-way lock cycles in
-                    # handle_document_tracking. ON CONFLICT DO UPDATE always takes the
-                    # row lock as part of the same statement, so all writers serialize
-                    # on the document row in a single, consistent step.
-                    #
-                    # The SET is a no-op self-assignment (content_hash unchanged) used
-                    # only to acquire the lock; the real hash is written immediately
-                    # below by handle_document_tracking / upsert_document_metadata.
-                    # ``RETURNING`` yields the pre-existing hash (or '__pending__' for a
-                    # freshly inserted row).
-                    existing_hash = await conn.fetchval(
-                        f"INSERT INTO {fq_table('documents')} (id, bank_id, original_text, content_hash) "
-                        f"VALUES ($1, $2, '', '__pending__') "
-                        f"ON CONFLICT (id, bank_id) DO UPDATE SET content_hash = {fq_table('documents')}.content_hash "
-                        f"RETURNING content_hash",
+                    # Ensure the document row exists, lock it to serialize all
+                    # concurrent same-document writers, and read its pre-existing
+                    # hash. The lock prevents interleaved retains from corrupting
+                    # each other in handle_document_tracking; the returned hash
+                    # ('__pending__' for a freshly inserted row) drives the
+                    # takeover check for later batches below. The PG/Oracle split
+                    # lives in the ops layer because Oracle can't do this upsert +
+                    # RETURNING in a single statement.
+                    existing_hash = await pool.ops.lock_document_for_write(
+                        conn,
+                        fq_table("documents"),
                         effective_doc_id,
                         bank_id,
                     )

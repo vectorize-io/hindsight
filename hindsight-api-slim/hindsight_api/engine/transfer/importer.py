@@ -15,11 +15,11 @@ import logging
 import uuid
 import zipfile
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any, Literal
 
 from ..db_utils import acquire_with_retry
-from ..retain import chunk_storage, embedding_processing, fact_storage, orchestrator
+from ..retain import bank_utils, chunk_storage, embedding_processing, fact_storage, orchestrator
 from ..retain.types import (
     CausalRelation,
     ChunkMetadata,
@@ -211,6 +211,208 @@ async def import_documents(
         bank_id,
         result.documents_skipped,
         result.observations_skipped,
+    )
+    return result
+
+
+# Bank-level config/state tables restored verbatim from a whole-bank archive.
+# Order matters for foreign keys: banks (parent) is restored before any child.
+_BANK_CHILD_TABLES = ("mental_models", "directives", "webhooks")
+_HISTORY_TABLES = ("audit_log", "llm_requests")
+
+
+@dataclass
+class BankImportResult:
+    """Outcome of importing a whole-bank archive."""
+
+    bank_id: str
+    documents_imported: int = 0
+    facts_imported: int = 0
+    observations_imported: int = 0
+    mental_models_imported: int = 0
+    directives_imported: int = 0
+    webhooks_imported: int = 0
+    history_rows_imported: int = 0
+
+
+@dataclass
+class ParsedBankArchive:
+    """The bank-level sections of a whole-bank archive (documents read separately)."""
+
+    manifest: TransferManifest
+    # table name -> list of verbatim row dicts (banks, mental_models, directives, webhooks)
+    bank_rows: dict[str, list[dict]] = field(default_factory=dict)
+    # table name -> rows (audit_log, llm_requests), present only with --include-history
+    history_rows: dict[str, list[dict]] = field(default_factory=dict)
+
+
+def parse_bank_archive(archive_bytes: bytes) -> ParsedBankArchive:
+    """Parse the bank-level sections of a whole-bank archive (``archive_type='bank'``)."""
+    with zipfile.ZipFile(io.BytesIO(archive_bytes), "r") as zf:
+        names = set(zf.namelist())
+        if "manifest.json" not in names:
+            raise ValueError("Invalid transfer archive: manifest.json is missing")
+        manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
+        if manifest.archive_type != "bank":
+            raise ValueError(
+                f"Not a whole-bank archive (archive_type={manifest.archive_type!r}); use import_documents instead"
+            )
+        bank_rows: dict[str, list[dict]] = {}
+        for table in ("banks", *_BANK_CHILD_TABLES):
+            fname = f"{table}.json"
+            bank_rows[table] = json.loads(zf.read(fname)) if fname in names else []
+        history_rows: dict[str, list[dict]] = {}
+        for table in _HISTORY_TABLES:
+            fname = f"history/{table}.json"
+            if fname in names:
+                history_rows[table] = json.loads(zf.read(fname))
+    return ParsedBankArchive(manifest=manifest, bank_rows=bank_rows, history_rows=history_rows)
+
+
+async def _restore_rows(conn: Any, table: str, rows: list[dict]) -> int:
+    """Insert verbatim rows into a bank-scoped table, coercing JSON-encoded values
+    back to the column's type (timestamps, uuids, jsonb). ``ON CONFLICT DO NOTHING``
+    keeps an import idempotent and safe to re-run against a partially-filled target."""
+    if not rows:
+        return 0
+    from ..memory_engine import get_current_schema
+
+    schema = get_current_schema()
+    col_types = {
+        r["column_name"]: r["data_type"]
+        for r in await conn.fetch(
+            "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2",
+            schema,
+            table,
+        )
+    }
+    inserted = 0
+    for row in rows:
+        cols = [c for c in row if c in col_types]
+        placeholders: list[str] = []
+        values: list[Any] = []
+        for position, col in enumerate(cols, start=1):
+            data_type = col_types[col]
+            value = row[col]
+            if data_type in ("jsonb", "json"):
+                # asyncpg has no JSON codec on these raw connections; pass JSON
+                # text and cast. Values may already be str (no codec on export) or
+                # a Python object (codec on export) — normalize to text either way.
+                values.append(value if isinstance(value, str) or value is None else json.dumps(value))
+                placeholders.append(f"${position}::jsonb")
+                continue
+            if value is not None and isinstance(value, str):
+                if data_type in ("timestamp with time zone", "timestamp without time zone"):
+                    value = datetime.fromisoformat(value)
+                elif data_type == "date":
+                    value = date.fromisoformat(value)
+                elif data_type == "uuid":
+                    value = uuid.UUID(value)
+            placeholders.append(f"${position}")
+            values.append(value)
+        col_list = ", ".join(f'"{c}"' for c in cols)
+        await conn.execute(
+            f"INSERT INTO {fq_table(table)} ({col_list}) VALUES ({', '.join(placeholders)}) ON CONFLICT DO NOTHING",
+            *values,
+        )
+        inserted += 1
+    return inserted
+
+
+async def import_bank(
+    *,
+    backend: Any,
+    embeddings_model: Any,
+    entity_resolver: Any,
+    config: Any,
+    format_date_fn: Any,
+    archive_bytes: bytes,
+    target_bank_id: str | None = None,
+    include_history: bool = False,
+    ops: Any = None,
+) -> BankImportResult:
+    """Restore a whole bank from a ``export_bank`` archive into the target instance.
+
+    Re-embeds facts with the *target* instance's embedding model and rebuilds links,
+    entities and search/vector indexes — the path for migrating a bank to an instance
+    configured with a different embedding model / vector / text-search backend.
+
+    The **target bank must not already exist**: import restores a complete bank
+    (config + facts + mental models + …) and is not a merge. If a bank with the
+    target id is present, this raises — delete it first or pass ``target_bank_id``
+    for a fresh id. A migration restores *exact* state, so unlike the document
+    import it fires no retain webhooks and triggers no consolidation/graph
+    maintenance: observations and mental models are restored as exported.
+    """
+    if ops is None:
+        ops = backend.ops
+    parsed = parse_bank_archive(archive_bytes)
+    source_bank_id = parsed.manifest.source_bank_id
+    bank_id = target_bank_id or source_bank_id
+
+    # Remapping to a different id: rewrite the carried bank_id on every row so FKs
+    # and PKs line up with the (also-remapped) documents/facts.
+    if bank_id != source_bank_id:
+        for rows in (*parsed.bank_rows.values(), *parsed.history_rows.values()):
+            for row in rows:
+                if "bank_id" in row:
+                    row["bank_id"] = bank_id
+
+    async with acquire_with_retry(backend) as conn:
+        # Refuse to import into an existing bank — this restores a whole bank, it
+        # does not merge. Merging would silently mix the archive's config/mental
+        # models/webhooks with whatever is already there (and global-unique ids
+        # like webhooks/directives would collide).
+        if await conn.fetchval(f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1", bank_id):
+            raise ValueError(
+                f"Target bank '{bank_id}' already exists; import-bank restores into a fresh bank "
+                f"(it is not a merge). Delete the bank first, or pass a different target bank id."
+            )
+        # Bank row first — children (documents, mental_models, …) FK to it.
+        await _restore_rows(conn, "banks", parsed.bank_rows.get("banks", []))
+    # Ensure the bank's per-bank vector indexes exist (no-op for global-index
+    # extensions); idempotent and keeps the restored banks row (ON CONFLICT DO NOTHING).
+    await bank_utils.get_or_create_bank_profile(backend, bank_id)
+
+    doc_result = await import_documents(
+        backend=backend,
+        embeddings_model=embeddings_model,
+        entity_resolver=entity_resolver,
+        config=config,
+        format_date_fn=format_date_fn,
+        bank_id=bank_id,
+        archive_bytes=archive_bytes,
+        ops=ops,
+        outbox_callback_factory=None,
+    )
+
+    result = BankImportResult(
+        bank_id=bank_id,
+        documents_imported=doc_result.documents_imported,
+        facts_imported=doc_result.facts_imported,
+        observations_imported=doc_result.observations_imported,
+    )
+    async with acquire_with_retry(backend) as conn:
+        result.mental_models_imported = await _restore_rows(
+            conn, "mental_models", parsed.bank_rows.get("mental_models", [])
+        )
+        result.directives_imported = await _restore_rows(conn, "directives", parsed.bank_rows.get("directives", []))
+        result.webhooks_imported = await _restore_rows(conn, "webhooks", parsed.bank_rows.get("webhooks", []))
+        if include_history:
+            for table in _HISTORY_TABLES:
+                result.history_rows_imported += await _restore_rows(conn, table, parsed.history_rows.get(table, []))
+
+    logger.info(
+        "[transfer] Imported bank %s: %d doc(s), %d fact(s), %d observation(s), "
+        "%d mental model(s), %d directive(s), %d webhook(s), %d history row(s)",
+        bank_id,
+        result.documents_imported,
+        result.facts_imported,
+        result.observations_imported,
+        result.mental_models_imported,
+        result.directives_imported,
+        result.webhooks_imported,
+        result.history_rows_imported,
     )
     return result
 

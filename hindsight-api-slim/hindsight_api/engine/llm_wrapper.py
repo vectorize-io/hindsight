@@ -255,6 +255,7 @@ def create_llm_provider(
     vertexai_region: str | None = None,
     vertexai_credentials: Any = None,
     gemini_safety_settings: list | None = None,
+    prompt_cache_enabled: bool = False,
     litellmrouter_config: dict[str, Any] | None = None,
 ) -> Any:  # Returns LLMInterface
     """
@@ -343,6 +344,7 @@ def create_llm_provider(
             vertexai_region=vertexai_region,
             vertexai_credentials=vertexai_credentials,
             gemini_safety_settings=gemini_safety_settings,
+            prompt_cache_enabled=prompt_cache_enabled,
         )
 
     elif provider_lower == "anthropic":
@@ -468,6 +470,7 @@ class LLMProvider:
         groq_service_tier: str | None = None,
         openai_service_tier: str | None = None,
         gemini_safety_settings: list | None = None,
+        prompt_cache_enabled: bool = False,
         extra_body: dict[str, Any] | None = None,
         default_headers: dict[str, str] | None = None,
         litellmrouter_config: dict[str, Any] | None = None,
@@ -506,6 +509,11 @@ class LLMProvider:
         self.openai_service_tier = openai_service_tier
         # Gemini safety settings (instance default; can be overridden per-request via context var)
         self.gemini_safety_settings = gemini_safety_settings
+        # Gemini prompt caching: when True, retain extraction (and any future
+        # caller that opts in) will reuse a CachedContent prefix to cut
+        # input-token cost. Off by default so the change is observable behind
+        # a flip rather than a silent behaviour change on upgrade.
+        self.prompt_cache_enabled = prompt_cache_enabled
         # Extra body params for OpenAI-compatible providers (e.g. chat_template_kwargs)
         self.extra_body = extra_body
         # Default headers passed to provider SDK clients (e.g. proxy auth, request tracing).
@@ -624,6 +632,21 @@ class LLMProvider:
             except Exception:
                 pass  # Config may not be initialized in test environments
 
+        # Prompt-prefix caching is a provider-agnostic toggle (default on): resolve
+        # it from the static server config for every provider when the caller didn't
+        # pass an explicit override. Providers that don't support caching ignore the
+        # value; only those that implement get_or_create_cached_prefix act on it.
+        if not self.prompt_cache_enabled:
+            from ..config import DEFAULT_LLM_PROMPT_CACHE_ENABLED, _get_raw_config
+
+            try:
+                raw_config = _get_raw_config()
+                self.prompt_cache_enabled = bool(
+                    getattr(raw_config, "llm_prompt_cache_enabled", DEFAULT_LLM_PROMPT_CACHE_ENABLED)
+                )
+            except Exception:
+                pass  # Config may not be initialized in test environments
+
         # For litellmrouter: prefer an explicit chain from the caller (per-op
         # construction in MemoryEngine threads the right chain through). If the caller
         # didn't supply one, fall back to the global ``llm_litellmrouter_config`` so
@@ -652,6 +675,7 @@ class LLMProvider:
             vertexai_region=vertexai_region,
             vertexai_credentials=vertexai_credentials,
             gemini_safety_settings=self.gemini_safety_settings,
+            prompt_cache_enabled=self.prompt_cache_enabled,
             litellmrouter_config=router_config,
         )
 
@@ -715,6 +739,7 @@ class LLMProvider:
         skip_validation: bool = False,
         strict_schema: bool = False,
         return_usage: bool = False,
+        cached_prefix: str | None = None,
     ) -> Any:
         """
         Make an LLM API call with retry logic.
@@ -771,6 +796,11 @@ class LLMProvider:
                 for sem in _semaphores_for_scope(scope):
                     await stack.enter_async_context(sem)
 
+                # cached_prefix is only set for providers that returned a handle
+                # from get_or_create_cached_prefix() (e.g. Gemini); it's None for
+                # the rest. Forward it only when present so providers that don't
+                # implement caching keep their call() signature untouched.
+                cache_kwarg = {"cached_prefix": cached_prefix} if cached_prefix is not None else {}
                 try:
                     # Delegate to provider implementation
                     result = await self._provider_impl.call(
@@ -785,6 +815,7 @@ class LLMProvider:
                         skip_validation=skip_validation,
                         strict_schema=strict_schema,
                         return_usage=return_usage,
+                        **cache_kwarg,
                     )
                 except Exception as e:
                     get_span_recorder().record_llm_call(
@@ -824,6 +855,7 @@ class LLMProvider:
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
         tool_choice: str | dict[str, Any] = "auto",
+        cached_prefix: str | None = None,
     ) -> "LLMToolCallResult":
         """
         Make an LLM API call with tool/function calling support.
@@ -864,6 +896,10 @@ class LLMProvider:
                 for sem in _semaphores_for_scope(scope):
                     await stack.enter_async_context(sem)
 
+                # cached_prefix is only set for providers that returned a handle
+                # from get_or_create_cached_prefix(); forward it only when present
+                # so non-caching providers keep their signature (same as call()).
+                cache_kwarg = {"cached_prefix": cached_prefix} if cached_prefix is not None else {}
                 try:
                     # Delegate to provider implementation
                     result = await self._provider_impl.call_with_tools(
@@ -876,6 +912,7 @@ class LLMProvider:
                         initial_backoff=initial_backoff,
                         max_backoff=max_backoff,
                         tool_choice=tool_choice,
+                        **cache_kwarg,
                     )
                 except Exception as e:
                     get_span_recorder().record_llm_call(
