@@ -59,4 +59,5 @@ hindsight-integrations/_drafts/
 # Changelog is now tracked in hindsight-docs/src/pages/changelog.md
 # CHANGELOG.md
 
-blog-post*
+blog-post
+*.worktrees
