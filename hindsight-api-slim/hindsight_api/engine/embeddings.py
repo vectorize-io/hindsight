@@ -319,13 +319,20 @@ class OnnxEmbeddings(Embeddings):
         model_path = self.model_path
         if not model_path:
             try:
-                from huggingface_hub import hf_hub_download
+                from huggingface_hub import snapshot_download
             except ImportError as exc:
                 raise ImportError(
                     "huggingface-hub is required to download ONNX embedding models. "
                     "Set HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH or install local-onnx."
                 ) from exc
-            model_path = hf_hub_download(repo_id=self.model_id, filename=self.onnx_file)
+            # Some large ONNX exports, for example BAAI/bge-m3, store weights in
+            # an external sidecar file next to model.onnx. Download both the
+            # requested graph and its conventional *_data sidecar when present.
+            snapshot_dir = snapshot_download(
+                repo_id=self.model_id,
+                allow_patterns=[self.onnx_file, f"{self.onnx_file}_data"],
+            )
+            model_path = os.path.join(snapshot_dir, self.onnx_file)
 
         logger.info(
             "Embeddings: initializing ONNX provider with model %s (%s)",

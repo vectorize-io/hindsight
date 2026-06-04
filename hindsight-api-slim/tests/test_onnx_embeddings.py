@@ -1,5 +1,6 @@
 """Tests for the ONNX Runtime embeddings provider."""
 
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -72,6 +73,32 @@ def test_onnx_embeddings_query_and_document_prefixes_are_asymmetric():
 
     assert tokenizer.calls[0]["texts"] == ["query: weather"]
     assert tokenizer.calls[1]["texts"] == ["passage: weather"]
+
+
+@pytest.mark.asyncio
+async def test_onnx_embeddings_downloads_external_data_sidecar_when_needed():
+    emb = OnnxEmbeddings(model_id="BAAI/bge-m3", onnx_file="onnx/model.onnx")
+    download = MagicMock(return_value="/hf/bge-m3")
+    session = MagicMock(return_value=FakeOnnxSession())
+    fake_hf = SimpleNamespace(snapshot_download=download)
+    fake_transformers = SimpleNamespace(AutoTokenizer=SimpleNamespace(from_pretrained=MagicMock(return_value=FakeTokenizer())))
+    fake_onnxruntime = SimpleNamespace(InferenceSession=session)
+
+    with patch.dict(
+        sys.modules,
+        {
+            "huggingface_hub": fake_hf,
+            "transformers": fake_transformers,
+            "onnxruntime": fake_onnxruntime,
+        },
+    ):
+        await emb.initialize()
+
+    download.assert_called_once_with(
+        repo_id="BAAI/bge-m3",
+        allow_patterns=["onnx/model.onnx", "onnx/model.onnx_data"],
+    )
+    session.assert_called_once_with("/hf/bge-m3/onnx/model.onnx", providers=["CPUExecutionProvider"])
 
 
 def test_create_embeddings_from_env_supports_onnx_provider():
