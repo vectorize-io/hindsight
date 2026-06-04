@@ -208,10 +208,11 @@ class GeminiLLM(LLMInterface):
         """
         start_time = time.time()
 
-        # Convert OpenAI-style messages to Gemini format. When a cache is
-        # in use, the system_instruction was baked into the CachedContent
-        # at create time — strip any system messages from the in-band
-        # payload so we don't duplicate (and pay for) the prefix.
+        # Convert OpenAI-style messages to Gemini format. We ALWAYS build
+        # system_instruction (even when a cache is in use): the config builder
+        # below omits it from the request while the cache carries the prefix, but
+        # it must be available so the cached-call-failed safety net can re-send it
+        # inline. Whether it's actually sent is decided in _build_generation_config.
         system_instruction = None
         gemini_contents = []
         using_cache = cached_prefix is not None
@@ -221,9 +222,6 @@ class GeminiLLM(LLMInterface):
             content = msg.get("content", "")
 
             if role == "system":
-                if using_cache:
-                    # System prompt lives in the cache; ignore in-band.
-                    continue
                 if system_instruction:
                     system_instruction += "\n\n" + content
                 else:
@@ -233,11 +231,10 @@ class GeminiLLM(LLMInterface):
             else:
                 gemini_contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=content)]))
 
-        # Add the JSON schema as a textual hint in the system_instruction. When a
-        # cache is in use the system_instruction is the cache (re-sending it is
-        # rejected), so the hint lives in the cached prefix instead — structured
-        # output is still enforced below via response_schema regardless.
-        if not using_cache and response_format is not None and hasattr(response_format, "model_json_schema"):
+        # Add the JSON schema as a textual hint in the system_instruction (matching
+        # the normal uncached path). Structured output is still enforced via
+        # response_schema regardless; this is just guidance text.
+        if response_format is not None and hasattr(response_format, "model_json_schema"):
             schema = response_format.model_json_schema()
             schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
             if system_instruction:
@@ -245,39 +242,43 @@ class GeminiLLM(LLMInterface):
             else:
                 system_instruction = schema_msg
 
+        # Apply safety settings: context var (per-request bank override) takes precedence over instance default
+        effective_safety_settings = _safety_settings_ctx.get()
+        if effective_safety_settings is None:
+            effective_safety_settings = self._safety_settings
+
         # Build generation config. ``cached_content`` and ``system_instruction``
         # are mutually exclusive (the cache IS the prefix; the SDK rejects
         # re-sending it). ``response_schema``/``response_mime_type`` are
         # request-level output constraints — NOT cacheable — so they're set on
         # every structured call, including cached ones where they ride alongside
-        # ``cached_content``.
-        config_kwargs: dict[str, Any] = {}
-        if using_cache:
-            config_kwargs["cached_content"] = cached_prefix
-        elif system_instruction:
-            config_kwargs["system_instruction"] = system_instruction
-        if response_format is not None:
-            config_kwargs["response_mime_type"] = "application/json"
-            config_kwargs["response_schema"] = response_format
-        if temperature is not None:
-            config_kwargs["temperature"] = temperature
-        # Gemini's equivalent of OpenAI-style max_completion_tokens is max_output_tokens.
-        # Without it the model can produce arbitrarily long responses, ignoring the
-        # caller's intended cap (e.g. mental_models max_tokens during refresh).
-        if max_completion_tokens is not None:
-            config_kwargs["max_output_tokens"] = max_completion_tokens
+        # ``cached_content``. Built as a closure so we can rebuild it WITHOUT the
+        # cache and retry inline if a stale/invalid CachedContent makes the call fail.
+        def _build_generation_config(use_cache: bool) -> "genai_types.GenerateContentConfig | None":
+            config_kwargs: dict[str, Any] = {}
+            if use_cache:
+                config_kwargs["cached_content"] = cached_prefix
+            elif system_instruction:
+                config_kwargs["system_instruction"] = system_instruction
+            if response_format is not None:
+                config_kwargs["response_mime_type"] = "application/json"
+                config_kwargs["response_schema"] = response_format
+            if temperature is not None:
+                config_kwargs["temperature"] = temperature
+            # Gemini's equivalent of OpenAI-style max_completion_tokens is max_output_tokens.
+            # Without it the model can produce arbitrarily long responses, ignoring the
+            # caller's intended cap (e.g. mental_models max_tokens during refresh).
+            if max_completion_tokens is not None:
+                config_kwargs["max_output_tokens"] = max_completion_tokens
+            if effective_safety_settings is not None:
+                config_kwargs["safety_settings"] = [
+                    genai_types.SafetySetting(category=s["category"], threshold=s["threshold"])
+                    for s in effective_safety_settings
+                ]
+            return genai_types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
 
-        # Apply safety settings: context var (per-request bank override) takes precedence over instance default
-        effective_safety_settings = _safety_settings_ctx.get()
-        if effective_safety_settings is None:
-            effective_safety_settings = self._safety_settings
-        if effective_safety_settings is not None:
-            config_kwargs["safety_settings"] = [
-                genai_types.SafetySetting(category=s["category"], threshold=s["threshold"])
-                for s in effective_safety_settings
-            ]
-
-        generation_config = genai_types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
+        cache_active = using_cache
+        generation_config = _build_generation_config(cache_active)
 
         last_exception = None
 
@@ -415,6 +416,20 @@ class GeminiLLM(LLMInterface):
                     logger.error(f"Gemini auth error (HTTP {e.code}), not retrying: {str(e)}")
                     raise
 
+                # Cached-request safety net: a stale/invalid/expired CachedContent
+                # (or an incompatibility like cache + tool_config) surfaces as a 400.
+                # Retrying the same cached request can't recover, so on the first
+                # such failure drop the cache, invalidate it so later operations
+                # recreate it, and retry THIS call inline with the prefix inlined.
+                # Caching must never break a request.
+                if cache_active and e.code == 400:
+                    logger.warning(f"Gemini cached call failed (400); retrying uncached. Reason: {str(e)}")
+                    if self._cache_manager is not None and cached_prefix is not None:
+                        self._cache_manager.invalidate(cached_prefix)
+                    cache_active = False
+                    generation_config = _build_generation_config(cache_active)
+                    continue
+
                 # Retry on retryable errors (rate limits, server errors, client errors)
                 if e.code in (400, 429, 500, 502, 503, 504) or (e.code and e.code >= 500):
                     last_exception = e
@@ -508,11 +523,10 @@ class GeminiLLM(LLMInterface):
             content = msg.get("content", "")
 
             if role == "system":
-                if using_cache:
-                    # System prompt is in the CachedContent; skip in-band so
-                    # we don't duplicate the prefix.
-                    i += 1
-                    continue
+                # Always capture system_instruction. _build_tools_config omits it
+                # (and tools) from the request while the cache carries the prefix,
+                # but it must be available so the cached-call-failed safety net can
+                # re-send the prefix + tools inline.
                 system_instruction = (system_instruction + "\n\n" + content) if system_instruction else content
                 i += 1
             elif role == "tool":
@@ -560,57 +574,62 @@ class GeminiLLM(LLMInterface):
                 gemini_contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=content)]))
                 i += 1
 
-        # When using a cached prefix, the SDK rejects re-sending
-        # system_instruction or tools alongside ``cached_content`` — the
-        # cache IS the prefix. tool_config (mode / allowed_function_names)
-        # is still a per-request decision and stays out of the cache.
-        config_kwargs: dict[str, Any] = {}
-        if using_cache:
-            config_kwargs["cached_content"] = cached_prefix
-        else:
-            config_kwargs["tools"] = gemini_tools
-            if system_instruction:
-                config_kwargs["system_instruction"] = system_instruction
-        if temperature is not None:
-            config_kwargs["temperature"] = temperature
-        # See note in `call`: Gemini's max_output_tokens is the equivalent of
-        # OpenAI-style max_completion_tokens.
-        if max_completion_tokens is not None:
-            config_kwargs["max_output_tokens"] = max_completion_tokens
-
-        # Map OpenAI-style tool_choice to Gemini FunctionCallingConfig
-        if tool_choice == "required":
-            config_kwargs["tool_config"] = genai_types.ToolConfig(
-                function_calling_config=genai_types.FunctionCallingConfig(
-                    mode="ANY",
-                )
-            )
-        elif isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
-            fn_name = tool_choice.get("function", {}).get("name")
-            if fn_name:
-                config_kwargs["tool_config"] = genai_types.ToolConfig(
-                    function_calling_config=genai_types.FunctionCallingConfig(
-                        mode="ANY",
-                        allowed_function_names=[fn_name],
-                    )
-                )
-        elif tool_choice == "none":
-            config_kwargs["tool_config"] = genai_types.ToolConfig(
-                function_calling_config=genai_types.FunctionCallingConfig(mode="NONE")
-            )
-        # "auto" is the default (no tool_config needed)
-
         # Apply safety settings: context var (per-request bank override) takes precedence over instance default
         effective_safety_settings = _safety_settings_ctx.get()
         if effective_safety_settings is None:
             effective_safety_settings = self._safety_settings
-        if effective_safety_settings is not None:
-            config_kwargs["safety_settings"] = [
-                genai_types.SafetySetting(category=s["category"], threshold=s["threshold"])
-                for s in effective_safety_settings
-            ]
 
-        config = genai_types.GenerateContentConfig(**config_kwargs)
+        # When using a cached prefix, the SDK rejects re-sending system_instruction
+        # or tools alongside ``cached_content`` — the cache IS the prefix.
+        # tool_config (mode / allowed_function_names) is a per-request decision and
+        # stays out of the cache. Built as a closure so we can rebuild it WITHOUT
+        # the cache and retry inline if a stale/invalid cache makes the call fail.
+        def _build_tools_config(use_cache: bool) -> "genai_types.GenerateContentConfig":
+            config_kwargs: dict[str, Any] = {}
+            if use_cache:
+                config_kwargs["cached_content"] = cached_prefix
+            else:
+                config_kwargs["tools"] = gemini_tools
+                if system_instruction:
+                    config_kwargs["system_instruction"] = system_instruction
+            if temperature is not None:
+                config_kwargs["temperature"] = temperature
+            # See note in `call`: Gemini's max_output_tokens is the equivalent of
+            # OpenAI-style max_completion_tokens.
+            if max_completion_tokens is not None:
+                config_kwargs["max_output_tokens"] = max_completion_tokens
+
+            # Map OpenAI-style tool_choice to Gemini FunctionCallingConfig
+            if tool_choice == "required":
+                config_kwargs["tool_config"] = genai_types.ToolConfig(
+                    function_calling_config=genai_types.FunctionCallingConfig(
+                        mode="ANY",
+                    )
+                )
+            elif isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+                fn_name = tool_choice.get("function", {}).get("name")
+                if fn_name:
+                    config_kwargs["tool_config"] = genai_types.ToolConfig(
+                        function_calling_config=genai_types.FunctionCallingConfig(
+                            mode="ANY",
+                            allowed_function_names=[fn_name],
+                        )
+                    )
+            elif tool_choice == "none":
+                config_kwargs["tool_config"] = genai_types.ToolConfig(
+                    function_calling_config=genai_types.FunctionCallingConfig(mode="NONE")
+                )
+            # "auto" is the default (no tool_config needed)
+
+            if effective_safety_settings is not None:
+                config_kwargs["safety_settings"] = [
+                    genai_types.SafetySetting(category=s["category"], threshold=s["threshold"])
+                    for s in effective_safety_settings
+                ]
+            return genai_types.GenerateContentConfig(**config_kwargs)
+
+        cache_active = using_cache
+        config = _build_tools_config(cache_active)
 
         last_exception = None
         for attempt in range(max_retries + 1):
@@ -719,6 +738,18 @@ class GeminiLLM(LLMInterface):
                 if e.code in (401, 403):
                     logger.error(f"Gemini auth error (HTTP {e.code}), not retrying: {str(e)}")
                     raise
+
+                # Cached-request safety net (see ``call``): a stale/invalid cache or
+                # a cache+tool_config conflict surfaces as a 400. Drop the cache,
+                # invalidate it for later operations, and retry THIS call inline
+                # with the prefix + tools re-sent. Caching must never break a call.
+                if cache_active and e.code == 400:
+                    logger.warning(f"Gemini cached tool call failed (400); retrying uncached. Reason: {str(e)}")
+                    if self._cache_manager is not None and cached_prefix is not None:
+                        self._cache_manager.invalidate(cached_prefix)
+                    cache_active = False
+                    config = _build_tools_config(cache_active)
+                    continue
 
                 # Retry on retryable errors
                 last_exception = e

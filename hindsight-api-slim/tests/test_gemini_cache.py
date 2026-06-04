@@ -319,6 +319,68 @@ async def test_gemini_llm_uses_cache_when_enabled(monkeypatch):
     assert fake_create.call_count == 1
 
 
+@pytest.mark.asyncio
+async def test_call_falls_back_to_uncached_when_cache_400s():
+    """A stale/invalid CachedContent makes the generate call 400. The provider
+    must drop the cache, invalidate the entry, and retry the SAME call inline
+    (prefix re-sent) so caching never breaks a request."""
+    import time
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from google.genai import errors as genai_errors
+
+    from hindsight_api.engine.providers.gemini_cache import GeminiCacheManager, _CacheEntry
+    from hindsight_api.engine.providers.gemini_llm import GeminiLLM
+
+    llm = GeminiLLM(provider="gemini", api_key="not-real-key", base_url="", model="gemini-test", prompt_cache_enabled=True)
+
+    # Seed a cache manager entry that maps to the (now invalid) cache name.
+    mgr = GeminiCacheManager(client=MagicMock())
+    mgr._entries["fp"] = _CacheEntry(name="cachedContents/stale", created_at=time.monotonic(), ttl_seconds=3300)
+    llm._cache_manager = mgr
+
+    captured = []
+
+    def _gen(*, model, contents, config):
+        captured.append(config)
+        if len(captured) == 1:
+            # First (cached) attempt — Gemini rejects the dead cache.
+            raise genai_errors.ClientError(
+                400, {"error": {"code": 400, "status": "INVALID_ARGUMENT", "message": "CachedContent not found"}}
+            )
+        # Retry without the cache succeeds.
+        return SimpleNamespace(
+            text="extracted",
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=10, candidates_token_count=2, cached_content_token_count=0, thoughts_token_count=0
+            ),
+            candidates=[SimpleNamespace(finish_reason="STOP")],
+        )
+
+    llm._client = MagicMock()
+    llm._client.aio = MagicMock()
+    llm._client.aio.models = MagicMock()
+    llm._client.aio.models.generate_content = AsyncMock(side_effect=_gen)
+
+    result = await llm.call(
+        messages=[{"role": "system", "content": "SYSTEM PREFIX"}, {"role": "user", "content": "doc"}],
+        cached_prefix="cachedContents/stale",
+        max_retries=2,
+        temperature=0.1,
+    )
+
+    # The request succeeded via the uncached retry.
+    assert result == "extracted"
+    assert len(captured) == 2
+    # First attempt referenced the cache; the retry inlined the prefix instead.
+    assert captured[0].cached_content == "cachedContents/stale"
+    assert captured[1].cached_content is None
+    assert captured[1].system_instruction == "SYSTEM PREFIX"
+    # The dead entry was invalidated so the next operation recreates it.
+    assert mgr._entries == {}
+
+
 # ---- Tools: cache key + create wiring -----------------------------------
 
 

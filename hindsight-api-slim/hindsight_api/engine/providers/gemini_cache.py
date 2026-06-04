@@ -209,6 +209,19 @@ class GeminiCacheManager:
         age = time.monotonic() - entry.created_at
         return age < (entry.ttl_seconds - self._refresh_margin_seconds)
 
+    def invalidate(self, name: str) -> None:
+        """Forget a cache name that the server rejected (expired/deleted/invalid).
+
+        Called by the provider when a generate request using this CachedContent
+        fails, so the next ``get_or_create`` recreates it instead of handing back
+        the dead name again. Best-effort and sync — drops the matching entry from
+        the in-process map; the orphaned server-side cache (if any) ages out on
+        its own TTL.
+        """
+        for key, entry in list(self._entries.items()):
+            if entry.name == name:
+                self._entries.pop(key, None)
+
     async def _create_cache(
         self,
         *,
