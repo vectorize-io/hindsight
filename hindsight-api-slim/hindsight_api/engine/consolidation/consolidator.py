@@ -2108,6 +2108,9 @@ async def _consolidate_batch_with_llm(
     batch_label = f"{len(memory_ids)} memories [{ids_label}]"
     for attempt in range(1, max_attempts + 1):
         try:
+            # Always request an explicit output budget. Some providers (notably
+            # Bedrock imported models) default to a low hidden cap and truncate
+            # structured consolidation JSON when this is omitted.
             call_kwargs: dict[str, Any] = {
                 "messages": [
                     {"role": "system", "content": system_prompt},
@@ -2115,6 +2118,7 @@ async def _consolidate_batch_with_llm(
                 ],
                 "response_format": response_model,
                 "scope": "consolidation",
+                "max_completion_tokens": config.consolidation_max_completion_tokens,
             }
             if inner_max_retries is not None:
                 call_kwargs["max_retries"] = inner_max_retries
