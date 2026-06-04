@@ -24,6 +24,7 @@ import {
   extractInlineRetainTags,
   stripInlineRetainTags,
   stripInlineTimestampPrefix,
+  stripRuntimeEnvelope,
   getPluginConfig,
   formatHookPerf,
   DEFAULT_RETAIN_CONTEXT,
@@ -97,6 +98,32 @@ describe("stripMemoryTags", () => {
 });
 
 // ---------------------------------------------------------------------------
+// stripRuntimeEnvelope
+// ---------------------------------------------------------------------------
+
+describe("stripRuntimeEnvelope", () => {
+  it("strips leading message id and opaque sender prefix while preserving text", () => {
+    const input =
+      "[message_id: om_x100b6d3512c5ccb0c084ad240a38842]\n" +
+      "ou_cb923a19782fe748cd9fff99454eee31: 我是只retain context的那次改动";
+
+    expect(stripRuntimeEnvelope(input)).toBe("我是只retain context的那次改动");
+  });
+
+  it("removes standalone opaque runtime ids", () => {
+    const input = "om_x100b6d3512c5ccb0c084ad240a38842\n真实内容\noc_abcdef123456";
+
+    expect(stripRuntimeEnvelope(input)).toBe("真实内容");
+  });
+
+  it("does not strip ordinary user text with a colon", () => {
+    const input = "计划: 今天修 retain 污染";
+
+    expect(stripRuntimeEnvelope(input)).toBe(input);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // extractRecallQuery
 // ---------------------------------------------------------------------------
 
@@ -154,6 +181,16 @@ describe("extractRecallQuery", () => {
     const result = extractRecallQuery(undefined, prompt);
     expect(result).not.toContain("[from: Alice]");
     expect(result).toContain("What should I eat for lunch?");
+  });
+
+  it("strips Feishu runtime ids from recall query text", () => {
+    const rawMessage =
+      "[message_id: om_x100b6d3512c5ccb0c084ad240a38842]\n" +
+      "ou_cb923a19782fe748cd9fff99454eee31: 这个修复是否进入生产？";
+
+    const result = extractRecallQuery(rawMessage, undefined);
+
+    expect(result).toBe("这个修复是否进入生产？");
   });
 
   it("handles full envelope with System lines, channel header, and from footer", () => {
@@ -403,6 +440,28 @@ describe("buildRetainRequest", () => {
     const request = buildRetainRequest("hello world", 1, {}, {}, 1700000000000, { turnIndex: 1 });
 
     expect(request.context).toBe(DEFAULT_RETAIN_CONTEXT);
+  });
+
+  it("keeps sender/channel/provider in retain metadata", () => {
+    const request = buildRetainRequest(
+      "hello world",
+      1,
+      {
+        sessionKey: "agent:main:feishu:oc_abcdef123456",
+        messageProvider: "feishu",
+        channelId: "oc_abcdef123456",
+        senderId: "ou_cb923a19782fe748cd9fff99454eee31",
+      },
+      {},
+      1700000000000,
+      { turnIndex: 1 }
+    );
+
+    expect(request.metadata).toMatchObject({
+      provider: "feishu",
+      channel_id: "oc_abcdef123456",
+      sender_id: "ou_cb923a19782fe748cd9fff99454eee31",
+    });
   });
 
   it("describes routing metadata and assistant/user roles in the default retain context", () => {
@@ -721,6 +780,73 @@ describe("prepareRetentionTranscript", () => {
     expect(result?.transcript).not.toContain("client:acme");
   });
 
+  it("strips OpenClaw metadata and Feishu runtime headers from retained structured content", () => {
+    const messages = [
+      {
+        role: "user",
+        content:
+          'Conversation info (untrusted metadata):\n```json\n{"message_id":"om_x100b6d3512c5ccb0c084ad240a38842","sender_id":"ou_cb923a19782fe748cd9fff99454eee31"}\n```\n' +
+          "[message_id: om_x100b6d3512c5ccb0c084ad240a38842]\n" +
+          "ou_cb923a19782fe748cd9fff99454eee31: 我是只retain context的那次改动",
+      },
+    ];
+
+    const result = prepareRetentionTranscript(messages, baseConfig);
+
+    expect(result).not.toBeNull();
+    expect(JSON.parse(result!.transcript)).toEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "我是只retain context的那次改动" }],
+      },
+    ]);
+    expect(result!.transcript).not.toContain("Conversation info");
+    expect(result!.transcript).not.toContain("message_id");
+    expect(result!.transcript).not.toContain("om_x100b6d3512c5ccb0c084ad240a38842");
+    expect(result!.transcript).not.toContain("ou_cb923a19782fe748cd9fff99454eee31");
+  });
+
+  it("strips Feishu runtime headers from retained text-only content", () => {
+    const config: PluginConfig = { ...baseConfig, retainToolCalls: false };
+    const messages = [
+      {
+        role: "user",
+        content:
+          "[message_id: om_x100b6d3512c5ccb0c084ad240a38842]\n" +
+          "ou_cb923a19782fe748cd9fff99454eee31: 我是只retain context的那次改动",
+      },
+    ];
+
+    const result = prepareRetentionTranscript(messages, config);
+
+    expect(result).not.toBeNull();
+    expect(JSON.parse(result!.transcript)).toEqual([
+      { role: "user", content: "我是只retain context的那次改动" },
+    ]);
+  });
+
+  it("strips runtime headers that appear after an inline timestamp", () => {
+    const messages = [
+      {
+        role: "user",
+        content:
+          "[Wed 2026-06-03 19:54 GMT+8]\n" +
+          "[message_id: om_x100b6d3512c5ccb0c084ad240a38842]\n" +
+          "ou_cb923a19782fe748cd9fff99454eee31: 我是只retain context的那次改动",
+      },
+    ];
+
+    const result = prepareRetentionTranscript(messages, baseConfig);
+
+    expect(result).not.toBeNull();
+    expect(JSON.parse(result!.transcript)).toEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "我是只retain context的那次改动" }],
+      },
+    ]);
+  });
+
   it("strips memory tags from user message when prependContext is prepended to it", () => {
     // Simulates the host prepending prependContext to the user message content
     const userContent = `<hindsight_memories>\nRelevant memories:\n- User prefers dark mode [world]\n\nUser message: What is dark mode?\n</hindsight_memories>\nWhat is dark mode?`;
@@ -872,46 +998,49 @@ describe("prepareRetentionTranscript", () => {
     expect(result?.messageCount).toBe(2);
   });
 
-  it("prepends a session-context system message when sessionContext is provided (json)", () => {
+  it("does not prepend session context as retained JSON content", () => {
     const config: PluginConfig = { ...baseConfig, retainToolCalls: false };
     const messages = [{ role: "user", content: "What's MIN-123 status?" }];
     const result = prepareRetentionTranscript(messages, config, false, {
-      senderId: "U7JAF258R",
-      channelId: "C04L6E0H3SQ",
-      provider: "slack",
+      senderId: "ou_cb923a19782fe748cd9fff99454eee31",
+      channelId: "oc_abcdef123456",
+      provider: "feishu",
     });
     expect(result).not.toBeNull();
     const parsed = JSON.parse(result!.transcript);
-    expect(parsed[0]).toEqual({
-      role: "system",
-      content: "[context]\nsender: U7JAF258R\nchannel: C04L6E0H3SQ\nprovider: slack\n[/context]",
-    });
-    expect(parsed[1]).toEqual({ role: "user", content: "What's MIN-123 status?" });
-    expect(result?.messageCount).toBe(2);
+    expect(parsed).toEqual([{ role: "user", content: "What's MIN-123 status?" }]);
+    expect(result!.transcript).not.toContain("[context]");
+    expect(result!.transcript).not.toContain("sender: ou_");
+    expect(result!.transcript).not.toContain("channel:");
+    expect(result!.transcript).not.toContain("provider:");
+    expect(result?.messageCount).toBe(1);
   });
 
-  it("prepends a session-context block when sessionContext is provided (text format)", () => {
+  it("does not prepend session context as retained text content", () => {
     const config: PluginConfig = { ...baseConfig, retainFormat: "text" };
     const messages = [{ role: "user", content: "ping" }];
     const result = prepareRetentionTranscript(messages, config, false, {
-      senderId: "U7JAF258R",
+      senderId: "ou_cb923a19782fe748cd9fff99454eee31",
+      channelId: "oc_abcdef123456",
+      provider: "feishu",
     });
     expect(result).not.toBeNull();
-    expect(result!.transcript.startsWith("[context]\nsender: U7JAF258R\n[/context]\n\n")).toBe(
-      true
-    );
+    expect(result!.transcript).not.toContain("[context]");
+    expect(result!.transcript).not.toContain("sender: ou_");
+    expect(result!.transcript).not.toContain("channel:");
+    expect(result!.transcript).not.toContain("provider:");
     expect(result!.transcript).toContain("[role: user]\nping\n[user:end]");
   });
 
-  it("omits the context header when includeSenderContext is explicitly disabled", () => {
+  it("does not prepend the context header when includeSenderContext is explicitly enabled", () => {
     const config: PluginConfig = {
       ...baseConfig,
       retainFormat: "text",
-      includeSenderContext: false,
+      includeSenderContext: true,
     };
     const messages = [{ role: "user", content: "ping" }];
     const result = prepareRetentionTranscript(messages, config, false, {
-      senderId: "U7JAF258R",
+      senderId: "ou_cb923a19782fe748cd9fff99454eee31",
     });
     expect(result).not.toBeNull();
     expect(result!.transcript).not.toContain("[context]");
@@ -1002,6 +1131,26 @@ describe("composeRecallQuery", () => {
     expect(query).toContain("assistant: Got it, dark mode noted.");
     // latest message should appear after prior context
     expect(query.indexOf("Prior context:")).toBeLessThan(query.indexOf("What theme do I prefer?"));
+  });
+
+  it("strips Feishu runtime ids from prior recall context", () => {
+    const messages = [
+      {
+        role: "user",
+        content:
+          "[message_id: om_x100b6d3512c5ccb0c084ad240a38842]\n" +
+          "ou_cb923a19782fe748cd9fff99454eee31: 我在修 retain 污染",
+      },
+      { role: "assistant", content: "收到。" },
+      { role: "user", content: "现在状态呢？" },
+    ];
+
+    const query = composeRecallQuery("现在状态呢？", messages, 2);
+
+    expect(query).toContain("user: 我在修 retain 污染");
+    expect(query).not.toContain("message_id");
+    expect(query).not.toContain("om_x100b6d3512c5ccb0c084ad240a38842");
+    expect(query).not.toContain("ou_cb923a19782fe748cd9fff99454eee31");
   });
 
   it("respects recallRoles when building prior context", () => {

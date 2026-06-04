@@ -34,9 +34,9 @@ const USER_AGENT = `hindsight-openclaw/${loadPackageVersion()}`;
 
 export const DEFAULT_RETAIN_CONTEXT =
   "This content is an AI-assistant conversation transcript from OpenClaw. " +
-  "The [context] block at the beginning of each turn contains routing identifiers: " +
-  "'sender' is an opaque user ID (not a human name), 'channel' is a chat identifier, " +
-  "'provider' is the messaging platform name. " +
+  "Retain request metadata may include routing identifiers such as " +
+  "'sender_id' (an opaque user ID, not a human name), 'channel_id' (a chat identifier), " +
+  "and 'provider' (the messaging platform name). " +
   "These are operational routing metadata, not semantic actors or people. " +
   "Messages with role 'assistant' are from the AI assistant; first-person statements " +
   "in assistant messages refer to the AI, not the human user. " +
@@ -613,7 +613,27 @@ export function stripMetadataEnvelopes(content: string): string {
     .replace(/\n---$/, "");
   // Strip: <Label> (untrusted metadata):\n```json\n{...}\n```  (without --- wrapper)
   content = content.replace(/[\w\s]+\(untrusted metadata\)[^\n]*\n```json[\s\S]*?```\n?/gim, "");
-  return content.trim();
+  return stripRuntimeEnvelope(content).trim();
+}
+
+const RUNTIME_MESSAGE_ID_LINE_RE = /^\[message_id:\s*(?:om|ou|oc)_[A-Za-z0-9_-]+\]$/i;
+const RUNTIME_OPAQUE_ID_LINE_RE = /^(?:om|ou|oc)_[A-Za-z0-9_-]+$/i;
+const RUNTIME_OPAQUE_SENDER_PREFIX_RE = /^\s*(?:om|ou|oc)_[A-Za-z0-9_-]+\s*:\s*/i;
+
+/**
+ * Strip inline OpenClaw/Feishu runtime headers that can appear before user text.
+ * These identifiers are routing/runtime metadata, not semantic conversation content.
+ */
+export function stripRuntimeEnvelope(content: string): string {
+  if (!content) return content;
+
+  const lines = content.split(/\r?\n/);
+  const kept = lines.filter((line) => {
+    const trimmed = line.trim();
+    return !RUNTIME_MESSAGE_ID_LINE_RE.test(trimmed) && !RUNTIME_OPAQUE_ID_LINE_RE.test(trimmed);
+  });
+
+  return kept.join("\n").replace(RUNTIME_OPAQUE_SENDER_PREFIX_RE, "");
 }
 
 /**
@@ -639,7 +659,9 @@ export function extractRecallQuery(
   let recallQuery = rawMessage;
   // Strip sender metadata envelope before any checks
   if (recallQuery) {
-    recallQuery = stripMetadataEnvelopes(recallQuery);
+    recallQuery = stripRuntimeEnvelope(
+      stripInlineTimestampPrefix(stripMetadataEnvelopes(recallQuery))
+    );
   }
   if (
     !recallQuery ||
@@ -650,7 +672,9 @@ export function extractRecallQuery(
     recallQuery = prompt;
     // Strip metadata envelopes from prompt too, then check if anything useful remains
     if (recallQuery) {
-      recallQuery = stripMetadataEnvelopes(recallQuery);
+      recallQuery = stripRuntimeEnvelope(
+        stripInlineTimestampPrefix(stripMetadataEnvelopes(recallQuery))
+      );
     }
     if (!recallQuery || recallQuery.length < 5) {
       return null;
@@ -676,7 +700,7 @@ export function extractRecallQuery(
 
     // Strip metadata envelopes again after channel envelope extraction, in case
     // the metadata block appeared after the [ChannelName] header
-    cleaned = stripMetadataEnvelopes(cleaned);
+    cleaned = stripRuntimeEnvelope(stripInlineTimestampPrefix(stripMetadataEnvelopes(cleaned)));
 
     recallQuery = cleaned.trim() || recallQuery;
   }
@@ -718,6 +742,7 @@ export function composeRecallQuery(
 
       content = stripMemoryTags(content).trim();
       content = stripMetadataEnvelopes(content);
+      content = stripRuntimeEnvelope(stripInlineTimestampPrefix(content));
       if (!content) {
         return null;
       }
@@ -2787,7 +2812,7 @@ export function prepareRetentionTranscript(
   messages: any[],
   pluginConfig: PluginConfig,
   retainFullWindow = false,
-  sessionContext?: RetentionSessionContext | null
+  _sessionContext?: RetentionSessionContext | null
 ): { transcript: string; messageCount: number } | null {
   if (!messages || messages.length === 0) {
     return null;
@@ -2814,22 +2839,13 @@ export function prepareRetentionTranscript(
 
   const format = pluginConfig.retainFormat ?? "json";
   const includeToolCalls = format === "json" && pluginConfig.retainToolCalls !== false;
-  const contextHeader =
-    pluginConfig.includeSenderContext === false
-      ? null
-      : formatRetentionSessionContext(sessionContext);
 
   if (includeToolCalls) {
     const structured = buildAnthropicStructuredMessages(targetMessages, pluginConfig);
     if (structured.length === 0) return null;
-    // Prepend session context as a system-role message so similarity search
-    // and downstream LLM consumers can attribute the conversation to a speaker.
-    const withContext = contextHeader
-      ? [{ role: "system", content: contextHeader }, ...structured]
-      : structured;
-    const transcript = JSON.stringify(withContext);
+    const transcript = JSON.stringify(structured);
     if (!transcript.trim() || transcript.length < 10) return null;
-    return { transcript, messageCount: withContext.length };
+    return { transcript, messageCount: structured.length };
   }
 
   // Role filtering (text-only path)
@@ -2858,6 +2874,7 @@ export function prepareRetentionTranscript(
     content = stripInlineRetainTags(content);
     content = stripMetadataEnvelopes(content);
     content = stripInlineTimestampPrefix(content);
+    content = stripRuntimeEnvelope(content).trim();
 
     if (content.trim()) {
       const timestamp = normalizeMessageTimestamp(msg);
@@ -2870,17 +2887,13 @@ export function prepareRetentionTranscript(
   let transcript: string;
   let messageCount: number;
   if (format === "text") {
-    const body = normalized
+    transcript = normalized
       .map(({ role, content }) => `[role: ${role}]\n${content}\n[${role}:end]`)
       .join("\n\n");
-    transcript = contextHeader ? `${contextHeader}\n\n${body}` : body;
     messageCount = normalized.length;
   } else {
-    const withContext = contextHeader
-      ? [{ role: "system", content: contextHeader }, ...normalized]
-      : normalized;
-    transcript = JSON.stringify(withContext);
-    messageCount = withContext.length;
+    transcript = JSON.stringify(normalized);
+    messageCount = normalized.length;
   }
 
   if (!transcript.trim() || transcript.length < 10) return null;
@@ -2962,8 +2975,10 @@ function normalizeMessageTimestamp(msg: any): string | undefined {
 
 function extractStructuredBlocks(content: any, role: string): any[] {
   if (typeof content === "string") {
-    const cleaned = stripInlineTimestampPrefix(
-      stripMetadataEnvelopes(stripInlineRetainTags(stripMemoryTags(content)))
+    const cleaned = stripRuntimeEnvelope(
+      stripInlineTimestampPrefix(
+        stripMetadataEnvelopes(stripInlineRetainTags(stripMemoryTags(content)))
+      )
     ).trim();
     return cleaned ? [{ type: "text", text: cleaned }] : [];
   }
@@ -2975,8 +2990,10 @@ function extractStructuredBlocks(content: any, role: string): any[] {
     const blockType = block.type;
 
     if (blockType === "text") {
-      const cleaned = stripInlineTimestampPrefix(
-        stripMetadataEnvelopes(stripInlineRetainTags(stripMemoryTags(block.text ?? "")))
+      const cleaned = stripRuntimeEnvelope(
+        stripInlineTimestampPrefix(
+          stripMetadataEnvelopes(stripInlineRetainTags(stripMemoryTags(block.text ?? "")))
+        )
       ).trim();
       if (cleaned) blocks.push({ type: "text", text: cleaned });
     } else if (blockType === "toolCall" && role === "assistant") {
