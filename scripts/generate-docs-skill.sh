@@ -155,6 +155,24 @@ def render_llm_providers_grid(_match):
 
 content = re.sub(r'<LLMProvidersGrid\s*/>', render_llm_providers_grid, content)
 
+# Render <LLMProviderCapabilities /> as a markdown capability table, sourced from
+# the same single-source-of-truth provider list (batchApi / promptCaching flags).
+def render_llm_capabilities_table(_match):
+    providers = json.loads(llm_providers_json.read_text())
+    rows = [
+        "| Provider | Batch API | Explicit prompt caching |",
+        "|----------|:---------:|:-----------------------:|",
+    ]
+    for p in providers:
+        if not p.get("id"):
+            continue
+        batch = "✅" if p.get("batchApi") else "—"
+        cache = "✅" if p.get("promptCaching") else "—"
+        rows.append(f"| {p['label']} (`{p['id']}`) | {batch} | {cache} |")
+    return "\n".join(rows)
+
+content = re.sub(r'<LLMProviderCapabilities\s*/>', render_llm_capabilities_table, content)
+
 # Convert <Tabs> to markdown sections
 # Replace <Tabs> ... </Tabs> with markdown headers
 content = re.sub(r'<Tabs>\s*', '', content)

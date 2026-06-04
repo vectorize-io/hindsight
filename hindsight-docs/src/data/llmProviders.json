@@ -1,9 +1,9 @@
 [
-  {"id": "openai",        "label": "OpenAI",            "iconKey": "openai",             "defaultModel": "gpt-4o-mini"},
+  {"id": "openai",        "label": "OpenAI",            "iconKey": "openai",             "defaultModel": "gpt-4o-mini", "batchApi": true},
   {"id": "anthropic",     "label": "Anthropic",         "iconKey": "anthropic",          "defaultModel": "claude-haiku-4-5-20251001"},
-  {"id": "gemini",        "label": "Google Gemini",     "iconKey": "gemini",             "defaultModel": "gemini-2.5-flash"},
-  {"id": "vertexai",      "label": "Vertex AI",         "iconKey": "gemini",             "defaultModel": "gemini-2.0-flash-001"},
-  {"id": "groq",          "label": "Groq",              "iconKey": "zap",                "defaultModel": "openai/gpt-oss-120b"},
+  {"id": "gemini",        "label": "Google Gemini",     "iconKey": "gemini",             "defaultModel": "gemini-2.5-flash", "promptCaching": true},
+  {"id": "vertexai",      "label": "Vertex AI",         "iconKey": "gemini",             "defaultModel": "gemini-2.0-flash-001", "promptCaching": true},
+  {"id": "groq",          "label": "Groq",              "iconKey": "zap",                "defaultModel": "openai/gpt-oss-120b", "batchApi": true},
   {"id": "ollama",        "label": "Ollama",            "iconKey": "ollama",             "defaultModel": "gemma3:12b"},
   {"id": "ollama-cloud",  "label": "Ollama Cloud",      "iconKey": "ollama",             "defaultModel": "gemma3:12b"},
   {"id": "lmstudio",      "label": "LM Studio",         "iconKey": "brain",              "defaultModel": "local-model"},
