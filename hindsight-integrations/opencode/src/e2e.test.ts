@@ -41,7 +41,13 @@ function mockOpencodeSessionMessages(messages: Array<{ role: string; content: st
 const describeLive = LIVE ? describe : describe.skip;
 
 describeLive("live: OpenCode plugin against Hindsight", () => {
-  const client = new HindsightClient({ baseUrl: URL });
+  // When pointing at the hosted backend, the suite's direct (non-plugin)
+  // retain/recall/deleteBank calls need the same token the plugin reads from
+  // HINDSIGHT_API_TOKEN — otherwise they 401 even when the plugin path is fine.
+  const TOKEN = process.env.HINDSIGHT_API_TOKEN;
+  const client = new HindsightClient(
+    TOKEN ? { baseUrl: URL, apiKey: TOKEN } : { baseUrl: URL }
+  );
 
   afterAll(async () => {
     try {
