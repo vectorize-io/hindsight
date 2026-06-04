@@ -227,7 +227,7 @@ async def test_vertexai_integration_actual_api():
         provider="vertexai",
         api_key="",
         base_url="",
-        model="google/gemini-2.0-flash-001",
+        model="google/gemini-2.5-flash-lite",
     )
 
     try:
