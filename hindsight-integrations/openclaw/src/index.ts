@@ -1479,7 +1479,7 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
         : undefined,
     retainContext:
       typeof config.retainContext === "string" && config.retainContext.trim().length > 0
-        ? config.retainContext
+        ? config.retainContext.trim()
         : DEFAULT_RETAIN_CONTEXT,
     excludeProviders: Array.isArray(config.excludeProviders)
       ? Array.from(
@@ -2736,7 +2736,7 @@ export function buildRetainRequest(
     documentId: documentId,
     context:
       typeof pluginConfig.retainContext === "string" && pluginConfig.retainContext.trim().length > 0
-        ? pluginConfig.retainContext
+        ? pluginConfig.retainContext.trim()
         : DEFAULT_RETAIN_CONTEXT,
     metadata: {
       retained_at: new Date(now).toISOString(),

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { createRequire } from "module";
 import {
   stripMemoryTags,
   extractRecallQuery,
@@ -28,6 +29,17 @@ import {
   DEFAULT_RETAIN_CONTEXT,
 } from "./index.js";
 import type { PluginConfig, MemoryResult, MoltbotPluginAPI } from "./types.js";
+
+const require = createRequire(import.meta.url);
+const openclawManifest = require("../openclaw.plugin.json") as {
+  configSchema?: {
+    properties?: {
+      retainContext?: {
+        default?: string;
+      };
+    };
+  };
+};
 
 // ---------------------------------------------------------------------------
 // stripMemoryTags
@@ -405,6 +417,19 @@ describe("buildRetainRequest", () => {
       1,
       {},
       { retainContext: "Custom extraction guidance." },
+      1700000000000,
+      { turnIndex: 1 }
+    );
+
+    expect(request.context).toBe("Custom extraction guidance.");
+  });
+
+  it("trims configured retain context before sending it", () => {
+    const request = buildRetainRequest(
+      "hello world",
+      1,
+      {},
+      { retainContext: "  Custom extraction guidance. \n" },
       1700000000000,
       { turnIndex: 1 }
     );
@@ -1538,11 +1563,22 @@ describe("getPluginConfig — retainContext", () => {
     expect(cfg.retainContext).toBe("Treat IDs as routing metadata.");
   });
 
+  it("trims an explicit retainContext", () => {
+    const cfg = getPluginConfig(makeApi({ retainContext: " Treat IDs as routing metadata. \n" }));
+    expect(cfg.retainContext).toBe("Treat IDs as routing metadata.");
+  });
+
   it("falls back to the default when retainContext is blank or non-string", () => {
     expect(getPluginConfig(makeApi({ retainContext: "" })).retainContext).toBe(
       DEFAULT_RETAIN_CONTEXT
     );
     expect(getPluginConfig(makeApi({ retainContext: 42 })).retainContext).toBe(
+      DEFAULT_RETAIN_CONTEXT
+    );
+  });
+
+  it("keeps the plugin manifest default in sync with the code default", () => {
+    expect(openclawManifest.configSchema?.properties?.retainContext?.default).toBe(
       DEFAULT_RETAIN_CONTEXT
     );
   });
