@@ -209,6 +209,17 @@ ENV_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_EMBEDDINGS_PROVIDER"
 ENV_EMBEDDINGS_LOCAL_MODEL = "HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL"
 ENV_EMBEDDINGS_LOCAL_FORCE_CPU = "HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"
 ENV_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE = "HINDSIGHT_API_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE"
+ENV_EMBEDDINGS_ONNX_MODEL_ID = "HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID"
+ENV_EMBEDDINGS_ONNX_MODEL_PATH = "HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH"
+ENV_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH = "HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH"
+ENV_EMBEDDINGS_ONNX_FILE = "HINDSIGHT_API_EMBEDDINGS_ONNX_FILE"
+ENV_EMBEDDINGS_ONNX_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS"
+ENV_EMBEDDINGS_ONNX_MAX_TOKENS = "HINDSIGHT_API_EMBEDDINGS_ONNX_MAX_TOKENS"
+ENV_EMBEDDINGS_ONNX_POOLING = "HINDSIGHT_API_EMBEDDINGS_ONNX_POOLING"
+ENV_EMBEDDINGS_ONNX_NORMALIZE = "HINDSIGHT_API_EMBEDDINGS_ONNX_NORMALIZE"
+ENV_EMBEDDINGS_ONNX_QUERY_PREFIX = "HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX"
+ENV_EMBEDDINGS_ONNX_PASSAGE_PREFIX = "HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX"
+ENV_EMBEDDINGS_ONNX_OUTPUT_NAME = "HINDSIGHT_API_EMBEDDINGS_ONNX_OUTPUT_NAME"
 ENV_EMBEDDINGS_TEI_URL = "HINDSIGHT_API_EMBEDDINGS_TEI_URL"
 ENV_EMBEDDINGS_OPENAI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY"
 ENV_EMBEDDINGS_OPENAI_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL"
@@ -597,6 +608,13 @@ DEFAULT_EMBEDDINGS_PROVIDER = "local"
 DEFAULT_EMBEDDINGS_LOCAL_MODEL = "BAAI/bge-small-en-v1.5"
 DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU = False  # Force CPU mode for local embeddings
 DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE = False  # Security: disabled by default, required for some models
+DEFAULT_EMBEDDINGS_ONNX_MODEL_ID = "intfloat/multilingual-e5-small"
+DEFAULT_EMBEDDINGS_ONNX_FILE = "onnx/model.onnx"
+DEFAULT_EMBEDDINGS_ONNX_MAX_TOKENS = 512
+DEFAULT_EMBEDDINGS_ONNX_POOLING = "mean"
+DEFAULT_EMBEDDINGS_ONNX_NORMALIZE = True
+DEFAULT_EMBEDDINGS_ONNX_QUERY_PREFIX = "query: "
+DEFAULT_EMBEDDINGS_ONNX_PASSAGE_PREFIX = "passage: "
 DEFAULT_EMBEDDINGS_OPENAI_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE = 100
 DEFAULT_EMBEDDINGS_GEMINI_MODEL = "gemini-embedding-001"
@@ -1234,6 +1252,17 @@ class HindsightConfig:
     embeddings_local_model: str
     embeddings_local_force_cpu: bool
     embeddings_local_trust_remote_code: bool
+    embeddings_onnx_model_id: str
+    embeddings_onnx_model_path: str | None
+    embeddings_onnx_tokenizer_name_or_path: str | None
+    embeddings_onnx_file: str
+    embeddings_onnx_dimensions: int | None
+    embeddings_onnx_max_tokens: int
+    embeddings_onnx_pooling: str
+    embeddings_onnx_normalize: bool
+    embeddings_onnx_query_prefix: str
+    embeddings_onnx_passage_prefix: str
+    embeddings_onnx_output_name: str | None
     embeddings_tei_url: str | None
     embeddings_openai_base_url: str | None
     embeddings_cohere_api_key: str | None
@@ -1888,6 +1917,36 @@ class HindsightConfig:
                 ENV_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE, str(DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE)
             ).lower()
             in ("true", "1"),
+            embeddings_onnx_model_id=os.getenv(ENV_EMBEDDINGS_ONNX_MODEL_ID, DEFAULT_EMBEDDINGS_ONNX_MODEL_ID),
+            embeddings_onnx_model_path=os.getenv(ENV_EMBEDDINGS_ONNX_MODEL_PATH) or None,
+            embeddings_onnx_tokenizer_name_or_path=os.getenv(ENV_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH) or None,
+            embeddings_onnx_file=os.getenv(ENV_EMBEDDINGS_ONNX_FILE, DEFAULT_EMBEDDINGS_ONNX_FILE),
+            embeddings_onnx_dimensions=_parse_optional_positive_int(
+                ENV_EMBEDDINGS_ONNX_DIMENSIONS,
+                os.getenv(ENV_EMBEDDINGS_ONNX_DIMENSIONS),
+            ),
+            embeddings_onnx_max_tokens=_parse_positive_int(
+                ENV_EMBEDDINGS_ONNX_MAX_TOKENS,
+                os.getenv(ENV_EMBEDDINGS_ONNX_MAX_TOKENS),
+                DEFAULT_EMBEDDINGS_ONNX_MAX_TOKENS,
+            ),
+            embeddings_onnx_pooling=_parse_optional_choice(
+                ENV_EMBEDDINGS_ONNX_POOLING,
+                os.getenv(ENV_EMBEDDINGS_ONNX_POOLING),
+                frozenset({"mean", "cls"}),
+            )
+            or DEFAULT_EMBEDDINGS_ONNX_POOLING,
+            embeddings_onnx_normalize=os.getenv(
+                ENV_EMBEDDINGS_ONNX_NORMALIZE, str(DEFAULT_EMBEDDINGS_ONNX_NORMALIZE)
+            ).lower()
+            in ("true", "1"),
+            embeddings_onnx_query_prefix=os.getenv(
+                ENV_EMBEDDINGS_ONNX_QUERY_PREFIX, DEFAULT_EMBEDDINGS_ONNX_QUERY_PREFIX
+            ),
+            embeddings_onnx_passage_prefix=os.getenv(
+                ENV_EMBEDDINGS_ONNX_PASSAGE_PREFIX, DEFAULT_EMBEDDINGS_ONNX_PASSAGE_PREFIX
+            ),
+            embeddings_onnx_output_name=os.getenv(ENV_EMBEDDINGS_ONNX_OUTPUT_NAME) or None,
             embeddings_tei_url=os.getenv(ENV_EMBEDDINGS_TEI_URL),
             embeddings_openai_base_url=os.getenv(ENV_EMBEDDINGS_OPENAI_BASE_URL) or None,
             embeddings_openai_batch_size=_parse_positive_int(
