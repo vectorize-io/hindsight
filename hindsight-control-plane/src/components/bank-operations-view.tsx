@@ -91,15 +91,24 @@ type OperationDetails =
       task_payload?: never;
     };
 
-const OPERATION_TYPE_OPTIONS = [
-  { value: "all", label: "All types" },
-  { value: "retain", label: "Retain" },
-  { value: "consolidation", label: "Consolidation" },
-  { value: "refresh_mental_model", label: "Mental Model Refresh" },
-  { value: "file_convert_retain", label: "File Convert & Retain" },
-  { value: "webhook_delivery", label: "Webhook Delivery" },
-  { value: "graph_maintenance", label: "Graph Maintenance" },
-];
+const OPERATION_TYPE_VALUES = [
+  "all",
+  "retain",
+  "consolidation",
+  "refresh_mental_model",
+  "file_convert_retain",
+  "webhook_delivery",
+  "graph_maintenance",
+] as const;
+
+const STATUS_FILTER_VALUES = [
+  null,
+  "pending",
+  "processing",
+  "completed",
+  "failed",
+  "cancelled",
+] as const;
 
 export function BankOperationsView() {
   const t = useTranslations("bankOperations");
@@ -118,6 +127,89 @@ export function BankOperationsView() {
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [loadingPayload, setLoadingPayload] = useState(false);
   const [payloadLoadedFor, setPayloadLoadedFor] = useState<string | null>(null);
+
+  const statusLabels: Record<string, string> = {
+    all: t("status.all"),
+    pending: t("status.pending"),
+    processing: t("status.processing"),
+    completed: t("status.completed"),
+    failed: t("status.failed"),
+    cancelled: t("status.cancelled"),
+  };
+
+  const operationTypeLabels: Record<string, string> = {
+    all: t("operationType.all"),
+    retain: t("operationType.retain"),
+    consolidation: t("operationType.consolidation"),
+    refresh_mental_model: t("operationType.refreshMentalModel"),
+    file_convert_retain: t("operationType.fileConvertRetain"),
+    webhook_delivery: t("operationType.webhookDelivery"),
+    graph_maintenance: t("operationType.graphMaintenance"),
+  };
+
+  const formatStatus = (status: string | null | undefined) =>
+    status ? (statusLabels[status] ?? status) : t("unknown");
+
+  const formatOperationType = (operationType: string | null | undefined) =>
+    operationType ? (operationTypeLabels[operationType] ?? operationType) : t("notAvailable");
+
+  const renderStatusBadge = (status: string | null | undefined, title?: string | null) => {
+    const label = formatStatus(status);
+
+    if (status === "pending") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+          <Clock className="w-3 h-3" />
+          {label}
+        </span>
+      );
+    }
+
+    if (status === "processing") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+          <Loader2 className="w-3 h-3 animate-spin" />
+          {label}
+        </span>
+      );
+    }
+
+    if (status === "failed") {
+      return (
+        <span
+          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20"
+          title={title ?? undefined}
+        >
+          <AlertCircle className="w-3 h-3" />
+          {label}
+        </span>
+      );
+    }
+
+    if (status === "completed") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+          <CheckCircle className="w-3 h-3" />
+          {label}
+        </span>
+      );
+    }
+
+    if (status === "cancelled") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-500/10 text-gray-600 dark:text-gray-400 border border-gray-500/20">
+          <Ban className="w-3 h-3" />
+          {label}
+        </span>
+      );
+    }
+
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground border border-border">
+        {label}
+      </span>
+    );
+  };
 
   const loadOperations = useCallback(
     async (
@@ -203,7 +295,7 @@ export function BankOperationsView() {
       setSelectedOperation(details);
     } catch (error) {
       console.error("Error loading operation details:", error);
-      setSelectedOperation({ error: "Failed to load operation details" });
+      setSelectedOperation({ error: t("operationDetailsLoadError") });
     } finally {
       setLoadingDetails(false);
     }
@@ -258,8 +350,8 @@ export function BankOperationsView() {
             </button>
           </div>
           <p className="text-sm text-muted-foreground">
-            {totalOperations} operation{totalOperations !== 1 ? "s" : ""}
-            {statusFilter ? ` (${statusFilter})` : ""}
+            {t("operationCount", { count: totalOperations })}
+            {statusFilter ? ` (${formatStatus(statusFilter)})` : ""}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -271,12 +363,12 @@ export function BankOperationsView() {
               <SelectValue placeholder={t("allTypes")} />
             </SelectTrigger>
             <SelectContent>
-              {OPERATION_TYPE_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
+              {OPERATION_TYPE_VALUES.map((value) => (
+                <SelectItem key={value} value={value}>
                   <div>
-                    <div>{opt.label}</div>
-                    {opt.value !== "all" && (
-                      <div className="text-xs text-muted-foreground font-mono">{opt.value}</div>
+                    <div>{operationTypeLabels[value]}</div>
+                    {value !== "all" && (
+                      <div className="text-xs text-muted-foreground font-mono">{value}</div>
                     )}
                   </div>
                 </SelectItem>
@@ -284,24 +376,17 @@ export function BankOperationsView() {
             </SelectContent>
           </Select>
           <div className="flex gap-1 bg-muted p-1 rounded-lg">
-            {[
-              { value: null, label: "All" },
-              { value: "pending", label: "Pending" },
-              { value: "processing", label: "Processing" },
-              { value: "completed", label: "Completed" },
-              { value: "failed", label: "Failed" },
-              { value: "cancelled", label: "Cancelled" },
-            ].map((filter) => (
+            {STATUS_FILTER_VALUES.map((filter) => (
               <button
-                key={filter.value ?? "all"}
-                onClick={() => handleFilterChange(filter.value)}
+                key={filter ?? "all"}
+                onClick={() => handleFilterChange(filter)}
                 className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                  statusFilter === filter.value
+                  statusFilter === filter
                     ? "bg-background shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {filter.label}
+                {filter ? formatStatus(filter) : statusLabels.all}
               </button>
             ))}
           </div>
@@ -314,10 +399,10 @@ export function BankOperationsView() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[100px]">ID</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead>Status</TableHead>
+                    <TableHead className="w-[100px]">{t("table.id")}</TableHead>
+                    <TableHead>{t("table.type")}</TableHead>
+                    <TableHead>{t("table.created")}</TableHead>
+                    <TableHead>{t("table.status")}</TableHead>
                     <TableHead className="w-[80px]"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -331,45 +416,13 @@ export function BankOperationsView() {
                       <TableCell className="font-mono text-xs text-muted-foreground">
                         {op.id.substring(0, 8)}
                       </TableCell>
-                      <TableCell className="font-medium">{op.task_type}</TableCell>
+                      <TableCell className="font-medium" title={op.task_type}>
+                        {formatOperationType(op.task_type)}
+                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {new Date(op.created_at).toLocaleString()}
                       </TableCell>
-                      <TableCell>
-                        {op.status === "pending" && (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                            <Clock className="w-3 h-3" />
-                            pending
-                          </span>
-                        )}
-                        {op.status === "processing" && (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                            processing
-                          </span>
-                        )}
-                        {op.status === "failed" && (
-                          <span
-                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20"
-                            title={op.error_message ?? undefined}
-                          >
-                            <AlertCircle className="w-3 h-3" />
-                            failed
-                          </span>
-                        )}
-                        {op.status === "completed" && (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                            <CheckCircle className="w-3 h-3" />
-                            completed
-                          </span>
-                        )}
-                        {op.status === "cancelled" && (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-500/10 text-gray-600 dark:text-gray-400 border border-gray-500/20">
-                            <Ban className="w-3 h-3" />
-                            cancelled
-                          </span>
-                        )}
-                      </TableCell>
+                      <TableCell>{renderStatusBadge(op.status, op.error_message)}</TableCell>
                       <TableCell>
                         {op.status === "pending" && (
                           <Button
@@ -387,7 +440,7 @@ export function BankOperationsView() {
                             ) : (
                               <X className="w-3 h-3 mr-1" />
                             )}
-                            {cancellingOpId === op.id ? "" : "Cancel"}
+                            {cancellingOpId === op.id ? "" : t("action.cancel")}
                           </Button>
                         )}
                         {(op.status === "failed" || op.status === "cancelled") && (
@@ -406,7 +459,7 @@ export function BankOperationsView() {
                             ) : (
                               <RotateCcw className="w-3 h-3 mr-1" />
                             )}
-                            {retryingOpId === op.id ? "" : "Retry"}
+                            {retryingOpId === op.id ? "" : t("action.retry")}
                           </Button>
                         )}
                       </TableCell>
@@ -419,8 +472,11 @@ export function BankOperationsView() {
             {totalOperations > limit && (
               <div className="flex items-center justify-between mt-4 pt-4 border-t">
                 <p className="text-sm text-muted-foreground">
-                  Showing {offset + 1}-{Math.min(offset + limit, totalOperations)} of{" "}
-                  {totalOperations}
+                  {t("pagination", {
+                    start: offset + 1,
+                    end: Math.min(offset + limit, totalOperations),
+                    total: totalOperations,
+                  })}
                 </p>
                 <div className="flex gap-2">
                   <Button
@@ -429,7 +485,7 @@ export function BankOperationsView() {
                     onClick={() => handlePageChange(Math.max(0, offset - limit))}
                     disabled={offset === 0}
                   >
-                    Previous
+                    {t("paginationPrevious")}
                   </Button>
                   <Button
                     variant="outline"
@@ -437,7 +493,7 @@ export function BankOperationsView() {
                     onClick={() => handlePageChange(offset + limit)}
                     disabled={offset + limit >= totalOperations}
                   >
-                    Next
+                    {t("paginationNext")}
                   </Button>
                 </div>
               </div>
@@ -445,7 +501,9 @@ export function BankOperationsView() {
           </>
         ) : (
           <p className="text-muted-foreground text-center py-8 text-sm">
-            No {statusFilter ? `${statusFilter} ` : ""}operations
+            {statusFilter
+              ? t("emptyStateWithStatus", { status: formatStatus(statusFilter) })
+              : t("emptyState")}
           </p>
         )}
       </div>
@@ -474,65 +532,47 @@ export function BankOperationsView() {
                   {/* Basic Info */}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <div className="text-sm font-medium text-muted-foreground">Status</div>
-                      <div className="mt-1">
-                        {selectedOperation.status === "pending" && (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                            <Clock className="w-3 h-3" />
-                            pending
-                          </span>
-                        )}
-                        {selectedOperation.status === "processing" && (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                            processing
-                          </span>
-                        )}
-                        {selectedOperation.status === "failed" && (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20">
-                            <AlertCircle className="w-3 h-3" />
-                            failed
-                          </span>
-                        )}
-                        {selectedOperation.status === "completed" && (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                            <CheckCircle className="w-3 h-3" />
-                            completed
-                          </span>
-                        )}
-                        {selectedOperation.status === "cancelled" && (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-500/10 text-gray-600 dark:text-gray-400 border border-gray-500/20">
-                            <Ban className="w-3 h-3" />
-                            cancelled
-                          </span>
-                        )}
+                      <div className="text-sm font-medium text-muted-foreground">
+                        {t("field.status")}
+                      </div>
+                      <div className="mt-1">{renderStatusBadge(selectedOperation.status)}</div>
+                    </div>
+                    <div>
+                      <div className="text-sm font-medium text-muted-foreground">
+                        {t("field.type")}
+                      </div>
+                      <div
+                        className="mt-1 font-mono text-sm"
+                        title={selectedOperation.operation_type ?? undefined}
+                      >
+                        {formatOperationType(selectedOperation.operation_type)}
                       </div>
                     </div>
                     <div>
-                      <div className="text-sm font-medium text-muted-foreground">Type</div>
-                      <div className="mt-1 font-mono text-sm">
-                        {selectedOperation.operation_type}
+                      <div className="text-sm font-medium text-muted-foreground">
+                        {t("field.created")}
                       </div>
-                    </div>
-                    <div>
-                      <div className="text-sm font-medium text-muted-foreground">Created</div>
                       <div className="mt-1 text-sm">
                         {selectedOperation.created_at
                           ? new Date(selectedOperation.created_at).toLocaleString()
-                          : "N/A"}
+                          : t("notAvailable")}
                       </div>
                     </div>
                     <div>
-                      <div className="text-sm font-medium text-muted-foreground">Updated</div>
+                      <div className="text-sm font-medium text-muted-foreground">
+                        {t("field.updated")}
+                      </div>
                       <div className="mt-1 text-sm">
                         {selectedOperation.updated_at
                           ? new Date(selectedOperation.updated_at).toLocaleString()
-                          : "N/A"}
+                          : t("notAvailable")}
                       </div>
                     </div>
                     {selectedOperation.completed_at && (
                       <div>
-                        <div className="text-sm font-medium text-muted-foreground">Completed</div>
+                        <div className="text-sm font-medium text-muted-foreground">
+                          {t("field.completed")}
+                        </div>
                         <div className="mt-1 text-sm">
                           {new Date(selectedOperation.completed_at).toLocaleString()}
                         </div>
@@ -568,7 +608,7 @@ export function BankOperationsView() {
                           ) : (
                             <X className="w-3 h-3 mr-1" />
                           )}
-                          Cancel
+                          {t("action.cancel")}
                         </Button>
                       )}
                       {(selectedOperation.status === "failed" ||
@@ -585,7 +625,7 @@ export function BankOperationsView() {
                           ) : (
                             <RotateCcw className="w-3 h-3 mr-1" />
                           )}
-                          Retry
+                          {t("action.retry")}
                         </Button>
                       )}
                     </div>
@@ -596,7 +636,7 @@ export function BankOperationsView() {
                     Object.keys(selectedOperation.result_metadata).length > 0 && (
                       <div>
                         <div className="text-sm font-medium text-muted-foreground mb-2">
-                          Metadata
+                          {t("metadata")}
                         </div>
                         <pre className="rounded-lg border bg-muted/30 p-3 text-xs font-mono overflow-x-auto max-h-96 whitespace-pre-wrap break-words">
                           {JSON.stringify(selectedOperation.result_metadata, null, 2)}
@@ -608,7 +648,7 @@ export function BankOperationsView() {
                   {selectedOperation.error_message && (
                     <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
                       <div className="text-sm font-medium text-red-600 dark:text-red-400 mb-1">
-                        Error
+                        {t("error")}
                       </div>
                       <div className="text-sm text-red-600/80 dark:text-red-400/80 font-mono">
                         {selectedOperation.error_message}
@@ -630,10 +670,10 @@ export function BankOperationsView() {
                         <Table>
                           <TableHeader>
                             <TableRow>
-                              <TableHead className="w-[60px]">Index</TableHead>
-                              <TableHead className="w-[100px]">ID</TableHead>
-                              <TableHead className="w-[80px]">Items</TableHead>
-                              <TableHead>Status</TableHead>
+                              <TableHead className="w-[60px]">{t("table.index")}</TableHead>
+                              <TableHead className="w-[100px]">{t("table.id")}</TableHead>
+                              <TableHead className="w-[80px]">{t("table.items")}</TableHead>
+                              <TableHead>{t("table.status")}</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -645,39 +685,7 @@ export function BankOperationsView() {
                                 </TableCell>
                                 <TableCell className="text-sm">{child.items_count}</TableCell>
                                 <TableCell>
-                                  {child.status === "pending" && (
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                                      <Clock className="w-3 h-3" />
-                                      pending
-                                    </span>
-                                  )}
-                                  {child.status === "processing" && (
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400">
-                                      <Loader2 className="w-3 h-3 animate-spin" />
-                                      processing
-                                    </span>
-                                  )}
-                                  {child.status === "failed" && (
-                                    <span
-                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-600 dark:text-red-400"
-                                      title={child.error_message ?? undefined}
-                                    >
-                                      <AlertCircle className="w-3 h-3" />
-                                      failed
-                                    </span>
-                                  )}
-                                  {child.status === "completed" && (
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                                      <CheckCircle className="w-3 h-3" />
-                                      completed
-                                    </span>
-                                  )}
-                                  {child.status === "cancelled" && (
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-500/10 text-gray-600 dark:text-gray-400">
-                                      <Ban className="w-3 h-3" />
-                                      cancelled
-                                    </span>
-                                  )}
+                                  {renderStatusBadge(child.status, child.error_message)}
                                 </TableCell>
                               </TableRow>
                             ))}
@@ -720,9 +728,7 @@ export function BankOperationsView() {
                           </pre>
                         ) : loadedThisOp ? (
                           <p className="text-xs text-muted-foreground">
-                            {isParent
-                              ? "This is a parent operation — the raw payload is stored on each sub-batch. Open a child operation to inspect its payload."
-                              : "No raw payload stored for this operation."}
+                            {isParent ? t("rawPayloadParentHelp") : t("rawPayloadEmpty")}
                           </p>
                         ) : (
                           <p className="text-xs text-muted-foreground">{t("rawPayloadHelp")}</p>

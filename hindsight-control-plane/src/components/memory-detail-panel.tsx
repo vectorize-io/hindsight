@@ -4,10 +4,11 @@ import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { TagList } from "@/components/ui/tag-list";
-import { Copy, Check, X, Loader2, Calendar, History } from "lucide-react";
+import { Copy, Check, X, Loader2, Calendar, History, Activity } from "lucide-react";
 import { DocumentChunkModal } from "./document-chunk-modal";
 import { MemoryDetailModal } from "./memory-detail-modal";
-import { client } from "@/lib/api";
+import { TraceDialog } from "./llm-requests-view";
+import { client, LLMRequestEntry } from "@/lib/api";
 
 interface MemoryDetailPanelProps {
   memory: any;
@@ -15,6 +16,139 @@ interface MemoryDetailPanelProps {
   compact?: boolean;
   inPanel?: boolean;
   bankId?: string;
+}
+
+interface TraceRun {
+  traceId: string;
+  entry: LLMRequestEntry;
+  calls: number;
+  tokens: number;
+  status: string;
+  start: string | null;
+  // "created": this run produced the memory (it's in metadata.memory_ids);
+  // "used": this run consumed it as a consolidation source.
+  relation: "created" | "used";
+}
+
+function metaHasId(
+  metadata: Record<string, unknown> | null | undefined,
+  key: string,
+  id: string
+): boolean {
+  const raw = metadata?.[key];
+  return Array.isArray(raw) && raw.includes(id);
+}
+
+// The operation runs touching this memory: the one that produced it ("Created
+// by" — retain for facts, consolidation for observations) and the consolidation
+// runs that consumed it as a source ("Used by"). Hidden when tracing is disabled
+// or nothing was recorded.
+function MemoryTraceRef({ bankId, memoryId }: { bankId: string; memoryId: string }) {
+  const t = useTranslations("memoryDetailPanel");
+  const [runs, setRuns] = useState<TraceRun[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [dialogEntry, setDialogEntry] = useState<LLMRequestEntry | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const data = await client.listLLMRequests(bankId, {
+          memory_id: memoryId,
+          group: true,
+          limit: 50,
+        });
+        if (cancelled) return;
+        const byTrace = new Map<string, LLMRequestEntry[]>();
+        for (const it of data.items || []) {
+          const key = it.trace_id || it.id;
+          if (!byTrace.has(key)) byTrace.set(key, []);
+          byTrace.get(key)!.push(it);
+        }
+        const list: TraceRun[] = [...byTrace.entries()].map(([traceId, rows]) => ({
+          traceId,
+          entry: rows[0],
+          calls: rows.length,
+          tokens: rows.reduce((s, r) => s + (r.total_tokens ?? 0), 0),
+          status: rows.some((r) => r.status === "error") ? "error" : "success",
+          start:
+            rows
+              .map((r) => r.started_at)
+              .filter(Boolean)
+              .sort()[0] ?? null,
+          // Produced this memory if it's in memory_ids; otherwise it was consumed
+          // as a source (the filter only returns runs matching one of the two).
+          relation: metaHasId(rows[0].metadata, "memory_ids", memoryId) ? "created" : "used",
+        }));
+        list.sort((a, b) => (b.start || "").localeCompare(a.start || ""));
+        setRuns(list);
+      } catch {
+        // Tracing may be disabled or the endpoint unavailable — stay hidden.
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [bankId, memoryId]);
+
+  if (!loaded || runs.length === 0) return null;
+
+  const createdRuns = runs.filter((r) => r.relation === "created");
+  const usedRuns = runs.filter((r) => r.relation === "used");
+
+  const renderRun = (run: TraceRun) => (
+    <button
+      key={run.traceId}
+      type="button"
+      onClick={() => setDialogEntry(run.entry)}
+      className="w-full flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm text-left hover:bg-muted/50"
+    >
+      <span className="inline-flex items-center gap-2 min-w-0">
+        <span
+          className={`w-1.5 h-1.5 rounded-full shrink-0 ${run.status === "error" ? "bg-red-500" : "bg-green-500"}`}
+        />
+        <span className="font-mono text-xs">{run.entry.operation || "—"}</span>
+        <span className="text-muted-foreground text-xs truncate">
+          {run.start ? new Date(run.start).toLocaleString() : ""}
+        </span>
+      </span>
+      <span className="text-muted-foreground text-xs font-mono shrink-0">
+        {t("tracedBySummary", { calls: run.calls, tokens: run.tokens.toLocaleString() })}
+      </span>
+    </button>
+  );
+
+  return (
+    <div className="border-t border-border pt-5 space-y-4">
+      {createdRuns.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 text-xs font-bold text-muted-foreground uppercase mb-3">
+            <Activity className="h-3.5 w-3.5" />
+            {t("tracedByTitle")}
+          </div>
+          <div className="space-y-1">{createdRuns.map(renderRun)}</div>
+        </div>
+      )}
+      {usedRuns.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 text-xs font-bold text-muted-foreground uppercase mb-3">
+            <Activity className="h-3.5 w-3.5" />
+            {t("consolidatedByTitle")}
+          </div>
+          <div className="space-y-1">{usedRuns.map(renderRun)}</div>
+        </div>
+      )}
+      <TraceDialog
+        bankId={bankId}
+        entry={dialogEntry}
+        open={!!dialogEntry}
+        onOpenChange={(o) => !o && setDialogEntry(null)}
+      />
+    </div>
+  );
 }
 
 export function MemoryDetailPanel({
@@ -343,6 +477,9 @@ export function MemoryDetailPanel({
                   </div>
                 </div>
               )}
+
+              {/* Producing trace (retain/consolidation that created this memory) */}
+              {memoryId && bankId && <MemoryTraceRef bankId={bankId} memoryId={memoryId} />}
             </div>
           )}
         </div>
@@ -594,6 +731,9 @@ export function MemoryDetailPanel({
                 </div>
               </div>
             )}
+
+            {/* Producing trace (retain/consolidation that created this memory) */}
+            {memoryId && bankId && <MemoryTraceRef bankId={bankId} memoryId={memoryId} />}
           </div>
         )}
       </div>

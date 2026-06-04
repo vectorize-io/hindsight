@@ -376,3 +376,48 @@ def test_llm_reasoning_effort_loaded_from_env(monkeypatch):
 
     config = HindsightConfig.from_env()
     assert config.llm_reasoning_effort == "xhigh"
+
+
+# ---------------------------------------------------------------------------
+# Recall candidate gating (BM25 score floor + per-source cap) — issue #1707
+# ---------------------------------------------------------------------------
+
+
+def test_bm25_min_score_defaults_to_zero(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.delenv("HINDSIGHT_API_BM25_MIN_SCORE", raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.bm25_min_score == 0.0
+
+
+def test_bm25_min_score_loaded_from_env(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_BM25_MIN_SCORE", "1.5")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.bm25_min_score == 1.5
+
+
+def test_recall_max_candidates_per_source_defaults_to_disabled(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.delenv("HINDSIGHT_API_RECALL_MAX_CANDIDATES_PER_SOURCE", raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.recall_max_candidates_per_source == 0
+
+
+def test_recall_max_candidates_per_source_loaded_from_env(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_RECALL_MAX_CANDIDATES_PER_SOURCE", "150")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.recall_max_candidates_per_source == 150

@@ -93,6 +93,7 @@ class TokenUsage(BaseModel):
     input_tokens: int = Field(default=0, description="Number of input/prompt tokens consumed")
     output_tokens: int = Field(default=0, description="Number of output/completion tokens generated")
     total_tokens: int = Field(default=0, description="Total tokens (input + output)")
+    cached_tokens: int = Field(default=0, description="Cached/cache-read prompt tokens, when reported by the provider")
 
     def __add__(self, other: "TokenUsage") -> "TokenUsage":
         """Allow aggregating token usage from multiple calls."""
@@ -100,6 +101,7 @@ class TokenUsage(BaseModel):
             input_tokens=self.input_tokens + other.input_tokens,
             output_tokens=self.output_tokens + other.output_tokens,
             total_tokens=self.total_tokens + other.total_tokens,
+            cached_tokens=self.cached_tokens + other.cached_tokens,
         )
 
 

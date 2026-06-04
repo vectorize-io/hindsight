@@ -7,6 +7,9 @@ def _drop_reflect_modules() -> None:
     for name in list(sys.modules):
         if name == "hindsight_api.engine.reflect" or name.startswith("hindsight_api.engine.reflect."):
             sys.modules.pop(name)
+    # The cl100k encoding is cached in engine.token_encoding; drop it too so the
+    # fresh reimport starts with an empty cache and the tiktoken patch is observed.
+    sys.modules.pop("hindsight_api.engine.token_encoding", None)
 
 
 def test_reflect_import_does_not_load_tiktoken_encoding():
@@ -22,7 +25,8 @@ def test_reflect_import_does_not_load_tiktoken_encoding():
 def test_reflect_token_counting_loads_tiktoken_encoding_when_used():
     _drop_reflect_modules()
     fake_encoding = MagicMock()
-    fake_encoding.encode.side_effect = lambda text: text.split()
+    # _SafeEncoding.encode passes disallowed_special=(); accept and ignore kwargs.
+    fake_encoding.encode.side_effect = lambda text, **kwargs: text.split()
 
     with patch("tiktoken.get_encoding", return_value=fake_encoding) as get_encoding:
         agent = importlib.import_module("hindsight_api.engine.reflect.agent")

@@ -47,17 +47,18 @@ def _pg_upgrade() -> None:
     schema = _get_schema_prefix()
     # GIN index on canonical_name enables sub-millisecond trigram similarity queries
     # (% operator, similarity()) instead of full-table scans across all bank entities.
-    op.execute("COMMIT")
-    op.execute(
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS entities_canonical_name_trgm_idx "
-        f"ON {schema}entities USING GIN (canonical_name gin_trgm_ops)"
-    )
+    # CREATE INDEX CONCURRENTLY cannot run inside a transaction block.
+    with op.get_context().autocommit_block():
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS entities_canonical_name_trgm_idx "
+            f"ON {schema}entities USING GIN (canonical_name gin_trgm_ops)"
+        )
 
 
 def _pg_downgrade() -> None:
     schema = _get_schema_prefix()
-    op.execute("COMMIT")
-    op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}entities_canonical_name_trgm_idx")
+    with op.get_context().autocommit_block():
+        op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}entities_canonical_name_trgm_idx")
     # Note: not dropping pg_trgm extension as other indexes may depend on it
 
 

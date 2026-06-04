@@ -9,6 +9,10 @@ interface Features {
   worker: boolean;
   bank_config_api: boolean;
   access_key_auth: boolean;
+  document_export_api: boolean;
+  document_import_api: boolean;
+  audit_log: boolean;
+  llm_trace: boolean;
 }
 
 interface FeaturesContextType {
@@ -23,6 +27,10 @@ const defaultFeatures: Features = {
   worker: false,
   bank_config_api: false,
   access_key_auth: false,
+  document_export_api: false,
+  document_import_api: false,
+  audit_log: false,
+  llm_trace: false,
 };
 
 const FeaturesContext = createContext<FeaturesContextType | undefined>(undefined);

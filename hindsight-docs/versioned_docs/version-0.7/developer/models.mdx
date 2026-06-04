@@ -511,13 +511,16 @@ Reranks initial search results to improve precision.
 |----------|-------------|----------|
 | `local` | SentenceTransformers CrossEncoder (default) | Development, low latency |
 | `cohere` | Cohere rerank API | Production, high quality |
+| `openrouter` | OpenRouter rerank API (Cohere-compatible gateway) | Multi-provider setups |
 | `zeroentropy` | ZeroEntropy rerank API (zerank-2) | Production, state-of-the-art accuracy |
 | `siliconflow` | SiliconFlow rerank API (Cohere-compatible `/rerank` endpoint) | Users in China or anyone on SiliconFlow's platform |
 | `alibaba` | Alibaba Cloud DashScope rerank API (qwen3-rerank) | Users on Alibaba Cloud / DashScope |
+| `google` | Google Discovery Engine ranking API (REST + Google auth) | Production, GCP integration |
 | `tei` | HuggingFace Text Embeddings Inference | Production, self-hosted |
 | `flashrank` | FlashRank (lightweight, fast) | Resource-constrained environments |
 | `litellm` | LiteLLM proxy (unified gateway) | Multi-provider setups |
 | `litellm-sdk` | LiteLLM SDK (direct API, no proxy) | Multi-provider, simpler setup |
+| `jina-mlx` | Jina rerank v3 via Apple Silicon MLX (local, no API key) | Apple Silicon (M1+) local inference |
 | `rrf` | RRF-only (no neural reranking) | Testing, minimal resources |
 
 ### Local Models

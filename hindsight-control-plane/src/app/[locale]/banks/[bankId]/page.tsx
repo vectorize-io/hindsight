@@ -18,6 +18,8 @@ import { BankOperationsView } from "@/components/bank-operations-view";
 import { MentalModelsView } from "@/components/mental-models-view";
 import { WebhooksView } from "@/components/webhooks-view";
 import { AuditLogsView } from "@/components/audit-logs-view";
+import { LLMRequestsView } from "@/components/llm-requests-view";
+import { FeatureNotEnabled } from "@/components/feature-not-enabled";
 import { useFeatures } from "@/lib/features-context";
 import { useBank } from "@/lib/bank-context";
 import { bankRoute } from "@/lib/bank-url";
@@ -44,7 +46,7 @@ import { Brain, Download, Trash2, Loader2, MoreVertical, Pencil, RotateCcw } fro
 
 type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
 type DataSubTab = "world" | "experience" | "observations" | "mental-models";
-type BankConfigTab = "general" | "configuration" | "webhooks" | "audit-logs";
+type BankConfigTab = "general" | "configuration" | "webhooks" | "audit-logs" | "llm-requests";
 
 export default function BankPage() {
   const params = useParams();
@@ -60,6 +62,8 @@ export default function BankPage() {
   const bankConfigTab = (searchParams.get("bankConfigTab") || "general") as BankConfigTab;
   const observationsEnabled = features?.observations ?? false;
   const bankConfigEnabled = features?.bank_config_api ?? false;
+  const auditLogEnabled = features?.audit_log ?? false;
+  const llmTraceEnabled = features?.llm_trace ?? false;
 
   // Bank actions state
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -330,7 +334,30 @@ export default function BankPage() {
                       }`}
                     >
                       {t("auditLogs")}
+                      {!auditLogEnabled && (
+                        <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                          Off
+                        </span>
+                      )}
                       {bankConfigTab === "audit-logs" && (
+                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                      )}
+                    </button>
+                    <button
+                      onClick={() => handleBankConfigTabChange("llm-requests")}
+                      className={`px-6 py-3 font-semibold text-sm transition-all relative ${
+                        bankConfigTab === "llm-requests"
+                          ? "text-primary"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {t("llmRequests")}
+                      {!llmTraceEnabled && (
+                        <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                          Off
+                        </span>
+                      )}
+                      {bankConfigTab === "llm-requests" && (
                         <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
                       )}
                     </button>
@@ -364,14 +391,46 @@ export default function BankPage() {
                       <WebhooksView />
                     </div>
                   )}
-                  {bankConfigTab === "audit-logs" && (
-                    <div>
-                      <p className="text-sm text-muted-foreground mb-4">
-                        {t("auditLogsDescription")}
-                      </p>
-                      <AuditLogsView />
-                    </div>
-                  )}
+                  {bankConfigTab === "audit-logs" &&
+                    (auditLogEnabled ? (
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-4">
+                          {t("auditLogsDescription")}
+                        </p>
+                        <AuditLogsView />
+                      </div>
+                    ) : (
+                      <FeatureNotEnabled
+                        title={t("auditLogsNotEnabled")}
+                        description={t.rich("auditLogsDisabledMessage", {
+                          envVar: () => (
+                            <code className="px-1 py-0.5 bg-muted rounded text-xs">
+                              HINDSIGHT_API_AUDIT_LOG_ENABLED=true
+                            </code>
+                          ),
+                        })}
+                      />
+                    ))}
+                  {bankConfigTab === "llm-requests" &&
+                    (llmTraceEnabled ? (
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-4">
+                          {t("llmRequestsDescription")}
+                        </p>
+                        <LLMRequestsView />
+                      </div>
+                    ) : (
+                      <FeatureNotEnabled
+                        title={t("llmRequestsNotEnabled")}
+                        description={t.rich("llmRequestsDisabledMessage", {
+                          envVar: () => (
+                            <code className="px-1 py-0.5 bg-muted rounded text-xs">
+                              HINDSIGHT_API_LLM_TRACE_ENABLED=true
+                            </code>
+                          ),
+                        })}
+                      />
+                    ))}
                 </div>
               </div>
             )}
@@ -488,37 +547,16 @@ export default function BankPage() {
                         <DataView key="observations" factType="observation" />
                       </div>
                     ) : (
-                      <div className="flex flex-col items-center justify-center py-16 text-center">
-                        <div className="text-muted-foreground mb-2">
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="48"
-                            height="48"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          >
-                            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Z" />
-                            <path d="M12 8v4" />
-                            <path d="M12 16h.01" />
-                          </svg>
-                        </div>
-                        <h3 className="text-lg font-semibold text-foreground mb-1">
-                          {t("observationsNotEnabled")}
-                        </h3>
-                        <p className="text-sm text-muted-foreground max-w-md">
-                          {t.rich("observationsDisabledMessage", {
-                            envVar: () => (
-                              <code className="px-1 py-0.5 bg-muted rounded text-xs">
-                                HINDSIGHT_API_ENABLE_OBSERVATIONS=true
-                              </code>
-                            ),
-                          })}
-                        </p>
-                      </div>
+                      <FeatureNotEnabled
+                        title={t("observationsNotEnabled")}
+                        description={t.rich("observationsDisabledMessage", {
+                          envVar: () => (
+                            <code className="px-1 py-0.5 bg-muted rounded text-xs">
+                              HINDSIGHT_API_ENABLE_OBSERVATIONS=true
+                            </code>
+                          ),
+                        })}
+                      />
                     ))}
                   {subTab === "mental-models" && (
                     <div>
@@ -532,11 +570,10 @@ export default function BankPage() {
               </div>
             )}
 
-            {/* Documents Tab */}
+            {/* Documents Tab — DocumentsView renders its own title row so the
+                Export/Import Actions menu can sit beside the heading. */}
             {view === "documents" && (
               <div>
-                <h1 className="text-3xl font-bold mb-2 text-foreground">{t("documents")}</h1>
-                <p className="text-muted-foreground mb-6">{t("documentsDescription")}</p>
                 <DocumentsView />
               </div>
             )}

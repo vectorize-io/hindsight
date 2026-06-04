@@ -382,6 +382,28 @@ async def run_reflect_agent(
         {"role": "user", "content": query},
     ]
 
+    # Opt into context caching for the agentic tool loop. The system
+    # prompt and tool definitions are stable for the duration of this
+    # reflect call (and across reflects against the same bank), so
+    # caching them once and reusing across every iteration of the loop
+    # collapses the dominant input cost — the prefix repeated on every
+    # turn. ``get_or_create_cached_prefix`` returns None when caching is
+    # disabled, unsupported, or the prefix is too small; the
+    # ``call_with_tools`` invocation below transparently falls back to
+    # the uncached path in that case.
+    cached_prefix_name: str | None = None
+    provider_impl = getattr(llm_config, "_provider_impl", None)
+    if provider_impl is not None and provider_impl.supports_prompt_caching():
+        try:
+            cached_prefix_name = await provider_impl.get_or_create_cached_prefix(
+                system_instruction=system_prompt,
+                tools=tools,
+            )
+        except Exception:
+            # Caching is a soft optimisation; never let a cache-side
+            # error block a reflect.
+            cached_prefix_name = None
+
     # Tracking
     total_tools_called = 0
     tool_trace: list[ToolCall] = []
@@ -576,12 +598,22 @@ async def run_reflect_agent(
             iter_tool_choice = "auto"
 
         try:
-            result = await llm_config.call_with_tools(
+            ct_kwargs: dict[str, Any] = dict(
                 messages=messages,
                 tools=tools,
                 scope="reflect_tool_call",
                 tool_choice=iter_tool_choice,
             )
+            # Gemini rejects ``cached_content`` alongside a per-request
+            # ``tool_config`` (forced tool choice): "CachedContent can not be used
+            # with GenerateContent request setting system_instruction, tools or
+            # tool_config." The forced-sequence iterations set tool_config, so only
+            # the ``auto`` iterations can reference the cache; forced iterations send
+            # the prefix inline. The cache (tools + system prompt) is identical
+            # either way, so this just limits *which* iterations are billed cached.
+            if cached_prefix_name is not None and iter_tool_choice == "auto":
+                ct_kwargs["cached_prefix"] = cached_prefix_name
+            result = await llm_config.call_with_tools(**ct_kwargs)
             llm_duration = int((time.time() - llm_start) * 1000)
             consecutive_errors = 0
             total_input_tokens += result.input_tokens

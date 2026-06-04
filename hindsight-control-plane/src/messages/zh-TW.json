@@ -74,6 +74,8 @@
     "auditLogs": "稽核記錄",
     "webhooksDescription": "管理用於接收此記憶庫事件通知的 Webhook 端點。",
     "auditLogsDescription": "檢視此記憶庫所有操作的稽核記錄。",
+    "llmRequests": "LLM 請求",
+    "llmRequestsDescription": "追蹤此記憶庫進行的每一次 LLM 呼叫，包括失敗的呼叫。",
     "recallAnalyzer": "Recall 分析器",
     "recallAnalyzerDescription": "使用詳細追蹤資訊和檢索方法分析記憶 Recall。",
     "reflect": "Reflect",
@@ -147,6 +149,10 @@
     "clearObservationsDetailedWarning": "所有觀察記憶都將永久刪除。此操作無法還原。",
     "observationsNotEnabled": "觀察未啟用",
     "observationsDisabledMessage": "此伺服器上的觀察整合已停用。請設定 <envVar></envVar> 以啟用。",
+    "auditLogsNotEnabled": "稽核記錄未啟用",
+    "auditLogsDisabledMessage": "此伺服器上的稽核記錄已停用。請設定 <envVar></envVar> 以啟用。",
+    "llmRequestsNotEnabled": "LLM 請求未啟用",
+    "llmRequestsDisabledMessage": "此伺服器上的 LLM 請求追蹤已停用。請設定 <envVar></envVar> 以啟用。",
     "deleteWillDeleteDetails": "這將刪除 {memories, plural, other {# 條記憶}}、{documents, plural, other {# 個文件}} 和 {links, plural, other {# 個連結}}。",
     "deleteWillDeleteObservations": "這將刪除 {count, plural, other {# 個觀察}}。"
   },
@@ -403,7 +409,56 @@
     "subBatchesCount": "子批次（{count}）",
     "rawPayload": "原始酬載",
     "loadRaw": "載入原始資料",
-    "rawPayloadHelp": "顯示送出此作業時使用的完整參數（可能較大）。"
+    "rawPayloadHelp": "顯示送出此作業時使用的完整參數（可能較大）。",
+    "operationCount": "{count} 個操作",
+    "unknown": "未知",
+    "notAvailable": "不適用",
+    "operationDetailsLoadError": "無法載入操作詳情",
+    "status": {
+      "all": "全部",
+      "pending": "待處理",
+      "processing": "處理中",
+      "completed": "已完成",
+      "failed": "失敗",
+      "cancelled": "已取消"
+    },
+    "operationType": {
+      "all": "所有類型",
+      "retain": "保留",
+      "consolidation": "整合",
+      "refreshMentalModel": "心智模型重新整理",
+      "fileConvertRetain": "檔案轉換並 Retain",
+      "webhookDelivery": "Webhook 投遞",
+      "graphMaintenance": "圖譜維護"
+    },
+    "table": {
+      "id": "操作 ID",
+      "type": "類型",
+      "created": "建立時間",
+      "status": "狀態",
+      "index": "索引",
+      "items": "項目"
+    },
+    "action": {
+      "cancel": "取消",
+      "retry": "重試"
+    },
+    "pagination": "顯示第 {start}-{end} 筆，共 {total} 筆",
+    "paginationPrevious": "上一頁",
+    "paginationNext": "下一頁",
+    "emptyState": "暫無操作",
+    "emptyStateWithStatus": "暫無{status}操作",
+    "field": {
+      "status": "狀態",
+      "type": "類型",
+      "created": "建立時間",
+      "updated": "更新時間",
+      "completed": "完成時間"
+    },
+    "metadata": "中繼資料",
+    "error": "錯誤",
+    "rawPayloadParentHelp": "這是父級操作，原始酬載存放在每個子批次上。開啟子操作以檢視其酬載。",
+    "rawPayloadEmpty": "此操作沒有儲存原始酬載。"
   },
   "dataView": {
     "loadingMemories": "載入中記憶...",
@@ -552,9 +607,30 @@
     "tagsInputPlaceholder": "tag1, tag2, tag3",
     "labelEventDate": "事件日期",
     "memoryCompositionTitle": "記憶組成",
+    "retainTracesTitle": "保留追蹤",
+    "retainTracesSummary": "{calls, plural, other {# 次呼叫}} · {tokens} tokens",
     "loadingChunks": "載入中片段...",
     "noChunksFound": "找不到此文件的片段",
-    "clickChunksTabToLoad": "按一下「片段」分頁以載入片段"
+    "clickChunksTabToLoad": "按一下「片段」分頁以載入片段",
+    "exportButton": "匯出",
+    "importButton": "從 zip 匯入",
+    "exporting": "正在匯出…",
+    "importing": "正在匯入…",
+    "exportSuccess": "已匯出文件",
+    "importSuccess": "已匯入 {imported} 個文件、{facts} 條事實；略過 {skipped} 個",
+    "importFailed": "匯入失敗",
+    "importTimeout": "匯入耗時超出預期；請稍後再查看",
+    "exportDialogTitle": "匯出文件",
+    "exportDialogDescription": "將此庫的文件及其擷取的事實下載為 .zip 檔案。不含向量，匯入時會以目標庫的模型重新產生。",
+    "exportIncludeObservationsLabel": "包含已整合的觀測",
+    "exportIncludeObservationsHint": "一併匯出合成的觀測。若關閉，目標庫會在整合時重新產生。",
+    "importDialogTitle": "匯入文件",
+    "importDialogDescription": "上傳先前從某個庫匯出的 .zip 檔案。這不是一般的文件上傳——事實會在此庫中重新嵌入並關聯。匯入會在背景執行。",
+    "actionsButton": "操作",
+    "importConflictLabel": "當文件已存在時",
+    "importConflictSkip": "略過 — 保留現有文件",
+    "importConflictReplace": "取代 — 以匯入的覆寫",
+    "importConflictNewId": "兩者都保留 — 以新 id 匯入"
   },
   "entitiesView": {
     "viewRelations": "關係",
@@ -948,6 +1024,73 @@
     "detailMetadata": "中繼資料",
     "entryCount": "{count, plural, one {# 條記錄} other {# 條記錄}}"
   },
+  "llmRequestsView": {
+    "callVolume": "呼叫量",
+    "tokenVolume": "Token 量",
+    "metricCalls": "呼叫",
+    "metricTokens": "Token",
+    "tokenModeTotal": "總計",
+    "tokenModeBreakdown": "明細",
+    "cumulative": "累積",
+    "tokensInput": "輸入",
+    "tokensOutput": "輸出",
+    "tokensCached": "快取",
+    "tokensTotal": "總計",
+    "tableHeaderTokens": "Token",
+    "chartLoading": "載入中...",
+    "chartNoData": "此時段內無資料",
+    "statusAll": "所有狀態",
+    "statusSuccess": "成功",
+    "statusError": "錯誤",
+    "operationAll": "所有操作",
+    "operationRetain": "保留",
+    "operationReflect": "反思",
+    "operationConsolidation": "整合",
+    "operationRefreshMentalModel": "重新整理心智模型",
+    "periodToday": "今天",
+    "periodLast7Days": "最近 7 天",
+    "periodLast30Days": "最近 30 天",
+    "dateRangeAll": "全部時間",
+    "dateRangeLastHour": "最近 1 小時",
+    "dateRangeLast24Hours": "最近 24 小時",
+    "dateRangeLast7Days": "最近 7 天",
+    "dateRangeLast30Days": "最近 30 天",
+    "refresh": "重新整理",
+    "tableHeaderTime": "時間",
+    "tableHeaderOperation": "操作",
+    "tableHeaderScope": "範圍",
+    "tableHeaderStatus": "狀態",
+    "tableHeaderDuration": "耗時",
+    "tableLoading": "載入中...",
+    "tableNoRequests": "找不到 LLM 請求",
+    "paginationPage": "第 {current} 頁，共 {total} 頁",
+    "previous": "上一頁",
+    "next": "下一頁",
+    "detailDialogTitle": "LLM 請求：{operation}",
+    "detailOperation": "操作：",
+    "detailScope": "範圍：",
+    "detailProvider": "提供者：",
+    "detailModel": "模型：",
+    "detailStatus": "狀態：",
+    "detailStarted": "開始時間：",
+    "detailDuration": "耗時：",
+    "detailInput": "輸入",
+    "detailOutput": "輸出",
+    "detailError": "錯誤",
+    "detailLlmInfo": "LLM 資訊",
+    "detailMetadata": "中繼資料",
+    "detailTrace": "Trace：",
+    "detailSpan": "Span：",
+    "detailParentSpan": "父 Span：",
+    "detailViewRun": "檢視此執行中的所有呼叫",
+    "traceFilterActive": "操作執行：",
+    "traceFilterClear": "清除",
+    "groupByRun": "分組",
+    "groupByRunHint": "依操作執行分組 LLM 呼叫",
+    "entryCount": "{count, plural, one {# 條記錄} other {# 條記錄}}",
+    "memoriesCreated": "已建立記憶 ({count}):",
+    "memoriesSource": "來源記憶 ({count}):"
+  },
   "observationHistory": {
     "unchanged": "未更改",
     "new": "新增",
@@ -1081,7 +1224,10 @@
     "sourceMentioned": "提及時間",
     "viewDocumentButton": "檢視文件",
     "viewChunkButton": "檢視片段",
-    "viewHistory": "檢視歷史"
+    "viewHistory": "檢視歷史",
+    "tracedByTitle": "建立來源",
+    "tracedBySummary": "{calls} 次呼叫 · {tokens} 個權杖",
+    "consolidatedByTitle": "整合來源"
   },
   "documentChunkModal": {
     "documentTitle": "文件詳情",
@@ -1210,7 +1356,8 @@
     "legendMany": "多",
     "linkTypeSemantic": "語義",
     "linkTypeTemporal": "時間",
-    "linkTypeEntity": "實體"
+    "linkTypeEntity": "實體",
+    "linkTypeCausal": "因果"
   },
   "metadata": {
     "title": "Hindsight Cloud",
@@ -1319,7 +1466,8 @@
         "bankAndModelIdRequired": "bank_id 和 model_id 為必填欄位",
         "operationIdRequired": "operation_id 為必填欄位",
         "missingRequestData": "缺少請求資料",
-        "missingBankId": "缺少 bank_id"
+        "missingBankId": "缺少 bank_id",
+        "fileRequired": "需要檔案"
       },
       "generic": {
         "failed": "失敗",
@@ -1357,7 +1505,9 @@
         "updateTags": "更新文件標籤失敗",
         "delete": "刪除文件失敗",
         "chunks": "取得文件片段失敗",
-        "reprocess": "重新處理文件失敗"
+        "reprocess": "重新處理文件失敗",
+        "export": "匯出文件失敗",
+        "import": "匯入文件失敗"
       },
       "files": {
         "upload": "上傳檔案失敗"
@@ -1406,6 +1556,10 @@
       "auditLogs": {
         "list": "列出稽核記錄失敗",
         "stats": "取得稽核記錄統計失敗"
+      },
+      "llmRequests": {
+        "list": "列出 LLM 請求失敗",
+        "stats": "取得 LLM 請求統計失敗"
       },
       "tags": {
         "list": "列出標籤失敗"

@@ -62,6 +62,9 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "n8n": IntegrationMeta("@vectorize-io/n8n-nodes-hindsight", "n8n"),
     "dify": IntegrationMeta("hindsight-dify", "Dify"),
     "vapi": IntegrationMeta("hindsight-vapi", "Vapi"),
+    "gemini-spark": IntegrationMeta("hindsight-gemini-spark", "Gemini Spark"),
+    "flowise": IntegrationMeta("@vectorize-io/flowise-nodes-hindsight", "Flowise"),
+    "google-adk": IntegrationMeta("hindsight-google-adk", "Google ADK"),
 }
 
 VALID_INTEGRATIONS = list(INTEGRATIONS.keys())

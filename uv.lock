@@ -1,4 +1,5 @@
 version = 1
+revision = 1
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -1472,7 +1473,7 @@ wheels = [
 
 [[package]]
 name = "hindsight-all"
-version = "0.7.1"
+version = "0.7.2"
 source = { editable = "hindsight-all" }
 dependencies = [
     { name = "hindsight-api-slim", extra = ["all"] },
@@ -1498,10 +1499,11 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.21.0" },
 ]
+provides-extras = ["local-llm", "test"]
 
 [[package]]
 name = "hindsight-all-slim"
-version = "0.7.1"
+version = "0.7.2"
 source = { editable = "hindsight-all-slim" }
 dependencies = [
     { name = "hindsight-api-slim" },
@@ -1523,10 +1525,11 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.21.0" },
 ]
+provides-extras = ["test"]
 
 [[package]]
 name = "hindsight-api"
-version = "0.7.1"
+version = "0.7.2"
 source = { editable = "hindsight-api" }
 dependencies = [
     { name = "hindsight-api-slim", extra = ["all"] },
@@ -1537,7 +1540,7 @@ requires-dist = [{ name = "hindsight-api-slim", extras = ["all"], editable = "hi
 
 [[package]]
 name = "hindsight-api-slim"
-version = "0.7.1"
+version = "0.7.2"
 source = { editable = "hindsight-api-slim" }
 dependencies = [
     { name = "aiohttp" },
@@ -1693,7 +1696,7 @@ requires-dist = [
     { name = "opentelemetry-semantic-conventions", specifier = ">=0.62b1" },
     { name = "oracledb", marker = "extra == 'oracle'", specifier = ">=2.5.0" },
     { name = "orjson", specifier = ">=3.11.6" },
-    { name = "pg0-embedded", marker = "extra == 'embedded-db'", specifier = ">=0.14.0" },
+    { name = "pg0-embedded", marker = "extra == 'embedded-db'", specifier = ">=0.14.2" },
     { name = "pgvector", specifier = ">=0.4.1" },
     { name = "pillow", specifier = ">=12.1.1" },
     { name = "protobuf", specifier = ">=6.33.5" },
@@ -1713,7 +1716,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13.0.0" },
     { name = "safetensors", marker = "extra == 'local-ml'", specifier = ">=0.6.2" },
     { name = "sentence-transformers", marker = "extra == 'local-ml'", specifier = ">=3.3.0" },
-    { name = "sqlalchemy", specifier = ">=2.0.44" },
+    { name = "sqlalchemy", specifier = ">=2.0.44,<2.1" },
     { name = "testcontainers", marker = "extra == 'test'", specifier = ">=4.0.0" },
     { name = "tiktoken", specifier = ">=0.12.0" },
     { name = "torch", marker = "extra == 'local-ml'", specifier = ">=2.6.0", index = "https://download.pytorch.org/whl/cpu" },
@@ -1726,6 +1729,7 @@ requires-dist = [
     { name = "winloop", marker = "sys_platform == 'win32'", specifier = ">=0.1.0" },
     { name = "wsproto", specifier = ">=1.0.0" },
 ]
+provides-extras = ["local-ml", "local-llm", "embedded-db", "oracle", "all", "test"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1743,7 +1747,7 @@ dev = [
 
 [[package]]
 name = "hindsight-client"
-version = "0.7.1"
+version = "0.7.2"
 source = { editable = "hindsight-clients/python" }
 dependencies = [
     { name = "aiohttp" },
@@ -1773,10 +1777,11 @@ requires-dist = [
     { name = "typing-extensions", specifier = ">=4.7.1" },
     { name = "urllib3", specifier = ">=2.1.0,<3.0.0" },
 ]
+provides-extras = ["test"]
 
 [[package]]
 name = "hindsight-dev"
-version = "0.7.1"
+version = "0.7.2"
 source = { editable = "hindsight-dev" }
 dependencies = [
     { name = "hindsight-api" },
@@ -1814,6 +1819,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13.0.0" },
     { name = "streamlit", specifier = ">=1.54.0" },
 ]
+provides-extras = ["test"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1823,7 +1829,7 @@ dev = [
 
 [[package]]
 name = "hindsight-embed"
-version = "0.7.1"
+version = "0.7.2"
 source = { editable = "hindsight-embed" }
 dependencies = [
     { name = "httpx" },
@@ -3459,15 +3465,15 @@ wheels = [
 
 [[package]]
 name = "pg0-embedded"
-version = "0.14.0"
+version = "0.14.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f6/3d/715ede5249fb2dfcf2f44bc7f13a8206ecc9434269f7ecebf2eb24ba4f43/pg0_embedded-0.14.0.tar.gz", hash = "sha256:afcb94825f716351034d7d2eb9cc9edb6da46e3103b647a31a28e2975df47594", size = 18927 }
+sdist = { url = "https://files.pythonhosted.org/packages/55/01/83e47dbc41377a43c04313188c2442dfcda8520af94fa5c6d2af519e8eef/pg0_embedded-0.14.2.tar.gz", hash = "sha256:e3534f6d014a6da230ef372307965fa0a9e8ae26e5882e1319645435cdcf2562", size = 19636 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ba/20/ee0eef26d7996d064aabe854825c445eb18da7a8c64c3e51eb411c4d128b/pg0_embedded-0.14.0-py3-none-macosx_14_0_arm64.whl", hash = "sha256:54d641fdc99dc45ad0143fffe47c58493d08e870178f8a52e53b3701fb0c8903", size = 13054857 },
-    { url = "https://files.pythonhosted.org/packages/bf/6b/ab37dde7f88db4b2cdab941785308e32ffed13c63762413a4bb92d5cb3fd/pg0_embedded-0.14.0-py3-none-macosx_15_0_x86_64.whl", hash = "sha256:33fc8d57617710fa05f796b93160055fab02c7f6d51a5d0b9fcaec6d519443f4", size = 13651928 },
-    { url = "https://files.pythonhosted.org/packages/ce/55/7a78b75cfae91601d5e51f79c94ee86ff1290baa4e72577307a0d5a11475/pg0_embedded-0.14.0-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:4d3a4ab7b712f10b13f35430136acef44ba2b31e1ae551fb62fc529195c8a462", size = 29376601 },
-    { url = "https://files.pythonhosted.org/packages/30/16/5dc8fc49e171df0967396a5986804c025142ce85fdfa8cb241537e105669/pg0_embedded-0.14.0-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:bd7f59f64e12aa364ab8a8e89a47d093fdd296ea2fb5a3c95987db60d091f905", size = 29928159 },
-    { url = "https://files.pythonhosted.org/packages/1b/24/cf04119710697f87369dca61c3ed9cadc1b38478764a894f64f6754c9d45/pg0_embedded-0.14.0-py3-none-win_amd64.whl", hash = "sha256:7e20fdb69c15fa964b340975906e74b613f1a5336c422c53c37e426d3383242f", size = 55111548 },
+    { url = "https://files.pythonhosted.org/packages/db/04/8abcc770b90d36703ac6ca6e212b71992a7428b836d41c1e860400967021/pg0_embedded-0.14.2-py3-none-macosx_14_0_arm64.whl", hash = "sha256:79c1ae875abc3ee4e4915a6178000e71b2df8073f47f861f882021c913759eb4", size = 13066176 },
+    { url = "https://files.pythonhosted.org/packages/d0/37/3d4cc473631c4021d63dccd460c6cf1bb280eff74a47c54a723d09a812a9/pg0_embedded-0.14.2-py3-none-macosx_15_0_x86_64.whl", hash = "sha256:80bfd79075fdf3909134f2d3adf58ea202a95cd219f4081262e894757feec286", size = 13664312 },
+    { url = "https://files.pythonhosted.org/packages/c0/27/3ce295cdcacaee32d0a66870b140e81460a20c3866cc3ef73fb0011ec6c4/pg0_embedded-0.14.2-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:f8dac4d2db5b8c2793c016cb8613a367f43a43a42253b5fd46e1bfac3397951c", size = 29383139 },
+    { url = "https://files.pythonhosted.org/packages/e0/a2/ee865726818fba05317b061892cf27241a8a4e98ecc05fd92b36e7d224f4/pg0_embedded-0.14.2-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:aef573a21b8b2b64f19162651097ec04df70f302b5042eb5ed7f23539053d1ca", size = 29937947 },
+    { url = "https://files.pythonhosted.org/packages/fc/3f/38868a6d42c8255d40754cdd86a90347c651f3fdc561ea4f766ff47b27d1/pg0_embedded-0.14.2-py3-none-win_amd64.whl", hash = "sha256:a0cd6e8f88fce1bb63b36ab0f851e613b397db023c7f0ec086b946b1f549a575", size = 55125680 },
 ]
 
 [[package]]

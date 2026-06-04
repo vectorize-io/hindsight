@@ -216,6 +216,7 @@ class AnthropicLLM(LLMInterface):
                 input_tokens = response.usage.input_tokens or 0 if response.usage else 0
                 output_tokens = response.usage.output_tokens or 0 if response.usage else 0
                 total_tokens = input_tokens + output_tokens
+                cached_tokens = getattr(response.usage, "cache_read_input_tokens", 0) or 0 if response.usage else 0
 
                 # Record LLM metrics
                 metrics = get_metrics_collector()
@@ -245,6 +246,7 @@ class AnthropicLLM(LLMInterface):
                     duration=duration,
                     finish_reason=finish_reason,
                     error=None,
+                    cached_tokens=cached_tokens,
                 )
 
                 # Log slow calls
@@ -260,6 +262,7 @@ class AnthropicLLM(LLMInterface):
                         input_tokens=input_tokens,
                         output_tokens=output_tokens,
                         total_tokens=total_tokens,
+                        cached_tokens=cached_tokens,
                     )
                     return result, token_usage
                 return result

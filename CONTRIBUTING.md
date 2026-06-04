@@ -9,13 +9,36 @@ Thanks for your interest in contributing to Hindsight!
    git clone git@github.com:vectorize-io/hindsight.git
    cd hindsight
    ```
-2. Set up your environment:
+
+2. Bootstrap your dev environment in one shot:
+   ```bash
+   ./scripts/dev/setup.sh
+   ```
+   This is idempotent (safe to re-run) and gets you ready to develop, including
+   offline. It:
+   - installs the required toolchains if missing (uv/Python, Node/npm, Rust/cargo),
+   - creates `.env` from `.env.example` (remember to add your LLM API key),
+   - configures git hooks,
+   - installs all Python and Node workspace dependencies,
+   - pre-downloads the local ML models + tokenizer so the API runs offline,
+   - builds the TypeScript SDK and the Rust CLI.
+
+   Useful flags: `--skip-build` (deps only), `--skip-models` (skip ML model
+   download), `--with-docs` (also build the docs site), `--force` (rebuild
+   artifacts). Docker image builds are out of scope. Run
+   `./scripts/dev/setup.sh --help` for details.
+
+### Manual setup
+
+If you'd rather set things up by hand instead of running the script above:
+
+1. Set up your environment:
    ```bash
    cp .env.example .env
    ```
    Edit the .env to add LLM API key and config as required
 
-3. Install dependencies:
+2. Install dependencies:
    ```bash
    # Python dependencies
    uv sync --directory hindsight-api/

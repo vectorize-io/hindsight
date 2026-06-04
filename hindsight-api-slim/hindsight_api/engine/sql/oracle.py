@@ -271,6 +271,7 @@ class OracleDialect(SQLDialect):
         arm_index: int = 0,
         text_search_extension: str = "native",
         bm25_language: str = "english",
+        bm25_min_score: float = 0.0,
         extra_where: str = "",
     ) -> str:
         # Oracle Text: CONTAINS() / SCORE() with the CTXSYS.CONTEXT index.
@@ -285,7 +286,9 @@ class OracleDialect(SQLDialect):
             f" FROM {table}"
             f" WHERE bank_id = {bank_id_param}"
             f"   AND fact_type = '{fact_type}'"
-            f"   AND CONTAINS(text, {text_param}, {label}) > 0"
+            # CONTAINS already gates to genuine matches; the configurable floor
+            # (default 0) keeps the threshold semantics uniform across backends.
+            f"   AND CONTAINS(text, {text_param}, {label}) > {bm25_min_score:g}"
             f"   {tags_clause}"
             f"   {groups_clause}"
             f"   {extra_where}"

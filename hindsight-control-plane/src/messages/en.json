@@ -74,6 +74,8 @@
     "auditLogs": "Audit Logs",
     "webhooksDescription": "Manage webhook endpoints to receive event notifications from this memory bank.",
     "auditLogsDescription": "View audit trail of all operations performed on this memory bank.",
+    "llmRequests": "LLM Requests",
+    "llmRequestsDescription": "Trace every LLM call made for this memory bank, including failures.",
     "recallAnalyzer": "Recall Analyzer",
     "recallAnalyzerDescription": "Analyze memory recall with detailed trace information and retrieval methods.",
     "reflect": "Reflect",
@@ -147,6 +149,10 @@
     "clearObservationsDetailedWarning": "All observation memories will be permanently deleted. This action cannot be undone.",
     "observationsNotEnabled": "Observations Not Enabled",
     "observationsDisabledMessage": "Observations consolidation is disabled on this server. Set <envVar></envVar> to enable.",
+    "auditLogsNotEnabled": "Audit Logs Not Enabled",
+    "auditLogsDisabledMessage": "Audit logging is disabled on this server. Set <envVar></envVar> to enable.",
+    "llmRequestsNotEnabled": "LLM Requests Not Enabled",
+    "llmRequestsDisabledMessage": "LLM request tracing is disabled on this server. Set <envVar></envVar> to enable.",
     "deleteWillDeleteDetails": "This will delete {memories, plural, one {# memory} other {# memories}}, {documents, plural, one {# document} other {# documents}}, and {links, plural, one {# link} other {# links}}.",
     "deleteWillDeleteObservations": "This will delete {count, plural, one {# observation} other {# observations}}."
   },
@@ -403,7 +409,56 @@
     "subBatchesCount": "Sub-batches ({count})",
     "rawPayload": "Raw payload",
     "loadRaw": "Load raw",
-    "rawPayloadHelp": "Shows the full parameters the operation was submitted with (may be large)."
+    "rawPayloadHelp": "Shows the full parameters the operation was submitted with (may be large).",
+    "operationCount": "{count, plural, one {# operation} other {# operations}}",
+    "unknown": "Unknown",
+    "notAvailable": "N/A",
+    "operationDetailsLoadError": "Failed to load operation details",
+    "status": {
+      "all": "All",
+      "pending": "Pending",
+      "processing": "Processing",
+      "completed": "Completed",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
+    "operationType": {
+      "all": "All types",
+      "retain": "Retain",
+      "consolidation": "Consolidation",
+      "refreshMentalModel": "Mental Model Refresh",
+      "fileConvertRetain": "File Convert & Retain",
+      "webhookDelivery": "Webhook Delivery",
+      "graphMaintenance": "Graph Maintenance"
+    },
+    "table": {
+      "id": "Operation ID",
+      "type": "Type",
+      "created": "Created",
+      "status": "Status",
+      "index": "Index",
+      "items": "Items"
+    },
+    "action": {
+      "cancel": "Cancel",
+      "retry": "Retry"
+    },
+    "pagination": "Showing {start}-{end} of {total}",
+    "paginationPrevious": "Previous",
+    "paginationNext": "Next",
+    "emptyState": "No operations",
+    "emptyStateWithStatus": "No {status} operations",
+    "field": {
+      "status": "Status",
+      "type": "Type",
+      "created": "Created",
+      "updated": "Updated",
+      "completed": "Completed"
+    },
+    "metadata": "Metadata",
+    "error": "Error",
+    "rawPayloadParentHelp": "This is a parent operation — the raw payload is stored on each sub-batch. Open a child operation to inspect its payload.",
+    "rawPayloadEmpty": "No raw payload stored for this operation."
   },
   "dataView": {
     "loadingMemories": "Loading memories...",
@@ -552,9 +607,30 @@
     "tagsInputPlaceholder": "tag1, tag2, tag3",
     "labelEventDate": "Event Date",
     "memoryCompositionTitle": "Memory Composition",
+    "retainTracesTitle": "Retain traces",
+    "retainTracesSummary": "{calls, plural, one {# call} other {# calls}} · {tokens} tokens",
     "loadingChunks": "Loading chunks...",
     "noChunksFound": "No chunks found for this document",
-    "clickChunksTabToLoad": "Click the Chunks tab to load chunks"
+    "clickChunksTabToLoad": "Click the Chunks tab to load chunks",
+    "exportButton": "Export",
+    "importButton": "Import from zip",
+    "exporting": "Exporting…",
+    "importing": "Importing…",
+    "exportSuccess": "Documents exported",
+    "importSuccess": "Imported {imported} document(s), {facts} fact(s); {skipped} skipped",
+    "importFailed": "Import failed",
+    "importTimeout": "Import is taking longer than expected; check back shortly",
+    "exportDialogTitle": "Export documents",
+    "exportDialogDescription": "Download this bank's documents and their extracted facts as a .zip archive. Embeddings aren't included — importing re-embeds with the target bank's model.",
+    "exportIncludeObservationsLabel": "Include consolidated observations",
+    "exportIncludeObservationsHint": "Also export synthesized observations. If left off, the target bank regenerates them during consolidation.",
+    "importDialogTitle": "Import documents",
+    "importDialogDescription": "Upload a .zip archive previously exported from a bank. This isn't a regular document upload — facts are re-embedded and re-linked in this bank. The import runs in the background.",
+    "actionsButton": "Actions",
+    "importConflictLabel": "If a document already exists",
+    "importConflictSkip": "Skip — keep the existing document",
+    "importConflictReplace": "Replace — overwrite with the imported one",
+    "importConflictNewId": "Keep both — import under a new id"
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -948,6 +1024,73 @@
     "detailMetadata": "Metadata",
     "entryCount": "{count, plural, one {# entry} other {# entries}}"
   },
+  "llmRequestsView": {
+    "callVolume": "Call Volume",
+    "tokenVolume": "Token Volume",
+    "metricCalls": "Calls",
+    "metricTokens": "Tokens",
+    "tokenModeTotal": "Total",
+    "tokenModeBreakdown": "Breakdown",
+    "cumulative": "Cumulative",
+    "tokensInput": "Input",
+    "tokensOutput": "Output",
+    "tokensCached": "Cached",
+    "tokensTotal": "Total",
+    "tableHeaderTokens": "Tokens",
+    "chartLoading": "Loading...",
+    "chartNoData": "No data for this period",
+    "statusAll": "All statuses",
+    "statusSuccess": "Success",
+    "statusError": "Error",
+    "operationAll": "All operations",
+    "operationRetain": "Retain",
+    "operationReflect": "Reflect",
+    "operationConsolidation": "Consolidation",
+    "operationRefreshMentalModel": "Mental model refresh",
+    "periodToday": "Today",
+    "periodLast7Days": "Last 7 days",
+    "periodLast30Days": "Last 30 days",
+    "dateRangeAll": "All time",
+    "dateRangeLastHour": "Last hour",
+    "dateRangeLast24Hours": "Last 24 hours",
+    "dateRangeLast7Days": "Last 7 days",
+    "dateRangeLast30Days": "Last 30 days",
+    "refresh": "Refresh",
+    "tableHeaderTime": "Time",
+    "tableHeaderOperation": "Operation",
+    "tableHeaderScope": "Scope",
+    "tableHeaderStatus": "Status",
+    "tableHeaderDuration": "Duration",
+    "tableLoading": "Loading...",
+    "tableNoRequests": "No LLM requests found",
+    "paginationPage": "Page {current} of {total}",
+    "previous": "Previous",
+    "next": "Next",
+    "detailDialogTitle": "LLM Request: {operation}",
+    "detailOperation": "Operation:",
+    "detailScope": "Scope:",
+    "detailProvider": "Provider:",
+    "detailModel": "Model:",
+    "detailStatus": "Status:",
+    "detailStarted": "Started:",
+    "detailDuration": "Duration:",
+    "detailInput": "Input",
+    "detailOutput": "Output",
+    "detailError": "Error",
+    "detailLlmInfo": "LLM Info",
+    "detailMetadata": "Metadata",
+    "detailTrace": "Trace:",
+    "detailSpan": "Span:",
+    "detailParentSpan": "Parent span:",
+    "detailViewRun": "View all calls in this run",
+    "traceFilterActive": "Operation run:",
+    "traceFilterClear": "Clear",
+    "groupByRun": "Group",
+    "groupByRunHint": "Group LLM calls by operation run",
+    "entryCount": "{count, plural, one {# entry} other {# entries}}",
+    "memoriesCreated": "Memories created ({count}):",
+    "memoriesSource": "Source memories ({count}):"
+  },
   "observationHistory": {
     "unchanged": "unchanged",
     "new": "new",
@@ -1081,7 +1224,10 @@
     "sourceMentioned": "Mentioned",
     "viewDocumentButton": "View Document",
     "viewChunkButton": "View Chunk",
-    "viewHistory": "View History"
+    "viewHistory": "View History",
+    "tracedByTitle": "Created by",
+    "tracedBySummary": "{calls} calls · {tokens} tokens",
+    "consolidatedByTitle": "Consolidated by"
   },
   "documentChunkModal": {
     "documentTitle": "Document Details",
@@ -1210,7 +1356,8 @@
     "legendMany": "many",
     "linkTypeSemantic": "semantic",
     "linkTypeTemporal": "temporal",
-    "linkTypeEntity": "entity"
+    "linkTypeEntity": "entity",
+    "linkTypeCausal": "causal"
   },
   "metadata": {
     "title": "Hindsight Cloud",
@@ -1319,7 +1466,8 @@
         "bankAndModelIdRequired": "bank_id and model_id are required",
         "operationIdRequired": "operation_id is required",
         "missingRequestData": "Missing request data",
-        "missingBankId": "Missing bank_id"
+        "missingBankId": "Missing bank_id",
+        "fileRequired": "file is required"
       },
       "generic": {
         "failed": "Failed",
@@ -1357,7 +1505,9 @@
         "updateTags": "Failed to update document tags",
         "delete": "Failed to delete document",
         "chunks": "Failed to fetch document chunks",
-        "reprocess": "Failed to reprocess document"
+        "reprocess": "Failed to reprocess document",
+        "export": "Failed to export documents",
+        "import": "Failed to import documents"
       },
       "files": {
         "upload": "Failed to upload files"
@@ -1406,6 +1556,10 @@
       "auditLogs": {
         "list": "Failed to list audit logs",
         "stats": "Failed to get audit log stats"
+      },
+      "llmRequests": {
+        "list": "Failed to list LLM requests",
+        "stats": "Failed to get LLM request stats"
       },
       "tags": {
         "list": "Failed to list tags"

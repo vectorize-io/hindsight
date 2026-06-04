@@ -41,7 +41,7 @@ def two_step_config() -> dict[str, Any]:
             {
                 "model_name": "default",
                 "litellm_params": {
-                    "model": "openai/MiniMax-M2.7",
+                    "model": "openai/MiniMax-M3",
                     "api_key": "sk-primary",
                     "api_base": "https://api.minimax.io/v1",
                 },

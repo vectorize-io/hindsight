@@ -273,6 +273,8 @@ class LLMSpanRecorder:
         finish_reason: Optional[str] = None,
         error: Optional[Exception] = None,
         tool_calls: Optional[list[dict[str, Any]]] = None,
+        cached_tokens: int = 0,
+        **_extra: Any,
     ) -> None:
         """
         Record a completed LLM call as a span with GenAI semantic conventions.
@@ -293,6 +295,8 @@ class LLMSpanRecorder:
             finish_reason: Reason the model stopped (stop, length, tool_calls, etc.)
             error: Exception if call failed
             tool_calls: List of tool calls made (for function calling)
+            cached_tokens: Cached/cache-read prompt tokens, when reported by the provider.
+            _extra: Tolerated forward-compatible kwargs from other recorders.
         """
         try:
             # Map provider name to GenAI semantic convention
@@ -326,6 +330,8 @@ class LLMSpanRecorder:
                 span.set_attribute(GenAIAttributes.RESPONSE_MODEL, model)
                 span.set_attribute(GenAIAttributes.USAGE_INPUT_TOKENS, input_tokens)
                 span.set_attribute(GenAIAttributes.USAGE_OUTPUT_TOKENS, output_tokens)
+                if cached_tokens:
+                    span.set_attribute("gen_ai.usage.cached_tokens", cached_tokens)
 
                 # Add custom attributes for Hindsight context
                 span.set_attribute("hindsight.scope", scope)
@@ -460,22 +466,61 @@ class NoOpLLMSpanRecorder:
         pass
 
 
-# Global span recorder instance
+class CompositeSpanRecorder:
+    """Fans out ``record_llm_call`` to every registered recorder.
+
+    This lets multiple GenAI consumers observe the same LLM calls — e.g. the
+    OpenTelemetry span exporter and the per-bank DB tracer — through the single
+    ``record_llm_call`` chokepoint each provider already calls. A failure in one
+    recorder never affects the others or the LLM call itself.
+    """
+
+    def __init__(self) -> None:
+        self._recorders: list[Any] = []
+
+    def register(self, recorder: Any) -> None:
+        if recorder not in self._recorders:
+            self._recorders.append(recorder)
+
+    def unregister(self, recorder: Any) -> None:
+        if recorder in self._recorders:
+            self._recorders.remove(recorder)
+
+    def record_llm_call(self, **kwargs: Any) -> None:
+        for recorder in self._recorders:
+            try:
+                recorder.record_llm_call(**kwargs)
+            except Exception as e:  # never let one recorder break others
+                logger.debug(f"Span recorder {type(recorder).__name__} failed: {e}", exc_info=True)
+
+
+# Global composite recorder — always present; fans out to whatever is registered.
+_composite_recorder = CompositeSpanRecorder()
+# Backward-compat reference to the OTel recorder (if created).
 _span_recorder: Optional[LLMSpanRecorder] = None
 
 
-def get_span_recorder() -> LLMSpanRecorder | NoOpLLMSpanRecorder:
-    """Get the global span recorder (NoOp if tracing disabled)."""
-    if _span_recorder is None:
-        return NoOpLLMSpanRecorder()
-    return _span_recorder
+def get_span_recorder() -> CompositeSpanRecorder:
+    """Get the global composite span recorder (fans out to all registered recorders)."""
+    return _composite_recorder
+
+
+def register_span_recorder(recorder: Any) -> None:
+    """Register an additional GenAI recorder (e.g. the per-bank DB tracer)."""
+    _composite_recorder.register(recorder)
+
+
+def unregister_span_recorder(recorder: Any) -> None:
+    """Remove a previously registered recorder."""
+    _composite_recorder.unregister(recorder)
 
 
 def create_span_recorder() -> LLMSpanRecorder:
-    """Create and set the global span recorder."""
+    """Create and register the OpenTelemetry span recorder."""
     global _span_recorder
     tracer = get_tracer()
     if tracer is None:
         raise RuntimeError("Tracing not initialized. Call initialize_tracing() first.")
     _span_recorder = LLMSpanRecorder(tracer)
+    register_span_recorder(_span_recorder)
     return _span_recorder

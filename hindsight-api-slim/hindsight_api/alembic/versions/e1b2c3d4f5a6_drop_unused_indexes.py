@@ -75,13 +75,13 @@ def _schema_prefix() -> str:
 
 def _pg_upgrade() -> None:
     schema = _schema_prefix()
-    # DROP INDEX CONCURRENTLY cannot run inside a transaction block; commit
-    # the Alembic transaction and issue each statement in its own implicit
-    # autocommit transaction.  IF EXISTS makes each statement idempotent
-    # across schemas that already dropped (or never had) the index.
-    for index_name in _PG_INDEXES_TO_DROP:
-        op.execute("COMMIT")
-        op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}{index_name}")
+    # DROP INDEX CONCURRENTLY cannot run inside a transaction block; an
+    # autocommit_block drops out of Alembic's migration transaction so each
+    # statement runs in its own autocommit.  IF EXISTS makes each statement
+    # idempotent across schemas that already dropped (or never had) the index.
+    with op.get_context().autocommit_block():
+        for index_name in _PG_INDEXES_TO_DROP:
+            op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}{index_name}")
 
 
 def _pg_downgrade() -> None:
@@ -89,39 +89,40 @@ def _pg_downgrade() -> None:
 
     # Recreate the dropped indexes in the same shape the prior migrations used,
     # so a downgrade leaves the schema in the state the previous head expected.
-    op.execute("COMMIT")
-    op.execute(
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_links_entity_covering "
-        f"ON {schema}memory_links(from_unit_id) "
-        f"INCLUDE (to_unit_id, entity_id) "
-        f"WHERE link_type = 'entity'"
-    )
-    op.execute("COMMIT")
-    op.execute(
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_links_from_unit ON {schema}memory_links(from_unit_id)"
-    )
-    op.execute("COMMIT")
-    op.execute(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_links_to_unit ON {schema}memory_links(to_unit_id)")
-    op.execute("COMMIT")
-    op.execute(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_links_link_type ON {schema}memory_links(link_type)")
-    op.execute("COMMIT")
-    op.execute(
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_entities_canonical_name ON {schema}entities(canonical_name)"
-    )
-    op.execute("COMMIT")
-    op.execute(
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS entities_canonical_name_trgm_idx "
-        f"ON {schema}entities USING GIN (canonical_name gin_trgm_ops)"
-    )
-    op.execute("COMMIT")
-    op.execute(
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_documents_retain_params "
-        f"ON {schema}documents USING GIN (retain_params)"
-    )
-    op.execute("COMMIT")
-    op.execute(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_documents_content_hash ON {schema}documents(content_hash)")
-    op.execute("COMMIT")
-    op.execute(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_unit_entities_entity ON {schema}unit_entities(entity_id)")
+    # CREATE INDEX CONCURRENTLY cannot run inside a transaction block.
+    with op.get_context().autocommit_block():
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_links_entity_covering "
+            f"ON {schema}memory_links(from_unit_id) "
+            f"INCLUDE (to_unit_id, entity_id) "
+            f"WHERE link_type = 'entity'"
+        )
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_links_from_unit ON {schema}memory_links(from_unit_id)"
+        )
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_links_to_unit ON {schema}memory_links(to_unit_id)"
+        )
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_links_link_type ON {schema}memory_links(link_type)"
+        )
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_entities_canonical_name ON {schema}entities(canonical_name)"
+        )
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS entities_canonical_name_trgm_idx "
+            f"ON {schema}entities USING GIN (canonical_name gin_trgm_ops)"
+        )
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_documents_retain_params "
+            f"ON {schema}documents USING GIN (retain_params)"
+        )
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_documents_content_hash ON {schema}documents(content_hash)"
+        )
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_unit_entities_entity ON {schema}unit_entities(entity_id)"
+        )
 
 
 def upgrade() -> None:

@@ -193,7 +193,7 @@ The semantic (embedding) arm covers cross-lingual matches by meaning. Hindsight 
 
 There are two knobs that interact:
 
-- `HINDSIGHT_API_TEXT_SEARCH_EXTENSION` — selects the backend (`native`, `vchord`, `pg_textsearch`, or `pgroonga`).
+- `HINDSIGHT_API_TEXT_SEARCH_EXTENSION` — selects the backend (`native`, `vchord`, `pg_textsearch`, `pgroonga`, or `pg_search`).
 - `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE` — selects the PostgreSQL dictionary used by the `native` backend (default: `english`).
 
 Pick the backend based on the languages your bank stores:
@@ -204,6 +204,7 @@ Pick the backend based on the languages your bank stores:
 | `vchord` | Multilingual via `llmlingua2` tokenizer. | Best when you're already using vchord for vector search. |
 | `pg_textsearch` | English only (hardcoded). | Industry-standard BM25 ranking + Block-Max WAND. |
 | `pgroonga` | **Yes — out of the box.** Single index handles English, CJK, and mixed-script content via the `TokenBigram` polyglot tokenizer + `NormalizerNFKC150` Unicode normalization. | Recommended for non-English / mixed-language banks. Requires the `pgroonga` extension. See `docker/docker-compose/pgroonga/`. |
+| `pg_search` | Multilingual via configurable tokenizer (e.g. `chinese_compatible`, `jieba`, `chinese_lindera`, `japanese_lindera`, `korean_lindera`, `ngram`). | ParadeDB `pg_search` extension; the only Citus-compatible BM25 backend. Tokenizer set via `HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER`. See `docker/docker-compose/pg_search/`. |
 
 **Choosing for a single-language bank** (e.g. all Spanish content):
 ```bash

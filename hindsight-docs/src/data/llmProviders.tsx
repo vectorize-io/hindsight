@@ -42,6 +42,10 @@ export interface LLMProvider {
   defaultModel?: string;
   /** Optional note rendered in the default-models table. */
   defaultModelNote?: string;
+  /** Supports the asynchronous Batch API (supports_batch_api in the engine). */
+  batchApi?: boolean;
+  /** Supports explicit prompt-prefix caching (supports_prompt_caching in the engine). */
+  promptCaching?: boolean;
 }
 
 /**
@@ -51,14 +55,19 @@ export interface LLMProvider {
  * consumed by:
  *   - this module (resolves iconKey -> IconType for the icon grid)
  *   - LLMProvidersTable React component (renders the default-models table)
- *   - scripts/generate-docs-skill.sh (renders <LLMProvidersTable /> as
- *     markdown when copying MDX docs into the agent-facing skill)
+ *   - LLMProviderCapabilities React component (renders the capability table:
+ *     batchApi / promptCaching)
+ *   - scripts/generate-docs-skill.sh (renders <LLMProvidersTable />,
+ *     <LLMProvidersGrid /> and <LLMProviderCapabilities /> as markdown when
+ *     copying MDX docs into the agent-facing skill)
  *
- * Keep aligned with PROVIDER_DEFAULT_MODELS in
- * hindsight-api-slim/hindsight_api/config.py.
+ * Keep the default model aligned with PROVIDER_DEFAULT_MODELS, and the
+ * capability flags with supports_batch_api() / supports_prompt_caching() on the
+ * provider classes, in hindsight-api-slim/hindsight_api/.
  */
 export const LLM_PROVIDERS: LLMProvider[] = (providersJson as Array<{
   id: string; label: string; iconKey: string; defaultModel?: string; defaultModelNote?: string;
+  batchApi?: boolean; promptCaching?: boolean;
 }>).map(({iconKey, ...rest}) => {
   const icon = ICON_REGISTRY[iconKey];
   if (!icon) throw new Error(`Unknown iconKey "${iconKey}" for provider "${rest.id || rest.label}"`);

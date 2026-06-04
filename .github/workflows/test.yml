@@ -39,6 +39,7 @@ jobs:
       integrations-litellm: ${{ steps.filter.outputs.integrations-litellm }}
       integrations-pydantic-ai: ${{ steps.filter.outputs.integrations-pydantic-ai }}
       integrations-ag2: ${{ steps.filter.outputs.integrations-ag2 }}
+      integrations-autogen: ${{ steps.filter.outputs.integrations-autogen }}
       integrations-llamaindex: ${{ steps.filter.outputs.integrations-llamaindex }}
       integrations-paperclip: ${{ steps.filter.outputs.integrations-paperclip }}
       integrations-opencode: ${{ steps.filter.outputs.integrations-opencode }}
@@ -52,6 +53,8 @@ jobs:
       integrations-dify: ${{ steps.filter.outputs.integrations-dify }}
       integrations-gemini-spark: ${{ steps.filter.outputs.integrations-gemini-spark }}
       integrations-vapi: ${{ steps.filter.outputs.integrations-vapi }}
+      integrations-flowise: ${{ steps.filter.outputs.integrations-flowise }}
+      integrations-google-adk: ${{ steps.filter.outputs.integrations-google-adk }}
       tools-agent-sdk: ${{ steps.filter.outputs.tools-agent-sdk }}
       integrations-roo-code: ${{ steps.filter.outputs.integrations-roo-code }}
       dev: ${{ steps.filter.outputs.dev }}
@@ -123,6 +126,8 @@ jobs:
             - 'hindsight-integrations/pydantic-ai/**'
           integrations-ag2:
             - 'hindsight-integrations/ag2/**'
+          integrations-autogen:
+            - 'hindsight-integrations/autogen/**'
           integrations-llamaindex:
             - 'hindsight-integrations/llamaindex/**'
           integrations-paperclip:
@@ -151,6 +156,10 @@ jobs:
             - 'hindsight-integrations/gemini-spark/**'
           integrations-vapi:
             - 'hindsight-integrations/vapi/**'
+          integrations-flowise:
+            - 'hindsight-integrations/flowise/**'
+          integrations-google-adk:
+            - 'hindsight-integrations/google-adk/**'
           tools-agent-sdk:
             - 'hindsight-tools/hindsight-agent-sdk/**'
           integrations-roo-code:
@@ -723,6 +732,43 @@ jobs:
 
     - name: Run tests
       working-directory: ./hindsight-integrations/pipecat
+      run: uv run pytest tests -v
+
+  test-google-adk-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-google-adk == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build google-adk integration
+      working-directory: ./hindsight-integrations/google-adk
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/google-adk
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/google-adk
       run: uv run pytest tests -v
 
   test-gemini-spark-integration:
@@ -2758,6 +2804,45 @@ jobs:
       working-directory: ./hindsight-integrations/ag2
       run: uv run pytest tests -v
 
+  test-autogen-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-autogen == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build autogen integration
+      working-directory: ./hindsight-integrations/autogen
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/autogen
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/autogen
+      # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
+      # (requires_real_llm) needs a live Hindsight server and runs separately.
+      run: uv run pytest tests -v -m "not requires_real_llm"
+
   test-smolagents-integration:
     needs: [detect-changes]
     if: >-
@@ -2829,6 +2914,37 @@ jobs:
     - name: Run tests
       working-directory: ./hindsight-integrations/dify
       run: pytest tests -v
+
+  test-flowise-integration:
+    needs: [detect-changes]
+    if: >-
+      github.event_name != 'pull_request_review' &&
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-flowise == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/flowise
+      run: npm install --no-audit --no-fund
+
+    - name: Type check
+      working-directory: ./hindsight-integrations/flowise
+      run: npx tsc --noEmit
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/flowise
+      run: npm test
 
   test-crewai-integration:
     needs: [detect-changes]
@@ -3928,6 +4044,7 @@ jobs:
       - test-pipecat-integration
       - test-gemini-spark-integration
       - test-vapi-integration
+      - test-google-adk-integration
       - test-roo-code-integration
       - build-control-plane
       - build-docs
@@ -3948,8 +4065,10 @@ jobs:
       - test-openclaw-integration
       - test-integration
       - test-ag2-integration
+      - test-autogen-integration
       - test-smolagents-integration
       - test-dify-integration
+      - test-flowise-integration
       - test-crewai-integration
       - test-litellm-integration
       - test-pydantic-ai-integration

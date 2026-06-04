@@ -266,12 +266,20 @@ class ConfigResolver:
         # Validate recall budget fields
         _validate_recall_budget_updates(normalized_updates)
 
-        # Merge with existing config (JSONB || operator)
+        # Persist the override. Banks are created lazily (on first retain), so a
+        # PATCH that precedes any ingestion would otherwise UPDATE zero rows and
+        # silently no-op while returning 200. Ensure the bank row exists first
+        # (this also creates its per-bank vector indexes), then merge defensively:
+        # COALESCE guards against a NULL config column (NULL || jsonb is NULL),
+        # which would drop the override even when a row is updated.
+        from .engine.retain.fact_storage import ensure_bank_exists
+
         async with self._backend.acquire() as conn:
+            await ensure_bank_exists(conn, bank_id, ops=self._backend.ops)
             await conn.execute(
                 f"""
                 UPDATE {fq_table("banks")}
-                SET config = config || $1::jsonb,
+                SET config = COALESCE(config, '{{}}'::jsonb) || $1::jsonb,
                     updated_at = now()
                 WHERE bank_id = $2
                 """,

@@ -554,6 +554,7 @@ export function Constellation({
       semantic: t("linkTypeSemantic"),
       temporal: t("linkTypeTemporal"),
       entity: t("linkTypeEntity"),
+      causal: t("linkTypeCausal"),
     };
     for (const [type, color] of Object.entries(LINK_TYPE_COLORS).reverse()) {
       const label = linkTypeLabel[type] ?? type;
@@ -599,8 +600,10 @@ export function Constellation({
       ctx.font = MONO;
       const labelColor = isDark ? "#a1a1aa" : "#71717a";
       ctx.fillStyle = labelColor;
-      ctx.fillText("few", 12, 98);
-      const fewW = ctx.measureText("few").width;
+      const sizeFew = t("legendFew");
+      const sizeMany = t("legendMany");
+      ctx.fillText(sizeFew, 12, 98);
+      const fewW = ctx.measureText(sizeFew).width;
       const dotsStart = 12 + fewW + 8;
       const dotColor = isDark ? "#a1a1aa" : "#52525b";
       ctx.fillStyle = dotColor;
@@ -614,7 +617,7 @@ export function Constellation({
       ctx.arc(dotsStart + 30, 94, 6, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = labelColor;
-      ctx.fillText("many", dotsStart + 42, 98);
+      ctx.fillText(sizeMany, dotsStart + 42, 98);
     }
 
     // Instructions
@@ -626,7 +629,7 @@ export function Constellation({
     ctx.restore();
 
     animRef.current = requestAnimationFrame(animate);
-  }, [isDark, preparedNodes, linksWithIndices, linksByNode]);
+  }, [isDark, preparedNodes, linksWithIndices, linksByNode, t]);
 
   // ----- Label drawing helper -----
   function drawLabel(

@@ -147,12 +147,13 @@ async def ensure_bank_exists(conn, bank_id: str, ops=None) -> None:
     internal_id = uuid.uuid4()
     inserted = await conn.fetchval(
         f"""
-        INSERT INTO {fq_table("banks")} (bank_id, disposition, mission, internal_id)
-        VALUES ($1, $2::jsonb, $3, $4)
+        INSERT INTO {fq_table("banks")} (bank_id, name, disposition, mission, internal_id)
+        VALUES ($1, $2, $3::jsonb, $4, $5)
         ON CONFLICT (bank_id) DO NOTHING
         RETURNING bank_id
         """,
         bank_id,
+        bank_id,  # Default name is the bank_id (matches get_or_create_bank_profile)
         json.dumps(DEFAULT_DISPOSITION),
         "",
         internal_id,

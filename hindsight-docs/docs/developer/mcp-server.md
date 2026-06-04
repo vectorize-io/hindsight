@@ -185,7 +185,7 @@ Search memories to provide personalized responses.
 | `query` | string | Yes | Natural language search query |
 | `max_tokens` | integer | No | Maximum tokens to return (default: 4096) |
 | `budget` | string | No | Search thoroughness: `low`, `mid`, or `high` (default: `high`) |
-| `types` | list[string] | No | Filter by fact type: `world`, `experience`, `opinion`. Defaults to all |
+| `types` | list[string] | No | Filter by fact type: `world`, `experience`, `observation`. Defaults to all |
 | `tags` | list[string] | No | Filter memories by tags |
 | `tags_match` | string | No | Tag matching mode: `any` (default) or `all` |
 | `query_timestamp` | string | No | ISO 8601 timestamp — recall as if asking at this point in time; anchors relative temporal expressions and recency scoring |
@@ -396,7 +396,7 @@ Browse stored memories with optional filtering and pagination.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `type` | string | No | Filter by fact type: `world`, `experience`, or `opinion` |
+| `type` | string | No | Filter by fact type: `world`, `experience`, or `observation` |
 | `q` | string | No | Search query to filter memories |
 | `limit` | integer | No | Maximum number of results (default: 100) |
 | `offset` | integer | No | Number of results to skip for pagination (default: 0) |
@@ -541,7 +541,7 @@ Clear all memories from a bank without deleting the bank itself. Optionally filt
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `type` | string | No | Fact type to clear: `world`, `experience`, or `opinion`. If not specified, clears all |
+| `type` | string | No | Fact type to clear: `world`, `experience`, or `observation`. If not specified, clears all |
 
 ---
 

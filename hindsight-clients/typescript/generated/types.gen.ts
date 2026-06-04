@@ -799,6 +799,18 @@ export type BodyFileRetain = {
 };
 
 /**
+ * Body_import_documents
+ */
+export type BodyImportDocuments = {
+  /**
+   * File
+   *
+   * Transfer ZIP archive
+   */
+  file: Blob | File;
+};
+
+/**
  * Budget
  *
  * Budget levels for recall/reflect operations.
@@ -1324,6 +1336,26 @@ export type DispositionTraits = {
 };
 
 /**
+ * DocumentImportSubmitResponse
+ *
+ * Response for the async document-import endpoint (202).
+ *
+ * The import runs in the background; poll the operations endpoint for status.
+ * The imported/skipped counts (documents_imported, facts_imported,
+ * observations_imported, etc.) are written to the operation's result_metadata.
+ */
+export type DocumentImportSubmitResponse = {
+  /**
+   * Operation Id
+   */
+  operation_id: string;
+  /**
+   * Status
+   */
+  status?: string;
+};
+
+/**
  * DocumentResponse
  *
  * Response model for get document endpoint.
@@ -1632,6 +1664,30 @@ export type FeaturesInfo = {
    * Whether file upload/conversion API is enabled
    */
   file_upload_api: boolean;
+  /**
+   * Document Export Api
+   *
+   * Whether the document export endpoint is enabled
+   */
+  document_export_api: boolean;
+  /**
+   * Document Import Api
+   *
+   * Whether the document import endpoint is enabled
+   */
+  document_import_api: boolean;
+  /**
+   * Audit Log
+   *
+   * Whether audit logging is enabled
+   */
+  audit_log: boolean;
+  /**
+   * Llm Trace
+   *
+   * Whether per-bank LLM request tracing is enabled
+   */
+  llm_trace: boolean;
 };
 
 /**
@@ -1710,6 +1766,209 @@ export type IncludeOptions = {
    * Include source facts for observation-type results. Set to {} to enable, null to disable (default: disabled).
    */
   source_facts?: SourceFactsIncludeOptions | null;
+};
+
+/**
+ * LLMRequestEntry
+ *
+ * A single LLM request trace row, as returned by the read API.
+ */
+export type LlmRequestEntry = {
+  /**
+   * Id
+   */
+  id: string;
+  /**
+   * Bank Id
+   */
+  bank_id: string | null;
+  /**
+   * Operation
+   */
+  operation: string | null;
+  /**
+   * Scope
+   */
+  scope: string | null;
+  /**
+   * Trace Id
+   */
+  trace_id: string | null;
+  /**
+   * Span Id
+   */
+  span_id: string | null;
+  /**
+   * Parent Span Id
+   */
+  parent_span_id: string | null;
+  /**
+   * Provider
+   */
+  provider: string | null;
+  /**
+   * Model
+   */
+  model: string | null;
+  /**
+   * Status
+   */
+  status: string;
+  /**
+   * Started At
+   */
+  started_at: string | null;
+  /**
+   * Ended At
+   */
+  ended_at: string | null;
+  /**
+   * Duration Ms
+   */
+  duration_ms: number | null;
+  /**
+   * Input Tokens
+   */
+  input_tokens: number | null;
+  /**
+   * Output Tokens
+   */
+  output_tokens: number | null;
+  /**
+   * Cached Tokens
+   */
+  cached_tokens: number | null;
+  /**
+   * Total Tokens
+   */
+  total_tokens: number | null;
+  /**
+   * Input
+   */
+  input?: unknown;
+  /**
+   * Output
+   */
+  output?: unknown;
+  /**
+   * Error
+   */
+  error: string | null;
+  /**
+   * Llm Info
+   */
+  llm_info: {
+    [key: string]: unknown;
+  };
+  /**
+   * Metadata
+   */
+  metadata: {
+    [key: string]: unknown;
+  };
+};
+
+/**
+ * LLMRequestListResponse
+ *
+ * Paginated list of LLM request traces for a bank.
+ */
+export type LlmRequestListResponse = {
+  /**
+   * Bank Id
+   */
+  bank_id: string;
+  /**
+   * Total
+   */
+  total: number;
+  /**
+   * Limit
+   */
+  limit: number;
+  /**
+   * Offset
+   */
+  offset: number;
+  /**
+   * Items
+   */
+  items: Array<LlmRequestEntry>;
+};
+
+/**
+ * LLMRequestStatsBucket
+ *
+ * A single time bucket in LLM request stats.
+ */
+export type LlmRequestStatsBucket = {
+  /**
+   * Time
+   */
+  time: string;
+  /**
+   * Statuses
+   */
+  statuses: {
+    [key: string]: number;
+  };
+  /**
+   * Total
+   */
+  total: number;
+  tokens: LlmRequestTokenSums;
+};
+
+/**
+ * LLMRequestStatsResponse
+ *
+ * LLM request counts and token sums grouped by time bucket.
+ */
+export type LlmRequestStatsResponse = {
+  /**
+   * Bank Id
+   */
+  bank_id: string;
+  /**
+   * Period
+   */
+  period: string;
+  /**
+   * Trunc
+   */
+  trunc: string;
+  /**
+   * Start
+   */
+  start: string;
+  /**
+   * Buckets
+   */
+  buckets: Array<LlmRequestStatsBucket>;
+};
+
+/**
+ * LLMRequestTokenSums
+ *
+ * Token totals for a time bucket.
+ */
+export type LlmRequestTokenSums = {
+  /**
+   * Input
+   */
+  input: number;
+  /**
+   * Output
+   */
+  output: number;
+  /**
+   * Cached
+   */
+  cached: number;
+  /**
+   * Total
+   */
+  total: number;
 };
 
 /**
@@ -3054,6 +3313,12 @@ export type TokenUsage = {
    * Total tokens (input + output)
    */
   total_tokens?: number;
+  /**
+   * Cached Tokens
+   *
+   * Cached/cache-read prompt tokens, when reported by the provider
+   */
+  cached_tokens?: number;
 };
 
 /**
@@ -5477,6 +5742,96 @@ export type ExportBankTemplateResponses = {
 export type ExportBankTemplateResponse =
   ExportBankTemplateResponses[keyof ExportBankTemplateResponses];
 
+export type ExportDocumentsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Document Id
+     *
+     * Document id(s) to export; omit for all
+     */
+    document_id?: Array<string> | null;
+    /**
+     * Include Observations
+     *
+     * Also export consolidated observations (restored on import)
+     */
+    include_observations?: boolean;
+  };
+  url: "/v1/default/banks/{bank_id}/document-transfer";
+};
+
+export type ExportDocumentsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ExportDocumentsError = ExportDocumentsErrors[keyof ExportDocumentsErrors];
+
+export type ExportDocumentsResponses = {
+  /**
+   * Transfer archive
+   */
+  200: unknown;
+};
+
+export type ImportDocumentsData = {
+  body: BodyImportDocuments;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * On Conflict
+     *
+     * skip | replace | new-id
+     */
+    on_conflict?: string;
+  };
+  url: "/v1/default/banks/{bank_id}/document-transfer";
+};
+
+export type ImportDocumentsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ImportDocumentsError = ImportDocumentsErrors[keyof ImportDocumentsErrors];
+
+export type ImportDocumentsResponses = {
+  /**
+   * Successful Response
+   */
+  202: DocumentImportSubmitResponse;
+};
+
+export type ImportDocumentsResponse = ImportDocumentsResponses[keyof ImportDocumentsResponses];
+
 export type GetBankTemplateSchemaData = {
   body?: never;
   path?: never;
@@ -6201,3 +6556,161 @@ export type AuditLogStatsResponses = {
 };
 
 export type AuditLogStatsResponse2 = AuditLogStatsResponses[keyof AuditLogStatsResponses];
+
+export type ListLlmRequestsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Status
+     *
+     * Filter by status (success, error)
+     */
+    status?: string | null;
+    /**
+     * Operation
+     *
+     * Filter by operation (retain, reflect, consolidation)
+     */
+    operation?: string | null;
+    /**
+     * Scope
+     *
+     * Filter by call scope
+     */
+    scope?: string | null;
+    /**
+     * Provider
+     *
+     * Filter by LLM provider
+     */
+    provider?: string | null;
+    /**
+     * Trace Id
+     *
+     * Filter to one operation run (all LLM calls sharing a trace)
+     */
+    trace_id?: string | null;
+    /**
+     * Document Id
+     *
+     * Filter to LLM calls that processed a given document
+     */
+    document_id?: string | null;
+    /**
+     * Memory Id
+     *
+     * Filter to the operation run(s) that produced or consumed a given memory_unit
+     */
+    memory_id?: string | null;
+    /**
+     * Group
+     *
+     * Paginate by operation run (trace) instead of by call; returns whole runs
+     */
+    group?: boolean;
+    /**
+     * Start Date
+     *
+     * Filter from this ISO datetime (inclusive)
+     */
+    start_date?: string | null;
+    /**
+     * End Date
+     *
+     * Filter until this ISO datetime (exclusive)
+     */
+    end_date?: string | null;
+    /**
+     * Limit
+     *
+     * Max items to return
+     */
+    limit?: number;
+    /**
+     * Offset
+     *
+     * Offset for pagination
+     */
+    offset?: number;
+  };
+  url: "/v1/default/banks/{bank_id}/llm-requests";
+};
+
+export type ListLlmRequestsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListLlmRequestsError = ListLlmRequestsErrors[keyof ListLlmRequestsErrors];
+
+export type ListLlmRequestsResponses = {
+  /**
+   * Successful Response
+   */
+  200: LlmRequestListResponse;
+};
+
+export type ListLlmRequestsResponse = ListLlmRequestsResponses[keyof ListLlmRequestsResponses];
+
+export type LlmRequestStatsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Operation
+     *
+     * Filter by operation
+     */
+    operation?: string | null;
+    /**
+     * Period
+     *
+     * Time period: 1d, 7d, or 30d
+     */
+    period?: string;
+  };
+  url: "/v1/default/banks/{bank_id}/llm-requests/stats";
+};
+
+export type LlmRequestStatsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type LlmRequestStatsError = LlmRequestStatsErrors[keyof LlmRequestStatsErrors];
+
+export type LlmRequestStatsResponses = {
+  /**
+   * Successful Response
+   */
+  200: LlmRequestStatsResponse;
+};
+
+export type LlmRequestStatsResponse2 = LlmRequestStatsResponses[keyof LlmRequestStatsResponses];

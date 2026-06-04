@@ -7,7 +7,7 @@ This provider handles all OpenAI API-compatible models including:
 - Groq: Fast inference with seed control and service tiers
 - Ollama: Local models with native streaming API support
 - LMStudio: Local models with OpenAI-compatible API
-- MiniMax: MiniMax-M2.7 models with 1M context window
+- MiniMax: MiniMax-M3 / MiniMax-M2.7 models with 1M context window
 - DeepSeek: deepseek-v4-flash / deepseek-v4-pro / deepseek-chat / deepseek-reasoner via api.deepseek.com
 - Opencode Go: deepseek-v4-flash via https://opencode.ai/zen/go/v1
 
@@ -232,7 +232,7 @@ class OpenAICompatibleLLM(LLMInterface):
     - Groq: Fast inference with seed control and service tiers
     - Ollama: Local models with native streaming API for better structured output
     - LMStudio: Local models with OpenAI-compatible API
-    - MiniMax: MiniMax-M2.7 models via OpenAI-compatible API (https://api.minimax.io/v1)
+    - MiniMax: MiniMax-M3 / MiniMax-M2.7 models via OpenAI-compatible API (https://api.minimax.io/v1)
     - DeepSeek: deepseek-v4-flash / deepseek-v4-pro / deepseek-chat / deepseek-reasoner via https://api.deepseek.com
     - opencode-go: deepseek-v4-flash via https://opencode.ai/zen/go/v1
     """
@@ -279,6 +279,7 @@ class OpenAICompatibleLLM(LLMInterface):
             "openrouter",
             "zai",
             "opencode-go",
+            "fireworks",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"OpenAICompatibleLLM only supports: {', '.join(valid_providers)}. Got: {self.provider}")
@@ -303,6 +304,10 @@ class OpenAICompatibleLLM(LLMInterface):
                 self.base_url = "https://api.z.ai/api/coding/paas/v4"
             elif self.provider == "opencode-go":
                 self.base_url = "https://opencode.ai/zen/go/v1"
+            elif self.provider == "fireworks":
+                # OpenAI-compatible inference host (online path). The batch API
+                # lives on a separate control-plane host — see FireworksLLM.
+                self.base_url = "https://api.fireworks.ai/inference/v1"
 
         # For ollama/lmstudio, use dummy key if not provided
         if self.provider in ("ollama", "lmstudio") and not self.api_key:
@@ -645,6 +650,9 @@ class OpenAICompatibleLLM(LLMInterface):
                 input_tokens = usage.prompt_tokens or 0 if usage else 0
                 output_tokens = usage.completion_tokens or 0 if usage else 0
                 total_tokens = usage.total_tokens or 0 if usage else 0
+                cached_tokens = 0
+                if usage and getattr(usage, "prompt_tokens_details", None):
+                    cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
 
                 # Record LLM metrics
                 metrics = get_metrics_collector()
@@ -674,14 +682,12 @@ class OpenAICompatibleLLM(LLMInterface):
                     duration=duration,
                     finish_reason=finish_reason,
                     error=None,
+                    cached_tokens=cached_tokens,
                 )
 
                 # Log slow calls
                 if duration > 10.0 and usage:
                     ratio = max(1, output_tokens) / max(1, input_tokens)
-                    cached_tokens = 0
-                    if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
-                        cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
                     cache_info = f", cached_tokens={cached_tokens}" if cached_tokens > 0 else ""
                     logger.info(
                         f"slow llm call: scope={scope}, model={self.provider}/{self.model}, "
@@ -694,6 +700,7 @@ class OpenAICompatibleLLM(LLMInterface):
                         input_tokens=input_tokens,
                         output_tokens=output_tokens,
                         total_tokens=total_tokens,
+                        cached_tokens=cached_tokens,
                     )
                     return result, token_usage
                 return result

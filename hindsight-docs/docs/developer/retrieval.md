@@ -271,7 +271,7 @@ RRF gives a good initial ranking, but it's based on positions, not on deep query
 
 **Why rerank after RRF?** RRF is position-based — it knows a memory ranked well across strategies, but it never actually reads the query and the memory together. The cross-encoder does: it takes the query and each candidate as a pair and produces a relevance score based on their full interaction. This catches nuances that position-based fusion misses, like a memory that ranked #1 in keyword search because it matched a common term but is actually irrelevant to the query's intent.
 
-**Score normalization:** Cross-encoders output raw logits (which can be negative). These are normalized to [0, 1] using the sigmoid function:
+**Score normalization:** Cross-encoders output raw logits (which can be negative). Scores that already fall within [0, 1] — as returned by calibrated external API rerankers (e.g. Cohere, SiliconFlow, ZeroEntropy, Alibaba, Jina) — are passed through unchanged to preserve their absolute confidence. Raw logits outside [0, 1] are normalized to [0, 1] using the sigmoid function:
 
 ```
 CE_normalized = 1 / (1 + e^(-raw_logit))

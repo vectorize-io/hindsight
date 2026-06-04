@@ -67,9 +67,10 @@ class TestMetricsCollector:
         # Create separate mocks for each histogram (operation_duration, llm_duration, http_request_duration)
         histogram_mocks = [MagicMock(), MagicMock(), MagicMock()]
         meter.create_histogram.side_effect = histogram_mocks
-        # Create separate mocks for each counter
-        # (operation_total, llm_tokens_input, llm_tokens_output, llm_calls_total, http_requests_total)
-        counter_mocks = [MagicMock() for _ in range(5)]
+        # Create separate mocks for each counter (operation_total, llm_tokens_input,
+        # llm_tokens_output, llm_calls_total, llm_tokens_cached_input,
+        # llm_tokens_thoughts, http_requests_total)
+        counter_mocks = [MagicMock() for _ in range(7)]
         meter.create_counter.side_effect = counter_mocks
         return meter
 
@@ -278,9 +279,10 @@ class TestLLMMetrics:
         # Create separate mocks for each histogram (operation_duration, llm_duration, http_request_duration)
         histogram_mocks = [MagicMock(), MagicMock(), MagicMock()]
         meter.create_histogram.side_effect = histogram_mocks
-        # Create separate mocks for each counter
-        # (operation_total, llm_tokens_input, llm_tokens_output, llm_calls_total, http_requests_total)
-        counter_mocks = [MagicMock() for _ in range(5)]
+        # Create separate mocks for each counter (operation_total, llm_tokens_input,
+        # llm_tokens_output, llm_calls_total, llm_tokens_cached_input,
+        # llm_tokens_thoughts, http_requests_total)
+        counter_mocks = [MagicMock() for _ in range(7)]
         meter.create_counter.side_effect = counter_mocks
         return meter
 

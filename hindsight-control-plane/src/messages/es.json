@@ -74,6 +74,8 @@
     "auditLogs": "Registros de auditoría",
     "webhooksDescription": "Administra los endpoints de webhook para recibir notificaciones de eventos de este banco de memoria.",
     "auditLogsDescription": "Visualiza el registro de auditoría de todas las operaciones realizadas en este banco de memoria.",
+    "llmRequests": "Solicitudes LLM",
+    "llmRequestsDescription": "Rastrea cada llamada a LLM realizada para este banco de memoria, incluidos los fallos.",
     "recallAnalyzer": "Analizador de Recall",
     "recallAnalyzerDescription": "Analiza el recall de memoria con información de rastreo detallada y métodos de recuperación.",
     "reflect": "Reflect",
@@ -147,6 +149,10 @@
     "clearObservationsDetailedWarning": "Todas las memorias de observación se eliminarán permanentemente. Esta acción no se puede deshacer.",
     "observationsNotEnabled": "Observaciones no habilitadas",
     "observationsDisabledMessage": "La consolidación de observaciones está deshabilitada en este servidor. Establece <envVar></envVar> para habilitarla.",
+    "auditLogsNotEnabled": "Registros de auditoría no habilitados",
+    "auditLogsDisabledMessage": "El registro de auditoría está deshabilitado en este servidor. Establece <envVar></envVar> para habilitarlo.",
+    "llmRequestsNotEnabled": "Solicitudes LLM no habilitadas",
+    "llmRequestsDisabledMessage": "El rastreo de solicitudes LLM está deshabilitado en este servidor. Establece <envVar></envVar> para habilitarlo.",
     "deleteWillDeleteDetails": "Esto eliminará {memories, plural, one {# memoria} other {# memorias}}, {documents, plural, one {# documento} other {# documentos}} y {links, plural, one {# enlace} other {# enlaces}}.",
     "deleteWillDeleteObservations": "Esto eliminará {count, plural, one {# observación} other {# observaciones}}."
   },
@@ -403,7 +409,56 @@
     "subBatchesCount": "Sublotes ({count})",
     "rawPayload": "Carga útil sin procesar",
     "loadRaw": "Cargar sin procesar",
-    "rawPayloadHelp": "Muestra los parámetros completos con los que se envió la operación (puede ser grande)."
+    "rawPayloadHelp": "Muestra los parámetros completos con los que se envió la operación (puede ser grande).",
+    "operationCount": "{count} operaciones",
+    "unknown": "Desconocido",
+    "notAvailable": "N/D",
+    "operationDetailsLoadError": "No se pudieron cargar los detalles de la operación",
+    "status": {
+      "all": "Todos",
+      "pending": "Pendiente",
+      "processing": "En proceso",
+      "completed": "Completada",
+      "failed": "Fallida",
+      "cancelled": "Cancelada"
+    },
+    "operationType": {
+      "all": "Todos los tipos",
+      "retain": "Retener",
+      "consolidation": "Consolidación",
+      "refreshMentalModel": "Actualización del modelo mental",
+      "fileConvertRetain": "Convertir archivo y retener",
+      "webhookDelivery": "Entrega de webhook",
+      "graphMaintenance": "Mantenimiento del grafo"
+    },
+    "table": {
+      "id": "ID de operación",
+      "type": "Tipo",
+      "created": "Creada",
+      "status": "Estado",
+      "index": "Índice",
+      "items": "Elementos"
+    },
+    "action": {
+      "cancel": "Cancelar",
+      "retry": "Reintentar"
+    },
+    "pagination": "Mostrando {start}-{end} de {total}",
+    "paginationPrevious": "Anterior",
+    "paginationNext": "Siguiente",
+    "emptyState": "No hay operaciones",
+    "emptyStateWithStatus": "No hay operaciones con estado {status}",
+    "field": {
+      "status": "Estado",
+      "type": "Tipo",
+      "created": "Creada",
+      "updated": "Actualizada",
+      "completed": "Completada"
+    },
+    "metadata": "Metadatos",
+    "error": "Error",
+    "rawPayloadParentHelp": "Esta es una operación principal: la carga útil sin procesar se almacena en cada sublote. Abre una operación secundaria para inspeccionar su carga útil.",
+    "rawPayloadEmpty": "No hay carga útil sin procesar almacenada para esta operación."
   },
   "dataView": {
     "loadingMemories": "Cargando memorias...",
@@ -552,9 +607,30 @@
     "tagsInputPlaceholder": "tag1, tag2, tag3",
     "labelEventDate": "Fecha del evento",
     "memoryCompositionTitle": "Composición de memorias",
+    "retainTracesTitle": "Trazas de retención",
+    "retainTracesSummary": "{calls, plural, one {# llamada} other {# llamadas}} · {tokens} tokens",
     "loadingChunks": "Cargando fragmentos...",
     "noChunksFound": "No se encontraron fragmentos para este documento",
-    "clickChunksTabToLoad": "Haz clic en la pestaña Fragmentos para cargar los fragmentos"
+    "clickChunksTabToLoad": "Haz clic en la pestaña Fragmentos para cargar los fragmentos",
+    "exportButton": "Exportar",
+    "importButton": "Importar desde zip",
+    "exporting": "Exportando…",
+    "importing": "Importando…",
+    "exportSuccess": "Documentos exportados",
+    "importSuccess": "Se importaron {imported} documento(s), {facts} hecho(s); {skipped} omitido(s)",
+    "importFailed": "La importación falló",
+    "importTimeout": "La importación está tardando más de lo esperado; vuelve a comprobar en breve",
+    "exportDialogTitle": "Exportar documentos",
+    "exportDialogDescription": "Descarga los documentos de este banco y sus hechos extraídos como un archivo .zip. No incluye embeddings: al importar se regeneran con el modelo del banco de destino.",
+    "exportIncludeObservationsLabel": "Incluir observaciones consolidadas",
+    "exportIncludeObservationsHint": "Exportar también las observaciones sintetizadas. Si se desactiva, el banco de destino las regenera durante la consolidación.",
+    "importDialogTitle": "Importar documentos",
+    "importDialogDescription": "Sube un archivo .zip exportado previamente de un banco. No es una carga de documentos normal: los hechos se vuelven a incrustar y enlazar en este banco. La importación se ejecuta en segundo plano.",
+    "actionsButton": "Acciones",
+    "importConflictLabel": "Si un documento ya existe",
+    "importConflictSkip": "Omitir — conservar el documento existente",
+    "importConflictReplace": "Reemplazar — sobrescribir con el importado",
+    "importConflictNewId": "Conservar ambos — importar con un nuevo id"
   },
   "entitiesView": {
     "viewRelations": "Relaciones",
@@ -948,6 +1024,73 @@
     "detailMetadata": "Metadatos",
     "entryCount": "{count, plural, one {# entrada} other {# entradas}}"
   },
+  "llmRequestsView": {
+    "callVolume": "Volumen de llamadas",
+    "tokenVolume": "Volumen de tokens",
+    "metricCalls": "Llamadas",
+    "metricTokens": "Tokens",
+    "tokenModeTotal": "Total",
+    "tokenModeBreakdown": "Desglose",
+    "cumulative": "Acumulado",
+    "tokensInput": "Entrada",
+    "tokensOutput": "Salida",
+    "tokensCached": "En caché",
+    "tokensTotal": "Total",
+    "tableHeaderTokens": "Tokens",
+    "chartLoading": "Cargando...",
+    "chartNoData": "Sin datos para este período",
+    "statusAll": "Todos los estados",
+    "statusSuccess": "Éxito",
+    "statusError": "Error",
+    "operationAll": "Todas las operaciones",
+    "operationRetain": "Retain",
+    "operationReflect": "Reflect",
+    "operationConsolidation": "Consolidación",
+    "operationRefreshMentalModel": "Actualización de modelo mental",
+    "periodToday": "Hoy",
+    "periodLast7Days": "Últimos 7 días",
+    "periodLast30Days": "Últimos 30 días",
+    "dateRangeAll": "Todo el tiempo",
+    "dateRangeLastHour": "Última hora",
+    "dateRangeLast24Hours": "Últimas 24 horas",
+    "dateRangeLast7Days": "Últimos 7 días",
+    "dateRangeLast30Days": "Últimos 30 días",
+    "refresh": "Actualizar",
+    "tableHeaderTime": "Hora",
+    "tableHeaderOperation": "Operación",
+    "tableHeaderScope": "Ámbito",
+    "tableHeaderStatus": "Estado",
+    "tableHeaderDuration": "Duración",
+    "tableLoading": "Cargando...",
+    "tableNoRequests": "No se encontraron solicitudes LLM",
+    "paginationPage": "Página {current} de {total}",
+    "previous": "Anterior",
+    "next": "Siguiente",
+    "detailDialogTitle": "Solicitud LLM: {operation}",
+    "detailOperation": "Operación:",
+    "detailScope": "Ámbito:",
+    "detailProvider": "Proveedor:",
+    "detailModel": "Modelo:",
+    "detailStatus": "Estado:",
+    "detailStarted": "Iniciado:",
+    "detailDuration": "Duración:",
+    "detailInput": "Entrada",
+    "detailOutput": "Salida",
+    "detailError": "Error",
+    "detailLlmInfo": "Información de LLM",
+    "detailMetadata": "Metadatos",
+    "detailTrace": "Trace:",
+    "detailSpan": "Span:",
+    "detailParentSpan": "Span padre:",
+    "detailViewRun": "Ver todas las llamadas de esta ejecución",
+    "traceFilterActive": "Ejecución de operación:",
+    "traceFilterClear": "Limpiar",
+    "groupByRun": "Agrupar",
+    "groupByRunHint": "Agrupar las llamadas al LLM por ejecución de operación",
+    "entryCount": "{count, plural, one {# entrada} other {# entradas}}",
+    "memoriesCreated": "Memorias creadas ({count}):",
+    "memoriesSource": "Memorias de origen ({count}):"
+  },
   "observationHistory": {
     "unchanged": "sin cambios",
     "new": "nuevo",
@@ -1081,7 +1224,10 @@
     "sourceMentioned": "Mencionado",
     "viewDocumentButton": "Ver documento",
     "viewChunkButton": "Ver fragmento",
-    "viewHistory": "Ver historial"
+    "viewHistory": "Ver historial",
+    "tracedByTitle": "Creado por",
+    "tracedBySummary": "{calls} llamadas · {tokens} tokens",
+    "consolidatedByTitle": "Consolidado por"
   },
   "documentChunkModal": {
     "documentTitle": "Detalles del documento",
@@ -1210,7 +1356,8 @@
     "legendMany": "muchos",
     "linkTypeSemantic": "semántico",
     "linkTypeTemporal": "temporal",
-    "linkTypeEntity": "entidad"
+    "linkTypeEntity": "entidad",
+    "linkTypeCausal": "causal"
   },
   "metadata": {
     "title": "Hindsight Cloud",
@@ -1319,7 +1466,8 @@
         "bankAndModelIdRequired": "bank_id y model_id son obligatorios",
         "operationIdRequired": "operation_id es obligatorio",
         "missingRequestData": "Faltan datos de la solicitud",
-        "missingBankId": "Falta bank_id"
+        "missingBankId": "Falta bank_id",
+        "fileRequired": "Se requiere un archivo"
       },
       "generic": {
         "failed": "Error",
@@ -1357,7 +1505,9 @@
         "updateTags": "No se pudieron actualizar las etiquetas del documento",
         "delete": "No se pudo eliminar el documento",
         "chunks": "No se pudieron obtener los fragmentos del documento",
-        "reprocess": "No se pudo reprocesar el documento"
+        "reprocess": "No se pudo reprocesar el documento",
+        "export": "No se pudieron exportar los documentos",
+        "import": "No se pudieron importar los documentos"
       },
       "files": {
         "upload": "No se pudieron subir los archivos"
@@ -1406,6 +1556,10 @@
       "auditLogs": {
         "list": "No se pudieron listar los registros de auditoría",
         "stats": "No se pudieron obtener las estadísticas de registros de auditoría"
+      },
+      "llmRequests": {
+        "list": "No se pudieron listar las solicitudes LLM",
+        "stats": "No se pudieron obtener las estadísticas de solicitudes LLM"
       },
       "tags": {
         "list": "No se pudieron listar las etiquetas"
