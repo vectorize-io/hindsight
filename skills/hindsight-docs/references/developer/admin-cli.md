@@ -4,13 +4,35 @@ The `hindsight-admin` CLI provides administrative commands for managing your Hin
 
 ## Installation
 
-The admin CLI is included with the `hindsight-api` package:
+The admin CLI is included with the `hindsight-api` package — installing it puts the `hindsight-admin` executable on your `PATH`:
 
 ```bash
 pip install hindsight-api
 # or
 uv add hindsight-api
 ```
+
+## Running the CLI
+
+`hindsight-admin` connects **directly to PostgreSQL** — it does not call the HTTP API. It reads the **same configuration as the API service** (environment variables, and a `.env` file in the current working directory), so it operates on whatever database `HINDSIGHT_API_DATABASE_URL` points to:
+
+- **Default**: `pg0`, the embedded development database (must be run on the host that owns the pg0 data).
+- **Production**: set `HINDSIGHT_API_DATABASE_URL=postgresql://user:pass@host:5432/hindsight`.
+
+Because it talks to the database directly (binary `COPY`, `TRUNCATE`, etc.), the admin CLI is **PostgreSQL-only** (not supported on Oracle). Run it on the same host/container as your API deployment so it inherits the right configuration and has network access to the database:
+
+```bash
+# Bare metal / virtualenv (with the API's env or a .env in the working dir)
+hindsight-admin worker-status
+
+# Docker — exec into the API container
+docker exec -it hindsight-api hindsight-admin backup /data/backup.zip
+
+# Kubernetes — exec into an API pod
+kubectl exec deploy/hindsight-api -- hindsight-admin run-db-migration
+```
+
+Use `--schema` to target a specific tenant schema (commands default to the configured base schema). See [Environment Variables](#environment-variables) below.
 
 ## Commands
 
