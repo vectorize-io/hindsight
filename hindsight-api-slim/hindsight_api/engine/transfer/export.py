@@ -39,10 +39,15 @@ logger = logging.getLogger(__name__)
 # test_export_bank_covers_schema enforces this so a table added by a future
 # migration can't be silently dropped from a migration archive.
 
-# Recreated by replaying the document/fact/observation export through the import
-# pipeline — re-embedded with the target model, entities re-resolved, links and
-# cooccurrence stats rebuilt. Not dumped as rows.
-_LOGICAL_TABLES = frozenset(
+# NOT written to the archive — rebuilt on import by replaying the document/fact/
+# observation payload through the import pipeline:
+#   * documents / chunks / memory_units carry their *text* in the logical document
+#     payload (TransferDocument) and are re-embedded with the target model;
+#   * entities / unit_entities / memory_links / entity_cooccurrences are derived
+#     data — the pipeline re-resolves entities and rebuilds links/cooccurrence
+#     stats against the target bank, so they are never exported.
+# Listed here only so the coverage guard can assert every table is classified.
+_REPLAYED_TABLES = frozenset(
     {
         "documents",
         "chunks",

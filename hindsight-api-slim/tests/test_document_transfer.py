@@ -100,11 +100,11 @@ def test_export_bank_covers_schema():
     from hindsight_api.engine.transfer.export import (
         _BANK_ROW_TABLES,
         _HISTORY_TABLES,
-        _LOGICAL_TABLES,
+        _REPLAYED_TABLES,
         _SKIP_TABLES,
     )
 
-    buckets = [set(_LOGICAL_TABLES), set(_BANK_ROW_TABLES), set(_HISTORY_TABLES), set(_SKIP_TABLES)]
+    buckets = [set(_REPLAYED_TABLES), set(_BANK_ROW_TABLES), set(_HISTORY_TABLES), set(_SKIP_TABLES)]
     classified = set().union(*buckets)
     assert classified == set(BACKUP_TABLES), (
         f"export-bank classification drifted from BACKUP_TABLES: "

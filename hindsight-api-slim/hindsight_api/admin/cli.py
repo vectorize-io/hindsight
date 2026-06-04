@@ -65,6 +65,23 @@ BACKUP_TABLES = [
 MANIFEST_VERSION = "1"
 
 
+async def _admin_connect(db_url: str) -> asyncpg.Connection:
+    """Open a raw asyncpg connection to an admin DB URL.
+
+    ``resolve_database_url`` handles both plain ``postgres://`` (passthrough) and
+    ``pg0://`` (boots the embedded server and returns its real libpq URL), so this
+    is the only step needed to connect. JSON codecs are registered so ``jsonb``
+    columns decode to Python objects (used by the export row dumps).
+    """
+    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    if is_pg0:
+        typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
+    conn = await asyncpg.connect(await resolve_database_url(db_url))
+    for type_name in ("json", "jsonb"):
+        await conn.set_type_codec(type_name, encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
+    return conn
+
+
 async def _backup(database_url: str, output_path: Path, schema: str = "public") -> dict[str, Any]:
     """Backup all tables to a zip file using binary COPY protocol."""
     conn = await asyncpg.connect(database_url)
@@ -334,18 +351,9 @@ def run_db_migration(
 
 
 async def _run_export_bank(db_url: str, bank_id: str, output: Path, schema: str, include_history: bool) -> int:
-    """Resolve the database URL and export a whole bank to a ZIP archive."""
-    is_pg0, instance_name, _ = parse_pg0_url(db_url)
-    if is_pg0:
-        typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
-    resolved_url = await resolve_database_url(db_url)
-
-    conn = await asyncpg.connect(resolved_url)
+    """Export a whole bank to a ZIP archive."""
+    conn = await _admin_connect(db_url)
     try:
-        # asyncpg returns jsonb as text by default; decode to Python objects so
-        # carried rows (e.g. retain_params, metadata) serialize cleanly.
-        for type_name in ("json", "jsonb"):
-            await conn.set_type_codec(type_name, encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
         # export_bank resolves table names via fq_table (the _current_schema
         # contextvar); set it so the raw connection targets the right schema.
         _current_schema.set(schema)
