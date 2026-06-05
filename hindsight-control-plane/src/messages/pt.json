@@ -454,12 +454,19 @@
       "created": "Criada",
       "updated": "Atualizada",
       "completed": "Concluída",
-      "progress": "Progresso"
+      "progress": "Progresso",
+      "lastHeartbeat": "Último sinal"
     },
     "metadata": "Metadados",
     "error": "Erro",
     "rawPayloadParentHelp": "Esta é uma operação pai: o payload bruto é armazenado em cada sublote. Abra uma operação filha para inspecionar seu payload.",
-    "rawPayloadEmpty": "Nenhum payload bruto armazenado para esta operação."
+    "rawPayloadEmpty": "Nenhum payload bruto armazenado para esta operação.",
+    "heartbeat": {
+      "justNow": "agora mesmo",
+      "secondsAgo": "há {secs}s",
+      "minutesAgo": "há {mins}min",
+      "hoursAgo": "há {hours}h"
+    }
   },
   "dataView": {
     "loadingMemories": "Carregando memórias...",

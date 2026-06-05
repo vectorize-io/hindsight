@@ -454,12 +454,19 @@
       "created": "建立時間",
       "updated": "更新時間",
       "completed": "完成時間",
-      "progress": "進度"
+      "progress": "進度",
+      "lastHeartbeat": "最後心跳"
     },
     "metadata": "中繼資料",
     "error": "錯誤",
     "rawPayloadParentHelp": "這是父級操作，原始酬載存放在每個子批次上。開啟子操作以檢視其酬載。",
-    "rawPayloadEmpty": "此操作沒有儲存原始酬載。"
+    "rawPayloadEmpty": "此操作沒有儲存原始酬載。",
+    "heartbeat": {
+      "justNow": "剛剛",
+      "secondsAgo": "{secs}秒前",
+      "minutesAgo": "{mins}分鐘前",
+      "hoursAgo": "{hours}小時前"
+    }
   },
   "dataView": {
     "loadingMemories": "載入中記憶...",

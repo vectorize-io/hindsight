@@ -454,12 +454,19 @@
       "created": "Erstellt",
       "updated": "Aktualisiert",
       "completed": "Abgeschlossen",
-      "progress": "Fortschritt"
+      "progress": "Fortschritt",
+      "lastHeartbeat": "Letzter Heartbeat"
     },
     "metadata": "Metadaten",
     "error": "Fehler",
     "rawPayloadParentHelp": "Dies ist ein übergeordneter Vorgang: Die Rohdaten-Payload wird in jedem Teilbatch gespeichert. Öffnen Sie einen untergeordneten Vorgang, um seine Payload zu prüfen.",
-    "rawPayloadEmpty": "Für diesen Vorgang ist keine Rohdaten-Payload gespeichert."
+    "rawPayloadEmpty": "Für diesen Vorgang ist keine Rohdaten-Payload gespeichert.",
+    "heartbeat": {
+      "justNow": "gerade eben",
+      "secondsAgo": "vor {secs}s",
+      "minutesAgo": "vor {mins}m",
+      "hoursAgo": "vor {hours}h"
+    }
   },
   "dataView": {
     "loadingMemories": "Erinnerungen werden geladen...",

@@ -744,13 +744,19 @@ async def _run_consolidation_job(
     hit_round_limit = False
 
     llm_batch_num = 0
-    consolidation_round = 0
-    # Cumulative count of memories processed across the whole job, shared by
-    # the per-batch log so it can still report processed/total under parallelism.
-    # Mutable container so the inner closure can update without a `nonlocal`.
-    cumulative_progress = {"processed": 0}
+    # Cumulative counters across the whole job, shared by the per-batch log and the
+    # durable progress snapshot so both report processed/total (and observation
+    # tallies) under parallelism. Mutable container so the inner closure can update
+    # without a `nonlocal`.
+    cumulative_progress = {
+        "processed": 0,
+        "observations_created": 0,
+        "observations_updated": 0,
+        "observations_merged": 0,
+        "observations_deleted": 0,
+        "memories_failed": 0,
+    }
     while True:
-        consolidation_round += 1
         # Cap fetch size by remaining round budget
         fetch_limit = (
             min(max_memories_per_batch, int(round_remaining)) if round_limit_enabled else max_memories_per_batch
@@ -970,12 +976,18 @@ async def _run_consolidation_job(
                     local_stats["memories_failed"] += 1
 
             # Maintain the cumulative-progress indicator under parallelism:
-            # increment a shared counter and snapshot under the same statement
-            # so the snapshot includes this batch. No await between the read
-            # and write, so single-threaded asyncio gives us atomicity for free
-            # — no lock needed.
+            # increment shared counters and snapshot under the same statements so
+            # the snapshot includes this batch. No await between the reads and
+            # writes, so single-threaded asyncio gives us atomicity for free —
+            # no lock needed.
             cumulative_progress["processed"] += local_stats["memories_processed"]
+            cumulative_progress["observations_created"] += local_stats["observations_created"]
+            cumulative_progress["observations_updated"] += local_stats["observations_updated"]
+            cumulative_progress["observations_merged"] += local_stats["observations_merged"]
+            cumulative_progress["observations_deleted"] += local_stats["observations_deleted"]
+            cumulative_progress["memories_failed"] += local_stats["memories_failed"]
             cum_processed = cumulative_progress["processed"]
+            cum_snapshot = dict(cumulative_progress)
 
             # Per-batch log uses batch_perf so timings/llm-calls/tokens reflect
             # only this batch's own work, even when other batches are running
@@ -1001,6 +1013,27 @@ async def _run_consolidation_job(
                 + (f" failed={local_stats['memories_failed']}" if local_stats["memories_failed"] else "")
                 + f" | input_tokens=~{input_tokens}"
                 f" | avg={llm_batch_time / max(1, len(llm_batch_local)):.3f}s/memory"
+            )
+
+            # Durable progress snapshot per LLM batch — this is the heartbeat an
+            # operator polls. The whole fetched batch is processed inside one outer
+            # round, so a round-boundary write would sit at the pre-round count for
+            # the entire (often minutes-long) LLM phase; writing here advances
+            # processed/total as each batch commits. set_stage mirrors it for the
+            # live worker log.
+            set_stage(f"consolidation.llm_batch.{batch_num_local}")
+            await memory_engine._write_operation_progress(
+                operation_id,
+                stage="processing_batch",
+                processed=cum_processed,
+                total=total_count,
+                detail={
+                    "observations_created": cum_snapshot["observations_created"],
+                    "observations_updated": cum_snapshot["observations_updated"],
+                    "observations_merged": cum_snapshot["observations_merged"],
+                    "observations_deleted": cum_snapshot["observations_deleted"],
+                    "memories_failed": cum_snapshot["memories_failed"],
+                },
             )
 
             # Fold batch counters into the job-level perf so the final summary
@@ -1080,25 +1113,6 @@ async def _run_consolidation_job(
 
         if any_cancelled:
             return {"status": "cancelled", "bank_id": bank_id, **stats}
-
-        # Durable progress snapshot at the round boundary (coarse — one short write per
-        # DB fetch batch, not per memory) so the operation status API reflects forward
-        # progress: memories consolidated so far + the observation counters.
-        set_stage(f"consolidation.round.{consolidation_round}")
-        await memory_engine._write_operation_progress(
-            operation_id,
-            stage="processing_batch",
-            processed=stats["memories_processed"],
-            total=total_count,
-            detail={
-                "round": consolidation_round,
-                "observations_created": stats["observations_created"],
-                "observations_updated": stats["observations_updated"],
-                "observations_merged": stats["observations_merged"],
-                "observations_deleted": stats["observations_deleted"],
-                "memories_failed": stats["memories_failed"],
-            },
-        )
 
         # Update round budget after processing this DB fetch batch
         if round_limit_enabled:

@@ -454,12 +454,19 @@
       "created": "作成日時",
       "updated": "更新日時",
       "completed": "完了日時",
-      "progress": "進捗"
+      "progress": "進捗",
+      "lastHeartbeat": "最終更新"
     },
     "metadata": "メタデータ",
     "error": "エラー",
     "rawPayloadParentHelp": "これは親操作です。生のペイロードは各サブバッチに保存されています。子操作を開いてペイロードを確認してください。",
-    "rawPayloadEmpty": "この操作に保存された生のペイロードはありません。"
+    "rawPayloadEmpty": "この操作に保存された生のペイロードはありません。",
+    "heartbeat": {
+      "justNow": "たった今",
+      "secondsAgo": "{secs}秒前",
+      "minutesAgo": "{mins}分前",
+      "hoursAgo": "{hours}時間前"
+    }
   },
   "dataView": {
     "loadingMemories": "メモリを読み込み中...",

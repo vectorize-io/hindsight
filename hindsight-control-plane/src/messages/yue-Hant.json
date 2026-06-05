@@ -454,12 +454,19 @@
       "created": "建立時間",
       "updated": "更新時間",
       "completed": "完成時間",
-      "progress": "進度"
+      "progress": "進度",
+      "lastHeartbeat": "最後心跳"
     },
     "metadata": "元資料",
     "error": "錯誤",
     "rawPayloadParentHelp": "呢個係父級操作，原始載荷會儲存在每個子批次。開啟子操作就可以查看佢嘅載荷。",
-    "rawPayloadEmpty": "此操作未有儲存原始載荷。"
+    "rawPayloadEmpty": "此操作未有儲存原始載荷。",
+    "heartbeat": {
+      "justNow": "啱啱",
+      "secondsAgo": "{secs}秒前",
+      "minutesAgo": "{mins}分鐘前",
+      "hoursAgo": "{hours}小時前"
+    }
   },
   "dataView": {
     "loadingMemories": "載入中記憶...",

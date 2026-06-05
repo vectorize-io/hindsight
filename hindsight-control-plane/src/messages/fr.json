@@ -454,12 +454,19 @@
       "created": "Créée",
       "updated": "Mise à jour",
       "completed": "Terminée",
-      "progress": "Progression"
+      "progress": "Progression",
+      "lastHeartbeat": "Dernier signal"
     },
     "metadata": "Métadonnées",
     "error": "Erreur",
     "rawPayloadParentHelp": "Il s'agit d'une opération parente : la charge utile brute est stockée dans chaque sous-lot. Ouvrez une opération enfant pour inspecter sa charge utile.",
-    "rawPayloadEmpty": "Aucune charge utile brute stockée pour cette opération."
+    "rawPayloadEmpty": "Aucune charge utile brute stockée pour cette opération.",
+    "heartbeat": {
+      "justNow": "à l'instant",
+      "secondsAgo": "il y a {secs}s",
+      "minutesAgo": "il y a {mins}min",
+      "hoursAgo": "il y a {hours}h"
+    }
   },
   "dataView": {
     "loadingMemories": "Chargement des souvenirs...",

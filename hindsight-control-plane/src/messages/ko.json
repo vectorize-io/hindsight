@@ -454,12 +454,19 @@
       "created": "생성일",
       "updated": "업데이트됨",
       "completed": "완료됨",
-      "progress": "진행 상황"
+      "progress": "진행 상황",
+      "lastHeartbeat": "마지막 신호"
     },
     "metadata": "메타데이터",
     "error": "오류",
     "rawPayloadParentHelp": "이 작업은 상위 작업입니다. 원시 페이로드는 각 하위 배치에 저장됩니다. 하위 작업을 열어 페이로드를 확인하세요.",
-    "rawPayloadEmpty": "이 작업에 저장된 원시 페이로드가 없습니다."
+    "rawPayloadEmpty": "이 작업에 저장된 원시 페이로드가 없습니다.",
+    "heartbeat": {
+      "justNow": "방금",
+      "secondsAgo": "{secs}초 전",
+      "minutesAgo": "{mins}분 전",
+      "hoursAgo": "{hours}시간 전"
+    }
   },
   "dataView": {
     "loadingMemories": "메모리 불러오는 중...",

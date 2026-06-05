@@ -454,12 +454,19 @@
       "created": "Creada",
       "updated": "Actualizada",
       "completed": "Completada",
-      "progress": "Progreso"
+      "progress": "Progreso",
+      "lastHeartbeat": "Último latido"
     },
     "metadata": "Metadatos",
     "error": "Error",
     "rawPayloadParentHelp": "Esta es una operación principal: la carga útil sin procesar se almacena en cada sublote. Abre una operación secundaria para inspeccionar su carga útil.",
-    "rawPayloadEmpty": "No hay carga útil sin procesar almacenada para esta operación."
+    "rawPayloadEmpty": "No hay carga útil sin procesar almacenada para esta operación.",
+    "heartbeat": {
+      "justNow": "ahora mismo",
+      "secondsAgo": "hace {secs}s",
+      "minutesAgo": "hace {mins}min",
+      "hoursAgo": "hace {hours}h"
+    }
   },
   "dataView": {
     "loadingMemories": "Cargando memorias...",

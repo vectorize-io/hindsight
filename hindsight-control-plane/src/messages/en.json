@@ -454,12 +454,19 @@
       "created": "Created",
       "updated": "Updated",
       "completed": "Completed",
-      "progress": "Progress"
+      "progress": "Progress",
+      "lastHeartbeat": "Last heartbeat"
     },
     "metadata": "Metadata",
     "error": "Error",
     "rawPayloadParentHelp": "This is a parent operation — the raw payload is stored on each sub-batch. Open a child operation to inspect its payload.",
-    "rawPayloadEmpty": "No raw payload stored for this operation."
+    "rawPayloadEmpty": "No raw payload stored for this operation.",
+    "heartbeat": {
+      "justNow": "just now",
+      "secondsAgo": "{secs}s ago",
+      "minutesAgo": "{mins}m ago",
+      "hoursAgo": "{hours}h ago"
+    }
   },
   "dataView": {
     "loadingMemories": "Loading memories...",

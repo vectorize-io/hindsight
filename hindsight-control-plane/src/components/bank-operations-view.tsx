@@ -130,6 +130,10 @@ export function BankOperationsView() {
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [loadingPayload, setLoadingPayload] = useState(false);
   const [payloadLoadedFor, setPayloadLoadedFor] = useState<string | null>(null);
+  // Ticks once a second so the "last heartbeat" relative time counts up live between
+  // the 5s data polls — a heartbeat that keeps aging without the snapshot advancing is
+  // the signal a job is stuck.
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const statusLabels: Record<string, string> = {
     all: t("status.all"),
@@ -214,10 +218,23 @@ export function BankOperationsView() {
     );
   };
 
+  // Compact "time since the snapshot was written", recomputed against the 1s tick so it
+  // counts up live. Seconds granularity (unlike the minute-level bankStats helper) because
+  // a heartbeat that hasn't moved for even ~30s on an active job is already suspicious.
+  const formatHeartbeat = (atIso: string): string => {
+    const at = new Date(atIso).getTime();
+    if (Number.isNaN(at)) return "";
+    const secs = Math.max(0, Math.round((nowMs - at) / 1000));
+    if (secs < 5) return t("heartbeat.justNow");
+    if (secs < 60) return t("heartbeat.secondsAgo", { secs });
+    if (secs < 3600) return t("heartbeat.minutesAgo", { mins: Math.floor(secs / 60) });
+    return t("heartbeat.hoursAgo", { hours: Math.floor(secs / 3600) });
+  };
+
   // Render the last-known progress snapshot for a running operation. The worker writes
-  // it at coarse phase boundaries (consolidation rounds, retain sub-batches); a snapshot
-  // that keeps advancing across the auto-refresh means a healthy long-running job, a
-  // frozen one means it may be stuck. Returns null when no snapshot was recorded yet.
+  // it per LLM batch / sub-batch; a snapshot that keeps advancing (and a heartbeat that
+  // stays fresh) means a healthy long-running job, a frozen one means it may be stuck.
+  // Returns null when no snapshot was recorded yet.
   const renderProgress = (progress: OperationProgress | null | undefined) => {
     if (!progress) return null;
     const stageLabel = progress.stage.replace(/[._]/g, " ");
@@ -241,6 +258,17 @@ export function BankOperationsView() {
         {pct !== null && (
           <div className="h-1 w-24 rounded-full bg-muted overflow-hidden">
             <div className="h-full rounded-full bg-blue-500/70" style={{ width: `${pct}%` }} />
+          </div>
+        )}
+        {progress.at && (
+          <div
+            className="flex items-center gap-1 text-[10px] text-muted-foreground/80"
+            title={new Date(progress.at).toLocaleString()}
+          >
+            <Clock className="w-2.5 h-2.5" />
+            <span>
+              {t("field.lastHeartbeat")} · {formatHeartbeat(progress.at)}
+            </span>
           </div>
         )}
       </div>
@@ -365,6 +393,15 @@ export function BankOperationsView() {
       return () => clearInterval(interval);
     }
   }, [currentBank, statusFilter, offset, taskTypeFilter]);
+
+  // Only tick the heartbeat clock while something is actually running — no point
+  // re-rendering every second when every operation is in a terminal state.
+  const hasProcessing = operations.some((op) => op.status === "processing");
+  useEffect(() => {
+    if (!hasProcessing) return;
+    const tick = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, [hasProcessing]);
 
   if (!currentBank) return null;
 
