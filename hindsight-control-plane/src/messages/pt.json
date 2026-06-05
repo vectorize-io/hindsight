@@ -453,7 +453,8 @@
       "type": "Tipo",
       "created": "Criada",
       "updated": "Atualizada",
-      "completed": "Concluída"
+      "completed": "Concluída",
+      "progress": "Progresso"
     },
     "metadata": "Metadados",
     "error": "Erro",

@@ -453,7 +453,8 @@
       "type": "유형",
       "created": "생성일",
       "updated": "업데이트됨",
-      "completed": "완료됨"
+      "completed": "완료됨",
+      "progress": "진행 상황"
     },
     "metadata": "메타데이터",
     "error": "오류",

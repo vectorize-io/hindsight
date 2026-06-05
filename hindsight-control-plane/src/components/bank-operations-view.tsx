@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
-import { client } from "@/lib/api";
+import { client, type OperationProgress } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -47,6 +47,7 @@ interface Operation {
   created_at: string;
   status: string;
   error_message: string | null;
+  progress?: OperationProgress | null;
 }
 
 interface ChildOperationStatus {
@@ -66,6 +67,7 @@ type OperationDetails =
       updated_at: string | null;
       completed_at: string | null;
       error_message: string | null;
+      progress?: OperationProgress | null;
       result_metadata?: {
         items_count?: number;
         total_tokens?: number;
@@ -86,6 +88,7 @@ type OperationDetails =
       updated_at?: never;
       completed_at?: never;
       error_message?: never;
+      progress?: never;
       result_metadata?: never;
       child_operations?: never;
       task_payload?: never;
@@ -208,6 +211,37 @@ export function BankOperationsView() {
       <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground border border-border">
         {label}
       </span>
+    );
+  };
+
+  // Render the last-known progress snapshot for a running operation. The worker writes
+  // it at coarse phase boundaries (consolidation rounds, retain sub-batches); a snapshot
+  // that keeps advancing across the auto-refresh means a healthy long-running job, a
+  // frozen one means it may be stuck. Returns null when no snapshot was recorded yet.
+  const renderProgress = (progress: OperationProgress | null | undefined) => {
+    if (!progress) return null;
+    const stageLabel = progress.stage.replace(/[._]/g, " ");
+    const hasCounts =
+      typeof progress.processed === "number" && typeof progress.total === "number" && progress.total > 0;
+    const pct = hasCounts
+      ? Math.min(100, Math.round((progress.processed! / progress.total!) * 100))
+      : null;
+    return (
+      <div className="mt-1 space-y-1">
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="capitalize">{stageLabel}</span>
+          {hasCounts && (
+            <span className="font-mono">
+              {progress.processed}/{progress.total}
+            </span>
+          )}
+        </div>
+        {pct !== null && (
+          <div className="h-1 w-24 rounded-full bg-muted overflow-hidden">
+            <div className="h-full rounded-full bg-blue-500/70" style={{ width: `${pct}%` }} />
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -422,7 +456,10 @@ export function BankOperationsView() {
                       <TableCell className="text-sm text-muted-foreground">
                         {new Date(op.created_at).toLocaleString()}
                       </TableCell>
-                      <TableCell>{renderStatusBadge(op.status, op.error_message)}</TableCell>
+                      <TableCell>
+                        {renderStatusBadge(op.status, op.error_message)}
+                        {op.status === "processing" && renderProgress(op.progress)}
+                      </TableCell>
                       <TableCell>
                         {op.status === "pending" && (
                           <Button
@@ -589,6 +626,31 @@ export function BankOperationsView() {
                       </div>
                     )}
                   </div>
+
+                  {/* Progress snapshot — last reported phase/counters for a running
+                      (or last-running) operation; helps tell a healthy long job from a stuck one. */}
+                  {selectedOperation.progress && (
+                    <div>
+                      <div className="text-sm font-medium text-muted-foreground mb-1">
+                        {t("field.progress")}
+                      </div>
+                      {renderProgress(selectedOperation.progress)}
+                      {selectedOperation.progress.detail &&
+                        Object.keys(selectedOperation.progress.detail).length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {Object.entries(selectedOperation.progress.detail).map(([key, value]) => (
+                              <span
+                                key={key}
+                                className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                              >
+                                <span className="capitalize">{key.replace(/_/g, " ")}</span>
+                                <span className="font-mono text-foreground">{value}</span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                    </div>
+                  )}
 
                   {/* Action buttons */}
                   {(selectedOperation.status === "pending" ||

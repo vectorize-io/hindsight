@@ -130,6 +130,20 @@ export interface LLMRequestStatsResponse {
   buckets: LLMRequestStatsBucket[];
 }
 
+/**
+ * Last-known progress snapshot for a long-running async operation (consolidation,
+ * batch retain). Written at coarse phase/batch boundaries by the worker; null until
+ * the operation reaches its first checkpoint. `processed`/`total` advancing across
+ * polls (with a moving `at`) means healthy; frozen numbers mean worth investigating.
+ */
+export interface OperationProgress {
+  stage: string;
+  at: string;
+  processed?: number | null;
+  total?: number | null;
+  detail?: Record<string, number> | null;
+}
+
 export type TagsMatch = "any" | "all" | "any_strict" | "all_strict";
 
 export type TagGroup =
@@ -453,6 +467,7 @@ export class ControlPlaneClient {
         created_at: string;
         status: string;
         error_message: string | null;
+        progress?: OperationProgress | null;
       }>;
     }>(`/api/operations/${encodeURIComponent(bankId)}${query ? `?${query}` : ""}`);
   }
@@ -945,6 +960,7 @@ export class ControlPlaneClient {
       updated_at: string | null;
       completed_at: string | null;
       error_message: string | null;
+      progress?: OperationProgress | null;
       result_metadata?: {
         items_count?: number;
         total_tokens?: number;

@@ -453,7 +453,8 @@
       "type": "タイプ",
       "created": "作成日時",
       "updated": "更新日時",
-      "completed": "完了日時"
+      "completed": "完了日時",
+      "progress": "進捗"
     },
     "metadata": "メタデータ",
     "error": "エラー",

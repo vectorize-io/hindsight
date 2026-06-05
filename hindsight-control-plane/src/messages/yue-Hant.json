@@ -453,7 +453,8 @@
       "type": "類型",
       "created": "建立時間",
       "updated": "更新時間",
-      "completed": "完成時間"
+      "completed": "完成時間",
+      "progress": "進度"
     },
     "metadata": "元資料",
     "error": "錯誤",
