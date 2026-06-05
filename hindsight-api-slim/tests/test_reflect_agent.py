@@ -24,6 +24,7 @@ from hindsight_api.engine.reflect.agent import (
     run_reflect_agent,
 )
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
+from tests.llm_judge import assert_meets_criteria
 
 
 class TestCleanAnswerText:
@@ -1041,3 +1042,138 @@ class TestContextOverflowIntegration:
 
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.hs_llm_core
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
+class TestMentalModelShortCircuitRealLLM:
+    """End-to-end, real-LLM coverage for the fresh-mental-model short-circuit.
+
+    The deterministic release-to-auto mechanism is covered by the MockLLM tests
+    above. What only a real model can verify is the behaviour *after* release:
+    that a real agent, once it is no longer forced, actually answers off a fresh
+    sufficient mental model — and, when the model is fresh but incomplete, that
+    it chooses to retrieve deeper itself with its own targeted query.
+
+    The search functions are stubbed so the mental-model content is controlled,
+    but ``llm_config`` drives the real agent loop.
+    """
+
+    @staticmethod
+    def _stub_functions(mental_models, recall_memories=None, observations=None):
+        async def search_mental_models_fn(query, max_results):
+            return {"query": query, "count": len(mental_models), "mental_models": mental_models}
+
+        return {
+            "search_mental_models_fn": AsyncMock(side_effect=search_mental_models_fn),
+            "search_observations_fn": AsyncMock(return_value={"observations": observations or []}),
+            "recall_fn": AsyncMock(return_value={"memories": recall_memories or []}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+
+    @pytest.mark.asyncio
+    async def test_real_fresh_mental_model_answers_without_lower_retrieval(self, llm_config):
+        """A fresh, sufficient mental model lets the real agent answer without obs/recall."""
+        functions = self._stub_functions(
+            mental_models=[
+                {
+                    "id": "mm-comm",
+                    "name": "Architecture Communication Preference",
+                    "content": (
+                        "For architecture decisions, the team prefers asynchronous written communication. "
+                        "They use concise ADRs (Architecture Decision Records) and explicitly avoid settling "
+                        "complex design questions in live meetings."
+                    ),
+                    "relevance": 0.94,
+                    "is_stale": False,
+                }
+            ]
+        )
+
+        result = await run_reflect_agent(
+            llm_config=llm_config,
+            bank_id="test-bank",
+            query="According to what you know, how does the team prefer to communicate about architecture decisions?",
+            bank_profile={"name": "Test", "mission": "Answer from curated knowledge"},
+            has_mental_models=True,
+            include_observations=True,
+            include_recall=True,
+            budget="low",
+            max_iterations=6,
+            **functions,
+        )
+
+        assert result.text, "agent must return a non-empty answer"
+        # The core behavioural win: the forced lower-level path was released, and a
+        # real model answered off the fresh mental model instead of digging deeper.
+        functions["search_observations_fn"].assert_not_called()
+        functions["recall_fn"].assert_not_called()
+        await assert_meets_criteria(
+            response=result.text,
+            criteria=(
+                "The answer states the team prefers asynchronous written communication for architecture "
+                "decisions (e.g. ADRs) rather than live meetings."
+            ),
+            context="The only knowledge available was a mental model describing the team's async/ADR preference.",
+        )
+
+    @pytest.mark.asyncio
+    async def test_real_stale_mental_model_forces_and_grounds_in_deeper_evidence(self, llm_config):
+        """A stale mental model must NOT short-circuit: the agent is forced deeper and grounds its answer there.
+
+        This is the safety side of the guard. Forcing the lower layers is
+        deterministic (stale fails the freshness check), so observations/recall
+        run regardless of model discretion; the real-LLM value is confirming the
+        agent corrects the stale summary using the freshly retrieved raw fact.
+        """
+        functions = self._stub_functions(
+            mental_models=[
+                {
+                    "id": "mm-aurora",
+                    "name": "Project Aurora Launch Plan",
+                    "content": "Project Aurora's launch is still pending and has not happened yet.",
+                    "relevance": 0.91,
+                    "is_stale": True,
+                    "staleness_reason": "newer deployment facts exist",
+                }
+            ],
+            recall_memories=[
+                {
+                    "id": "mem-deploy",
+                    "content": "Project Aurora shipped to production on Friday at 16:00 UTC (deploy log A-1029).",
+                }
+            ],
+            observations=[
+                {
+                    "id": "obs-deploy",
+                    "content": "Aurora production deployment confirmed Friday; see deploy log A-1029.",
+                }
+            ],
+        )
+
+        result = await run_reflect_agent(
+            llm_config=llm_config,
+            bank_id="test-bank",
+            query="What is the current status of Project Aurora, and what concrete fact supports it?",
+            bank_profile={"name": "Test", "mission": "Answer with verifiable detail"},
+            has_mental_models=True,
+            include_observations=True,
+            include_recall=True,
+            budget="low",
+            max_iterations=6,
+            **functions,
+        )
+
+        assert result.text, "agent must return a non-empty answer"
+        # Stale mental model → no short-circuit → lower layers are still forced.
+        assert functions["search_observations_fn"].await_count > 0
+        assert functions["recall_fn"].await_count > 0
+        await assert_meets_criteria(
+            response=result.text,
+            criteria=(
+                "The answer states Project Aurora has launched/shipped to production (NOT that it is still "
+                "pending) and cites the Friday production deployment (e.g. deploy log A-1029) as support."
+            ),
+            context="A stale mental model claimed the launch was still pending, but the freshly retrieved raw "
+            "fact (deploy log A-1029) shows it shipped on Friday. The agent should correct the stale summary.",
+        )
