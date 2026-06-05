@@ -9642,6 +9642,66 @@
         "title": "MentalModelTrigger",
         "description": "Trigger settings for a mental model."
       },
+      "OperationProgress": {
+        "properties": {
+          "stage": {
+            "type": "string",
+            "title": "Stage",
+            "description": "Coarse phase the operation last reported (e.g. 'processing_batch')."
+          },
+          "at": {
+            "type": "string",
+            "title": "At",
+            "description": "ISO-8601 timestamp when this snapshot was written."
+          },
+          "processed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processed",
+            "description": "Units of work finished so far (sub-batches, memories), when known."
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total",
+            "description": "Total units of work for the operation, when known."
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail",
+            "description": "Operation-specific counters (e.g. observations_created, round, items_in_sub_batch)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "stage",
+          "at"
+        ],
+        "title": "OperationProgress",
+        "description": "Last-known progress snapshot for a long-running async operation.\n\nWritten at coarse phase/batch boundaries by the worker (consolidation, batch\nretain). Lets an operator polling the operation status API distinguish a healthy\nlong-running job (``processed`` advancing across polls) from a frozen one (same\nnumbers, no movement in ``at``). Absent (``null``) on operations that never\nreached a checkpoint \u2014 completed-instantly or pre-feature rows."
+      },
       "OperationResponse": {
         "properties": {
           "id": {
@@ -9670,6 +9730,18 @@
           "created_at": {
             "type": "string",
             "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At",
+            "description": "When this operation's row last changed (claim, progress heartbeat, or completion)."
           },
           "status": {
             "type": "string",
@@ -9709,6 +9781,17 @@
             ],
             "title": "Next Retry At",
             "description": "When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is waiting rather than available for immediate pickup \u2014 for example, an extension may have raised DeferOperation to park the task until some backpressure window opens. Always null for completed tasks."
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperationProgress"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last-known progress snapshot for a running operation; null if none was recorded."
           }
         },
         "type": "object",
@@ -9827,6 +9910,17 @@
             ],
             "title": "Next Retry At",
             "description": "When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is parked (e.g. by an extension raising DeferOperation) rather than awaiting immediate pickup."
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperationProgress"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last-known progress snapshot for a running operation; null if none was recorded."
           },
           "result_metadata": {
             "anyOf": [
