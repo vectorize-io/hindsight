@@ -161,9 +161,6 @@ _enabled_lock = threading.Lock()
 _original_completion = None
 _original_acompletion = None
 
-# Lock protecting _last_injection_debug writes
-_debug_lock = threading.Lock()
-
 
 @dataclass
 class InjectionDebugInfo:
