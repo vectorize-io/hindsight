@@ -32,8 +32,7 @@ class ValidationError(BaseModel):
     type: StrictStr
     input: Optional[Any] = None
     ctx: Optional[Dict[str, Any]] = None
-    url: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["loc", "msg", "type", "input", "ctx", "url"]
+    __properties: ClassVar[List[str]] = ["loc", "msg", "type", "input", "ctx"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -102,8 +101,7 @@ class ValidationError(BaseModel):
             "msg": obj.get("msg"),
             "type": obj.get("type"),
             "input": obj.get("input"),
-            "ctx": obj.get("ctx"),
-            "url": obj.get("url")
+            "ctx": obj.get("ctx")
         })
         return _obj
 

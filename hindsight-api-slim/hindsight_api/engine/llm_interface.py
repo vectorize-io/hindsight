@@ -84,7 +84,9 @@ class LLMInterface(ABC):
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
             skip_validation: Return raw JSON without Pydantic validation.
-            strict_schema: Use strict JSON schema enforcement (OpenAI only).
+            strict_schema: Grammar-enforce structured output via json_schema strict
+                (OpenAI-compatible, LiteLLM) instead of the soft json_object path. Gemini
+                enforces its response_schema natively; providers without a strict mode ignore it.
             return_usage: If True, return tuple (result, TokenUsage) instead of just result.
             cached_prefix: Opaque handle from ``get_or_create_cached_prefix`` for the
                 cacheable system prefix, or None. Providers without explicit prompt

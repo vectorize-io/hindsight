@@ -1086,12 +1086,15 @@ def _build_request_body(llm_config, config, prompt: str, user_message: str, resp
     if llm_config.provider == "openai" and llm_config._provider_impl.openai_service_tier:
         request_body["service_tier"] = llm_config._provider_impl.openai_service_tier
 
-    # Add response_format (JSON schema)
+    # Add response_format (JSON schema). The batch path builds the request body
+    # directly instead of going through LLMProvider.call(), so honour
+    # HINDSIGHT_API_LLM_STRICT_SCHEMA here too: strict=True grammar-enforces the
+    # output on capable backends rather than relying on the model to emit clean JSON.
     if hasattr(response_schema, "model_json_schema"):
         schema = response_schema.model_json_schema()
         request_body["response_format"] = {
             "type": "json_schema",
-            "json_schema": {"name": "facts", "schema": schema},
+            "json_schema": {"name": "facts", "schema": schema, "strict": config.llm_strict_schema},
         }
 
     return request_body

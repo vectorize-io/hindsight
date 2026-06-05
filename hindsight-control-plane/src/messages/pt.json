@@ -427,7 +427,7 @@
       "retain": "Retain",
       "consolidation": "Consolidação",
       "refreshMentalModel": "Atualização do modelo mental",
-      "fileConvertRetain": "Converter arquivo e Retain",
+      "fileConvertRetain": "Converter arquivo",
       "webhookDelivery": "Entrega de webhook",
       "graphMaintenance": "Manutenção do grafo"
     },
@@ -437,7 +437,8 @@
       "created": "Criada",
       "status": "Status",
       "index": "Índice",
-      "items": "Itens"
+      "items": "Itens",
+      "actions": "Ações"
     },
     "action": {
       "cancel": "Cancelar",
@@ -453,12 +454,21 @@
       "type": "Tipo",
       "created": "Criada",
       "updated": "Atualizada",
-      "completed": "Concluída"
+      "completed": "Concluída",
+      "progress": "Progresso",
+      "lastHeartbeat": "Último sinal"
     },
     "metadata": "Metadados",
     "error": "Erro",
     "rawPayloadParentHelp": "Esta é uma operação pai: o payload bruto é armazenado em cada sublote. Abra uma operação filha para inspecionar seu payload.",
-    "rawPayloadEmpty": "Nenhum payload bruto armazenado para esta operação."
+    "rawPayloadEmpty": "Nenhum payload bruto armazenado para esta operação.",
+    "heartbeat": {
+      "justNow": "agora mesmo",
+      "secondsAgo": "há {secs}s",
+      "minutesAgo": "há {mins}min",
+      "hoursAgo": "há {hours}h"
+    },
+    "progressEstimateNote": "O total é estimado quando a consolidação inicia e pode crescer se novas memórias chegarem durante a execução — isso é esperado."
   },
   "dataView": {
     "loadingMemories": "Carregando memórias...",
@@ -990,7 +1000,7 @@
     "actionDeleteMentalModel": "Excluir Modelo Mental",
     "actionCreateDirective": "Criar Diretiva",
     "actionDeleteDirective": "Excluir Diretiva",
-    "actionFileConvertRetain": "Converter Arquivo e Retain",
+    "actionFileConvertRetain": "Converter arquivo",
     "actionWebhookDelivery": "Entrega de Webhook",
     "transportAll": "Todos os transportes",
     "transportHttp": "HTTP",

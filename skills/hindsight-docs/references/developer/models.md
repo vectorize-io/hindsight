@@ -37,6 +37,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - OpenAI Codex
 - Claude Code
 - AWS Bedrock
+- Fireworks AI
 - OpenAI Compatible
 - LiteLLM (100+)
 
@@ -93,6 +94,7 @@ Beyond basic generation, some providers support optional features that lower cos
 | OpenAI Codex (`openai-codex`) | — | — |
 | Claude Code (`claude-code`) | — | — |
 | AWS Bedrock (`bedrock`) | — | — |
+| Fireworks AI (`fireworks`) | — | — |
 | LiteLLM (100+) (`litellm`) | — | — |
 
 - **Batch API** — submits bulk retain extraction through the provider's asynchronous batch endpoint, typically at ~50% lower cost. Used automatically when available; otherwise calls run synchronously.
@@ -121,9 +123,9 @@ The following models have been tested and verified to work correctly with Hindsi
 | **OpenAI** | `gpt-4o-mini` |
 | **Anthropic** | `claude-sonnet-4-20250514` |
 | **Anthropic** | `claude-3-5-sonnet-20241022` |
-| **Gemini** | `gemini-3-pro-preview` |
-| **Gemini** | `gemini-2.5-flash` |
-| **Gemini** | `gemini-2.5-flash-lite` |
+| **Gemini** | `gemini-3.5-flash` |
+| **Gemini** | `gemini-3.1-pro-preview` |
+| **Gemini** | `gemini-3.1-flash-lite` |
 | **Groq** | `openai/gpt-oss-120b` |
 | **Groq** | `openai/gpt-oss-20b` |
 
@@ -136,7 +138,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `openai` | `gpt-4o-mini` |
 | `anthropic` | `claude-haiku-4-5-20251001` |
 | `gemini` | `gemini-2.5-flash` |
-| `vertexai` | `gemini-2.0-flash-001` |
+| `vertexai` | `gemini-2.5-flash-lite` |
 | `groq` | `openai/gpt-oss-120b` |
 | `ollama` | `gemma3:12b` |
 | `ollama-cloud` | `gemma3:12b` |
@@ -151,6 +153,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `openai-codex` | `gpt-5.4-mini` |
 | `claude-code` | `claude-sonnet-4-5-20250929` |
 | `bedrock` | `us.amazon.nova-2-lite-v1:0` |
+| `fireworks` | `accounts/fireworks/models/llama-v3p1-8b-instruct` |
 | `litellm` | `gpt-4o-mini` |
 
 **Example:** Setting just the provider uses its default model:
@@ -194,6 +197,9 @@ export HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS=16000
 ```
 
 **Important:** `HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS` must be greater than `HINDSIGHT_API_RETAIN_CHUNK_SIZE` (default: 3000). The system will validate this on startup and provide an error message if the configuration is invalid.
+> **⚠️ Groq free tier is not suitable for Hindsight**
+> 
+Groq's free tier only allows 8,000 tokens per minute — far below what Hindsight needs for a single retain call (~64k). Free-tier Groq models therefore can't be used with Hindsight; use a paid Groq tier or a different provider.
 ### Configuration
 
 ```bash

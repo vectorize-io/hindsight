@@ -86,6 +86,111 @@ Factors affecting throughput:
 
 ---
 
+## Tuning for Local & Small Environments
+
+Hindsight's defaults are tuned for cloud LLM providers and multi-core servers. When you run it on a laptop, a single GPU box, or against a **local LLM server** (llama.cpp, vLLM, LM Studio, Ollama) with a small fixed slot pool, those defaults can saturate the backend, time out, or thrash the CPU. This section collects the knobs that matter for low-resource setups.
+
+### LLM concurrency
+
+The default `HINDSIGHT_API_LLM_MAX_CONCURRENT=32` assumes a cloud provider that can absorb dozens of parallel requests. A local server with a handful of slots cannot — Hindsight will fill every slot and **starve any other client sharing the endpoint** (your main agent, another app, or a second Hindsight operation).
+
+```bash
+export HINDSIGHT_API_LLM_MAX_CONCURRENT=2
+```
+
+A value of `2` lets retain and consolidation run concurrently without blocking each other. If the endpoint is **shared** with other clients (other applications, agents, or workflows hitting the same llama-server / vLLM / LM Studio instance), reserve slots for them by lowering further — leave at least one slot free per shared client.
+
+You can also split the budget per operation so background work never crowds out live reads. The per-operation caps compose *on top of* the global cap:
+
+```bash
+# global=4, with retain/consolidation capped low so reflect always has headroom
+export HINDSIGHT_API_LLM_MAX_CONCURRENT=4
+export HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT=1
+export HINDSIGHT_API_CONSOLIDATION_LLM_MAX_CONCURRENT=1
+```
+
+### Timeouts and retries
+
+Small models on modest hardware generate tokens slowly, and the first request after startup pays a model-load cost. The default `HINDSIGHT_API_LLM_TIMEOUT=120` (seconds) can be too tight for a large local model on CPU — raise it to avoid spurious timeouts and wasted retries:
+
+```bash
+export HINDSIGHT_API_LLM_TIMEOUT=300        # allow slow local generation
+export HINDSIGHT_API_LLM_MAX_RETRIES=2      # fail faster locally — retries rarely help a slow box
+```
+
+A local endpoint isn't rate-limited, so aggressive retry/backoff mostly adds latency on real failures. Lower retries and let genuine errors surface quickly.
+
+### Smaller, faster models — and reasoning effort
+
+Retain (fact extraction) is structured work that does not need a frontier model; reflect can use a lighter model still. On a constrained box, point each operation at the smallest model that holds up:
+
+```bash
+# Reflect on a small/fast model; retain on a slightly stronger structured-output model
+export HINDSIGHT_API_REFLECT_LLM_MODEL=<small-fast-model>
+export HINDSIGHT_API_RETAIN_LLM_MODEL=<structured-output-model>
+```
+
+If your model exposes a reasoning/thinking budget, keep it low (the default) — extra reasoning tokens are pure latency for the extraction and consolidation paths:
+
+```bash
+export HINDSIGHT_API_LLM_REASONING_EFFORT=low
+```
+
+Consolidation sends multiple facts to the LLM in a single call (default 8). On a small model with a limited context window, a large batch produces an oversized prompt and a long, error-prone response. Shrink the batch so each consolidation call stays small and reliable:
+
+```bash
+export HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE=2   # default 8; lower = smaller prompts, more calls
+```
+
+### Built-in llama.cpp tuning
+
+The bundled `llamacpp` provider runs a llama.cpp server as a managed subprocess — no external server needed. Key knobs for small machines:
+
+```bash
+export HINDSIGHT_API_LLM_PROVIDER=llamacpp
+export HINDSIGHT_API_LLM_MAX_CONCURRENT=2        # retain + consolidation without blocking
+export HINDSIGHT_API_LLAMACPP_GPU_LAYERS=-1      # -1 = offload all layers to GPU; 0 = CPU only
+export HINDSIGHT_API_LLAMACPP_CONTEXT_SIZE=8192  # lower to save RAM/VRAM; raise for big batches
+export HINDSIGHT_API_LLAMACPP_EXTRA_ARGS="--n_threads 8"  # match physical cores on CPU-only boxes
+# export HINDSIGHT_API_LLAMACPP_NO_GRAMMAR=true  # faster, but less reliable JSON output
+```
+
+See [Built-in llama.cpp](./configuration#built-in-llamacpp) for the full option list.
+
+### Reranker on CPU
+
+Recall's bottleneck on a machine without a GPU is the cross-encoder reranker. The local reranker has several CPU/Apple-Silicon knobs that are quality-neutral but materially faster:
+
+```bash
+# Apple Silicon (MPS): half precision is 27–36% faster, quality-identical
+export HINDSIGHT_API_RERANKER_LOCAL_FP16=true
+
+# Sort pairs by length before batching — 36–54% faster, quality-identical by construction
+export HINDSIGHT_API_RERANKER_LOCAL_BUCKET_BATCHING=true
+
+# Cap reranker parallelism so it doesn't thrash a small CPU under load (default 4)
+export HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT=2
+
+# On macOS, force CPU if MPS/XPC causes instability
+# export HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU=true
+```
+
+The biggest single win on CPU is reranking fewer candidates. By default Hindsight reranks up to 300 candidates per recall — shrink that pool to cut cross-encoder work proportionally:
+
+```bash
+export HINDSIGHT_API_RERANKER_MAX_CANDIDATES=100   # default 300; RRF pre-filters the rest
+```
+
+For a pure-CPU box that struggles with the cross-encoder, `flashrank` is a lighter ONNX-based reranker:
+
+```bash
+export HINDSIGHT_API_RERANKER_PROVIDER=flashrank
+```
+
+You can also reduce recall work directly: use a lower `budget` (`low`/`mid`) for everyday queries and reserve `high` for comprehensive reasoning. See [Recall Performance](#recall-performance) below.
+
+---
+
 ## Recall Performance
 
 ### Budget

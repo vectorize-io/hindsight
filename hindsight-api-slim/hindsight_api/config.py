@@ -143,6 +143,7 @@ ENV_LLM_GROQ_SERVICE_TIER = "HINDSIGHT_API_LLM_GROQ_SERVICE_TIER"
 ENV_LLM_OPENAI_SERVICE_TIER = "HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER"
 ENV_LLM_EXTRA_BODY = "HINDSIGHT_API_LLM_EXTRA_BODY"
 ENV_LLM_DEFAULT_HEADERS = "HINDSIGHT_API_LLM_DEFAULT_HEADERS"
+ENV_LLM_STRICT_SCHEMA = "HINDSIGHT_API_LLM_STRICT_SCHEMA"
 
 # LiteLLM Router chain — provider-specific config consumed by the "litellmrouter"
 # provider. Each entry is a deployment; the Router tries them in declared order and
@@ -209,6 +210,17 @@ ENV_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_EMBEDDINGS_PROVIDER"
 ENV_EMBEDDINGS_LOCAL_MODEL = "HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL"
 ENV_EMBEDDINGS_LOCAL_FORCE_CPU = "HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"
 ENV_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE = "HINDSIGHT_API_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE"
+ENV_EMBEDDINGS_ONNX_MODEL_ID = "HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID"
+ENV_EMBEDDINGS_ONNX_MODEL_PATH = "HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH"
+ENV_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH = "HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH"
+ENV_EMBEDDINGS_ONNX_FILE = "HINDSIGHT_API_EMBEDDINGS_ONNX_FILE"
+ENV_EMBEDDINGS_ONNX_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS"
+ENV_EMBEDDINGS_ONNX_MAX_TOKENS = "HINDSIGHT_API_EMBEDDINGS_ONNX_MAX_TOKENS"
+ENV_EMBEDDINGS_ONNX_POOLING = "HINDSIGHT_API_EMBEDDINGS_ONNX_POOLING"
+ENV_EMBEDDINGS_ONNX_NORMALIZE = "HINDSIGHT_API_EMBEDDINGS_ONNX_NORMALIZE"
+ENV_EMBEDDINGS_ONNX_QUERY_PREFIX = "HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX"
+ENV_EMBEDDINGS_ONNX_PASSAGE_PREFIX = "HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX"
+ENV_EMBEDDINGS_ONNX_OUTPUT_NAME = "HINDSIGHT_API_EMBEDDINGS_ONNX_OUTPUT_NAME"
 ENV_EMBEDDINGS_TEI_URL = "HINDSIGHT_API_EMBEDDINGS_TEI_URL"
 ENV_EMBEDDINGS_OPENAI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY"
 ENV_EMBEDDINGS_OPENAI_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL"
@@ -346,6 +358,8 @@ ENV_RECALL_MAX_QUERY_TOKENS = "HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS"
 ENV_MENTAL_MODEL_REFRESH_CONCURRENCY = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_CONCURRENCY"
 ENV_LINK_EXPANSION_PER_ENTITY_LIMIT = "HINDSIGHT_API_LINK_EXPANSION_PER_ENTITY_LIMIT"
 ENV_LINK_EXPANSION_TIMEOUT = "HINDSIGHT_API_LINK_EXPANSION_TIMEOUT"
+ENV_BANK_STATS_CACHE_TTL_SECONDS = "HINDSIGHT_API_BANK_STATS_CACHE_TTL_SECONDS"
+ENV_BANK_STATS_CACHE_MAX_ENTRIES = "HINDSIGHT_API_BANK_STATS_CACHE_MAX_ENTRIES"
 
 # OpenTelemetry tracing configuration
 ENV_OTEL_TRACES_ENABLED = "HINDSIGHT_API_OTEL_TRACES_ENABLED"
@@ -420,6 +434,7 @@ ENV_ENABLE_AUTO_CONSOLIDATION = "HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION"
 ENV_CONSOLIDATION_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE"
 ENV_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = "HINDSIGHT_API_CONSOLIDATION_MAX_MEMORIES_PER_ROUND"
 ENV_CONSOLIDATION_LLM_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE"
+ENV_CONSOLIDATION_DEDUP_THRESHOLD = "HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD"
 ENV_CONSOLIDATION_LLM_PARALLELISM = "HINDSIGHT_API_CONSOLIDATION_LLM_PARALLELISM"
 ENV_CONSOLIDATION_MAX_TOKENS = "HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS"
 ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS = "HINDSIGHT_API_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS"
@@ -431,6 +446,7 @@ ENV_CONSOLIDATION_MAX_ATTEMPTS = "HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS"
 ENV_OBSERVATIONS_MISSION = "HINDSIGHT_API_OBSERVATIONS_MISSION"
 ENV_MAX_OBSERVATIONS_PER_SCOPE = "HINDSIGHT_API_MAX_OBSERVATIONS_PER_SCOPE"
 ENV_ENABLE_OBSERVATION_HISTORY = "HINDSIGHT_API_ENABLE_OBSERVATION_HISTORY"
+ENV_OBSERVATION_HISTORY_MAX_ENTRIES = "HINDSIGHT_API_OBSERVATION_HISTORY_MAX_ENTRIES"
 ENV_ENABLE_MENTAL_MODEL_HISTORY = "HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY"
 ENV_MENTAL_MODEL_HISTORY_MAX_ENTRIES = "HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES"
 
@@ -461,6 +477,11 @@ ENV_DB_POOL_MAX_SIZE = "HINDSIGHT_API_DB_POOL_MAX_SIZE"
 ENV_DB_COMMAND_TIMEOUT = "HINDSIGHT_API_DB_COMMAND_TIMEOUT"
 ENV_DB_ACQUIRE_TIMEOUT = "HINDSIGHT_API_DB_ACQUIRE_TIMEOUT"
 ENV_DB_STATEMENT_TIMEOUT = "HINDSIGHT_API_DB_STATEMENT_TIMEOUT"
+
+# Wall-clock cap on model/connection initialization at startup. If embeddings,
+# cross-encoder, or LLM verification hang (e.g. an offline HuggingFace download
+# or an unreachable provider), the daemon fails fast instead of hanging forever.
+ENV_MODEL_INIT_TIMEOUT = "HINDSIGHT_API_MODEL_INIT_TIMEOUT"
 
 # Worker configuration (distributed task processing)
 ENV_WORKER_ENABLED = "HINDSIGHT_API_WORKER_ENABLED"
@@ -546,7 +567,7 @@ DEFAULT_LLM_PROVIDER = "openai"
 PROVIDER_DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-haiku-4-5",
-    "gemini": "gemini-2.5-flash",
+    "gemini": "gemini-3.5-flash",
     "groq": "openai/gpt-oss-120b",
     "minimax": "MiniMax-M3",
     "deepseek": "deepseek-v4-flash",
@@ -556,7 +577,7 @@ PROVIDER_DEFAULT_MODELS = {
     "ollama-cloud": "gemma3:12b",
     "llamacpp": "gemma-4-e2b-it",
     "lmstudio": "local-model",
-    "vertexai": "google/gemini-2.5-flash-lite",
+    "vertexai": "google/gemini-3.1-flash-lite",
     "openai-codex": "gpt-5.4-mini",
     "claude-code": "claude-sonnet-4-5-20250929",
     "mock": "mock-model",
@@ -574,6 +595,14 @@ DEFAULT_LLAMACPP_CONTEXT_SIZE = 8192
 DEFAULT_LLAMACPP_CHAT_FORMAT = None  # None = auto-detect from GGUF metadata
 DEFAULT_LLAMACPP_NO_GRAMMAR = False  # True = disable JSON grammar enforcement (faster but less reliable)
 DEFAULT_LLAMACPP_EXTRA_ARGS = None  # Space-separated extra CLI args for llama.cpp server
+
+# True = ask schema-capable backends to grammar-enforce structured output via
+# json_schema strict (OpenAI-compatible, LiteLLM; Gemini already enforces its
+# native response_schema). Default False keeps the soft "schema-in-prompt +
+# json_object" path, which weaker self-hosted instruction-followers can violate
+# (prose preambles, markdown fences, invalid JSON) — wedging retain/consolidation
+# on parse retries.
+DEFAULT_LLM_STRICT_SCHEMA = False
 
 DEFAULT_LLM_MAX_CONCURRENT = 32
 DEFAULT_LLM_MAX_RETRIES = 3  # Max retry attempts for LLM API calls
@@ -594,6 +623,13 @@ DEFAULT_EMBEDDINGS_PROVIDER = "local"
 DEFAULT_EMBEDDINGS_LOCAL_MODEL = "BAAI/bge-small-en-v1.5"
 DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU = False  # Force CPU mode for local embeddings
 DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE = False  # Security: disabled by default, required for some models
+DEFAULT_EMBEDDINGS_ONNX_MODEL_ID = "intfloat/multilingual-e5-small"
+DEFAULT_EMBEDDINGS_ONNX_FILE = "onnx/model.onnx"
+DEFAULT_EMBEDDINGS_ONNX_MAX_TOKENS = 512
+DEFAULT_EMBEDDINGS_ONNX_POOLING = "mean"
+DEFAULT_EMBEDDINGS_ONNX_NORMALIZE = True
+DEFAULT_EMBEDDINGS_ONNX_QUERY_PREFIX = "query: "
+DEFAULT_EMBEDDINGS_ONNX_PASSAGE_PREFIX = "passage: "
 DEFAULT_EMBEDDINGS_OPENAI_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE = 100
 DEFAULT_EMBEDDINGS_GEMINI_MODEL = "gemini-embedding-001"
@@ -758,6 +794,8 @@ DEFAULT_RECALL_MAX_QUERY_TOKENS = 500  # Maximum tokens allowed in recall query
 DEFAULT_MENTAL_MODEL_REFRESH_CONCURRENCY = 8  # Max concurrent mental model refreshes
 DEFAULT_LINK_EXPANSION_PER_ENTITY_LIMIT = 200  # Max target units per entity in graph expansion
 DEFAULT_LINK_EXPANSION_TIMEOUT = 10.0  # Timeout (seconds) for entity expansion query
+DEFAULT_BANK_STATS_CACHE_TTL_SECONDS = 60.0  # TTL for get_bank_stats result cache; 0 disables
+DEFAULT_BANK_STATS_CACHE_MAX_ENTRIES = 1024  # LRU bound across (schema, bank) keys
 
 # Retain settings
 DEFAULT_RETAIN_MAX_COMPLETION_TOKENS = 64000  # Max tokens for fact extraction LLM call
@@ -797,18 +835,27 @@ DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
 DEFAULT_ENABLE_AUTO_CONSOLIDATION = True  # Auto-consolidation after retain enabled by default
 DEFAULT_ENABLE_OBSERVATION_HISTORY = True  # Observation history tracking enabled by default
 DEFAULT_ENABLE_MENTAL_MODEL_HISTORY = True  # Mental model history tracking enabled by default
-# Each history entry snapshots previous_content + previous_reflect_response. Without
-# a cap, sustained mental-model refresh load grows the jsonb array unboundedly until
-# it crosses Postgres's hard 256MB jsonb limit and subsequent UPDATEs fail with
-# SQLSTATE 54000. 50 keeps the array well under 100MB even with large reflect
-# responses, while preserving enough recent history for meaningful audit / rollback.
+# History (mental-model refresh snapshots and observation update snapshots) lives in
+# the dedicated mental_model_history / observation_history tables, one row per change.
+# On every write we insert the new entry and delete the oldest rows beyond the cap,
+# so the per-item history can never grow unboundedly (the old single-JSONB-column
+# design hit Postgres's hard 256MB jsonb limit -> SQLSTATE 54000 and stuck rows).
+# 50 preserves enough recent history for meaningful audit / rollback per item.
+# A cap <= 0 removes the trim (unbounded growth) — to turn history OFF use the
+# enable_* flag, not a zero cap.
 DEFAULT_MENTAL_MODEL_HISTORY_MAX_ENTRIES = 50
+DEFAULT_OBSERVATION_HISTORY_MAX_ENTRIES = 50
 DEFAULT_CONSOLIDATION_MAX_ATTEMPTS = 3  # Outer retry attempts for consolidation LLM batch calls
 DEFAULT_CONSOLIDATION_BATCH_SIZE = 50  # Memories to load per batch (internal memory optimization)
 DEFAULT_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = (
     100  # Max memories per consolidation round (0 = unlimited). Limits how long one bank holds a worker slot.
 )
 DEFAULT_CONSOLIDATION_LLM_BATCH_SIZE = 8  # Facts per LLM call (1 = no batching; >1 = batch mode)
+# Cosine >= this between a newly-created or freshly-updated observation and an existing one
+# triggers a focused 1-by-1 LLM "merge or keep" pass (the LLM reads both, so numbers/negation/
+# entities are respected). Enabled by default; set to 1.0 to disable. Postgres only — the merge
+# path uses Postgres-only SQL, so consolidation skips it on Oracle regardless of this value.
+DEFAULT_CONSOLIDATION_DEDUP_THRESHOLD = 0.97
 DEFAULT_CONSOLIDATION_LLM_PARALLELISM = (
     4  # Max tag groups consolidated concurrently per op. Locks on overlapping write
     # scopes degrade to sequential automatically; matches retain_max_concurrent.
@@ -833,6 +880,7 @@ DEFAULT_DB_POOL_MAX_SIZE = 100
 DEFAULT_DB_COMMAND_TIMEOUT = 60  # seconds
 DEFAULT_DB_ACQUIRE_TIMEOUT = 30  # seconds
 DEFAULT_DB_STATEMENT_TIMEOUT = 600  # seconds (Postgres statement_timeout applied on every pool connection; 0 disables)
+DEFAULT_MODEL_INIT_TIMEOUT = 300  # seconds (cap on startup model/connection init; covers first-time downloads)
 
 # Worker configuration (distributed task processing)
 DEFAULT_WORKER_ENABLED = True  # API runs worker by default (standalone mode)
@@ -886,9 +934,9 @@ DEFAULT_AUDIT_LOG_ACTIONS = ""  # Empty = audit all eligible actions
 DEFAULT_AUDIT_LOG_RETENTION_DAYS = -1  # -1 = keep forever
 
 # LLM request tracing defaults
-DEFAULT_LLM_TRACE_ENABLED = False  # Disabled by default
+DEFAULT_LLM_TRACE_ENABLED = True  # Enabled by default
 DEFAULT_LLM_TRACE_SCOPES = ""  # Empty = trace all call scopes
-DEFAULT_LLM_TRACE_RETENTION_DAYS = -1  # -1 = keep forever
+DEFAULT_LLM_TRACE_RETENTION_DAYS = 1  # Retain trace rows for 1 day by default
 DEFAULT_LLM_TRACE_MAX_CHARS = 50000  # Truncate stored input/output beyond this many chars
 
 # Default MCP tool descriptions (can be customized via env vars)
@@ -1154,6 +1202,7 @@ class HindsightConfig:
     llm_default_headers: (
         dict | None
     )  # Custom headers passed as default_headers to provider SDK clients (e.g. {"X-Component-Id": "hindsight"} for proxies / request tracing)
+    llm_strict_schema: bool  # Grammar-enforce structured output via the provider's strongest schema mode (see DEFAULT_LLM_STRICT_SCHEMA)
 
     # LiteLLM Router chain (provider-specific; consumed by the "litellmrouter" provider).
     # List of deployment dicts evaluated in order with fallback on transient errors.
@@ -1225,6 +1274,17 @@ class HindsightConfig:
     embeddings_local_model: str
     embeddings_local_force_cpu: bool
     embeddings_local_trust_remote_code: bool
+    embeddings_onnx_model_id: str
+    embeddings_onnx_model_path: str | None
+    embeddings_onnx_tokenizer_name_or_path: str | None
+    embeddings_onnx_file: str
+    embeddings_onnx_dimensions: int | None
+    embeddings_onnx_max_tokens: int
+    embeddings_onnx_pooling: str
+    embeddings_onnx_normalize: bool
+    embeddings_onnx_query_prefix: str
+    embeddings_onnx_passage_prefix: str
+    embeddings_onnx_output_name: str | None
     embeddings_tei_url: str | None
     embeddings_openai_base_url: str | None
     embeddings_cohere_api_key: str | None
@@ -1322,6 +1382,8 @@ class HindsightConfig:
     mental_model_refresh_concurrency: int
     link_expansion_per_entity_limit: int
     link_expansion_timeout: float
+    bank_stats_cache_ttl_seconds: float
+    bank_stats_cache_max_entries: int
 
     # Retain settings
     retain_max_completion_tokens: int
@@ -1367,9 +1429,11 @@ class HindsightConfig:
     enable_observations: bool
     enable_auto_consolidation: bool
     enable_observation_history: bool
+    observation_history_max_entries: int
     enable_mental_model_history: bool
     mental_model_history_max_entries: int
     consolidation_batch_size: int
+    consolidation_dedup_threshold: float
     consolidation_max_memories_per_round: int
     consolidation_llm_batch_size: int
     consolidation_llm_parallelism: int
@@ -1429,6 +1493,7 @@ class HindsightConfig:
     db_command_timeout: int
     db_acquire_timeout: int
     db_statement_timeout: int
+    model_init_timeout: float
 
     # Worker configuration (distributed task processing)
     worker_enabled: bool
@@ -1714,6 +1779,21 @@ class HindsightConfig:
                     " and ".join(missing),
                 )
 
+        if self.embeddings_provider == "onnx":
+            try:
+                import importlib
+
+                importlib.import_module("onnxruntime")
+                importlib.import_module("transformers")
+            except ImportError:
+                logger.warning(
+                    "ONNX embeddings provider configured, but 'onnxruntime' and/or "
+                    "'transformers' is not installed. The API will fail at model init time. Either:\n"
+                    "  1. Install ONNX deps: pip install hindsight-api-slim[local-onnx]\n"
+                    "  2. Use a different embeddings provider, e.g. HINDSIGHT_API_EMBEDDINGS_PROVIDER=local "
+                    "or openai"
+                )
+
         # Validate that sum of per-operation slot reservations does not exceed max_slots
         total_reserved = sum(self.worker_slot_reservations.values())
         if total_reserved > self.worker_max_slots:
@@ -1766,6 +1846,7 @@ class HindsightConfig:
             llm_openai_service_tier=os.getenv(ENV_LLM_OPENAI_SERVICE_TIER, DEFAULT_LLM_OPENAI_SERVICE_TIER),
             llm_extra_body=json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null")),
             llm_default_headers=json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null")),
+            llm_strict_schema=os.getenv(ENV_LLM_STRICT_SCHEMA, str(DEFAULT_LLM_STRICT_SCHEMA)).lower() in ("true", "1"),
             llm_litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
             # Vertex AI
             llm_vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or DEFAULT_LLM_VERTEXAI_PROJECT_ID,
@@ -1876,6 +1957,36 @@ class HindsightConfig:
                 ENV_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE, str(DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE)
             ).lower()
             in ("true", "1"),
+            embeddings_onnx_model_id=os.getenv(ENV_EMBEDDINGS_ONNX_MODEL_ID, DEFAULT_EMBEDDINGS_ONNX_MODEL_ID),
+            embeddings_onnx_model_path=os.getenv(ENV_EMBEDDINGS_ONNX_MODEL_PATH) or None,
+            embeddings_onnx_tokenizer_name_or_path=os.getenv(ENV_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH) or None,
+            embeddings_onnx_file=os.getenv(ENV_EMBEDDINGS_ONNX_FILE, DEFAULT_EMBEDDINGS_ONNX_FILE),
+            embeddings_onnx_dimensions=_parse_optional_positive_int(
+                ENV_EMBEDDINGS_ONNX_DIMENSIONS,
+                os.getenv(ENV_EMBEDDINGS_ONNX_DIMENSIONS),
+            ),
+            embeddings_onnx_max_tokens=_parse_positive_int(
+                ENV_EMBEDDINGS_ONNX_MAX_TOKENS,
+                os.getenv(ENV_EMBEDDINGS_ONNX_MAX_TOKENS),
+                DEFAULT_EMBEDDINGS_ONNX_MAX_TOKENS,
+            ),
+            embeddings_onnx_pooling=_parse_optional_choice(
+                ENV_EMBEDDINGS_ONNX_POOLING,
+                os.getenv(ENV_EMBEDDINGS_ONNX_POOLING),
+                frozenset({"mean", "cls"}),
+            )
+            or DEFAULT_EMBEDDINGS_ONNX_POOLING,
+            embeddings_onnx_normalize=os.getenv(
+                ENV_EMBEDDINGS_ONNX_NORMALIZE, str(DEFAULT_EMBEDDINGS_ONNX_NORMALIZE)
+            ).lower()
+            in ("true", "1"),
+            embeddings_onnx_query_prefix=os.getenv(
+                ENV_EMBEDDINGS_ONNX_QUERY_PREFIX, DEFAULT_EMBEDDINGS_ONNX_QUERY_PREFIX
+            ),
+            embeddings_onnx_passage_prefix=os.getenv(
+                ENV_EMBEDDINGS_ONNX_PASSAGE_PREFIX, DEFAULT_EMBEDDINGS_ONNX_PASSAGE_PREFIX
+            ),
+            embeddings_onnx_output_name=os.getenv(ENV_EMBEDDINGS_ONNX_OUTPUT_NAME) or None,
             embeddings_tei_url=os.getenv(ENV_EMBEDDINGS_TEI_URL),
             embeddings_openai_base_url=os.getenv(ENV_EMBEDDINGS_OPENAI_BASE_URL) or None,
             embeddings_openai_batch_size=_parse_positive_int(
@@ -2093,6 +2204,12 @@ class HindsightConfig:
                 os.getenv(ENV_LINK_EXPANSION_PER_ENTITY_LIMIT, str(DEFAULT_LINK_EXPANSION_PER_ENTITY_LIMIT))
             ),
             link_expansion_timeout=float(os.getenv(ENV_LINK_EXPANSION_TIMEOUT, str(DEFAULT_LINK_EXPANSION_TIMEOUT))),
+            bank_stats_cache_ttl_seconds=float(
+                os.getenv(ENV_BANK_STATS_CACHE_TTL_SECONDS, str(DEFAULT_BANK_STATS_CACHE_TTL_SECONDS))
+            ),
+            bank_stats_cache_max_entries=int(
+                os.getenv(ENV_BANK_STATS_CACHE_MAX_ENTRIES, str(DEFAULT_BANK_STATS_CACHE_MAX_ENTRIES))
+            ),
             # Optimization flags
             skip_llm_verification=os.getenv(ENV_SKIP_LLM_VERIFICATION, "false").lower() == "true",
             lazy_reranker=os.getenv(ENV_LAZY_RERANKER, "false").lower() == "true",
@@ -2174,6 +2291,12 @@ class HindsightConfig:
                 ENV_ENABLE_OBSERVATION_HISTORY, str(DEFAULT_ENABLE_OBSERVATION_HISTORY)
             ).lower()
             == "true",
+            observation_history_max_entries=int(
+                os.getenv(
+                    ENV_OBSERVATION_HISTORY_MAX_ENTRIES,
+                    str(DEFAULT_OBSERVATION_HISTORY_MAX_ENTRIES),
+                )
+            ),
             enable_mental_model_history=os.getenv(
                 ENV_ENABLE_MENTAL_MODEL_HISTORY, str(DEFAULT_ENABLE_MENTAL_MODEL_HISTORY)
             ).lower()
@@ -2192,6 +2315,9 @@ class HindsightConfig:
                     ENV_CONSOLIDATION_MAX_MEMORIES_PER_ROUND,
                     str(DEFAULT_CONSOLIDATION_MAX_MEMORIES_PER_ROUND),
                 )
+            ),
+            consolidation_dedup_threshold=float(
+                os.getenv(ENV_CONSOLIDATION_DEDUP_THRESHOLD, str(DEFAULT_CONSOLIDATION_DEDUP_THRESHOLD))
             ),
             consolidation_llm_batch_size=int(
                 os.getenv(ENV_CONSOLIDATION_LLM_BATCH_SIZE, str(DEFAULT_CONSOLIDATION_LLM_BATCH_SIZE))
@@ -2235,6 +2361,7 @@ class HindsightConfig:
             db_command_timeout=int(os.getenv(ENV_DB_COMMAND_TIMEOUT, str(DEFAULT_DB_COMMAND_TIMEOUT))),
             db_acquire_timeout=int(os.getenv(ENV_DB_ACQUIRE_TIMEOUT, str(DEFAULT_DB_ACQUIRE_TIMEOUT))),
             db_statement_timeout=int(os.getenv(ENV_DB_STATEMENT_TIMEOUT, str(DEFAULT_DB_STATEMENT_TIMEOUT))),
+            model_init_timeout=float(os.getenv(ENV_MODEL_INIT_TIMEOUT, str(DEFAULT_MODEL_INIT_TIMEOUT))),
             # Worker configuration
             worker_enabled=os.getenv(ENV_WORKER_ENABLED, str(DEFAULT_WORKER_ENABLED)).lower() == "true",
             worker_id=os.getenv(ENV_WORKER_ID) or DEFAULT_WORKER_ID,

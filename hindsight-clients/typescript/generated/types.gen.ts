@@ -2415,6 +2415,52 @@ export type MentalModelTriggerOutput = {
 };
 
 /**
+ * OperationProgress
+ *
+ * Last-known progress snapshot for a long-running async operation.
+ *
+ * Written at coarse phase/batch boundaries by the worker (consolidation, batch
+ * retain). Lets an operator polling the operation status API distinguish a healthy
+ * long-running job (``processed`` advancing across polls) from a frozen one (same
+ * numbers, no movement in ``at``). Absent (``null``) on operations that never
+ * reached a checkpoint — completed-instantly or pre-feature rows.
+ */
+export type OperationProgress = {
+  /**
+   * Stage
+   *
+   * Coarse phase the operation last reported (e.g. 'processing_batch').
+   */
+  stage: string;
+  /**
+   * At
+   *
+   * ISO-8601 timestamp when this snapshot was written.
+   */
+  at: string;
+  /**
+   * Processed
+   *
+   * Units of work finished so far (sub-batches, memories), when known.
+   */
+  processed?: number | null;
+  /**
+   * Total
+   *
+   * Total units of work for the operation, when known.
+   */
+  total?: number | null;
+  /**
+   * Detail
+   *
+   * Operation-specific counters (e.g. observations_created, round, items_in_sub_batch).
+   */
+  detail?: {
+    [key: string]: number;
+  } | null;
+};
+
+/**
  * OperationResponse
  *
  * Response model for a single async operation.
@@ -2441,6 +2487,12 @@ export type OperationResponse = {
    */
   created_at: string;
   /**
+   * Updated At
+   *
+   * When this operation's row last changed (claim, progress heartbeat, or completion).
+   */
+  updated_at?: string | null;
+  /**
    * Status
    */
   status: string;
@@ -2460,6 +2512,10 @@ export type OperationResponse = {
    * When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is waiting rather than available for immediate pickup — for example, an extension may have raised DeferOperation to park the task until some backpressure window opens. Always null for completed tasks.
    */
   next_retry_at?: string | null;
+  /**
+   * Last-known progress snapshot for a running operation; null if none was recorded.
+   */
+  progress?: OperationProgress | null;
 };
 
 /**
@@ -2508,6 +2564,10 @@ export type OperationStatusResponse = {
    * When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is parked (e.g. by an extension raising DeferOperation) rather than awaiting immediate pickup.
    */
   next_retry_at?: string | null;
+  /**
+   * Last-known progress snapshot for a running operation; null if none was recorded.
+   */
+  progress?: OperationProgress | null;
   /**
    * Result Metadata
    *
@@ -3506,10 +3566,6 @@ export type ValidationError = {
   ctx?: {
     [key: string]: unknown;
   };
-  /**
-   * URL
-   */
-  url?: string;
 };
 
 /**

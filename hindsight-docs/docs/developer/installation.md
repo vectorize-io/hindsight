@@ -78,12 +78,18 @@ export OPENAI_API_KEY=sk-xxx
 
 docker run -it --pull always --name hindsight --restart unless-stopped -p 8888:8888 -p 9999:9999 \
   -e HINDSIGHT_API_LLM_API_KEY=$OPENAI_API_KEY \
-  -v $HOME/.hindsight-docker:/home/hindsight/.pg0 \
+  -v hindsight-data:/home/hindsight/.pg0 \
   ghcr.io/vectorize-io/hindsight:latest
 ```
 
 - **API Server**: http://localhost:8888
 - **Control Plane** (Web UI): http://localhost:9999
+
+:::note Persisting data: named volume vs. host bind mount
+The container runs as a non-root user (UID 1000). The `hindsight-data` **named volume** above is recommended — Docker creates it owned by the container user, so it works with no extra setup.
+
+If you instead bind-mount a **host directory** (`-v $HOME/.hindsight-docker:/home/hindsight/.pg0`), that directory must be writable by UID 1000, or the embedded database fails to start with `Permission denied`. Either `chown` the directory to UID 1000, or run the container as your host user: `--user $(id -u):$(id -g) -e HOME=/home/hindsight` (after `chown`-ing the directory to your own UID).
+:::
 
 All published images are [signed with Cosign](#verifying-image-signatures) — verification is optional.
 

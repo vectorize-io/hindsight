@@ -1,6 +1,6 @@
 """Unit tests for async retain tag propagation."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -56,19 +56,18 @@ async def test_submit_async_retain_includes_document_tags_in_task_payload():
     contents = [{"content": "Async retain payload test."}]
     document_tags = ["scope:tools", "user:alice"]
 
-    # Return (profile, created=False) so the default-template-on-create hook is skipped.
-    with patch(
-        "hindsight_api.engine.memory_engine.bank_utils.get_or_create_bank_profile",
-        new_callable=AsyncMock,
-        return_value=(MagicMock(), False),
-    ):
-        result = await MemoryEngine.submit_async_retain(
-            engine,
-            bank_id="bank-1",
-            contents=contents,
-            document_tags=document_tags,
-            request_context=request_context,
-        )
+    # Stub the lazy bank-create/default-template hook to a no-op (created=False)
+    # so the inline transaction path runs against the mock connection without
+    # real DB work. The hook itself is covered by dedicated tests.
+    engine._ensure_bank_exists = AsyncMock(return_value=False)
+
+    result = await MemoryEngine.submit_async_retain(
+        engine,
+        bank_id="bank-1",
+        contents=contents,
+        document_tags=document_tags,
+        request_context=request_context,
+    )
 
     # Check result structure
     assert "operation_id" in result

@@ -96,6 +96,13 @@ local-llm = [
     "llama-cpp-python[server]>=0.3.0",
     "huggingface-hub>=0.20.0",
 ]
+local-onnx = [
+    # In-process ONNX Runtime embeddings without an Ollama/TEI sidecar
+    "onnxruntime>=1.17.0",
+    "transformers>=4.53.0",
+    "huggingface-hub>=0.20.0",
+    "numpy>=1.26.0",
+]
 embedded-db = [
     "pg0-embedded>=0.14.2",
 ]
@@ -103,7 +110,7 @@ oracle = [
     "oracledb>=2.5.0",
 ]
 all = [
-    "hindsight-api-slim[local-ml,embedded-db]",
+    "hindsight-api-slim[local-ml,local-onnx,embedded-db]",
 ]
 test = [
     "pytest>=7.0.0",

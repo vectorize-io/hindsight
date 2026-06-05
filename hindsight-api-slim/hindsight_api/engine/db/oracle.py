@@ -14,6 +14,7 @@ Supports multi-tenant schema isolation via ALTER SESSION SET CURRENT_SCHEMA.
 """
 
 import datetime
+import inspect
 import json
 import logging
 import re
@@ -154,6 +155,23 @@ _JSON_COL_NAMES = {
     "result_metadata",
     "task_payload",
     "history",
+}
+# NOTE: the history tables' JSON payload column is named ``content`` — deliberately
+# NOT added here, because ``mental_models.content`` is plain text (adding "content"
+# would corrupt those reads). The history read paths json.loads ``content`` directly.
+
+# Columns backed by CLOB in Oracle (large text or JSON). When such a column is
+# returned via a ``RETURNING`` clause it must be bound as DB_TYPE_CLOB; binding
+# it as VARCHAR raises ORA-22835 ("buffer too small for CLOB to CHAR") once the
+# value exceeds 4000 bytes. Union of the JSON-CLOB columns above and the
+# large-text CLOB columns.
+_CLOB_RETURNING_COLS = _JSON_COL_NAMES | {
+    "content",
+    "text",
+    "context",
+    "structured_content",
+    "text_signals",
+    "search_vector",
 }
 
 
@@ -685,6 +703,11 @@ class OracleConnection(DatabaseConnection):
                     params[f"ret_{i}"] = cursor.var(oracledb.DB_TYPE_TIMESTAMP_TZ, arraysize=1)
                 elif clean in _NUMERIC_COLS:
                     params[f"ret_{i}"] = cursor.var(oracledb.DB_TYPE_NUMBER, arraysize=1)
+                elif clean in _CLOB_RETURNING_COLS:
+                    # CLOB-backed column: a VARCHAR out-bind caps at 4000 bytes and
+                    # raises ORA-22835 for larger values. Read back as a LOB in
+                    # _read_returning_values.
+                    params[f"ret_{i}"] = cursor.var(oracledb.DB_TYPE_CLOB, arraysize=1)
                 else:
                     params[f"ret_{i}"] = cursor.var(oracledb.DB_TYPE_VARCHAR, arraysize=1)
 
@@ -862,7 +885,7 @@ class OracleConnection(DatabaseConnection):
 
         return query, params
 
-    def _read_returning_values(self, returning_cols: list[str], params: dict[str, Any]) -> dict[str, Any] | None:
+    async def _read_returning_values(self, returning_cols: list[str], params: dict[str, Any]) -> dict[str, Any] | None:
         """Read values from RETURNING INTO output variables after execute."""
         row: dict[str, Any] = {}
         for i, col in enumerate(returning_cols):
@@ -871,6 +894,14 @@ class OracleConnection(DatabaseConnection):
             if not values:
                 return None
             val = values[0] if isinstance(values, list) else values
+
+            # CLOB-bound columns return a LOB handle; read it to a string. The
+            # async pool yields AsyncLOB whose read() is a coroutine.
+            if val is not None and not isinstance(val, (str, bytes, int, float)) and hasattr(val, "read"):
+                data = val.read()
+                if inspect.isawaitable(data):
+                    data = await data
+                val = data
 
             # Clean alias: "LOWER(canonical_name) AS name_lower" → "name_lower"
             clean_col = col.strip()
@@ -1059,7 +1090,7 @@ class OracleConnection(DatabaseConnection):
                 raise
 
             if ret_cols is not None:
-                row_dict = self._read_returning_values(ret_cols, params)
+                row_dict = await self._read_returning_values(ret_cols, params)
                 return [ResultRow(row_dict)] if row_dict else []
 
             columns = [col[0].lower() for col in cursor.description or []]
@@ -1097,7 +1128,7 @@ class OracleConnection(DatabaseConnection):
                 raise
 
             if ret_cols is not None:
-                row_dict = self._read_returning_values(ret_cols, params)
+                row_dict = await self._read_returning_values(ret_cols, params)
                 return ResultRow(row_dict) if row_dict else None
 
             columns = [col[0].lower() for col in cursor.description or []]
@@ -1130,7 +1161,7 @@ class OracleConnection(DatabaseConnection):
             await cursor.execute(query, params)
 
             if ret_cols is not None:
-                row_dict = self._read_returning_values(ret_cols, params)
+                row_dict = await self._read_returning_values(ret_cols, params)
                 if row_dict is None:
                     return None
                 vals = list(row_dict.values())

@@ -302,6 +302,24 @@ def _is_context_overflow_error(exc: Exception) -> bool:
     )
 
 
+def _all_mental_models_are_usable_and_fresh(tool_output: dict[str, Any]) -> bool:
+    """Return whether every retrieved mental model is explicitly fresh and has answerable content.
+
+    Used to decide — without an extra LLM call — whether a forced
+    ``search_mental_models`` result is trustworthy enough to hand control back
+    to the agent. A model is usable only when it is explicitly ``is_stale ==
+    False`` (an unknown/missing staleness flag is treated as unsafe) and has
+    non-empty content.
+    """
+    models = tool_output.get("mental_models") or []
+    for model in models:
+        if model.get("is_stale") is not False:
+            return False
+        if not str(model.get("content") or "").strip():
+            return False
+    return True
+
+
 async def run_reflect_agent(
     llm_config: "LLMProvider",
     bank_id: str,
@@ -464,6 +482,11 @@ async def run_reflect_agent(
         )
 
     consecutive_errors = 0
+    # When a forced ``search_mental_models`` returns fresh, usable models on a
+    # low/mid-budget call, we stop forcing the lower retrieval layers from this
+    # iteration onward and let the agent answer (or retrieve deeper itself)
+    # under ``auto`` tool choice. None means the full forced path still applies.
+    stop_forcing_from_iteration: int | None = None
     for iteration in range(max_iterations):
         is_last = iteration == max_iterations - 1
 
@@ -592,8 +615,11 @@ async def run_reflect_agent(
         if include_recall:
             forced_sequence.append("recall")
 
-        if iteration < len(forced_sequence):
-            iter_tool_choice: str | dict = {"type": "function", "function": {"name": forced_sequence[iteration]}}
+        if stop_forcing_from_iteration is not None and iteration >= stop_forcing_from_iteration:
+            # A fresh mental model already short-circuited the forced path.
+            iter_tool_choice: str | dict = "auto"
+        elif iteration < len(forced_sequence):
+            iter_tool_choice = {"type": "function", "function": {"name": forced_sequence[iteration]}}
         else:
             iter_tool_choice = "auto"
 
@@ -956,6 +982,25 @@ async def run_reflect_agent(
                     for mm in output["mental_models"]:
                         if "id" in mm:
                             available_mental_model_ids.add(mm["id"])
+                    # Deterministic short-circuit (no extra LLM call): on a
+                    # low/mid-budget call, if every retrieved mental model is
+                    # fresh and has usable content, stop forcing the lower
+                    # retrieval layers. The next iteration runs under ``auto``
+                    # tool choice, so the agent can answer directly when the
+                    # mental model suffices, or — having just read it — issue a
+                    # targeted ``search_observations``/``recall`` itself. Stale,
+                    # empty, or missing mental models keep the full forced path.
+                    if (
+                        stop_forcing_from_iteration is None
+                        and (budget or "low").lower() != "high"
+                        and output.get("mental_models")
+                        and _all_mental_models_are_usable_and_fresh(output)
+                    ):
+                        stop_forcing_from_iteration = iteration + 1
+                        logger.info(
+                            f"[REFLECT {reflect_id}] Fresh mental models sufficient on iteration {iteration + 1}; "
+                            "releasing forced lower-level retrieval to auto."
+                        )
 
                 if (
                     normalized_tool_name == "search_observations"
