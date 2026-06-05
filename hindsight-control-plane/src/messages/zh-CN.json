@@ -427,7 +427,7 @@
       "retain": "保留",
       "consolidation": "整合",
       "refreshMentalModel": "心智模型刷新",
-      "fileConvertRetain": "文件转换并 Retain",
+      "fileConvertRetain": "转换文件",
       "webhookDelivery": "Webhook 投递",
       "graphMaintenance": "图谱维护"
     },
@@ -1000,7 +1000,7 @@
     "actionDeleteMentalModel": "删除心智模型",
     "actionCreateDirective": "创建指令",
     "actionDeleteDirective": "删除指令",
-    "actionFileConvertRetain": "文件转换并 Retain",
+    "actionFileConvertRetain": "转换文件",
     "actionWebhookDelivery": "Webhook 投递",
     "transportAll": "所有传输",
     "transportHttp": "HTTP",

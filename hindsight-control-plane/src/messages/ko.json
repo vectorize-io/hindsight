@@ -427,7 +427,7 @@
       "retain": "Retain",
       "consolidation": "통합",
       "refreshMentalModel": "멘탈 모델 새로고침",
-      "fileConvertRetain": "파일 변환 및 Retain",
+      "fileConvertRetain": "파일 변환",
       "webhookDelivery": "Webhook 전달",
       "graphMaintenance": "그래프 유지관리"
     },
@@ -1000,7 +1000,7 @@
     "actionDeleteMentalModel": "멘탈 모델 삭제",
     "actionCreateDirective": "지시문 생성",
     "actionDeleteDirective": "지시문 삭제",
-    "actionFileConvertRetain": "파일 변환 및 Retain",
+    "actionFileConvertRetain": "파일 변환",
     "actionWebhookDelivery": "Webhook 전송",
     "transportAll": "모든 전송",
     "transportHttp": "HTTP",

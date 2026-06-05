@@ -427,7 +427,7 @@
       "retain": "Retain",
       "consolidation": "統合",
       "refreshMentalModel": "メンタルモデル更新",
-      "fileConvertRetain": "ファイル変換と Retain",
+      "fileConvertRetain": "ファイル変換",
       "webhookDelivery": "Webhook 配信",
       "graphMaintenance": "グラフメンテナンス"
     },
@@ -1000,7 +1000,7 @@
     "actionDeleteMentalModel": "メンタルモデルを削除",
     "actionCreateDirective": "ディレクティブを作成",
     "actionDeleteDirective": "ディレクティブを削除",
-    "actionFileConvertRetain": "ファイル変換とRetain",
+    "actionFileConvertRetain": "ファイル変換",
     "actionWebhookDelivery": "Webhook配信",
     "transportAll": "すべてのトランスポート",
     "transportHttp": "HTTP",

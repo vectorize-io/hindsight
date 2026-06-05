@@ -427,7 +427,7 @@
       "retain": "Retain",
       "consolidation": "Consolidation",
       "refreshMentalModel": "Mental Model Refresh",
-      "fileConvertRetain": "File Convert & Retain",
+      "fileConvertRetain": "Convert File",
       "webhookDelivery": "Webhook Delivery",
       "graphMaintenance": "Graph Maintenance"
     },
@@ -1000,7 +1000,7 @@
     "actionDeleteMentalModel": "Delete Mental Model",
     "actionCreateDirective": "Create Directive",
     "actionDeleteDirective": "Delete Directive",
-    "actionFileConvertRetain": "File Convert & Retain",
+    "actionFileConvertRetain": "Convert File",
     "actionWebhookDelivery": "Webhook Delivery",
     "transportAll": "All transports",
     "transportHttp": "HTTP",
