@@ -64,12 +64,19 @@ export OPENAI_API_KEY=sk-xxx
 
 docker run -it --pull always --name hindsight --restart unless-stopped -p 8888:8888 -p 9999:9999 \
   -e HINDSIGHT_API_LLM_API_KEY=$OPENAI_API_KEY \
-  -v $HOME/.hindsight-docker:/home/hindsight/.pg0 \
+  -v hindsight-data:/home/hindsight/.pg0 \
   ghcr.io/vectorize-io/hindsight:latest
 ```
 
 >API: http://localhost:8888
 >UI: http://localhost:9999
+
+The container runs as a non-root user (UID 1000). The `hindsight-data` named
+volume above is the recommended way to persist data — Docker creates it owned by
+the container user automatically. If you prefer to bind-mount a host directory
+(`-v $HOME/.hindsight-docker:/home/hindsight/.pg0`), that directory must be
+writable by UID 1000; otherwise run the container as your host user with
+`--user $(id -u):$(id -g) -e HOME=/home/hindsight` after `chown`-ing it to match.
 
 You can modify the LLM provider by setting `HINDSIGHT_API_LLM_PROVIDER`. Valid options are `openai`, `anthropic`, `gemini`, `groq`, `ollama`, `lmstudio`, and `minimax`. The documentation provides more details on [supported models](https://hindsight.vectorize.io/developer/models).
 
