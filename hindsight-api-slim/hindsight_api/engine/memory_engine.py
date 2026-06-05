@@ -29,6 +29,7 @@ from ..config import (
     DEFAULT_RECALL_INCLUDE_CHUNKS,
     DEFAULT_RECALL_MAX_TOKENS,
     DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS,
+    ENV_MODEL_INIT_TIMEOUT,
     HindsightConfig,
     get_config,
 )
@@ -2309,8 +2310,22 @@ class MemoryEngine(MemoryEngineInterface):
         if not self._skip_llm_verification:
             init_tasks.append(verify_llm())
 
-        # Run pg0 and selected model initializations in parallel
-        await asyncio.gather(*init_tasks)
+        # Run pg0 and selected model initializations in parallel.
+        # Cap the whole thing with a wall-clock timeout so a hung init task
+        # (e.g. an offline HuggingFace download or an unreachable provider)
+        # fails the daemon fast instead of leaving it stuck forever — neither
+        # started nor errored.
+        init_timeout = get_config().model_init_timeout
+        try:
+            await asyncio.wait_for(asyncio.gather(*init_tasks), timeout=init_timeout)
+        except TimeoutError as e:
+            raise RuntimeError(
+                f"Model/connection initialization did not complete within "
+                f"{init_timeout:g}s. A model load (embeddings/cross-encoder) or LLM "
+                f"verification is likely blocked — e.g. an offline model download or "
+                f"an unreachable provider. Increase {ENV_MODEL_INIT_TIMEOUT} if the "
+                f"first-time model download legitimately needs more time."
+            ) from e
 
         # Run database migrations if enabled
         if self._run_migrations:
