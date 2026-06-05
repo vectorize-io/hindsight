@@ -15,13 +15,13 @@ Reflect is Hindsight's "ask a question, get a synthesized answer" call. It's the
 
 **Mental models** are Hindsight's pre-computed escape valve. They're persisted, named, self-refreshing reflect summaries. You define one with a `source_query` and Hindsight runs it once, stores the result, and keeps it fresh as new memories land. The next time your agent needs that answer, it's instant.
 
-This post is the technical reference for how they actually work — schema, refresh logic, the tag-matching policy that quietly bites people, and the two refresh modes (`full` and `delta`) you have to choose between. Every claim links to a file path and a line number in the [Hindsight repo](https://github.com/vectorize-io/hindsight).
+This post is the technical reference for how they actually work — schema, refresh logic, the tag-matching policy that quietly bites people, and the two refresh modes (`full` and `delta`) you have to choose between.
 
 <!-- truncate -->
 
 ## What a Mental Model Actually Is
 
-From [`hindsight-docs/docs/developer/api/mental-models.mdx`](https://github.com/vectorize-io/hindsight/blob/main/hindsight-docs/docs/developer/api/mental-models.mdx):
+From the docs:
 
 > Mental models are **saved reflect responses** that you curate for your memory bank. When you create a mental model, Hindsight runs a reflect operation with your source query and stores the result. During future reflect calls, these pre-computed summaries are checked first — providing faster, more consistent answers.
 
@@ -32,7 +32,7 @@ That's the conceptual core. Technically, a mental model is a row in the `mental_
 - A `trigger` config (when to refresh)
 - Optional `tags` (which memories feed it, and who can see it)
 
-Reflect uses a three-tier retrieval hierarchy. From the system prompt at [`hindsight-api-slim/hindsight_api/engine/reflect/prompts.py:208`](https://github.com/vectorize-io/hindsight/blob/main/hindsight-api-slim/hindsight_api/engine/reflect/prompts.py):
+Reflect uses a three-tier retrieval hierarchy. The system prompt the reflect agent receives spells it out:
 
 ```text
 ### 1. MENTAL MODELS (search_mental_models) - Try First
@@ -53,7 +53,7 @@ Mental models sit at the top of that hierarchy. The agent looks at them first, t
 
 ## The Schema
 
-The `mental_models` table is defined in [`hindsight-api-slim/hindsight_api/alembic/versions/o1a2b3c4d5e6_oracle_baseline.py:194`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-api-slim/hindsight_api/alembic/versions). The columns worth knowing:
+The `mental_models` table has these columns worth knowing:
 
 | Column | Notes |
 |---|---|
@@ -78,7 +78,7 @@ The composite `(id, bank_id)` primary key means each bank's mental models live i
 
 This is the single most important choice when you create a mental model.
 
-The `trigger.mode` field is `Literal["full", "delta"]`, defined in [`hindsight-api-slim/hindsight_api/api/http.py:1626`](https://github.com/vectorize-io/hindsight/blob/main/hindsight-api-slim/hindsight_api/api/http.py):
+The `trigger.mode` field is `Literal["full", "delta"]`. The full trigger schema:
 
 ```python
 class MentalModelTriggerOutput(BaseModel):
@@ -106,7 +106,7 @@ Delta mode is more interesting. From the reference doc:
 
 This is the right pick for long-lived "playbook"-style models — documents you want to evolve incrementally without the LLM rewriting the parts that didn't need to change.
 
-The implementation lives in [`hindsight-api-slim/hindsight_api/engine/memory_engine.py:9194`](https://github.com/vectorize-io/hindsight/blob/main/hindsight-api-slim/hindsight_api/engine/memory_engine.py) (the `refresh_mental_model` function). The decision logic:
+The `refresh_mental_model` decision logic:
 
 1. Parse `trigger.mode`. If `delta`, check whether the existing `content` is non-empty and not the placeholder `"Generating content..."`.
 2. Check whether `source_query` has changed since `last_refreshed_source_query`.
@@ -114,13 +114,17 @@ The implementation lives in [`hindsight-api-slim/hindsight_api/engine/memory_eng
 
 The fallback is automatic and silent — you can't accidentally delta-edit a model that doesn't have a baseline yet, and you can't delta-edit a model whose source query just changed (because the prior content may no longer be relevant).
 
+### Delta refresh only looks at new facts
+
+When the delta path runs, the recall call is scoped temporally: refresh adds `created_after=last_refreshed_at` to the reflect call, so the agentic loop only retrieves memories that arrived *since the last refresh*. The LLM then mixes those new facts into the existing structured content via add/replace operations. Nothing already represented in the model needs to be re-read, and nothing already represented in the model gets re-written from older facts. The inline comment in the refresh path puts it bluntly: *"so the agentic loop only retrieves genuinely new information."*
+
 ### The byte-identical guarantee
 
 In delta mode, only sections targeted by an operation get rewritten. Everything else is copied verbatim from the previous `structured_content` AST. That matters more than it sounds: if your mental model contains a checklist or a code block that the team has reviewed, delta mode guarantees the LLM won't quietly reword it.
 
 ### Empty-content protection
 
-Independent of mode, refresh has an "never overwrite with empty content" guard (memory_engine.py:9479):
+Independent of mode, refresh has a "never overwrite with empty content" guard:
 
 > If LLM call fails or returns empty, existing content is **preserved** — refreshes never overwrite a populated document with empty content.
 
@@ -132,7 +136,7 @@ If reflect comes back with nothing — no matching memories, LLM failure, tag mi
 
 The other half of the `trigger` config is `refresh_after_consolidation`. Set it to `true` and the model refreshes automatically as part of Hindsight's consolidation cycle.
 
-The hook lives in [`hindsight-api-slim/hindsight_api/engine/consolidation/consolidator.py:1150`](https://github.com/vectorize-io/hindsight/blob/main/hindsight-api-slim/hindsight_api/engine/consolidation/consolidator.py), and the security comment is worth quoting verbatim:
+The hook function's docstring spells out the policy:
 
 ```python
 async def _trigger_mental_model_refreshes(
@@ -163,7 +167,7 @@ Tags on a mental model do two things, and you have to think about both:
 1. They control which memories the refresh path reads when generating content
 2. They control which reflect / recall calls can see the model
 
-The default policy for #1 is **`all_strict`** — meaning during refresh, the model only sees memories carrying **all** of its tags. From [`hindsight-api-slim/hindsight_api/engine/memory_engine.py:628`](https://github.com/vectorize-io/hindsight/blob/main/hindsight-api-slim/hindsight_api/engine/memory_engine.py):
+The default policy for #1 is **`all_strict`** — meaning during refresh, the model only sees memories carrying **all** of its tags. The resolution logic:
 
 ```python
 def _resolve_refresh_tag_filtering(model_tags, trigger_data):
@@ -205,7 +209,7 @@ The fix is either:
 
 ## The Synthesis Prompt
 
-When refresh runs, it calls `reflect_async` with a `context` parameter that tells the LLM specifically how to write a mental model. From [`hindsight-api-slim/hindsight_api/engine/memory_engine.py:9244`](https://github.com/vectorize-io/hindsight/blob/main/hindsight-api-slim/hindsight_api/engine/memory_engine.py):
+When refresh runs, it calls `reflect_async` with a `context` parameter that tells the LLM specifically how to write a mental model:
 
 ```python
 refresh_context = (
@@ -326,7 +330,7 @@ This pattern — delta most of the time, occasional clear-and-rebuild — is wha
 | `POST` | `/v1/default/banks/{bank_id}/mental-models/{id}/clear` | `clear_mental_model()` |
 | `GET` | `/v1/default/banks/{bank_id}/mental-models/{id}/history` | `get_mental_model_history()` |
 
-All client methods have async (`a*`-prefix) variants. The MCP server exposes the same operations as tools (`create_mental_model`, `refresh_mental_model`, etc.) per [`hindsight-docs/docs/developer/mcp-server.md`](https://github.com/vectorize-io/hindsight/blob/main/hindsight-docs/docs/developer/mcp-server.md), so a Claude / Cursor / Codex agent talking to Hindsight via MCP can create and refresh models directly.
+All client methods have async (`a*`-prefix) variants. The MCP server exposes the same operations as tools (`create_mental_model`, `refresh_mental_model`, etc.), so a Claude / Cursor / Codex agent talking to Hindsight via MCP can create and refresh models directly.
 
 ---
 
