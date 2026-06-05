@@ -136,12 +136,6 @@ If your model exposes a reasoning/thinking budget, keep it low (the default) —
 export HINDSIGHT_API_LLM_REASONING_EFFORT=low
 ```
 
-If you only need chunk storage + semantic search and no fact extraction, you can drop the LLM entirely (retain falls back to chunk mode, recall still works, reflect is disabled):
-
-```bash
-export HINDSIGHT_API_LLM_PROVIDER=none
-```
-
 ### Built-in llama.cpp tuning
 
 The bundled `llamacpp` provider runs a llama.cpp server as a managed subprocess — no external server needed. Key knobs for small machines:
