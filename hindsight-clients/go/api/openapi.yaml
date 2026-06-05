@@ -6432,6 +6432,38 @@ components:
           nullable: true
           type: integer
       title: MentalModelTrigger
+    OperationProgress:
+      description: |-
+        Last-known progress snapshot for a long-running async operation.
+
+        Written at coarse phase/batch boundaries by the worker (consolidation, batch
+        retain). Lets an operator polling the operation status API distinguish a healthy
+        long-running job (``processed`` advancing across polls) from a frozen one (same
+        numbers, no movement in ``at``). Absent (``null``) on operations that never
+        reached a checkpoint — completed-instantly or pre-feature rows.
+      properties:
+        stage:
+          description: Coarse phase the operation last reported (e.g. 'processing_batch').
+          title: Stage
+          type: string
+        at:
+          description: ISO-8601 timestamp when this snapshot was written.
+          title: At
+          type: string
+        processed:
+          nullable: true
+          type: integer
+        total:
+          nullable: true
+          type: integer
+        detail:
+          additionalProperties:
+            type: integer
+          nullable: true
+      required:
+      - at
+      - stage
+      title: OperationProgress
     OperationResponse:
       description: Response model for a single async operation.
       example:
@@ -6457,6 +6489,9 @@ components:
         created_at:
           title: Created At
           type: string
+        updated_at:
+          nullable: true
+          type: string
         status:
           title: Status
           type: string
@@ -6469,6 +6504,8 @@ components:
         next_retry_at:
           nullable: true
           type: string
+        progress:
+          $ref: '#/components/schemas/OperationProgress'
       required:
       - created_at
       - error_message
@@ -6521,6 +6558,8 @@ components:
         next_retry_at:
           nullable: true
           type: string
+        progress:
+          $ref: '#/components/schemas/OperationProgress'
         result_metadata:
           additionalProperties: {}
           nullable: true

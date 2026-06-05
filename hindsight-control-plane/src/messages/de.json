@@ -427,7 +427,7 @@
       "retain": "Retain",
       "consolidation": "Konsolidierung",
       "refreshMentalModel": "Mental-Model-Aktualisierung",
-      "fileConvertRetain": "Datei konvertieren und Retain",
+      "fileConvertRetain": "Datei konvertieren",
       "webhookDelivery": "Webhook-Zustellung",
       "graphMaintenance": "Graph-Wartung"
     },
@@ -437,7 +437,8 @@
       "created": "Erstellt",
       "status": "Status",
       "index": "Index",
-      "items": "Elemente"
+      "items": "Elemente",
+      "actions": "Aktionen"
     },
     "action": {
       "cancel": "Abbrechen",
@@ -453,12 +454,21 @@
       "type": "Typ",
       "created": "Erstellt",
       "updated": "Aktualisiert",
-      "completed": "Abgeschlossen"
+      "completed": "Abgeschlossen",
+      "progress": "Fortschritt",
+      "lastHeartbeat": "Letzter Heartbeat"
     },
     "metadata": "Metadaten",
     "error": "Fehler",
     "rawPayloadParentHelp": "Dies ist ein übergeordneter Vorgang: Die Rohdaten-Payload wird in jedem Teilbatch gespeichert. Öffnen Sie einen untergeordneten Vorgang, um seine Payload zu prüfen.",
-    "rawPayloadEmpty": "Für diesen Vorgang ist keine Rohdaten-Payload gespeichert."
+    "rawPayloadEmpty": "Für diesen Vorgang ist keine Rohdaten-Payload gespeichert.",
+    "heartbeat": {
+      "justNow": "gerade eben",
+      "secondsAgo": "vor {secs}s",
+      "minutesAgo": "vor {mins}m",
+      "hoursAgo": "vor {hours}h"
+    },
+    "progressEstimateNote": "Die Gesamtzahl ist eine Schätzung vom Start der Konsolidierung und kann steigen, wenn währenddessen neue Erinnerungen hinzukommen — das ist normal."
   },
   "dataView": {
     "loadingMemories": "Erinnerungen werden geladen...",
@@ -990,7 +1000,7 @@
     "actionDeleteMentalModel": "Mentales Modell löschen",
     "actionCreateDirective": "Direktive erstellen",
     "actionDeleteDirective": "Direktive löschen",
-    "actionFileConvertRetain": "Datei konvertieren und Retain",
+    "actionFileConvertRetain": "Datei konvertieren",
     "actionWebhookDelivery": "Webhook-Zustellung",
     "transportAll": "Alle Transportmittel",
     "transportHttp": "HTTP",
