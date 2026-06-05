@@ -10,6 +10,16 @@ from hindsight_api.engine.maintenance import MaintenanceLoop
 from hindsight_api.engine.memory_engine import MemoryEngine
 
 
+def test_start_is_noop_on_oracle(monkeypatch):
+    """The loop is PostgreSQL-only (PG-only tables + routines); it must not start on Oracle."""
+    import hindsight_api.engine.maintenance as maintenance_mod
+
+    monkeypatch.setattr(maintenance_mod, "_is_oracle", lambda: True)
+    loop = MaintenanceLoop(engine=None)
+    loop.start()
+    assert loop._task is None
+
+
 def test_is_due_runs_at_start_then_waits_interval():
     """A job is due on first check (run-at-start), then not until its interval elapses."""
     loop = MaintenanceLoop(engine=None)  # _is_due needs no engine

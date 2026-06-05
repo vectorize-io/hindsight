@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 from ..config import HindsightConfig, get_config
 from ..models import RequestContext
 from .db_utils import acquire_with_retry
+from .schema import _is_oracle
 
 if TYPE_CHECKING:
     from .memory_engine import MemoryEngine
@@ -57,6 +58,13 @@ class MaintenanceLoop:
     def start(self) -> None:
         """Start the loop if any maintenance job is enabled. Idempotent."""
         if self._task and not self._task.done():
+            return
+        # PostgreSQL-only: the retention sweeps target PG-only tables (audit_log,
+        # llm_requests) and the reconcile relies on PG-only PL/pgSQL routines
+        # installed by the maintenance-routines migration. Oracle support is
+        # intentionally absent (mirrors that PG-only migration).
+        if _is_oracle():
+            logger.debug("Maintenance loop not started: PostgreSQL-only")
             return
         if not self._any_job_enabled():
             logger.debug("Maintenance loop not started: no jobs enabled")
