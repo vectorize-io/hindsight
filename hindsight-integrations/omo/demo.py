@@ -11,8 +11,8 @@ This simulates OMO's hook lifecycle:
 The demo uses http://localhost:8080 and creates a bank called "omo-demo".
 """
 
-import io
 import importlib
+import io
 import json
 import os
 import sys
@@ -38,9 +38,9 @@ RESET = "\033[0m"
 
 
 def banner(text):
-    print(f"\n{BOLD}{CYAN}{'='*60}{RESET}")
+    print(f"\n{BOLD}{CYAN}{'=' * 60}{RESET}")
     print(f"{BOLD}{CYAN}  {text}{RESET}")
-    print(f"{BOLD}{CYAN}{'='*60}{RESET}\n")
+    print(f"{BOLD}{CYAN}{'=' * 60}{RESET}\n")
 
 
 def step(num, text):
@@ -116,9 +116,7 @@ def run_hook_script(module_name, hook_input, tmp_dir):
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
 
-    spec = importlib.util.spec_from_file_location(
-        module_name, os.path.join(SCRIPTS_DIR, f"{module_name}.py")
-    )
+    spec = importlib.util.spec_from_file_location(module_name, os.path.join(SCRIPTS_DIR, f"{module_name}.py"))
     mod = importlib.util.module_from_spec(spec)
 
     old_stdin, old_stdout, old_stderr = sys.stdin, sys.stdout, sys.stderr
@@ -137,6 +135,7 @@ def run_hook_script(module_name, hook_input, tmp_dir):
 def check_server():
     """Check if Hindsight server is running."""
     from lib.client import HindsightClient
+
     client = HindsightClient(API_URL)
     return client.health_check(timeout=3)
 
@@ -196,11 +195,20 @@ def main():
         step(3, "Simulating retain (Stop) — storing a conversation...")
         messages = [
             {"role": "user", "content": "I always prefer using Python with type hints for backend services."},
-            {"role": "assistant", "content": "Got it! I'll use Python with type hints for all backend code. Would you like me to also set up mypy for strict type checking?"},
+            {
+                "role": "assistant",
+                "content": "Got it! I'll use Python with type hints for all backend code. Would you like me to also set up mypy for strict type checking?",
+            },
             {"role": "user", "content": "Yes, and I prefer FastAPI over Flask for REST APIs."},
-            {"role": "assistant", "content": "Great choices. FastAPI with Pydantic models gives you automatic validation and OpenAPI docs. I'll use that as the default framework."},
+            {
+                "role": "assistant",
+                "content": "Great choices. FastAPI with Pydantic models gives you automatic validation and OpenAPI docs. I'll use that as the default framework.",
+            },
             {"role": "user", "content": "Also, always use uv instead of pip for dependency management."},
-            {"role": "assistant", "content": "Noted — uv for dependency management. It's much faster than pip and handles lockfiles well."},
+            {
+                "role": "assistant",
+                "content": "Noted — uv for dependency management. It's much faster than pip and handles lockfiles well.",
+            },
         ]
         transcript_path = create_transcript(tmp_dir, messages)
         hook_input = {
@@ -246,10 +254,16 @@ def main():
         # ─── Step 6: Retain a second conversation ───
         step(6, "Retaining a second conversation...")
         messages2 = [
-            {"role": "user", "content": "Let's set up the project structure. I want a monorepo with separate packages."},
+            {
+                "role": "user",
+                "content": "Let's set up the project structure. I want a monorepo with separate packages.",
+            },
             {"role": "assistant", "content": "I'll create a monorepo structure. For Python, we can use uv workspaces."},
             {"role": "user", "content": "Use PostgreSQL for the database, and always use Alembic for migrations."},
-            {"role": "assistant", "content": "PostgreSQL + Alembic is a solid combo. I'll set up the migration infrastructure."},
+            {
+                "role": "assistant",
+                "content": "PostgreSQL + Alembic is a solid combo. I'll set up the migration infrastructure.",
+            },
         ]
         session_id_2 = f"demo-{int(time.time())}-2"
         transcript_path_2 = create_transcript(tmp_dir, messages2)
@@ -279,13 +293,13 @@ def main():
 
     banner("Demo Complete!")
     print(f"  Bank '{BANK_ID}' now has memories from 2 conversations.")
-    print(f"  Run this demo again to see recalled memories from past runs.")
+    print("  Run this demo again to see recalled memories from past runs.")
     print(f"  API: {API_URL}")
     print()
     print(f"  {BOLD}Try recalling manually:{RESET}")
     print(f"  curl -s -X POST {API_URL}/v1/default/banks/{BANK_ID}/memories/recall \\")
-    print(f'    -H "Content-Type: application/json" \\')
-    print(f'    -d \'{{"query": "What tools does the user prefer?", "max_tokens": 512}}\'')
+    print('    -H "Content-Type: application/json" \\')
+    print('    -d \'{"query": "What tools does the user prefer?", "max_tokens": 512}\'')
     print()
 
 
