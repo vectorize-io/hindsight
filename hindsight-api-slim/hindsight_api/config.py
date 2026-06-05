@@ -478,6 +478,11 @@ ENV_DB_COMMAND_TIMEOUT = "HINDSIGHT_API_DB_COMMAND_TIMEOUT"
 ENV_DB_ACQUIRE_TIMEOUT = "HINDSIGHT_API_DB_ACQUIRE_TIMEOUT"
 ENV_DB_STATEMENT_TIMEOUT = "HINDSIGHT_API_DB_STATEMENT_TIMEOUT"
 
+# Wall-clock cap on model/connection initialization at startup. If embeddings,
+# cross-encoder, or LLM verification hang (e.g. an offline HuggingFace download
+# or an unreachable provider), the daemon fails fast instead of hanging forever.
+ENV_MODEL_INIT_TIMEOUT = "HINDSIGHT_API_MODEL_INIT_TIMEOUT"
+
 # Worker configuration (distributed task processing)
 ENV_WORKER_ENABLED = "HINDSIGHT_API_WORKER_ENABLED"
 ENV_WORKER_ID = "HINDSIGHT_API_WORKER_ID"
@@ -875,6 +880,7 @@ DEFAULT_DB_POOL_MAX_SIZE = 100
 DEFAULT_DB_COMMAND_TIMEOUT = 60  # seconds
 DEFAULT_DB_ACQUIRE_TIMEOUT = 30  # seconds
 DEFAULT_DB_STATEMENT_TIMEOUT = 600  # seconds (Postgres statement_timeout applied on every pool connection; 0 disables)
+DEFAULT_MODEL_INIT_TIMEOUT = 300  # seconds (cap on startup model/connection init; covers first-time downloads)
 
 # Worker configuration (distributed task processing)
 DEFAULT_WORKER_ENABLED = True  # API runs worker by default (standalone mode)
@@ -1487,6 +1493,7 @@ class HindsightConfig:
     db_command_timeout: int
     db_acquire_timeout: int
     db_statement_timeout: int
+    model_init_timeout: float
 
     # Worker configuration (distributed task processing)
     worker_enabled: bool
@@ -2354,6 +2361,7 @@ class HindsightConfig:
             db_command_timeout=int(os.getenv(ENV_DB_COMMAND_TIMEOUT, str(DEFAULT_DB_COMMAND_TIMEOUT))),
             db_acquire_timeout=int(os.getenv(ENV_DB_ACQUIRE_TIMEOUT, str(DEFAULT_DB_ACQUIRE_TIMEOUT))),
             db_statement_timeout=int(os.getenv(ENV_DB_STATEMENT_TIMEOUT, str(DEFAULT_DB_STATEMENT_TIMEOUT))),
+            model_init_timeout=float(os.getenv(ENV_MODEL_INIT_TIMEOUT, str(DEFAULT_MODEL_INIT_TIMEOUT))),
             # Worker configuration
             worker_enabled=os.getenv(ENV_WORKER_ENABLED, str(DEFAULT_WORKER_ENABLED)).lower() == "true",
             worker_id=os.getenv(ENV_WORKER_ID) or DEFAULT_WORKER_ID,
