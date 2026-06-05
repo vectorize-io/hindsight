@@ -11,6 +11,7 @@ This module provides metrics for:
 - Database connection pool metrics
 """
 
+import asyncio
 import importlib
 import logging
 import os
@@ -19,7 +20,7 @@ _resource_mod = importlib.import_module("resource") if importlib.util.find_spec(
 import threading
 import time
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, NamedTuple
 
 from opentelemetry import metrics
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
@@ -54,6 +55,22 @@ HTTP_DURATION_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0
 # cache and the observable gauges read from it — keeping the /metrics scrape
 # path synchronous (the same reason the db-pool gauges read cached state).
 BACKLOG_METRICS_REFRESH_SECONDS = 30
+
+
+class _AsyncOpKey(NamedTuple):
+    """Cache / label key for the async-operation queue gauge."""
+
+    tenant: str
+    operation_type: str
+    status: str
+    bank_id: str | None
+
+
+class _BacklogKey(NamedTuple):
+    """Cache / label key for the consolidation backlog and failed gauges."""
+
+    tenant: str
+    bank_id: str | None
 
 
 def get_token_bucket(token_count: int) -> str:
@@ -343,10 +360,10 @@ class MetricsCollector(MetricsCollectorBase):
 
         # Backlog / queue-depth gauge caches, refreshed by a background task
         # (see _setup_backlog_metrics) so the scrape path stays synchronous.
-        self._async_ops_counts: dict[tuple, int] = {}
-        self._consolidation_backlog: dict[tuple, int] = {}
-        self._consolidation_failed: dict[tuple, int] = {}
-        self._backlog_task = None
+        self._async_ops_counts: dict[_AsyncOpKey, int] = {}
+        self._consolidation_backlog: dict[_BacklogKey, int] = {}
+        self._consolidation_failed: dict[_BacklogKey, int] = {}
+        self._backlog_task: "asyncio.Task | None" = None
 
     @contextmanager
     def record_operation(
@@ -693,24 +710,24 @@ class MetricsCollector(MetricsCollectorBase):
             return  # already started for this collector
 
         def get_async_operations(_options):
-            for (tenant, operation_type, status, bank_id), value in list(self._async_ops_counts.items()):
-                attrs = {"tenant": tenant, "operation_type": operation_type, "status": status}
-                if bank_id is not None:
-                    attrs["bank_id"] = bank_id
+            for key, value in list(self._async_ops_counts.items()):
+                attrs = {"tenant": key.tenant, "operation_type": key.operation_type, "status": key.status}
+                if key.bank_id is not None:
+                    attrs["bank_id"] = key.bank_id
                 yield metrics.Observation(value, attrs)
 
         def get_consolidation_backlog(_options):
-            for (tenant, bank_id), value in list(self._consolidation_backlog.items()):
-                attrs = {"tenant": tenant}
-                if bank_id is not None:
-                    attrs["bank_id"] = bank_id
+            for key, value in list(self._consolidation_backlog.items()):
+                attrs = {"tenant": key.tenant}
+                if key.bank_id is not None:
+                    attrs["bank_id"] = key.bank_id
                 yield metrics.Observation(value, attrs)
 
         def get_consolidation_failed(_options):
-            for (tenant, bank_id), value in list(self._consolidation_failed.items()):
-                attrs = {"tenant": tenant}
-                if bank_id is not None:
-                    attrs["bank_id"] = bank_id
+            for key, value in list(self._consolidation_failed.items()):
+                attrs = {"tenant": key.tenant}
+                if key.bank_id is not None:
+                    attrs["bank_id"] = key.bank_id
                 yield metrics.Observation(value, attrs)
 
         self.meter.create_observable_gauge(
@@ -737,19 +754,18 @@ class MetricsCollector(MetricsCollectorBase):
         # Drive the caches from a background task on the running loop.
         # set_db_pool runs during async startup, so a loop is normally present;
         # if not, the gauges simply stay empty rather than crashing collection.
-        import asyncio
-
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             logger.warning("No running event loop; backlog metrics disabled")
             return
+        # Process-lifetime task: there is no collector teardown hook to cancel it
+        # on, so it's torn down with the event loop at process shutdown. If a
+        # shutdown path is ever added, cancel self._backlog_task there.
         self._backlog_task = loop.create_task(self._backlog_refresh_loop())
 
     async def _backlog_refresh_loop(self):
         """Periodically refresh the backlog / queue-depth caches."""
-        import asyncio
-
         while True:
             try:
                 await self._refresh_backlog()
@@ -770,10 +786,12 @@ class MetricsCollector(MetricsCollectorBase):
         if self._db_pool is None:
             return
 
-        async_ops: dict[tuple, int] = {}
-        backlog: dict[tuple, int] = {}
-        failed: dict[tuple, int] = {}
+        async_ops: dict[_AsyncOpKey, int] = {}
+        backlog: dict[_BacklogKey, int] = {}
+        failed: dict[_BacklogKey, int] = {}
         per_bank = self._include_bank_id
+        bank_sel = "bank_id, " if per_bank else ""
+        bank_grp = " GROUP BY bank_id" if per_bank else ""
 
         async with self._db_pool.acquire() as conn:
             # memory_units is the central per-tenant table; its presence marks a
@@ -783,47 +801,62 @@ class MetricsCollector(MetricsCollectorBase):
             )
             for schema_row in schema_rows:
                 schema = schema_row["table_schema"]
-                bank_sel = "bank_id, " if per_bank else ""
-                bank_grp = ", bank_id" if per_bank else ""
 
                 # Worker queue depth — mirrors operations_by_status, split by
                 # operation_type. Terminal states (completed/cancelled) are
                 # excluded on purpose: a gauge of finished work grows without
                 # bound and says nothing about current load.
                 # Index: idx_async_operations_status.
+                ops_grp = "operation_type, status" + (", bank_id" if per_bank else "")
                 try:
                     rows = await conn.fetch(
                         f"SELECT operation_type, status, {bank_sel}COUNT(*) AS count "
                         f'FROM "{schema}".async_operations '
                         "WHERE status IN ('pending', 'processing', 'failed') "
-                        f"GROUP BY operation_type, status{bank_grp}"
+                        f"GROUP BY {ops_grp}"
                     )
                     for row in rows:
                         bank = row["bank_id"] if per_bank else None
-                        key = (schema, row["operation_type"] or "unknown", row["status"], bank)
+                        key = _AsyncOpKey(schema, row["operation_type"] or "unknown", row["status"], bank)
                         async_ops[key] = async_ops.get(key, 0) + int(row["count"])
                 except Exception:
                     logger.debug("Async-ops queue query failed for schema %s", schema, exc_info=True)
 
-                # Consolidation backlog (source memories) — lifted from the
-                # bank-stats endpoint. The partial index
-                # idx_memory_units_unconsolidated backs the pending count.
+                # Consolidation backlog + stranded counts. Two separate COUNT(*)
+                # queries rather than one with two FILTERs: each WHERE matches a
+                # partial-index predicate exactly, so each runs as an index scan
+                # over just the unconsolidated / failed subset instead of a seq
+                # scan of the whole (largest) table on every refresh.
+                #   idx_memory_units_unconsolidated        WHERE consolidated_at IS NULL ...
+                #   idx_memory_units_consolidation_failed  WHERE consolidation_failed_at IS NOT NULL ...
+                # GROUP BY bank_id still composes — bank_id is each index's lead column.
                 try:
                     rows = await conn.fetch(
-                        f"SELECT {bank_sel}"
-                        "COUNT(*) FILTER (WHERE consolidated_at IS NULL "
-                        "AND fact_type IN ('experience', 'world')) AS pending, "
-                        "COUNT(*) FILTER (WHERE consolidation_failed_at IS NOT NULL "
-                        "AND fact_type IN ('experience', 'world')) AS failed "
-                        f'FROM "{schema}".memory_units' + (" GROUP BY bank_id" if per_bank else "")
+                        f"SELECT {bank_sel}COUNT(*) AS count "
+                        f'FROM "{schema}".memory_units '
+                        "WHERE consolidated_at IS NULL AND fact_type IN ('experience', 'world')"
+                        f"{bank_grp}"
                     )
                     for row in rows:
                         bank = row["bank_id"] if per_bank else None
-                        key = (schema, bank)
-                        backlog[key] = backlog.get(key, 0) + int(row["pending"])
-                        failed[key] = failed.get(key, 0) + int(row["failed"])
+                        key = _BacklogKey(schema, bank)
+                        backlog[key] = backlog.get(key, 0) + int(row["count"])
                 except Exception:
                     logger.debug("Consolidation backlog query failed for schema %s", schema, exc_info=True)
+
+                try:
+                    rows = await conn.fetch(
+                        f"SELECT {bank_sel}COUNT(*) AS count "
+                        f'FROM "{schema}".memory_units '
+                        "WHERE consolidation_failed_at IS NOT NULL AND fact_type IN ('experience', 'world')"
+                        f"{bank_grp}"
+                    )
+                    for row in rows:
+                        bank = row["bank_id"] if per_bank else None
+                        key = _BacklogKey(schema, bank)
+                        failed[key] = failed.get(key, 0) + int(row["count"])
+                except Exception:
+                    logger.debug("Consolidation failed query failed for schema %s", schema, exc_info=True)
 
         self._async_ops_counts = async_ops
         self._consolidation_backlog = backlog

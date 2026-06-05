@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from hindsight_api.metrics import MetricsCollector
+from hindsight_api.metrics import MetricsCollector, _AsyncOpKey, _BacklogKey
 
 
 class _FakeConn:
@@ -59,6 +59,7 @@ def _collector(include_bank_id=False):
 
 
 def _rows_for(sql):
+    """Canned results, keyed off distinctive substrings of each query."""
     if "information_schema.tables" in sql:
         return [{"table_schema": "public"}]
     if "async_operations" in sql:
@@ -68,8 +69,10 @@ def _rows_for(sql):
             {"operation_type": "consolidation", "status": "processing", "count": 1},
             {"operation_type": "consolidation", "status": "failed", "count": 2},
         ]
-    if "memory_units" in sql:
-        return [{"pending": 42, "failed": 3}]
+    if "memory_units" in sql and "consolidated_at IS NULL" in sql:
+        return [{"count": 42}]
+    if "memory_units" in sql and "consolidation_failed_at IS NOT NULL" in sql:
+        return [{"count": 3}]
     return []
 
 
@@ -91,22 +94,53 @@ async def test_refresh_backlog_aggregates_queue_and_consolidation():
 
 
 @pytest.mark.asyncio
-async def test_refresh_backlog_excludes_terminal_statuses_from_query():
-    """The queue gauge must not count completed/cancelled work — assert the
-    SQL filters to the non-terminal states only."""
+async def test_refresh_backlog_uses_index_matched_predicates_not_filter_scan():
+    """Backlog/failed must be two separate COUNT(*) queries whose WHERE matches
+    a partial-index predicate exactly (no FILTER over a full-table scan), and
+    the queue query must exclude terminal statuses."""
     captured = []
     collector = _collector()
-
-    def fetch(sql, *a):
-        captured.append(sql)
-        return _rows_for(sql)
-
-    collector._db_pool = _FakePool(fetch)
+    collector._db_pool = _FakePool(lambda sql, *a: (captured.append(sql), _rows_for(sql))[1])
     await collector._refresh_backlog()
+
+    mem_queries = [s for s in captured if "memory_units" in s and "COUNT(*)" in s]
+    assert len(mem_queries) == 2  # split, not a single two-FILTER aggregate
+    assert all("FILTER" not in s for s in mem_queries)
+    assert any("consolidated_at IS NULL AND fact_type IN ('experience', 'world')" in s for s in mem_queries)
+    assert any("consolidation_failed_at IS NOT NULL AND fact_type IN ('experience', 'world')" in s for s in mem_queries)
 
     ops_sql = next(s for s in captured if "async_operations" in s and "GROUP BY" in s)
     assert "status IN ('pending', 'processing', 'failed')" in ops_sql
     assert "completed" not in ops_sql and "cancelled" not in ops_sql
+
+
+@pytest.mark.asyncio
+async def test_refresh_backlog_per_bank_labels_and_group_by_when_enabled():
+    """With metrics_include_bank_id on, bank_id enters the cache key and the
+    SQL switches to GROUP BY bank_id."""
+    captured = []
+
+    def fetch(sql, *a):
+        captured.append(sql)
+        if "information_schema.tables" in sql:
+            return [{"table_schema": "public"}]
+        if "async_operations" in sql:
+            return [{"operation_type": "retain", "status": "pending", "bank_id": "bankA", "count": 4}]
+        if "memory_units" in sql and "consolidated_at IS NULL" in sql:
+            return [{"bank_id": "bankA", "count": 11}]
+        if "memory_units" in sql and "consolidation_failed_at IS NOT NULL" in sql:
+            return [{"bank_id": "bankA", "count": 2}]
+        return []
+
+    collector = _collector(include_bank_id=True)
+    collector._db_pool = _FakePool(fetch)
+    await collector._refresh_backlog()
+
+    assert collector._async_ops_counts[("public", "retain", "pending", "bankA")] == 4
+    assert collector._consolidation_backlog[("public", "bankA")] == 11
+    assert collector._consolidation_failed[("public", "bankA")] == 2
+    # bank_id must be grouped in every per-bank count query
+    assert all("GROUP BY bank_id" in s for s in captured if "memory_units" in s and "COUNT(*)" in s)
 
 
 def test_gauges_register_and_emit_cached_values_without_bank_id():
@@ -124,10 +158,10 @@ def test_gauges_register_and_emit_cached_values_without_bank_id():
     assert "hindsight.consolidation.failed" in gauges
 
     collector._async_ops_counts = {
-        ("public", "retain", "pending", None): 7,
-        ("public", "consolidation", "processing", None): 1,
+        _AsyncOpKey("public", "retain", "pending", None): 7,
+        _AsyncOpKey("public", "consolidation", "processing", None): 1,
     }
-    collector._consolidation_backlog = {("public", None): 9}
+    collector._consolidation_backlog = {_BacklogKey("public", None): 9}
 
     obs = list(gauges["hindsight.async_operations"](None))
     by_label = {(o.attributes["operation_type"], o.attributes["status"]): o.value for o in obs}
@@ -138,3 +172,17 @@ def test_gauges_register_and_emit_cached_values_without_bank_id():
     backlog_obs = list(gauges["hindsight.consolidation.backlog"](None))
     assert backlog_obs[0].value == 9
     assert backlog_obs[0].attributes["tenant"] == "public"
+
+
+def test_gauge_emits_bank_id_attribute_when_present():
+    collector = _collector(include_bank_id=True)
+    collector.set_db_pool(MagicMock())
+    gauges = {
+        c.kwargs["name"]: c.kwargs["callbacks"][0]
+        for c in collector.meter.create_observable_gauge.call_args_list
+        if "callbacks" in c.kwargs
+    }
+    collector._consolidation_backlog = {_BacklogKey("public", "bankA"): 4}
+    obs = list(gauges["hindsight.consolidation.backlog"](None))
+    assert obs[0].value == 4
+    assert obs[0].attributes["bank_id"] == "bankA"
