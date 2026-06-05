@@ -1,5 +1,5 @@
 ---
-title: "Mental Models in Hindsight: A Code-Level Deep Dive"
+title: "Mental Models: The Self-Refreshing Memory Cache Your Agent Should Have Yesterday"
 authors: [benfrank241]
 slug: "2026/06/05/mental-models-deep-dive"
 date: 2026-06-05T16:00
