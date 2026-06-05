@@ -269,7 +269,11 @@ def create_llm_provider(
         reasoning_effort: Reasoning effort level for supported providers.
         groq_service_tier: Groq service tier (for Groq provider) - "on_demand", "flex", or "auto".
         openai_service_tier: OpenAI service tier (for OpenAI provider) - None (default) or "flex" (50% cheaper).
-        extra_body: Extra body params merged into OpenAI-compatible API calls.
+        extra_body: Extra request-body params merged into the provider's native
+            call. Threaded into OpenAI-compatible, Fireworks, Anthropic, Gemini/
+            VertexAI and LiteLLM providers (each merges them in its own parameter
+            space). Keys must use each provider's native names (e.g. ``max_tokens``
+            for OpenAI/Anthropic vs ``max_output_tokens`` for Gemini).
         default_headers: Custom headers passed as ``default_headers`` to provider SDK clients
             (used by operators routing through proxies / request-tracing middleware). Currently
             wired into the Anthropic provider; other providers may opt in as needed.
@@ -345,6 +349,7 @@ def create_llm_provider(
             vertexai_credentials=vertexai_credentials,
             gemini_safety_settings=gemini_safety_settings,
             prompt_cache_enabled=prompt_cache_enabled,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "anthropic":
@@ -355,6 +360,7 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             default_headers=default_headers,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "litellm":
@@ -364,6 +370,7 @@ def create_llm_provider(
             base_url=base_url,
             model=model,
             reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "litellmrouter":
@@ -381,6 +388,7 @@ def create_llm_provider(
             model=model,
             config=litellmrouter_config,
             reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "bedrock":
@@ -392,6 +400,7 @@ def create_llm_provider(
             base_url=base_url,
             model=bedrock_model,
             reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "llamacpp":
@@ -487,7 +496,8 @@ class LLMProvider:
             groq_service_tier: Groq service tier ("on_demand", "flex", "auto") - from config.
             openai_service_tier: OpenAI service tier (None or "flex") - from config.
             gemini_safety_settings: Safety settings for Gemini/VertexAI providers.
-            extra_body: Extra body params merged into OpenAI-compatible API calls.
+            extra_body: Extra request-body params merged into the provider's native call
+                (OpenAI-compatible, Fireworks, Anthropic, Gemini/VertexAI, LiteLLM).
             default_headers: Custom headers passed as ``default_headers`` to provider SDK clients.
                 Used by operators routing through proxies / request-tracing middleware. Falls
                 back to ``HindsightConfig.llm_default_headers`` (env: ``HINDSIGHT_API_LLM_DEFAULT_HEADERS``)

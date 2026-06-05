@@ -174,7 +174,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_LLM_REASONING_EFFORT` | Reasoning effort for providers/models that support it (for example `low`, `medium`, `high`, `xhigh`) | `low` |
 | `HINDSIGHT_API_LLM_GROQ_SERVICE_TIER` | Groq service tier: `on_demand`, `flex`, `auto` | `auto` |
 | `HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER` | OpenAI service tier: `flex` for 50% cost savings (OpenAI Flex Processing) | None (default) |
-| `HINDSIGHT_API_LLM_EXTRA_BODY` | JSON dict merged into `extra_body` for all OpenAI-compatible API calls. Useful for custom model servers (e.g., vLLM `chat_template_kwargs`). | `null` |
+| `HINDSIGHT_API_LLM_EXTRA_BODY` | JSON dict of extra request-body params (e.g. `temperature`, `top_p`, `max_tokens`) merged into every LLM call. Applied across the OpenAI-compatible, Fireworks, Anthropic, Gemini/VertexAI and LiteLLM (incl. Bedrock/Router) providers. Each provider merges them in its own native parameter space, so use that provider's field names (e.g. `max_tokens` for OpenAI/Anthropic vs `max_output_tokens` for Gemini). Also useful for custom model servers (e.g. vLLM `chat_template_kwargs`). | `null` |
 | `HINDSIGHT_API_LLM_DEFAULT_HEADERS` | JSON dict passed as `default_headers` to provider SDK clients. Used by operators routing through proxies / request-tracing middleware (e.g. Cloudflare AI Gateway, Helicone, corporate proxies). Currently wired into the Anthropic provider; other providers can opt in. | `null` |
 | `HINDSIGHT_API_LLM_GEMINI_SAFETY_SETTINGS` | JSON-encoded list of `{category, threshold}` dicts for Gemini/VertexAI content safety filtering | `null` |
 | `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED` | Reuse the fixed system prefix via the provider's explicit prompt cache, billed at the cached-input rate (Gemini/Vertex `CachedContent`). The cached prefix is shared across all banks and soft-fails to an uncached call. Set to `false` to disable. See [Models](./models#provider-capabilities). | `true` |
@@ -459,10 +459,21 @@ two slots that retain/consolidation cannot consume.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `tei`, `openai`, `openai-codex`, `openrouter`, `cohere`, `google`, `zeroentropy`, `litellm`, or `litellm-sdk` | `local` |
+| `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `onnx`, `tei`, `openai`, `openai-codex`, `openrouter`, `cohere`, `google`, `zeroentropy`, `litellm`, or `litellm-sdk` | `local` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL` | Model for local provider | `BAAI/bge-small-en-v1.5` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU` | Force CPU mode for local embeddings (avoids MPS/XPC issues on macOS) | `false` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID` | Hugging Face model repo for the ONNX provider. Used for auto-download and as the tokenizer fallback. | `intfloat/multilingual-e5-small` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH` | Local path to the ONNX graph. When unset, Hindsight downloads `HINDSIGHT_API_EMBEDDINGS_ONNX_FILE` from `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID`. | - |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH` | Hugging Face tokenizer repo or local tokenizer directory. Set this when using `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH`. | Falls back to `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_FILE` | ONNX file path inside the Hugging Face repo. Hindsight also downloads the conventional external-data sidecar with `_data` suffix when present. | `onnx/model.onnx` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS` | Expected embedding dimensions. Startup fails if the loaded model returns a different size. | Auto-detected |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_MAX_TOKENS` | Max tokenizer length for ONNX embeddings. | `512` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_POOLING` | Pooling strategy for token embeddings: `mean` or `cls`. Ignored when the ONNX graph returns a pre-pooled 2-D embedding output. | `mean` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_NORMALIZE` | L2-normalize ONNX vectors before storage. | `true` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX` | Prefix applied to query/search text before ONNX embedding. Keep `query: ` for E5 models; set to empty for non-E5 models such as MiniLM or BGE. | `query: ` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX` | Prefix applied to stored memory/document text before ONNX embedding. Keep `passage: ` for E5 models; set to empty for non-E5 models such as MiniLM or BGE. | `passage: ` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_OUTPUT_NAME` | Optional ONNX output name to request when an exported graph exposes a pooled embedding output. | - |
 | `HINDSIGHT_API_EMBEDDINGS_TEI_URL` | TEI server URL | - |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY` | OpenAI API key (falls back to `HINDSIGHT_API_LLM_API_KEY`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL` | OpenAI embedding model | `text-embedding-3-small` |
@@ -498,7 +509,107 @@ two slots that retain/consolidation cannot consume.
 | `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_REGION` | Vertex AI region for embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_REGION`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_SERVICE_ACCOUNT_KEY` | Service account key for Vertex AI embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY`) | - |
 
-Embedding provider selection, credentials, base URLs, model choices, dimensions, encoding format, batch sizes, and latency modes are static server-level settings. They are not hierarchical per-bank overrides.
+Embedding provider selection, credentials, base URLs, model choices, dimensions, encoding format, batch sizes, and latency modes are static server-level settings. They are not hierarchical per-bank overrides. The ONNX settings above are also static, matching the existing `embeddings_local_*` settings.
+
+#### Local ONNX embeddings
+
+The ONNX provider runs embedding models in-process with ONNX Runtime. Install the optional deps when building your own API environment:
+
+```bash
+pip install 'hindsight-api-slim[local-onnx]'
+# or, in this repository:
+uv sync --project hindsight-api-slim --extra local-onnx
+```
+
+You can either let Hindsight download the model from Hugging Face at startup by setting `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID`, or pre-download the ONNX graph and tokenizer files under the Hindsight repository root.
+
+```bash
+cd /path/to/hindsight
+mkdir -p models
+
+MODEL_ID=intfloat/multilingual-e5-small
+MODEL_DIR=models/intfloat__multilingual-e5-small
+
+uv run --project hindsight-api-slim --extra local-onnx python - <<'PY'
+import os
+from huggingface_hub import snapshot_download
+
+snapshot_download(
+    repo_id=os.environ["MODEL_ID"],
+    local_dir=os.environ["MODEL_DIR"],
+    allow_patterns=[
+        "onnx/model.onnx",
+        "onnx/model.onnx_data",
+        "*.json",
+        "*.txt",
+        "*.model",
+    ],
+)
+PY
+```
+
+Then start Hindsight with paths relative to the repository root:
+
+```bash
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=onnx
+export HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH=./models/intfloat__multilingual-e5-small/onnx/model.onnx
+export HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH=./models/intfloat__multilingual-e5-small
+export HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS=384
+export HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX="query: "
+export HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX="passage: "
+```
+
+For Docker deployments, mount the same model directory and use container paths:
+
+```yaml
+services:
+  hindsight:
+    volumes:
+      - ./models:/app/models:ro
+    environment:
+      HINDSIGHT_API_EMBEDDINGS_PROVIDER: onnx
+      HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH: /app/models/intfloat__multilingual-e5-small/onnx/model.onnx
+      HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH: /app/models/intfloat__multilingual-e5-small
+      HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS: "384"
+      HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX: "query: "
+      HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX: "passage: "
+```
+
+Model-specific examples:
+
+```bash
+# sentence-transformers/all-MiniLM-L6-v2: 384 dimensions, no E5 prefixes
+export HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID=sentence-transformers/all-MiniLM-L6-v2
+export HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS=384
+export HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX=""
+export HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX=""
+
+# intfloat/multilingual-e5-small: 384 dimensions, keep E5 prefixes
+export HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID=intfloat/multilingual-e5-small
+export HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS=384
+export HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX="query: "
+export HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX="passage: "
+
+# sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2: 384 dimensions, no E5 prefixes
+export HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+export HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS=384
+export HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX=""
+export HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX=""
+
+# BAAI/bge-m3: 1024 dimensions, no E5 prefixes; keep onnx/model.onnx_data next to model.onnx
+export HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID=BAAI/bge-m3
+export HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS=1024
+export HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX=""
+export HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX=""
+```
+
+:::warning
+Do not mix embeddings from different models in the same vector index. Switching from `local` to `onnx`, or changing ONNX models, requires re-embedding existing memories/documents even when the vector dimensions happen to match. For example, `BAAI/bge-small-en-v1.5` and `intfloat/multilingual-e5-small` both produce 384-dimensional vectors, but their embedding spaces are not semantically comparable.
+:::
+
+:::warning
+The default ONNX query/document prefixes (`query: ` and `passage: `) are for E5 models. Clear both prefix variables for non-E5 models such as MiniLM or BGE, otherwise Hindsight will prepend E5-style text to models that were not trained with that format.
+:::
 
 #### Common Pitfall: Provider-Specific Embedding Env Var Names
 

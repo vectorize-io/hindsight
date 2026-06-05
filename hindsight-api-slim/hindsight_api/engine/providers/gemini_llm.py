@@ -70,6 +70,14 @@ class GeminiLLM(LLMInterface):
         # Safety settings: None means use Gemini's defaults
         self._safety_settings: list | None = kwargs.get("gemini_safety_settings")
 
+        # User-configured extra params merged into the GenerateContentConfig of
+        # every call. Gemini's request body nests generation params, so we expose
+        # them in the SDK's native config space rather than as a raw body merge:
+        # keys must be GenerateContentConfig fields (e.g. temperature, top_p,
+        # top_k, max_output_tokens, seed). Sourced from llm_extra_body
+        # (env: HINDSIGHT_API_LLM_EXTRA_BODY).
+        self._extra_body: dict[str, Any] = kwargs.get("extra_body") or {}
+
         # Context-cache manager. Lazy-initialized on first cache lookup so
         # nothing happens for models/workloads that never reach it. The instance
         # default here is off (a directly-constructed GeminiLLM doesn't cache); the
@@ -255,7 +263,8 @@ class GeminiLLM(LLMInterface):
         # ``cached_content``. Built as a closure so we can rebuild it WITHOUT the
         # cache and retry inline if a stale/invalid CachedContent makes the call fail.
         def _build_generation_config(use_cache: bool) -> "genai_types.GenerateContentConfig | None":
-            config_kwargs: dict[str, Any] = {}
+            # Seed with user-configured extra params; explicit settings below win.
+            config_kwargs: dict[str, Any] = dict(self._extra_body)
             if use_cache:
                 config_kwargs["cached_content"] = cached_prefix
             elif system_instruction:
@@ -585,7 +594,8 @@ class GeminiLLM(LLMInterface):
         # stays out of the cache. Built as a closure so we can rebuild it WITHOUT
         # the cache and retry inline if a stale/invalid cache makes the call fail.
         def _build_tools_config(use_cache: bool) -> "genai_types.GenerateContentConfig":
-            config_kwargs: dict[str, Any] = {}
+            # Seed with user-configured extra params; explicit settings below win.
+            config_kwargs: dict[str, Any] = dict(self._extra_body)
             if use_cache:
                 config_kwargs["cached_content"] = cached_prefix
             else:

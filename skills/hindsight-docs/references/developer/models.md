@@ -94,6 +94,7 @@ Beyond basic generation, some providers support optional features that lower cos
 | OpenAI Codex (`openai-codex`) | — | — |
 | Claude Code (`claude-code`) | — | — |
 | AWS Bedrock (`bedrock`) | — | — |
+| Fireworks AI (`fireworks`) | — | — |
 | LiteLLM (100+) (`litellm`) | — | — |
 
 - **Batch API** — submits bulk retain extraction through the provider's asynchronous batch endpoint, typically at ~50% lower cost. Used automatically when available; otherwise calls run synchronously.
