@@ -109,14 +109,6 @@ export HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT=1
 export HINDSIGHT_API_CONSOLIDATION_LLM_MAX_CONCURRENT=1
 ```
 
-**Symptom of saturation:** other clients sharing the endpoint appear to "hang" or queue indefinitely while Hindsight occupies all slots with retain/recall/consolidation calls. Verify with:
-
-```bash
-# llama.cpp default port is 8080; adjust if your server uses a different port
-curl -s http://127.0.0.1:8080/slots | jq '.[] | {id, is_processing, n_decoded}'
-ss -tnp 'dst :8080'   # count connections per client PID
-```
-
 ### Timeouts and retries
 
 Small models on modest hardware generate tokens slowly, and the first request after startup pays a model-load cost. The default `HINDSIGHT_API_LLM_TIMEOUT=120` (seconds) can be too tight for a large local model on CPU — raise it to avoid spurious timeouts and wasted retries:
