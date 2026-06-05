@@ -22,7 +22,7 @@ import time
 import uuid
 from collections import defaultdict
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from itertools import combinations
 from typing import TYPE_CHECKING, Any, Literal
@@ -1520,6 +1520,64 @@ def _max_date(dates: "Any") -> "datetime | None":
     return max((d for d in dates if d is not None), default=None)
 
 
+@dataclass(frozen=True)
+class _ObservationHistorySnapshot:
+    """Pre-update state of an observation, persisted as the ``content`` JSON blob
+    of one observation_history row.
+
+    Temporal fields are the ISO strings carried on MemoryFact; new_source_memory_ids
+    are the ids added by the update.
+    """
+
+    previous_text: str | None
+    previous_tags: list[str]
+    previous_occurred_start: str | None
+    previous_occurred_end: str | None
+    previous_mentioned_at: str | None
+    new_source_memory_ids: list[str]
+
+
+async def _append_observation_history(
+    conn: "Connection",
+    bank_id: str,
+    observation_id: str,
+    snapshot: _ObservationHistorySnapshot,
+    max_entries: int,
+) -> None:
+    """Insert one pre-update snapshot into ``observation_history``, then delete the
+    oldest rows beyond ``max_entries`` for this observation.
+
+    The snapshot is stored as a single JSONB ``content`` blob (per-row, so it stays
+    small). Bounding by row count keeps a frequently-reinforced observation's
+    history from growing without bound.
+    """
+    obs_uuid = uuid.UUID(observation_id)
+    await conn.execute(
+        f"""
+        INSERT INTO {fq_table("observation_history")} (observation_id, bank_id, content, changed_at)
+        VALUES ($1, $2, $3::jsonb, now())
+        """,
+        obs_uuid,
+        bank_id,
+        json.dumps(asdict(snapshot)),
+    )
+    if max_entries and max_entries > 0:
+        await conn.execute(
+            f"""
+            DELETE FROM {fq_table("observation_history")}
+            WHERE observation_id = $1
+              AND id NOT IN (
+                  SELECT id FROM {fq_table("observation_history")}
+                  WHERE observation_id = $1
+                  ORDER BY changed_at DESC, id DESC
+                  LIMIT $2
+              )
+            """,
+            obs_uuid,
+            max_entries,
+        )
+
+
 async def _execute_update_action(
     conn: "Connection",
     memory_engine: "MemoryEngine",
@@ -1559,15 +1617,14 @@ async def _execute_update_action(
 
     from ...config import get_config
 
-    history_entry = {
-        "previous_text": model.text,
-        "previous_tags": list(model.tags or []),
-        "previous_occurred_start": model.occurred_start,
-        "previous_occurred_end": model.occurred_end,
-        "previous_mentioned_at": model.mentioned_at,
-        "changed_at": datetime.now(timezone.utc).isoformat(),
-        "new_source_memory_ids": [str(mid) for mid in source_memory_ids],
-    }
+    history_entry = _ObservationHistorySnapshot(
+        previous_text=model.text,
+        previous_tags=list(model.tags or []),
+        previous_occurred_start=model.occurred_start,
+        previous_occurred_end=model.occurred_end,
+        previous_mentioned_at=model.mentioned_at,
+        new_source_memory_ids=[str(mid) for mid in source_memory_ids],
+    )
 
     source_ids = list(model.source_fact_ids or []) + source_memory_ids
 
@@ -1583,9 +1640,6 @@ async def _execute_update_action(
         perf.record_timing("embedding", time.time() - t0)
 
     config = get_config()
-    history_clause = (
-        "history = COALESCE(history, '[]'::jsonb) || $3::jsonb," if config.enable_observation_history else ""
-    )
 
     t0 = time.time()
     await conn.execute(
@@ -1593,19 +1647,17 @@ async def _execute_update_action(
         UPDATE {fq_table("memory_units")}
         SET text = $1,
             embedding = $2::vector,
-            {history_clause}
-            source_memory_ids = $4,
-            proof_count = $5,
-            tags = $10,
+            source_memory_ids = $3,
+            proof_count = $4,
+            tags = $9,
             updated_at = now(),
-            occurred_start = LEAST(occurred_start, COALESCE($7, occurred_start)),
-            occurred_end = GREATEST(occurred_end, COALESCE($8, occurred_end)),
-            mentioned_at = GREATEST(mentioned_at, COALESCE($9, mentioned_at))
-        WHERE id = $6
+            occurred_start = LEAST(occurred_start, COALESCE($6, occurred_start)),
+            occurred_end = GREATEST(occurred_end, COALESCE($7, occurred_end)),
+            mentioned_at = GREATEST(mentioned_at, COALESCE($8, mentioned_at))
+        WHERE id = $5
         """,
         new_text,
         embedding_str,
-        json.dumps([history_entry]),
         source_ids,
         len(source_ids),
         uuid.UUID(observation_id),
@@ -1614,6 +1666,15 @@ async def _execute_update_action(
         source_mentioned_at,
         merged_tags,
     )
+
+    # Record the pre-update snapshot in the dedicated observation_history table
+    # (one row per change), then trim to the configured cap. History lived in a
+    # single unbounded JSONB column before; an often-reinforced observation grew
+    # it until it crossed Postgres's 256MB jsonb limit and got stuck.
+    if config.enable_observation_history:
+        await _append_observation_history(
+            conn, bank_id, observation_id, history_entry, config.observation_history_max_entries
+        )
 
     # Sync observation_sources junction table (Oracle only — PG uses native array ops).
     if memory_engine._backend.ops.uses_observation_sources_table:
@@ -2055,10 +2116,10 @@ async def _create_observation_directly(
         # VectorChord: manually tokenize and insert search_vector
         query = f"""
             INSERT INTO {fq_table("memory_units")} (
-                id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids, history,
+                id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids,
                 tags, event_date, occurred_start, occurred_end, mentioned_at, search_vector
             )
-            VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, '[]'::jsonb, $6, $7, $8, $9, $10,
+            VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, $6, $7, $8, $9, $10,
                     tokenize($3, 'llmlingua2')::bm25_catalog.bm25vector)
             RETURNING id
         """
@@ -2074,10 +2135,10 @@ async def _create_observation_directly(
         # re-ingested. Tracking a separate fix for that gap.
         query = f"""
             INSERT INTO {fq_table("memory_units")} (
-                id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids, history,
+                id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids,
                 tags, event_date, occurred_start, occurred_end, mentioned_at
             )
-            VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, '[]'::jsonb, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, $6, $7, $8, $9, $10)
             RETURNING id
         """
 

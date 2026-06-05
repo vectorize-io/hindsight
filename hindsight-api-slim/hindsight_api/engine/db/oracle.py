@@ -156,6 +156,9 @@ _JSON_COL_NAMES = {
     "task_payload",
     "history",
 }
+# NOTE: the history tables' JSON payload column is named ``content`` — deliberately
+# NOT added here, because ``mental_models.content`` is plain text (adding "content"
+# would corrupt those reads). The history read paths json.loads ``content`` directly.
 
 # Columns backed by CLOB in Oracle (large text or JSON). When such a column is
 # returned via a ``RETURNING`` clause it must be bound as DB_TYPE_CLOB; binding

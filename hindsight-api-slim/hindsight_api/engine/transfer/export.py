@@ -56,11 +56,22 @@ _REPLAYED_TABLES = frozenset(
         "unit_entities",
         "memory_links",
         "entity_cooccurrences",
+        # observation_history FKs to a memory_units observation, but observations
+        # are derived: they're regenerated with FRESH ids when consolidation is
+        # replayed on import (see _EXPORTED_FACT_TYPES — observations are excluded).
+        # There is no stable observation id to re-attach history to, so it is not
+        # carried; the target rebuilds observation history as it re-consolidates.
+        "observation_history",
     }
 )
 # Carried verbatim as JSON rows (bank config + synthesized state). Embedding-bearing
 # rows have their vector stripped (see _DERIVED_COLUMNS) and are re-embedded on import.
 _BANK_ROW_TABLES = ("banks", "mental_models", "directives", "webhooks")
+# Bank-scoped child-history carried verbatim. Unlike observations, mental models
+# keep their (id, bank_id) across export/import, so their refresh history can be
+# re-attached. The surrogate ``id`` is dropped on dump so the target reassigns it
+# (see _dump_history_rows); restored after its parent table (mental_models).
+_CARRIED_HISTORY_TABLES = ("mental_model_history",)
 # Operational history — only carried with include_history=True.
 _HISTORY_TABLES = ("audit_log", "llm_requests")
 # Intentionally never exported.
@@ -234,6 +245,21 @@ async def _dump_bank_rows(conn: Any, table: str, bank_id: str) -> list[dict]:
     return [{k: v for k, v in dict(row).items() if k not in _DERIVED_COLUMNS} for row in rows]
 
 
+async def _dump_history_rows(conn: Any, table: str, bank_id: str) -> list[dict]:
+    """Dump a bank-scoped child-history table for carrying across instances.
+
+    Drops the surrogate ``id`` so the target reassigns it from its own IDENTITY
+    sequence (carrying explicit ids would leave the sequence un-advanced and
+    collide with later writes). Ordered oldest-first so the reassigned ids keep
+    the same chronological tie-break order the read path relies on.
+    """
+    rows = await conn.fetch(
+        f"SELECT * FROM {fq_table(table)} WHERE bank_id = $1 ORDER BY changed_at, id",
+        bank_id,
+    )
+    return [{k: v for k, v in dict(row).items() if k not in _DERIVED_COLUMNS and k != "id"} for row in rows]
+
+
 async def export_bank(conn: Any, bank_id: str, *, include_history: bool = False) -> bytes:
     """Export an entire bank into a portable ZIP archive (no embeddings).
 
@@ -255,6 +281,8 @@ async def export_bank(conn: Any, bank_id: str, *, include_history: bool = False)
     observations = await _load_observations(conn, bank_id, loaded.unit_index)
 
     bank_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in _BANK_ROW_TABLES}
+    for table in _CARRIED_HISTORY_TABLES:
+        bank_rows[table] = await _dump_history_rows(conn, table, bank_id)
     history_rows: dict[str, list[dict]] = {}
     if include_history:
         history_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in _HISTORY_TABLES}

@@ -231,7 +231,13 @@ async def test_horse_farm_observation_history(memory_real_llm: MemoryEngine, req
             async with pool.acquire() as conn:
                 observations = await conn.fetch(
                     """
-                    SELECT id, text, proof_count, source_memory_ids, history
+                    SELECT id, text, proof_count, source_memory_ids,
+                           COALESCE((
+                               SELECT jsonb_agg(jsonb_build_object('previous_text', oh.content->>'previous_text')
+                                                ORDER BY oh.changed_at, oh.id)
+                               FROM observation_history oh
+                               WHERE oh.observation_id = memory_units.id
+                           ), '[]'::jsonb) AS history
                     FROM memory_units
                     WHERE bank_id = $1 AND fact_type = 'observation'
                     ORDER BY created_at
@@ -255,7 +261,13 @@ async def test_horse_farm_observation_history(memory_real_llm: MemoryEngine, req
     async with pool.acquire() as conn:
         observations = await conn.fetch(
             """
-            SELECT id, text, proof_count, source_memory_ids, history
+            SELECT id, text, proof_count, source_memory_ids,
+                   COALESCE((
+                       SELECT jsonb_agg(jsonb_build_object('previous_text', oh.content->>'previous_text')
+                                        ORDER BY oh.changed_at, oh.id)
+                       FROM observation_history oh
+                       WHERE oh.observation_id = memory_units.id
+                   ), '[]'::jsonb) AS history
             FROM memory_units
             WHERE bank_id = $1 AND fact_type = 'observation'
             ORDER BY created_at

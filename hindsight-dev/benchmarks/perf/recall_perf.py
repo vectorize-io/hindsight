@@ -624,11 +624,11 @@ async def _insert_synthetic_observations(pool: Any, bank_id: str) -> int:
             f"""
             INSERT INTO {table} (
                 id, bank_id, text, fact_type, embedding,
-                proof_count, source_memory_ids, history,
+                proof_count, source_memory_ids,
                 tags, event_date, occurred_start, occurred_end, mentioned_at
             ) VALUES (
                 $1, $2, $3, 'observation', $4::vector,
-                1, ARRAY[$5::uuid], '[]'::jsonb,
+                1, ARRAY[$5::uuid],
                 $6, $7, $8, $9, $10
             )
             ON CONFLICT DO NOTHING

@@ -6231,7 +6231,7 @@ class MemoryEngine(MemoryEngineInterface):
         async with acquire_with_retry(backend) as conn:
             row = await conn.fetchrow(
                 f"""
-                SELECT fact_type, history, source_memory_ids
+                SELECT fact_type, source_memory_ids
                 FROM {fq_table("memory_units")}
                 WHERE id = $1 AND bank_id = $2
                 """,
@@ -6243,11 +6243,46 @@ class MemoryEngine(MemoryEngineInterface):
             if row["fact_type"] != "observation":
                 return []
 
-            raw_history = row["history"]
-            if isinstance(raw_history, str):
-                raw_history = json.loads(raw_history)
-            if not raw_history:
+            # History now lives in the dedicated observation_history table
+            # (one row per change), ordered oldest-first to match the prior
+            # append-order semantics the reconstruction below relies on.
+            history_rows = await conn.fetch(
+                f"""
+                SELECT content, changed_at
+                FROM {fq_table("observation_history")}
+                WHERE observation_id = $1
+                ORDER BY changed_at ASC, id ASC
+                """,
+                uuid.UUID(memory_id),
+            )
+            if not history_rows:
                 return []
+
+            def _iso(v: Any) -> Any:
+                return v.isoformat() if hasattr(v, "isoformat") else v
+
+            def _as_list(v: Any) -> list:
+                return list(v) if v else []
+
+            raw_history = []
+            for hr in history_rows:
+                # The snapshot fields live in the JSONB ``content`` blob (str on
+                # Oracle CLOB / when no jsonb codec is registered, dict otherwise).
+                content = hr["content"]
+                if isinstance(content, str):
+                    content = json.loads(content) if content else {}
+                content = content or {}
+                raw_history.append(
+                    {
+                        "previous_text": content.get("previous_text"),
+                        "previous_tags": _as_list(content.get("previous_tags")),
+                        "previous_occurred_start": content.get("previous_occurred_start"),
+                        "previous_occurred_end": content.get("previous_occurred_end"),
+                        "previous_mentioned_at": content.get("previous_mentioned_at"),
+                        "changed_at": _iso(hr["changed_at"]),
+                        "new_source_memory_ids": [str(s) for s in _as_list(content.get("new_source_memory_ids"))],
+                    }
+                )
 
             # Collect all source memory IDs (current full set + all historical new ones)
             current_source_ids: list[str] = [str(sid) for sid in (row["source_memory_ids"] or [])]
@@ -8662,7 +8697,7 @@ class MemoryEngine(MemoryEngineInterface):
 
             rows = await conn.fetch(
                 f"""
-                SELECT id, bank_id, text, proof_count, history, tags, source_memory_ids, created_at, updated_at
+                SELECT id, bank_id, text, proof_count, tags, source_memory_ids, created_at, updated_at
                 FROM {fq_table("memory_units")}
                 WHERE bank_id = $1 AND fact_type = 'observation' {tag_filter}
                 ORDER BY updated_at DESC NULLS LAST
@@ -8698,7 +8733,7 @@ class MemoryEngine(MemoryEngineInterface):
         async with acquire_with_retry(backend) as conn:
             row = await conn.fetchrow(
                 f"""
-                SELECT id, bank_id, text, proof_count, history, tags, source_memory_ids, created_at, updated_at
+                SELECT id, bank_id, text, proof_count, tags, source_memory_ids, created_at, updated_at
                 FROM {fq_table("memory_units")}
                 WHERE bank_id = $1 AND id = $2 AND fact_type = 'observation'
                 """,
@@ -8739,14 +8774,6 @@ class MemoryEngine(MemoryEngineInterface):
 
     def _row_to_observation_consolidated(self, row: Any) -> dict[str, Any]:
         """Convert a database row to an observation dict."""
-        import json
-
-        history = row["history"]
-        if isinstance(history, str):
-            history = json.loads(history)
-        elif history is None:
-            history = []
-
         # Convert source_memory_ids to strings
         source_memory_ids = row.get("source_memory_ids") or []
         source_memory_ids = [str(sid) for sid in source_memory_ids]
@@ -8756,7 +8783,8 @@ class MemoryEngine(MemoryEngineInterface):
             "bank_id": row["bank_id"],
             "text": row["text"],
             "proof_count": row["proof_count"] or 1,
-            "history": history,
+            # Deprecated inline field — full history via GET .../{id}/history.
+            "history": [],
             "tags": row["tags"] or [],
             "source_memory_ids": source_memory_ids,
             "source_memories": [],  # Populated separately when fetching full details
@@ -8917,23 +8945,41 @@ class MemoryEngine(MemoryEngineInterface):
         await self._authenticate_tenant(request_context)
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
-            row = await conn.fetchrow(
-                f"""
-                SELECT history
-                FROM {fq_table("mental_models")}
-                WHERE bank_id = $1 AND id = $2
-                """,
+            exists = await conn.fetchrow(
+                f"SELECT id FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
                 bank_id,
                 mental_model_id,
             )
-            if row is None:
+            if exists is None:
                 return None
-            raw_history = row["history"]
-            if isinstance(raw_history, str):
-                raw_history = json.loads(raw_history)
-            if not raw_history:
-                return []
-            return list(reversed(raw_history))
+            # History now lives in the dedicated mental_model_history table (one
+            # row per refresh), returned most-recent-first. The snapshot fields
+            # live in the JSONB ``content`` blob.
+            rows = await conn.fetch(
+                f"""
+                SELECT content, changed_at
+                FROM {fq_table("mental_model_history")}
+                WHERE mental_model_id = $1 AND bank_id = $2
+                ORDER BY changed_at DESC, id DESC
+                """,
+                mental_model_id,
+                bank_id,
+            )
+            result: list[dict] = []
+            for r in rows:
+                content = r["content"]
+                if isinstance(content, str):
+                    content = json.loads(content) if content else {}
+                content = content or {}
+                changed_at = r["changed_at"]
+                result.append(
+                    {
+                        "previous_content": content.get("previous_content"),
+                        "previous_reflect_response": content.get("previous_reflect_response"),
+                        "changed_at": changed_at.isoformat() if hasattr(changed_at, "isoformat") else changed_at,
+                    }
+                )
+            return result
 
     async def create_mental_model(
         self,
@@ -9448,10 +9494,9 @@ class MemoryEngine(MemoryEngineInterface):
             # If content is changing, fetch current content + reflect_response to record history
             previous_content: str | None = None
             previous_reflect_response: dict[str, Any] | None = None
-            previous_history: list[Any] = []
             if content is not None:
                 current_row = await conn.fetchrow(
-                    f"SELECT content, reflect_response, history FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                    f"SELECT content, reflect_response FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
                     bank_id,
                     mental_model_id,
                 )
@@ -9462,16 +9507,15 @@ class MemoryEngine(MemoryEngineInterface):
                         previous_reflect_response = json.loads(raw_rr) if raw_rr else None
                     else:
                         previous_reflect_response = raw_rr
-                    raw_history = current_row["history"]
-                    if isinstance(raw_history, str):
-                        raw_history = json.loads(raw_history) if raw_history else []
-                    if isinstance(raw_history, list):
-                        previous_history = raw_history
 
             # Build dynamic update
             updates = []
             params: list[Any] = [bank_id, mental_model_id]
             param_idx = 3
+
+            # History snapshot is written to mental_model_history after the UPDATE.
+            record_mm_history = False
+            slim_reflect_response: dict[str, Any] | None = None
 
             if name is not None:
                 updates.append(f"name = ${param_idx}")
@@ -9483,64 +9527,19 @@ class MemoryEngine(MemoryEngineInterface):
                 params.append(content)
                 param_idx += 1
                 updates.append("last_refreshed_at = NOW()")
-                # Record history entry with the previous content.
-                #
-                # Cap the array to the most recent N entries at write time
-                # (see HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES).
-                #
-                # Each entry stores only the slim slice of previous_reflect_response
-                # that consumers actually read: `based_on` (the fact references that
-                # backed that version). The full reflect_response can be hundreds of
-                # KB once `text`, fact bodies, scoring, and embeddings are included;
-                # storing the full payload made each UPDATE rewrite ~10-20 MB of TOAST
-                # per refresh, which prevented HOT updates and accumulated dead
-                # tuples faster than autovacuum could reclaim them. The slim shape
-                # keeps per-row size in the ~hundreds-of-KB range, which fits in a
-                # single heap page and re-enables HOT updates.
+                # Snapshot the previous version for history. The actual write goes
+                # into the dedicated mental_model_history table after the UPDATE
+                # (see _append_mental_model_history); we only store the slim slice
+                # of previous_reflect_response that consumers read — `based_on`,
+                # the fact references that backed that version. The full
+                # reflect_response can be hundreds of KB (text, fact bodies,
+                # scoring, embeddings), so persisting it per entry is wasteful.
                 if get_config().enable_mental_model_history:
-                    slim_reflect_response: dict[str, Any] | None = None
                     if previous_reflect_response is not None:
                         based_on = previous_reflect_response.get("based_on")
                         if based_on is not None:
                             slim_reflect_response = {"based_on": based_on}
-                    new_history_entry = {
-                        "previous_content": previous_content,
-                        "previous_reflect_response": slim_reflect_response,
-                        "changed_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                    max_entries = get_config().mental_model_history_max_entries
-                    if self._database_backend_type == "oracle":
-                        # Oracle has no jsonb_agg / jsonb_array_elements WITH ORDINALITY,
-                        # so the PG read-modify-write below cannot be rewritten. Compute the
-                        # trimmed history in Python (we already fetched the current array) and
-                        # bind it as a single JSON value. Trimming keeps the most recent
-                        # ``max_entries`` entries — identical semantics to the PG GREATEST/idx
-                        # window: keep [] when max_entries == 0, else the last max_entries.
-                        combined = previous_history + [new_history_entry]
-                        trimmed = [] if max_entries == 0 else combined[-max_entries:]
-                        updates.append(f"history = ${param_idx}")
-                        params.append(json.dumps(trimmed))
-                        param_idx += 1
-                    else:
-                        history_entry = json.dumps([new_history_entry])
-                        history_param_idx = param_idx
-                        param_idx += 1
-                        max_entries_param_idx = param_idx
-                        param_idx += 1
-                        updates.append(
-                            "history = ("
-                            "  SELECT COALESCE(jsonb_agg(elem ORDER BY idx), '[]'::jsonb) "
-                            "  FROM jsonb_array_elements("
-                            f"    COALESCE(history, '[]'::jsonb) || ${history_param_idx}::jsonb"
-                            "  ) WITH ORDINALITY a(elem, idx) "
-                            "  WHERE idx > GREATEST("
-                            "    jsonb_array_length(COALESCE(history, '[]'::jsonb)) + 1"
-                            f"    - ${max_entries_param_idx}, 0"
-                            "  )"
-                            ")"
-                        )
-                        params.append(history_entry)
-                        params.append(max_entries)
+                    record_mm_history = True
                 # Also update embedding (convert to string for asyncpg vector type)
                 embedding_text = f"{name or ''} {content}"
                 embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [embedding_text])
@@ -9598,7 +9597,63 @@ class MemoryEngine(MemoryEngineInterface):
 
             row = await conn.fetchrow(query, *params)
 
+            # Persist the previous-version snapshot in the dedicated history table
+            # (one row per refresh), then trim to the configured cap. Replaces the
+            # old single-JSONB-column append, which rewrote the whole array (plus
+            # TOAST) on every refresh and was capped by entry count, not size.
+            if row is not None and record_mm_history:
+                await self._append_mental_model_history(
+                    conn,
+                    bank_id,
+                    mental_model_id,
+                    previous_content,
+                    slim_reflect_response,
+                    get_config().mental_model_history_max_entries,
+                )
+
             return self._row_to_mental_model(row) if row else None
+
+    async def _append_mental_model_history(
+        self,
+        conn: Any,
+        bank_id: str,
+        mental_model_id: str,
+        previous_content: str | None,
+        previous_reflect_response: dict[str, Any] | None,
+        max_entries: int,
+    ) -> None:
+        """Insert one refresh snapshot into mental_model_history, then delete the
+        oldest rows beyond ``max_entries`` for this model. The snapshot is stored
+        as a single JSONB ``content`` blob (per-row, so it stays small); bounding
+        by row count keeps per-model history from growing without bound."""
+        content = json.dumps(
+            {"previous_content": previous_content, "previous_reflect_response": previous_reflect_response}
+        )
+        await conn.execute(
+            f"""
+            INSERT INTO {fq_table("mental_model_history")} (mental_model_id, bank_id, content, changed_at)
+            VALUES ($1, $2, $3::jsonb, now())
+            """,
+            mental_model_id,
+            bank_id,
+            content,
+        )
+        if max_entries and max_entries > 0:
+            await conn.execute(
+                f"""
+                DELETE FROM {fq_table("mental_model_history")}
+                WHERE mental_model_id = $1 AND bank_id = $2
+                  AND id NOT IN (
+                      SELECT id FROM {fq_table("mental_model_history")}
+                      WHERE mental_model_id = $1 AND bank_id = $2
+                      ORDER BY changed_at DESC, id DESC
+                      LIMIT $3
+                  )
+                """,
+                mental_model_id,
+                bank_id,
+                max_entries,
+            )
 
     async def clear_mental_model(
         self,
