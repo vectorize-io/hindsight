@@ -199,7 +199,7 @@ The fix is either:
 - Backfill the tag onto the source memories before the first refresh, or
 - Override the default via `trigger.tags_match` (e.g. `"any"` to allow OR-matching, `"any_strict"` to OR-match but still exclude untagged).
 
-**Concrete pattern:** when you're building a per-project memory bank with `project:<name>` tagging, make sure your retain pipeline already attaches the project tag *before* you seed mental models that depend on it. The [oh-my-pi project does this explicitly](https://hindsight.vectorize.io/blog/2026/06/05/oh-my-pi-hindsight-memory) — their `mental-models.ts` has a comment warning that "seed tags MUST be a subset of the tags actually attached by `retainSession`" for exactly this reason.
+**Concrete pattern:** when you're building a per-project memory bank with `project:<name>` tagging, make sure your retain pipeline already attaches the project tag *before* you seed mental models that depend on it. Seed first, tag retains second, and every refresh in between runs against an empty source pool — the empty-content guard then quietly keeps the placeholder text alive while you wonder why nothing's generating.
 
 ---
 
@@ -311,8 +311,6 @@ client.refresh_mental_model(bank_id="my-app", mental_model_id=mm["id"])
 
 This pattern — delta most of the time, occasional clear-and-rebuild — is what the docs explicitly recommend for long-lived models.
 
-A real example of this exact shape in production is the [oh-my-pi coding agent](https://hindsight.vectorize.io/blog/2026/06/05/oh-my-pi-hindsight-memory), which ships three seeded mental models out of the box (`user-preferences`, `project-conventions`, `project-decisions`) with the same `delta` + `refresh_after_consolidation: true` pattern.
-
 ---
 
 ## The REST and Client Surface
@@ -367,7 +365,6 @@ For any question your agent asks every session, that's the right shape. Stop pay
 **Further reading:**
 
 - [Mental Models API reference](https://hindsight.vectorize.io/developer/api/mental-models) — the official doc, with the full schema and endpoint reference
-- [How oh-my-pi Built Persistent Codebase Memory on Hindsight](https://hindsight.vectorize.io/blog/2026/06/05/oh-my-pi-hindsight-memory) — a 10k-star coding agent using mental models in production with three curated seeds
 - [Using Entity Labels to Automatically Tag Memories](/blog/2026/06/02/entity-labels-automatic-memory-tagging) — controlled-vocabulary tagging, which often determines what your mental models can see
 - [What's new in Hindsight 0.5.3](/blog/2026/04/17/version-0-5-3) — delta-mode refresh launch
 - [What's new in Hindsight 0.7.0](/blog/2026/05/27/version-0-7-0) — clear endpoint, history hardening
