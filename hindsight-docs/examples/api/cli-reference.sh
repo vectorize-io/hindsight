@@ -65,7 +65,7 @@ hindsight memory recall $BANK_ID "hiking recommendations" \
 
 
 # [docs:cli-recall-fact-type]
-hindsight memory recall $BANK_ID "query" --fact-type world,opinion
+hindsight memory recall $BANK_ID "query" --fact-type world,observation
 # [/docs:cli-recall-fact-type]
 
 

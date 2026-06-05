@@ -46,6 +46,14 @@ After `retain()` completes, the consolidation engine runs automatically:
 3. **Observation creation/update** — New observations are created or existing ones refined
 4. **Evidence tracking** — Each observation maintains references to supporting facts
 
+### Near-Duplicate Reconciliation
+
+Consolidation can still produce two observations that say the same thing in slightly different words — for example when a weaker model writes a near-identical observation instead of refining the existing one, or when refining an observation reshapes its wording so it overlaps another one. Left alone, these near-duplicates clutter recall with redundant beliefs.
+
+When enabled, Hindsight reconciles them automatically. Whenever an observation is created **or** updated, it is compared against the existing observations it most closely resembles. If one is highly similar, a focused check decides whether to **merge** them into a single belief (folding both sets of supporting evidence together) or **keep** them separate. Because the check reads the full text of both, observations that differ in a meaningful detail — a number, a negation, a named entity or language — are correctly kept apart rather than collapsed.
+
+This is controlled by the [`HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD`](configuration.md#observations) setting: the cosine similarity at or above which two observations are reconciled. It is **enabled by default** (`0.97`); a lower value reconciles more aggressively, and `1.0` disables it. Reconciliation runs on PostgreSQL deployments only — it is skipped on Oracle regardless of the threshold.
+
 ### Disabling Auto-Consolidation
 
 Set `HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION=false` (or configure per-bank via the [bank config API](api/memory-banks.md#observations-configuration)) to prevent consolidation from running automatically after retain, delete, and update operations. When disabled, consolidation only runs when you explicitly call the [consolidate endpoint](#trigger-consolidation).

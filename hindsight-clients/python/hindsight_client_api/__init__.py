@@ -117,6 +117,7 @@ from hindsight_client_api.models.mental_model_trigger_output_tag_groups_inner im
 from hindsight_client_api.models.model_not import ModelNot
 from hindsight_client_api.models.not1 import Not1
 from hindsight_client_api.models.observation_scopes import ObservationScopes
+from hindsight_client_api.models.operation_progress import OperationProgress
 from hindsight_client_api.models.operation_response import OperationResponse
 from hindsight_client_api.models.operation_status_response import OperationStatusResponse
 from hindsight_client_api.models.operations_list_response import OperationsListResponse

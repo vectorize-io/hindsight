@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
-import { client } from "@/lib/api";
+import { client, type OperationProgress } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -45,8 +45,10 @@ interface Operation {
   items_count: number;
   document_id: string | null;
   created_at: string;
+  updated_at?: string | null;
   status: string;
   error_message: string | null;
+  progress?: OperationProgress | null;
 }
 
 interface ChildOperationStatus {
@@ -66,6 +68,7 @@ type OperationDetails =
       updated_at: string | null;
       completed_at: string | null;
       error_message: string | null;
+      progress?: OperationProgress | null;
       result_metadata?: {
         items_count?: number;
         total_tokens?: number;
@@ -86,6 +89,7 @@ type OperationDetails =
       updated_at?: never;
       completed_at?: never;
       error_message?: never;
+      progress?: never;
       result_metadata?: never;
       child_operations?: never;
       task_payload?: never;
@@ -127,6 +131,10 @@ export function BankOperationsView() {
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [loadingPayload, setLoadingPayload] = useState(false);
   const [payloadLoadedFor, setPayloadLoadedFor] = useState<string | null>(null);
+  // Ticks once a second so the "last heartbeat" relative time counts up live between
+  // the 5s data polls — a heartbeat that keeps aging without the snapshot advancing is
+  // the signal a job is stuck.
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const statusLabels: Record<string, string> = {
     all: t("status.all"),
@@ -211,6 +219,95 @@ export function BankOperationsView() {
     );
   };
 
+  // Compact "time since the snapshot was written", recomputed against the 1s tick so it
+  // counts up live. Seconds granularity (unlike the minute-level bankStats helper) because
+  // a heartbeat that hasn't moved for even ~30s on an active job is already suspicious.
+  const formatHeartbeat = (atIso: string): string => {
+    const at = new Date(atIso).getTime();
+    if (Number.isNaN(at)) return "";
+    const secs = Math.max(0, Math.round((nowMs - at) / 1000));
+    if (secs < 5) return t("heartbeat.justNow");
+    if (secs < 60) return t("heartbeat.secondsAgo", { secs });
+    if (secs < 3600) return t("heartbeat.minutesAgo", { mins: Math.floor(secs / 60) });
+    return t("heartbeat.hoursAgo", { hours: Math.floor(secs / 3600) });
+  };
+
+  // Render the last-known progress snapshot for a running operation. The worker writes
+  // it per LLM batch / sub-batch; a snapshot that keeps advancing (and a heartbeat that
+  // stays fresh) means a healthy long-running job, a frozen one means it may be stuck.
+  // `compact` keeps it to a single inline row for the table; the full form (with stage
+  // label, counters and a labelled heartbeat) is used in the details dialog.
+  const renderProgress = (
+    progress: OperationProgress | null | undefined,
+    opts?: { compact?: boolean }
+  ) => {
+    if (!progress) return null;
+    const stageLabel = progress.stage.replace(/[._]/g, " ");
+    const hasCounts =
+      typeof progress.processed === "number" &&
+      typeof progress.total === "number" &&
+      progress.total > 0;
+    const pct = hasCounts
+      ? Math.min(100, Math.round((progress.processed! / progress.total!) * 100))
+      : null;
+    const heartbeat = progress.at ? formatHeartbeat(progress.at) : null;
+
+    if (opts?.compact) {
+      // Single line so the table row stays short: bar + count + heartbeat age. The stage
+      // name and absolute timestamp move to the tooltip (and the details dialog).
+      return (
+        <div
+          className="flex items-center gap-1.5 text-[11px] text-muted-foreground whitespace-nowrap"
+          title={`${stageLabel}${progress.at ? ` — ${new Date(progress.at).toLocaleString()}` : ""}`}
+        >
+          {pct !== null && (
+            <span className="h-1 w-14 shrink-0 rounded-full bg-muted overflow-hidden">
+              <span
+                className="block h-full rounded-full bg-blue-500/70"
+                style={{ width: `${pct}%` }}
+              />
+            </span>
+          )}
+          {hasCounts && (
+            <span className="font-mono">
+              {progress.processed}/{progress.total}
+            </span>
+          )}
+          {heartbeat && <span className="text-muted-foreground/70">· {heartbeat}</span>}
+        </div>
+      );
+    }
+
+    return (
+      <div className="mt-1 space-y-1">
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="capitalize">{stageLabel}</span>
+          {hasCounts && (
+            <span className="font-mono">
+              {progress.processed}/{progress.total}
+            </span>
+          )}
+        </div>
+        {pct !== null && (
+          <div className="h-1 w-24 rounded-full bg-muted overflow-hidden">
+            <div className="h-full rounded-full bg-blue-500/70" style={{ width: `${pct}%` }} />
+          </div>
+        )}
+        {progress.at && (
+          <div
+            className="flex items-center gap-1 text-[10px] text-muted-foreground/80"
+            title={new Date(progress.at).toLocaleString()}
+          >
+            <Clock className="w-2.5 h-2.5" />
+            <span>
+              {t("field.lastHeartbeat")} · {formatHeartbeat(progress.at)}
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const loadOperations = useCallback(
     async (
       newStatusFilter: string | null = statusFilter,
@@ -230,6 +327,9 @@ export function BankOperationsView() {
         });
         setOperations(opsData.operations || []);
         setTotalOperations(opsData.total || 0);
+        // Refresh the clock on every poll so relative times (e.g. the "Updated" column)
+        // stay accurate even when nothing is processing and the 1s ticker is idle.
+        setNowMs(Date.now());
       } catch (error) {
         console.error("Error loading operations:", error);
       } finally {
@@ -319,16 +419,57 @@ export function BankOperationsView() {
     }
   };
 
+  // Poll faster while work is in flight so the progress bar / heartbeat feel live, and
+  // back off to a calmer cadence when everything is terminal.
+  const hasProcessing = operations.some((op) => op.status === "processing");
   useEffect(() => {
     if (currentBank) {
       loadOperations(statusFilter, offset, taskTypeFilter);
       const interval = setInterval(
         () => loadOperations(statusFilter, offset, taskTypeFilter),
-        5000
+        hasProcessing ? 2000 : 5000
       );
       return () => clearInterval(interval);
     }
-  }, [currentBank, statusFilter, offset, taskTypeFilter]);
+  }, [currentBank, statusFilter, offset, taskTypeFilter, hasProcessing, loadOperations]);
+
+  // Only tick the heartbeat clock while something is actually running — no point
+  // re-rendering every second when every operation is in a terminal state.
+  useEffect(() => {
+    if (!hasProcessing) return;
+    const tick = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, [hasProcessing]);
+
+  // Flash a row when it transitions into a terminal state, so a completion that lands
+  // on a poll reads as a deliberate change rather than a silent badge swap. We diff the
+  // status each load against the previous one and briefly mark the changed ids.
+  const prevStatusRef = useRef<Record<string, string>>({});
+  const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    const justFinished = operations
+      .filter(
+        (op) =>
+          prev[op.id] &&
+          prev[op.id] !== op.status &&
+          (op.status === "completed" || op.status === "failed" || op.status === "cancelled")
+      )
+      .map((op) => op.id);
+    prevStatusRef.current = Object.fromEntries(operations.map((op) => [op.id, op.status]));
+    if (justFinished.length === 0) return;
+    setFlashIds((s) => new Set([...s, ...justFinished]));
+    const timer = setTimeout(
+      () =>
+        setFlashIds((s) => {
+          const next = new Set(s);
+          justFinished.forEach((id) => next.delete(id));
+          return next;
+        }),
+      1200
+    );
+    return () => clearTimeout(timer);
+  }, [operations]);
 
   if (!currentBank) return null;
 
@@ -402,15 +543,28 @@ export function BankOperationsView() {
                     <TableHead className="w-[100px]">{t("table.id")}</TableHead>
                     <TableHead>{t("table.type")}</TableHead>
                     <TableHead>{t("table.created")}</TableHead>
-                    <TableHead>{t("table.status")}</TableHead>
-                    <TableHead className="w-[80px]"></TableHead>
+                    <TableHead>{t("field.updated")}</TableHead>
+                    {/* Fixed width so the row doesn't reflow when the inline progress
+                        appears/disappears as an operation starts or finishes. */}
+                    <TableHead className="w-[300px]">{t("table.status")}</TableHead>
+                    {/* Fixed width + always-present label so the column doesn't grow
+                        when a pending/failed row's Cancel/Retry button appears. */}
+                    <TableHead className="w-[110px]">{t("table.actions")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {operations.map((op) => (
                     <TableRow
                       key={op.id}
-                      className={`cursor-pointer hover:bg-muted/50 ${op.status === "failed" ? "bg-red-500/5" : ""}`}
+                      className={`cursor-pointer transition-colors duration-700 hover:bg-muted/50 ${
+                        flashIds.has(op.id)
+                          ? op.status === "completed"
+                            ? "bg-emerald-500/15"
+                            : "bg-red-500/15"
+                          : op.status === "failed"
+                            ? "bg-red-500/5"
+                            : ""
+                      }`}
                       onClick={() => handleOperationClick(op.id)}
                     >
                       <TableCell className="font-mono text-xs text-muted-foreground">
@@ -422,8 +576,20 @@ export function BankOperationsView() {
                       <TableCell className="text-sm text-muted-foreground">
                         {new Date(op.created_at).toLocaleString()}
                       </TableCell>
-                      <TableCell>{renderStatusBadge(op.status, op.error_message)}</TableCell>
-                      <TableCell>
+                      <TableCell
+                        className="text-sm text-muted-foreground"
+                        title={op.updated_at ? new Date(op.updated_at).toLocaleString() : undefined}
+                      >
+                        {op.updated_at ? formatHeartbeat(op.updated_at) : "—"}
+                      </TableCell>
+                      <TableCell className="w-[300px]">
+                        <div className="flex items-center gap-2 whitespace-nowrap">
+                          {renderStatusBadge(op.status, op.error_message)}
+                          {op.status === "processing" &&
+                            renderProgress(op.progress, { compact: true })}
+                        </div>
+                      </TableCell>
+                      <TableCell className="w-[110px] whitespace-nowrap">
                         {op.status === "pending" && (
                           <Button
                             variant="ghost"
@@ -589,6 +755,23 @@ export function BankOperationsView() {
                       </div>
                     )}
                   </div>
+
+                  {/* Progress snapshot — only meaningful while the operation is in
+                      flight. For a terminal operation the status badge + completed_at are
+                      the truth; a leftover heartbeat would misleadingly read as in-progress. */}
+                  {selectedOperation.status === "processing" && selectedOperation.progress && (
+                    <div>
+                      <div className="text-sm font-medium text-muted-foreground mb-1">
+                        {t("field.progress")}
+                      </div>
+                      {renderProgress(selectedOperation.progress)}
+                      {selectedOperation.operation_type === "consolidation" && (
+                        <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground/70">
+                          {t("progressEstimateNote")}
+                        </p>
+                      )}
+                    </div>
+                  )}
 
                   {/* Action buttons */}
                   {(selectedOperation.status === "pending" ||
