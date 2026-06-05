@@ -44,6 +44,16 @@ logger = logging.getLogger(__name__)
 DEFAULT_LLM_SEED = 4242
 JSON_MODE_USER_HINT = "Return valid json only."
 
+# Self-hosted OpenAI-compatible servers that advertise tool_choice="required"
+# but silently ignore it: instead of forcing a tool call they return
+# finish_reason "stop"/"tool_calls" with an EMPTY tool_calls array and no error.
+# Reflect's agent loop then sees no tool call, runs synthesis with no retrieval,
+# and answers "I don't have information" even when the bank holds the answer.
+# See issues #1563 (LM Studio), #1179 (LM Studio + Qwen), #1877 (vLLM with
+# --enable-auto-tool-choice). llama-server (the "llamacpp" provider) honors
+# "required" correctly and is intentionally excluded (#1179).
+_TOOL_CHOICE_REQUIRED_UNSUPPORTED_PROVIDERS = frozenset({"lmstudio", "ollama"})
+
 
 class ProviderResponseError(RuntimeError):
     """Raised when a provider returns a success response without usable content."""
@@ -359,6 +369,21 @@ class OpenAICompatibleLLM(LLMInterface):
             f"OpenAI-compatible client initialized: provider={self.provider}, model={self.model}, "
             f"base_url={self.base_url or 'default'}"
         )
+
+    def _drops_tool_choice_required(self) -> bool:
+        """Whether this endpoint silently ignores ``tool_choice="required"``.
+
+        True for self-hosted OpenAI-compatible servers known to return an empty
+        tool_calls array for "required" instead of forcing a call (#1563/#1179/
+        #1877). Covers LM Studio / Ollama directly, plus any server reached via
+        the generic "openai" provider with a custom ``base_url`` (e.g. a local
+        vLLM endpoint). The real OpenAI API (no base_url override) honors
+        "required", and cloud providers keep their own default base_urls, so both
+        are left untouched.
+        """
+        if self.provider in _TOOL_CHOICE_REQUIRED_UNSUPPORTED_PROVIDERS:
+            return True
+        return self.provider == "openai" and bool(self.base_url)
 
     async def verify_connection(self) -> None:
         """
@@ -869,6 +894,16 @@ class OpenAICompatibleLLM(LLMInterface):
         # only when the caller asks for a non-default behaviour avoids those 400s
         # without changing semantics for compliant providers.
         if request_tool_choice == "auto":
+            request_tool_choice = None
+
+        # vLLM (--enable-auto-tool-choice), LM Studio, Ollama and similar
+        # self-hosted servers silently drop tool_choice="required", returning an
+        # empty tool_calls array instead of forcing a call (#1563/#1179/#1877).
+        # Downgrade to auto (None) so the model still gets to call a tool. Named
+        # tool_choice dicts were already normalized to "required" + a single
+        # filtered tool above, so the call stays practically forced even under
+        # auto. The real OpenAI API honors "required" and is left untouched.
+        if request_tool_choice == "required" and self._drops_tool_choice_required():
             request_tool_choice = None
 
         # DeepSeek tool-call replies can carry provider-specific reasoning_content.
