@@ -11,13 +11,9 @@ hide_table_of_contents: true
 
 ![How oh-my-pi Built Persistent Codebase Memory on Hindsight](/img/blog/oh-my-pi-hindsight-memory.png)
 
-[oh-my-pi](https://github.com/can1357/oh-my-pi) (or `omp`) is a TypeScript + Rust coding agent for the terminal — 10,600+ stars, 40+ LLM providers, 32 built-in tools, 13 LSP ops, 27 DAP ops, and a ~27k-line Rust core. Its tagline is "A coding agent with the IDE wired in." Its README, [section 11](https://github.com/can1357/oh-my-pi#11--hindsight-memory-the-agent-curates), is titled *"Hindsight: memory the agent curates"*:
+[oh-my-pi](https://github.com/can1357/oh-my-pi) (or `omp`) is a TypeScript + Rust coding agent for the terminal — with 10,600+ stars, 40+ providers, 32 tools — it aims to have the IDE wired in, with each tool meticulously crafted for the agent's performance. When it comes to memory, they trusted Hindsight due to it's exceptional long-term recall performance and the multi-faceted retrieval technique used underneath.
 
-> The agent remembers your codebase between sessions. It writes facts mid-run with retain, pulls them back with recall, and compresses each session into a mental model that loads on the first turn of the next one. Project-scoped by default, so what it learns about this repo stays with this repo.
-
-That's not a thin integration. It's a full memory subsystem built on top of Hindsight's API — bank scoping, mental-model seeding, debounced retain queues, auto-recall on the first turn. This post is a tour of how they built it, with code pulled straight from the public repo. If you're considering Hindsight for a coding agent of your own, this is a useful reference for the shape of a deep integration.
-
-<!-- truncate -->
+It's not a thin integration either: it features a complete memory subsystem built on top of Hindsight's API — bank scoping, mental-model seeding, debounced retain queues, auto-recall on the first turn. This post is a tour of how they built it, with code pulled straight from the public repo. If you're considering Hindsight for a coding agent of your own, this is a useful reference for the shape of a deep integration.
 
 ## TL;DR
 
@@ -39,42 +35,30 @@ The first decision a coding agent has to make is *what counts as one user's memo
 
 The default — `per-project-tagged` — is the interesting choice. It uses one bank for the whole user but tags each retain with the project it came from. Recalls then filter with `tagsMatch: "any"`, so the agent sees project-scoped memories **and** anything the user has retained globally (user preferences, cross-project conventions). That's stronger isolation than a global bank, less rigid than separate banks per repo, and exactly the trade-off you'd want for a coding agent that hops between projects.
 
-The bank id derivation is one function:
-
+The derivation is one small function:
 ```ts
-function baseBankId(config: HindsightConfig): string {
-    const base = config.bankId?.trim() || DEFAULT_BANK_NAME;   // "omp"
-    const prefix = config.bankIdPrefix?.trim() || "";
-    return prefix ? `${prefix}-${base}` : base;
-}
-
-export function computeBankScope(config: HindsightConfig, directory: string): BankScope {
-    const base = baseBankId(config);
-    switch (config.scoping) {
-        case "global":
-            return { bankId: base };
-        case "per-project":
-            return { bankId: `${base}-${projectLabel(directory)}` };
-        case "per-project-tagged": {
-            const tag = `${PROJECT_TAG_PREFIX}${projectLabel(directory)}`;
-            return {
-                bankId: base,
-                retainTags: [tag],
-                recallTags: [tag],
-                recallTagsMatch: "any",
-            };
-        }
+export function computeBankScope(config: HindsightConfig, directory: string) {
+  const base = baseBankId(config); // "omp" unless overridden
+  switch (config.scoping) {
+    case "global":
+      return { bankId: base };
+    case "per-project":
+      return { bankId: `${base}-${projectLabel(directory)}` };
+    case "per-project-tagged": {
+      const tag = `${PROJECT_TAG_PREFIX}${projectLabel(directory)}`;
+      return { bankId: base, retainTags: [tag], recallTags: [tag], recallTagsMatch: "any" };
     }
+  }
 }
 ```
 
-So if you've got the default config and you're working on `~/code/superproject`, every retain carries the tag `project:superproject` and every recall pulls memories where that tag matches *or* the memory has no project tag at all. Hindsight's `tags` / `tags_match` API does the rest at the storage layer — no schema changes, no per-project bank lifecycle to manage.
+`projectLabel` is just the directory's basename, so working in `~/code/superproject` tags everything `project:superproject`. Hindsight's `tags` / `tags_match` does the rest server-side — no schema work, no per-repo bank to keep alive. Want hard walls instead? `per-project` hands every directory its own bank.
 
 ---
 
 ## The Mental-Models Layer
 
-The clever part of the integration is the **mental-models layer**. Hindsight's mental-model feature lets you persist a named summary that gets auto-refreshed by the server's consolidator. oh-my-pi uses it as a low-latency "what does the agent already know about this user / project" cache that gets spliced into the developer instructions every prompt rebuild — no per-turn recall HTTP cost.
+The clever part of the integration is the **mental-models layer**. A Hindsight mental model is a named, persisted summary that the server keeps fresh on its own — and omp leans on it as a low-latency cache of what the agent already knows about you and your project, spliced into the developer instructions on every prompt rebuild instead of paying for a recall round-trip each turn.
 
 The seed file ([`seeds.json`](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/hindsight/seeds.json)) is the entire policy:
 
@@ -135,7 +119,7 @@ const RETAIN_FLUSH_BATCH_SIZE = 16;
 const RETAIN_FLUSH_INTERVAL_MS = 5_000;
 ```
 
-When the model calls `retain` with one or more items, they're queued. The queue flushes immediately when it hits 16 items, or after 5 seconds of inactivity. Each flush is a single `retainBatch(...)` POST against `/v1/default/banks/{bank_id}/memories` with `async: true` so the agent isn't waiting on server-side fact extraction. The model's tool result is the immediate `"<count> memory queued."` — the actual write is fire-and-forget, with flush failures surfacing as a session warning notice rather than an exception.
+When the model calls `retain` with one or more items, they're queued. The queue flushes immediately when it hits 16 items, or 5 seconds after the first turn. Each flush is a single `retainBatch(...)` POST against `/v1/default/banks/{bank_id}/memories` with `async: true` so the agent isn't waiting on server-side fact extraction. The model's tool result is the immediate `"<count> memory queued."` — the actual write is fire-and-forget, with flush failures surfacing as a session warning notice rather than an exception.
 
 Auto-retain takes a different path. It builds a transcript of the session (configurable as `full-session` or `last-turn` via `hindsight.retainMode`) and sends it as one large `retain` call. The default — `full-session` — lets Hindsight's fact extractor decide what's worth keeping rather than asking oh-my-pi to pre-summarize on the client.
 
