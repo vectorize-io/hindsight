@@ -437,7 +437,8 @@
       "created": "Erstellt",
       "status": "Status",
       "index": "Index",
-      "items": "Elemente"
+      "items": "Elemente",
+      "actions": "Aktionen"
     },
     "action": {
       "cancel": "Abbrechen",

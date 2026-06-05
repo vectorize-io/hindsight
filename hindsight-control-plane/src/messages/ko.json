@@ -437,7 +437,8 @@
       "created": "생성일",
       "status": "상태",
       "index": "인덱스",
-      "items": "항목"
+      "items": "항목",
+      "actions": "작업"
     },
     "action": {
       "cancel": "취소",

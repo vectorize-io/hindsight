@@ -437,7 +437,8 @@
       "created": "创建时间",
       "status": "状态",
       "index": "索引",
-      "items": "项目"
+      "items": "项目",
+      "actions": "操作"
     },
     "action": {
       "cancel": "取消",

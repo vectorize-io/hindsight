@@ -437,7 +437,8 @@
       "created": "Creada",
       "status": "Estado",
       "index": "Índice",
-      "items": "Elementos"
+      "items": "Elementos",
+      "actions": "Acciones"
     },
     "action": {
       "cancel": "Cancelar",

@@ -437,7 +437,8 @@
       "created": "作成日時",
       "status": "ステータス",
       "index": "インデックス",
-      "items": "項目"
+      "items": "項目",
+      "actions": "操作"
     },
     "action": {
       "cancel": "キャンセル",

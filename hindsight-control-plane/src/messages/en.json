@@ -437,7 +437,8 @@
       "created": "Created",
       "status": "Status",
       "index": "Index",
-      "items": "Items"
+      "items": "Items",
+      "actions": "Actions"
     },
     "action": {
       "cancel": "Cancel",

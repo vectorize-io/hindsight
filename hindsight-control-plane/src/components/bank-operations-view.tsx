@@ -547,7 +547,9 @@ export function BankOperationsView() {
                     {/* Fixed width so the row doesn't reflow when the inline progress
                         appears/disappears as an operation starts or finishes. */}
                     <TableHead className="w-[300px]">{t("table.status")}</TableHead>
-                    <TableHead className="w-[80px]"></TableHead>
+                    {/* Fixed width + always-present label so the column doesn't grow
+                        when a pending/failed row's Cancel/Retry button appears. */}
+                    <TableHead className="w-[110px]">{t("table.actions")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -587,7 +589,7 @@ export function BankOperationsView() {
                             renderProgress(op.progress, { compact: true })}
                         </div>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="w-[110px] whitespace-nowrap">
                         {op.status === "pending" && (
                           <Button
                             variant="ghost"

@@ -437,7 +437,8 @@
       "created": "建立時間",
       "status": "狀態",
       "index": "索引",
-      "items": "項目"
+      "items": "項目",
+      "actions": "操作"
     },
     "action": {
       "cancel": "取消",
