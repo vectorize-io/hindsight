@@ -411,9 +411,12 @@ async def retrieve_temporal_combined(
         end_date = end_date.replace(tzinfo=UTC)
 
     # Build tags clause
-    # Entry point query: fixed params are $1-$6, tags at $7
-    tags_clause = build_tags_where_clause_simple(tags, 7, match=tags_match)
-    tag_groups_param_start = 7 + (1 if tags else 0)
+    # Entry-point query: fixed params are $1-$5 (emb, bank, start, end, threshold), tags at $6.
+    # fact_type is inlined as a literal per UNION ALL arm (not a bind) — this avoids `unnest`,
+    # which has no Oracle equivalent (the `<=>` operator and LIMIT are translated to Oracle by
+    # the backend on execute, but `unnest` is not). Mirrors retrieve_semantic_bm25_combined.
+    tags_clause = build_tags_where_clause_simple(tags, 6, match=tags_match)
+    tag_groups_param_start = 6 + (1 if tags else 0)
     groups_clause, groups_params, _ = build_tag_groups_where_clause(tag_groups, tag_groups_param_start)
 
     # created_at time range filter (after tags/groups)
@@ -429,7 +432,7 @@ async def retrieve_temporal_combined(
         created_range_clause += f" AND updated_at < ${_next_idx}"
         _next_idx += 1
 
-    params: list = [query_emb_str, bank_id, fact_types, start_date, end_date, semantic_threshold]
+    params: list = [query_emb_str, bank_id, start_date, end_date, semantic_threshold]
     if tags:
         params.append(tags)
     params.extend(groups_params)
@@ -454,37 +457,46 @@ async def retrieve_temporal_combined(
     # sort (30s+ on a 660k-row bank). The pool is then narrowed to _TEMPORAL_ENTRY_POINTS per
     # fact_type by _select_with_temporal_coverage so the entry points span the window's range
     # rather than clustering in one slice.
-    pool_rows = await conn.fetch(
-        f"""
-        SELECT dr.id, dr.text, dr.context, dr.event_date, dr.occurred_start, dr.occurred_end, dr.mentioned_at, dr.fact_type, dr.proof_count, dr.document_id, dr.chunk_id, dr.tags, dr.metadata, dr.similarity
-        FROM unnest($3::text[]) AS ft(fact_type)
-        CROSS JOIN LATERAL (
-            SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start, mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.proof_count, mu.document_id, mu.chunk_id, mu.tags, mu.metadata,
-                   1 - (mu.embedding <=> $1::vector) AS similarity
-            FROM {fq_table("memory_units")} mu
-            WHERE mu.bank_id = $2
-              AND mu.fact_type = ft.fact_type
-              AND mu.embedding IS NOT NULL
-              AND (
-                  (mu.occurred_start IS NOT NULL AND mu.occurred_end IS NOT NULL
-                   AND mu.occurred_start <= $5 AND mu.occurred_end >= $4)
-                  OR
-                  (mu.mentioned_at IS NOT NULL AND mu.mentioned_at BETWEEN $4 AND $5)
-                  OR
-                  (mu.occurred_start IS NOT NULL AND mu.occurred_start BETWEEN $4 AND $5)
-                  OR
-                  (mu.occurred_end IS NOT NULL AND mu.occurred_end BETWEEN $4 AND $5)
-              )
-              AND (1 - (mu.embedding <=> $1::vector)) >= $6
-              {tags_clause}
-              {groups_clause}
-              {created_range_clause}
-            ORDER BY mu.embedding <=> $1::vector
-            LIMIT {_TEMPORAL_POOL_SIZE}
-        ) dr
-        """,
-        *params,
+    if not fact_types:
+        return {}
+
+    # One similarity-ranked, window-filtered arm per fact_type, UNION ALL'd — each arm has its
+    # own ORDER BY ... LIMIT so the per-(bank, fact_type) vector index can serve it. fact_type
+    # is inlined as a literal (controlled internal enum, never user input), matching
+    # retrieve_semantic_bm25_combined; this keeps the query free of `unnest`/LATERAL, which the
+    # Oracle backend cannot translate.
+    pool_cols = (
+        "id, text, context, event_date, occurred_start, occurred_end, mentioned_at, "
+        "fact_type, proof_count, document_id, chunk_id, tags, metadata"
     )
+    table = fq_table("memory_units")
+    arms = [
+        f"""(
+        SELECT {pool_cols}, 1 - (embedding <=> $1::vector) AS similarity
+        FROM {table}
+        WHERE bank_id = $2
+          AND fact_type = '{ft}'
+          AND embedding IS NOT NULL
+          AND (
+              (occurred_start IS NOT NULL AND occurred_end IS NOT NULL
+               AND occurred_start <= $4 AND occurred_end >= $3)
+              OR
+              (mentioned_at IS NOT NULL AND mentioned_at BETWEEN $3 AND $4)
+              OR
+              (occurred_start IS NOT NULL AND occurred_start BETWEEN $3 AND $4)
+              OR
+              (occurred_end IS NOT NULL AND occurred_end BETWEEN $3 AND $4)
+          )
+          AND (1 - (embedding <=> $1::vector)) >= $5
+          {tags_clause}
+          {groups_clause}
+          {created_range_clause}
+        ORDER BY embedding <=> $1::vector
+        LIMIT {_TEMPORAL_POOL_SIZE}
+        )"""
+        for ft in fact_types
+    ]
+    pool_rows = await conn.fetch("\nUNION ALL\n".join(arms), *params)
 
     if not pool_rows:
         return {ft: [] for ft in fact_types}
