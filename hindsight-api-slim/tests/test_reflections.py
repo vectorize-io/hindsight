@@ -91,6 +91,34 @@ class TestMentalModelsCRUD:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    async def test_create_mental_model_insert_failure_rolls_back_bank(self, memory: MemoryEngine, request_context):
+        """The lazy bank-create shares the insert's transaction: if the insert
+        fails, the freshly-created bank must roll back with it (no orphan bank).
+
+        A non-JSON-serializable ``trigger`` makes building the INSERT arguments
+        raise inside the transaction, after the bank row has been created on the
+        same connection — a deterministic in-transaction failure.
+        """
+        bank_id = f"test-mental-model-rollback-{uuid.uuid4().hex[:8]}"
+
+        with pytest.raises(TypeError):
+            await memory.create_mental_model(
+                bank_id=bank_id,
+                name="Doomed Model",
+                source_query="never persisted",
+                content="never persisted",
+                trigger={"unserializable": {1, 2, 3}},  # a set is not JSON-serializable
+                request_context=request_context,
+            )
+
+        profile = await memory.get_bank_profile(
+            bank_id=bank_id,
+            request_context=request_context,
+            create_if_missing=False,
+        )
+        assert profile is None, "bank should have rolled back with the failed insert"
+
+    @pytest.mark.asyncio
     async def test_list_mental_models(self, memory: MemoryEngine, request_context):
         """Test listing mental models with filters."""
         bank_id = f"test-mental-model-list-{uuid.uuid4().hex[:8]}"

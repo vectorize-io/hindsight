@@ -3295,7 +3295,9 @@ class MemoryEngine(MemoryEngineInterface):
         await self._authenticate_tenant(request_context)
         backend = await self._get_backend()
         # Ensure the bank (and its per-bank vector indexes) exist before inserts.
-        await bank_utils.get_or_create_bank_profile(backend, bank_id)
+        # Import has no single write transaction to join — the archive is written
+        # by a worker later — so the bank is created on its own connection.
+        await self._ensure_bank_exists(bank_id, request_context)
 
         # Stash the archive in file storage and reference it by key in the task
         # payload, rather than base64-ing megabytes into the operation JSON.
@@ -3341,7 +3343,9 @@ class MemoryEngine(MemoryEngineInterface):
         from .transfer import import_documents
 
         backend = await self._get_backend()
-        await bank_utils.get_or_create_bank_profile(backend, bank_id)
+        # Imports insert across many per-document transactions, so the bank is
+        # created up front on its own connection rather than coupled to a write.
+        await self._ensure_bank_exists(bank_id, request_context)
         resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
         outbox_factory = self._build_retain_outbox_callback_factory(
             bank_id=bank_id, operation_id=None, schema=_current_schema.get()
@@ -7130,7 +7134,8 @@ class MemoryEngine(MemoryEngineInterface):
                 return None
             profile, created = existing, False
         else:
-            profile, created = await bank_utils.get_or_create_bank_profile(backend, bank_id)
+            result = await bank_utils.get_or_create_bank_profile(backend, bank_id)
+            profile, created = result.profile, result.created
 
         # Apply HINDSIGHT_API_DEFAULT_BANK_TEMPLATE to freshly-created banks. Done
         # before reading the resolved config below so the template's overrides
@@ -7160,6 +7165,56 @@ class MemoryEngine(MemoryEngineInterface):
             "disposition": disposition,
             "mission": mission,
         }
+
+    async def _ensure_bank_exists(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+        *,
+        conn=None,
+    ) -> bool:
+        """Lazily create the bank row (the FK target for bank-scoped writes).
+
+        This is the single entry point every write path uses to mirror retain's
+        lazy bank auto-create, so a first write to a new bank (pinned mental
+        model, webhook, async operation, ...) behaves consistently instead of
+        surfacing a raw FK violation.
+
+        Transactionality:
+          * Pass ``conn`` (a connection with an open transaction) to run the
+            bank ``INSERT`` and its per-bank vector index creation on the
+            caller's connection. The bank row then commits — or rolls back —
+            atomically with the caller's write on that same transaction.
+          * Omit ``conn`` to ensure the bank on a dedicated connection (used by
+            paths that have no single write transaction to join, e.g. retain and
+            import, whose data is written later across many per-document
+            transactions).
+
+        The ``HINDSIGHT_API_DEFAULT_BANK_TEMPLATE`` hook is best-effort, opens
+        its own connections and can itself create pinned mental models, so it is
+        never run inside the caller's transaction. When ``conn`` is omitted it is
+        applied inline here. When ``conn`` is supplied the caller MUST apply it
+        after committing, gated on the returned flag::
+
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    created = await self._ensure_bank_exists(bank_id, rc, conn=conn)
+                    ...  # bank-scoped write on the same conn
+            if created:
+                await self._apply_default_bank_template(bank_id, rc)
+
+        Returns:
+            True if the bank was freshly created on this call.
+        """
+        backend = await self._get_backend()
+        if conn is not None:
+            result = await bank_utils.get_or_create_bank_profile_on_conn(conn, bank_id, ops=backend.ops)
+            return result.created
+
+        result = await bank_utils.get_or_create_bank_profile(backend, bank_id)
+        if result.created:
+            await self._apply_default_bank_template(bank_id, request_context)
+        return result.created
 
     async def _apply_default_bank_template(
         self,
@@ -8972,13 +9027,6 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
-        # mental_models.bank_id has a FK to banks. Retain creates banks lazily;
-        # pinned model creation must do the same so a first write to a new bank
-        # does not surface as a raw database constraint error.
-        _, created = await bank_utils.get_or_create_bank_profile(backend, bank_id)
-        if created:
-            await self._apply_default_bank_template(bank_id, request_context)
-
         # Generate embedding for the content
         embedding_text = f"{name} {content}"
         embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [embedding_text])
@@ -8988,46 +9036,57 @@ class MemoryEngine(MemoryEngineInterface):
         if not mental_model_id:
             mental_model_id = f"mm-{uuid.uuid4().hex}"
 
+        # mental_models.bank_id has a FK to banks. Retain creates banks lazily;
+        # pinned model creation must do the same. The lazy bank-create runs inside
+        # the same transaction as the INSERT below, so a freshly-created bank never
+        # outlives a mental-model insert that ultimately fails.
         async with acquire_with_retry(backend) as conn:
-            if mental_model_id:
-                row = await conn.fetchrow(
-                    f"""
-                    INSERT INTO {fq_table("mental_models")}
-                    (id, bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger)
-                    VALUES ($1, $2, 'pinned', $3, ' ', $4, $5, $6, $7, COALESCE($8, 2048), COALESCE($9, '{{"refresh_after_consolidation": false}}'::jsonb))
-                    RETURNING id, bank_id, name, source_query, content, tags,
-                              last_refreshed_at, created_at, reflect_response,
-                              max_tokens, trigger, structured_content
-                    """,
-                    mental_model_id,
-                    bank_id,
-                    name,
-                    source_query,
-                    content,
-                    embedding_str,
-                    tags or [],
-                    max_tokens,
-                    json.dumps(trigger) if trigger else None,
-                )
-            else:
-                row = await conn.fetchrow(
-                    f"""
-                    INSERT INTO {fq_table("mental_models")}
-                    (bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger)
-                    VALUES ($1, 'pinned', $2, ' ', $3, $4, $5, $6, COALESCE($7, 2048), COALESCE($8, '{{"refresh_after_consolidation": false}}'::jsonb))
-                    RETURNING id, bank_id, name, source_query, content, tags,
-                              last_refreshed_at, created_at, reflect_response,
-                              max_tokens, trigger, structured_content
-                    """,
-                    bank_id,
-                    name,
-                    source_query,
-                    content,
-                    embedding_str,
-                    tags or [],
-                    max_tokens,
-                    json.dumps(trigger) if trigger else None,
-                )
+            async with conn.transaction():
+                created = await self._ensure_bank_exists(bank_id, request_context, conn=conn)
+                if mental_model_id:
+                    row = await conn.fetchrow(
+                        f"""
+                        INSERT INTO {fq_table("mental_models")}
+                        (id, bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger)
+                        VALUES ($1, $2, 'pinned', $3, ' ', $4, $5, $6, $7, COALESCE($8, 2048), COALESCE($9, '{{"refresh_after_consolidation": false}}'::jsonb))
+                        RETURNING id, bank_id, name, source_query, content, tags,
+                                  last_refreshed_at, created_at, reflect_response,
+                                  max_tokens, trigger, structured_content
+                        """,
+                        mental_model_id,
+                        bank_id,
+                        name,
+                        source_query,
+                        content,
+                        embedding_str,
+                        tags or [],
+                        max_tokens,
+                        json.dumps(trigger) if trigger else None,
+                    )
+                else:
+                    row = await conn.fetchrow(
+                        f"""
+                        INSERT INTO {fq_table("mental_models")}
+                        (bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger)
+                        VALUES ($1, 'pinned', $2, ' ', $3, $4, $5, $6, COALESCE($7, 2048), COALESCE($8, '{{"refresh_after_consolidation": false}}'::jsonb))
+                        RETURNING id, bank_id, name, source_query, content, tags,
+                                  last_refreshed_at, created_at, reflect_response,
+                                  max_tokens, trigger, structured_content
+                        """,
+                        bank_id,
+                        name,
+                        source_query,
+                        content,
+                        embedding_str,
+                        tags or [],
+                        max_tokens,
+                        json.dumps(trigger) if trigger else None,
+                    )
+
+        # Best-effort default-template hook runs after the bank-create commits
+        # (it opens its own connections and can create pinned models).
+        if created:
+            await self._apply_default_bank_template(bank_id, request_context)
 
         logger.info(f"[MENTAL_MODELS] Created pinned mental model '{name}' for bank {bank_id}")
         return self._row_to_mental_model(row)
@@ -10573,22 +10632,27 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
 
         # Ensure the bank row exists before inserting into webhooks (FK constraint).
-        _, created = await bank_utils.get_or_create_bank_profile(backend, bank_id)
+        # The lazy bank-create shares the webhook insert's transaction so the two
+        # commit (or roll back) atomically.
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                created = await self._ensure_bank_exists(bank_id, request_context, conn=conn)
+                row = await backend.ops.create_webhook(
+                    conn,
+                    fq_table("webhooks"),
+                    webhook_id,
+                    bank_id,
+                    url,
+                    secret,
+                    event_types,
+                    enabled,
+                    http_config_json,
+                )
+
+        # Best-effort default-template hook runs after the bank-create commits.
         if created:
             await self._apply_default_bank_template(bank_id, request_context)
 
-        async with acquire_with_retry(backend) as conn:
-            row = await backend.ops.create_webhook(
-                conn,
-                fq_table("webhooks"),
-                webhook_id,
-                bank_id,
-                url,
-                secret,
-                event_types,
-                enabled,
-                http_config_json,
-            )
         return dict(row) if row is not None else None
 
     async def list_webhooks(
@@ -10954,12 +11018,6 @@ class MemoryEngine(MemoryEngineInterface):
         parent_operation_id = uuid.uuid4()
         backend = await self._get_backend()
 
-        # Ensure the bank row exists before inserting async_operations (which now has a FK).
-        # Banks are created lazily on first retain, but the FK requires the row to exist first.
-        _, created = await bank_utils.get_or_create_bank_profile(self._backend, bank_id)
-        if created:
-            await self._apply_default_bank_template(bank_id, request_context)
-
         # Create typed metadata for parent operation
         parent_metadata = BatchRetainParentMetadata(
             items_count=len(contents),
@@ -10994,6 +11052,10 @@ class MemoryEngine(MemoryEngineInterface):
 
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
+                # async_operations.bank_id has a FK to banks. Create the bank
+                # lazily inside this same transaction so it is atomic with the
+                # parent + child operation rows.
+                created = await self._ensure_bank_exists(bank_id, request_context, conn=conn)
                 await conn.execute(
                     f"""
                     INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status)
@@ -11052,6 +11114,10 @@ class MemoryEngine(MemoryEngineInterface):
                         json.dumps(full_payload, default=_json_default),
                     )
                     deferred_child_payloads.append(full_payload)
+
+        # Best-effort default-template hook runs after the bank-create commits.
+        if created:
+            await self._apply_default_bank_template(bank_id, request_context)
 
         logger.info(f"Created parent operation {parent_operation_id} with {len(sub_batches)} child sub-batch(es)")
 

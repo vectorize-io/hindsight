@@ -542,6 +542,31 @@ class TestWebhookHttpApi:
         )
 
     @pytest.mark.asyncio
+    async def test_http_create_webhook_creates_missing_bank(self, api_client: httpx.AsyncClient):
+        """Creating the first webhook for a bank should lazily create the bank
+        (webhooks.bank_id has an FK), not raise a constraint error."""
+        bank_id = f"http-wh-newbank-{uuid.uuid4().hex[:8]}"
+
+        response = await api_client.post(
+            f"/v1/default/banks/{bank_id}/webhooks",
+            json={
+                "url": "https://example.com/new-bank",
+                "event_types": ["consolidation.completed"],
+            },
+        )
+        assert response.status_code == 201, response.text
+        webhook_id = response.json()["id"]
+
+        banks_resp = await api_client.get("/v1/default/banks")
+        assert banks_resp.status_code == 200
+        bank_ids = {bank["bank_id"] for bank in banks_resp.json()["banks"]}
+        assert bank_id in bank_ids
+
+        # Cleanup
+        await api_client.delete(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}")
+        await api_client.delete(f"/v1/default/banks/{bank_id}")
+
+    @pytest.mark.asyncio
     async def test_http_list_webhooks(self, api_client: httpx.AsyncClient):
         """GET /webhooks returns the webhooks registered for a bank."""
         bank_id = f"http-wh-{uuid.uuid4().hex[:8]}"
