@@ -180,8 +180,6 @@ The integration started on `@vectorize-io/hindsight-client`. They eventually swa
 
 This is normal for any sufficiently invested integration — a real shipping product wants to minimize its dependency surface and have full control over retries, timeouts, and test seams. The important detail is that they didn't change the API contract; they just talked to the same endpoints directly. That's a quiet vote of confidence in the API design: it was clean enough to in-house against.
 
-(The Hindsight Python client is still the right choice for >95% of integrations. The oh-my-pi rewrite is what you do when you're shipping a 10k-star product, not what you'd do to evaluate the feature set.)
-
 ---
 
 ## What This Means for Coding Agents on Hindsight
