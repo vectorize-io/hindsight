@@ -261,7 +261,10 @@ export function BankOperationsView() {
         >
           {pct !== null && (
             <span className="h-1 w-14 shrink-0 rounded-full bg-muted overflow-hidden">
-              <span className="block h-full rounded-full bg-blue-500/70" style={{ width: `${pct}%` }} />
+              <span
+                className="block h-full rounded-full bg-blue-500/70"
+                style={{ width: `${pct}%` }}
+              />
             </span>
           )}
           {hasCounts && (
@@ -528,7 +531,8 @@ export function BankOperationsView() {
                       </TableCell>
                       <TableCell>
                         {renderStatusBadge(op.status, op.error_message)}
-                        {op.status === "processing" && renderProgress(op.progress, { compact: true })}
+                        {op.status === "processing" &&
+                          renderProgress(op.progress, { compact: true })}
                       </TableCell>
                       <TableCell>
                         {op.status === "pending" && (
@@ -706,22 +710,6 @@ export function BankOperationsView() {
                         {t("field.progress")}
                       </div>
                       {renderProgress(selectedOperation.progress)}
-                      {selectedOperation.progress.detail &&
-                        Object.keys(selectedOperation.progress.detail).length > 0 && (
-                          <div className="mt-2 flex flex-wrap gap-1.5">
-                            {Object.entries(selectedOperation.progress.detail).map(
-                              ([key, value]) => (
-                                <span
-                                  key={key}
-                                  className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-1.5 py-0.5 text-[11px] text-muted-foreground"
-                                >
-                                  <span className="capitalize">{key.replace(/_/g, " ")}</span>
-                                  <span className="font-mono text-foreground">{value}</span>
-                                </span>
-                              )
-                            )}
-                          </div>
-                        )}
                     </div>
                   )}
 

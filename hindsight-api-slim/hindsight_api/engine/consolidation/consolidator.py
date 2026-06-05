@@ -1023,12 +1023,16 @@ async def _run_consolidation_job(
             # the entire (often minutes-long) LLM phase; writing here advances
             # processed/total as each batch commits. set_stage mirrors it for the
             # live worker log.
+            # total_count is the unconsolidated count at job start; memories retained
+            # *during* consolidation get picked up by later fetches, so processed can
+            # exceed it. Treat total as an estimate that grows with processed so the
+            # bar never reads >100% (e.g. 58/51).
             set_stage(f"consolidation.llm_batch.{batch_num_local}")
             await memory_engine._write_operation_progress(
                 operation_id,
                 stage="consolidating",
                 processed=cum_processed,
-                total=total_count,
+                total=max(total_count, cum_processed),
                 detail={
                     "observations_created": cum_snapshot["observations_created"],
                     "observations_updated": cum_snapshot["observations_updated"],
@@ -1181,7 +1185,7 @@ async def _run_consolidation_job(
             operation_id,
             stage="refreshing_mental_models",
             processed=stats["memories_processed"],
-            total=total_count,
+            total=max(total_count, stats["memories_processed"]),
         )
         # SECURITY: Only refresh mental models with matching tags (or all if no tags were consolidated)
         mental_models_refreshed = await _trigger_mental_model_refreshes(

@@ -3078,17 +3078,9 @@ class MemoryEngine(MemoryEngineInterface):
                     total_processed_content_tokens = None
                 else:
                     total_processed_content_tokens = total_processed_content_tokens + sub_processed
-
-                # Durable progress snapshot after this sub-batch committed, so an operator
-                # polling the operation status API sees forward progress that reaches
-                # total/total when the batch finishes (not stuck at the pre-run count).
-                await self._write_operation_progress(
-                    operation_id,
-                    stage="processing_sub_batch",
-                    processed=i,
-                    total=len(sub_batches),
-                    detail={"items_in_sub_batch": len(sub_batch)},
-                )
+                # Per-sub-batch progress is intentionally not written here: the streaming
+                # retain pipeline emits finer-grained "storing N/total chunks" snapshots
+                # via progress_callback as each sub-batch's chunks commit.
 
             total_time = time.time() - start_time
             logger.info(
@@ -3111,15 +3103,8 @@ class MemoryEngine(MemoryEngineInterface):
                 outbox_callback=outbox_callback,
                 outbox_callback_factory=outbox_callback_factory,
             )
-            # Single sub-batch committed — record it as done (1/1) so a completed
-            # operation's last snapshot reflects completion, not a pre-run 0/1.
-            await self._write_operation_progress(
-                operation_id,
-                stage="processing_sub_batch",
-                processed=1,
-                total=1,
-                detail={"items_in_sub_batch": len(contents)},
-            )
+            # Progress for this path is emitted by the streaming pipeline as
+            # "storing N/total chunks" via progress_callback (see _retain_batch_async_internal).
 
         # Call post-operation hook if validator is configured
         if self._operation_validator:
@@ -3285,6 +3270,9 @@ class MemoryEngine(MemoryEngineInterface):
                 db_semaphore=self._put_semaphore,
                 document_body_override=document_body_override,
                 chunk_index_offset=chunk_index_offset,
+                # Stream chunk-level "storing N/total" progress to the operation row as
+                # the document's chunks commit (more useful than the coarse sub-batch tick).
+                progress_callback=self._write_operation_progress,
             )
             # Map the created facts onto this retain's trace so the trace view can
             # show which memories the ingestion produced. result[0] is the
