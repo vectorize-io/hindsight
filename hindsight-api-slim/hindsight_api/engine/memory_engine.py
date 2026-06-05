@@ -928,7 +928,6 @@ class MemoryEngine(MemoryEngineInterface):
             schema_getter=get_current_schema,
             enabled=config.audit_log_enabled,
             allowed_actions=config.audit_log_actions,
-            retention_days=config.audit_log_retention_days,
         )
 
         # Per-bank LLM request tracer (disabled by default). Registered as a
@@ -939,12 +938,17 @@ class MemoryEngine(MemoryEngineInterface):
             schema_getter=get_current_schema,
             enabled=config.llm_trace_enabled,
             allowed_scopes=config.llm_trace_scopes,
-            retention_days=config.llm_trace_retention_days,
             max_chars=config.llm_trace_max_chars,
         )
         from ..tracing import register_span_recorder
 
         register_span_recorder(self._llm_recorder)
+
+        # Background maintenance loop (retention sweeps + consolidation reconcile),
+        # created in initialize() once the pool/backend is ready.
+        from .maintenance import MaintenanceLoop
+
+        self._maintenance_loop: MaintenanceLoop | None = None
 
         # Backpressure mechanism: limit concurrent searches to prevent overwhelming the database
         # Configurable via HINDSIGHT_API_RECALL_MAX_CONCURRENT (default: 50)
@@ -2585,11 +2589,13 @@ class MemoryEngine(MemoryEngineInterface):
         self._task_backend.set_executor(self.execute_task)
         await self._task_backend.initialize()
 
-        # Start audit log retention sweep (if configured)
-        self._audit_logger.start_retention_sweep()
+        # Start the background maintenance loop: cross-tenant retention sweeps
+        # (audit_log, llm_requests) plus the consolidation reconcile that
+        # re-schedules banks with eligible-but-unscheduled facts.
+        from .maintenance import MaintenanceLoop
 
-        # Start LLM trace retention sweep (if configured)
-        self._llm_recorder.start_retention_sweep()
+        self._maintenance_loop = MaintenanceLoop(self)
+        self._maintenance_loop.start()
 
         self._initialized = True
         logger.info("Memory system initialized (pool and task backend started)")
@@ -2654,11 +2660,11 @@ class MemoryEngine(MemoryEngineInterface):
         """Close the connection pool and shutdown background workers."""
         logger.info("close() started")
 
-        # Stop audit log retention sweep
-        await self._audit_logger.stop_retention_sweep()
+        # Stop the background maintenance loop (retention sweeps + reconcile)
+        if self._maintenance_loop is not None:
+            await self._maintenance_loop.stop()
 
-        # Stop LLM trace retention sweep and unregister the recorder
-        await self._llm_recorder.stop_retention_sweep()
+        # Unregister the LLM trace recorder span hook
         from ..tracing import unregister_span_recorder
 
         unregister_span_recorder(self._llm_recorder)

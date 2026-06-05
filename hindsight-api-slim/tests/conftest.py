@@ -20,6 +20,11 @@ from hindsight_api.pg0 import EmbeddedPostgres
 DEFAULT_PG0_INSTANCE_NAME = "hindsight-test"
 DEFAULT_PG0_PORT = int(os.environ.get("HINDSIGHT_TEST_PG_PORT", "5556"))
 
+# Disable the background consolidation reconcile during tests: it defaults on in
+# production, but its timer would otherwise race test data on the shared pg0.
+# Tests that exercise it call MaintenanceLoop._run_reconcile() directly.
+os.environ.setdefault("HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS", "0")
+
 
 # Load environment variables from .env at the start of test session
 def pytest_configure(config):
