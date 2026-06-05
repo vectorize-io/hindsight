@@ -1923,6 +1923,49 @@ class MemoryEngine(MemoryEngineInterface):
             logger.error(f"Failed to check operation liveness {operation_id}: {e}")
             return True  # Assume alive on DB error to avoid false-positive aborts
 
+    async def _write_operation_progress(
+        self,
+        operation_id: str | None,
+        *,
+        stage: str,
+        processed: int | None = None,
+        total: int | None = None,
+        detail: dict[str, int] | None = None,
+    ) -> None:
+        """Persist a last-known progress snapshot for a long-running async operation.
+
+        Merges a ``progress`` object into ``async_operations.result_metadata`` (top-level
+        ``||`` merge, so sibling keys such as ``is_parent`` survive) and bumps
+        ``updated_at``. Callers invoke this at coarse phase/batch boundaries — not per
+        row — so an operator polling the operation status API can see the current stage
+        and counters and tell a healthy long-running job from a frozen one.
+
+        Best-effort: a failed heartbeat must never fail the underlying job, so all errors
+        are swallowed with a debug log. A ``None`` operation_id (synchronous / untracked
+        call sites) is a no-op.
+        """
+        if not operation_id:
+            return
+        snapshot: dict[str, Any] = {"stage": stage, "at": datetime.now(UTC).isoformat()}
+        if processed is not None:
+            snapshot["processed"] = processed
+        if total is not None:
+            snapshot["total"] = total
+        if detail:
+            snapshot["detail"] = detail
+        try:
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                await conn.execute(
+                    f"UPDATE {fq_table('async_operations')} "
+                    f"SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $2::jsonb, "
+                    f"updated_at = now() WHERE operation_id = $1",
+                    uuid.UUID(operation_id),
+                    json.dumps({"progress": snapshot}),
+                )
+        except Exception as e:
+            logger.debug(f"Failed to write operation progress for {operation_id}: {e}")
+
     async def _mark_operation_failed(self, operation_id: str, error_message: str, error_traceback: str):
         """Helper to mark an operation as failed in the database.
 
@@ -2978,6 +3021,17 @@ class MemoryEngine(MemoryEngineInterface):
                 logger.info(
                     f"Processing sub-batch {i}/{len(sub_batches)}: {len(sub_batch)} items, {sub_batch_tokens:,} tokens"
                 )
+                # Durable progress snapshot + live worker stage so an operator polling the
+                # operation status API sees how far a long batch has advanced (processed =
+                # sub-batches already committed before this one).
+                set_stage(f"batch_retain.sub_batch.{i}")
+                await self._write_operation_progress(
+                    operation_id,
+                    stage="processing_sub_batch",
+                    processed=i - 1,
+                    total=len(sub_batches),
+                    detail={"items_in_sub_batch": len(sub_batch)},
+                )
 
                 # Resolve the document this sub-batch writes to so we can offset
                 # its chunk_index past chunks already stored by earlier
@@ -3038,7 +3092,15 @@ class MemoryEngine(MemoryEngineInterface):
             )
             result = per_input_results
         else:
-            # Small batch - use internal method directly
+            # Small batch - use internal method directly (single sub-batch).
+            set_stage("batch_retain.sub_batch.1")
+            await self._write_operation_progress(
+                operation_id,
+                stage="processing_sub_batch",
+                processed=0,
+                total=1,
+                detail={"items_in_sub_batch": len(contents)},
+            )
             result, total_usage, total_processed_content_tokens = await self._retain_batch_async_internal(
                 bank_id=bank_id,
                 contents=contents,
@@ -10346,6 +10408,7 @@ class MemoryEngine(MemoryEngineInterface):
                         "error_message": row["error_message"],
                         "retry_count": row["retry_count"] or 0,
                         "next_retry_at": next_retry_at.isoformat() if next_retry_at else None,
+                        "progress": result_metadata.get("progress"),
                     }
                 )
 
@@ -10475,6 +10538,7 @@ class MemoryEngine(MemoryEngineInterface):
                         "error_message": row["error_message"],
                         "retry_count": row["retry_count"] or 0,
                         "next_retry_at": row["next_retry_at"].isoformat() if row["next_retry_at"] else None,
+                        "progress": result_metadata.get("progress"),
                         "result_metadata": result_metadata,
                         "child_operations": child_statuses,
                         "task_payload": task_payload,
@@ -10491,6 +10555,7 @@ class MemoryEngine(MemoryEngineInterface):
                         "error_message": row["error_message"],
                         "retry_count": row["retry_count"] or 0,
                         "next_retry_at": row["next_retry_at"].isoformat() if row["next_retry_at"] else None,
+                        "progress": result_metadata.get("progress"),
                         "result_metadata": result_metadata,
                         "task_payload": task_payload,
                     }

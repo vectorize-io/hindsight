@@ -19,6 +19,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.operation_progress import OperationProgress
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -35,7 +36,8 @@ class OperationResponse(BaseModel):
     error_message: Optional[StrictStr]
     retry_count: Optional[StrictInt] = None
     next_retry_at: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["id", "task_type", "items_count", "document_id", "created_at", "status", "error_message", "retry_count", "next_retry_at"]
+    progress: Optional[OperationProgress] = None
+    __properties: ClassVar[List[str]] = ["id", "task_type", "items_count", "document_id", "created_at", "status", "error_message", "retry_count", "next_retry_at", "progress"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -76,6 +78,9 @@ class OperationResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of progress
+        if self.progress:
+            _dict['progress'] = self.progress.to_dict()
         # set to None if document_id (nullable) is None
         # and model_fields_set contains the field
         if self.document_id is None and "document_id" in self.model_fields_set:
@@ -95,6 +100,11 @@ class OperationResponse(BaseModel):
         # and model_fields_set contains the field
         if self.next_retry_at is None and "next_retry_at" in self.model_fields_set:
             _dict['next_retry_at'] = None
+
+        # set to None if progress (nullable) is None
+        # and model_fields_set contains the field
+        if self.progress is None and "progress" in self.model_fields_set:
+            _dict['progress'] = None
 
         return _dict
 
@@ -116,7 +126,8 @@ class OperationResponse(BaseModel):
             "status": obj.get("status"),
             "error_message": obj.get("error_message"),
             "retry_count": obj.get("retry_count"),
-            "next_retry_at": obj.get("next_retry_at")
+            "next_retry_at": obj.get("next_retry_at"),
+            "progress": OperationProgress.from_dict(obj["progress"]) if obj.get("progress") is not None else None
         })
         return _obj
 

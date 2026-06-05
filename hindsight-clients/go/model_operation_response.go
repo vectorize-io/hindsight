@@ -30,6 +30,7 @@ type OperationResponse struct {
 	ErrorMessage NullableString `json:"error_message"`
 	RetryCount NullableInt32 `json:"retry_count,omitempty"`
 	NextRetryAt NullableString `json:"next_retry_at,omitempty"`
+	Progress NullableOperationProgress `json:"progress,omitempty"`
 }
 
 type _OperationResponse OperationResponse
@@ -329,6 +330,48 @@ func (o *OperationResponse) UnsetNextRetryAt() {
 	o.NextRetryAt.Unset()
 }
 
+// GetProgress returns the Progress field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationResponse) GetProgress() OperationProgress {
+	if o == nil || IsNil(o.Progress.Get()) {
+		var ret OperationProgress
+		return ret
+	}
+	return *o.Progress.Get()
+}
+
+// GetProgressOk returns a tuple with the Progress field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationResponse) GetProgressOk() (*OperationProgress, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.Progress.Get(), o.Progress.IsSet()
+}
+
+// HasProgress returns a boolean if a field has been set.
+func (o *OperationResponse) HasProgress() bool {
+	if o != nil && o.Progress.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetProgress gets a reference to the given NullableOperationProgress and assigns it to the Progress field.
+func (o *OperationResponse) SetProgress(v OperationProgress) {
+	o.Progress.Set(&v)
+}
+// SetProgressNil sets the value for Progress to be an explicit nil
+func (o *OperationResponse) SetProgressNil() {
+	o.Progress.Set(nil)
+}
+
+// UnsetProgress ensures that no value is present for Progress, not even an explicit nil
+func (o *OperationResponse) UnsetProgress() {
+	o.Progress.Unset()
+}
+
 func (o OperationResponse) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -353,6 +396,9 @@ func (o OperationResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.NextRetryAt.IsSet() {
 		toSerialize["next_retry_at"] = o.NextRetryAt.Get()
+	}
+	if o.Progress.IsSet() {
+		toSerialize["progress"] = o.Progress.Get()
 	}
 	return toSerialize, nil
 }

@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, field_validator
 
 from ...config import get_config
+from ...worker.stage import set_stage
 from ..db_utils import acquire_with_retry
 from ..llm_trace import (
     record_created_memory_ids,
@@ -717,6 +718,12 @@ async def _run_consolidation_job(
     logger.info(f"[CONSOLIDATION] bank={bank_id} total_unconsolidated={total_count}")
     perf.log(f"[1] Found {total_count} pending memories to consolidate")
 
+    # Initial durable progress snapshot so an operator polling the operation status
+    # API sees the job has started and how much work it found, before the first round
+    # of LLM batches completes (which can take minutes on a dense bank).
+    set_stage("consolidation.scanning")
+    await memory_engine._write_operation_progress(operation_id, stage="scanning", processed=0, total=total_count)
+
     # Process each memory with individual commits for crash recovery
     stats: dict[str, int] = {
         "memories_processed": 0,
@@ -737,11 +744,13 @@ async def _run_consolidation_job(
     hit_round_limit = False
 
     llm_batch_num = 0
+    consolidation_round = 0
     # Cumulative count of memories processed across the whole job, shared by
     # the per-batch log so it can still report processed/total under parallelism.
     # Mutable container so the inner closure can update without a `nonlocal`.
     cumulative_progress = {"processed": 0}
     while True:
+        consolidation_round += 1
         # Cap fetch size by remaining round budget
         fetch_limit = (
             min(max_memories_per_batch, int(round_remaining)) if round_limit_enabled else max_memories_per_batch
@@ -1072,6 +1081,25 @@ async def _run_consolidation_job(
         if any_cancelled:
             return {"status": "cancelled", "bank_id": bank_id, **stats}
 
+        # Durable progress snapshot at the round boundary (coarse — one short write per
+        # DB fetch batch, not per memory) so the operation status API reflects forward
+        # progress: memories consolidated so far + the observation counters.
+        set_stage(f"consolidation.round.{consolidation_round}")
+        await memory_engine._write_operation_progress(
+            operation_id,
+            stage="processing_batch",
+            processed=stats["memories_processed"],
+            total=total_count,
+            detail={
+                "round": consolidation_round,
+                "observations_created": stats["observations_created"],
+                "observations_updated": stats["observations_updated"],
+                "observations_merged": stats["observations_merged"],
+                "observations_deleted": stats["observations_deleted"],
+                "memories_failed": stats["memories_failed"],
+            },
+        )
+
         # Update round budget after processing this DB fetch batch
         if round_limit_enabled:
             round_remaining -= len(memories)
@@ -1132,6 +1160,13 @@ async def _run_consolidation_job(
         stats["mental_models_refreshed"] = 0
         logger.info(f"[CONSOLIDATION] bank={bank_id} skipping mental model refresh (round limit hit, re-queued)")
     else:
+        set_stage("consolidation.refreshing_mental_models")
+        await memory_engine._write_operation_progress(
+            operation_id,
+            stage="refreshing_mental_models",
+            processed=stats["memories_processed"],
+            total=total_count,
+        )
         # SECURITY: Only refresh mental models with matching tags (or all if no tags were consolidated)
         mental_models_refreshed = await _trigger_mental_model_refreshes(
             memory_engine=memory_engine,
