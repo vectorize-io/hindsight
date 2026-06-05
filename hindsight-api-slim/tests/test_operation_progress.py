@@ -223,7 +223,8 @@ async def test_consolidation_records_advancing_progress(memory: MemoryEngine, re
 
 @pytest.mark.asyncio
 async def test_batch_retain_records_progress(memory: MemoryEngine, request_context, monkeypatch):
-    """Batch retain writes a processing_sub_batch snapshot for the operation it runs under."""
+    """Batch retain writes a processing_sub_batch snapshot that reaches total/total on
+    completion — so a finished retain's last snapshot reflects done, not a pre-run 0/N."""
     bank_id = f"op_progress_retain_{uuid.uuid4().hex[:8]}"
     await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
 
@@ -246,9 +247,19 @@ async def test_batch_retain_records_progress(memory: MemoryEngine, request_conte
 
     sub_batch_calls = [c for c in captured if c["stage"] == "processing_sub_batch"]
     assert sub_batch_calls, "expected at least one processing_sub_batch progress write"
-    first = sub_batch_calls[0]
-    assert first["total"] >= 1
-    assert first["processed"] == 0  # nothing committed before the first sub-batch
-    assert "items_in_sub_batch" in first["detail"]
+    # Snapshots are written after each sub-batch commits, so the final one reaches total/total
+    # (no longer frozen at the pre-run count) and every write carries its item count.
+    last = sub_batch_calls[-1]
+    assert last["total"] >= 1
+    assert last["processed"] == last["total"]
+    assert all("items_in_sub_batch" in c["detail"] for c in sub_batch_calls)
+
+    # The durable row reflects completion, so a consumer polling a finished retain
+    # never sees a 0/N "still processing" snapshot.
+    row = await pool.fetchrow(
+        "SELECT result_metadata FROM async_operations WHERE operation_id = $1", uuid.UUID(op_id)
+    )
+    progress = _read_meta(row)["progress"]
+    assert progress["processed"] == progress["total"]
 
     await memory.delete_bank(bank_id, request_context=request_context)

@@ -222,7 +222,9 @@ export function BankOperationsView() {
     if (!progress) return null;
     const stageLabel = progress.stage.replace(/[._]/g, " ");
     const hasCounts =
-      typeof progress.processed === "number" && typeof progress.total === "number" && progress.total > 0;
+      typeof progress.processed === "number" &&
+      typeof progress.total === "number" &&
+      progress.total > 0;
     const pct = hasCounts
       ? Math.min(100, Math.round((progress.processed! / progress.total!) * 100))
       : null;
@@ -627,9 +629,10 @@ export function BankOperationsView() {
                     )}
                   </div>
 
-                  {/* Progress snapshot — last reported phase/counters for a running
-                      (or last-running) operation; helps tell a healthy long job from a stuck one. */}
-                  {selectedOperation.progress && (
+                  {/* Progress snapshot — only meaningful while the operation is in
+                      flight. For a terminal operation the status badge + completed_at are
+                      the truth; a leftover heartbeat would misleadingly read as in-progress. */}
+                  {selectedOperation.status === "processing" && selectedOperation.progress && (
                     <div>
                       <div className="text-sm font-medium text-muted-foreground mb-1">
                         {t("field.progress")}
@@ -638,15 +641,17 @@ export function BankOperationsView() {
                       {selectedOperation.progress.detail &&
                         Object.keys(selectedOperation.progress.detail).length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-1.5">
-                            {Object.entries(selectedOperation.progress.detail).map(([key, value]) => (
-                              <span
-                                key={key}
-                                className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-1.5 py-0.5 text-[11px] text-muted-foreground"
-                              >
-                                <span className="capitalize">{key.replace(/_/g, " ")}</span>
-                                <span className="font-mono text-foreground">{value}</span>
-                              </span>
-                            ))}
+                            {Object.entries(selectedOperation.progress.detail).map(
+                              ([key, value]) => (
+                                <span
+                                  key={key}
+                                  className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                                >
+                                  <span className="capitalize">{key.replace(/_/g, " ")}</span>
+                                  <span className="font-mono text-foreground">{value}</span>
+                                </span>
+                              )
+                            )}
                           </div>
                         )}
                     </div>

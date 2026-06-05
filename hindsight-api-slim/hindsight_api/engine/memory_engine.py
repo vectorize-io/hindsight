@@ -3021,17 +3021,10 @@ class MemoryEngine(MemoryEngineInterface):
                 logger.info(
                     f"Processing sub-batch {i}/{len(sub_batches)}: {len(sub_batch)} items, {sub_batch_tokens:,} tokens"
                 )
-                # Durable progress snapshot + live worker stage so an operator polling the
-                # operation status API sees how far a long batch has advanced (processed =
-                # sub-batches already committed before this one).
+                # Live worker stage for the in-flight sub-batch; the durable progress
+                # snapshot is written *after* the sub-batch commits (below) so processed
+                # reflects work actually done and reaches total on completion.
                 set_stage(f"batch_retain.sub_batch.{i}")
-                await self._write_operation_progress(
-                    operation_id,
-                    stage="processing_sub_batch",
-                    processed=i - 1,
-                    total=len(sub_batches),
-                    detail={"items_in_sub_batch": len(sub_batch)},
-                )
 
                 # Resolve the document this sub-batch writes to so we can offset
                 # its chunk_index past chunks already stored by earlier
@@ -3086,6 +3079,17 @@ class MemoryEngine(MemoryEngineInterface):
                 else:
                     total_processed_content_tokens = total_processed_content_tokens + sub_processed
 
+                # Durable progress snapshot after this sub-batch committed, so an operator
+                # polling the operation status API sees forward progress that reaches
+                # total/total when the batch finishes (not stuck at the pre-run count).
+                await self._write_operation_progress(
+                    operation_id,
+                    stage="processing_sub_batch",
+                    processed=i,
+                    total=len(sub_batches),
+                    detail={"items_in_sub_batch": len(sub_batch)},
+                )
+
             total_time = time.time() - start_time
             logger.info(
                 f"RETAIN_BATCH_ASYNC (chunked) COMPLETE: {len(per_input_results)} results from {len(contents)} contents in {total_time:.3f}s"
@@ -3094,13 +3098,6 @@ class MemoryEngine(MemoryEngineInterface):
         else:
             # Small batch - use internal method directly (single sub-batch).
             set_stage("batch_retain.sub_batch.1")
-            await self._write_operation_progress(
-                operation_id,
-                stage="processing_sub_batch",
-                processed=0,
-                total=1,
-                detail={"items_in_sub_batch": len(contents)},
-            )
             result, total_usage, total_processed_content_tokens = await self._retain_batch_async_internal(
                 bank_id=bank_id,
                 contents=contents,
@@ -3113,6 +3110,15 @@ class MemoryEngine(MemoryEngineInterface):
                 strategy=strategy,
                 outbox_callback=outbox_callback,
                 outbox_callback_factory=outbox_callback_factory,
+            )
+            # Single sub-batch committed — record it as done (1/1) so a completed
+            # operation's last snapshot reflects completion, not a pre-run 0/1.
+            await self._write_operation_progress(
+                operation_id,
+                stage="processing_sub_batch",
+                processed=1,
+                total=1,
+                detail={"items_in_sub_batch": len(contents)},
             )
 
         # Call post-operation hook if validator is configured
