@@ -1,7 +1,7 @@
 [project]
-name = "hindsight-langgraph"
-version = "0.2.0"
-description = "LangGraph integration for Hindsight - persistent memory tools, nodes, and memory instructions for AI agents"
+name = "hindsight-claude-agent-sdk"
+version = "0.1.0"
+description = "Claude Agent SDK integration for Hindsight - persistent memory tools and hooks for Claude agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -11,10 +11,10 @@ authors = [
 keywords = [
     "ai",
     "memory",
-    "langgraph",
-    "langchain",
+    "claude",
     "agents",
     "hindsight",
+    "anthropic",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -24,28 +24,18 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
 dependencies = [
-    "langchain-core>=0.3.0",
+    "claude-agent-sdk>=0.1.50",
     "hindsight-client>=0.4.0",
-    # Transitive dependency security fixes
-    "langchain-core>=1.2.22",  # Path traversal in legacy load_prompt functions fix
-    "requests>=2.33.0",  # Insecure temp file reuse in extract_zipped_paths()
-]
-
-[project.optional-dependencies]
-langgraph = [
-    "langgraph>=0.3.0",
-]
-all = [
-    "langgraph>=0.3.0",
 ]
 
 [project.urls]
 Homepage = "https://github.com/vectorize-io/hindsight"
-Documentation = "https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/langgraph"
+Documentation = "https://docs.hindsight.vectorize.io/docs/sdks/integrations/claude-agent-sdk"
 Repository = "https://github.com/vectorize-io/hindsight"
 
 [build-system]
@@ -53,7 +43,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["hindsight_langgraph"]
+packages = ["hindsight_claude_agent_sdk"]
+
+[tool.ruff]
+line-length = 120
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -64,7 +57,8 @@ markers = [
 
 [dependency-groups]
 dev = [
-    "hindsight-langgraph[langgraph]",
     "pytest>=9.0.2",
     "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.0",
+    "mcp>=1.0.0",
 ]

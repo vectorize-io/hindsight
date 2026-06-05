@@ -1,15 +1,16 @@
-"""Unit tests for Hindsight LangGraph tools."""
+"""Unit tests for Hindsight Claude Agent SDK tools."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from hindsight_langgraph import (
+from hindsight_claude_agent_sdk import (
     configure,
+    create_hindsight_server,
     create_hindsight_tools,
-    memory_instructions,
     reset_config,
 )
-from hindsight_langgraph.errors import HindsightError
+from hindsight_claude_agent_sdk._version import __version__
+from hindsight_claude_agent_sdk.errors import HindsightError
 
 
 def _mock_client():
@@ -32,7 +33,7 @@ def _mock_recall_response(texts: list[str]):
     return response
 
 
-def _mock_reflect_response(text: str):
+def _mock_reflect_response(text: str | None):
     response = MagicMock()
     response.text = text
     return response
@@ -42,6 +43,14 @@ def _mock_retain_response():
     response = MagicMock()
     response.success = True
     return response
+
+
+def _get_tool(tools, name: str):
+    """Find a tool by name from the tools list."""
+    for t in tools:
+        if t.name == name:
+            return t
+    raise ValueError(f"Tool {name} not found. Available: {[t.name for t in tools]}")
 
 
 class TestCreateHindsightTools:
@@ -55,6 +64,12 @@ class TestCreateHindsightTools:
         client = _mock_client()
         tools = create_hindsight_tools(bank_id="test", client=client)
         assert len(tools) == 3
+
+    def test_tool_names(self):
+        client = _mock_client()
+        tools = create_hindsight_tools(bank_id="test", client=client)
+        names = [t.name for t in tools]
+        assert names == ["hindsight_retain", "hindsight_recall", "hindsight_reflect"]
 
     def test_include_retain_only(self):
         client = _mock_client()
@@ -105,48 +120,55 @@ class TestCreateHindsightTools:
 
     def test_defaults_to_cloud_without_config(self, monkeypatch):
         """With no client, config, or explicit URL, defaults to the cloud URL."""
-        from hindsight_langgraph.config import DEFAULT_HINDSIGHT_API_URL
+        from hindsight_claude_agent_sdk.config import DEFAULT_HINDSIGHT_API_URL
 
         monkeypatch.delenv("HINDSIGHT_API_KEY", raising=False)
-        with patch("hindsight_langgraph._client.Hindsight") as mock_cls:
+        with patch("hindsight_claude_agent_sdk._client.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             tools = create_hindsight_tools(bank_id="test")
             assert len(tools) == 3
-            call_kwargs = mock_cls.call_args[1]
-            assert call_kwargs["base_url"] == DEFAULT_HINDSIGHT_API_URL
-            # No key configured → none passed; it only fails at call time.
-            assert "api_key" not in call_kwargs
+            assert mock_cls.call_args.kwargs["base_url"] == DEFAULT_HINDSIGHT_API_URL
+            assert "api_key" not in mock_cls.call_args.kwargs
 
     def test_reads_api_key_from_env_without_config(self, monkeypatch):
         """HINDSIGHT_API_KEY is honoured even when configure() was never called."""
         monkeypatch.setenv("HINDSIGHT_API_KEY", "sk-from-env")
-        with patch("hindsight_langgraph._client.Hindsight") as mock_cls:
+        with patch("hindsight_claude_agent_sdk._client.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             create_hindsight_tools(bank_id="test")
-            call_kwargs = mock_cls.call_args[1]
-            assert call_kwargs["api_key"] == "sk-from-env"
+            assert mock_cls.call_args.kwargs["api_key"] == "sk-from-env"
 
     def test_falls_back_to_global_config(self):
         configure(hindsight_api_url="http://localhost:8888")
-        with patch("hindsight_langgraph._client.Hindsight") as mock_cls:
+        with patch("hindsight_claude_agent_sdk._client.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             tools = create_hindsight_tools(bank_id="test")
             assert len(tools) == 3
-            call_kwargs = mock_cls.call_args[1]
-            assert call_kwargs["base_url"] == "http://localhost:8888"
-            assert call_kwargs["timeout"] == 30.0
-            assert "user_agent" in call_kwargs
+            mock_cls.assert_called_once_with(
+                base_url="http://localhost:8888",
+                timeout=30.0,
+                user_agent=f"hindsight-claude-agent-sdk/{__version__}",
+            )
 
     def test_explicit_url_overrides_config(self):
         configure(hindsight_api_url="http://config:8888")
-        with patch("hindsight_langgraph._client.Hindsight") as mock_cls:
+        with patch("hindsight_claude_agent_sdk._client.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
-            create_hindsight_tools(
-                bank_id="test", hindsight_api_url="http://explicit:9999"
+            create_hindsight_tools(bank_id="test", hindsight_api_url="http://explicit:9999")
+            mock_cls.assert_called_once_with(
+                base_url="http://explicit:9999",
+                timeout=30.0,
+                user_agent=f"hindsight-claude-agent-sdk/{__version__}",
             )
-            call_kwargs = mock_cls.call_args[1]
-            assert call_kwargs["base_url"] == "http://explicit:9999"
-            assert call_kwargs["timeout"] == 30.0
+
+
+class TestCreateHindsightServer:
+    def test_returns_mcp_server_config(self):
+        client = _mock_client()
+        server = create_hindsight_server(bank_id="test", client=client)
+        assert isinstance(server, dict)
+        assert server["type"] == "sdk"
+        assert server["name"] == "hindsight"
 
 
 class TestRetainTool:
@@ -160,11 +182,9 @@ class TestRetainTool:
             include_recall=False,
             include_reflect=False,
         )
-        result = await tools[0].ainvoke("The user likes Python")
-        assert result == "Memory stored successfully."
-        client.aretain.assert_called_once_with(
-            bank_id="test-bank", content="The user likes Python"
-        )
+        result = await tools[0].handler({"content": "The user likes Python"})
+        assert result["content"][0]["text"] == "Memory stored successfully."
+        client.aretain.assert_called_once_with(bank_id="test-bank", content="The user likes Python")
 
     @pytest.mark.asyncio
     async def test_retain_passes_tags(self):
@@ -177,12 +197,42 @@ class TestRetainTool:
             include_recall=False,
             include_reflect=False,
         )
-        await tools[0].ainvoke("some content")
+        await tools[0].handler({"content": "some content"})
         call_kwargs = client.aretain.call_args[1]
         assert call_kwargs["tags"] == ["source:chat"]
 
     @pytest.mark.asyncio
-    async def test_retain_raises_hindsight_error(self):
+    async def test_retain_passes_metadata(self):
+        client = _mock_client()
+        client.aretain.return_value = _mock_retain_response()
+        tools = create_hindsight_tools(
+            bank_id="test",
+            client=client,
+            retain_metadata={"source": "chat", "session": "abc"},
+            include_recall=False,
+            include_reflect=False,
+        )
+        await tools[0].handler({"content": "content"})
+        call_kwargs = client.aretain.call_args[1]
+        assert call_kwargs["metadata"] == {"source": "chat", "session": "abc"}
+
+    @pytest.mark.asyncio
+    async def test_retain_passes_document_id(self):
+        client = _mock_client()
+        client.aretain.return_value = _mock_retain_response()
+        tools = create_hindsight_tools(
+            bank_id="test",
+            client=client,
+            retain_document_id="session-123",
+            include_recall=False,
+            include_reflect=False,
+        )
+        await tools[0].handler({"content": "content"})
+        call_kwargs = client.aretain.call_args[1]
+        assert call_kwargs["document_id"] == "session-123"
+
+    @pytest.mark.asyncio
+    async def test_retain_error_returns_error(self):
         client = _mock_client()
         client.aretain.side_effect = RuntimeError("connection refused")
         tools = create_hindsight_tools(
@@ -191,26 +241,26 @@ class TestRetainTool:
             include_recall=False,
             include_reflect=False,
         )
-        with pytest.raises(HindsightError, match="Retain failed"):
-            await tools[0].ainvoke("content")
+        result = await tools[0].handler({"content": "content"})
+        assert result["is_error"] is True
+        assert "Retain failed" in result["content"][0]["text"]
 
 
 class TestRecallTool:
     @pytest.mark.asyncio
     async def test_recall_returns_numbered_results(self):
         client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(
-            ["User likes Python", "User is in NYC"]
-        )
+        client.arecall.return_value = _mock_recall_response(["User likes Python", "User is in NYC"])
         tools = create_hindsight_tools(
             bank_id="test-bank",
             client=client,
             include_retain=False,
             include_reflect=False,
         )
-        result = await tools[0].ainvoke("user preferences")
-        assert "1. User likes Python" in result
-        assert "2. User is in NYC" in result
+        result = await tools[0].handler({"query": "user preferences"})
+        text = result["content"][0]["text"]
+        assert "1. User likes Python" in text
+        assert "2. User is in NYC" in text
 
     @pytest.mark.asyncio
     async def test_recall_empty_results(self):
@@ -222,8 +272,8 @@ class TestRecallTool:
             include_retain=False,
             include_reflect=False,
         )
-        result = await tools[0].ainvoke("anything")
-        assert result == "No relevant memories found."
+        result = await tools[0].handler({"query": "anything"})
+        assert result["content"][0]["text"] == "No relevant memories found."
 
     @pytest.mark.asyncio
     async def test_recall_passes_budget_and_max_tokens(self):
@@ -237,7 +287,7 @@ class TestRecallTool:
             include_retain=False,
             include_reflect=False,
         )
-        await tools[0].ainvoke("query")
+        await tools[0].handler({"query": "query"})
         call_kwargs = client.arecall.call_args[1]
         assert call_kwargs["budget"] == "high"
         assert call_kwargs["max_tokens"] == 2048
@@ -254,10 +304,58 @@ class TestRecallTool:
             include_retain=False,
             include_reflect=False,
         )
-        await tools[0].ainvoke("query")
+        await tools[0].handler({"query": "query"})
         call_kwargs = client.arecall.call_args[1]
         assert call_kwargs["tags"] == ["scope:user"]
         assert call_kwargs["tags_match"] == "all"
+
+    @pytest.mark.asyncio
+    async def test_recall_passes_types(self):
+        client = _mock_client()
+        client.arecall.return_value = _mock_recall_response(["fact"])
+        tools = create_hindsight_tools(
+            bank_id="test",
+            client=client,
+            recall_types=["world", "experience"],
+            include_retain=False,
+            include_reflect=False,
+        )
+        await tools[0].handler({"query": "query"})
+        call_kwargs = client.arecall.call_args[1]
+        assert call_kwargs["types"] == ["world", "experience"]
+
+    @pytest.mark.asyncio
+    async def test_recall_includes_entities(self):
+        client = _mock_client()
+        response = _mock_recall_response(["User works at Acme"])
+        entity = MagicMock()
+        entity.name = "Acme"
+        response.results[0].entities = [entity]
+        client.arecall.return_value = response
+        tools = create_hindsight_tools(
+            bank_id="test",
+            client=client,
+            recall_include_entities=True,
+            include_retain=False,
+            include_reflect=False,
+        )
+        result = await tools[0].handler({"query": "employer"})
+        text = result["content"][0]["text"]
+        assert "[entities: Acme]" in text
+
+    @pytest.mark.asyncio
+    async def test_recall_error_returns_error(self):
+        client = _mock_client()
+        client.arecall.side_effect = RuntimeError("timeout")
+        tools = create_hindsight_tools(
+            bank_id="test",
+            client=client,
+            include_retain=False,
+            include_reflect=False,
+        )
+        result = await tools[0].handler({"query": "query"})
+        assert result["is_error"] is True
+        assert "Recall failed" in result["content"][0]["text"]
 
 
 class TestReflectTool:
@@ -273,10 +371,21 @@ class TestReflectTool:
             include_retain=False,
             include_recall=False,
         )
-        result = await tools[0].ainvoke("What do you know about the user?")
-        assert (
-            result == "The user is a Python developer who prefers functional patterns."
+        result = await tools[0].handler({"query": "What do you know about the user?"})
+        assert result["content"][0]["text"] == "The user is a Python developer who prefers functional patterns."
+
+    @pytest.mark.asyncio
+    async def test_reflect_none_returns_fallback(self):
+        client = _mock_client()
+        client.areflect.return_value = _mock_reflect_response(None)
+        tools = create_hindsight_tools(
+            bank_id="test",
+            client=client,
+            include_retain=False,
+            include_recall=False,
         )
+        result = await tools[0].handler({"query": "anything"})
+        assert result["content"][0]["text"] == "No relevant memories found."
 
     @pytest.mark.asyncio
     async def test_reflect_empty_returns_fallback(self):
@@ -288,8 +397,8 @@ class TestReflectTool:
             include_retain=False,
             include_recall=False,
         )
-        result = await tools[0].ainvoke("anything")
-        assert result == "No relevant memories found."
+        result = await tools[0].handler({"query": "anything"})
+        assert result["content"][0]["text"] == "No relevant memories found."
 
     @pytest.mark.asyncio
     async def test_reflect_passes_budget(self):
@@ -302,7 +411,7 @@ class TestReflectTool:
             include_retain=False,
             include_recall=False,
         )
-        await tools[0].ainvoke("query")
+        await tools[0].handler({"query": "query"})
         call_kwargs = client.areflect.call_args[1]
         assert call_kwargs["budget"] == "high"
 
@@ -317,7 +426,7 @@ class TestReflectTool:
             include_retain=False,
             include_recall=False,
         )
-        await tools[0].ainvoke("query")
+        await tools[0].handler({"query": "query"})
         call_kwargs = client.areflect.call_args[1]
         assert call_kwargs["context"] == "The user is asking about project setup"
 
@@ -334,7 +443,7 @@ class TestReflectTool:
             include_retain=False,
             include_recall=False,
         )
-        await tools[0].ainvoke("query")
+        await tools[0].handler({"query": "query"})
         call_kwargs = client.areflect.call_args[1]
         assert call_kwargs["max_tokens"] == 2048
         assert call_kwargs["response_schema"] == schema
@@ -351,165 +460,84 @@ class TestReflectTool:
             include_retain=False,
             include_recall=False,
         )
-        await tools[0].ainvoke("query")
+        await tools[0].handler({"query": "query"})
         call_kwargs = client.areflect.call_args[1]
         assert call_kwargs["tags"] == ["scope:global"]
         assert call_kwargs["tags_match"] == "all"
 
-
-class TestRetainExtendedParams:
     @pytest.mark.asyncio
-    async def test_retain_passes_metadata(self):
+    async def test_reflect_error_returns_error(self):
         client = _mock_client()
-        client.aretain.return_value = _mock_retain_response()
+        client.areflect.side_effect = RuntimeError("timeout")
         tools = create_hindsight_tools(
             bank_id="test",
             client=client,
-            retain_metadata={"source": "chat", "session": "abc"},
+            include_retain=False,
             include_recall=False,
-            include_reflect=False,
         )
-        await tools[0].ainvoke("content")
-        call_kwargs = client.aretain.call_args[1]
-        assert call_kwargs["metadata"] == {"source": "chat", "session": "abc"}
+        result = await tools[0].handler({"query": "query"})
+        assert result["is_error"] is True
+        assert "Reflect failed" in result["content"][0]["text"]
+
+
+class TestConfigFallback:
+    def setup_method(self):
+        reset_config()
+
+    def teardown_method(self):
+        reset_config()
 
     @pytest.mark.asyncio
-    async def test_retain_passes_document_id(self):
-        client = _mock_client()
-        client.aretain.return_value = _mock_retain_response()
-        tools = create_hindsight_tools(
-            bank_id="test",
-            client=client,
-            retain_document_id="session-123",
-            include_recall=False,
-            include_reflect=False,
-        )
-        await tools[0].ainvoke("content")
-        call_kwargs = client.aretain.call_args[1]
-        assert call_kwargs["document_id"] == "session-123"
-
-
-class TestRecallExtendedParams:
-    @pytest.mark.asyncio
-    async def test_recall_passes_types(self):
+    async def test_config_budget_used_when_no_explicit(self):
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response(["fact"])
+        configure(
+            hindsight_api_url="http://localhost:8888",
+            budget="low",
+        )
         tools = create_hindsight_tools(
             bank_id="test",
             client=client,
-            recall_types=["world", "experience"],
             include_retain=False,
             include_reflect=False,
         )
-        await tools[0].ainvoke("query")
+        await tools[0].handler({"query": "query"})
         call_kwargs = client.arecall.call_args[1]
-        assert call_kwargs["types"] == ["world", "experience"]
+        assert call_kwargs["budget"] == "low"
 
     @pytest.mark.asyncio
-    async def test_recall_passes_include_entities(self):
+    async def test_explicit_budget_overrides_config(self):
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response(["fact"])
+        configure(
+            hindsight_api_url="http://localhost:8888",
+            budget="low",
+        )
         tools = create_hindsight_tools(
-            bank_id="test",
-            client=client,
-            recall_include_entities=True,
-            include_retain=False,
-            include_reflect=False,
-        )
-        await tools[0].ainvoke("query")
-        call_kwargs = client.arecall.call_args[1]
-        assert call_kwargs["include_entities"] is True
-
-
-class TestMemoryInstructions:
-    @pytest.mark.asyncio
-    async def test_returns_base_instructions_when_no_memories(self):
-        client = _mock_client()
-        response = MagicMock()
-        response.results = []
-        client.arecall.return_value = response
-
-        fn = memory_instructions(
-            bank_id="test",
-            client=client,
-            base_instructions="You are helpful.",
-        )
-        result = await fn()
-        assert result == "You are helpful."
-
-    @pytest.mark.asyncio
-    async def test_appends_memories_to_base_instructions(self):
-        client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(["likes Python", "uses VS Code"])
-
-        fn = memory_instructions(
-            bank_id="test",
-            client=client,
-            base_instructions="You are helpful.",
-        )
-        result = await fn()
-        assert result.startswith("You are helpful.")
-        assert "likes Python" in result
-        assert "uses VS Code" in result
-
-    @pytest.mark.asyncio
-    async def test_passes_recall_params(self):
-        client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(["fact"])
-
-        fn = memory_instructions(
             bank_id="test",
             client=client,
             budget="high",
-            max_tokens=2048,
-            tags=["scope:user"],
-            tags_match="all",
+            include_retain=False,
+            include_reflect=False,
         )
-        await fn()
-
+        await tools[0].handler({"query": "query"})
         call_kwargs = client.arecall.call_args[1]
-        assert call_kwargs["bank_id"] == "test"
         assert call_kwargs["budget"] == "high"
-        assert call_kwargs["max_tokens"] == 2048
-        assert call_kwargs["tags"] == ["scope:user"]
-        assert call_kwargs["tags_match"] == "all"
 
     @pytest.mark.asyncio
-    async def test_respects_max_results(self):
+    async def test_config_tags_used_for_retain(self):
         client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(["a", "b", "c", "d"])
-
-        fn = memory_instructions(
+        client.aretain.return_value = _mock_retain_response()
+        configure(
+            hindsight_api_url="http://localhost:8888",
+            tags=["env:test"],
+        )
+        tools = create_hindsight_tools(
             bank_id="test",
             client=client,
-            max_results=2,
+            include_recall=False,
+            include_reflect=False,
         )
-        result = await fn()
-        # Should only include 2 memories
-        assert "1." in result
-        assert "2." in result
-        assert "3." not in result
-
-    @pytest.mark.asyncio
-    async def test_custom_prefix(self):
-        client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(["fact"])
-
-        fn = memory_instructions(
-            bank_id="test",
-            client=client,
-            prefix="\n\nContext:\n",
-        )
-        result = await fn()
-        assert "\n\nContext:\n" in result
-
-    @pytest.mark.asyncio
-    async def test_falls_back_on_error(self):
-        client = _mock_client()
-        client.arecall.side_effect = RuntimeError("connection refused")
-
-        fn = memory_instructions(
-            bank_id="test", client=client, base_instructions="You are helpful."
-        )
-        result = await fn()
-        assert result == "You are helpful."
+        await tools[0].handler({"content": "content"})
+        call_kwargs = client.aretain.call_args[1]
+        assert call_kwargs["tags"] == ["env:test"]

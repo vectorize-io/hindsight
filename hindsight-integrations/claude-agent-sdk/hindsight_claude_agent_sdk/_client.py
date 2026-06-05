@@ -1,33 +1,30 @@
 """Shared Hindsight client resolution logic."""
 
+from __future__ import annotations
+
 import os
-from importlib import metadata
-from typing import Any, Optional
+from typing import Any
 
 from hindsight_client import Hindsight
 
+from ._version import __version__
 from .config import DEFAULT_HINDSIGHT_API_URL, HINDSIGHT_API_KEY_ENV, get_config
 
-try:
-    _VERSION = metadata.version("hindsight-langgraph")
-except metadata.PackageNotFoundError:
-    _VERSION = "0.0.0"
-_USER_AGENT = f"hindsight-langgraph/{_VERSION}"
+_USER_AGENT = f"hindsight-claude-agent-sdk/{__version__}"
 
 
 def resolve_client(
-    client: Optional[Hindsight],
-    hindsight_api_url: Optional[str],
-    api_key: Optional[str],
+    client: Hindsight | None,
+    hindsight_api_url: str | None,
+    api_key: str | None,
 ) -> Hindsight:
     """Resolve a Hindsight client from explicit args or global config.
 
     Falls back to the default API URL and the ``HINDSIGHT_API_KEY`` env var
-    when neither an explicit argument nor a prior ``configure()`` call
-    supplied them, so ``create_hindsight_tools(bank_id=...)`` works with
-    nothing but the env var set. Self-hosted users override the URL. The API
-    key is optional at construction time — a missing key only fails when a
-    call is actually made.
+    when neither an explicit argument nor a prior ``configure()`` call supplied
+    them, so the tools and hooks work with nothing but the env var set.
+    Self-hosted users override the URL. The API key is optional at construction
+    time — a missing key only fails when a call is actually made.
     """
     if client is not None:
         return client
