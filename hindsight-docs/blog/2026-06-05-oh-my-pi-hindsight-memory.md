@@ -1,6 +1,6 @@
 ---
 title: "How oh-my-pi Built Persistent Codebase Memory on Hindsight"
-authors: [benfrank241]
+authors: [benfrank241, can1357]
 slug: "2026/06/05/oh-my-pi-hindsight-memory"
 date: 2026-06-05T12:00
 tags: [hindsight, coding, agents, memory, case-study, oh-my-pi, mental-models]
