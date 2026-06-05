@@ -7995,6 +7995,13 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
+        # mental_models.bank_id has a FK to banks. Retain creates banks lazily;
+        # pinned model creation must do the same so a first write to a new bank
+        # does not surface as a raw database constraint error.
+        _, created = await bank_utils.get_or_create_bank_profile(backend, bank_id)
+        if created:
+            await self._apply_default_bank_template(bank_id, request_context)
+
         # Generate embedding for the content
         embedding_text = f"{name} {content}"
         embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [embedding_text])
