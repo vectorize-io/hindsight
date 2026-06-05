@@ -420,6 +420,10 @@ async def run_reflect_agent(
     available_mental_model_ids: set[str] = set()
     available_observation_ids: set[str] = set()
 
+    # Budget-aware short-circuit: when mental models are sufficient,
+    # skip forcing lower-level retrieval (search_observations, recall)
+    mental_models_sufficient = False
+
     def _get_llm_trace() -> list[LLMCall]:
         return [
             LLMCall(
@@ -592,8 +596,25 @@ async def run_reflect_agent(
         if include_recall:
             forced_sequence.append("recall")
 
-        if iteration < len(forced_sequence):
-            iter_tool_choice: str | dict = {"type": "function", "function": {"name": forced_sequence[iteration]}}
+        # Budget-aware short-circuit: for low/mid budgets, allow the agent to
+        # answer after search_mental_models returns sufficient fresh results,
+        # without forcing lower-level retrieval (search_observations, recall).
+        # High budget preserves the full forced hierarchical verification path.
+        effective_budget = budget or "low"
+        _skip_forcing = False
+        if has_mental_models and effective_budget == "low":
+            # Low budget: force only search_mental_models, then allow auto
+            if iteration >= 1:
+                _skip_forcing = True
+        elif has_mental_models and effective_budget == "mid" and mental_models_sufficient:
+            # Mid budget: skip lower retrieval when mental models are fresh and relevant
+            if iteration >= 1:
+                _skip_forcing = True
+
+        if _skip_forcing:
+            iter_tool_choice: str | dict = "auto"
+        elif iteration < len(forced_sequence):
+            iter_tool_choice = {"type": "function", "function": {"name": forced_sequence[iteration]}}
         else:
             iter_tool_choice = "auto"
 
@@ -956,6 +977,17 @@ async def run_reflect_agent(
                     for mm in output["mental_models"]:
                         if "id" in mm:
                             available_mental_model_ids.add(mm["id"])
+                    # Determine if mental models are fresh enough to short-circuit
+                    # lower-level retrieval (search_observations, recall).
+                    fresh_models = [
+                        mm for mm in output.get("mental_models", [])
+                        if not mm.get("is_stale", True) and mm.get("content")
+                    ]
+                    if fresh_models:
+                        # At least one mental model is non-empty and not stale.
+                        # Mark as sufficient so the forced-sequence logic can
+                        # skip to auto mode on the next iteration.
+                        mental_models_sufficient = True
 
                 if (
                     normalized_tool_name == "search_observations"
