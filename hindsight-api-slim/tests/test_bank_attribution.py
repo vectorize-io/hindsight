@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from hindsight_api.engine.embeddings import OpenAIEmbeddings
 from hindsight_api.engine.memory_engine import (
+    _bind_bank_id,
     _current_bank_id,
     get_current_bank_id,
 )
@@ -75,6 +76,45 @@ class TestBankContextVar:
         finally:
             pass
         assert get_current_bank_id() is None
+
+
+class TestBindBankIdDecorator:
+    """The engine binds the bank via @_bind_bank_id on recall/retain/batch/task methods."""
+
+    async def test_binds_named_arg_positional_and_keyword(self):
+        @_bind_bank_id()
+        async def op(bank_id: str, query: str) -> str | None:
+            return get_current_bank_id()
+
+        assert await op("user-pos", "q") == "user-pos"
+        assert await op(bank_id="user-kw", query="q") == "user-kw"
+        assert get_current_bank_id() is None
+
+    async def test_extracts_dict_key(self):
+        @_bind_bank_id("task_dict", key="bank_id")
+        async def op(task_dict: dict) -> str | None:
+            return get_current_bank_id()
+
+        assert await op({"bank_id": "user-task", "type": "consolidation"}) == "user-task"
+        assert await op({"type": "consolidation"}) is None
+        assert get_current_bank_id() is None
+
+    async def test_resets_on_exception(self):
+        @_bind_bank_id()
+        async def op(bank_id: str) -> None:
+            assert get_current_bank_id() == "user-boom"
+            raise ValueError("boom")
+
+        with pytest.raises(ValueError):
+            await op("user-boom")
+        assert get_current_bank_id() is None
+
+    async def test_non_string_value_binds_none(self):
+        @_bind_bank_id()
+        async def op(bank_id: object) -> str | None:
+            return get_current_bank_id()
+
+        assert await op(12345) is None
 
 
 # ── LLM provider: user injection ──────────────────────────────────────────────

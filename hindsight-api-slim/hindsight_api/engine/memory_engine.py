@@ -11,6 +11,8 @@ This implements a sophisticated memory architecture that combines:
 
 import asyncio
 import contextvars
+import functools
+import inspect
 import json
 import logging
 import time
@@ -18,7 +20,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar, cast, overload
 
 import asyncpg
 import httpx
@@ -84,6 +86,39 @@ def get_current_schema() -> str:
 def get_current_bank_id() -> str | None:
     """Get the bank id of the in-flight operation, or None outside a bank-scoped context."""
     return _current_bank_id.get()
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _bind_bank_id(
+    arg: str = "bank_id", key: str | None = None
+) -> Callable[[Callable[_P, Awaitable[_R]]], Callable[_P, Awaitable[_R]]]:
+    """Bind ``_current_bank_id`` to an argument of the wrapped coroutine for the call's duration.
+
+    ``arg`` names the parameter carrying the bank id; ``key`` optionally pulls it out of a
+    dict-valued argument (e.g. ``task_dict["bank_id"]``). Token-based set/reset (including on
+    exception) keeps the binding scoped to the call.
+    """
+
+    def decorate(func: Callable[_P, Awaitable[_R]]) -> Callable[_P, Awaitable[_R]]:
+        sig = inspect.signature(func)
+
+        @functools.wraps(func)
+        async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+            value = sig.bind(*args, **kwargs).arguments.get(arg)
+            if key is not None and isinstance(value, dict):
+                value = value.get(key)
+            token = _current_bank_id.set(value if isinstance(value, str) else None)
+            try:
+                return await func(*args, **kwargs)
+            finally:
+                _current_bank_id.reset(token)
+
+        return wrapper
+
+    return decorate
 
 
 def count_tokens(text: str) -> int:
@@ -1525,6 +1560,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         logger.info(f"[REFRESH_MENTAL_MODEL_TASK] Completed for bank_id={bank_id}, mental_model_id={mental_model_id}")
 
+    @_bind_bank_id("task_dict", key="bank_id")
     async def execute_task(self, task_dict: dict[str, Any]):
         """
         Execute a task by routing it to the appropriate handler.
@@ -1563,152 +1599,147 @@ class MemoryEngine(MemoryEngineInterface):
 
         consolidation_result: dict | None = None
         bank_id = task_dict.get("bank_id")
-        bank_token = _current_bank_id.set(bank_id)
-        try:
-            async with audit_context(
-                self._audit_logger, task_type or "unknown", "system", bank_id, request=task_dict
-            ) as audit_entry:
-                try:
-                    # Stage breadcrumb for the worker poller's WORKER_TASK log line.
-                    # No-op outside a worker context.
-                    set_stage(f"task.{task_type}")
-                    if task_type == "batch_retain":
-                        await self._handle_batch_retain(task_dict)
-                    elif task_type == "file_convert_retain":
-                        await self._handle_file_convert_retain(task_dict)
-                    elif task_type == "import_documents":
-                        await self._handle_import_documents(task_dict)
-                    elif task_type == "consolidation":
-                        consolidation_result = await self._handle_consolidation(task_dict)
-                    elif task_type == "graph_maintenance":
-                        await self._handle_graph_maintenance(task_dict)
-                    elif task_type == "refresh_mental_model":
-                        await self._handle_refresh_mental_model(task_dict)
-                    elif task_type == "webhook_delivery":
-                        await self._handle_webhook_delivery(task_dict)
+        async with audit_context(
+            self._audit_logger, task_type or "unknown", "system", bank_id, request=task_dict
+        ) as audit_entry:
+            try:
+                # Stage breadcrumb for the worker poller's WORKER_TASK log line.
+                # No-op outside a worker context.
+                set_stage(f"task.{task_type}")
+                if task_type == "batch_retain":
+                    await self._handle_batch_retain(task_dict)
+                elif task_type == "file_convert_retain":
+                    await self._handle_file_convert_retain(task_dict)
+                elif task_type == "import_documents":
+                    await self._handle_import_documents(task_dict)
+                elif task_type == "consolidation":
+                    consolidation_result = await self._handle_consolidation(task_dict)
+                elif task_type == "graph_maintenance":
+                    await self._handle_graph_maintenance(task_dict)
+                elif task_type == "refresh_mental_model":
+                    await self._handle_refresh_mental_model(task_dict)
+                elif task_type == "webhook_delivery":
+                    await self._handle_webhook_delivery(task_dict)
+                else:
+                    logger.error(f"Unknown task type: {task_type}")
+                    # Don't retry unknown task types
+                    if operation_id:
+                        await self._delete_operation_record(operation_id)
+                    return
+
+                # Task succeeded - mark operation as completed
+                # file_convert_retain marks itself as completed in a transaction, skip double-marking
+                if operation_id and task_type not in ("file_convert_retain",):
+                    if task_type == "consolidation":
+                        # Atomically mark completed AND queue webhook delivery in one transaction
+                        await self._mark_operation_completed_and_fire_webhook(
+                            operation_id=operation_id,
+                            bank_id=task_dict.get("bank_id", ""),
+                            status="completed",
+                            result=consolidation_result,
+                            schema=schema,
+                        )
                     else:
-                        logger.error(f"Unknown task type: {task_type}")
-                        # Don't retry unknown task types
-                        if operation_id:
-                            await self._delete_operation_record(operation_id)
-                        return
+                        await self._mark_operation_completed(operation_id)
 
-                    # Task succeeded - mark operation as completed
-                    # file_convert_retain marks itself as completed in a transaction, skip double-marking
-                    if operation_id and task_type not in ("file_convert_retain",):
-                        if task_type == "consolidation":
-                            # Atomically mark completed AND queue webhook delivery in one transaction
-                            await self._mark_operation_completed_and_fire_webhook(
-                                operation_id=operation_id,
-                                bank_id=task_dict.get("bank_id", ""),
-                                status="completed",
-                                result=consolidation_result,
-                                schema=schema,
+                audit_entry.response = {"status": "completed", "operation_id": operation_id}
+
+            except RetryTaskAt:
+                # Task-owned retry: let the poller handle scheduling
+                raise
+            except DeferOperation:
+                # Task-owned defer: let the poller handle re-scheduling without
+                # bumping retry_count or writing error_message. Pairs with the
+                # DeferOperation catch in poller._execute_task_inner (PR #1105);
+                # without this passthrough, the generic-exception branch below
+                # would convert a legitimate defer into a 60-second RetryTaskAt
+                # and lose the "not a failure" semantics entirely.
+                raise
+            except Exception as e:
+                logger.error(f"Task execution failed: {task_type}, error: {e}")
+                import traceback
+
+                error_traceback = traceback.format_exc()
+                traceback.print_exc()
+
+                if task_type == "file_convert_retain":
+                    # Non-retryable: mark as failed immediately.
+                    # Conversion failures won't improve on retry (missing OCR, corrupted file, etc.)
+                    logger.error(f"Not retrying task {task_type} (non-retryable), marking as failed")
+                    if operation_id:
+                        await self._mark_operation_failed(operation_id, str(e), error_traceback)
+                elif _is_non_retryable_task_error(e):
+                    # Non-retryable: deterministic task failures (integrity violations,
+                    # invalid embedding dimensions, etc.) will not succeed by rerunning
+                    # the same payload. Retrying just burns worker capacity.
+                    logger.error(f"Not retrying task {task_type} (deterministic failure): {type(e).__name__}")
+                    if task_type == "consolidation" and operation_id:
+                        await self._fire_consolidation_webhook(
+                            bank_id=task_dict.get("bank_id", ""),
+                            operation_id=operation_id,
+                            status="failed",
+                            result=None,
+                            error_message=str(e),
+                            schema=schema,
+                        )
+                    if operation_id:
+                        await self._mark_operation_failed(operation_id, str(e), error_traceback)
+                else:
+                    if task_type == "consolidation" and operation_id:
+                        # Fire failure webhook (non-transactional — operation not yet marked failed;
+                        # poller will mark it failed after this raise)
+                        await self._fire_consolidation_webhook(
+                            bank_id=task_dict.get("bank_id", ""),
+                            operation_id=operation_id,
+                            status="failed",
+                            result=None,
+                            error_message=str(e),
+                            schema=schema,
+                        )
+
+                        # When another consolidation is already pending for the same
+                        # bank, skip the retry. The pending op will process the same
+                        # unconsolidated rows when it runs, so retrying ours just
+                        # multiplies retry budgets during a long transient outage
+                        # (every retain enqueues a fresh op, each independently
+                        # consuming `_retry_count` slots — a retry storm).
+                        bank_id_for_dedup = task_dict.get("bank_id", "")
+                        if bank_id_for_dedup and await self._has_other_pending_consolidation(
+                            bank_id=bank_id_for_dedup,
+                            operation_id=operation_id,
+                        ):
+                            logger.info(
+                                f"Consolidation {operation_id} for bank {bank_id_for_dedup} hit "
+                                f"transient error; another consolidation is already pending for "
+                                f"this bank — skipping retry."
                             )
-                        else:
-                            await self._mark_operation_completed(operation_id)
+                            raise
 
-                    audit_entry.response = {"status": "completed", "operation_id": operation_id}
-
-                except RetryTaskAt:
-                    # Task-owned retry: let the poller handle scheduling
-                    raise
-                except DeferOperation:
-                    # Task-owned defer: let the poller handle re-scheduling without
-                    # bumping retry_count or writing error_message. Pairs with the
-                    # DeferOperation catch in poller._execute_task_inner (PR #1105);
-                    # without this passthrough, the generic-exception branch below
-                    # would convert a legitimate defer into a 60-second RetryTaskAt
-                    # and lose the "not a failure" semantics entirely.
-                    raise
-                except Exception as e:
-                    logger.error(f"Task execution failed: {task_type}, error: {e}")
-                    import traceback
-
-                    error_traceback = traceback.format_exc()
-                    traceback.print_exc()
-
-                    if task_type == "file_convert_retain":
-                        # Non-retryable: mark as failed immediately.
-                        # Conversion failures won't improve on retry (missing OCR, corrupted file, etc.)
-                        logger.error(f"Not retrying task {task_type} (non-retryable), marking as failed")
-                        if operation_id:
-                            await self._mark_operation_failed(operation_id, str(e), error_traceback)
-                    elif _is_non_retryable_task_error(e):
-                        # Non-retryable: deterministic task failures (integrity violations,
-                        # invalid embedding dimensions, etc.) will not succeed by rerunning
-                        # the same payload. Retrying just burns worker capacity.
-                        logger.error(f"Not retrying task {task_type} (deterministic failure): {type(e).__name__}")
-                        if task_type == "consolidation" and operation_id:
-                            await self._fire_consolidation_webhook(
-                                bank_id=task_dict.get("bank_id", ""),
-                                operation_id=operation_id,
-                                status="failed",
-                                result=None,
-                                error_message=str(e),
-                                schema=schema,
-                            )
-                        if operation_id:
-                            await self._mark_operation_failed(operation_id, str(e), error_traceback)
-                    else:
-                        if task_type == "consolidation" and operation_id:
-                            # Fire failure webhook (non-transactional — operation not yet marked failed;
-                            # poller will mark it failed after this raise)
-                            await self._fire_consolidation_webhook(
-                                bank_id=task_dict.get("bank_id", ""),
-                                operation_id=operation_id,
-                                status="failed",
-                                result=None,
-                                error_message=str(e),
-                                schema=schema,
-                            )
-
-                            # When another consolidation is already pending for the same
-                            # bank, skip the retry. The pending op will process the same
-                            # unconsolidated rows when it runs, so retrying ours just
-                            # multiplies retry budgets during a long transient outage
-                            # (every retain enqueues a fresh op, each independently
-                            # consuming `_retry_count` slots — a retry storm).
-                            bank_id_for_dedup = task_dict.get("bank_id", "")
-                            if bank_id_for_dedup and await self._has_other_pending_consolidation(
-                                bank_id=bank_id_for_dedup,
-                                operation_id=operation_id,
-                            ):
-                                logger.info(
-                                    f"Consolidation {operation_id} for bank {bank_id_for_dedup} hit "
-                                    f"transient error; another consolidation is already pending for "
-                                    f"this bank — skipping retry."
-                                )
-                                raise
-
-                            # Indefinite retry with capped exponential backoff.
-                            # Transient outages (LLM provider down, DB flapping) must
-                            # eventually recover; the alternative (cap after 3 retries
-                            # and mark failed) silently dead-letters the bank's backlog.
-                            # The dedup-by-bank guard above prevents this from causing
-                            # a retry storm when multiple ops exist for the same bank.
-                            retry_count = task_dict.get("_retry_count", 0)
-                            backoff = _consolidation_retry_backoff_seconds(retry_count)
-                            raise RetryTaskAt(
-                                retry_at=datetime.now(UTC) + timedelta(seconds=backoff),
-                                message=str(e),
-                            )
-
-                        # Retryable: use RetryTaskAt if under the retry limit, else re-raise (poller marks failed).
-                        # Retry count and backoff come from config (HINDSIGHT_API_WORKER_MAX_RETRIES and
-                        # HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS). Defaults of 3 x 60s give a
-                        # 4-minute total window; operators expecting a longer provider outage can raise them.
-                        config = get_config()
+                        # Indefinite retry with capped exponential backoff.
+                        # Transient outages (LLM provider down, DB flapping) must
+                        # eventually recover; the alternative (cap after 3 retries
+                        # and mark failed) silently dead-letters the bank's backlog.
+                        # The dedup-by-bank guard above prevents this from causing
+                        # a retry storm when multiple ops exist for the same bank.
                         retry_count = task_dict.get("_retry_count", 0)
-                        if retry_count < config.worker_max_retries:
-                            raise RetryTaskAt(
-                                retry_at=datetime.now(UTC)
-                                + timedelta(seconds=config.worker_task_retry_backoff_seconds),
-                                message=str(e),
-                            )
-                        raise
-        finally:
-            _current_bank_id.reset(bank_token)
+                        backoff = _consolidation_retry_backoff_seconds(retry_count)
+                        raise RetryTaskAt(
+                            retry_at=datetime.now(UTC) + timedelta(seconds=backoff),
+                            message=str(e),
+                        )
+
+                    # Retryable: use RetryTaskAt if under the retry limit, else re-raise (poller marks failed).
+                    # Retry count and backoff come from config (HINDSIGHT_API_WORKER_MAX_RETRIES and
+                    # HINDSIGHT_API_WORKER_TASK_RETRY_BACKOFF_SECONDS). Defaults of 3 x 60s give a
+                    # 4-minute total window; operators expecting a longer provider outage can raise them.
+                    config = get_config()
+                    retry_count = task_dict.get("_retry_count", 0)
+                    if retry_count < config.worker_max_retries:
+                        raise RetryTaskAt(
+                            retry_at=datetime.now(UTC) + timedelta(seconds=config.worker_task_retry_backoff_seconds),
+                            message=str(e),
+                        )
+                    raise
 
     async def _fire_consolidation_webhook(
         self,
@@ -2725,6 +2756,7 @@ class MemoryEngine(MemoryEngineInterface):
         ctx = request_context if request_context is not None else RC()
         return asyncio.run(self.retain_async(bank_id, content, context, event_date, request_context=ctx))
 
+    @_bind_bank_id()
     async def retain_async(
         self,
         bank_id: str,
@@ -2760,24 +2792,18 @@ class MemoryEngine(MemoryEngineInterface):
         if document_id:
             content_dict["document_id"] = document_id
 
-        # Bind the bank for this operation so provider calls can attribute spend
-        # per bank. retain_batch_async re-binds the same id; this keeps the binding
-        # active for the whole retain_async call regardless of the delegate.
-        bank_token = _current_bank_id.set(bank_id)
-        try:
-            # Use retain_batch_async with a single item (avoids code duplication)
-            result = await self.retain_batch_async(
-                bank_id=bank_id,
-                contents=[content_dict],
-                request_context=request_context,
-                fact_type_override=fact_type_override,
-            )
-        finally:
-            _current_bank_id.reset(bank_token)
+        # Use retain_batch_async with a single item (avoids code duplication)
+        result = await self.retain_batch_async(
+            bank_id=bank_id,
+            contents=[content_dict],
+            request_context=request_context,
+            fact_type_override=fact_type_override,
+        )
 
         # Return the first (and only) list of unit IDs
         return result[0] if result else []
 
+    @_bind_bank_id()
     async def retain_batch_async(
         self,
         bank_id: str,
@@ -2849,265 +2875,262 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Authenticate tenant and set schema in context (for fq_table())
         await self._authenticate_tenant(request_context)
-        bank_token = _current_bank_id.set(bank_id)
-        try:
-            # Validate operation if validator is configured
-            contents_copy = [dict(c) for c in contents]  # Convert TypedDict to regular dict for extension
-            if self._operation_validator:
-                from hindsight_api.extensions import RetainContext
 
-                ctx = RetainContext(
-                    bank_id=bank_id,
-                    contents=contents_copy,
-                    request_context=request_context,
-                    document_id=document_id,
-                    fact_type_override=fact_type_override,
-                )
-                result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
-                if result and result.contents is not None:
-                    contents = result.contents
+        # Validate operation if validator is configured
+        contents_copy = [dict(c) for c in contents]  # Convert TypedDict to regular dict for extension
+        if self._operation_validator:
+            from hindsight_api.extensions import RetainContext
 
-            # Engine-owned copy: the orchestrator clears per-item "content" strings
-            # after building the document's combined text (memory pressure
-            # optimization, see retain/orchestrator.py). Without an internal copy
-            # those mutations leak back to the caller's dicts.
-            contents = cast(list[RetainContentDict], [dict(c) for c in contents])
+            ctx = RetainContext(
+                bank_id=bank_id,
+                contents=contents_copy,
+                request_context=request_context,
+                document_id=document_id,
+                fact_type_override=fact_type_override,
+            )
+            result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
+            if result and result.contents is not None:
+                contents = result.contents
 
-            # Sanitize content/context at ingress so lone UTF-16 surrogates (e.g. a
-            # half-emoji a client serialized as a `\udXXX` escape) cannot crash the
-            # embedder, cross-encoder, or logging with an HTTP 500 (see issue #1875).
+        # Engine-owned copy: the orchestrator clears per-item "content" strings
+        # after building the document's combined text (memory pressure
+        # optimization, see retain/orchestrator.py). Without an internal copy
+        # those mutations leak back to the caller's dicts.
+        contents = cast(list[RetainContentDict], [dict(c) for c in contents])
+
+        # Sanitize content/context at ingress so lone UTF-16 surrogates (e.g. a
+        # half-emoji a client serialized as a `\udXXX` escape) cannot crash the
+        # embedder, cross-encoder, or logging with an HTTP 500 (see issue #1875).
+        for item in contents:
+            if "content" in item:
+                item["content"] = sanitize_text(item["content"]) or ""
+            if item.get("context"):
+                item["context"] = sanitize_text(item["context"]) or ""
+
+        # Apply batch-level document_id to contents that don't have their own (backwards compatibility)
+        if document_id:
             for item in contents:
-                if "content" in item:
-                    item["content"] = sanitize_text(item["content"]) or ""
-                if item.get("context"):
-                    item["context"] = sanitize_text(item["context"]) or ""
+                if "document_id" not in item:
+                    item["document_id"] = document_id
 
-            # Apply batch-level document_id to contents that don't have their own (backwards compatibility)
-            if document_id:
-                for item in contents:
-                    if "document_id" not in item:
-                        item["document_id"] = document_id
+        if outbox_callback is None and outbox_callback_factory is not None:
+            outbox_callback = outbox_callback_factory(contents)
 
-            if outbox_callback is None and outbox_callback_factory is not None:
-                outbox_callback = outbox_callback_factory(contents)
+        # Validate no duplicate document_ids in the batch
+        # Having duplicate document_ids causes race conditions in document upserts during parallel processing
+        doc_ids = [item.get("document_id") for item in contents if item.get("document_id")]
+        if len(doc_ids) != len(set(doc_ids)):
+            from collections import Counter
 
-            # Validate no duplicate document_ids in the batch
-            # Having duplicate document_ids causes race conditions in document upserts during parallel processing
-            doc_ids = [item.get("document_id") for item in contents if item.get("document_id")]
-            if len(doc_ids) != len(set(doc_ids)):
-                from collections import Counter
+            duplicates = [doc_id for doc_id, count in Counter(doc_ids).items() if count > 1]
+            raise ValueError(
+                f"Batch contains duplicate document_ids: {duplicates}. "
+                f"Each content item in a batch must have a unique document_id to avoid race conditions."
+            )
 
-                duplicates = [doc_id for doc_id, count in Counter(doc_ids).items() if count > 1]
-                raise ValueError(
-                    f"Batch contains duplicate document_ids: {duplicates}. "
-                    f"Each content item in a batch must have a unique document_id to avoid race conditions."
-                )
+        # Validate update_mode=append requires document_id
+        for item in contents:
+            if item.get("update_mode") == "append" and not item.get("document_id"):
+                raise ValueError("update_mode='append' requires a document_id")
 
-            # Validate update_mode=append requires document_id
-            for item in contents:
-                if item.get("update_mode") == "append" and not item.get("document_id"):
-                    raise ValueError("update_mode='append' requires a document_id")
+        # Auto-chunk large batches by token count to avoid timeouts and memory issues
+        # Calculate total token count
+        total_tokens = sum(count_tokens(item.get("content", "")) for item in contents)
+        total_usage = TokenUsage()
+        # Aggregate "content tokens that actually went through extraction after
+        # chunk-level dedup" across sub-batches. ``None`` in any sub-batch
+        # means that sub-batch bypassed dedup, so the aggregate is None
+        # (see RetainResult.processed_content_tokens).
+        total_processed_content_tokens: int | None = 0
 
-            # Auto-chunk large batches by token count to avoid timeouts and memory issues
-            # Calculate total token count
-            total_tokens = sum(count_tokens(item.get("content", "")) for item in contents)
-            total_usage = TokenUsage()
-            # Aggregate "content tokens that actually went through extraction after
-            # chunk-level dedup" across sub-batches. ``None`` in any sub-batch
-            # means that sub-batch bypassed dedup, so the aggregate is None
-            # (see RetainResult.processed_content_tokens).
-            total_processed_content_tokens: int | None = 0
+        # Get batch size threshold from config
+        config = get_config()
+        tokens_per_batch = config.retain_batch_tokens
 
-            # Get batch size threshold from config
-            config = get_config()
-            tokens_per_batch = config.retain_batch_tokens
+        if total_tokens > tokens_per_batch:
+            # Split into smaller batches based on token count
+            logger.info(
+                f"Large batch detected ({total_tokens:,} tokens from {len(contents)} items). Splitting into sub-batches of ~{tokens_per_batch:,} tokens each..."
+            )
 
-            if total_tokens > tokens_per_batch:
-                # Split into smaller batches based on token count
-                logger.info(
-                    f"Large batch detected ({total_tokens:,} tokens from {len(contents)} items). Splitting into sub-batches of ~{tokens_per_batch:,} tokens each..."
-                )
+            split = _split_contents_into_sub_batches(contents, tokens_per_batch)
+            sub_batches = split.sub_batches
+            origin_indices = split.origin_indices
+            document_body_overrides = split.document_body_overrides
 
-                split = _split_contents_into_sub_batches(contents, tokens_per_batch)
-                sub_batches = split.sub_batches
-                origin_indices = split.origin_indices
-                document_body_overrides = split.document_body_overrides
-
-                sub_batch_sizes = [len(b) for b in sub_batches]
-                # Keep the per-sub-batch sizes log compact when an oversize
-                # single item gets chunked into many [1]-sized sub-batches.
-                if len(sub_batches) <= 20:
-                    logger.info(f"Split into {len(sub_batches)} sub-batches: {sub_batch_sizes} items each")
-                else:
-                    logger.info(
-                        f"Split into {len(sub_batches)} sub-batches "
-                        f"(items per sub-batch: min={min(sub_batch_sizes)}, "
-                        f"max={max(sub_batch_sizes)}, total={sum(sub_batch_sizes)})"
-                    )
-
-                # Preserve the public contract: one result list per input
-                # content. When an oversize single item is chunked across
-                # multiple sub-batches, unit_ids from every chunk get
-                # appended back into that input's result slot.
-                per_input_results: list[list[str]] = [[] for _ in contents]
-
-                # Per-document chunk_index offsets. When an oversized single item is
-                # sliced into several sub-batches that all share one document_id and
-                # run sequentially, each sub-batch must continue the document's
-                # chunk_index sequence rather than restart at 0 — otherwise the
-                # derived chunk_id ({bank}_{doc}_{index}) collides and later
-                # sub-batches overwrite earlier chunks, leaving only one sub-batch's
-                # worth of chunks/memories (issue #1888). Counting uses the same
-                # bank-resolved, strategy-applied chunk size the orchestrator chunks
-                # with, so the offsets match the chunk_index values it assigns.
-                from .retain import fact_extraction, fact_storage
-
-                sub_chunk_size = await self._resolve_retain_chunk_size(bank_id, request_context, strategy)
-                chunk_offsets: dict[str, int] = {}
-
-                # In update_mode="append", retain_batch prepends the existing document
-                # body to the FIRST sub-batch as an extra content item before chunking
-                # (see orchestrator.retain_batch), consuming chunks(existing_body)
-                # additional chunk_index slots ahead of that sub-batch's own content.
-                # Capture that chunk count per document up front — the first sub-batch
-                # overwrites documents.original_text when it commits, so it can't be
-                # read back afterwards — and fold it into the offset so later
-                # sub-batches continue past the prepended chunks instead of colliding.
-                append_prepend_chunks: dict[str, int] = {}
-                backend = await self._get_backend()
-                append_doc_ids: set[str] = set()
-                for item in contents:
-                    item_doc_id = item.get("document_id")
-                    if item.get("update_mode") == "append" and item_doc_id:
-                        append_doc_ids.add(item_doc_id)
-                for append_doc_id in append_doc_ids:
-                    async with acquire_with_retry(backend) as conn:
-                        existing_text = await fact_storage.get_document_content(conn, bank_id, append_doc_id)
-                    if existing_text:
-                        append_prepend_chunks[append_doc_id] = len(
-                            fact_extraction.chunk_text(existing_text, sub_chunk_size)
-                        )
-
-                for i, (sub_batch, sub_origins) in enumerate(zip(sub_batches, origin_indices), 1):
-                    # Checkpoint: abort if the operation was deleted (bank was deleted) between sub-batches.
-                    if operation_id and not await self._check_op_alive(operation_id):
-                        logger.info(
-                            f"[BATCH_RETAIN] bank={bank_id} operation {operation_id} cancelled (bank deleted), stopping after {i - 1}/{len(sub_batches)} sub-batches"
-                        )
-                        if return_usage:
-                            return per_input_results, total_usage
-                        return per_input_results
-
-                    sub_batch_tokens = sum(count_tokens(item.get("content", "")) for item in sub_batch)
-                    logger.info(
-                        f"Processing sub-batch {i}/{len(sub_batches)}: {len(sub_batch)} items, {sub_batch_tokens:,} tokens"
-                    )
-
-                    # Resolve the document this sub-batch writes to so we can offset
-                    # its chunk_index past chunks already stored by earlier
-                    # sub-batches of the same document. Only the oversized-single-item
-                    # split shares a document_id across sub-batches; packed multi-item
-                    # sub-batches carry distinct document_ids (offset stays 0).
-                    sub_doc_id = document_id or (sub_batch[0].get("document_id") if len(sub_batch) == 1 else None)
-                    sub_offset = chunk_offsets.get(sub_doc_id, 0) if sub_doc_id else 0
-
-                    sub_results, sub_usage, sub_processed = await self._retain_batch_async_internal(
-                        bank_id=bank_id,
-                        contents=sub_batch,
-                        request_context=request_context,
-                        document_id=document_id,
-                        is_first_batch=i == 1,  # Only upsert on first batch
-                        fact_type_override=fact_type_override,
-                        document_tags=document_tags,
-                        operation_id=operation_id,
-                        strategy=strategy,
-                        # Outbox callback runs inside the last sub-batch's transaction so the
-                        # webhook delivery row is committed atomically with the final retain data.
-                        outbox_callback=outbox_callback if i == len(sub_batches) else None,
-                        outbox_callback_factory=outbox_callback_factory if i == len(sub_batches) else None,
-                        document_body_override=document_body_overrides[i - 1],
-                        chunk_index_offset=sub_offset,
-                    )
-
-                    # Advance the document's chunk_index cursor by the number of
-                    # chunks this sub-batch produced (computed with the same chunk
-                    # size the orchestrator uses), so the next sub-batch sharing the
-                    # document continues the sequence.
-                    if sub_doc_id:
-                        sub_chunk_count = sum(
-                            len(fact_extraction.chunk_text(item.get("content", "") or "", sub_chunk_size))
-                            for item in sub_batch
-                        )
-                        # retain_batch only prepends the existing body on the global
-                        # first sub-batch (is_first_batch == i == 1), so fold its chunk
-                        # count in only there.
-                        if i == 1:
-                            sub_chunk_count += append_prepend_chunks.get(sub_doc_id, 0)
-                        chunk_offsets[sub_doc_id] = sub_offset + sub_chunk_count
-                    # sub_results aligns 1:1 with sub_batch items; map each
-                    # back to its source input via origin_indices so callers
-                    # iterating with ``zip(contents, results)`` still align.
-                    for sub_idx, origin_idx in enumerate(sub_origins):
-                        if sub_idx < len(sub_results):
-                            per_input_results[origin_idx].extend(sub_results[sub_idx])
-                    total_usage = total_usage + sub_usage
-                    if total_processed_content_tokens is None or sub_processed is None:
-                        total_processed_content_tokens = None
-                    else:
-                        total_processed_content_tokens = total_processed_content_tokens + sub_processed
-
-                total_time = time.time() - start_time
-                logger.info(
-                    f"RETAIN_BATCH_ASYNC (chunked) COMPLETE: {len(per_input_results)} results from {len(contents)} contents in {total_time:.3f}s"
-                )
-                result = per_input_results
+            sub_batch_sizes = [len(b) for b in sub_batches]
+            # Keep the per-sub-batch sizes log compact when an oversize
+            # single item gets chunked into many [1]-sized sub-batches.
+            if len(sub_batches) <= 20:
+                logger.info(f"Split into {len(sub_batches)} sub-batches: {sub_batch_sizes} items each")
             else:
-                # Small batch - use internal method directly
-                result, total_usage, total_processed_content_tokens = await self._retain_batch_async_internal(
+                logger.info(
+                    f"Split into {len(sub_batches)} sub-batches "
+                    f"(items per sub-batch: min={min(sub_batch_sizes)}, "
+                    f"max={max(sub_batch_sizes)}, total={sum(sub_batch_sizes)})"
+                )
+
+            # Preserve the public contract: one result list per input
+            # content. When an oversize single item is chunked across
+            # multiple sub-batches, unit_ids from every chunk get
+            # appended back into that input's result slot.
+            per_input_results: list[list[str]] = [[] for _ in contents]
+
+            # Per-document chunk_index offsets. When an oversized single item is
+            # sliced into several sub-batches that all share one document_id and
+            # run sequentially, each sub-batch must continue the document's
+            # chunk_index sequence rather than restart at 0 — otherwise the
+            # derived chunk_id ({bank}_{doc}_{index}) collides and later
+            # sub-batches overwrite earlier chunks, leaving only one sub-batch's
+            # worth of chunks/memories (issue #1888). Counting uses the same
+            # bank-resolved, strategy-applied chunk size the orchestrator chunks
+            # with, so the offsets match the chunk_index values it assigns.
+            from .retain import fact_extraction, fact_storage
+
+            sub_chunk_size = await self._resolve_retain_chunk_size(bank_id, request_context, strategy)
+            chunk_offsets: dict[str, int] = {}
+
+            # In update_mode="append", retain_batch prepends the existing document
+            # body to the FIRST sub-batch as an extra content item before chunking
+            # (see orchestrator.retain_batch), consuming chunks(existing_body)
+            # additional chunk_index slots ahead of that sub-batch's own content.
+            # Capture that chunk count per document up front — the first sub-batch
+            # overwrites documents.original_text when it commits, so it can't be
+            # read back afterwards — and fold it into the offset so later
+            # sub-batches continue past the prepended chunks instead of colliding.
+            append_prepend_chunks: dict[str, int] = {}
+            backend = await self._get_backend()
+            append_doc_ids: set[str] = set()
+            for item in contents:
+                item_doc_id = item.get("document_id")
+                if item.get("update_mode") == "append" and item_doc_id:
+                    append_doc_ids.add(item_doc_id)
+            for append_doc_id in append_doc_ids:
+                async with acquire_with_retry(backend) as conn:
+                    existing_text = await fact_storage.get_document_content(conn, bank_id, append_doc_id)
+                if existing_text:
+                    append_prepend_chunks[append_doc_id] = len(
+                        fact_extraction.chunk_text(existing_text, sub_chunk_size)
+                    )
+
+            for i, (sub_batch, sub_origins) in enumerate(zip(sub_batches, origin_indices), 1):
+                # Checkpoint: abort if the operation was deleted (bank was deleted) between sub-batches.
+                if operation_id and not await self._check_op_alive(operation_id):
+                    logger.info(
+                        f"[BATCH_RETAIN] bank={bank_id} operation {operation_id} cancelled (bank deleted), stopping after {i - 1}/{len(sub_batches)} sub-batches"
+                    )
+                    if return_usage:
+                        return per_input_results, total_usage
+                    return per_input_results
+
+                sub_batch_tokens = sum(count_tokens(item.get("content", "")) for item in sub_batch)
+                logger.info(
+                    f"Processing sub-batch {i}/{len(sub_batches)}: {len(sub_batch)} items, {sub_batch_tokens:,} tokens"
+                )
+
+                # Resolve the document this sub-batch writes to so we can offset
+                # its chunk_index past chunks already stored by earlier
+                # sub-batches of the same document. Only the oversized-single-item
+                # split shares a document_id across sub-batches; packed multi-item
+                # sub-batches carry distinct document_ids (offset stays 0).
+                sub_doc_id = document_id or (sub_batch[0].get("document_id") if len(sub_batch) == 1 else None)
+                sub_offset = chunk_offsets.get(sub_doc_id, 0) if sub_doc_id else 0
+
+                sub_results, sub_usage, sub_processed = await self._retain_batch_async_internal(
                     bank_id=bank_id,
-                    contents=contents,
+                    contents=sub_batch,
                     request_context=request_context,
                     document_id=document_id,
-                    is_first_batch=True,
+                    is_first_batch=i == 1,  # Only upsert on first batch
                     fact_type_override=fact_type_override,
                     document_tags=document_tags,
                     operation_id=operation_id,
                     strategy=strategy,
-                    outbox_callback=outbox_callback,
-                    outbox_callback_factory=outbox_callback_factory,
+                    # Outbox callback runs inside the last sub-batch's transaction so the
+                    # webhook delivery row is committed atomically with the final retain data.
+                    outbox_callback=outbox_callback if i == len(sub_batches) else None,
+                    outbox_callback_factory=outbox_callback_factory if i == len(sub_batches) else None,
+                    document_body_override=document_body_overrides[i - 1],
+                    chunk_index_offset=sub_offset,
                 )
 
-            # Call post-operation hook if validator is configured
-            if self._operation_validator:
-                from hindsight_api.extensions import RetainResult
+                # Advance the document's chunk_index cursor by the number of
+                # chunks this sub-batch produced (computed with the same chunk
+                # size the orchestrator uses), so the next sub-batch sharing the
+                # document continues the sequence.
+                if sub_doc_id:
+                    sub_chunk_count = sum(
+                        len(fact_extraction.chunk_text(item.get("content", "") or "", sub_chunk_size))
+                        for item in sub_batch
+                    )
+                    # retain_batch only prepends the existing body on the global
+                    # first sub-batch (is_first_batch == i == 1), so fold its chunk
+                    # count in only there.
+                    if i == 1:
+                        sub_chunk_count += append_prepend_chunks.get(sub_doc_id, 0)
+                    chunk_offsets[sub_doc_id] = sub_offset + sub_chunk_count
+                # sub_results aligns 1:1 with sub_batch items; map each
+                # back to its source input via origin_indices so callers
+                # iterating with ``zip(contents, results)`` still align.
+                for sub_idx, origin_idx in enumerate(sub_origins):
+                    if sub_idx < len(sub_results):
+                        per_input_results[origin_idx].extend(sub_results[sub_idx])
+                total_usage = total_usage + sub_usage
+                if total_processed_content_tokens is None or sub_processed is None:
+                    total_processed_content_tokens = None
+                else:
+                    total_processed_content_tokens = total_processed_content_tokens + sub_processed
 
-                result_ctx = RetainResult(
-                    bank_id=bank_id,
-                    contents=contents_copy,
-                    request_context=request_context,
-                    document_id=document_id,
-                    fact_type_override=fact_type_override,
-                    unit_ids=result,
-                    success=True,
-                    error=None,
-                    llm_input_tokens=total_usage.input_tokens,
-                    llm_output_tokens=total_usage.output_tokens,
-                    llm_total_tokens=total_usage.total_tokens,
-                    processed_content_tokens=total_processed_content_tokens,
-                )
-                try:
-                    await self._operation_validator.on_retain_complete(result_ctx)
-                except Exception as e:
-                    logger.warning(f"Post-retain hook error (non-fatal): {e}")
+            total_time = time.time() - start_time
+            logger.info(
+                f"RETAIN_BATCH_ASYNC (chunked) COMPLETE: {len(per_input_results)} results from {len(contents)} contents in {total_time:.3f}s"
+            )
+            result = per_input_results
+        else:
+            # Small batch - use internal method directly
+            result, total_usage, total_processed_content_tokens = await self._retain_batch_async_internal(
+                bank_id=bank_id,
+                contents=contents,
+                request_context=request_context,
+                document_id=document_id,
+                is_first_batch=True,
+                fact_type_override=fact_type_override,
+                document_tags=document_tags,
+                operation_id=operation_id,
+                strategy=strategy,
+                outbox_callback=outbox_callback,
+                outbox_callback_factory=outbox_callback_factory,
+            )
 
-            # Same async side effects every fact insert triggers (retain or import).
-            await self._submit_post_insert_maintenance(bank_id, request_context)
+        # Call post-operation hook if validator is configured
+        if self._operation_validator:
+            from hindsight_api.extensions import RetainResult
 
-            if return_usage:
-                return result, total_usage
-            return result
-        finally:
-            _current_bank_id.reset(bank_token)
+            result_ctx = RetainResult(
+                bank_id=bank_id,
+                contents=contents_copy,
+                request_context=request_context,
+                document_id=document_id,
+                fact_type_override=fact_type_override,
+                unit_ids=result,
+                success=True,
+                error=None,
+                llm_input_tokens=total_usage.input_tokens,
+                llm_output_tokens=total_usage.output_tokens,
+                llm_total_tokens=total_usage.total_tokens,
+                processed_content_tokens=total_processed_content_tokens,
+            )
+            try:
+                await self._operation_validator.on_retain_complete(result_ctx)
+            except Exception as e:
+                logger.warning(f"Post-retain hook error (non-fatal): {e}")
+
+        # Same async side effects every fact insert triggers (retain or import).
+        await self._submit_post_insert_maintenance(bank_id, request_context)
+
+        if return_usage:
+            return result, total_usage
+        return result
 
     async def _submit_post_insert_maintenance(
         self,
@@ -3477,6 +3500,7 @@ class MemoryEngine(MemoryEngineInterface):
             )
         )
 
+    @_bind_bank_id()
     async def recall_async(
         self,
         bank_id: str,
@@ -3546,36 +3570,201 @@ class MemoryEngine(MemoryEngineInterface):
         """
         # Authenticate tenant and set schema in context (for fq_table())
         await self._authenticate_tenant(request_context)
-        bank_token = _current_bank_id.set(bank_id)
+
+        # Sanitize the query at ingress: a client may serialize a half-emoji as a
+        # lone UTF-16 surrogate, which crashes downstream logging, the embedder, and
+        # the cross-encoder tokenizer with an HTTP 500 (see issue #1875). Cleaning it
+        # here protects every sink that the query flows into.
+        query = sanitize_text(query) or ""
+
+        # Default to all fact types if not specified
+        if fact_type is None:
+            fact_type = list(VALID_RECALL_FACT_TYPES)
+
+        # Filter out 'opinion' (removed fact type, silently ignore for backwards compat)
+        fact_type = [ft for ft in fact_type if ft != "opinion"]
+        if not fact_type:
+            return RecallResultModel(results=[], entities={}, chunks={})
+
+        # Validate fact types
+        invalid_types = set(fact_type) - VALID_RECALL_FACT_TYPES
+        if invalid_types:
+            raise ValueError(
+                f"Invalid fact type(s): {', '.join(sorted(invalid_types))}. "
+                f"Must be one of: {', '.join(sorted(VALID_RECALL_FACT_TYPES))}"
+            )
+
+        # Validate operation if validator is configured
+        if self._operation_validator:
+            from hindsight_api.extensions import RecallContext
+
+            ctx = RecallContext(
+                bank_id=bank_id,
+                query=query,
+                request_context=request_context,
+                budget=budget,
+                max_tokens=max_tokens,
+                enable_trace=enable_trace,
+                fact_types=list(fact_type),
+                question_date=question_date,
+                include_entities=include_entities,
+                max_entity_tokens=max_entity_tokens,
+                include_chunks=include_chunks,
+                max_chunk_tokens=max_chunk_tokens,
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=tag_groups,
+            )
+            result = await self._validate_operation(self._operation_validator.validate_recall(ctx))
+            if result:
+                if result.tags is not None:
+                    tags = result.tags
+                if result.tags_match is not None:
+                    tags_match = result.tags_match
+                if result.tag_groups is not None:
+                    tag_groups = result.tag_groups
+
+        # Map budget enum to thinking_budget number using bank-resolved config.
+        # Function "fixed" preserves legacy {LOW: 100, MID: 300, HIGH: 1000}; function "adaptive"
+        # derives from max_tokens and clamps to [recall_budget_min, recall_budget_max].
+        budget_config_dict = await self._config_resolver.get_bank_config(bank_id, request_context)
+        thinking_budget = _resolve_thinking_budget(budget_config_dict, budget, max_tokens)
+
+        # Log recall start with tags if present (skip if quiet mode for internal operations)
+        if not _quiet:
+            tags_info = f", tags={tags} ({tags_match})" if tags else ""
+            logger.info(f"[RECALL {bank_id[:8]}] Starting recall for query: {query[:50]}...{tags_info}")
+
+        # Create parent span for recall operation
+        from ..tracing import get_tracer
+
+        tracer = get_tracer()
+        # Use start_as_current_span to ensure child spans are linked properly
+        recall_span_context = tracer.start_as_current_span("hindsight.recall")
+        recall_span = recall_span_context.__enter__()
+        recall_span.set_attribute("hindsight.bank_id", bank_id)
+        recall_span.set_attribute("hindsight.query", query[:100])
+        recall_span.set_attribute("hindsight.fact_types", ",".join(fact_type))
+        recall_span.set_attribute("hindsight.thinking_budget", thinking_budget)
+        recall_span.set_attribute("hindsight.max_tokens", max_tokens)
+
         try:
-            # Sanitize the query at ingress: a client may serialize a half-emoji as a
-            # lone UTF-16 surrogate, which crashes downstream logging, the embedder, and
-            # the cross-encoder tokenizer with an HTTP 500 (see issue #1875). Cleaning it
-            # here protects every sink that the query flows into.
-            query = sanitize_text(query) or ""
+            # Backpressure: limit concurrent recalls to prevent overwhelming the database
+            result = None
+            error_msg = None
+            semaphore_wait_start = time.time()
+            async with self._search_semaphore:
+                semaphore_wait = time.time() - semaphore_wait_start
+                # Retry loop for connection errors
+                max_retries = 3
+                for attempt in range(max_retries + 1):
+                    try:
+                        result = await self._search_with_retries(
+                            bank_id,
+                            query,
+                            fact_type,
+                            thinking_budget,
+                            max_tokens,
+                            enable_trace,
+                            question_date,
+                            include_entities,
+                            max_entity_tokens,
+                            include_chunks,
+                            max_chunk_tokens,
+                            request_context,
+                            semaphore_wait=semaphore_wait,
+                            tags=tags,
+                            tags_match=tags_match,
+                            tag_groups=tag_groups,
+                            created_after=created_after,
+                            created_before=created_before,
+                            connection_budget=_connection_budget,
+                            quiet=_quiet,
+                            include_source_facts=include_source_facts,
+                            max_source_facts_tokens=max_source_facts_tokens,
+                            max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
+                            reranking=reranking,
+                        )
+                        break  # Success - exit retry loop
+                    except Exception as e:
+                        # Check if it's a connection error (PG or Oracle)
+                        is_connection_error = (
+                            isinstance(e, asyncpg.TooManyConnectionsError)
+                            or isinstance(e, asyncpg.CannotConnectNowError)
+                            or (isinstance(e, asyncpg.PostgresError) and "connection" in str(e).lower())
+                            or _is_oracledb_connection_error(e)
+                        )
 
-            # Default to all fact types if not specified
-            if fact_type is None:
-                fact_type = list(VALID_RECALL_FACT_TYPES)
+                        if is_connection_error and attempt < max_retries:
+                            # Wait with exponential backoff before retry
+                            wait_time = 0.5 * (2**attempt)  # 0.5s, 1s, 2s
+                            logger.warning(
+                                f"Connection error on search attempt {attempt + 1}/{max_retries + 1}: {str(e)}. "
+                                f"Retrying in {wait_time:.1f}s..."
+                            )
+                            await asyncio.sleep(wait_time)
+                        else:
+                            # Not a connection error or out of retries - call post-hook and raise
+                            error_msg = str(e)
+                            if self._operation_validator:
+                                from hindsight_api.extensions.operation_validator import RecallResult
 
-            # Filter out 'opinion' (removed fact type, silently ignore for backwards compat)
-            fact_type = [ft for ft in fact_type if ft != "opinion"]
-            if not fact_type:
-                return RecallResultModel(results=[], entities={}, chunks={})
+                                result_ctx = RecallResult(
+                                    bank_id=bank_id,
+                                    query=query,
+                                    request_context=request_context,
+                                    budget=budget,
+                                    max_tokens=max_tokens,
+                                    enable_trace=enable_trace,
+                                    fact_types=list(fact_type),
+                                    question_date=question_date,
+                                    include_entities=include_entities,
+                                    max_entity_tokens=max_entity_tokens,
+                                    include_chunks=include_chunks,
+                                    max_chunk_tokens=max_chunk_tokens,
+                                    result=None,
+                                    success=False,
+                                    error=error_msg,
+                                )
+                                try:
+                                    await self._operation_validator.on_recall_complete(result_ctx)
+                                except Exception as hook_err:
+                                    logger.warning(f"Post-recall hook error (non-fatal): {hook_err}")
+                            raise
+                else:
+                    # Exceeded max retries
+                    error_msg = "Exceeded maximum retries for search due to connection errors."
+                    if self._operation_validator:
+                        from hindsight_api.extensions.operation_validator import RecallResult
 
-            # Validate fact types
-            invalid_types = set(fact_type) - VALID_RECALL_FACT_TYPES
-            if invalid_types:
-                raise ValueError(
-                    f"Invalid fact type(s): {', '.join(sorted(invalid_types))}. "
-                    f"Must be one of: {', '.join(sorted(VALID_RECALL_FACT_TYPES))}"
-                )
+                        result_ctx = RecallResult(
+                            bank_id=bank_id,
+                            query=query,
+                            request_context=request_context,
+                            budget=budget,
+                            max_tokens=max_tokens,
+                            enable_trace=enable_trace,
+                            fact_types=list(fact_type),
+                            question_date=question_date,
+                            include_entities=include_entities,
+                            max_entity_tokens=max_entity_tokens,
+                            include_chunks=include_chunks,
+                            max_chunk_tokens=max_chunk_tokens,
+                            result=None,
+                            success=False,
+                            error=error_msg,
+                        )
+                        try:
+                            await self._operation_validator.on_recall_complete(result_ctx)
+                        except Exception as hook_err:
+                            logger.warning(f"Post-recall hook error (non-fatal): {hook_err}")
+                    raise Exception(error_msg)
 
-            # Validate operation if validator is configured
-            if self._operation_validator:
-                from hindsight_api.extensions import RecallContext
+            # Call post-operation hook for success
+            if self._operation_validator and result is not None:
+                from hindsight_api.extensions.operation_validator import RecallResult
 
-                ctx = RecallContext(
+                result_ctx = RecallResult(
                     bank_id=bank_id,
                     query=query,
                     request_context=request_context,
@@ -3588,186 +3777,18 @@ class MemoryEngine(MemoryEngineInterface):
                     max_entity_tokens=max_entity_tokens,
                     include_chunks=include_chunks,
                     max_chunk_tokens=max_chunk_tokens,
-                    tags=tags,
-                    tags_match=tags_match,
-                    tag_groups=tag_groups,
+                    result=result,
+                    success=True,
+                    error=None,
                 )
-                result = await self._validate_operation(self._operation_validator.validate_recall(ctx))
-                if result:
-                    if result.tags is not None:
-                        tags = result.tags
-                    if result.tags_match is not None:
-                        tags_match = result.tags_match
-                    if result.tag_groups is not None:
-                        tag_groups = result.tag_groups
+                try:
+                    await self._operation_validator.on_recall_complete(result_ctx)
+                except Exception as e:
+                    logger.warning(f"Post-recall hook error (non-fatal): {e}")
 
-            # Map budget enum to thinking_budget number using bank-resolved config.
-            # Function "fixed" preserves legacy {LOW: 100, MID: 300, HIGH: 1000}; function "adaptive"
-            # derives from max_tokens and clamps to [recall_budget_min, recall_budget_max].
-            budget_config_dict = await self._config_resolver.get_bank_config(bank_id, request_context)
-            thinking_budget = _resolve_thinking_budget(budget_config_dict, budget, max_tokens)
-
-            # Log recall start with tags if present (skip if quiet mode for internal operations)
-            if not _quiet:
-                tags_info = f", tags={tags} ({tags_match})" if tags else ""
-                logger.info(f"[RECALL {bank_id[:8]}] Starting recall for query: {query[:50]}...{tags_info}")
-
-            # Create parent span for recall operation
-            from ..tracing import get_tracer
-
-            tracer = get_tracer()
-            # Use start_as_current_span to ensure child spans are linked properly
-            recall_span_context = tracer.start_as_current_span("hindsight.recall")
-            recall_span = recall_span_context.__enter__()
-            recall_span.set_attribute("hindsight.bank_id", bank_id)
-            recall_span.set_attribute("hindsight.query", query[:100])
-            recall_span.set_attribute("hindsight.fact_types", ",".join(fact_type))
-            recall_span.set_attribute("hindsight.thinking_budget", thinking_budget)
-            recall_span.set_attribute("hindsight.max_tokens", max_tokens)
-
-            try:
-                # Backpressure: limit concurrent recalls to prevent overwhelming the database
-                result = None
-                error_msg = None
-                semaphore_wait_start = time.time()
-                async with self._search_semaphore:
-                    semaphore_wait = time.time() - semaphore_wait_start
-                    # Retry loop for connection errors
-                    max_retries = 3
-                    for attempt in range(max_retries + 1):
-                        try:
-                            result = await self._search_with_retries(
-                                bank_id,
-                                query,
-                                fact_type,
-                                thinking_budget,
-                                max_tokens,
-                                enable_trace,
-                                question_date,
-                                include_entities,
-                                max_entity_tokens,
-                                include_chunks,
-                                max_chunk_tokens,
-                                request_context,
-                                semaphore_wait=semaphore_wait,
-                                tags=tags,
-                                tags_match=tags_match,
-                                tag_groups=tag_groups,
-                                created_after=created_after,
-                                created_before=created_before,
-                                connection_budget=_connection_budget,
-                                quiet=_quiet,
-                                include_source_facts=include_source_facts,
-                                max_source_facts_tokens=max_source_facts_tokens,
-                                max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
-                                reranking=reranking,
-                            )
-                            break  # Success - exit retry loop
-                        except Exception as e:
-                            # Check if it's a connection error (PG or Oracle)
-                            is_connection_error = (
-                                isinstance(e, asyncpg.TooManyConnectionsError)
-                                or isinstance(e, asyncpg.CannotConnectNowError)
-                                or (isinstance(e, asyncpg.PostgresError) and "connection" in str(e).lower())
-                                or _is_oracledb_connection_error(e)
-                            )
-
-                            if is_connection_error and attempt < max_retries:
-                                # Wait with exponential backoff before retry
-                                wait_time = 0.5 * (2**attempt)  # 0.5s, 1s, 2s
-                                logger.warning(
-                                    f"Connection error on search attempt {attempt + 1}/{max_retries + 1}: {str(e)}. "
-                                    f"Retrying in {wait_time:.1f}s..."
-                                )
-                                await asyncio.sleep(wait_time)
-                            else:
-                                # Not a connection error or out of retries - call post-hook and raise
-                                error_msg = str(e)
-                                if self._operation_validator:
-                                    from hindsight_api.extensions.operation_validator import RecallResult
-
-                                    result_ctx = RecallResult(
-                                        bank_id=bank_id,
-                                        query=query,
-                                        request_context=request_context,
-                                        budget=budget,
-                                        max_tokens=max_tokens,
-                                        enable_trace=enable_trace,
-                                        fact_types=list(fact_type),
-                                        question_date=question_date,
-                                        include_entities=include_entities,
-                                        max_entity_tokens=max_entity_tokens,
-                                        include_chunks=include_chunks,
-                                        max_chunk_tokens=max_chunk_tokens,
-                                        result=None,
-                                        success=False,
-                                        error=error_msg,
-                                    )
-                                    try:
-                                        await self._operation_validator.on_recall_complete(result_ctx)
-                                    except Exception as hook_err:
-                                        logger.warning(f"Post-recall hook error (non-fatal): {hook_err}")
-                                raise
-                    else:
-                        # Exceeded max retries
-                        error_msg = "Exceeded maximum retries for search due to connection errors."
-                        if self._operation_validator:
-                            from hindsight_api.extensions.operation_validator import RecallResult
-
-                            result_ctx = RecallResult(
-                                bank_id=bank_id,
-                                query=query,
-                                request_context=request_context,
-                                budget=budget,
-                                max_tokens=max_tokens,
-                                enable_trace=enable_trace,
-                                fact_types=list(fact_type),
-                                question_date=question_date,
-                                include_entities=include_entities,
-                                max_entity_tokens=max_entity_tokens,
-                                include_chunks=include_chunks,
-                                max_chunk_tokens=max_chunk_tokens,
-                                result=None,
-                                success=False,
-                                error=error_msg,
-                            )
-                            try:
-                                await self._operation_validator.on_recall_complete(result_ctx)
-                            except Exception as hook_err:
-                                logger.warning(f"Post-recall hook error (non-fatal): {hook_err}")
-                        raise Exception(error_msg)
-
-                # Call post-operation hook for success
-                if self._operation_validator and result is not None:
-                    from hindsight_api.extensions.operation_validator import RecallResult
-
-                    result_ctx = RecallResult(
-                        bank_id=bank_id,
-                        query=query,
-                        request_context=request_context,
-                        budget=budget,
-                        max_tokens=max_tokens,
-                        enable_trace=enable_trace,
-                        fact_types=list(fact_type),
-                        question_date=question_date,
-                        include_entities=include_entities,
-                        max_entity_tokens=max_entity_tokens,
-                        include_chunks=include_chunks,
-                        max_chunk_tokens=max_chunk_tokens,
-                        result=result,
-                        success=True,
-                        error=None,
-                    )
-                    try:
-                        await self._operation_validator.on_recall_complete(result_ctx)
-                    except Exception as e:
-                        logger.warning(f"Post-recall hook error (non-fatal): {e}")
-
-                return result
-            finally:
-                recall_span_context.__exit__(None, None, None)
+            return result
         finally:
-            _current_bank_id.reset(bank_token)
+            recall_span_context.__exit__(None, None, None)
 
     async def _search_with_retries(
         self,
