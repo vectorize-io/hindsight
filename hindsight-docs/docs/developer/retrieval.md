@@ -104,9 +104,9 @@ If you need true BM25 ranking on a horizontally scaled Postgres (Citus) cluster,
 - Relative time: "What did Bob work on last year?"
 - Before/after: "What happened before Alice joined Google?"
 
-**How it works:** Combines semantic understanding with time filtering to find events within specific periods.
+**How it works:** When the query contains a time reference, Hindsight parses it into a date window, then retrieves the memories whose time overlaps that window. Within the window it selects candidates by **semantic relevance to the query** — not by recency — so the most relevant in-window memory is never dropped just because other memories happen to be more recent. It then **spreads the selection across the window's range**: the window is divided into time-buckets and the strongest match from each populated bucket is taken first, so a "what happened in 2023?" query surfaces memories from across the whole year rather than clustering on whichever stretch is densest. Time is also used as a *scoring* signal — memories closer to the center of the window get a small boost (see [Temporal proximity signal](#temporal-proximity-signal)).
 
-**Why it matters:** Enables precise historical queries without losing old information.
+**Why it matters:** Enables precise historical queries that stay relevant *and* representative of the whole period. It also stays fast and meaningful on memory banks whose timestamps are densely clustered (for example when a large batch is ingested with one date): because selection is relevance-first, a time window that happens to match most of the bank still returns the best matches rather than an arbitrary slice.
 
 ---
 
