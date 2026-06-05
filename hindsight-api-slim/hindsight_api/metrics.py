@@ -823,20 +823,31 @@ class MetricsCollector(MetricsCollectorBase):
                     logger.debug("Async-ops queue query failed for schema %s", schema, exc_info=True)
 
                 # Consolidation backlog + stranded counts. Two separate COUNT(*)
-                # queries rather than one with two FILTERs: each WHERE matches a
-                # partial-index predicate exactly, so each runs as an index scan
-                # over just the unconsolidated / failed subset instead of a seq
-                # scan of the whole (largest) table on every refresh.
+                # queries rather than one with two FILTERs — each WHERE matches a
+                # partial-index predicate exactly:
                 #   idx_memory_units_unconsolidated        WHERE consolidated_at IS NULL ...
                 #   idx_memory_units_consolidation_failed  WHERE consolidation_failed_at IS NOT NULL ...
                 # GROUP BY bank_id still composes — bank_id is each index's lead column.
+                #
+                # The backlog count runs with seqscan disabled in a scoped
+                # transaction. The partial index matches its predicate, but
+                # `consolidated_at IS NULL` is true for a large fraction of the
+                # table (every observation has a null consolidated_at), so the
+                # planner misjudges selectivity and otherwise seq-scans the whole
+                # (largest) table on every refresh — verified on a 114k-row table
+                # via EXPLAIN: seq scan ~92 ms vs index scan ~0.1 ms. SET LOCAL
+                # forces the index path and resets at transaction end. The failed
+                # count below needs no such nudge: `consolidation_failed_at IS NOT
+                # NULL` is rare, so its index is chosen on cost.
                 try:
-                    rows = await conn.fetch(
-                        f"SELECT {bank_sel}COUNT(*) AS count "
-                        f'FROM "{schema}".memory_units '
-                        "WHERE consolidated_at IS NULL AND fact_type IN ('experience', 'world')"
-                        f"{bank_grp}"
-                    )
+                    async with conn.transaction():
+                        await conn.execute("SET LOCAL enable_seqscan = off")
+                        rows = await conn.fetch(
+                            f"SELECT {bank_sel}COUNT(*) AS count "
+                            f'FROM "{schema}".memory_units '
+                            "WHERE consolidated_at IS NULL AND fact_type IN ('experience', 'world')"
+                            f"{bank_grp}"
+                        )
                     for row in rows:
                         bank = row["bank_id"] if per_bank else None
                         key = _BacklogKey(schema, bank)

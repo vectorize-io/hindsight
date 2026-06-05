@@ -19,14 +19,29 @@ import pytest
 from hindsight_api.metrics import MetricsCollector, _AsyncOpKey, _BacklogKey
 
 
+class _FakeTxn:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 class _FakeConn:
     """asyncpg-like connection whose fetch() is dispatched by SQL substring."""
 
     def __init__(self, fetch_fn):
         self._fetch_fn = fetch_fn
+        self.executed = []
 
     async def fetch(self, sql, *args):
         return self._fetch_fn(sql, *args)
+
+    async def execute(self, sql, *args):
+        self.executed.append(sql)
+
+    def transaction(self):
+        return _FakeTxn()
 
 
 class _FakeAcquire:
@@ -112,6 +127,21 @@ async def test_refresh_backlog_uses_index_matched_predicates_not_filter_scan():
     ops_sql = next(s for s in captured if "async_operations" in s and "GROUP BY" in s)
     assert "status IN ('pending', 'processing', 'failed')" in ops_sql
     assert "completed" not in ops_sql and "cancelled" not in ops_sql
+
+
+@pytest.mark.asyncio
+async def test_backlog_count_runs_with_seqscan_disabled():
+    """`consolidated_at IS NULL` is true for a large fraction of the table, so
+    the planner misjudges selectivity and won't use the partial index without a
+    nudge — the backlog count must issue SET LOCAL enable_seqscan=off."""
+    collector = _collector()
+    pool = _FakePool(lambda sql, *a: _rows_for(sql))
+    collector._db_pool = pool
+    await collector._refresh_backlog()
+
+    assert any("enable_seqscan" in s.lower() and "off" in s.lower() for s in pool._conn.executed)
+    # the result is still correct under the nudge
+    assert collector._consolidation_backlog[("public", None)] == 42
 
 
 @pytest.mark.asyncio
