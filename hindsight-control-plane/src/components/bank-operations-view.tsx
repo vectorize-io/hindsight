@@ -256,7 +256,7 @@ export function BankOperationsView() {
       // name and absolute timestamp move to the tooltip (and the details dialog).
       return (
         <div
-          className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground whitespace-nowrap"
+          className="flex items-center gap-1.5 text-[11px] text-muted-foreground whitespace-nowrap"
           title={`${stageLabel}${progress.at ? ` — ${new Date(progress.at).toLocaleString()}` : ""}`}
         >
           {pct !== null && (
@@ -530,9 +530,11 @@ export function BankOperationsView() {
                         {new Date(op.created_at).toLocaleString()}
                       </TableCell>
                       <TableCell>
-                        {renderStatusBadge(op.status, op.error_message)}
-                        {op.status === "processing" &&
-                          renderProgress(op.progress, { compact: true })}
+                        <div className="flex items-center gap-2 whitespace-nowrap">
+                          {renderStatusBadge(op.status, op.error_message)}
+                          {op.status === "processing" &&
+                            renderProgress(op.progress, { compact: true })}
+                        </div>
                       </TableCell>
                       <TableCell>
                         {op.status === "pending" && (
