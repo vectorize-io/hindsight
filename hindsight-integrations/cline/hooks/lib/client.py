@@ -110,7 +110,7 @@ class HindsightClient:
         content: str,
         document_id: str = "conversation",
         context: Optional[str] = None,
-        metadata: Optional[dict] = None,
+        metadata: Optional[dict[str, Any]] = None,
         tags: Optional[list] = None,
         timeout: int = 15,
     ) -> dict[str, Any]:
