@@ -726,6 +726,36 @@ async def _run_consolidation_job(
     set_stage("consolidation.consolidating")
     await memory_engine._write_operation_progress(operation_id, stage="consolidating", processed=0, total=total_count)
 
+    async def _count_unconsolidated() -> int:
+        """Re-count memories still pending consolidation in this job's scope.
+
+        ``total_count`` is a point-in-time estimate from job start; memories retained
+        while consolidation runs get picked up by later fetches, so processed can pass
+        it. When that happens we re-count to report a real total (processed + remaining)
+        instead of pinning the bar at 100%."""
+        async with acquire_with_retry(pool) as count_conn:
+            pending = await count_conn.fetchval(
+                f"""
+                SELECT COUNT(*)
+                FROM {fq_table("memory_units")}
+                WHERE bank_id = $1
+                  AND consolidated_at IS NULL
+                  AND consolidation_failed_at IS NULL
+                  AND fact_type IN ('experience', 'world')
+                  {scope_clause}
+                """,
+                *scope_params,
+            )
+        return pending or 0
+
+    async def _progress_total(processed: int) -> int:
+        # Cheap path: while we're still within the start-of-job estimate it's exact, so
+        # no extra query. Only re-count once the estimate is exhausted (≈the final batch
+        # normally, or repeatedly only if memories keep arriving mid-run).
+        if processed < total_count:
+            return total_count
+        return processed + await _count_unconsolidated()
+
     # Process each memory with individual commits for crash recovery
     stats: dict[str, int] = {
         "memories_processed": 0,
@@ -1023,16 +1053,12 @@ async def _run_consolidation_job(
             # the entire (often minutes-long) LLM phase; writing here advances
             # processed/total as each batch commits. set_stage mirrors it for the
             # live worker log.
-            # total_count is the unconsolidated count at job start; memories retained
-            # *during* consolidation get picked up by later fetches, so processed can
-            # exceed it. Treat total as an estimate that grows with processed so the
-            # bar never reads >100% (e.g. 58/51).
             set_stage(f"consolidation.llm_batch.{batch_num_local}")
             await memory_engine._write_operation_progress(
                 operation_id,
                 stage="consolidating",
                 processed=cum_processed,
-                total=max(total_count, cum_processed),
+                total=await _progress_total(cum_processed),
                 detail={
                     "observations_created": cum_snapshot["observations_created"],
                     "observations_updated": cum_snapshot["observations_updated"],
@@ -1185,7 +1211,7 @@ async def _run_consolidation_job(
             operation_id,
             stage="refreshing_mental_models",
             processed=stats["memories_processed"],
-            total=max(total_count, stats["memories_processed"]),
+            total=await _progress_total(stats["memories_processed"]),
         )
         # SECURITY: Only refresh mental models with matching tags (or all if no tags were consolidated)
         mental_models_refreshed = await _trigger_mental_model_refreshes(

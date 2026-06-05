@@ -467,7 +467,8 @@
       "secondsAgo": "{secs}秒前",
       "minutesAgo": "{mins}分鐘前",
       "hoursAgo": "{hours}小時前"
-    }
+    },
+    "progressEstimateNote": "總數是整合開始時的估算值，執行期間若有新記憶加入可能會增加，屬於正常現象。"
   },
   "dataView": {
     "loadingMemories": "載入中記憶...",

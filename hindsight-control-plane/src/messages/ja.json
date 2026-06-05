@@ -467,7 +467,8 @@
       "secondsAgo": "{secs}秒前",
       "minutesAgo": "{mins}分前",
       "hoursAgo": "{hours}時間前"
-    }
+    },
+    "progressEstimateNote": "合計は統合の開始時点での推定値で、実行中に新しいメモリーが追加されると増えることがあります（正常な動作です）。"
   },
   "dataView": {
     "loadingMemories": "メモリを読み込み中...",

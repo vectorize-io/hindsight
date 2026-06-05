@@ -467,7 +467,8 @@
       "secondsAgo": "{secs}秒前",
       "minutesAgo": "{mins}分钟前",
       "hoursAgo": "{hours}小时前"
-    }
+    },
+    "progressEstimateNote": "总数是整合开始时的估算值，运行期间若有新记忆加入可能会增加，属于正常现象。"
   },
   "dataView": {
     "loadingMemories": "正在加载记忆...",

@@ -467,7 +467,8 @@
       "secondsAgo": "vor {secs}s",
       "minutesAgo": "vor {mins}m",
       "hoursAgo": "vor {hours}h"
-    }
+    },
+    "progressEstimateNote": "Die Gesamtzahl ist eine Schätzung vom Start der Konsolidierung und kann steigen, wenn währenddessen neue Erinnerungen hinzukommen — das ist normal."
   },
   "dataView": {
     "loadingMemories": "Erinnerungen werden geladen...",

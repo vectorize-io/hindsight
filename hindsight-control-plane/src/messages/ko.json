@@ -467,7 +467,8 @@
       "secondsAgo": "{secs}초 전",
       "minutesAgo": "{mins}분 전",
       "hoursAgo": "{hours}시간 전"
-    }
+    },
+    "progressEstimateNote": "총계는 통합 시작 시점의 추정치이며, 실행 중 새 메모리가 추가되면 늘어날 수 있습니다 — 정상입니다."
   },
   "dataView": {
     "loadingMemories": "메모리 불러오는 중...",

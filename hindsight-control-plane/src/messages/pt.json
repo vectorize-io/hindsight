@@ -467,7 +467,8 @@
       "secondsAgo": "há {secs}s",
       "minutesAgo": "há {mins}min",
       "hoursAgo": "há {hours}h"
-    }
+    },
+    "progressEstimateNote": "O total é estimado quando a consolidação inicia e pode crescer se novas memórias chegarem durante a execução — isso é esperado."
   },
   "dataView": {
     "loadingMemories": "Carregando memórias...",

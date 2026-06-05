@@ -765,6 +765,11 @@ export function BankOperationsView() {
                         {t("field.progress")}
                       </div>
                       {renderProgress(selectedOperation.progress)}
+                      {selectedOperation.operation_type === "consolidation" && (
+                        <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground/70">
+                          {t("progressEstimateNote")}
+                        </p>
+                      )}
                     </div>
                   )}
 
