@@ -2214,6 +2214,10 @@ class OperationResponse(BaseModel):
     items_count: int
     document_id: str | None = None
     created_at: str
+    updated_at: str | None = Field(
+        default=None,
+        description="When this operation's row last changed (claim, progress heartbeat, or completion).",
+    )
     status: str
     error_message: str | None
     retry_count: int | None = Field(

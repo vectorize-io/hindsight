@@ -2487,6 +2487,12 @@ export type OperationResponse = {
    */
   created_at: string;
   /**
+   * Updated At
+   *
+   * When this operation's row last changed (claim, progress heartbeat, or completion).
+   */
+  updated_at?: string | null;
+  /**
    * Status
    */
   status: string;

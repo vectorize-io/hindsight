@@ -26,6 +26,7 @@ type OperationResponse struct {
 	ItemsCount int32 `json:"items_count"`
 	DocumentId NullableString `json:"document_id,omitempty"`
 	CreatedAt string `json:"created_at"`
+	UpdatedAt NullableString `json:"updated_at,omitempty"`
 	Status string `json:"status"`
 	ErrorMessage NullableString `json:"error_message"`
 	RetryCount NullableInt32 `json:"retry_count,omitempty"`
@@ -194,6 +195,48 @@ func (o *OperationResponse) GetCreatedAtOk() (*string, bool) {
 // SetCreatedAt sets field value
 func (o *OperationResponse) SetCreatedAt(v string) {
 	o.CreatedAt = v
+}
+
+// GetUpdatedAt returns the UpdatedAt field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationResponse) GetUpdatedAt() string {
+	if o == nil || IsNil(o.UpdatedAt.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.UpdatedAt.Get()
+}
+
+// GetUpdatedAtOk returns a tuple with the UpdatedAt field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationResponse) GetUpdatedAtOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.UpdatedAt.Get(), o.UpdatedAt.IsSet()
+}
+
+// HasUpdatedAt returns a boolean if a field has been set.
+func (o *OperationResponse) HasUpdatedAt() bool {
+	if o != nil && o.UpdatedAt.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetUpdatedAt gets a reference to the given NullableString and assigns it to the UpdatedAt field.
+func (o *OperationResponse) SetUpdatedAt(v string) {
+	o.UpdatedAt.Set(&v)
+}
+// SetUpdatedAtNil sets the value for UpdatedAt to be an explicit nil
+func (o *OperationResponse) SetUpdatedAtNil() {
+	o.UpdatedAt.Set(nil)
+}
+
+// UnsetUpdatedAt ensures that no value is present for UpdatedAt, not even an explicit nil
+func (o *OperationResponse) UnsetUpdatedAt() {
+	o.UpdatedAt.Unset()
 }
 
 // GetStatus returns the Status field value
@@ -389,6 +432,9 @@ func (o OperationResponse) ToMap() (map[string]interface{}, error) {
 		toSerialize["document_id"] = o.DocumentId.Get()
 	}
 	toSerialize["created_at"] = o.CreatedAt
+	if o.UpdatedAt.IsSet() {
+		toSerialize["updated_at"] = o.UpdatedAt.Get()
+	}
 	toSerialize["status"] = o.Status
 	toSerialize["error_message"] = o.ErrorMessage.Get()
 	if o.RetryCount.IsSet() {

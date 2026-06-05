@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
 import { client, type OperationProgress } from "@/lib/api";
@@ -45,6 +45,7 @@ interface Operation {
   items_count: number;
   document_id: string | null;
   created_at: string;
+  updated_at?: string | null;
   status: string;
   error_message: string | null;
   progress?: OperationProgress | null;
@@ -326,6 +327,9 @@ export function BankOperationsView() {
         });
         setOperations(opsData.operations || []);
         setTotalOperations(opsData.total || 0);
+        // Refresh the clock on every poll so relative times (e.g. the "Updated" column)
+        // stay accurate even when nothing is processing and the 1s ticker is idle.
+        setNowMs(Date.now());
       } catch (error) {
         console.error("Error loading operations:", error);
       } finally {
@@ -437,6 +441,36 @@ export function BankOperationsView() {
     return () => clearInterval(tick);
   }, [hasProcessing]);
 
+  // Flash a row when it transitions into a terminal state, so a completion that lands
+  // on a poll reads as a deliberate change rather than a silent badge swap. We diff the
+  // status each load against the previous one and briefly mark the changed ids.
+  const prevStatusRef = useRef<Record<string, string>>({});
+  const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    const justFinished = operations
+      .filter(
+        (op) =>
+          prev[op.id] &&
+          prev[op.id] !== op.status &&
+          (op.status === "completed" || op.status === "failed" || op.status === "cancelled")
+      )
+      .map((op) => op.id);
+    prevStatusRef.current = Object.fromEntries(operations.map((op) => [op.id, op.status]));
+    if (justFinished.length === 0) return;
+    setFlashIds((s) => new Set([...s, ...justFinished]));
+    const timer = setTimeout(
+      () =>
+        setFlashIds((s) => {
+          const next = new Set(s);
+          justFinished.forEach((id) => next.delete(id));
+          return next;
+        }),
+      1200
+    );
+    return () => clearTimeout(timer);
+  }, [operations]);
+
   if (!currentBank) return null;
 
   return (
@@ -509,7 +543,10 @@ export function BankOperationsView() {
                     <TableHead className="w-[100px]">{t("table.id")}</TableHead>
                     <TableHead>{t("table.type")}</TableHead>
                     <TableHead>{t("table.created")}</TableHead>
-                    <TableHead>{t("table.status")}</TableHead>
+                    <TableHead>{t("field.updated")}</TableHead>
+                    {/* Fixed width so the row doesn't reflow when the inline progress
+                        appears/disappears as an operation starts or finishes. */}
+                    <TableHead className="w-[300px]">{t("table.status")}</TableHead>
                     <TableHead className="w-[80px]"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -517,7 +554,15 @@ export function BankOperationsView() {
                   {operations.map((op) => (
                     <TableRow
                       key={op.id}
-                      className={`cursor-pointer hover:bg-muted/50 ${op.status === "failed" ? "bg-red-500/5" : ""}`}
+                      className={`cursor-pointer transition-colors duration-700 hover:bg-muted/50 ${
+                        flashIds.has(op.id)
+                          ? op.status === "completed"
+                            ? "bg-emerald-500/15"
+                            : "bg-red-500/15"
+                          : op.status === "failed"
+                            ? "bg-red-500/5"
+                            : ""
+                      }`}
                       onClick={() => handleOperationClick(op.id)}
                     >
                       <TableCell className="font-mono text-xs text-muted-foreground">
@@ -529,7 +574,13 @@ export function BankOperationsView() {
                       <TableCell className="text-sm text-muted-foreground">
                         {new Date(op.created_at).toLocaleString()}
                       </TableCell>
-                      <TableCell>
+                      <TableCell
+                        className="text-sm text-muted-foreground"
+                        title={op.updated_at ? new Date(op.updated_at).toLocaleString() : undefined}
+                      >
+                        {op.updated_at ? formatHeartbeat(op.updated_at) : "—"}
+                      </TableCell>
+                      <TableCell className="w-[300px]">
                         <div className="flex items-center gap-2 whitespace-nowrap">
                           {renderStatusBadge(op.status, op.error_message)}
                           {op.status === "processing" &&

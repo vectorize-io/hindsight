@@ -465,6 +465,7 @@ export class ControlPlaneClient {
         items_count: number;
         document_id: string | null;
         created_at: string;
+        updated_at?: string | null;
         status: string;
         error_message: string | null;
         progress?: OperationProgress | null;

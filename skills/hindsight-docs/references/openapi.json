@@ -9731,6 +9731,18 @@
             "type": "string",
             "title": "Created At"
           },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At",
+            "description": "When this operation's row last changed (claim, progress heartbeat, or completion)."
+          },
           "status": {
             "type": "string",
             "title": "Status"

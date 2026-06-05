@@ -6489,6 +6489,9 @@ components:
         created_at:
           title: Created At
           type: string
+        updated_at:
+          nullable: true
+          type: string
         status:
           title: Status
           type: string
