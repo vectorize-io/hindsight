@@ -14,6 +14,8 @@ import re
 import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from pydantic import BaseModel, Field
+
 from .models import DirectiveInfo, LLMCall, ReflectAgentResult, TokenUsageSummary, ToolCall
 from .prompts import (
     _extract_directive_rules,
@@ -302,6 +304,217 @@ def _is_context_overflow_error(exc: Exception) -> bool:
     )
 
 
+class MentalModelRetrievalDecision(BaseModel):
+    """Structured policy decision after the mental-model retrieval layer."""
+
+    mental_models_sufficient: bool = Field(
+        description="Whether the retrieved mental models are enough to allow the agent to stop forced lower-level retrieval."
+    )
+    needs_observations: bool = Field(description="Whether consolidated observations should be searched next.")
+    needs_recall: bool = Field(description="Whether raw world/experience facts should be searched next.")
+    reason: str = Field(description="Short explanation for the retrieval decision.")
+    follow_up_query: str | None = Field(
+        default=None,
+        description="Targeted lower-level retrieval query to verify the mental-model conclusion or gap.",
+    )
+
+
+class MentalModelRetrievalPolicyResult(BaseModel):
+    """Retrieval policy decision plus token usage."""
+
+    decision: MentalModelRetrievalDecision
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+def _fallback_retrieval_decision(
+    reason: str, include_observations: bool, include_recall: bool, follow_up_query: str | None = None
+) -> MentalModelRetrievalDecision:
+    return MentalModelRetrievalDecision(
+        mental_models_sufficient=False,
+        needs_observations=include_observations,
+        needs_recall=include_recall,
+        reason=reason,
+        follow_up_query=follow_up_query,
+    )
+
+
+def _all_mental_models_are_usable_and_fresh(tool_output: dict[str, Any]) -> bool:
+    """Return whether every retrieved mental model is explicitly fresh and has answerable content."""
+    for model in tool_output.get("mental_models", []):
+        if model.get("is_stale") is not False:
+            return False
+        content = str(model.get("content") or "").strip()
+        if not content:
+            return False
+    return True
+
+
+def _mental_model_decision_payload(tool_output: dict[str, Any], *, max_chars: int = 8000) -> dict[str, Any]:
+    """Trim mental-model content for the retrieval-policy LLM call."""
+    payload_models: list[dict[str, Any]] = []
+    remaining = max_chars
+    for model in tool_output.get("mental_models", []):
+        content = str(model.get("content") or "")
+        if remaining <= 0:
+            content_preview = ""
+        else:
+            content_preview = content[:remaining]
+            remaining -= len(content_preview)
+        payload_models.append(
+            {
+                "id": model.get("id"),
+                "name": model.get("name"),
+                "relevance": model.get("relevance"),
+                "is_stale": model.get("is_stale"),
+                "staleness_reason": model.get("staleness_reason"),
+                "updated_at": model.get("updated_at"),
+                "content": content_preview,
+                "content_truncated": len(content_preview) < len(content),
+            }
+        )
+    return {
+        "query": tool_output.get("query"),
+        "count": tool_output.get("count", len(payload_models)),
+        "mental_models": payload_models,
+    }
+
+
+async def _decide_after_mental_models(
+    llm_config: "LLMProvider",
+    *,
+    user_query: str,
+    context: str | None,
+    mental_model_output: dict[str, Any],
+    budget: str | None,
+    include_observations: bool,
+    include_recall: bool,
+    reflect_id: str,
+) -> MentalModelRetrievalPolicyResult:
+    """Ask the LLM whether lower-level retrieval should remain forced.
+
+    The LLM makes the semantic sufficiency call; system code still enforces
+    budget boundaries and falls back to deeper retrieval on malformed/uncertain
+    decisions.
+    """
+    if (budget or "low").lower() == "high":
+        return MentalModelRetrievalPolicyResult(
+            decision=_fallback_retrieval_decision(
+                "High budget keeps the full verification path.",
+                include_observations,
+                include_recall,
+                mental_model_output.get("query") or user_query,
+            )
+        )
+
+    if not mental_model_output.get("mental_models"):
+        return MentalModelRetrievalPolicyResult(
+            decision=_fallback_retrieval_decision(
+                "No mental models were retrieved.",
+                include_observations,
+                include_recall,
+                mental_model_output.get("query") or user_query,
+            )
+        )
+
+    if not _all_mental_models_are_usable_and_fresh(mental_model_output):
+        return MentalModelRetrievalPolicyResult(
+            decision=_fallback_retrieval_decision(
+                "At least one retrieved mental model was stale or had no usable content.",
+                include_observations,
+                include_recall,
+                mental_model_output.get("query") or user_query,
+            )
+        )
+
+    decision_input = {
+        "user_query": user_query,
+        "context": context,
+        "budget": (budget or "low").lower(),
+        "lower_level_tools_enabled": {
+            "search_observations": include_observations,
+            "recall": include_recall,
+        },
+        "mental_model_results": _mental_model_decision_payload(mental_model_output),
+    }
+    prompt = f"""Decide whether the retrieved mental models are sufficient for answering the user's reflect query, or whether lower-level retrieval must remain forced.
+
+You are not answering the user. You are making a retrieval-policy decision.
+
+Rules:
+- Use relevance as metadata only. Do not apply a fixed score threshold.
+- If the mental models are stale, missing, ambiguous, or only loosely related, request lower-level retrieval.
+- If the user asks for latest/current status, exact counts, timelines, examples, sources, evidence, contradictions, or raw details, request lower-level retrieval.
+- If the query is broad and the fresh mental models directly answer it, mark them sufficient.
+- If uncertain, prefer lower-level retrieval.
+- Only request tools that are enabled in lower_level_tools_enabled.
+- If lower-level retrieval is needed, set follow_up_query to a concise query targeting the mental-model conclusion, gap, or stale point to verify. Use the original user query only if no better targeted query exists.
+
+Return a structured decision.
+
+Input:
+```json
+{json.dumps(decision_input, ensure_ascii=False, default=str)}
+```"""
+
+    try:
+        decision_result, usage = await llm_config.call(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a precise retrieval policy classifier. Return only the requested structured decision.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            response_format=MentalModelRetrievalDecision,
+            scope="reflect_retrieval_policy",
+            temperature=0,
+            max_completion_tokens=700,
+            max_retries=1,
+            initial_backoff=0.25,
+            max_backoff=1.0,
+            return_usage=True,
+        )
+        if isinstance(decision_result, MentalModelRetrievalDecision):
+            decision = decision_result
+        elif isinstance(decision_result, dict):
+            decision = MentalModelRetrievalDecision.model_validate(decision_result)
+        else:
+            decision = MentalModelRetrievalDecision.model_validate_json(str(decision_result))
+    except Exception as e:
+        logger.warning(f"[REFLECT {reflect_id}] Mental-model retrieval decision failed: {e}")
+        return MentalModelRetrievalPolicyResult(
+            decision=_fallback_retrieval_decision(
+                "Retrieval policy decision failed; using conservative deeper retrieval.",
+                include_observations,
+                include_recall,
+                mental_model_output.get("query") or user_query,
+            ),
+        )
+
+    if decision.mental_models_sufficient:
+        decision.needs_observations = False
+        decision.needs_recall = False
+        decision.follow_up_query = None
+    else:
+        decision.needs_observations = decision.needs_observations and include_observations
+        decision.needs_recall = decision.needs_recall and include_recall
+        decision.follow_up_query = (
+            (decision.follow_up_query or "").strip() or mental_model_output.get("query") or user_query
+        )
+        if not decision.needs_observations and not decision.needs_recall and (include_observations or include_recall):
+            # A non-sufficient answer with no enabled follow-up is contradictory.
+            # Prefer the safe path by forcing the next enabled lower layer.
+            decision.needs_observations = include_observations
+            decision.needs_recall = include_recall and not include_observations
+
+    return MentalModelRetrievalPolicyResult(
+        decision=decision,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+    )
+
+
 async def run_reflect_agent(
     llm_config: "LLMProvider",
     bank_id: str,
@@ -464,6 +677,9 @@ async def run_reflect_agent(
         )
 
     consecutive_errors = 0
+    forced_sequence_override: list[str] | None = None
+    forced_sequence_override_start_iteration = 0
+    forced_query_overrides: dict[str, str] = {}
     for iteration in range(max_iterations):
         is_last = iteration == max_iterations - 1
 
@@ -591,9 +807,16 @@ async def run_reflect_agent(
             forced_sequence.append("search_observations")
         if include_recall:
             forced_sequence.append("recall")
+        forced_sequence_index = iteration
+        if forced_sequence_override is not None:
+            forced_sequence = forced_sequence_override
+            forced_sequence_index = iteration - forced_sequence_override_start_iteration
 
-        if iteration < len(forced_sequence):
-            iter_tool_choice: str | dict = {"type": "function", "function": {"name": forced_sequence[iteration]}}
+        if 0 <= forced_sequence_index < len(forced_sequence):
+            iter_tool_choice: str | dict = {
+                "type": "function",
+                "function": {"name": forced_sequence[forced_sequence_index]},
+            }
         else:
             iter_tool_choice = "auto"
 
@@ -880,18 +1103,27 @@ async def run_reflect_agent(
             # Partition into enabled vs hallucinated (not in enabled_tools set)
             allowed_tools = []
             hallucinated_tools = []
+            history_tool_calls = []
+            query_override_originals = {}
             for tc in other_tools:
                 norm = _normalize_tool_name(tc.name)
                 if enabled_tools is not None and norm not in enabled_tools and norm not in ("done", "expand"):
                     hallucinated_tools.append(tc)
+                    history_tool_calls.append(tc)
                 else:
+                    query_override = forced_query_overrides.pop(norm, None)
+                    if query_override and norm in ("search_observations", "recall"):
+                        original_query = tc.arguments.get("query")
+                        tc = tc.model_copy(update={"arguments": {**tc.arguments, "query": query_override}})
+                        query_override_originals[tc.id] = original_query
                     allowed_tools.append(tc)
+                    history_tool_calls.append(tc)
 
             # Build assistant message with all tool calls (LLM requires them for history)
             messages.append(
                 {
                     "role": "assistant",
-                    "tool_calls": [_tool_call_to_dict(tc) for tc in other_tools],
+                    "tool_calls": [_tool_call_to_dict(tc) for tc in history_tool_calls],
                 }
             )
 
@@ -948,6 +1180,7 @@ async def run_reflect_agent(
                     )
 
                 # Track available IDs from tool results (only for successful responses)
+                should_decide_after_mental_models = False
                 if (
                     normalized_tool_name == "search_mental_models"
                     and isinstance(output, dict)
@@ -956,6 +1189,11 @@ async def run_reflect_agent(
                     for mm in output["mental_models"]:
                         if "id" in mm:
                             available_mental_model_ids.add(mm["id"])
+                    should_decide_after_mental_models = (
+                        (budget or "low").lower() != "high"
+                        and forced_sequence_override is None
+                        and iteration < len(forced_sequence) - 1
+                    )
 
                 if (
                     normalized_tool_name == "search_observations"
@@ -983,6 +1221,9 @@ async def run_reflect_agent(
 
                 # Track for logging and context history
                 input_dict = {"tool": tc.name, **tc.arguments}
+                if tc.id in query_override_originals:
+                    input_dict["original_query"] = query_override_originals[tc.id]
+                    input_dict["query_overridden_by"] = "retrieval_policy"
                 input_summary = _summarize_input(tc.name, tc.arguments)
 
                 # Extract reason from tool arguments (if provided)
@@ -1015,6 +1256,72 @@ async def run_reflect_agent(
 
                 # Keep context history for fallback final prompt
                 context_history.append({"tool": tc.name, "input": input_dict, "output": output})
+
+                if should_decide_after_mental_models:
+                    decision_start = time.time()
+                    policy_result = await _decide_after_mental_models(
+                        llm_config,
+                        user_query=query,
+                        context=context,
+                        mental_model_output=output,
+                        budget=budget,
+                        include_observations=include_observations,
+                        include_recall=include_recall,
+                        reflect_id=reflect_id,
+                    )
+                    decision = policy_result.decision
+                    decision_duration_ms = int((time.time() - decision_start) * 1000)
+                    total_input_tokens += policy_result.input_tokens
+                    total_output_tokens += policy_result.output_tokens
+                    llm_trace.append(
+                        {
+                            "scope": "retrieval_policy",
+                            "duration_ms": decision_duration_ms,
+                            "input_tokens": policy_result.input_tokens,
+                            "output_tokens": policy_result.output_tokens,
+                        }
+                    )
+
+                    next_forced_sequence = []
+                    if decision.needs_observations:
+                        next_forced_sequence.append("search_observations")
+                    if decision.needs_recall:
+                        next_forced_sequence.append("recall")
+                    forced_sequence_override = next_forced_sequence
+                    forced_sequence_override_start_iteration = iteration + 1
+                    forced_query_overrides = {
+                        tool_name: decision.follow_up_query
+                        for tool_name in next_forced_sequence
+                        if decision.follow_up_query
+                    }
+
+                    decision_output = decision.model_dump()
+                    decision_input = {
+                        "tool": "retrieval_policy",
+                        "after_tool": "search_mental_models",
+                        "budget": (budget or "low").lower(),
+                    }
+                    tool_trace.append(
+                        ToolCall(
+                            tool="retrieval_policy",
+                            reason=decision.reason,
+                            input=decision_input,
+                            output=decision_output,
+                            duration_ms=decision_duration_ms,
+                            iteration=iteration + 1,
+                        )
+                    )
+                    tool_trace_summary.append(
+                        {
+                            "tool": "retrieval_policy",
+                            "input_summary": f"(budget={(budget or 'low').lower()})",
+                            "duration_ms": decision_duration_ms,
+                            "output_chars": len(json.dumps(decision_output, ensure_ascii=False)),
+                        }
+                    )
+                    context_history.append(
+                        {"tool": "retrieval_policy", "input": decision_input, "output": decision_output}
+                    )
 
     # Should not reach here
     answer = "I was unable to formulate a complete answer within the iteration limit."

@@ -9,14 +9,18 @@ These tests verify:
 """
 
 import asyncio
+import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from hindsight_api import LLMConfig, get_config
+from hindsight_api.engine.llm_wrapper import requires_api_key
 from hindsight_api.engine.reflect.agent import (
     _clean_answer_text,
     _clean_done_answer,
     _count_messages_tokens,
+    _decide_after_mental_models,
     _is_context_overflow_error,
     _is_done_tool,
     _normalize_tool_name,
@@ -218,6 +222,315 @@ class TestReflectAgentMocked:
             "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "test memory"}]}),
             "expand_fn": AsyncMock(return_value={"memories": []}),
         }
+
+    @pytest.mark.asyncio
+    async def test_mental_model_policy_allows_auto_when_sufficient(self, mock_llm, mock_functions):
+        """A sufficient mental model should cancel the remaining forced retrieval path."""
+        mock_functions["search_mental_models_fn"].return_value = {
+            "query": "test query",
+            "count": 1,
+            "mental_models": [
+                {
+                    "id": "mm-1",
+                    "name": "User preferences",
+                    "content": "The user prefers concise engineering answers.",
+                    "relevance": 0.31,
+                    "is_stale": False,
+                }
+            ],
+        }
+        mock_llm.call.return_value = (
+            {
+                "mental_models_sufficient": True,
+                "needs_observations": False,
+                "needs_recall": False,
+                "reason": "Fresh mental model directly answers the broad preference question.",
+            },
+            TokenUsage(input_tokens=20, output_tokens=10, total_tokens=30),
+        )
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="1",
+                        name="search_mental_models",
+                        arguments={"reason": "check curated knowledge", "query": "test query"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="2",
+                        name="done",
+                        arguments={"answer": "Use concise engineering answers.", "mental_model_ids": ["mm-1"]},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=True,
+            budget="low",
+            max_iterations=5,
+            **mock_functions,
+        )
+
+        assert result.text == "Use concise engineering answers."
+        mock_functions["search_observations_fn"].assert_not_called()
+        mock_functions["recall_fn"].assert_not_called()
+        assert mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"] == "auto"
+        policy_trace = next(tc for tc in result.tool_trace if tc.tool == "retrieval_policy")
+        assert policy_trace.output["mental_models_sufficient"] is True
+
+    @pytest.mark.asyncio
+    async def test_stale_or_empty_mental_models_cannot_short_circuit(self, mock_llm, mock_functions):
+        """Deterministic freshness/content guards should override an overconfident policy path."""
+        mock_functions["search_mental_models_fn"].return_value = {
+            "query": "test query",
+            "count": 2,
+            "mental_models": [
+                {
+                    "id": "mm-stale",
+                    "name": "Old project status",
+                    "content": "The old status said launch was complete.",
+                    "relevance": 0.92,
+                    "is_stale": True,
+                    "staleness_reason": "newer source facts exist",
+                },
+                {
+                    "id": "mm-empty",
+                    "name": "Empty project status",
+                    "content": "   ",
+                    "relevance": 0.81,
+                    "is_stale": False,
+                },
+            ],
+        }
+        mock_llm.call.return_value = (
+            {
+                "mental_models_sufficient": True,
+                "needs_observations": False,
+                "needs_recall": False,
+                "reason": "This should not be trusted.",
+            },
+            TokenUsage(input_tokens=20, output_tokens=10, total_tokens=30),
+        )
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="1",
+                        name="search_mental_models",
+                        arguments={"reason": "check curated knowledge", "query": "test query"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="2",
+                        name="search_observations",
+                        arguments={"reason": "verify stale summaries", "query": "generic query"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="3", name="recall", arguments={"reason": "verify raw facts", "query": "generic"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="4",
+                        name="done",
+                        arguments={"answer": "Verified from lower-level retrieval.", "memory_ids": ["mem-1"]},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=True,
+            budget="low",
+            max_iterations=5,
+            **mock_functions,
+        )
+
+        assert result.text == "Verified from lower-level retrieval."
+        mock_llm.call.assert_not_called()
+        mock_functions["search_observations_fn"].assert_called_once()
+        mock_functions["recall_fn"].assert_called_once()
+        policy_trace = next(tc for tc in result.tool_trace if tc.tool == "retrieval_policy")
+        assert policy_trace.output["mental_models_sufficient"] is False
+        assert policy_trace.output["reason"] == "At least one retrieved mental model was stale or had no usable content."
+
+    @pytest.mark.asyncio
+    async def test_high_budget_keeps_full_forced_retrieval_path(self, mock_llm, mock_functions):
+        """High budget should not run the sufficiency policy or skip lower layers."""
+        mock_functions["search_mental_models_fn"].return_value = {
+            "query": "test query",
+            "count": 1,
+            "mental_models": [
+                {
+                    "id": "mm-1",
+                    "name": "User preferences",
+                    "content": "The user prefers concise engineering answers.",
+                    "relevance": 0.99,
+                    "is_stale": False,
+                }
+            ],
+        }
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="1",
+                        name="search_mental_models",
+                        arguments={"reason": "check curated knowledge", "query": "test query"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="2",
+                        name="search_observations",
+                        arguments={"reason": "verify summaries", "query": "test query"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="3", name="recall", arguments={"reason": "verify raw facts", "query": "test query"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="4",
+                        name="done",
+                        arguments={"answer": "Verified answer.", "mental_model_ids": ["mm-1"], "memory_ids": ["mem-1"]},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=True,
+            budget="high",
+            max_iterations=5,
+            **mock_functions,
+        )
+
+        assert result.text == "Verified answer."
+        mock_llm.call.assert_not_called()
+        mock_functions["search_observations_fn"].assert_called_once()
+        mock_functions["recall_fn"].assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_mental_model_policy_can_skip_observations_but_force_recall(self, mock_llm, mock_functions):
+        """The policy can partially rewrite the forced path instead of only all-or-nothing skipping."""
+        mock_functions["search_mental_models_fn"].return_value = {
+            "query": "test query",
+            "count": 1,
+            "mental_models": [
+                {
+                    "id": "mm-1",
+                    "name": "Project status",
+                    "content": "The project status may need raw fact verification.",
+                    "relevance": 0.8,
+                    "is_stale": False,
+                }
+            ],
+        }
+        mock_llm.call.return_value = (
+            {
+                "mental_models_sufficient": False,
+                "needs_observations": False,
+                "needs_recall": True,
+                "reason": "The question asks for exact current status, so raw facts are needed.",
+                "follow_up_query": "current project status raw facts",
+            },
+            TokenUsage(input_tokens=20, output_tokens=10, total_tokens=30),
+        )
+        mock_llm.call_with_tools.side_effect = [
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="1",
+                        name="search_mental_models",
+                        arguments={"reason": "check curated knowledge", "query": "test query"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="2",
+                        name="recall",
+                        arguments={"reason": "verify raw facts", "query": "generic project query"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(
+                        id="3",
+                        name="done",
+                        arguments={"answer": "Raw facts verified it.", "memory_ids": ["mem-1"]},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            has_mental_models=True,
+            budget="mid",
+            max_iterations=5,
+            **mock_functions,
+        )
+
+        assert result.text == "Raw facts verified it."
+        mock_functions["search_observations_fn"].assert_not_called()
+        mock_functions["recall_fn"].assert_called_once()
+        assert mock_functions["recall_fn"].await_args.args[0] == "current project status raw facts"
+        second_tool_choice = mock_llm.call_with_tools.await_args_list[1].kwargs["tool_choice"]
+        assert second_tool_choice == {"type": "function", "function": {"name": "recall"}}
+        recall_trace = next(tc for tc in result.tool_trace if tc.tool == "recall")
+        assert recall_trace.input["query"] == "current project status raw facts"
+        assert recall_trace.input["original_query"] == "generic project query"
+        assert recall_trace.input["query_overridden_by"] == "retrieval_policy"
 
     @pytest.mark.asyncio
     async def test_handles_functions_prefix_in_done(self, mock_llm, mock_functions):
@@ -699,6 +1012,119 @@ class TestDirectiveLeakageOnEmptyBank:
             )
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.hs_llm_core
+@pytest.mark.flaky(reruns=2, reruns_delay=2)
+class TestMentalModelRetrievalPolicyRealLLM:
+    """Real-LLM coverage for the mental-model retrieval policy classifier."""
+
+    @pytest.fixture
+    def real_reflect_llm(self):
+        config = get_config()
+        provider = config.reflect_llm_provider or config.llm_provider
+        api_key = config.reflect_llm_api_key or config.llm_api_key or ""
+        model = config.reflect_llm_model or config.llm_model
+        base_url = config.reflect_llm_base_url or config.llm_base_url
+
+        if not provider or provider == "none":
+            pytest.skip("real reflect LLM provider is not configured")
+        if requires_api_key(provider) and not api_key:
+            pytest.skip("real reflect LLM API key is not configured")
+        if not base_url:
+            if provider.lower() == "groq":
+                base_url = "https://api.groq.com/openai/v1"
+            elif provider.lower() == "ollama":
+                base_url = "http://localhost:11434/v1"
+            elif provider.lower() == "ollama-cloud":
+                base_url = "https://ollama.com/v1"
+            else:
+                base_url = ""
+
+        return LLMConfig(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=config.llm_reasoning_effort,
+            extra_body=config.llm_extra_body,
+            default_headers=config.llm_default_headers,
+            litellmrouter_config=config.reflect_llm_litellmrouter_config or config.llm_litellmrouter_config,
+        )
+
+    @pytest.mark.asyncio
+    async def test_real_policy_accepts_direct_fresh_mental_model(self, real_reflect_llm):
+        result = await _decide_after_mental_models(
+            real_reflect_llm,
+            user_query="According to the mental model, what communication style does the team prefer for architecture decisions?",
+            context=None,
+            mental_model_output={
+                "query": "architecture decision communication style",
+                "count": 1,
+                "mental_models": [
+                    {
+                        "id": "mm-communication",
+                        "name": "Architecture Communication Preference",
+                        "content": (
+                            "For architecture decisions, the team prefers async written communication. "
+                            "They use concise ADRs and avoid deciding complex design questions in live meetings."
+                        ),
+                        "relevance": 0.94,
+                        "is_stale": False,
+                    }
+                ],
+            },
+            budget="low",
+            include_observations=True,
+            include_recall=True,
+            reflect_id="test-real-policy-sufficient",
+        )
+
+        decision = result.decision
+        assert result.input_tokens > 0
+        assert result.output_tokens > 0
+        assert decision.mental_models_sufficient is True, decision.model_dump()
+        assert decision.needs_observations is False
+        assert decision.needs_recall is False
+        assert decision.follow_up_query is None
+
+    @pytest.mark.asyncio
+    async def test_real_policy_requests_targeted_verification_for_current_evidence(self, real_reflect_llm):
+        result = await _decide_after_mental_models(
+            real_reflect_llm,
+            user_query="What is the current Project Aurora launch status, and which raw fact proves it?",
+            context=None,
+            mental_model_output={
+                "query": "Project Aurora launch status",
+                "count": 1,
+                "mental_models": [
+                    {
+                        "id": "mm-aurora",
+                        "name": "Project Aurora Launch Plan",
+                        "content": (
+                            "Project Aurora had a planned Friday launch in the last planning summary. "
+                            "This summary does not include current completion evidence or raw source facts."
+                        ),
+                        "relevance": 0.91,
+                        "is_stale": False,
+                    }
+                ],
+            },
+            budget="low",
+            include_observations=True,
+            include_recall=True,
+            reflect_id="test-real-policy-verify",
+        )
+
+        decision = result.decision
+        assert result.input_tokens > 0
+        assert result.output_tokens > 0
+        assert decision.mental_models_sufficient is False, decision.model_dump()
+        assert decision.needs_observations or decision.needs_recall
+        assert decision.follow_up_query
+        follow_up = decision.follow_up_query.lower()
+        assert "aurora" in follow_up
+        assert "status" in follow_up or "launch" in follow_up or "evidence" in follow_up
 
 
 @pytest.mark.hs_llm_core
