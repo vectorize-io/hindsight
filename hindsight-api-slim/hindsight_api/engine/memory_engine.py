@@ -2379,9 +2379,23 @@ class MemoryEngine(MemoryEngineInterface):
         self._dialect = create_sql_dialect(self._database_backend_type)
 
         stmt_timeout_s = self._db_statement_timeout
+        text_search_extension = get_config().text_search_extension
 
         # Per-connection initialization callback (PostgreSQL-specific for now)
         async def _init_connection(conn: asyncpg.Connection) -> None:
+            # VectorChord BM25 registers its objects in dedicated schemas
+            # (vchord_bm25 -> bm25_catalog, pg_tokenizer -> tokenizer_catalog).
+            # The BM25 distance operator `<&>` resolves its operand types via the
+            # session search_path, so a connection that lacks these schemas fails
+            # recall with `type "bm25vector" does not exist` (and retain with
+            # `function tokenize(...) does not exist`). The official vchord-suite
+            # image masks this by shipping them in search_path; an external
+            # Postgres does not, so we add them ourselves. Tenant tables are always
+            # accessed via fully-qualified names (fq_table), so this does not
+            # affect schema isolation. Only needed for the vchord backend.
+            if text_search_extension == "vchord":
+                await conn.execute('SET search_path TO "$user", public, bm25_catalog, tokenizer_catalog')
+
             # SET (not SET LOCAL) so per-backend ANN tuning persists for the
             # connection lifetime. Each backend exposes its own GUC: pgvector
             # uses hnsw.ef_search, vchord uses vchordrq.probes. The dispatcher
