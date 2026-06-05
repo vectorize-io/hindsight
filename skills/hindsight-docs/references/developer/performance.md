@@ -136,6 +136,12 @@ If your model exposes a reasoning/thinking budget, keep it low (the default) —
 export HINDSIGHT_API_LLM_REASONING_EFFORT=low
 ```
 
+Consolidation sends multiple facts to the LLM in a single call (default 8). On a small model with a limited context window, a large batch produces an oversized prompt and a long, error-prone response. Shrink the batch so each consolidation call stays small and reliable:
+
+```bash
+export HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE=2   # default 8; lower = smaller prompts, more calls
+```
+
 ### Built-in llama.cpp tuning
 
 The bundled `llamacpp` provider runs a llama.cpp server as a managed subprocess — no external server needed. Key knobs for small machines:
@@ -169,6 +175,12 @@ export HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT=2
 # export HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU=true
 ```
 
+The biggest single win on CPU is reranking fewer candidates. By default Hindsight reranks up to 300 candidates per recall — shrink that pool to cut cross-encoder work proportionally:
+
+```bash
+export HINDSIGHT_API_RERANKER_MAX_CANDIDATES=100   # default 300; RRF pre-filters the rest
+```
+
 For a pure-CPU box that struggles with the cross-encoder, `flashrank` is a lighter ONNX-based reranker:
 
 ```bash
@@ -176,14 +188,6 @@ export HINDSIGHT_API_RERANKER_PROVIDER=flashrank
 ```
 
 You can also reduce recall work directly: use a lower `budget` (`low`/`mid`) for everyday queries and reserve `high` for comprehensive reasoning. See [Recall Performance](#recall-performance) below.
-
-### Embeddings on CPU
-
-The default local embedding model (`BAAI/bge-small-en-v1.5`, 384-dim) is already small and CPU-friendly. On macOS, if MPS causes hangs or crashes, force CPU:
-
-```bash
-export HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU=true
-```
 
 ---
 
