@@ -191,7 +191,8 @@ class GeminiLLM(LLMInterface):
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
             skip_validation: Return raw JSON without Pydantic validation.
-            strict_schema: Use strict JSON schema enforcement (not supported by Gemini).
+            strict_schema: Ignored — Gemini always grammar-enforces structured output via its
+                native response_schema, so it is strict regardless of this flag.
             return_usage: If True, return tuple (result, TokenUsage).
             cached_prefix: Optional CachedContent resource name (from
                 ``GeminiCacheManager.get_or_create``). When set, the

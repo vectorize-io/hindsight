@@ -460,7 +460,9 @@ class OpenAICompatibleLLM(LLMInterface):
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
             skip_validation: Return raw JSON without Pydantic validation.
-            strict_schema: Use strict JSON schema enforcement (OpenAI only).
+            strict_schema: Use strict json_schema (grammar-enforced) response_format instead of
+                the soft json_object path. Supported by OpenAI and schema-capable self-hosted
+                backends (llama.cpp, vLLM). Server-wide via HINDSIGHT_API_LLM_STRICT_SCHEMA.
             return_usage: If True, return tuple (result, TokenUsage) instead of just result.
 
         Returns:

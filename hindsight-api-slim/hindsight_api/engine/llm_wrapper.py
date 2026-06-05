@@ -754,7 +754,10 @@ class LLMProvider:
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
             skip_validation: Return raw JSON without Pydantic validation.
-            strict_schema: Use strict JSON schema enforcement (OpenAI only). Guarantees all required fields.
+            strict_schema: Per-call override requesting grammar-enforced (json_schema strict)
+                structured output instead of the soft json_object path. The server-level
+                HINDSIGHT_API_LLM_STRICT_SCHEMA flag is OR-ed in here so it applies to every call;
+                providers without a strict mode ignore it.
             return_usage: If True, return tuple (result, TokenUsage) instead of just result.
 
         Returns:
@@ -773,6 +776,16 @@ class LLMProvider:
 
         structured = "+structured" if response_format is not None else ""
         set_stage(f"llm.{self.provider}.{scope}{structured}")
+
+        # Resolve strict-schema once, here, rather than in each provider: the
+        # per-call argument OR the server-level HINDSIGHT_API_LLM_STRICT_SCHEMA
+        # flag. Providers with a json_schema response_format (OpenAI-compatible,
+        # LiteLLM) then grammar-enforce structured output instead of the fragile
+        # soft json_object path; Gemini already enforces its native response_schema,
+        # and providers without a strict mode simply ignore the flag.
+        from ..config import get_config
+
+        strict_schema = strict_schema or get_config().llm_strict_schema
 
         # LLM call observability flows through the OTel GenAI recorder
         # (tracing.get_span_recorder().record_llm_call). Provider implementations
