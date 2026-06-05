@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from hindsight_superagent import configure, reset_config
-from hindsight_superagent._client import resolve_hindsight_client, resolve_safety_client
+from hindsight_superagent._client import resolve_hindsight_client
 from hindsight_superagent.errors import HindsightError
 
 
@@ -66,53 +66,3 @@ class TestResolveHindsightClient:
             assert call_kwargs["api_key"] == "explicit-key"
 
 
-class TestResolveSafetyClient:
-    def setup_method(self) -> None:
-        reset_config()
-
-    def teardown_method(self) -> None:
-        reset_config()
-
-    def test_returns_explicit_client(self) -> None:
-        client = MagicMock()
-        result = resolve_safety_client(client, None)
-        assert result is client
-
-    def test_creates_client_from_args(self) -> None:
-        with patch("hindsight_superagent._client.create_client") as mock_fn:
-            mock_fn.return_value = MagicMock()
-            resolve_safety_client(None, "sa-test-key")
-            mock_fn.assert_called_once_with(
-                api_key="sa-test-key", enable_fallback=False, fallback_timeout=5.0
-            )
-
-    def test_creates_client_from_global_config(self) -> None:
-        configure(hindsight_api_url="http://localhost:8888", superagent_api_key="sa-config-key")
-        with patch("hindsight_superagent._client.create_client") as mock_fn:
-            mock_fn.return_value = MagicMock()
-            resolve_safety_client(None, None)
-            mock_fn.assert_called_once_with(
-                api_key="sa-config-key", enable_fallback=False, fallback_timeout=5.0
-            )
-
-    def test_raises_without_key(self) -> None:
-        with pytest.raises(HindsightError, match="No Superagent API key"):
-            resolve_safety_client(None, None)
-
-    def test_explicit_key_overrides_config(self) -> None:
-        configure(hindsight_api_url="http://localhost:8888", superagent_api_key="config-key")
-        with patch("hindsight_superagent._client.create_client") as mock_fn:
-            mock_fn.return_value = MagicMock()
-            resolve_safety_client(None, "explicit-key")
-            mock_fn.assert_called_once_with(
-                api_key="explicit-key", enable_fallback=False, fallback_timeout=5.0
-            )
-
-    def test_fallback_enabled_via_config(self) -> None:
-        configure(superagent_api_key="key", enable_fallback=True, fallback_timeout=10.0)
-        with patch("hindsight_superagent._client.create_client") as mock_fn:
-            mock_fn.return_value = MagicMock()
-            resolve_safety_client(None, None)
-            mock_fn.assert_called_once_with(
-                api_key="key", enable_fallback=True, fallback_timeout=10.0
-            )

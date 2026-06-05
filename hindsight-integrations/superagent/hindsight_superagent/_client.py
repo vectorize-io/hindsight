@@ -84,18 +84,3 @@ def build_safety_client(snapshot: dict[str, Any]) -> SafetyClient:
     return create_client(**snapshot)
 
 
-def resolve_safety_client(
-    safety_client: SafetyClient | None,
-    superagent_api_key: str | None,
-    enable_fallback: bool | None = None,
-    fallback_timeout: float | None = None,
-) -> SafetyClient:
-    """Resolve a Superagent SafetyClient from explicit args or global config.
-
-    Kept for backwards compatibility — combines snapshot + build into one call.
-    New callers should use the two-step API to control when global config and
-    env-var resolution happens.
-    """
-    if safety_client is not None:
-        return safety_client
-    return build_safety_client(snapshot_safety_config(superagent_api_key, enable_fallback, fallback_timeout))
