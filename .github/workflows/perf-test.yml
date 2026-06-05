@@ -223,6 +223,10 @@ jobs:
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
       HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_ENABLE_OBSERVATIONS: "true"
+      # Exercise create+update semantic dedup (the benchmark's whole point). Safe here because
+      # the benchmark runs on embedded pg0 (Postgres); the merge path is Postgres-only, which is
+      # why the feature stays opt-in / disabled by default rather than enabled globally.
+      HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD: "0.97"
     steps:
     - uses: actions/checkout@v6
       with:
