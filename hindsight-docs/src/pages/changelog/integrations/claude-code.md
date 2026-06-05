@@ -8,6 +8,12 @@ import PageHero from '@site/src/components/PageHero';
 
 [← Claude Code integration](/sdks/integrations/claude-code)
 
+## [0.7.1](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.7.1)
+
+**Bug Fixes**
+
+- Enable knowledge tools by default and keep the MCP server running even when knowledge tools are disabled.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/nicoloboschi.png?size=40" alt="@nicoloboschi" width="18" height="18" style={{borderRadius: "50%"}} />@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/655435ea" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>655435ea</a>
+
 ## [0.7.0](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.7.0)
 
 **Improvements**

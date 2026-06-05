@@ -136,7 +136,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `openai` | `gpt-4o-mini` |
 | `anthropic` | `claude-haiku-4-5-20251001` |
 | `gemini` | `gemini-2.5-flash` |
-| `vertexai` | `gemini-2.0-flash-001` |
+| `vertexai` | `gemini-2.5-flash-lite` |
 | `groq` | `openai/gpt-oss-120b` |
 | `ollama` | `gemma3:12b` |
 | `ollama-cloud` | `gemma3:12b` |

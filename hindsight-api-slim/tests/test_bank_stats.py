@@ -5,6 +5,7 @@ Covers the new fields exposed by GET /v1/default/banks/{bank_id}/stats
 (operations_by_status) and the new endpoint
 GET /v1/default/banks/{bank_id}/stats/memories-timeseries.
 """
+
 import uuid
 from datetime import datetime
 
@@ -83,9 +84,7 @@ async def test_bank_stats_exposes_operations_by_status(api_client, test_bank_id)
         ("90d", 90, "day"),
     ],
 )
-async def test_memories_timeseries_periods(
-    api_client, test_bank_id, period, expected_count, expected_trunc
-):
+async def test_memories_timeseries_periods(api_client, test_bank_id, period, expected_count, expected_trunc):
     """Every period must return the full expected bucket count and trunc."""
     try:
         response = await api_client.post(
@@ -139,9 +138,7 @@ async def test_memories_timeseries_invalid_period_falls_back(api_client, test_ba
 
 
 @pytest.mark.asyncio
-async def test_memories_timeseries_empty_bank_returns_zero_filled_buckets(
-    api_client, test_bank_id
-):
+async def test_memories_timeseries_empty_bank_returns_zero_filled_buckets(api_client, test_bank_id):
     """A bank with no memories must still return the full zero-filled bucket set."""
     try:
         response = await api_client.get(
@@ -240,5 +237,148 @@ async def test_list_memories_filter_by_consolidation_state_rejects_unknown(api_c
             params={"consolidation_state": "bogus"},
         )
         assert response.status_code == 400
+    finally:
+        await api_client.delete(f"/v1/default/banks/{test_bank_id}")
+
+
+@pytest.mark.asyncio
+async def test_bank_stats_link_counts_have_no_join(api_client, test_bank_id):
+    """link_counts must be populated; the deprecated breakdown fields must be empty.
+
+    Confirms the simplified single-table aggregation still produces the totals
+    the UI reads (`links_by_link_type`) without the historical
+    memory_links⇒memory_units join that powered the 2D `links_breakdown` no
+    consumer reads.
+    """
+    try:
+        response = await api_client.post(
+            f"/v1/default/banks/{test_bank_id}/memories",
+            json={"items": [{"content": "Carol leads platform engineering.", "context": "team"}]},
+        )
+        assert response.status_code == 200
+
+        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/stats")
+        assert response.status_code == 200
+        stats = response.json()
+
+        # link totals must still come back so the UI overview cards render.
+        assert isinstance(stats["links_by_link_type"], dict)
+        assert stats["total_links"] >= 0
+
+        # Deprecated breakdown fields stay in the response shape but are empty.
+        assert stats["links_breakdown"] == {}
+        assert stats["links_by_fact_type"] == {}
+    finally:
+        await api_client.delete(f"/v1/default/banks/{test_bank_id}")
+
+
+@pytest.mark.asyncio
+async def test_get_bank_freshness_returns_only_consolidation_fields(memory, test_bank_id):
+    """get_bank_freshness must return just the freshness keys, no link aggregation."""
+    from hindsight_api.extensions import RequestContext
+
+    try:
+        await _insert_memory(memory, test_bank_id, "Headed for consolidation.", failed=False)
+        await _insert_memory(memory, test_bank_id, "Also pending.", failed=True)
+
+        freshness = await memory.get_bank_freshness(
+            test_bank_id,
+            request_context=RequestContext(internal=True),
+        )
+
+        assert set(freshness.keys()) == {
+            "last_consolidated_at",
+            "pending_consolidation",
+            "failed_consolidation",
+        }
+        assert freshness["pending_consolidation"] >= 2
+        assert freshness["failed_consolidation"] >= 1
+    finally:
+        await memory._bank_stats_cache.clear()
+        async with memory._pool.acquire() as conn:
+            await conn.execute("DELETE FROM memory_units WHERE bank_id = $1", test_bank_id)
+
+
+@pytest.mark.asyncio
+async def test_reflect_uses_freshness_not_bank_stats(memory, test_bank_id):
+    """reflect() must call the cheap freshness query, not get_bank_stats.
+
+    Counts calls to `_compute_bank_stats` (the heavy loader) during a reflect
+    invocation; it must stay at zero — reflect should route through
+    `get_bank_freshness` instead.
+    """
+    from hindsight_api.extensions import RequestContext
+
+    try:
+        # Seed a single memory so reflect has something to inspect.
+        await _insert_memory(memory, test_bank_id, "Reflect seed.", failed=False)
+
+        compute_calls = 0
+        original_compute = memory._compute_bank_stats
+
+        async def counting_compute(bank_id: str):
+            nonlocal compute_calls
+            compute_calls += 1
+            return await original_compute(bank_id)
+
+        memory._compute_bank_stats = counting_compute  # type: ignore[method-assign]
+        try:
+            await memory._bank_stats_cache.clear()
+            try:
+                await memory.reflect(
+                    test_bank_id,
+                    "What do you know about this bank?",
+                    request_context=RequestContext(internal=True),
+                )
+            except Exception:
+                # reflect may fail without a configured LLM in this test env;
+                # we only care that it did not invoke the heavy stats loader
+                # before failing.
+                pass
+            assert compute_calls == 0
+        finally:
+            memory._compute_bank_stats = original_compute  # type: ignore[method-assign]
+    finally:
+        await memory._bank_stats_cache.clear()
+        async with memory._pool.acquire() as conn:
+            await conn.execute("DELETE FROM memory_units WHERE bank_id = $1", test_bank_id)
+
+
+@pytest.mark.asyncio
+async def test_bank_stats_served_from_cache_on_repeat_call(api_client, memory, test_bank_id):
+    """A second /stats call within the TTL must not re-run the aggregations.
+
+    The cache layer wraps the DB-heavy `_compute_bank_stats` body; counting
+    its invocations is the cleanest way to prove the wiring works without
+    relying on timing.
+    """
+    try:
+        response = await api_client.post(
+            f"/v1/default/banks/{test_bank_id}/memories",
+            json={"items": [{"content": "Bob is a project manager.", "context": "team"}]},
+        )
+        assert response.status_code == 200
+
+        original = memory._compute_bank_stats
+        call_count = 0
+
+        async def counting_compute(bank_id: str):
+            nonlocal call_count
+            call_count += 1
+            return await original(bank_id)
+
+        # Make sure no stale entry exists from prior test ordering.
+        await memory._bank_stats_cache.clear()
+        memory._compute_bank_stats = counting_compute  # type: ignore[method-assign]
+        try:
+            first = await api_client.get(f"/v1/default/banks/{test_bank_id}/stats")
+            second = await api_client.get(f"/v1/default/banks/{test_bank_id}/stats")
+            assert first.status_code == 200
+            assert second.status_code == 200
+            assert first.json() == second.json()
+            assert call_count == 1
+        finally:
+            memory._compute_bank_stats = original  # type: ignore[method-assign]
+            await memory._bank_stats_cache.clear()
     finally:
         await api_client.delete(f"/v1/default/banks/{test_bank_id}")

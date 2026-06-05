@@ -177,6 +177,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_LLM_EXTRA_BODY` | JSON dict merged into `extra_body` for all OpenAI-compatible API calls. Useful for custom model servers (e.g., vLLM `chat_template_kwargs`). | `null` |
 | `HINDSIGHT_API_LLM_DEFAULT_HEADERS` | JSON dict passed as `default_headers` to provider SDK clients. Used by operators routing through proxies / request-tracing middleware (e.g. Cloudflare AI Gateway, Helicone, corporate proxies). Currently wired into the Anthropic provider; other providers can opt in. | `null` |
 | `HINDSIGHT_API_LLM_GEMINI_SAFETY_SETTINGS` | JSON-encoded list of `{category, threshold}` dicts for Gemini/VertexAI content safety filtering | `null` |
+| `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED` | Reuse the fixed system prefix via the provider's explicit prompt cache, billed at the cached-input rate (Gemini/Vertex `CachedContent`). The cached prefix is shared across all banks and soft-fails to an uncached call. Set to `false` to disable. See [Models](./models#provider-capabilities). | `true` |
 
 **Provider Examples**
 
@@ -1220,6 +1221,7 @@ Observations are deduplicated, evidence-grounded knowledge consolidated from mul
 | `HINDSIGHT_API_CONSOLIDATION_MAX_MEMORIES_PER_ROUND` | Maximum memories processed per consolidation round. When the limit is reached, the job yields its worker slot and re-queues itself so other banks get fair scheduling. Mental model refreshes only run on the final round. `0` = unlimited. Configurable per bank. | `100` |
 | `HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS` | Max tokens for recall when finding related observations during consolidation | `1024` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE` | Number of facts sent to the LLM in a single consolidation call. Higher values reduce LLM calls and improve throughput at the cost of larger prompts. Set to `1` to disable batching. Configurable per bank. | `8` |
+| `HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD` | Cosine similarity at/above which a newly-created or freshly-updated observation is reconciled against an existing near-identical one via a focused 1-by-1 LLM "merge or keep" call (the model reads both texts, so a number/negation/entity difference is respected). Catches near-duplicate observations that weaker consolidation models emit even when shown the twin, as well as duplicates that arise when an update rewrites an observation into a near-twin of another. `1.0` disables it. Postgres only. | `1.0` (disabled) |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_PARALLELISM` | Maximum number of tag groups consolidated concurrently within one consolidation op. Each group acquires per-scope locks before processing, so groups whose write scopes overlap (e.g. under `per_tag` / `all_combinations` / explicit-list `observation_scopes`) automatically serialise on the overlapping scopes — actual concurrency may be lower than this cap when scopes contend. Set to `1` for fully sequential behaviour. Higher values raise peak LLM QPS and connection-pool usage during consolidation proportionally — tune down if your LLM provider rate-limits tightly or your DB pool is small. Configurable per bank. | `4` |
 | `HINDSIGHT_API_CONSOLIDATION_RECALL_BUDGET` | Budget level for the recall pass inside consolidation (`low`, `mid`, `high`). Lower budgets fetch fewer candidate rows, reducing peak memory usage on large banks. | `low` |
 | `HINDSIGHT_API_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS` | Total token budget for source facts included with observations in the consolidation prompt. `-1` = unlimited. Configurable per bank. | `4096` |
@@ -1370,6 +1372,7 @@ Configuration for background task processing. By default, the API processes task
 | `HINDSIGHT_API_WORKER_FILE_CONVERT_RETAIN_MAX_SLOTS` | Reserved slots for file_convert_retain tasks within `WORKER_MAX_SLOTS` | `0` |
 | `HINDSIGHT_API_WORKER_REFRESH_MENTAL_MODEL_MAX_SLOTS` | Reserved slots for refresh_mental_model tasks within `WORKER_MAX_SLOTS` | `0` |
 | `HINDSIGHT_API_WORKER_GRAPH_MAINTENANCE_MAX_SLOTS` | Reserved slots for graph_maintenance tasks within `WORKER_MAX_SLOTS` | `0` |
+| `HINDSIGHT_API_WORKER_IMPORT_DOCUMENTS_MAX_SLOTS` | Reserved slots for import_documents tasks within `WORKER_MAX_SLOTS` | `0` |
 
 :::note Slot reservations and shared pool
 Per-operation `*_MAX_SLOTS` values are **reservations within** `WORKER_MAX_SLOTS`, not additive pools. The sum of all reservations must not exceed `WORKER_MAX_SLOTS` (startup raises `ValueError` otherwise). Remaining capacity (`WORKER_MAX_SLOTS - sum of reservations`) forms a **shared pool** usable by any operation type on a first-come basis; operation types whose reserved capacity is full can also overflow into the shared pool. Consolidation's bank-serialization constraint (no two consolidation tasks for the same bank concurrently) is preserved regardless of which pool claims the slot.
@@ -1396,6 +1399,15 @@ This ensures `shadow-*` banks are always consolidated before others, even if the
 |----------|-------------|---------|
 | `HINDSIGHT_API_SKIP_LLM_VERIFICATION` | Skip LLM connection check on startup | `false` |
 | `HINDSIGHT_API_LAZY_RERANKER` | Lazy-load reranker model (faster startup) | `false` |
+
+#### Bank stats cache
+
+`get_bank_stats` aggregates over `memory_links` (joining `memory_units`), which can be a multi-second scan on banks with millions of rows. Because the result is intentionally approximate — it backs a UI widget and the freshness hint inside `reflect` — it is cached per `(schema, bank)` for a few tens of seconds, which also coalesces concurrent misses onto a single in-flight query. Tune it for high-concurrency or large-bank deployments:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_BANK_STATS_CACHE_TTL_SECONDS` | Time-to-live (seconds) for the `get_bank_stats` result cache. `0` disables caching, so every call runs the query. | `60` |
+| `HINDSIGHT_API_BANK_STATS_CACHE_MAX_ENTRIES` | Maximum number of cached `(schema, bank)` entries before LRU eviction. Bounds memory in deployments with many banks. | `1024` |
 
 #### Native thread pools
 
@@ -1439,15 +1451,15 @@ Audit logging captures mutating operations (retain, recall, reflect, bank config
 
 LLM request tracing records every LLM call Hindsight makes — for retain, reflect, and consolidation — into an `llm_requests` table, queryable per bank via the `/llm-requests` endpoint. Each row captures the input messages, the model output, token usage (input / output / cached / total, taken from the provider response), finish reason, provider/model, timing, and caller metadata. **Failed calls are recorded too** (`status = "error"` with the error message), so the table is useful for debugging what the LLM is doing and why a call failed. Capture is wired into the OpenTelemetry GenAI recording path (the same `record_llm_call` hook used for OTLP span export), so it stays consistent with the provider-reported request details.
 
-**LLM request tracing is disabled by default.** With `HINDSIGHT_API_LLM_TRACE_ENABLED=false`, the `llm_requests` table stays empty and `/llm-requests` returns `{"total": 0, "items": []}` regardless of activity. Set the flag to `true` and restart the API to start capturing calls.
+**LLM request tracing is enabled by default**, with traced rows retained for 1 day. To disable it entirely set `HINDSIGHT_API_LLM_TRACE_ENABLED=false` and restart the API — the `llm_requests` table then stays empty and `/llm-requests` returns `{"total": 0, "items": []}` regardless of activity.
 
-> **Note:** Traced rows contain the full prompt and model output, which may include sensitive memory content and can be large. Keep tracing disabled in production unless you need it, and use `HINDSIGHT_API_LLM_TRACE_MAX_CHARS` to bound how much of each payload is stored.
+> **Note:** Traced rows contain the full prompt and model output, which may include sensitive memory content and can be large. Use `HINDSIGHT_API_LLM_TRACE_MAX_CHARS` to bound how much of each payload is stored, tighten `HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS`, or set `HINDSIGHT_API_LLM_TRACE_ENABLED=false` to turn tracing off in sensitive environments.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_TRACE_ENABLED` | Master switch for LLM request tracing. Must be `true` for any calls to be recorded. | `false` |
+| `HINDSIGHT_API_LLM_TRACE_ENABLED` | Master switch for LLM request tracing. Must be `true` for any calls to be recorded. | `true` |
 | `HINDSIGHT_API_LLM_TRACE_SCOPES` | Comma-separated allowlist of call scopes to trace (e.g. `retain_extract_facts,reflect`; empty = all scopes) | `""` |
-| `HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS` | Number of days to retain trace rows. `-1` = keep forever. | `-1` |
+| `HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS` | Number of days to retain trace rows. `-1` = keep forever. | `1` |
 | `HINDSIGHT_API_LLM_TRACE_MAX_CHARS` | Truncate stored input/output beyond this many characters (keeps the row, stores a truncated preview). | `50000` |
 
 ### Programmatic Configuration

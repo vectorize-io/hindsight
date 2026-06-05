@@ -67,6 +67,30 @@ class TestMentalModelsCRUD:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    async def test_create_mental_model_creates_missing_bank(self, memory: MemoryEngine, request_context):
+        """Creating the first mental model in a bank should lazily create the bank."""
+        bank_id = f"test-mental-model-missing-bank-{uuid.uuid4().hex[:8]}"
+
+        mental_model = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="First Model",
+            source_query="What should this bank remember?",
+            content="Initial content",
+            request_context=request_context,
+        )
+
+        assert mental_model["bank_id"] == bank_id
+
+        profile = await memory.get_bank_profile(
+            bank_id=bank_id,
+            request_context=request_context,
+            create_if_missing=False,
+        )
+        assert profile is not None
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
     async def test_list_mental_models(self, memory: MemoryEngine, request_context):
         """Test listing mental models with filters."""
         bank_id = f"test-mental-model-list-{uuid.uuid4().hex[:8]}"
@@ -240,6 +264,28 @@ class TestObservationsAPI:
 
 class TestMentalModelsAPI:
     """Test mental models API endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_create_mental_model_api_creates_missing_bank(self, api_client, test_bank_id):
+        """POST /mental-models should not FK-fail when it is the bank's first write."""
+        response = await api_client.post(
+            f"/v1/default/banks/{test_bank_id}/mental-models",
+            json={
+                "name": "First API Mental Model",
+                "source_query": "What is known in this new bank?",
+                "tags": ["api-test"],
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["mental_model_id"]
+
+        response = await api_client.get("/v1/default/banks")
+        assert response.status_code == 200
+        bank_ids = {bank["bank_id"] for bank in response.json()["banks"]}
+        assert test_bank_id in bank_ids
+
+        await api_client.delete(f"/v1/default/banks/{test_bank_id}")
 
     @pytest.mark.asyncio
     async def test_mental_models_api_crud(self, api_client, test_bank_id):

@@ -35,7 +35,14 @@ _config = load_config()
 _dbg = lambda *a: debug_log(_config, *a)
 
 if not _config.get("enableKnowledgeTools"):
-    _dbg("Knowledge tools disabled (enableKnowledgeTools=false), MCP server exiting")
+    # Knowledge tools are opt-out. When disabled we must NOT exit: the plugin
+    # registers this server unconditionally in .mcp.json, and Claude Code treats
+    # a process that exits at startup as a crashed server — retrying it and
+    # surfacing a `-32000` reconnect error on every prompt. Instead, stay alive
+    # as an empty MCP server that advertises no tools. The tool definitions
+    # below are skipped entirely because mcp.run() blocks here.
+    _dbg("Knowledge tools disabled (enableKnowledgeTools=false) — running empty MCP server")
+    mcp.run(transport="stdio")
     sys.exit(0)
 
 try:
