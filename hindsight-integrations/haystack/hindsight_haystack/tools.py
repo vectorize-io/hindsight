@@ -445,20 +445,27 @@ def _build_backend_kwargs(
     reflect_tags_match: Optional[str],
     mission: Optional[str],
 ) -> dict[str, Any]:
-    """Build serializable backend kwargs, extracting client connection info."""
+    """Build serializable backend kwargs, extracting client connection info.
+
+    The api_key is intentionally NOT serialized. Haystack pipelines get dumped
+    to YAML for inspection/checkpointing/sharing, and a serialized key would
+    leak into every dump. On deserialization, resolve_client() reads the key
+    from the HINDSIGHT_API_KEY env var (see _client.py:resolve_client), so a
+    redeployed pipeline picks the key back up from the host's environment
+    rather than from the YAML.
+    """
     serializable_url = hindsight_api_url
-    serializable_key = api_key
     if client is not None and serializable_url is None:
         serializable_url = getattr(client, "_base_url", None) or getattr(client, "base_url", None)
         if serializable_url is not None:
             serializable_url = str(serializable_url)
-    if client is not None and serializable_key is None:
-        serializable_key = getattr(client, "_api_key", None) or getattr(client, "api_key", None)
+    # api_key is deliberately omitted from the returned dict; resolve_client's
+    # env-var fallback supplies it on rebuild.
+    del api_key
 
     return {
         "bank_id": bank_id,
         "hindsight_api_url": serializable_url,
-        "api_key": serializable_key,
         "budget": budget,
         "max_tokens": max_tokens,
         "tags": tags,

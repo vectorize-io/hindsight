@@ -582,8 +582,15 @@ class TestHaystackCompatibility:
             assert result == "Memory stored successfully."
         reset_config()
 
-    def test_tools_round_trip_serialization_with_client(self):
-        """Round-trip works when tools were created with an explicit client."""
+    def test_tools_round_trip_serialization_with_client(self, monkeypatch):
+        """Round-trip works when tools were created with an explicit client.
+
+        The base_url is serialized (so a deserialized pipeline still points at
+        the right host). The api_key is NOT serialized — Haystack pipelines
+        get dumped to YAML and a serialized key leaks into every dump. The
+        from_dict path picks the key back up from the HINDSIGHT_API_KEY env
+        var via resolve_client.
+        """
         from hindsight_client import Hindsight
 
         reset_config()
@@ -598,21 +605,30 @@ class TestHaystackCompatibility:
             tools = create_hindsight_tools(bank_id="test", client=mock_instance)
             retain_tool = [t for t in tools if t.name == "retain_memory"][0]
 
-            # Verify serialized kwargs captured the client's connection info
+            # Verify serialized kwargs captured the URL but NOT the key
             d = retain_tool.to_dict()
             assert d["data"]["backend_kwargs"]["hindsight_api_url"] == "http://from-client:8888"
-            assert d["data"]["backend_kwargs"]["api_key"] == "client-key"
+            assert "api_key" not in d["data"]["backend_kwargs"], (
+                "api_key must not appear in serialized backend_kwargs — would leak to YAML pipeline dumps"
+            )
 
-            # Round-trip: from_dict should reconstruct using the serialized URL
+            # And it shouldn't be hiding under another name anywhere in the dump
+            import json
+            assert "client-key" not in json.dumps(d), (
+                "the literal api_key value leaked into the serialized dict"
+            )
+
+            # Round-trip: from_dict picks the URL from the serialized dict and the key
+            # from the env var (HINDSIGHT_API_KEY) via resolve_client.
+            monkeypatch.setenv("HINDSIGHT_API_KEY", "env-key")
             from hindsight_haystack.tools import _HindsightTool
 
             restored = _HindsightTool.from_dict(d)
             assert restored.name == "retain_memory"
-            # Verify Hindsight was called with the extracted URL
             mock_cls.assert_called()
             call_kwargs = mock_cls.call_args[1]
             assert call_kwargs["base_url"] == "http://from-client:8888"
-            assert call_kwargs["api_key"] == "client-key"
+            assert call_kwargs["api_key"] == "env-key"
 
     def test_serialization_preserves_explicit_url_over_client(self):
         """When both client= and hindsight_api_url= are passed, explicit URL wins."""
