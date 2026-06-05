@@ -195,23 +195,21 @@ async def test_consolidation_records_advancing_progress(memory: MemoryEngine, re
     assert result["status"] == "completed"
 
     stages = [c["stage"] for c in captured]
-    assert "scanning" in stages
-    assert "processing_batch" in stages
+    assert "consolidating" in stages
     assert "refreshing_mental_models" in stages
 
-    # The first snapshot reports the discovered total (some positive number of facts
-    # extracted from the 4 retained statements) with nothing processed yet.
-    scanning = next(c for c in captured if c["stage"] == "scanning")
-    assert scanning["total"] > 0
-    assert scanning["processed"] == 0
+    # The initial "consolidating" snapshot reports the discovered total (some positive
+    # number of facts extracted from the 4 retained statements) with nothing done yet.
+    consolidating = [c for c in captured if c["stage"] == "consolidating"]
+    initial = next(c for c in consolidating if c["processed"] == 0)
+    assert initial["total"] > 0
 
-    # processing_batch snapshots report real forward progress against the same total,
-    # advancing to cover every memory by the final round.
-    batches = [c for c in captured if c["stage"] == "processing_batch"]
-    assert batches, "expected at least one processing_batch snapshot"
-    assert all(b["total"] == scanning["total"] for b in batches)
-    assert max(b["processed"] for b in batches) == scanning["total"]
-    assert min(b["processed"] for b in batches) > 0
+    # Per-LLM-batch "consolidating" snapshots report real forward progress against the
+    # same total, advancing to cover every memory by the final batch — this is the
+    # heartbeat that previously sat frozen at the pre-batch count.
+    assert all(c["total"] == initial["total"] for c in consolidating)
+    assert max(c["processed"] for c in consolidating) == initial["total"]
+    assert any(c["processed"] > 0 for c in consolidating)
 
     # The durable row carries the last snapshot for an operator polling the API.
     row = await pool.fetchrow("SELECT result_metadata FROM async_operations WHERE operation_id = $1", uuid.UUID(op_id))

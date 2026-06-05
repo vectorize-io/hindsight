@@ -719,10 +719,12 @@ async def _run_consolidation_job(
     perf.log(f"[1] Found {total_count} pending memories to consolidate")
 
     # Initial durable progress snapshot so an operator polling the operation status
-    # API sees the job has started and how much work it found, before the first round
-    # of LLM batches completes (which can take minutes on a dense bank).
-    set_stage("consolidation.scanning")
-    await memory_engine._write_operation_progress(operation_id, stage="scanning", processed=0, total=total_count)
+    # API sees the job has started and how much work it found, before the first batch
+    # of LLM work completes (which can take minutes on a dense bank). Uses the same
+    # "consolidating" stage as the per-batch heartbeat so the operator sees a single
+    # phase advancing 0/N -> N/N rather than an opaque "scanning" -> "processing" hop.
+    set_stage("consolidation.consolidating")
+    await memory_engine._write_operation_progress(operation_id, stage="consolidating", processed=0, total=total_count)
 
     # Process each memory with individual commits for crash recovery
     stats: dict[str, int] = {
@@ -1024,7 +1026,7 @@ async def _run_consolidation_job(
             set_stage(f"consolidation.llm_batch.{batch_num_local}")
             await memory_engine._write_operation_progress(
                 operation_id,
-                stage="processing_batch",
+                stage="consolidating",
                 processed=cum_processed,
                 total=total_count,
                 detail={

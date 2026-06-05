@@ -234,8 +234,12 @@ export function BankOperationsView() {
   // Render the last-known progress snapshot for a running operation. The worker writes
   // it per LLM batch / sub-batch; a snapshot that keeps advancing (and a heartbeat that
   // stays fresh) means a healthy long-running job, a frozen one means it may be stuck.
-  // Returns null when no snapshot was recorded yet.
-  const renderProgress = (progress: OperationProgress | null | undefined) => {
+  // `compact` keeps it to a single inline row for the table; the full form (with stage
+  // label, counters and a labelled heartbeat) is used in the details dialog.
+  const renderProgress = (
+    progress: OperationProgress | null | undefined,
+    opts?: { compact?: boolean }
+  ) => {
     if (!progress) return null;
     const stageLabel = progress.stage.replace(/[._]/g, " ");
     const hasCounts =
@@ -245,6 +249,31 @@ export function BankOperationsView() {
     const pct = hasCounts
       ? Math.min(100, Math.round((progress.processed! / progress.total!) * 100))
       : null;
+    const heartbeat = progress.at ? formatHeartbeat(progress.at) : null;
+
+    if (opts?.compact) {
+      // Single line so the table row stays short: bar + count + heartbeat age. The stage
+      // name and absolute timestamp move to the tooltip (and the details dialog).
+      return (
+        <div
+          className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground whitespace-nowrap"
+          title={`${stageLabel}${progress.at ? ` — ${new Date(progress.at).toLocaleString()}` : ""}`}
+        >
+          {pct !== null && (
+            <span className="h-1 w-14 shrink-0 rounded-full bg-muted overflow-hidden">
+              <span className="block h-full rounded-full bg-blue-500/70" style={{ width: `${pct}%` }} />
+            </span>
+          )}
+          {hasCounts && (
+            <span className="font-mono">
+              {progress.processed}/{progress.total}
+            </span>
+          )}
+          {heartbeat && <span className="text-muted-foreground/70">· {heartbeat}</span>}
+        </div>
+      );
+    }
+
     return (
       <div className="mt-1 space-y-1">
         <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -383,20 +412,22 @@ export function BankOperationsView() {
     }
   };
 
+  // Poll faster while work is in flight so the progress bar / heartbeat feel live, and
+  // back off to a calmer cadence when everything is terminal.
+  const hasProcessing = operations.some((op) => op.status === "processing");
   useEffect(() => {
     if (currentBank) {
       loadOperations(statusFilter, offset, taskTypeFilter);
       const interval = setInterval(
         () => loadOperations(statusFilter, offset, taskTypeFilter),
-        5000
+        hasProcessing ? 2000 : 5000
       );
       return () => clearInterval(interval);
     }
-  }, [currentBank, statusFilter, offset, taskTypeFilter]);
+  }, [currentBank, statusFilter, offset, taskTypeFilter, hasProcessing, loadOperations]);
 
   // Only tick the heartbeat clock while something is actually running — no point
   // re-rendering every second when every operation is in a terminal state.
-  const hasProcessing = operations.some((op) => op.status === "processing");
   useEffect(() => {
     if (!hasProcessing) return;
     const tick = setInterval(() => setNowMs(Date.now()), 1000);
@@ -497,7 +528,7 @@ export function BankOperationsView() {
                       </TableCell>
                       <TableCell>
                         {renderStatusBadge(op.status, op.error_message)}
-                        {op.status === "processing" && renderProgress(op.progress)}
+                        {op.status === "processing" && renderProgress(op.progress, { compact: true })}
                       </TableCell>
                       <TableCell>
                         {op.status === "pending" && (
