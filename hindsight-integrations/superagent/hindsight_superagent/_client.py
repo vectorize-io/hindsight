@@ -82,5 +82,3 @@ def build_safety_client(snapshot: dict[str, Any]) -> SafetyClient:
             "or call configure(superagent_api_key=...) first. Get a key at https://www.superagent.sh"
         )
     return create_client(**snapshot)
-
-

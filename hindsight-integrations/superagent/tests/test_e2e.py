@@ -147,9 +147,7 @@ class TestE2ERetain:
     async def test_retain_with_pii_redacts(self) -> None:
         """Retain content with PII — redact should strip sensitive data before storage."""
         safe = _make_client()
-        result = await safe.retain(
-            "Alice Johnson (alice.johnson@acme.com) prefers Python for backend work."
-        )
+        result = await safe.retain("Alice Johnson (alice.johnson@acme.com) prefers Python for backend work.")
         assert result == "Memory stored successfully."
 
 
@@ -165,8 +163,7 @@ class TestE2ERecall:
         # The retained content mentioned PostgreSQL and us-east-1; at least one
         # of those tokens should surface in recall results.
         assert "postgresql" in joined or "us-east-1" in joined, (
-            f"Recall surfaced results but none referenced the stored content: "
-            f"{[r.text for r in results.results]}"
+            f"Recall surfaced results but none referenced the stored content: {[r.text for r in results.results]}"
         )
         for r in results.results:
             print(f"  - {r.text}")
@@ -264,9 +261,7 @@ class TestE2ERedact:
         )
         results = await _recall_until_nonempty(safe, "Project Phoenix client onboarding")
         joined = " | ".join(r.text for r in results.results).lower()
-        assert "bob.smith@secretcorp.com" not in joined, (
-            f"PII leak: email found in recalled memory: {joined}"
-        )
+        assert "bob.smith@secretcorp.com" not in joined, f"PII leak: email found in recalled memory: {joined}"
         # The project anchor MUST still be retrievable — otherwise we can't
         # claim we read back the memory at all (vs. reading nothing).
         assert "phoenix" in joined or "onboarding" in joined, (
@@ -335,7 +330,7 @@ class TestSuperagentRedactOnly:
             model="openai/gpt-4.1-nano",
         )
         assert "alice@example.com" not in result.redacted.lower()
-        print(f"Original: Contact alice at alice@example.com for details.")
+        print("Original: Contact alice at alice@example.com for details.")
         print(f"Redacted: {result.redacted}")
         print(f"Findings: {result.findings}")
 
@@ -384,8 +379,7 @@ class TestE2ERedactOnReflect:
         # fact about it; the credit card sits in the same memory but is
         # secondary to the project context for retrieval purposes.
         await seed.retain(
-            "Project Tango payment notes for Q3 2026. "
-            "Dave's credit card is 4111-1111-1111-1111, expires 12/30."
+            "Project Tango payment notes for Q3 2026. Dave's credit card is 4111-1111-1111-1111, expires 12/30."
         )
         # Confirm the memory is queryable before reflecting.
         await _recall_until_nonempty(seed, "Project Tango payment notes")
@@ -395,18 +389,13 @@ class TestE2ERedactOnReflect:
             enable_guard_on_reflect=False,
             enable_redact_on_reflect=True,  # the path under test
         )
-        response = await reader.reflect(
-            "Summarise the Project Tango payment notes including any card details"
-        )
+        response = await reader.reflect("Summarise the Project Tango payment notes including any card details")
         assert response.text, "Reflect should return text"
         # The card number MUST be scrubbed.  We also check for the bare 16-digit
         # pattern in case the LLM reformats with/without dashes.
         no_dashes = "4111111111111111"
-        assert "4111-1111-1111-1111" not in response.text and no_dashes not in response.text.replace(
-            "-", ""
-        ), (
-            f"Credit card leaked through reflect (redact-on-reflect failed): "
-            f"{response.text[:300]}"
+        assert "4111-1111-1111-1111" not in response.text and no_dashes not in response.text.replace("-", ""), (
+            f"Credit card leaked through reflect (redact-on-reflect failed): {response.text[:300]}"
         )
         print(f"Redacted reflect: {response.text[:300]}")
 
@@ -463,9 +452,7 @@ class TestE2EConfigPrecedence:
             await safe.retain("Reach Eve at eve@megacorp.com tomorrow.")
             results = await _recall_until_nonempty(safe, "How to reach Eve")
             joined = " | ".join(r.text for r in results.results).lower()
-            assert "eve@megacorp.com" not in joined, (
-                f"Per-instance redact override didn't fire; PII leaked: {joined}"
-            )
+            assert "eve@megacorp.com" not in joined, f"Per-instance redact override didn't fire; PII leaked: {joined}"
             print(f"Per-instance override scrubbed PII: {results.results[0].text}")
         finally:
             reset_config()

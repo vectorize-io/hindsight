@@ -510,9 +510,7 @@ class TestRedactOnRecall:
     @pytest.mark.asyncio
     async def test_redact_applied_to_each_result_when_enabled(self) -> None:
         hindsight = _mock_hindsight_client()
-        recall_response = _mock_recall_response(
-            ["John's email is john@acme.com", "Phone: 555-1234"]
-        )
+        recall_response = _mock_recall_response(["John's email is john@acme.com", "Phone: 555-1234"])
         hindsight.arecall = AsyncMock(return_value=recall_response)
         safety = _mock_safety_client(redacted_text="[REDACTED]")
         safe = SafeHindsight(
@@ -645,9 +643,7 @@ class TestSafetyConfigSnapshot:
     def test_constructor_arg_overrides_global_config_snapshot(self) -> None:
         configure(superagent_api_key="from-global")
         hindsight = _mock_hindsight_client()
-        safe = SafeHindsight(
-            bank_id="test", hindsight_client=hindsight, superagent_api_key="from-arg"
-        )
+        safe = SafeHindsight(bank_id="test", hindsight_client=hindsight, superagent_api_key="from-arg")
         assert safe._safety_snapshot["api_key"] == "from-arg"
 
 
@@ -1260,9 +1256,9 @@ class TestOnGuardErrorContainment:
             result = await safe.retain("hello")
         assert result == "Memory stored successfully."
         # The warning surfaced the callback failure for the operator.
-        assert any(
-            "on_guard callback raised" in record.message for record in caplog.records
-        ), f"Expected warning log; got: {[r.message for r in caplog.records]}"
+        assert any("on_guard callback raised" in record.message for record in caplog.records), (
+            f"Expected warning log; got: {[r.message for r in caplog.records]}"
+        )
 
     @pytest.mark.asyncio
     async def test_async_callback_exception_does_not_fail_recall(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -1287,6 +1283,7 @@ class TestOnGuardErrorContainment:
     @pytest.mark.asyncio
     async def test_callback_exception_does_not_suppress_block(self) -> None:
         """If the callback raises AND Guard says block, the block still raises."""
+
         def boom(scope: str, result) -> None:
             raise RuntimeError("ignored")
 

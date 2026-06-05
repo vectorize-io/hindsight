@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from hindsight_superagent import configure, reset_config
 from hindsight_superagent._client import resolve_hindsight_client
-from hindsight_superagent.errors import HindsightError
 
 
 class TestResolveHindsightClient:
@@ -64,5 +62,3 @@ class TestResolveHindsightClient:
             call_kwargs = mock_cls.call_args.kwargs
             assert call_kwargs["base_url"] == "http://explicit:9999"
             assert call_kwargs["api_key"] == "explicit-key"
-
-
