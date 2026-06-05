@@ -424,6 +424,7 @@ async def retain_batch(
     db_semaphore: "asyncio.Semaphore | None" = None,
     document_body_override: str | None = None,
     chunk_index_offset: int = 0,
+    progress_callback: "Callable[..., Awaitable[None]] | None" = None,
 ) -> tuple[list[list[str]], TokenUsage, int | None]:
     """
     Process a batch of content through the retain pipeline.
@@ -714,6 +715,7 @@ async def retain_batch(
         db_semaphore=db_semaphore,
         document_body_override=document_body_override,
         chunk_index_offset=chunk_index_offset,
+        progress_callback=progress_callback,
     )
 
 
@@ -853,6 +855,7 @@ async def _streaming_retain_batch(
     db_semaphore: "asyncio.Semaphore | None" = None,
     document_body_override: str | None = None,
     chunk_index_offset: int = 0,
+    progress_callback: "Callable[..., Awaitable[None]] | None" = None,
 ) -> tuple[list[list[str]], TokenUsage]:
     """
     Process a large document in streaming mini-batches to bound memory usage.
@@ -1031,6 +1034,25 @@ async def _streaming_retain_batch(
     async def _db_consumer() -> None:
         batch: list[tuple] = []
         consumer_batch_idx = 0
+        chunks_committed = 0
+
+        # Best-effort durable progress: how many chunks of this document have been
+        # extracted+committed so far. Written per consumer batch so an operator polling
+        # the retain operation sees "storing 200/1200 chunks" advancing instead of a
+        # single opaque sub-batch tick. Never lets a heartbeat failure break retain.
+        async def _emit_chunk_progress() -> None:
+            if not (progress_callback and operation_id):
+                return
+            try:
+                await progress_callback(
+                    operation_id,
+                    stage="storing",
+                    processed=chunks_committed,
+                    total=total_chunks,
+                    detail={"facts_committed": len(all_unit_ids)},
+                )
+            except Exception:
+                logger.debug("retain chunk-progress write failed", exc_info=True)
 
         while True:
             item = await chunk_queue.get()
@@ -1042,6 +1064,8 @@ async def _streaming_retain_batch(
                         consumer_batch_idx,
                         is_last=True,
                     )
+                    chunks_committed += len(batch)
+                    await _emit_chunk_progress()
                 break
 
             batch.append(item)
@@ -1061,6 +1085,8 @@ async def _streaming_retain_batch(
                     is_last=False,
                 )
                 consumer_batch_idx += 1
+                chunks_committed += len(batch)
+                await _emit_chunk_progress()
                 batch = []
 
     async def _process_db_batch(

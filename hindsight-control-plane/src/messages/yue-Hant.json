@@ -427,7 +427,7 @@
       "retain": "保留",
       "consolidation": "整合",
       "refreshMentalModel": "心智模型重新整理",
-      "fileConvertRetain": "檔案轉換並 Retain",
+      "fileConvertRetain": "轉換檔案",
       "webhookDelivery": "Webhook 投遞",
       "graphMaintenance": "圖譜維護"
     },
@@ -437,7 +437,8 @@
       "created": "建立時間",
       "status": "狀態",
       "index": "索引",
-      "items": "項目"
+      "items": "項目",
+      "actions": "操作"
     },
     "action": {
       "cancel": "取消",
@@ -453,12 +454,21 @@
       "type": "類型",
       "created": "建立時間",
       "updated": "更新時間",
-      "completed": "完成時間"
+      "completed": "完成時間",
+      "progress": "進度",
+      "lastHeartbeat": "最後心跳"
     },
     "metadata": "元資料",
     "error": "錯誤",
     "rawPayloadParentHelp": "呢個係父級操作，原始載荷會儲存在每個子批次。開啟子操作就可以查看佢嘅載荷。",
-    "rawPayloadEmpty": "此操作未有儲存原始載荷。"
+    "rawPayloadEmpty": "此操作未有儲存原始載荷。",
+    "heartbeat": {
+      "justNow": "啱啱",
+      "secondsAgo": "{secs}秒前",
+      "minutesAgo": "{mins}分鐘前",
+      "hoursAgo": "{hours}小時前"
+    },
+    "progressEstimateNote": "總數係整合開始時嘅估算值，執行期間如果有新記憶加入可能會增加，屬正常現象。"
   },
   "dataView": {
     "loadingMemories": "載入中記憶...",
@@ -990,7 +1000,7 @@
     "actionDeleteMentalModel": "刪除心智模型",
     "actionCreateDirective": "建立指令",
     "actionDeleteDirective": "刪除指令",
-    "actionFileConvertRetain": "檔案轉換並 Retain",
+    "actionFileConvertRetain": "轉換檔案",
     "actionWebhookDelivery": "Webhook 投遞",
     "transportAll": "所有傳輸",
     "transportHttp": "HTTP",

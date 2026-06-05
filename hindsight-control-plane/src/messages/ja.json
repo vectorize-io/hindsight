@@ -427,7 +427,7 @@
       "retain": "Retain",
       "consolidation": "統合",
       "refreshMentalModel": "メンタルモデル更新",
-      "fileConvertRetain": "ファイル変換と Retain",
+      "fileConvertRetain": "ファイル変換",
       "webhookDelivery": "Webhook 配信",
       "graphMaintenance": "グラフメンテナンス"
     },
@@ -437,7 +437,8 @@
       "created": "作成日時",
       "status": "ステータス",
       "index": "インデックス",
-      "items": "項目"
+      "items": "項目",
+      "actions": "操作"
     },
     "action": {
       "cancel": "キャンセル",
@@ -453,12 +454,21 @@
       "type": "タイプ",
       "created": "作成日時",
       "updated": "更新日時",
-      "completed": "完了日時"
+      "completed": "完了日時",
+      "progress": "進捗",
+      "lastHeartbeat": "最終更新"
     },
     "metadata": "メタデータ",
     "error": "エラー",
     "rawPayloadParentHelp": "これは親操作です。生のペイロードは各サブバッチに保存されています。子操作を開いてペイロードを確認してください。",
-    "rawPayloadEmpty": "この操作に保存された生のペイロードはありません。"
+    "rawPayloadEmpty": "この操作に保存された生のペイロードはありません。",
+    "heartbeat": {
+      "justNow": "たった今",
+      "secondsAgo": "{secs}秒前",
+      "minutesAgo": "{mins}分前",
+      "hoursAgo": "{hours}時間前"
+    },
+    "progressEstimateNote": "合計は統合の開始時点での推定値で、実行中に新しいメモリーが追加されると増えることがあります（正常な動作です）。"
   },
   "dataView": {
     "loadingMemories": "メモリを読み込み中...",
@@ -990,7 +1000,7 @@
     "actionDeleteMentalModel": "メンタルモデルを削除",
     "actionCreateDirective": "ディレクティブを作成",
     "actionDeleteDirective": "ディレクティブを削除",
-    "actionFileConvertRetain": "ファイル変換とRetain",
+    "actionFileConvertRetain": "ファイル変換",
     "actionWebhookDelivery": "Webhook配信",
     "transportAll": "すべてのトランスポート",
     "transportHttp": "HTTP",
