@@ -1,21 +1,21 @@
 ---
-title: "Mental Models: The Self-Refreshing Memory Cache Your Agent Should Have Yesterday"
+title: "How Hindsight Learns: A Deep Dive Into Mental Models"
 authors: [benfrank241]
 slug: "2026/06/05/mental-models-deep-dive"
 date: 2026-06-05T16:00
 tags: [hindsight, memory, mental-models, agents, deep-dive, tutorial]
-description: "Hindsight's mental models are persisted, self-refreshing reflect summaries. Two refresh modes, automatic consolidation hooks, and a strict tag-matching policy you need to know. A walkthrough from the schema up."
+description: "Mental models are the top tier of Hindsight's learning hierarchy — persistent, self-refreshing understandings of the topics your agent asks about every session. A walkthrough from the schema up."
 image: /img/blog/mental-models-deep-dive.png
 hide_table_of_contents: true
 ---
 
-![Mental Models in Hindsight](/img/blog/mental-models-deep-dive.png)
+![How Hindsight Learns — Mental Models](/img/blog/mental-models-deep-dive.png)
 
-Reflect is Hindsight's "ask a question, get a synthesized answer" call. It's the right primitive for ad-hoc questions, but it's expensive — every call runs an LLM over fresh recall. If you've got a question your agent asks *every session* — *"what are this user's preferences?"*, *"what are this project's conventions?"* — paying for synthesis every turn is wasteful.
+Hindsight learns in three stages. **Raw facts** are what was said — individual memories extracted from the agent's conversations. **Observations** are what Hindsight has noticed across many facts — auto-consolidated patterns and conclusions. **Mental models** are what Hindsight has come to *understand* — stable, named documents that evolve every time the bank gets new evidence. They sit at the top of the retrieval hierarchy because that's where the learning lives.
 
-**Mental models** are Hindsight's pre-computed escape valve. They're persisted, named, self-refreshing reflect summaries. You define one with a `source_query` and Hindsight runs it once, stores the result, and keeps it fresh as new memories land. The next time your agent needs that answer, it's instant.
+For the questions your agent asks every session — *"what are this user's preferences?"*, *"what are this project's conventions?"* — re-deriving the answer from raw facts every turn is wasteful. Worse, it's brittle: synthesis output drifts session-to-session because every reflect call starts from scratch. Mental models replace that with a persistent representation that Hindsight has been refining all along.
 
-This post is the technical reference for how they actually work — schema, refresh logic, the tag-matching policy that quietly bites people, and the two refresh modes (`full` and `delta`) you have to choose between.
+This post is the technical reference for how the top tier actually works — schema, refresh logic, the tag-matching policy that quietly bites people, and the two refresh modes (`full` and `delta`) you have to choose between.
 
 <!-- truncate -->
 
@@ -76,7 +76,7 @@ The composite `(id, bank_id)` primary key means each bank's mental models live i
 
 ## The Two Refresh Modes
 
-This is the single most important choice when you create a mental model.
+This is the single most important choice when you create a mental model. The two modes are really two postures for the same job: incorporating new evidence into what the model already understands. `full` re-derives everything from current evidence. `delta` keeps the prior understanding and folds new evidence in. Pick the one that matches how your topic actually evolves.
 
 The `trigger.mode` field is `Literal["full", "delta"]`. The full trigger schema:
 
@@ -360,9 +360,9 @@ Five gotchas that come up in practice:
 
 ## The Whole Idea
 
-Mental models are reflect, frozen. You define the question once, Hindsight runs it, the answer is cached. The consolidator keeps it fresh automatically — touching only the bits that need to change in delta mode, regenerating fully when you ask. The agent reads from the cache at the top of the reflect hierarchy and only drops down to observations or raw recall when no cached answer fits.
+Mental models are how Hindsight *learns* the things your agent asks about repeatedly. Raw facts capture what was said. Observations capture what Hindsight noticed across them. Mental models capture what Hindsight has come to understand — and unlike the first two tiers, they're stable, named, and refined incrementally as new evidence lands.
 
-For any question your agent asks every session, that's the right shape. Stop paying for synthesis on the questions that don't change between turns.
+The performance win — instant retrieval, no per-turn synthesis — is the side-effect. The real win is that your agent stops re-deriving its understanding of a stable topic every session and starts working from a representation Hindsight has been refining all along.
 
 ---
 
