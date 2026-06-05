@@ -48,11 +48,18 @@ class LiteLLMLLM(LLMInterface):
         model: str,
         reasoning_effort: str = "low",
         timeout: float = 300.0,
+        extra_body: dict[str, Any] | None = None,
         **kwargs: Any,
     ):
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
         self.timeout = timeout
         self._litellm: Any = None
+        # User-configured extra params merged as top-level kwargs into every
+        # completion call so LiteLLM normalizes them per-provider (e.g. maps
+        # temperature/top_p/max_tokens across OpenAI, Anthropic, Bedrock, …) and
+        # drops any the target model rejects (litellm.drop_params=True below).
+        # Sourced from llm_extra_body (env: HINDSIGHT_API_LLM_EXTRA_BODY).
+        self._extra_body: dict[str, Any] = extra_body or {}
 
         try:
             import litellm
@@ -106,6 +113,11 @@ class LiteLLMLLM(LLMInterface):
             kwargs["max_completion_tokens"] = self._cap_max_completion_tokens(max_completion_tokens)
         if temperature is not None:
             kwargs["temperature"] = temperature
+
+        # User-configured extras fill in only where the caller didn't set a value,
+        # so explicit per-call params (model, messages, temperature, …) always win.
+        for key, value in self._extra_body.items():
+            kwargs.setdefault(key, value)
 
         return kwargs
 

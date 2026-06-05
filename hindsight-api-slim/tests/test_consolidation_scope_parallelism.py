@@ -109,7 +109,9 @@ def _mock_llm_one_obs_per_fact():
     def callback(messages, scope):
         if scope != "consolidation":
             return _ConsolidationBatchResponse()
-        prompt = messages[0]["content"] if messages else ""
+        # Facts live in the user message; the system message (stable, cached) carries
+        # example UUIDs in its OUTPUT samples — read user only.
+        prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
         fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
         creates = [
             _CreateAction(text=f"Observation about fact {fid[:8]}", source_fact_ids=[fid])

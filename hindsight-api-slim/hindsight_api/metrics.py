@@ -184,6 +184,8 @@ class MetricsCollectorBase:
         input_tokens: int = 0,
         output_tokens: int = 0,
         success: bool = True,
+        cached_input_tokens: int = 0,
+        thoughts_tokens: int = 0,
     ):
         """
         Record metrics for an LLM call.
@@ -193,9 +195,11 @@ class MetricsCollectorBase:
             model: Model name
             scope: Scope identifier (e.g., "memory", "reflect", "consolidation")
             duration: Call duration in seconds
-            input_tokens: Number of input/prompt tokens
-            output_tokens: Number of output/completion tokens
+            input_tokens: Number of input/prompt tokens (total)
+            output_tokens: Number of output/completion tokens visible in candidates
             success: Whether the call was successful
+            cached_input_tokens: Subset of input_tokens billed at the cached rate
+            thoughts_tokens: Reasoning tokens (billed as output, hidden from candidates)
         """
         raise NotImplementedError
 
@@ -233,6 +237,8 @@ class NoOpMetricsCollector(MetricsCollectorBase):
         input_tokens: int = 0,
         output_tokens: int = 0,
         success: bool = True,
+        cached_input_tokens: int = 0,
+        thoughts_tokens: int = 0,
     ):
         """No-op LLM call recording."""
         pass
@@ -285,6 +291,27 @@ class MetricsCollector(MetricsCollectorBase):
         # LLM call counter (success/failure)
         self.llm_calls_total = self.meter.create_counter(
             name="hindsight.llm.calls.total", description="Total number of LLM API calls", unit="calls"
+        )
+
+        # Cached input tokens (subset of input_tokens billed at the cached rate).
+        # Useful for tracking prompt-cache hit-rate independently of total
+        # input volume. provider.scope.model labels matche llm_tokens_input.
+        self.llm_tokens_cached_input = self.meter.create_counter(
+            name="hindsight.llm.tokens.cached_input",
+            description="Number of cached input tokens (billed at cached rate) for LLM calls",
+            unit="tokens",
+        )
+
+        # Thinking / reasoning tokens (Gemini 2.5+ family). Billed at the
+        # output rate by the provider but invisible to candidates_token_count.
+        # Surfacing them as a distinct counter is required for honest cost
+        # attribution: a workload that "looks cheap" by output volume can be
+        # silently expensive if the model is doing long reasoning chains.
+        self.llm_tokens_thoughts = self.meter.create_counter(
+            name="hindsight.llm.tokens.thoughts",
+            description="Number of reasoning/thinking tokens emitted by the model "
+            "(billed as output but not surfaced in candidates)",
+            unit="tokens",
         )
 
         # HTTP request metrics
@@ -370,6 +397,8 @@ class MetricsCollector(MetricsCollectorBase):
         input_tokens: int = 0,
         output_tokens: int = 0,
         success: bool = True,
+        cached_input_tokens: int = 0,
+        thoughts_tokens: int = 0,
     ):
         """
         Record metrics for an LLM call.
@@ -379,9 +408,15 @@ class MetricsCollector(MetricsCollectorBase):
             model: Model name
             scope: Scope identifier (e.g., "memory", "reflect", "consolidation")
             duration: Call duration in seconds
-            input_tokens: Number of input/prompt tokens
-            output_tokens: Number of output/completion tokens
+            input_tokens: Number of input/prompt tokens (total, including cached portion)
+            output_tokens: Number of output/completion tokens visible in candidates
             success: Whether the call was successful
+            cached_input_tokens: Subset of input_tokens billed at the cached
+                rate (Gemini context caching). Defaults to 0 when caching is
+                disabled or the provider doesn't surface this field.
+            thoughts_tokens: Reasoning/thinking tokens (Gemini 2.5+ family).
+                Billed at the output rate but not counted in candidates.
+                Defaults to 0 for providers that don't emit thoughts.
         """
         # Base attributes for all metrics
         base_attributes = {
@@ -412,6 +447,18 @@ class MetricsCollector(MetricsCollectorBase):
                 "token_bucket": get_token_bucket(output_tokens),
             }
             self.llm_tokens_output.add(output_tokens, output_attributes)
+
+        if cached_input_tokens > 0:
+            self.llm_tokens_cached_input.add(
+                cached_input_tokens,
+                {**base_attributes, "token_bucket": get_token_bucket(cached_input_tokens)},
+            )
+
+        if thoughts_tokens > 0:
+            self.llm_tokens_thoughts.add(
+                thoughts_tokens,
+                {**base_attributes, "token_bucket": get_token_bucket(thoughts_tokens)},
+            )
 
     @contextmanager
     def record_http_request(self, method: str, endpoint: str, status_code_getter: Callable[[], int]):

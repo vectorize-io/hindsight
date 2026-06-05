@@ -1,5 +1,6 @@
 import {LLMProvidersGrid} from '@site/src/components/SupportedGrids';
 import {LLMProvidersTable} from '@site/src/components/LLMProvidersTable';
+import {LLMProviderCapabilities} from '@site/src/components/LLMProviderCapabilities';
 
 # Models
 
@@ -57,6 +58,19 @@ Set `HINDSIGHT_API_LLM_PROVIDER=litellmrouter` to run the default LLM through [L
 See [Configuration](./configuration#llm-router-litellm-router) for setup.
 :::
 
+### Provider Capabilities
+
+Beyond basic generation, some providers support optional features that lower cost or latency. Hindsight uses each feature automatically when the configured provider supports it.
+
+<LLMProviderCapabilities />
+
+- **Batch API** — submits bulk retain extraction through the provider's asynchronous batch endpoint, typically at ~50% lower cost. Used automatically when available; otherwise calls run synchronously.
+- **Explicit prompt caching** — reuses the large, fixed system prefix that retain (fact extraction), consolidation, and the reflect tool-loop send on every call, billing it at the provider's cached-input rate. On Gemini/Vertex this uses the `CachedContent` API. **On by default**; disable with `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED=false`. Hindsight structures these prompts so the cached prefix is **bank-agnostic** — one cache is shared across all banks rather than one per bank/mission, and creation soft-fails to an uncached call, so it never breaks a request.
+
+:::note
+A blank "Explicit prompt caching" cell does not mean a provider has no caching. OpenAI, for example, caches a stable leading prompt prefix **automatically** server-side, so it benefits with no configuration; Anthropic supports caching via `cache_control` breakpoints which can be wired up through the same provider hook. The column tracks only Hindsight's explicit `get_or_create_cached_prefix` hook, which Gemini/Vertex implement today.
+:::
+
 ### Benchmarks
 
 Not sure which model to use? The **[Model Leaderboard](https://benchmarks.hindsight.vectorize.io/)** benchmarks models across accuracy, speed, cost, and reliability for retain, reflect, and observation consolidation so you can pick the right trade-off for your use case.
@@ -78,9 +92,9 @@ The following models have been tested and verified to work correctly with Hindsi
 | **OpenAI** | `gpt-4o-mini` |
 | **Anthropic** | `claude-sonnet-4-20250514` |
 | **Anthropic** | `claude-3-5-sonnet-20241022` |
-| **Gemini** | `gemini-3-pro-preview` |
-| **Gemini** | `gemini-2.5-flash` |
-| **Gemini** | `gemini-2.5-flash-lite` |
+| **Gemini** | `gemini-3.5-flash` |
+| **Gemini** | `gemini-3.1-pro-preview` |
+| **Gemini** | `gemini-3.1-flash-lite` |
 | **Groq** | `openai/gpt-oss-120b` |
 | **Groq** | `openai/gpt-oss-20b` |
 

@@ -115,9 +115,25 @@ class TestCreateHindsightTools:
         )
         assert len(tools) == 0
 
-    def test_raises_without_client_or_config(self):
-        with pytest.raises(HindsightError, match="No Hindsight API URL"):
+    def test_defaults_to_cloud_without_config(self, monkeypatch):
+        """With no client, config, or explicit URL, defaults to the cloud URL."""
+        from hindsight_autogen.config import DEFAULT_HINDSIGHT_API_URL
+
+        monkeypatch.delenv("HINDSIGHT_API_KEY", raising=False)
+        with patch("hindsight_autogen._client.Hindsight") as mock_cls:
+            mock_cls.return_value = _mock_client()
+            tools = create_hindsight_tools(bank_id="test")
+            assert len(tools) == 3
+            assert mock_cls.call_args.kwargs["base_url"] == DEFAULT_HINDSIGHT_API_URL
+            assert "api_key" not in mock_cls.call_args.kwargs
+
+    def test_reads_api_key_from_env_without_config(self, monkeypatch):
+        """HINDSIGHT_API_KEY is honoured even when configure() was never called."""
+        monkeypatch.setenv("HINDSIGHT_API_KEY", "sk-from-env")
+        with patch("hindsight_autogen._client.Hindsight") as mock_cls:
+            mock_cls.return_value = _mock_client()
             create_hindsight_tools(bank_id="test")
+            assert mock_cls.call_args.kwargs["api_key"] == "sk-from-env"
 
     def test_falls_back_to_global_config(self):
         configure(hindsight_api_url="http://localhost:8888")
@@ -125,14 +141,18 @@ class TestCreateHindsightTools:
             mock_cls.return_value = _mock_client()
             tools = create_hindsight_tools(bank_id="test")
             assert len(tools) == 3
-            mock_cls.assert_called_once_with(base_url="http://localhost:8888", timeout=30.0)
+            mock_cls.assert_called_once()
+            assert mock_cls.call_args.kwargs["base_url"] == "http://localhost:8888"
+            assert mock_cls.call_args.kwargs["timeout"] == 30.0
 
     def test_explicit_url_overrides_config(self):
         configure(hindsight_api_url="http://config:8888")
         with patch("hindsight_autogen._client.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             create_hindsight_tools(bank_id="test", hindsight_api_url="http://explicit:9999")
-            mock_cls.assert_called_once_with(base_url="http://explicit:9999", timeout=30.0)
+            mock_cls.assert_called_once()
+            assert mock_cls.call_args.kwargs["base_url"] == "http://explicit:9999"
+            assert mock_cls.call_args.kwargs["timeout"] == 30.0
 
 
 class TestRetainTool:

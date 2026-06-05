@@ -43,6 +43,10 @@ from ..config import (
     ENV_EMBEDDINGS_LOCAL_FORCE_CPU,
     ENV_EMBEDDINGS_LOCAL_MODEL,
     ENV_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE,
+    ENV_EMBEDDINGS_ONNX_DIMENSIONS,
+    ENV_EMBEDDINGS_ONNX_MODEL_ID,
+    ENV_EMBEDDINGS_ONNX_MODEL_PATH,
+    ENV_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH,
     ENV_EMBEDDINGS_OPENAI_API_KEY,
     ENV_EMBEDDINGS_OPENAI_BASE_URL,
     ENV_EMBEDDINGS_OPENAI_MODEL,
@@ -271,6 +275,172 @@ class LocalSTEmbeddings(Embeddings):
 
         embeddings = self._model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
         return [emb.tolist() for emb in embeddings]
+
+
+class OnnxEmbeddings(Embeddings):
+    """Local ONNX Runtime embeddings provider.
+
+    This provider runs transformer embedding models in-process with ONNX Runtime,
+    avoiding a sidecar Ollama/TEI server or a remote embeddings API. It supports
+    sentence-transformer style mean pooling and E5-style asymmetric prefixes.
+    """
+
+    def __init__(
+        self,
+        model_id: str,
+        model_path: str | None = None,
+        tokenizer_name_or_path: str | None = None,
+        onnx_file: str = "onnx/model.onnx",
+        dimensions: int | None = None,
+        max_tokens: int = 512,
+        pooling: str = "mean",
+        normalize: bool = True,
+        query_prefix: str = "query: ",
+        passage_prefix: str = "passage: ",
+        output_name: str | None = None,
+    ):
+        self.model_id = model_id
+        self.model_path = model_path
+        if model_path and tokenizer_name_or_path is None:
+            logger.warning(
+                "Embeddings: ONNX model_path is set without tokenizer_name_or_path; "
+                "falling back to tokenizer from model_id %s. Set "
+                "HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH when using local ONNX artifacts.",
+                model_id,
+            )
+        self.tokenizer_name_or_path = tokenizer_name_or_path or model_id
+        self.onnx_file = onnx_file
+        self.configured_dimensions = dimensions
+        self.max_tokens = max_tokens
+        self.pooling = pooling.lower()
+        if self.pooling not in {"mean", "cls"}:
+            raise ValueError("ONNX embeddings pooling must be 'mean' or 'cls'")
+        self.normalize = normalize
+        self.query_prefix = query_prefix
+        self.passage_prefix = passage_prefix
+        self.output_name = output_name
+        self._session = None
+        self._tokenizer = None
+        self._dimension: int | None = dimensions
+
+    @property
+    def provider_name(self) -> str:
+        return "onnx"
+
+    @property
+    def dimension(self) -> int:
+        if self._dimension is None:
+            raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+        return self._dimension
+
+    async def initialize(self) -> None:
+        if self._session is not None and self._tokenizer is not None:
+            return
+
+        try:
+            import onnxruntime as ort
+            from transformers import AutoTokenizer
+        except ImportError as exc:
+            raise ImportError(
+                "onnxruntime and transformers are required for OnnxEmbeddings. "
+                "Install with: pip install 'hindsight-api-slim[local-onnx]'"
+            ) from exc
+
+        model_path = self.model_path
+        if not model_path:
+            try:
+                from huggingface_hub import snapshot_download
+            except ImportError as exc:
+                raise ImportError(
+                    "huggingface-hub is required to download ONNX embedding models. "
+                    "Set HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH or install local-onnx."
+                ) from exc
+            # Some large ONNX exports, for example BAAI/bge-m3, store weights in
+            # an external sidecar file next to model.onnx. Download both the
+            # requested graph and its conventional *_data sidecar when present.
+            snapshot_dir = snapshot_download(
+                repo_id=self.model_id,
+                allow_patterns=[self.onnx_file, f"{self.onnx_file}_data"],
+            )
+            model_path = os.path.join(snapshot_dir, self.onnx_file)
+
+        logger.info(
+            "Embeddings: initializing ONNX provider with model %s (%s)",
+            self.model_id,
+            model_path,
+        )
+        logger.info(
+            "Embeddings: ONNX query_prefix=%r passage_prefix=%r pooling=%s normalize=%s",
+            self.query_prefix,
+            self.passage_prefix,
+            self.pooling,
+            self.normalize,
+        )
+        self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name_or_path)
+        self._session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+
+        detected = len(self.encode(["test"])[0])
+        if self.configured_dimensions is not None and detected != self.configured_dimensions:
+            raise ValueError(
+                f"Configured ONNX embedding dimension {self.configured_dimensions} does not match model output {detected}"
+            )
+        self._dimension = detected
+        logger.info("Embeddings: ONNX provider initialized (dim: %s)", self._dimension)
+
+    def _encode_prefixed(self, texts: list[str], prefix: str) -> list[list[float]]:
+        if prefix:
+            return self.encode([f"{prefix}{text}" for text in texts])
+        return self.encode(texts)
+
+    def encode_query(self, texts: list[str]) -> list[list[float]]:
+        return self._encode_prefixed(texts, self.query_prefix)
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._encode_prefixed(texts, self.passage_prefix)
+
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        if self._session is None or self._tokenizer is None:
+            raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+        if not texts:
+            return []
+
+        import numpy as np
+
+        encoded = self._tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            max_length=self.max_tokens,
+            return_tensors="np",
+        )
+        input_names = {inp.name for inp in self._session.get_inputs()}
+        ort_inputs = {name: value for name, value in encoded.items() if name in input_names}
+        if "token_type_ids" in input_names and "token_type_ids" not in ort_inputs:
+            ort_inputs["token_type_ids"] = np.zeros_like(encoded["input_ids"])
+
+        outputs = self._session.run([self.output_name] if self.output_name else None, ort_inputs)
+        token_embeddings = outputs[0]
+
+        # Some exported models expose a pooled 2-D embedding as their first output.
+        if getattr(token_embeddings, "ndim", 0) == 2:
+            embeddings = token_embeddings
+        elif self.pooling == "cls":
+            embeddings = token_embeddings[:, 0]
+        else:
+            attention_mask = encoded.get("attention_mask")
+            if attention_mask is None:
+                attention_mask = np.ones(token_embeddings.shape[:2], dtype=np.float32)
+            mask = attention_mask[..., None].astype(np.float32)
+            summed = (token_embeddings * mask).sum(axis=1)
+            counts = np.clip(mask.sum(axis=1), a_min=1e-9, a_max=None)
+            embeddings = summed / counts
+
+        if self.normalize:
+            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+            norms[norms == 0] = 1
+            embeddings = embeddings / norms
+
+        return embeddings.astype(float).tolist()
 
 
 class RemoteTEIEmbeddings(Embeddings):
@@ -1413,6 +1583,20 @@ def create_embeddings_from_env() -> Embeddings:
             force_cpu=config.embeddings_local_force_cpu,
             trust_remote_code=config.embeddings_local_trust_remote_code,
         )
+    elif provider == "onnx":
+        return OnnxEmbeddings(
+            model_id=config.embeddings_onnx_model_id,
+            model_path=config.embeddings_onnx_model_path,
+            tokenizer_name_or_path=config.embeddings_onnx_tokenizer_name_or_path,
+            onnx_file=config.embeddings_onnx_file,
+            dimensions=config.embeddings_onnx_dimensions,
+            max_tokens=config.embeddings_onnx_max_tokens,
+            pooling=config.embeddings_onnx_pooling,
+            normalize=config.embeddings_onnx_normalize,
+            query_prefix=config.embeddings_onnx_query_prefix,
+            passage_prefix=config.embeddings_onnx_passage_prefix,
+            output_name=config.embeddings_onnx_output_name,
+        )
     elif provider == "openai":
         # Use dedicated embeddings API key, or fall back to LLM API key
         api_key = os.environ.get(ENV_EMBEDDINGS_OPENAI_API_KEY) or os.environ.get(ENV_LLM_API_KEY)
@@ -1514,6 +1698,6 @@ def create_embeddings_from_env() -> Embeddings:
     else:
         raise ValueError(
             f"Unknown embeddings provider: {provider}. "
-            f"Supported: 'local', 'tei', 'openai', 'openai-codex', 'openrouter', 'cohere', 'google', "
+            f"Supported: 'local', 'onnx', 'tei', 'openai', 'openai-codex', 'openrouter', 'cohere', 'google', "
             f"'zeroentropy', 'litellm', 'litellm-sdk'"
         )

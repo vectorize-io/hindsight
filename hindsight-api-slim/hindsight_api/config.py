@@ -143,6 +143,7 @@ ENV_LLM_GROQ_SERVICE_TIER = "HINDSIGHT_API_LLM_GROQ_SERVICE_TIER"
 ENV_LLM_OPENAI_SERVICE_TIER = "HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER"
 ENV_LLM_EXTRA_BODY = "HINDSIGHT_API_LLM_EXTRA_BODY"
 ENV_LLM_DEFAULT_HEADERS = "HINDSIGHT_API_LLM_DEFAULT_HEADERS"
+ENV_LLM_STRICT_SCHEMA = "HINDSIGHT_API_LLM_STRICT_SCHEMA"
 ENV_LLM_SEND_BANK_AS_USER = "HINDSIGHT_API_LLM_SEND_BANK_AS_USER"
 
 # LiteLLM Router chain — provider-specific config consumed by the "litellmrouter"
@@ -210,6 +211,17 @@ ENV_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_EMBEDDINGS_PROVIDER"
 ENV_EMBEDDINGS_LOCAL_MODEL = "HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL"
 ENV_EMBEDDINGS_LOCAL_FORCE_CPU = "HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"
 ENV_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE = "HINDSIGHT_API_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE"
+ENV_EMBEDDINGS_ONNX_MODEL_ID = "HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID"
+ENV_EMBEDDINGS_ONNX_MODEL_PATH = "HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH"
+ENV_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH = "HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH"
+ENV_EMBEDDINGS_ONNX_FILE = "HINDSIGHT_API_EMBEDDINGS_ONNX_FILE"
+ENV_EMBEDDINGS_ONNX_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS"
+ENV_EMBEDDINGS_ONNX_MAX_TOKENS = "HINDSIGHT_API_EMBEDDINGS_ONNX_MAX_TOKENS"
+ENV_EMBEDDINGS_ONNX_POOLING = "HINDSIGHT_API_EMBEDDINGS_ONNX_POOLING"
+ENV_EMBEDDINGS_ONNX_NORMALIZE = "HINDSIGHT_API_EMBEDDINGS_ONNX_NORMALIZE"
+ENV_EMBEDDINGS_ONNX_QUERY_PREFIX = "HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX"
+ENV_EMBEDDINGS_ONNX_PASSAGE_PREFIX = "HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX"
+ENV_EMBEDDINGS_ONNX_OUTPUT_NAME = "HINDSIGHT_API_EMBEDDINGS_ONNX_OUTPUT_NAME"
 ENV_EMBEDDINGS_TEI_URL = "HINDSIGHT_API_EMBEDDINGS_TEI_URL"
 ENV_EMBEDDINGS_OPENAI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY"
 ENV_EMBEDDINGS_OPENAI_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL"
@@ -348,6 +360,8 @@ ENV_RECALL_MAX_QUERY_TOKENS = "HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS"
 ENV_MENTAL_MODEL_REFRESH_CONCURRENCY = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_CONCURRENCY"
 ENV_LINK_EXPANSION_PER_ENTITY_LIMIT = "HINDSIGHT_API_LINK_EXPANSION_PER_ENTITY_LIMIT"
 ENV_LINK_EXPANSION_TIMEOUT = "HINDSIGHT_API_LINK_EXPANSION_TIMEOUT"
+ENV_BANK_STATS_CACHE_TTL_SECONDS = "HINDSIGHT_API_BANK_STATS_CACHE_TTL_SECONDS"
+ENV_BANK_STATS_CACHE_MAX_ENTRIES = "HINDSIGHT_API_BANK_STATS_CACHE_MAX_ENTRIES"
 
 # OpenTelemetry tracing configuration
 ENV_OTEL_TRACES_ENABLED = "HINDSIGHT_API_OTEL_TRACES_ENABLED"
@@ -364,6 +378,16 @@ ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY = "HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOU
 
 # Gemini safety settings
 ENV_LLM_GEMINI_SAFETY_SETTINGS = "HINDSIGHT_API_LLM_GEMINI_SAFETY_SETTINGS"
+
+# Gemini prompt caching. When enabled, retain fact-extraction reuses a
+# CachedContent prefix for the static system_instruction + response_schema,
+# cutting per-call input cost on workloads with many small documents.
+# Provider-agnostic prompt-prefix caching. Providers that support it (currently
+# Gemini/Vertex via CachedContent) reuse the large, fixed, bank-agnostic system
+# prefix at the cached-input rate; providers that don't simply ignore it. On by
+# default — the prefix is bank-agnostic so a single cache is shared across all
+# banks, and creation soft-fails to an uncached call, so it never breaks a request.
+ENV_LLM_PROMPT_CACHE_ENABLED = "HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED"
 
 # Retain settings
 ENV_RETAIN_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"
@@ -412,6 +436,7 @@ ENV_ENABLE_AUTO_CONSOLIDATION = "HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION"
 ENV_CONSOLIDATION_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE"
 ENV_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = "HINDSIGHT_API_CONSOLIDATION_MAX_MEMORIES_PER_ROUND"
 ENV_CONSOLIDATION_LLM_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE"
+ENV_CONSOLIDATION_DEDUP_THRESHOLD = "HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD"
 ENV_CONSOLIDATION_LLM_PARALLELISM = "HINDSIGHT_API_CONSOLIDATION_LLM_PARALLELISM"
 ENV_CONSOLIDATION_MAX_TOKENS = "HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS"
 ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS = "HINDSIGHT_API_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS"
@@ -503,6 +528,14 @@ ENV_RECALL_BUDGET_MAX = "HINDSIGHT_API_RECALL_BUDGET_MAX"
 # Recall candidate gating (per-source cap + BM25 score floor)
 ENV_BM25_MIN_SCORE = "HINDSIGHT_API_BM25_MIN_SCORE"
 ENV_RECALL_MAX_CANDIDATES_PER_SOURCE = "HINDSIGHT_API_RECALL_MAX_CANDIDATES_PER_SOURCE"
+# Per-strategy recall boost. Prioritises specific retrieval arms (semantic,
+# bm25, graph, temporal) on recall via a human priority level — e.g.
+# "graph:high" to strongly favour graph hits, or "graph:high,semantic:low".
+# Valid levels: low | medium | high. The level (not a raw number) is the knob
+# because the boost is applied on two different score scales — see
+# engine/search/recall_boost.py for the level -> magnitude mapping and rationale.
+# Empty disables the feature.
+ENV_RECALL_STRATEGY_BOOSTS = "HINDSIGHT_API_RECALL_STRATEGY_BOOSTS"
 
 # Audit log settings
 ENV_AUDIT_LOG_ENABLED = "HINDSIGHT_API_AUDIT_LOG_ENABLED"
@@ -530,7 +563,7 @@ DEFAULT_LLM_PROVIDER = "openai"
 PROVIDER_DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-haiku-4-5",
-    "gemini": "gemini-2.5-flash",
+    "gemini": "gemini-3.5-flash",
     "groq": "openai/gpt-oss-120b",
     "minimax": "MiniMax-M3",
     "deepseek": "deepseek-v4-flash",
@@ -540,7 +573,7 @@ PROVIDER_DEFAULT_MODELS = {
     "ollama-cloud": "gemma3:12b",
     "llamacpp": "gemma-4-e2b-it",
     "lmstudio": "local-model",
-    "vertexai": "google/gemini-2.5-flash-lite",
+    "vertexai": "google/gemini-3.1-flash-lite",
     "openai-codex": "gpt-5.4-mini",
     "claude-code": "claude-sonnet-4-5-20250929",
     "mock": "mock-model",
@@ -558,6 +591,14 @@ DEFAULT_LLAMACPP_CONTEXT_SIZE = 8192
 DEFAULT_LLAMACPP_CHAT_FORMAT = None  # None = auto-detect from GGUF metadata
 DEFAULT_LLAMACPP_NO_GRAMMAR = False  # True = disable JSON grammar enforcement (faster but less reliable)
 DEFAULT_LLAMACPP_EXTRA_ARGS = None  # Space-separated extra CLI args for llama.cpp server
+
+# True = ask schema-capable backends to grammar-enforce structured output via
+# json_schema strict (OpenAI-compatible, LiteLLM; Gemini already enforces its
+# native response_schema). Default False keeps the soft "schema-in-prompt +
+# json_object" path, which weaker self-hosted instruction-followers can violate
+# (prose preambles, markdown fences, invalid JSON) — wedging retain/consolidation
+# on parse retries.
+DEFAULT_LLM_STRICT_SCHEMA = False
 
 DEFAULT_LLM_MAX_CONCURRENT = 32
 DEFAULT_LLM_MAX_RETRIES = 3  # Max retry attempts for LLM API calls
@@ -579,6 +620,13 @@ DEFAULT_EMBEDDINGS_PROVIDER = "local"
 DEFAULT_EMBEDDINGS_LOCAL_MODEL = "BAAI/bge-small-en-v1.5"
 DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU = False  # Force CPU mode for local embeddings
 DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE = False  # Security: disabled by default, required for some models
+DEFAULT_EMBEDDINGS_ONNX_MODEL_ID = "intfloat/multilingual-e5-small"
+DEFAULT_EMBEDDINGS_ONNX_FILE = "onnx/model.onnx"
+DEFAULT_EMBEDDINGS_ONNX_MAX_TOKENS = 512
+DEFAULT_EMBEDDINGS_ONNX_POOLING = "mean"
+DEFAULT_EMBEDDINGS_ONNX_NORMALIZE = True
+DEFAULT_EMBEDDINGS_ONNX_QUERY_PREFIX = "query: "
+DEFAULT_EMBEDDINGS_ONNX_PASSAGE_PREFIX = "passage: "
 DEFAULT_EMBEDDINGS_OPENAI_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE = 100
 DEFAULT_EMBEDDINGS_GEMINI_MODEL = "gemini-embedding-001"
@@ -618,6 +666,56 @@ DEFAULT_BM25_MIN_SCORE = 0.0
 # temporal) before RRF, so a single over-expanding backend cannot fill the
 # reranker's global candidate budget on its own. 0 disables the cap.
 DEFAULT_RECALL_MAX_CANDIDATES_PER_SOURCE = 0
+# Per-strategy recall boost, as a comma-separated "strategy:level" list (e.g.
+# "graph:high,semantic:low"). Empty disables the feature. See
+# ENV_RECALL_STRATEGY_BOOSTS for the full rationale.
+DEFAULT_RECALL_STRATEGY_BOOSTS = ""
+# Retrieval arms that can be boosted; mirrors fusion.py source_names.
+RECALL_STRATEGY_NAMES = ("semantic", "bm25", "graph", "temporal")
+# User-facing priority levels. Kept in sync with recall_boost.BOOST_LEVELS by a
+# guard test; defined here (not imported) so config stays free of the heavy
+# engine.search import graph.
+RECALL_BOOST_LEVELS = ("low", "medium", "high")
+# Level applied when a strategy is listed without one (e.g. "graph" or "graph:").
+DEFAULT_RECALL_BOOST_LEVEL = "medium"
+
+
+def _parse_strategy_boosts(raw: str | None) -> dict[str, str]:
+    """Parse a "strategy:level,strategy:level" string into a boost map.
+
+    A strategy listed without a level (``"graph"`` or ``"graph:"``) defaults to
+    ``medium``. Only the strategies you list are boosted; any strategy you omit
+    keeps its normal, unboosted weight. Unknown strategy names, unknown levels,
+    and malformed entries are skipped with a warning so a typo degrades to a
+    no-op boost rather than breaking recall.
+    """
+    if not raw or not raw.strip():
+        return {}
+    boosts: dict[str, str] = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        name, _sep, level = entry.partition(":")
+        name = name.strip().lower()
+        level = level.strip().lower() or DEFAULT_RECALL_BOOST_LEVEL
+        if name not in RECALL_STRATEGY_NAMES:
+            logger.warning(
+                "Ignoring unknown recall strategy %r in boost (valid: %s)", name, ", ".join(RECALL_STRATEGY_NAMES)
+            )
+            continue
+        if level not in RECALL_BOOST_LEVELS:
+            logger.warning(
+                "Ignoring unknown recall boost level %r for %r (valid: %s)",
+                level,
+                name,
+                ", ".join(RECALL_BOOST_LEVELS),
+            )
+            continue
+        boosts[name] = level
+    return boosts
+
+
 DEFAULT_RERANKER_FLASHRANK_MODEL = "ms-marco-MiniLM-L-12-v2"  # Best balance of speed and quality
 DEFAULT_RERANKER_FLASHRANK_CACHE_DIR = None  # Use default cache directory
 DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA = False  # Disable ONNX CPU memory arena to bound RSS
@@ -694,6 +792,8 @@ DEFAULT_RECALL_MAX_QUERY_TOKENS = 500  # Maximum tokens allowed in recall query
 DEFAULT_MENTAL_MODEL_REFRESH_CONCURRENCY = 8  # Max concurrent mental model refreshes
 DEFAULT_LINK_EXPANSION_PER_ENTITY_LIMIT = 200  # Max target units per entity in graph expansion
 DEFAULT_LINK_EXPANSION_TIMEOUT = 10.0  # Timeout (seconds) for entity expansion query
+DEFAULT_BANK_STATS_CACHE_TTL_SECONDS = 60.0  # TTL for get_bank_stats result cache; 0 disables
+DEFAULT_BANK_STATS_CACHE_MAX_ENTRIES = 1024  # LRU bound across (schema, bank) keys
 
 # Retain settings
 DEFAULT_RETAIN_MAX_COMPLETION_TOKENS = 64000  # Max tokens for fact extraction LLM call
@@ -712,6 +812,7 @@ DEFAULT_RETAIN_BATCH_TOKENS = 10_000  # ~40KB of text  # Max chars per sub-batch
 DEFAULT_RETAIN_ENTITY_LOOKUP = "trigram"  # "full" or "trigram"
 DEFAULT_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE = 100  # Unique entity names per pg_trgm candidate lookup query
 DEFAULT_RETAIN_BATCH_ENABLED = False  # Use LLM Batch API for fact extraction (only when async=True)
+DEFAULT_LLM_PROMPT_CACHE_ENABLED = True  # Reuse the fixed system prefix via provider prompt caching
 DEFAULT_RETAIN_BATCH_POLL_INTERVAL_SECONDS = 60  # Batch API polling interval in seconds
 
 # File storage defaults
@@ -744,6 +845,11 @@ DEFAULT_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = (
     100  # Max memories per consolidation round (0 = unlimited). Limits how long one bank holds a worker slot.
 )
 DEFAULT_CONSOLIDATION_LLM_BATCH_SIZE = 8  # Facts per LLM call (1 = no batching; >1 = batch mode)
+# Cosine >= this between a newly-created or freshly-updated observation and an existing one
+# triggers a focused 1-by-1 LLM "merge or keep" pass (the LLM reads both, so numbers/negation/
+# entities are respected). Enabled by default; set to 1.0 to disable. Postgres only — the merge
+# path uses Postgres-only SQL, so consolidation skips it on Oracle regardless of this value.
+DEFAULT_CONSOLIDATION_DEDUP_THRESHOLD = 0.97
 DEFAULT_CONSOLIDATION_LLM_PARALLELISM = (
     4  # Max tag groups consolidated concurrently per op. Locks on overlapping write
     # scopes degrade to sequential automatically; matches retain_max_concurrent.
@@ -821,9 +927,9 @@ DEFAULT_AUDIT_LOG_ACTIONS = ""  # Empty = audit all eligible actions
 DEFAULT_AUDIT_LOG_RETENTION_DAYS = -1  # -1 = keep forever
 
 # LLM request tracing defaults
-DEFAULT_LLM_TRACE_ENABLED = False  # Disabled by default
+DEFAULT_LLM_TRACE_ENABLED = True  # Enabled by default
 DEFAULT_LLM_TRACE_SCOPES = ""  # Empty = trace all call scopes
-DEFAULT_LLM_TRACE_RETENTION_DAYS = -1  # -1 = keep forever
+DEFAULT_LLM_TRACE_RETENTION_DAYS = 1  # Retain trace rows for 1 day by default
 DEFAULT_LLM_TRACE_MAX_CHARS = 50000  # Truncate stored input/output beyond this many chars
 
 # Default MCP tool descriptions (can be customized via env vars)
@@ -1089,6 +1195,7 @@ class HindsightConfig:
     llm_default_headers: (
         dict | None
     )  # Custom headers passed as default_headers to provider SDK clients (e.g. {"X-Component-Id": "hindsight"} for proxies / request tracing)
+    llm_strict_schema: bool  # Grammar-enforce structured output via the provider's strongest schema mode (see DEFAULT_LLM_STRICT_SCHEMA)
     # Tags outbound OpenAI-compatible LLM + embedding calls with `user=<bank_id>` for
     # per-bank cost attribution. Downstream cost gateways (OpenRouter usage accounting,
     # LiteLLM, Helicone) key attribution on the OpenAI `user` field. Opt-in; never
@@ -1108,6 +1215,10 @@ class HindsightConfig:
 
     # Gemini safety settings (None = use Gemini defaults; list of dicts with category/threshold)
     llm_gemini_safety_settings: list | None
+
+    # Gemini prompt caching toggle. When True, retain extraction reuses a
+    # CachedContent prefix for its system prompt + response schema.
+    llm_prompt_cache_enabled: bool
 
     # Built-in llama.cpp configuration (for provider=llamacpp)
     llamacpp_model_path: str | None  # Path to GGUF file (None = auto-download default)
@@ -1161,6 +1272,17 @@ class HindsightConfig:
     embeddings_local_model: str
     embeddings_local_force_cpu: bool
     embeddings_local_trust_remote_code: bool
+    embeddings_onnx_model_id: str
+    embeddings_onnx_model_path: str | None
+    embeddings_onnx_tokenizer_name_or_path: str | None
+    embeddings_onnx_file: str
+    embeddings_onnx_dimensions: int | None
+    embeddings_onnx_max_tokens: int
+    embeddings_onnx_pooling: str
+    embeddings_onnx_normalize: bool
+    embeddings_onnx_query_prefix: str
+    embeddings_onnx_passage_prefix: str
+    embeddings_onnx_output_name: str | None
     embeddings_tei_url: str | None
     embeddings_openai_base_url: str | None
     embeddings_cohere_api_key: str | None
@@ -1202,6 +1324,7 @@ class HindsightConfig:
     reranker_max_candidates: int
     bm25_min_score: float
     recall_max_candidates_per_source: int
+    recall_strategy_boosts: dict[str, str]
     reranker_cohere_api_key: str | None
     reranker_cohere_model: str
     reranker_cohere_base_url: str | None
@@ -1258,6 +1381,8 @@ class HindsightConfig:
     mental_model_refresh_concurrency: int
     link_expansion_per_entity_limit: int
     link_expansion_timeout: float
+    bank_stats_cache_ttl_seconds: float
+    bank_stats_cache_max_entries: int
 
     # Retain settings
     retain_max_completion_tokens: int
@@ -1306,6 +1431,7 @@ class HindsightConfig:
     enable_mental_model_history: bool
     mental_model_history_max_entries: int
     consolidation_batch_size: int
+    consolidation_dedup_threshold: float
     consolidation_max_memories_per_round: int
     consolidation_llm_batch_size: int
     consolidation_llm_parallelism: int
@@ -1651,6 +1777,21 @@ class HindsightConfig:
                     " and ".join(missing),
                 )
 
+        if self.embeddings_provider == "onnx":
+            try:
+                import importlib
+
+                importlib.import_module("onnxruntime")
+                importlib.import_module("transformers")
+            except ImportError:
+                logger.warning(
+                    "ONNX embeddings provider configured, but 'onnxruntime' and/or "
+                    "'transformers' is not installed. The API will fail at model init time. Either:\n"
+                    "  1. Install ONNX deps: pip install hindsight-api-slim[local-onnx]\n"
+                    "  2. Use a different embeddings provider, e.g. HINDSIGHT_API_EMBEDDINGS_PROVIDER=local "
+                    "or openai"
+                )
+
         # Validate that sum of per-operation slot reservations does not exceed max_slots
         total_reserved = sum(self.worker_slot_reservations.values())
         if total_reserved > self.worker_max_slots:
@@ -1703,6 +1844,7 @@ class HindsightConfig:
             llm_openai_service_tier=os.getenv(ENV_LLM_OPENAI_SERVICE_TIER, DEFAULT_LLM_OPENAI_SERVICE_TIER),
             llm_extra_body=json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null")),
             llm_default_headers=json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null")),
+            llm_strict_schema=os.getenv(ENV_LLM_STRICT_SCHEMA, str(DEFAULT_LLM_STRICT_SCHEMA)).lower() in ("true", "1"),
             llm_send_bank_as_user=os.getenv(ENV_LLM_SEND_BANK_AS_USER, str(DEFAULT_LLM_SEND_BANK_AS_USER)).lower()
             in ("true", "1"),
             llm_litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
@@ -1713,6 +1855,10 @@ class HindsightConfig:
             or DEFAULT_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY,
             # Gemini safety settings (JSON-encoded list of {category, threshold} dicts)
             llm_gemini_safety_settings=json.loads(os.getenv(ENV_LLM_GEMINI_SAFETY_SETTINGS, "null")),
+            llm_prompt_cache_enabled=os.getenv(
+                ENV_LLM_PROMPT_CACHE_ENABLED, str(DEFAULT_LLM_PROMPT_CACHE_ENABLED)
+            ).lower()
+            in ("1", "true", "yes", "on"),
             # Built-in llama.cpp configuration
             llamacpp_model_path=os.getenv(ENV_LLAMACPP_MODEL_PATH) or None,
             llamacpp_gpu_layers=int(os.getenv(ENV_LLAMACPP_GPU_LAYERS, str(DEFAULT_LLAMACPP_GPU_LAYERS))),
@@ -1811,6 +1957,36 @@ class HindsightConfig:
                 ENV_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE, str(DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE)
             ).lower()
             in ("true", "1"),
+            embeddings_onnx_model_id=os.getenv(ENV_EMBEDDINGS_ONNX_MODEL_ID, DEFAULT_EMBEDDINGS_ONNX_MODEL_ID),
+            embeddings_onnx_model_path=os.getenv(ENV_EMBEDDINGS_ONNX_MODEL_PATH) or None,
+            embeddings_onnx_tokenizer_name_or_path=os.getenv(ENV_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH) or None,
+            embeddings_onnx_file=os.getenv(ENV_EMBEDDINGS_ONNX_FILE, DEFAULT_EMBEDDINGS_ONNX_FILE),
+            embeddings_onnx_dimensions=_parse_optional_positive_int(
+                ENV_EMBEDDINGS_ONNX_DIMENSIONS,
+                os.getenv(ENV_EMBEDDINGS_ONNX_DIMENSIONS),
+            ),
+            embeddings_onnx_max_tokens=_parse_positive_int(
+                ENV_EMBEDDINGS_ONNX_MAX_TOKENS,
+                os.getenv(ENV_EMBEDDINGS_ONNX_MAX_TOKENS),
+                DEFAULT_EMBEDDINGS_ONNX_MAX_TOKENS,
+            ),
+            embeddings_onnx_pooling=_parse_optional_choice(
+                ENV_EMBEDDINGS_ONNX_POOLING,
+                os.getenv(ENV_EMBEDDINGS_ONNX_POOLING),
+                frozenset({"mean", "cls"}),
+            )
+            or DEFAULT_EMBEDDINGS_ONNX_POOLING,
+            embeddings_onnx_normalize=os.getenv(
+                ENV_EMBEDDINGS_ONNX_NORMALIZE, str(DEFAULT_EMBEDDINGS_ONNX_NORMALIZE)
+            ).lower()
+            in ("true", "1"),
+            embeddings_onnx_query_prefix=os.getenv(
+                ENV_EMBEDDINGS_ONNX_QUERY_PREFIX, DEFAULT_EMBEDDINGS_ONNX_QUERY_PREFIX
+            ),
+            embeddings_onnx_passage_prefix=os.getenv(
+                ENV_EMBEDDINGS_ONNX_PASSAGE_PREFIX, DEFAULT_EMBEDDINGS_ONNX_PASSAGE_PREFIX
+            ),
+            embeddings_onnx_output_name=os.getenv(ENV_EMBEDDINGS_ONNX_OUTPUT_NAME) or None,
             embeddings_tei_url=os.getenv(ENV_EMBEDDINGS_TEI_URL),
             embeddings_openai_base_url=os.getenv(ENV_EMBEDDINGS_OPENAI_BASE_URL) or None,
             embeddings_openai_batch_size=_parse_positive_int(
@@ -1936,6 +2112,9 @@ class HindsightConfig:
             recall_max_candidates_per_source=int(
                 os.getenv(ENV_RECALL_MAX_CANDIDATES_PER_SOURCE, str(DEFAULT_RECALL_MAX_CANDIDATES_PER_SOURCE))
             ),
+            recall_strategy_boosts=_parse_strategy_boosts(
+                os.getenv(ENV_RECALL_STRATEGY_BOOSTS, DEFAULT_RECALL_STRATEGY_BOOSTS)
+            ),
             # Cohere reranker (with backward-compatible fallback to shared API key)
             reranker_cohere_api_key=os.getenv(ENV_RERANKER_COHERE_API_KEY) or os.getenv(ENV_COHERE_API_KEY),
             reranker_cohere_model=os.getenv(ENV_RERANKER_COHERE_MODEL, DEFAULT_RERANKER_COHERE_MODEL),
@@ -2028,6 +2207,12 @@ class HindsightConfig:
                 os.getenv(ENV_LINK_EXPANSION_PER_ENTITY_LIMIT, str(DEFAULT_LINK_EXPANSION_PER_ENTITY_LIMIT))
             ),
             link_expansion_timeout=float(os.getenv(ENV_LINK_EXPANSION_TIMEOUT, str(DEFAULT_LINK_EXPANSION_TIMEOUT))),
+            bank_stats_cache_ttl_seconds=float(
+                os.getenv(ENV_BANK_STATS_CACHE_TTL_SECONDS, str(DEFAULT_BANK_STATS_CACHE_TTL_SECONDS))
+            ),
+            bank_stats_cache_max_entries=int(
+                os.getenv(ENV_BANK_STATS_CACHE_MAX_ENTRIES, str(DEFAULT_BANK_STATS_CACHE_MAX_ENTRIES))
+            ),
             # Optimization flags
             skip_llm_verification=os.getenv(ENV_SKIP_LLM_VERIFICATION, "false").lower() == "true",
             lazy_reranker=os.getenv(ENV_LAZY_RERANKER, "false").lower() == "true",
@@ -2127,6 +2312,9 @@ class HindsightConfig:
                     ENV_CONSOLIDATION_MAX_MEMORIES_PER_ROUND,
                     str(DEFAULT_CONSOLIDATION_MAX_MEMORIES_PER_ROUND),
                 )
+            ),
+            consolidation_dedup_threshold=float(
+                os.getenv(ENV_CONSOLIDATION_DEDUP_THRESHOLD, str(DEFAULT_CONSOLIDATION_DEDUP_THRESHOLD))
             ),
             consolidation_llm_batch_size=int(
                 os.getenv(ENV_CONSOLIDATION_LLM_BATCH_SIZE, str(DEFAULT_CONSOLIDATION_LLM_BATCH_SIZE))

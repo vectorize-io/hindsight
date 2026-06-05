@@ -50,6 +50,8 @@ WORKDIR /app/api
 # Sync dependencies using appropriate extras based on INCLUDE_LOCAL_MODELS
 # local-ml: torch, sentence-transformers, transformers, einops, flashrank, mlx (optional)
 # embedded-db: pg0-embedded (always included for embedded PostgreSQL support)
+# ONNX Runtime embeddings are intentionally not bundled into the official
+# standalone image; install the local-onnx extra in custom images when needed.
 RUN if [ "$INCLUDE_LOCAL_MODELS" = "true" ]; then \
         uv sync --extra local-ml --extra embedded-db; \
     else \

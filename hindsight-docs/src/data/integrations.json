@@ -349,6 +349,16 @@
       "category": "mcp",
       "link": "/sdks/integrations/context-forge",
       "icon": "/img/icons/mcp.png"
+    },
+    {
+      "id": "outsystems",
+      "name": "OutSystems",
+      "description": "Add Hindsight memory banks to OutSystems applications or agents.",
+      "type": "community",
+      "by": "stefan-d-p",
+      "category": "framework",
+      "link": "https://www.outsystems.com/forge/component-overview/24766/hindsight-api-odc",
+      "icon": "/img/icons/outsystems.svg"
     }
   ]
 }

@@ -458,8 +458,28 @@ class MemoryEngineInterface(ABC):
             request_context: Request context for authentication.
 
         Returns:
-            Dict with node_counts, link_counts, link_counts_by_fact_type,
-            link_breakdown, and operations stats.
+            Dict with node_counts, link_counts, link_counts_by_fact_type
+            (deprecated, returns empty), link_breakdown (deprecated, returns
+            empty), and operations stats.
+        """
+        ...
+
+    @abstractmethod
+    async def get_bank_freshness(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """
+        Get consolidation freshness for a bank.
+
+        Cheap alternative to get_bank_stats when callers only need
+        last_consolidated_at / pending_consolidation / failed_consolidation.
+
+        Returns:
+            Dict with last_consolidated_at (ISO-8601 string or None),
+            pending_consolidation (int), and failed_consolidation (int).
         """
         ...
 

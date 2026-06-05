@@ -6862,9 +6862,9 @@
         "properties": {
           "file": {
             "type": "string",
-            "format": "binary",
             "title": "File",
-            "description": "Transfer ZIP archive"
+            "description": "Transfer ZIP archive",
+            "format": "binary"
           }
         },
         "type": "object",
@@ -11747,12 +11747,8 @@
             "title": "Input"
           },
           "ctx": {
-            "title": "Context",
-            "type": "object"
-          },
-          "url": {
-            "title": "URL",
-            "type": "string"
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",

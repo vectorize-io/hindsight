@@ -33,7 +33,7 @@ Browse the Bank Templates Hub for ready-to-use templates.
     "disposition_empathy": 3,
     "enable_observations": true,
     "observations_mission": "...",
-    "entity_labels": ["PERSON", "ORGANIZATION"],
+    "entity_labels": [{ "key": "sentiment", "type": "value", "values": [{ "value": "positive" }, { "value": "negative" }] }],
     "entities_allow_free_form": true
   },
   "mental_models": [
@@ -90,7 +90,7 @@ All fields in `bank` are optional. Only the fields you include will be set as pe
 | `disposition_empathy` | integer (1-5) | How empathetic the disposition is |
 | `enable_observations` | boolean | Toggle observation consolidation |
 | `observations_mission` | string | Controls what gets synthesised into observations |
-| `entity_labels` | string[] | Controlled vocabulary for entity labels |
+| `entity_labels` | object[] | Controlled vocabulary as label groups — see [Memory Banks → entity_labels](./memory-banks#entity-labels) |
 | `entities_allow_free_form` | boolean | Allow entities outside the label vocabulary |
 
 ### Mental Model Fields

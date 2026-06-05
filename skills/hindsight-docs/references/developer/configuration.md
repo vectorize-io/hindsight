@@ -174,9 +174,11 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_LLM_REASONING_EFFORT` | Reasoning effort for providers/models that support it (for example `low`, `medium`, `high`, `xhigh`) | `low` |
 | `HINDSIGHT_API_LLM_GROQ_SERVICE_TIER` | Groq service tier: `on_demand`, `flex`, `auto` | `auto` |
 | `HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER` | OpenAI service tier: `flex` for 50% cost savings (OpenAI Flex Processing) | None (default) |
-| `HINDSIGHT_API_LLM_EXTRA_BODY` | JSON dict merged into `extra_body` for all OpenAI-compatible API calls. Useful for custom model servers (e.g., vLLM `chat_template_kwargs`). | `null` |
+| `HINDSIGHT_API_LLM_EXTRA_BODY` | JSON dict of extra request-body params (e.g. `temperature`, `top_p`, `max_tokens`) merged into every LLM call. Applied across the OpenAI-compatible, Fireworks, Anthropic, Gemini/VertexAI and LiteLLM (incl. Bedrock/Router) providers. Each provider merges them in its own native parameter space, so use that provider's field names (e.g. `max_tokens` for OpenAI/Anthropic vs `max_output_tokens` for Gemini). Also useful for custom model servers (e.g. vLLM `chat_template_kwargs`). | `null` |
 | `HINDSIGHT_API_LLM_DEFAULT_HEADERS` | JSON dict passed as `default_headers` to provider SDK clients. Used by operators routing through proxies / request-tracing middleware (e.g. Cloudflare AI Gateway, Helicone, corporate proxies). Currently wired into the Anthropic provider; other providers can opt in. | `null` |
+| `HINDSIGHT_API_LLM_STRICT_SCHEMA` | Grammar-enforce structured output via `json_schema` `strict: true` instead of the soft "schema-in-prompt + `json_object`" path. Use it with weaker self-hosted models that return prose preambles, markdown ` ```json ` fences, or invalid JSON — which otherwise fail to parse and wedge retain/consolidation. Applies to OpenAI-compatible backends (OpenAI, llama.cpp, vLLM) and LiteLLM; Gemini already enforces its native `response_schema` regardless, and providers without a strict mode ignore it. | `false` |
 | `HINDSIGHT_API_LLM_GEMINI_SAFETY_SETTINGS` | JSON-encoded list of `{category, threshold}` dicts for Gemini/VertexAI content safety filtering | `null` |
+| `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED` | Reuse the fixed system prefix via the provider's explicit prompt cache, billed at the cached-input rate (Gemini/Vertex `CachedContent`). The cached prefix is shared across all banks and soft-fails to an uncached call. Set to `false` to disable. See [Models](./models#provider-capabilities). | `true` |
 
 **Provider Examples**
 
@@ -458,10 +460,21 @@ two slots that retain/consolidation cannot consume.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `tei`, `openai`, `openai-codex`, `openrouter`, `cohere`, `google`, `zeroentropy`, `litellm`, or `litellm-sdk` | `local` |
+| `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `onnx`, `tei`, `openai`, `openai-codex`, `openrouter`, `cohere`, `google`, `zeroentropy`, `litellm`, or `litellm-sdk` | `local` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL` | Model for local provider | `BAAI/bge-small-en-v1.5` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU` | Force CPU mode for local embeddings (avoids MPS/XPC issues on macOS) | `false` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID` | Hugging Face model repo for the ONNX provider. Used for auto-download and as the tokenizer fallback. | `intfloat/multilingual-e5-small` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH` | Local path to the ONNX graph. When unset, Hindsight downloads `HINDSIGHT_API_EMBEDDINGS_ONNX_FILE` from `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID`. | - |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH` | Hugging Face tokenizer repo or local tokenizer directory. Set this when using `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH`. | Falls back to `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_FILE` | ONNX file path inside the Hugging Face repo. Hindsight also downloads the conventional external-data sidecar with `_data` suffix when present. | `onnx/model.onnx` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS` | Expected embedding dimensions. Startup fails if the loaded model returns a different size. | Auto-detected |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_MAX_TOKENS` | Max tokenizer length for ONNX embeddings. | `512` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_POOLING` | Pooling strategy for token embeddings: `mean` or `cls`. Ignored when the ONNX graph returns a pre-pooled 2-D embedding output. | `mean` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_NORMALIZE` | L2-normalize ONNX vectors before storage. | `true` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX` | Prefix applied to query/search text before ONNX embedding. Keep `query: ` for E5 models; set to empty for non-E5 models such as MiniLM or BGE. | `query: ` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX` | Prefix applied to stored memory/document text before ONNX embedding. Keep `passage: ` for E5 models; set to empty for non-E5 models such as MiniLM or BGE. | `passage: ` |
+| `HINDSIGHT_API_EMBEDDINGS_ONNX_OUTPUT_NAME` | Optional ONNX output name to request when an exported graph exposes a pooled embedding output. | - |
 | `HINDSIGHT_API_EMBEDDINGS_TEI_URL` | TEI server URL | - |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY` | OpenAI API key (falls back to `HINDSIGHT_API_LLM_API_KEY`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL` | OpenAI embedding model | `text-embedding-3-small` |
@@ -497,7 +510,107 @@ two slots that retain/consolidation cannot consume.
 | `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_REGION` | Vertex AI region for embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_REGION`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_SERVICE_ACCOUNT_KEY` | Service account key for Vertex AI embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY`) | - |
 
-Embedding provider selection, credentials, base URLs, model choices, dimensions, encoding format, batch sizes, and latency modes are static server-level settings. They are not hierarchical per-bank overrides.
+Embedding provider selection, credentials, base URLs, model choices, dimensions, encoding format, batch sizes, and latency modes are static server-level settings. They are not hierarchical per-bank overrides. The ONNX settings above are also static, matching the existing `embeddings_local_*` settings.
+
+#### Local ONNX embeddings
+
+The ONNX provider runs embedding models in-process with ONNX Runtime. Install the optional deps when building your own API environment:
+
+```bash
+pip install 'hindsight-api-slim[local-onnx]'
+# or, in this repository:
+uv sync --project hindsight-api-slim --extra local-onnx
+```
+
+You can either let Hindsight download the model from Hugging Face at startup by setting `HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID`, or pre-download the ONNX graph and tokenizer files under the Hindsight repository root.
+
+```bash
+cd /path/to/hindsight
+mkdir -p models
+
+MODEL_ID=intfloat/multilingual-e5-small
+MODEL_DIR=models/intfloat__multilingual-e5-small
+
+uv run --project hindsight-api-slim --extra local-onnx python - <<'PY'
+import os
+from huggingface_hub import snapshot_download
+
+snapshot_download(
+    repo_id=os.environ["MODEL_ID"],
+    local_dir=os.environ["MODEL_DIR"],
+    allow_patterns=[
+        "onnx/model.onnx",
+        "onnx/model.onnx_data",
+        "*.json",
+        "*.txt",
+        "*.model",
+    ],
+)
+PY
+```
+
+Then start Hindsight with paths relative to the repository root:
+
+```bash
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=onnx
+export HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH=./models/intfloat__multilingual-e5-small/onnx/model.onnx
+export HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH=./models/intfloat__multilingual-e5-small
+export HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS=384
+export HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX="query: "
+export HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX="passage: "
+```
+
+For Docker deployments, mount the same model directory and use container paths:
+
+```yaml
+services:
+  hindsight:
+    volumes:
+      - ./models:/app/models:ro
+    environment:
+      HINDSIGHT_API_EMBEDDINGS_PROVIDER: onnx
+      HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH: /app/models/intfloat__multilingual-e5-small/onnx/model.onnx
+      HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH: /app/models/intfloat__multilingual-e5-small
+      HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS: "384"
+      HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX: "query: "
+      HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX: "passage: "
+```
+
+Model-specific examples:
+
+```bash
+# sentence-transformers/all-MiniLM-L6-v2: 384 dimensions, no E5 prefixes
+export HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID=sentence-transformers/all-MiniLM-L6-v2
+export HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS=384
+export HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX=""
+export HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX=""
+
+# intfloat/multilingual-e5-small: 384 dimensions, keep E5 prefixes
+export HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID=intfloat/multilingual-e5-small
+export HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS=384
+export HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX="query: "
+export HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX="passage: "
+
+# sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2: 384 dimensions, no E5 prefixes
+export HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+export HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS=384
+export HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX=""
+export HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX=""
+
+# BAAI/bge-m3: 1024 dimensions, no E5 prefixes; keep onnx/model.onnx_data next to model.onnx
+export HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID=BAAI/bge-m3
+export HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS=1024
+export HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX=""
+export HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX=""
+```
+
+:::warning
+Do not mix embeddings from different models in the same vector index. Switching from `local` to `onnx`, or changing ONNX models, requires re-embedding existing memories/documents even when the vector dimensions happen to match. For example, `BAAI/bge-small-en-v1.5` and `intfloat/multilingual-e5-small` both produce 384-dimensional vectors, but their embedding spaces are not semantically comparable.
+:::
+
+:::warning
+The default ONNX query/document prefixes (`query: ` and `passage: `) are for E5 models. Clear both prefix variables for non-E5 models such as MiniLM or BGE, otherwise Hindsight will prepend E5-style text to models that were not trained with that format.
+:::
 
 #### Common Pitfall: Provider-Specific Embedding Env Var Names
 
@@ -844,6 +957,7 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` | Max candidates to rerank per recall (RRF pre-filters the rest) | `300` |
 | `HINDSIGHT_API_BM25_MIN_SCORE` | Minimum BM25 score a row must exceed to enter fusion. Gates out zero-score, non-matching rows on backends (notably `vchord`) whose operator ranks every document instead of pre-filtering to query-term matches. `0` keeps only genuine term matches; raise it to require stronger matches. | `0` |
 | `HINDSIGHT_API_RECALL_MAX_CANDIDATES_PER_SOURCE` | Cap on candidates each retrieval source (semantic, BM25, graph, temporal) contributes to RRF, applied before the global reranker cap. Prevents one over-expanding backend from filling the reranker budget on its own. `0` disables the cap. | `0` |
+| `HINDSIGHT_API_RECALL_STRATEGY_BOOSTS` | Prioritise one or more retrieval sources over the others on recall, as a comma-separated `strategy:level` list (e.g. `graph:high` to strongly favour graph hits, or `graph:high,bm25:low`). Strategies: `semantic`, `bm25`, `graph`, `temporal`. Levels: `low` (gentle — mainly protects the source's candidates from being dropped before reranking), `medium` (moderate preference), `high` (strong — the source dominates the candidate pool and outranks most other matches, only a strong direct match still wins). The boost is applied in two places: before the reranker cap (so favoured candidates survive the `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` budget) and after reranking (to nudge them up the final order); a named level is used because those two stages live on different score scales. Only the strategies you list are boosted — any you omit keep their normal weight (no implicit boost). A strategy written without a level (`graph` or `graph:`) defaults to `medium`. Empty disables the feature. | _(empty)_ |
 | `HINDSIGHT_API_MENTAL_MODEL_REFRESH_CONCURRENCY` | Max concurrent mental model refreshes | `8` |
 | `HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY` | Track history of content changes to each mental model (previous content + timestamp). Disable to reduce storage if audit trails are not needed. | `true` |
 | `HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES` | Max entries retained in the per-mental-model history jsonb array. Older entries are dropped at write time. Prevents the array from crossing Postgres's hard 256MB jsonb size limit (which would otherwise make further UPDATEs to the row fail with SQLSTATE 54000). Each entry stores only the slim `{based_on}` slice of the prior `reflect_response` (the only field consumed by the control-plane UI's history view) so per-row size stays bounded and HOT updates apply. | `50` |
@@ -1219,6 +1333,7 @@ Observations are deduplicated, evidence-grounded knowledge consolidated from mul
 | `HINDSIGHT_API_CONSOLIDATION_MAX_MEMORIES_PER_ROUND` | Maximum memories processed per consolidation round. When the limit is reached, the job yields its worker slot and re-queues itself so other banks get fair scheduling. Mental model refreshes only run on the final round. `0` = unlimited. Configurable per bank. | `100` |
 | `HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS` | Max tokens for recall when finding related observations during consolidation | `1024` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE` | Number of facts sent to the LLM in a single consolidation call. Higher values reduce LLM calls and improve throughput at the cost of larger prompts. Set to `1` to disable batching. Configurable per bank. | `8` |
+| `HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD` | Cosine similarity at/above which a newly-created or freshly-updated observation is reconciled against an existing near-identical one via a focused 1-by-1 LLM "merge or keep" call (the model reads both texts, so a number/negation/entity difference is respected). Catches near-duplicate observations that weaker consolidation models emit even when shown the twin, as well as duplicates that arise when an update rewrites an observation into a near-twin of another. Set to `1.0` to disable. Postgres only — consolidation skips reconciliation on Oracle regardless of this value. | `0.97` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_PARALLELISM` | Maximum number of tag groups consolidated concurrently within one consolidation op. Each group acquires per-scope locks before processing, so groups whose write scopes overlap (e.g. under `per_tag` / `all_combinations` / explicit-list `observation_scopes`) automatically serialise on the overlapping scopes — actual concurrency may be lower than this cap when scopes contend. Set to `1` for fully sequential behaviour. Higher values raise peak LLM QPS and connection-pool usage during consolidation proportionally — tune down if your LLM provider rate-limits tightly or your DB pool is small. Configurable per bank. | `4` |
 | `HINDSIGHT_API_CONSOLIDATION_RECALL_BUDGET` | Budget level for the recall pass inside consolidation (`low`, `mid`, `high`). Lower budgets fetch fewer candidate rows, reducing peak memory usage on large banks. | `low` |
 | `HINDSIGHT_API_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS` | Total token budget for source facts included with observations in the consolidation prompt. `-1` = unlimited. Configurable per bank. | `4096` |
@@ -1369,6 +1484,7 @@ Configuration for background task processing. By default, the API processes task
 | `HINDSIGHT_API_WORKER_FILE_CONVERT_RETAIN_MAX_SLOTS` | Reserved slots for file_convert_retain tasks within `WORKER_MAX_SLOTS` | `0` |
 | `HINDSIGHT_API_WORKER_REFRESH_MENTAL_MODEL_MAX_SLOTS` | Reserved slots for refresh_mental_model tasks within `WORKER_MAX_SLOTS` | `0` |
 | `HINDSIGHT_API_WORKER_GRAPH_MAINTENANCE_MAX_SLOTS` | Reserved slots for graph_maintenance tasks within `WORKER_MAX_SLOTS` | `0` |
+| `HINDSIGHT_API_WORKER_IMPORT_DOCUMENTS_MAX_SLOTS` | Reserved slots for import_documents tasks within `WORKER_MAX_SLOTS` | `0` |
 
 :::note Slot reservations and shared pool
 Per-operation `*_MAX_SLOTS` values are **reservations within** `WORKER_MAX_SLOTS`, not additive pools. The sum of all reservations must not exceed `WORKER_MAX_SLOTS` (startup raises `ValueError` otherwise). Remaining capacity (`WORKER_MAX_SLOTS - sum of reservations`) forms a **shared pool** usable by any operation type on a first-come basis; operation types whose reserved capacity is full can also overflow into the shared pool. Consolidation's bank-serialization constraint (no two consolidation tasks for the same bank concurrently) is preserved regardless of which pool claims the slot.
@@ -1395,6 +1511,15 @@ This ensures `shadow-*` banks are always consolidated before others, even if the
 |----------|-------------|---------|
 | `HINDSIGHT_API_SKIP_LLM_VERIFICATION` | Skip LLM connection check on startup | `false` |
 | `HINDSIGHT_API_LAZY_RERANKER` | Lazy-load reranker model (faster startup) | `false` |
+
+#### Bank stats cache
+
+`get_bank_stats` aggregates over `memory_links` (joining `memory_units`), which can be a multi-second scan on banks with millions of rows. Because the result is intentionally approximate — it backs a UI widget and the freshness hint inside `reflect` — it is cached per `(schema, bank)` for a few tens of seconds, which also coalesces concurrent misses onto a single in-flight query. Tune it for high-concurrency or large-bank deployments:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_BANK_STATS_CACHE_TTL_SECONDS` | Time-to-live (seconds) for the `get_bank_stats` result cache. `0` disables caching, so every call runs the query. | `60` |
+| `HINDSIGHT_API_BANK_STATS_CACHE_MAX_ENTRIES` | Maximum number of cached `(schema, bank)` entries before LRU eviction. Bounds memory in deployments with many banks. | `1024` |
 
 #### Native thread pools
 
@@ -1438,15 +1563,15 @@ Audit logging captures mutating operations (retain, recall, reflect, bank config
 
 LLM request tracing records every LLM call Hindsight makes — for retain, reflect, and consolidation — into an `llm_requests` table, queryable per bank via the `/llm-requests` endpoint. Each row captures the input messages, the model output, token usage (input / output / cached / total, taken from the provider response), finish reason, provider/model, timing, and caller metadata. **Failed calls are recorded too** (`status = "error"` with the error message), so the table is useful for debugging what the LLM is doing and why a call failed. Capture is wired into the OpenTelemetry GenAI recording path (the same `record_llm_call` hook used for OTLP span export), so it stays consistent with the provider-reported request details.
 
-**LLM request tracing is disabled by default.** With `HINDSIGHT_API_LLM_TRACE_ENABLED=false`, the `llm_requests` table stays empty and `/llm-requests` returns `{"total": 0, "items": []}` regardless of activity. Set the flag to `true` and restart the API to start capturing calls.
+**LLM request tracing is enabled by default**, with traced rows retained for 1 day. To disable it entirely set `HINDSIGHT_API_LLM_TRACE_ENABLED=false` and restart the API — the `llm_requests` table then stays empty and `/llm-requests` returns `{"total": 0, "items": []}` regardless of activity.
 
-> **Note:** Traced rows contain the full prompt and model output, which may include sensitive memory content and can be large. Keep tracing disabled in production unless you need it, and use `HINDSIGHT_API_LLM_TRACE_MAX_CHARS` to bound how much of each payload is stored.
+> **Note:** Traced rows contain the full prompt and model output, which may include sensitive memory content and can be large. Use `HINDSIGHT_API_LLM_TRACE_MAX_CHARS` to bound how much of each payload is stored, tighten `HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS`, or set `HINDSIGHT_API_LLM_TRACE_ENABLED=false` to turn tracing off in sensitive environments.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_TRACE_ENABLED` | Master switch for LLM request tracing. Must be `true` for any calls to be recorded. | `false` |
+| `HINDSIGHT_API_LLM_TRACE_ENABLED` | Master switch for LLM request tracing. Must be `true` for any calls to be recorded. | `true` |
 | `HINDSIGHT_API_LLM_TRACE_SCOPES` | Comma-separated allowlist of call scopes to trace (e.g. `retain_extract_facts,reflect`; empty = all scopes) | `""` |
-| `HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS` | Number of days to retain trace rows. `-1` = keep forever. | `-1` |
+| `HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS` | Number of days to retain trace rows. `-1` = keep forever. | `1` |
 | `HINDSIGHT_API_LLM_TRACE_MAX_CHARS` | Truncate stored input/output beyond this many characters (keeps the row, stores a truncated preview). | `50000` |
 
 ### Programmatic Configuration

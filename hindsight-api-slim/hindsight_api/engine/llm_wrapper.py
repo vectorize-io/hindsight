@@ -255,6 +255,7 @@ def create_llm_provider(
     vertexai_region: str | None = None,
     vertexai_credentials: Any = None,
     gemini_safety_settings: list | None = None,
+    prompt_cache_enabled: bool = False,
     litellmrouter_config: dict[str, Any] | None = None,
 ) -> Any:  # Returns LLMInterface
     """
@@ -268,7 +269,11 @@ def create_llm_provider(
         reasoning_effort: Reasoning effort level for supported providers.
         groq_service_tier: Groq service tier (for Groq provider) - "on_demand", "flex", or "auto".
         openai_service_tier: OpenAI service tier (for OpenAI provider) - None (default) or "flex" (50% cheaper).
-        extra_body: Extra body params merged into OpenAI-compatible API calls.
+        extra_body: Extra request-body params merged into the provider's native
+            call. Threaded into OpenAI-compatible, Fireworks, Anthropic, Gemini/
+            VertexAI and LiteLLM providers (each merges them in its own parameter
+            space). Keys must use each provider's native names (e.g. ``max_tokens``
+            for OpenAI/Anthropic vs ``max_output_tokens`` for Gemini).
         default_headers: Custom headers passed as ``default_headers`` to provider SDK clients
             (used by operators routing through proxies / request-tracing middleware). Currently
             wired into the Anthropic provider; other providers may opt in as needed.
@@ -343,6 +348,8 @@ def create_llm_provider(
             vertexai_region=vertexai_region,
             vertexai_credentials=vertexai_credentials,
             gemini_safety_settings=gemini_safety_settings,
+            prompt_cache_enabled=prompt_cache_enabled,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "anthropic":
@@ -353,6 +360,7 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             default_headers=default_headers,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "litellm":
@@ -362,6 +370,7 @@ def create_llm_provider(
             base_url=base_url,
             model=model,
             reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "litellmrouter":
@@ -379,6 +388,7 @@ def create_llm_provider(
             model=model,
             config=litellmrouter_config,
             reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "bedrock":
@@ -390,6 +400,7 @@ def create_llm_provider(
             base_url=base_url,
             model=bedrock_model,
             reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "llamacpp":
@@ -468,6 +479,7 @@ class LLMProvider:
         groq_service_tier: str | None = None,
         openai_service_tier: str | None = None,
         gemini_safety_settings: list | None = None,
+        prompt_cache_enabled: bool = False,
         extra_body: dict[str, Any] | None = None,
         default_headers: dict[str, str] | None = None,
         litellmrouter_config: dict[str, Any] | None = None,
@@ -484,7 +496,8 @@ class LLMProvider:
             groq_service_tier: Groq service tier ("on_demand", "flex", "auto") - from config.
             openai_service_tier: OpenAI service tier (None or "flex") - from config.
             gemini_safety_settings: Safety settings for Gemini/VertexAI providers.
-            extra_body: Extra body params merged into OpenAI-compatible API calls.
+            extra_body: Extra request-body params merged into the provider's native call
+                (OpenAI-compatible, Fireworks, Anthropic, Gemini/VertexAI, LiteLLM).
             default_headers: Custom headers passed as ``default_headers`` to provider SDK clients.
                 Used by operators routing through proxies / request-tracing middleware. Falls
                 back to ``HindsightConfig.llm_default_headers`` (env: ``HINDSIGHT_API_LLM_DEFAULT_HEADERS``)
@@ -506,6 +519,11 @@ class LLMProvider:
         self.openai_service_tier = openai_service_tier
         # Gemini safety settings (instance default; can be overridden per-request via context var)
         self.gemini_safety_settings = gemini_safety_settings
+        # Gemini prompt caching: when True, retain extraction (and any future
+        # caller that opts in) will reuse a CachedContent prefix to cut
+        # input-token cost. Off by default so the change is observable behind
+        # a flip rather than a silent behaviour change on upgrade.
+        self.prompt_cache_enabled = prompt_cache_enabled
         # Extra body params for OpenAI-compatible providers (e.g. chat_template_kwargs)
         self.extra_body = extra_body
         # Default headers passed to provider SDK clients (e.g. proxy auth, request tracing).
@@ -624,6 +642,21 @@ class LLMProvider:
             except Exception:
                 pass  # Config may not be initialized in test environments
 
+        # Prompt-prefix caching is a provider-agnostic toggle (default on): resolve
+        # it from the static server config for every provider when the caller didn't
+        # pass an explicit override. Providers that don't support caching ignore the
+        # value; only those that implement get_or_create_cached_prefix act on it.
+        if not self.prompt_cache_enabled:
+            from ..config import DEFAULT_LLM_PROMPT_CACHE_ENABLED, _get_raw_config
+
+            try:
+                raw_config = _get_raw_config()
+                self.prompt_cache_enabled = bool(
+                    getattr(raw_config, "llm_prompt_cache_enabled", DEFAULT_LLM_PROMPT_CACHE_ENABLED)
+                )
+            except Exception:
+                pass  # Config may not be initialized in test environments
+
         # For litellmrouter: prefer an explicit chain from the caller (per-op
         # construction in MemoryEngine threads the right chain through). If the caller
         # didn't supply one, fall back to the global ``llm_litellmrouter_config`` so
@@ -652,6 +685,7 @@ class LLMProvider:
             vertexai_region=vertexai_region,
             vertexai_credentials=vertexai_credentials,
             gemini_safety_settings=self.gemini_safety_settings,
+            prompt_cache_enabled=self.prompt_cache_enabled,
             litellmrouter_config=router_config,
         )
 
@@ -715,6 +749,7 @@ class LLMProvider:
         skip_validation: bool = False,
         strict_schema: bool = False,
         return_usage: bool = False,
+        cached_prefix: str | None = None,
     ) -> Any:
         """
         Make an LLM API call with retry logic.
@@ -729,7 +764,10 @@ class LLMProvider:
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
             skip_validation: Return raw JSON without Pydantic validation.
-            strict_schema: Use strict JSON schema enforcement (OpenAI only). Guarantees all required fields.
+            strict_schema: Per-call override requesting grammar-enforced (json_schema strict)
+                structured output instead of the soft json_object path. The server-level
+                HINDSIGHT_API_LLM_STRICT_SCHEMA flag is OR-ed in here so it applies to every call;
+                providers without a strict mode ignore it.
             return_usage: If True, return tuple (result, TokenUsage) instead of just result.
 
         Returns:
@@ -748,6 +786,16 @@ class LLMProvider:
 
         structured = "+structured" if response_format is not None else ""
         set_stage(f"llm.{self.provider}.{scope}{structured}")
+
+        # Resolve strict-schema once, here, rather than in each provider: the
+        # per-call argument OR the server-level HINDSIGHT_API_LLM_STRICT_SCHEMA
+        # flag. Providers with a json_schema response_format (OpenAI-compatible,
+        # LiteLLM) then grammar-enforce structured output instead of the fragile
+        # soft json_object path; Gemini already enforces its native response_schema,
+        # and providers without a strict mode simply ignore the flag.
+        from ..config import get_config
+
+        strict_schema = strict_schema or get_config().llm_strict_schema
 
         # LLM call observability flows through the OTel GenAI recorder
         # (tracing.get_span_recorder().record_llm_call). Provider implementations
@@ -771,6 +819,11 @@ class LLMProvider:
                 for sem in _semaphores_for_scope(scope):
                     await stack.enter_async_context(sem)
 
+                # cached_prefix is only set for providers that returned a handle
+                # from get_or_create_cached_prefix() (e.g. Gemini); it's None for
+                # the rest. Forward it only when present so providers that don't
+                # implement caching keep their call() signature untouched.
+                cache_kwarg = {"cached_prefix": cached_prefix} if cached_prefix is not None else {}
                 try:
                     # Delegate to provider implementation
                     result = await self._provider_impl.call(
@@ -785,6 +838,7 @@ class LLMProvider:
                         skip_validation=skip_validation,
                         strict_schema=strict_schema,
                         return_usage=return_usage,
+                        **cache_kwarg,
                     )
                 except Exception as e:
                     get_span_recorder().record_llm_call(
@@ -824,6 +878,7 @@ class LLMProvider:
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
         tool_choice: str | dict[str, Any] = "auto",
+        cached_prefix: str | None = None,
     ) -> "LLMToolCallResult":
         """
         Make an LLM API call with tool/function calling support.
@@ -864,6 +919,10 @@ class LLMProvider:
                 for sem in _semaphores_for_scope(scope):
                     await stack.enter_async_context(sem)
 
+                # cached_prefix is only set for providers that returned a handle
+                # from get_or_create_cached_prefix(); forward it only when present
+                # so non-caching providers keep their signature (same as call()).
+                cache_kwarg = {"cached_prefix": cached_prefix} if cached_prefix is not None else {}
                 try:
                     # Delegate to provider implementation
                     result = await self._provider_impl.call_with_tools(
@@ -876,6 +935,7 @@ class LLMProvider:
                         initial_backoff=initial_backoff,
                         max_backoff=max_backoff,
                         tool_choice=tool_choice,
+                        **cache_kwarg,
                     )
                 except Exception as e:
                     get_span_recorder().record_llm_call(

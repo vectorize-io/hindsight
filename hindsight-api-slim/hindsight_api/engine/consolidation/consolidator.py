@@ -25,7 +25,7 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import combinations
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, field_validator
 
@@ -41,7 +41,10 @@ from ..llm_trace import (
 from ..llm_wrapper import sanitize_llm_output
 from ..memory_engine import Budget, fq_table
 from ..retain import embedding_utils
-from .prompts import build_batch_consolidation_prompt
+from .prompts import (
+    build_consolidation_input,
+    build_consolidation_system_prompt,
+)
 
 if TYPE_CHECKING:
     from asyncpg import Connection
@@ -83,6 +86,222 @@ def _duplicate_create_target(
     if norm in update_texts:
         return "an UPDATE in this response"
     return None
+
+
+# Top-K existing observations probed (by the new observation's own embedding) when
+# semantic dedup is enabled. Small: we only need the nearest few candidates.
+_DEDUP_TOP_K = 5
+
+
+class _DedupDecision(BaseModel):
+    """Focused 1-by-1 verdict for whether a new observation duplicates an existing one."""
+
+    action: Literal["merge", "keep"]
+    text: str = ""  # the synthesized merged observation (when action == "merge")
+    reason: str = ""
+
+
+_DEDUP_PROMPT = """You reconcile long-term memory observations. A NEW observation is about to be \
+stored, and it is highly similar to an EXISTING one:
+
+[NEW] {new}
+[EXISTING] {existing}
+
+If they assert the SAME fact (wording aside), respond action="merge" and provide `text`: a single \
+observation that preserves EVERY detail from both. If they differ in ANY important detail — a \
+number/quantity, a named entity or language, a negation, or a condition — respond action="keep"."""
+
+
+def _dedup_active(config: Any) -> bool:
+    """Whether create/update semantic dedup runs for this consolidation.
+
+    Enabled when the resolved threshold is < 1.0, EXCEPT on Oracle: the merge path uses
+    Postgres-only SQL (``unnest``/``array_agg``, ``UPDATE ... FROM``), so on Oracle dedup is
+    skipped — it behaves exactly as it did before this feature, regardless of the configured
+    threshold. This is why the feature can ship enabled-by-default without breaking Oracle.
+    """
+    if config is None or getattr(config, "consolidation_dedup_threshold", 1.0) >= 1.0:
+        return False
+    return get_config().database_backend != "oracle"
+
+
+@dataclass
+class _DedupOutcome:
+    """Result of probing one observation against its in-scope neighbours.
+
+    ``best_id`` is the nearest observation at/above the threshold (None if none),
+    ``merged_text`` is the LLM-synthesized union text (set only when ``should_merge``).
+    """
+
+    best_id: str | None
+    merged_text: str
+    should_merge: bool
+
+
+async def _dedup_adjudicate(
+    conn: "Connection",
+    memory_engine: "MemoryEngine",
+    bank_id: str,
+    config: Any,
+    dedup_llm_config: Any,
+    anchor_text: str,
+    anchor_emb_str: str | None,
+    tags: list[str] | None,
+    exclude_id: str | None,
+) -> _DedupOutcome:
+    """Probe one observation's embedding against in-scope observations and adjudicate a merge.
+
+    Anchored on the observation text — the correct obs<->obs comparison, unlike consolidation
+    recall which is anchored on the raw fact. Returns the nearest observation at/above
+    ``consolidation_dedup_threshold`` and, when found, the LLM's focused 1-by-1 merge-or-keep
+    verdict (scope ``consolidation_dedup``): the LLM reads both texts, so a word-level difference
+    (number / negation / entity) is respected. ``exclude_id`` skips the anchor observation itself
+    (used by the UPDATE path, where the anchor row already exists and would self-match at 1.0).
+    ``anchor_emb_str`` reuses an already-computed embedding (the UPDATE path just embedded it);
+    pass None to embed ``anchor_text`` here (the CREATE path).
+    """
+    from ..search.retrieval import retrieve_semantic_bm25_combined
+
+    threshold = config.consolidation_dedup_threshold
+    if anchor_emb_str is None:
+        embs = await embedding_utils.generate_embeddings_batch(memory_engine.embeddings, [anchor_text])
+        if not embs:
+            return _DedupOutcome(best_id=None, merged_text="", should_merge=False)
+        anchor_emb_str = str(embs[0])
+    tags_match = "all_strict" if tags else "any"
+    grouped = await retrieve_semantic_bm25_combined(
+        conn, anchor_emb_str, anchor_text, bank_id, ["observation"], _DEDUP_TOP_K, tags=tags, tags_match=tags_match
+    )
+    results = grouped.get("observation", ([], []))[0]
+    best_id: str | None = None
+    best_text = ""
+    best_sim = threshold  # only candidates at/above the threshold are considered
+    for r in results:
+        rid = str(r.id)
+        if exclude_id is not None and rid == exclude_id:
+            continue  # never match the anchor observation against itself
+        sim = r.similarity or 0.0
+        if sim >= best_sim:
+            best_id, best_text, best_sim = rid, r.text, sim
+
+    if best_id is None:
+        return _DedupOutcome(best_id=None, merged_text="", should_merge=False)
+
+    decision: _DedupDecision = await dedup_llm_config.call(
+        messages=[{"role": "user", "content": _DEDUP_PROMPT.format(new=anchor_text, existing=best_text)}],
+        response_format=_DedupDecision,
+        scope="consolidation_dedup",
+    )
+    if decision.action != "merge":
+        return _DedupOutcome(best_id=best_id, merged_text="", should_merge=False)
+    return _DedupOutcome(best_id=best_id, merged_text=decision.text.strip() or best_text, should_merge=True)
+
+
+async def _dedup_reconcile_create(
+    conn: "Connection",
+    memory_engine: "MemoryEngine",
+    bank_id: str,
+    config: Any,
+    dedup_llm_config: Any,
+    create_text: str,
+    create_source_ids: list[uuid.UUID],
+    tags: list[str] | None,
+) -> str | None:
+    """Semantic dedup for a single CREATE (create-time, focused 1-by-1).
+
+    On "merge", folds the new source facts + the synthesized text into the existing
+    observation and returns its id (caller skips the CREATE). Returns None when there is
+    no near twin or the LLM keeps them distinct.
+    """
+    outcome = await _dedup_adjudicate(
+        conn, memory_engine, bank_id, config, dedup_llm_config, create_text, None, tags, exclude_id=None
+    )
+    if not outcome.should_merge or outcome.best_id is None:
+        return None
+
+    # Fold the new source facts into the twin and persist the merged text. We keep the twin's
+    # existing embedding: the merged text is >= threshold similar, so the stored vector stays
+    # representative and we avoid a re-embed + a dialect-specific vector UPDATE.
+    await conn.execute(
+        f"""
+        UPDATE {fq_table("memory_units")}
+        SET text = $1,
+            source_memory_ids = (SELECT array_agg(DISTINCT e) FROM unnest(source_memory_ids || $2::uuid[]) e),
+            proof_count = (SELECT count(DISTINCT e) FROM unnest(source_memory_ids || $2::uuid[]) e),
+            updated_at = now()
+        WHERE id = $3::uuid
+        """,
+        outcome.merged_text,
+        create_source_ids,
+        uuid.UUID(outcome.best_id),
+    )
+    return outcome.best_id
+
+
+async def _dedup_reconcile_update(
+    conn: "Connection",
+    memory_engine: "MemoryEngine",
+    bank_id: str,
+    config: Any,
+    dedup_llm_config: Any,
+    updated_id: str,
+    updated_text: str,
+    updated_emb_str: str | None,
+    tags: list[str] | None,
+) -> None:
+    """Semantic dedup for an UPDATE (after the observation was rewritten + re-embedded).
+
+    An UPDATE rewrites an observation's text and re-embeds it, so its vector can drift to
+    within threshold of a DIFFERENT existing observation. The create-time guard never sees
+    this (it only runs on CREATE), so without this the two persist as a near-duplicate pair —
+    the measured residual-duplicate source. Probe the updated observation's new embedding
+    against the others (excluding itself); on "merge", fold the just-updated observation's
+    sources into the twin, persist the merged text, and DELETE the updated row. Unlike the
+    CREATE path the row already exists, so reconciliation is a fold-and-delete, not a skip.
+    """
+    outcome = await _dedup_adjudicate(
+        conn,
+        memory_engine,
+        bank_id,
+        config,
+        dedup_llm_config,
+        updated_text,
+        updated_emb_str,
+        tags,
+        exclude_id=updated_id,
+    )
+    if not outcome.should_merge or outcome.best_id is None:
+        return
+
+    # Fold the updated observation's sources into the twin (keeping the twin's embedding, as in
+    # the create path) then delete the now-redundant updated row. The all_strict/any tag match
+    # guarantees twin and updated share scope, so dropping the updated row's tags loses no
+    # visibility. Temporal fields follow the surviving twin (minimal scope; matches create).
+    await conn.execute(
+        f"""
+        UPDATE {fq_table("memory_units")} t
+        SET text = $1,
+            source_memory_ids = (
+                SELECT array_agg(DISTINCT e) FROM unnest(t.source_memory_ids || u.source_memory_ids) e
+            ),
+            proof_count = (
+                SELECT count(DISTINCT e) FROM unnest(t.source_memory_ids || u.source_memory_ids) e
+            ),
+            updated_at = now()
+        FROM {fq_table("memory_units")} u
+        WHERE t.id = $2::uuid AND u.id = $3::uuid
+        """,
+        outcome.merged_text,
+        uuid.UUID(outcome.best_id),
+        uuid.UUID(updated_id),
+    )
+    await _execute_delete_action(conn, bank_id, updated_id)
+    logger.info(
+        "[CONSOLIDATION] dedup-merged updated observation %s into %s (cosine>=%.2f)",
+        updated_id[:8],
+        outcome.best_id[:8],
+        config.consolidation_dedup_threshold,
+    )
 
 
 @dataclass
@@ -1138,6 +1357,20 @@ async def _process_memory_batch(
 
     mem_by_id = {str(m["id"]): m for m in memories}
 
+    # Semantic dedup: when enabled, an observation that is >= the threshold cosine to a DIFFERENT
+    # existing observation is reconciled by a focused 1-by-1 LLM merge (anchored on the observation
+    # text, not the source fact). It runs on both CREATE (a near-dup emitted despite the twin being
+    # in context — weak-model failure mode) and UPDATE (a rewrite+re-embed that drifts an existing
+    # observation into a twin — the create-time guard can't see this). The trace operation/scope is
+    # "consolidation_dedup" (routes through the consolidation concurrency bucket via llm_wrapper's
+    # "consolidation" prefix; recorded distinctly in llm_requests).
+    dedup_enabled = _dedup_active(config)
+    dedup_llm_config = (
+        memory_engine._consolidation_llm_config.with_config(config, bank_id=bank_id, operation="consolidation_dedup")
+        if dedup_enabled
+        else None
+    )
+
     # Execute deletes first to free observation slots before creates consume them
     deleted_count = 0
     for delete in llm_result.deletes:
@@ -1162,7 +1395,7 @@ async def _process_memory_batch(
             )
             continue
         agg = _aggregate_source_fields(source_mems, tags=fact_tags)
-        await _execute_update_action(
+        updated_emb_str = await _execute_update_action(
             conn=conn,
             memory_engine=memory_engine,
             bank_id=bank_id,
@@ -1178,6 +1411,21 @@ async def _process_memory_batch(
         )
         for m in source_mems:
             per_memory_updated.add(str(m["id"]))
+        # Reconcile the rewritten observation against its neighbours: the re-embed may have
+        # drifted it into a near-twin of another existing observation (the residual-duplicate
+        # source). updated_emb_str is None when the update was skipped — nothing to reconcile.
+        if dedup_enabled and updated_emb_str is not None:
+            await _dedup_reconcile_update(
+                conn,
+                memory_engine,
+                bank_id,
+                config,
+                dedup_llm_config,
+                update.observation_id,
+                update.text,
+                updated_emb_str,
+                agg.tags,
+            )
 
     # Deterministic dedup guard: map the observations the LLM was SHOWN by their
     # normalised text. The model intermittently emits a CREATE whose text is identical
@@ -1211,6 +1459,22 @@ async def _process_memory_batch(
                 create.reason or "(none given)",
             )
             continue
+
+        # Semantic near-duplicate reconciliation: merge this CREATE into an existing
+        # near-identical observation (LLM-adjudicated, 1-by-1) instead of inserting a dup.
+        if dedup_enabled:
+            merged_into = await _dedup_reconcile_create(
+                conn, memory_engine, bank_id, config, dedup_llm_config, create.text, create_source_ids, agg.tags
+            )
+            if merged_into is not None:
+                logger.info(
+                    "[CONSOLIDATION] dedup-merged observation CREATE into %s (cosine>=%.2f)",
+                    merged_into[:8],
+                    config.consolidation_dedup_threshold,
+                )
+                for m in source_mems:
+                    per_memory_created.add(str(m["id"]))
+                continue
 
         await _execute_create_action(
             conn=conn,
@@ -1269,12 +1533,15 @@ async def _execute_update_action(
     source_occurred_end: datetime | None = None,
     source_mentioned_at: datetime | None = None,
     perf: ConsolidationPerfLog | None = None,
-) -> None:
+) -> str | None:
     """
     Update an existing observation.
 
     Extends source_memory_ids with all contributing memories, updates temporal fields
     (LEAST for occurred_start, GREATEST for occurred_end / mentioned_at), and merges tags.
+
+    Returns the observation's freshly-computed embedding (pgvector literal) so the caller can
+    run UPDATE-path dedup without re-embedding, or None when the update was skipped.
     """
     model = next((m for m in observations if str(m.id) == observation_id), None)
     if not model:
@@ -1371,6 +1638,7 @@ async def _execute_update_action(
     # Map the updated observation onto the consolidation trace as a produced memory.
     record_created_memory_ids([observation_id])
     logger.debug(f"Updated observation {observation_id} from {len(source_memory_ids)} source memories")
+    return embedding_str
 
 
 async def _execute_create_action(
@@ -1648,15 +1916,37 @@ async def _consolidate_batch_with_llm(
                 f"(out of {max_observations_per_scope}). Prefer UPDATE over CREATE when possible."
             )
 
-    prompt_template = build_batch_consolidation_prompt(
-        config.observations_mission,
-        observation_capacity_note,
+    # Split the prompt: a bank-agnostic system instruction (rules + input format +
+    # decision guide + output format) that is byte-identical across batches AND
+    # across banks, and a per-batch user message (mission + capacity note + facts +
+    # existing observations). The split lets the system prefix be served from a
+    # single Gemini context cache shared by every bank — the bank mission, capacity
+    # note, and response_schema (all bank/batch-variable) are kept OUT of the
+    # cached prefix so one cache serves all and it never busts within a run.
+    system_prompt = build_consolidation_system_prompt(
         llm_output_language=getattr(config, "llm_output_language", None),
     )
-    prompt = prompt_template.format(
+    user_content = build_consolidation_input(
         facts_text=facts_lines,
         observations_text=observations_text,
+        observations_mission=config.observations_mission,
+        observation_capacity_note=observation_capacity_note,
     )
+
+    # Opt into context caching of the stable system prefix when the provider
+    # supports it (gemini/vertexai with the flag on). response_schema is NOT
+    # passed to the fingerprint: it varies per batch (max_creates) but is not
+    # part of the cached prefix, so keying on it would needlessly bust the cache.
+    cached_prefix_name: str | None = None
+    provider_impl = getattr(llm_config, "_provider_impl", None)
+    if provider_impl is not None and provider_impl.supports_prompt_caching():
+        try:
+            cached_prefix_name = await provider_impl.get_or_create_cached_prefix(
+                system_instruction=system_prompt,
+            )
+        except Exception:
+            logger.exception("Consolidation cache prefix lookup failed; falling back to uncached call")
+            cached_prefix_name = None
 
     # Use a constrained response model when observation limit is active
     response_model = _build_response_model(max_creates=remaining_observation_slots)
@@ -1677,12 +1967,17 @@ async def _consolidate_batch_with_llm(
     for attempt in range(1, max_attempts + 1):
         try:
             call_kwargs: dict[str, Any] = {
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
                 "response_format": response_model,
                 "scope": "consolidation",
             }
             if inner_max_retries is not None:
                 call_kwargs["max_retries"] = inner_max_retries
+            if cached_prefix_name is not None:
+                call_kwargs["cached_prefix"] = cached_prefix_name
             response: _ConsolidationBatchResponse = await llm_config.call(**call_kwargs)
             # Defensive truncation: some LLM providers may not enforce JSON schema max_length
             creates = response.creates
@@ -1699,7 +1994,7 @@ async def _consolidate_batch_with_llm(
                 updates=updates,
                 deletes=response.deletes,
                 obs_count=len(union_observations),
-                prompt_chars=len(prompt),
+                prompt_chars=len(system_prompt) + len(user_content),
             )
         except Exception as exc:
             last_exc = exc
@@ -1711,7 +2006,9 @@ async def _consolidate_batch_with_llm(
         f"[CONSOLIDATION] LLM batch call failed after {max_attempts} attempts for {batch_label}, "
         f"skipping batch. Last error: {last_exc}"
     )
-    return _BatchLLMResult(obs_count=len(union_observations), prompt_chars=len(prompt), failed=True)
+    return _BatchLLMResult(
+        obs_count=len(union_observations), prompt_chars=len(system_prompt) + len(user_content), failed=True
+    )
 
 
 async def _create_observation_directly(

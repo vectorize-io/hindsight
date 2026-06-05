@@ -3506,10 +3506,6 @@ export type ValidationError = {
   ctx?: {
     [key: string]: unknown;
   };
-  /**
-   * URL
-   */
-  url?: string;
 };
 
 /**

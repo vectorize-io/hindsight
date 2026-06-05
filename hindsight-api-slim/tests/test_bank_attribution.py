@@ -251,6 +251,8 @@ class _BankCapturingBackend:
     run_in_executor; this verifies the bank ContextVar survives that thread hop.
     """
 
+    dimension = 1
+
     def __init__(self) -> None:
         self.seen_bank_id: str | None = "UNSET"
 
@@ -277,6 +279,8 @@ async def test_executor_length_validation_preserved():
     """The 1:1 alignment guard must still fire after the context-aware offload."""
 
     class _ShortBackend:
+        dimension = 1
+
         def encode_documents(self, texts: list[str]) -> list[list[float]]:
             return [[0.0]]  # one vector for two inputs
 

@@ -49,6 +49,30 @@ class PostgreSQLOps(DataAccessOps):
             content_hashes,
         )
 
+    async def lock_document_for_write(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        doc_id: str,
+        bank_id: str,
+    ) -> str | None:
+        # Single upsert that both creates the row (if absent) and locks it (if
+        # present) atomically. ON CONFLICT DO UPDATE always takes the row lock as
+        # part of the statement, so all concurrent same-document writers serialize
+        # on the document row in one consistent step (the earlier two-step form —
+        # DO NOTHING + a separate SELECT FOR UPDATE — could deadlock because
+        # DO NOTHING takes no lock on an existing row). The SET is a no-op
+        # self-assignment used only to acquire the lock; RETURNING yields the
+        # pre-existing hash (or '__pending__' for a freshly inserted row).
+        return await conn.fetchval(
+            f"INSERT INTO {table} (id, bank_id, original_text, content_hash) "
+            f"VALUES ($1, $2, '', '__pending__') "
+            f"ON CONFLICT (id, bank_id) DO UPDATE SET content_hash = {table}.content_hash "
+            f"RETURNING content_hash",
+            doc_id,
+            bank_id,
+        )
+
     async def insert_facts_batch(
         self,
         conn: DatabaseConnection,

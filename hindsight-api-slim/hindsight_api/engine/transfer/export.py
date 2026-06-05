@@ -8,13 +8,16 @@ is set, in which case they are written to ``observations.json``.
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import logging
 import zipfile
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 from ..db_utils import acquire_with_retry
 from ..schema import fq_table
@@ -30,6 +33,47 @@ from .schema import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Whole-bank export classification. Every bank-scoped table (admin.cli.BACKUP_TABLES)
+# must fall into exactly one bucket below; tests/test_document_transfer.py's
+# test_export_bank_covers_schema enforces this so a table added by a future
+# migration can't be silently dropped from a migration archive.
+
+# NOT written to the archive — rebuilt on import by replaying the document/fact/
+# observation payload through the import pipeline:
+#   * documents / chunks / memory_units carry their *text* in the logical document
+#     payload (TransferDocument) and are re-embedded with the target model;
+#   * entities / unit_entities / memory_links / entity_cooccurrences are derived
+#     data — the pipeline re-resolves entities and rebuilds links/cooccurrence
+#     stats against the target bank, so they are never exported.
+# Listed here only so the coverage guard can assert every table is classified.
+_REPLAYED_TABLES = frozenset(
+    {
+        "documents",
+        "chunks",
+        "memory_units",
+        "entities",
+        "unit_entities",
+        "memory_links",
+        "entity_cooccurrences",
+    }
+)
+# Carried verbatim as JSON rows (bank config + synthesized state). Embedding-bearing
+# rows have their vector stripped (see _DERIVED_COLUMNS) and are re-embedded on import.
+_BANK_ROW_TABLES = ("banks", "mental_models", "directives", "webhooks")
+# Operational history — only carried with include_history=True.
+_HISTORY_TABLES = ("audit_log", "llm_requests")
+# Intentionally never exported.
+_SKIP_TABLES = frozenset(
+    {
+        "async_operations",  # in-flight ops; drain on the source before migrating
+        "graph_maintenance_queue",  # transient work queue; regenerated on import
+        "file_storage",  # raw uploads; documents.original_text is already carried
+    }
+)
+# Derived columns dropped from carried rows so the target regenerates them with
+# its own embedding model / text-search backend.
+_DERIVED_COLUMNS = ("embedding", "search_vector")
 
 
 @dataclass
@@ -160,6 +204,103 @@ async def export_documents(
         fact_total,
         len(observations),
         bank_id,
+    )
+    return archive.getvalue()
+
+
+def _row_json_default(obj: Any) -> Any:
+    """JSON serializer for the value types asyncpg returns from bank rows."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, date):
+        return obj.isoformat()
+    if isinstance(obj, UUID):
+        return str(obj)
+    if isinstance(obj, Decimal):
+        # str preserves precision; import casts back to numeric.
+        return str(obj)
+    if isinstance(obj, (bytes, bytearray, memoryview)):
+        return base64.b64encode(bytes(obj)).decode("ascii")
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+async def _dump_bank_rows(conn: Any, table: str, bank_id: str) -> list[dict]:
+    """Dump all rows of a bank-scoped table as JSON-ready dicts (derived columns stripped).
+
+    Embedding/search-vector columns are omitted so the target instance
+    regenerates them with its own model/backend on import.
+    """
+    rows = await conn.fetch(f"SELECT * FROM {fq_table(table)} WHERE bank_id = $1", bank_id)
+    return [{k: v for k, v in dict(row).items() if k not in _DERIVED_COLUMNS} for row in rows]
+
+
+async def export_bank(conn: Any, bank_id: str, *, include_history: bool = False) -> bytes:
+    """Export an entire bank into a portable ZIP archive (no embeddings).
+
+    Produces a superset of the documents archive: the logical
+    document/fact/observation export (replayed and re-embedded on import) plus
+    the bank's config, mental models, directives and webhooks as JSON rows. With
+    ``include_history`` the operational tails (audit_log, llm_requests) are also
+    carried. Intended for migrating a bank to a new instance configured with a
+    different embedding model / vector / text-search backend — every vector is
+    regenerated on the target, so nothing here is encoder-specific.
+
+    ``conn`` is a live connection scoped to the bank's schema (the admin CLI sets
+    ``_current_schema`` and passes its raw connection; the engine acquires one
+    after tenant auth).
+    """
+    loaded = await _load_documents(conn, bank_id, None)
+    documents = loaded.documents
+    # Whole-bank export always carries observations (they're bank-level state).
+    observations = await _load_observations(conn, bank_id, loaded.unit_index)
+
+    bank_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in _BANK_ROW_TABLES}
+    history_rows: dict[str, list[dict]] = {}
+    if include_history:
+        history_rows = {table: await _dump_bank_rows(conn, table, bank_id) for table in _HISTORY_TABLES}
+
+    archive = io.BytesIO()
+    fact_total = 0
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        for index, document in enumerate(documents):
+            fact_total += len(document.facts)
+            zf.writestr(f"documents/{index:06d}.json", document.model_dump_json(indent=2, exclude_none=False))
+
+        if observations:
+            payload = "[\n" + ",\n".join(o.model_dump_json(indent=2) for o in observations) + "\n]\n"
+            zf.writestr("observations.json", payload)
+
+        for table, rows in bank_rows.items():
+            zf.writestr(f"{table}.json", json.dumps(rows, indent=2, default=_row_json_default))
+        for table, rows in history_rows.items():
+            zf.writestr(f"history/{table}.json", json.dumps(rows, indent=2, default=_row_json_default))
+
+        manifest = TransferManifest(
+            schema_version=SCHEMA_VERSION,
+            source_bank_id=bank_id,
+            exported_at=datetime.now(UTC),
+            document_count=len(documents),
+            fact_count=fact_total,
+            observation_count=len(observations),
+            archive_type="bank",
+            mental_model_count=len(bank_rows.get("mental_models", [])),
+            directive_count=len(bank_rows.get("directives", [])),
+            webhook_count=len(bank_rows.get("webhooks", [])),
+            includes_history=include_history,
+        )
+        zf.writestr("manifest.json", manifest.model_dump_json(indent=2))
+
+    logger.info(
+        "[transfer] Exported bank %s: %d document(s), %d fact(s), %d observation(s), "
+        "%d mental model(s), %d directive(s), %d webhook(s)%s",
+        bank_id,
+        len(documents),
+        fact_total,
+        len(observations),
+        len(bank_rows.get("mental_models", [])),
+        len(bank_rows.get("directives", [])),
+        len(bank_rows.get("webhooks", [])),
+        " (with history)" if include_history else "",
     )
     return archive.getvalue()
 

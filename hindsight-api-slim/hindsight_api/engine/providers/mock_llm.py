@@ -162,6 +162,12 @@ class MockLLM(LLMInterface):
             # Consolidation: produce a single observation from the input facts
             # so the full pipeline (retain → consolidation → observation → recall) works.
             result = self._build_mock_consolidation(messages, response_format)
+        elif scope == "consolidation_dedup" and response_format is not None:
+            # Observation dedup adjudication. Default to "keep" so mock-LLM consolidation never
+            # spuriously merges observations — this preserves the pre-dedup behaviour that
+            # deterministic consolidation tests assert (the generic branch below can't construct
+            # the model because its "action" field is required and has no default).
+            result = response_format(action="keep", reason="mock")
         elif scope == "memory_think":
             # Reflect: return a plausible text answer
             result = "Based on the available information, the answer is related to the context provided."
