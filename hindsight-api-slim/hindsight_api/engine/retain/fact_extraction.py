@@ -510,11 +510,11 @@ LANGUAGE: MANDATORY — Detect the language of the input text and produce ALL ou
 FACT FORMAT - BE CONCISE
 ══════════════════════════════════════════════════════════════════════════
 
-1. **what**: Core fact - concise but complete (1-2 sentences max)
-2. **when**: Temporal info if mentioned. "N/A" if none. Use day name when known.
-3. **where**: Location if relevant. "N/A" if none.
-4. **who**: People involved with relationships. "N/A" if just general info.
-5. **why**: Context/significance ONLY if important. "N/A" if obvious.
+1. "what": Core fact - concise but complete (1-2 sentences max)
+2. "when": Temporal info if mentioned. "N/A" if none. Use day name when known.
+3. "where": Location if relevant. "N/A" if none.
+4. "who": People involved with relationships. "N/A" if just general info.
+5. "why": Context/significance ONLY if important. "N/A" if obvious.
 
 CONCISENESS: Capture the essence, not every word. One good sentence beats three mediocre ones.
 
