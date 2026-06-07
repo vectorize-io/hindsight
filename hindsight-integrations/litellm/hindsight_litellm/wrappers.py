@@ -14,6 +14,7 @@ from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional
 
+from ._async import ensure_loop, run_sync
 from .config import (
     DEFAULT_BANK_ID,
     DEFAULT_HINDSIGHT_API_URL,
@@ -43,6 +44,10 @@ def _get_client(api_url: str, api_key: Optional[str] = None):
     """
     from hindsight_client import Hindsight
 
+    # Establish this thread's owned event loop before the client's first call so
+    # the client's internal get_event_loop() reuses it (no deprecation, no
+    # orphaned per-call loop).
+    ensure_loop()
     return Hindsight(base_url=api_url, api_key=api_key, timeout=30.0, user_agent=USER_AGENT)
 
 
@@ -104,6 +109,10 @@ def recall(
     budget: Optional[str] = None,
     max_tokens: Optional[int] = None,
     hindsight_api_url: Optional[str] = None,
+    include_entities: Optional[bool] = None,
+    trace: Optional[bool] = None,
+    recall_tags: Optional[List[str]] = None,
+    recall_tags_match: Optional[str] = None,
 ) -> RecallResponse:
     """Recall memories from Hindsight.
 
@@ -118,6 +127,10 @@ def recall(
         budget: Recall budget level (low, mid, high) - controls how many memories are returned
         max_tokens: Maximum tokens for memory context
         hindsight_api_url: Override the configured API URL
+        include_entities: Include entity observations in results (default: from config)
+        trace: Enable trace info for debugging (default: from config)
+        recall_tags: Tags to filter by when recalling memories
+        recall_tags_match: Tag matching mode - any/all/any_strict/all_strict (default: from config)
 
     Returns:
         RecallResponse containing matched memories (iterable like a list).
@@ -128,7 +141,7 @@ def recall(
 
     Example:
         >>> from hindsight_litellm import configure, recall
-        >>> configure(bank_id="my-agent", hindsight_api_url="http://localhost:8888")
+        >>> configure(bank_id="my-agent")
         >>>
         >>> # Query memories
         >>> memories = recall("what projects am I working on?")
@@ -136,11 +149,8 @@ def recall(
         ...     print(f"- [{m.fact_type}] {m.text}")
         - [world] User is building a FastAPI project
         >>>
-        >>> # With verbose mode, access debug info
-        >>> configure(bank_id="my-agent", verbose=True)
-        >>> memories = recall("what projects am I working on?")
-        >>> if memories.debug:
-        ...     print(f"Queried bank: {memories.debug.bank_id}")
+        >>> # Filter by tags
+        >>> memories = recall("preferences", recall_tags=["user:alice"], recall_tags_match="any_strict")
     """
     # Get config and defaults, or use overrides
     config = get_config()
@@ -151,6 +161,12 @@ def recall(
     target_fact_types = fact_types or (defaults.fact_types if defaults else None)
     target_budget = budget or (defaults.budget if defaults else "mid")
     target_max_tokens = max_tokens or (defaults.max_memory_tokens if defaults else 4096)
+    target_include_entities = (
+        include_entities if include_entities is not None else (defaults.include_entities if defaults else True)
+    )
+    target_trace = trace if trace is not None else (defaults.trace if defaults else False)
+    target_recall_tags = recall_tags or (defaults.recall_tags if defaults else None)
+    target_recall_tags_match = recall_tags_match or (defaults.recall_tags_match if defaults else "any")
 
     if not api_url or not target_bank_id:
         raise RuntimeError("Hindsight not configured. Call configure() or provide bank_id and hindsight_api_url.")
@@ -161,13 +177,19 @@ def recall(
         client = _get_client(api_url, config.api_key if config else None)
 
         # Call recall API
-        results = client.recall(
-            bank_id=target_bank_id,
-            query=query,
-            types=target_fact_types,
-            budget=target_budget,
-            max_tokens=target_max_tokens,
-        )
+        recall_kwargs: dict = {
+            "bank_id": target_bank_id,
+            "query": query,
+            "types": target_fact_types,
+            "budget": target_budget,
+            "max_tokens": target_max_tokens,
+            "trace": target_trace,
+            "include_entities": target_include_entities,
+        }
+        if target_recall_tags:
+            recall_kwargs["tags"] = target_recall_tags
+            recall_kwargs["tags_match"] = target_recall_tags_match
+        results = client.recall(**recall_kwargs)
 
         # Convert to RecallResult objects
         recall_results = []
@@ -283,6 +305,8 @@ def reflect(
     context: Optional[str] = None,
     response_schema: Optional[dict] = None,
     hindsight_api_url: Optional[str] = None,
+    recall_tags: Optional[List[str]] = None,
+    recall_tags_match: Optional[str] = None,
 ) -> ReflectResult:
     """Generate a contextual answer based on memories.
 
@@ -319,6 +343,8 @@ def reflect(
     api_url = hindsight_api_url or (config.hindsight_api_url if config else None)
     target_bank_id = bank_id or (defaults.bank_id if defaults else None)
     target_budget = budget or (defaults.budget if defaults else "mid")
+    target_recall_tags = recall_tags or (defaults.recall_tags if defaults else None)
+    target_recall_tags_match = recall_tags_match or (defaults.recall_tags_match if defaults else "any")
 
     if not api_url or not target_bank_id:
         raise RuntimeError("Hindsight not configured. Call configure() or provide bank_id and hindsight_api_url.")
@@ -329,7 +355,7 @@ def reflect(
         client = _get_client(api_url, config.api_key if config else None)
 
         # Call reflect API
-        reflect_kwargs = {
+        reflect_kwargs: dict = {
             "bank_id": target_bank_id,
             "query": query,
             "budget": target_budget,
@@ -338,6 +364,9 @@ def reflect(
             reflect_kwargs["context"] = context
         if response_schema is not None:
             reflect_kwargs["response_schema"] = response_schema
+        if target_recall_tags:
+            reflect_kwargs["tags"] = target_recall_tags
+            reflect_kwargs["tags_match"] = target_recall_tags_match
         result = client.reflect(**reflect_kwargs)
 
         # Convert to ReflectResult
@@ -651,6 +680,7 @@ async def aretain(
     tags: Optional[List[str]] = None,
     metadata: Optional[Dict[str, str]] = None,
     hindsight_api_url: Optional[str] = None,
+    sync: bool = False,
 ) -> RetainResult:
     """Async version of retain().
 
@@ -669,6 +699,7 @@ async def aretain(
             tags=tags,
             metadata=metadata,
             hindsight_api_url=hindsight_api_url,
+            sync=sync,
         ),
     )
 
@@ -877,11 +908,38 @@ class HindsightOpenAI:
         # Create wrapped chat.completions interface
         self.chat = _WrappedChat(self)
 
+    def close(self) -> None:
+        """Release the Hindsight connection and close the wrapped client.
+
+        Closes the lazily-created Hindsight client so aiohttp doesn't leak its
+        session, then forwards to the underlying client's ``close()`` if it
+        has one. Safe to call multiple times. Also usable as a context manager
+        (``with wrap_openai(OpenAI()) as client: ...``).
+        """
+        if self._hindsight_client is not None:
+            try:
+                self._hindsight_client.close()
+            finally:
+                self._hindsight_client = None
+        underlying_close = getattr(self._client, "close", None)
+        if callable(underlying_close):
+            underlying_close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+        return False
+
     def _get_hindsight_client(self):
         """Get or create the Hindsight client."""
         if self._hindsight_client is None:
             from hindsight_client import Hindsight
 
+            # Own this thread's loop before the client's first call so its
+            # cached session binds to our managed, reused loop.
+            ensure_loop()
             self._hindsight_client = Hindsight(
                 base_url=self._api_url,
                 api_key=self._api_key,
@@ -1023,8 +1081,6 @@ class HindsightOpenAI:
         Returns:
             The document's original_text, or None if not found.
         """
-        import asyncio
-
         from hindsight_client_api.api import documents_api
 
         try:
@@ -1040,13 +1096,7 @@ class HindsightOpenAI:
                         return None
                     raise
 
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-            return loop.run_until_complete(_fetch())
+            return run_sync(_fetch())
         except Exception as e:
             logger.debug(f"Failed to fetch document: {e}")
             return None
@@ -1288,11 +1338,38 @@ class HindsightAnthropic:
         # Create wrapped messages interface
         self.messages = _WrappedAnthropicMessages(self)
 
+    def close(self) -> None:
+        """Release the Hindsight connection and close the wrapped client.
+
+        Closes the lazily-created Hindsight client so aiohttp doesn't leak its
+        session, then forwards to the underlying client's ``close()`` if it
+        has one. Safe to call multiple times. Also usable as a context manager
+        (``with wrap_anthropic(Anthropic()) as client: ...``).
+        """
+        if self._hindsight_client is not None:
+            try:
+                self._hindsight_client.close()
+            finally:
+                self._hindsight_client = None
+        underlying_close = getattr(self._client, "close", None)
+        if callable(underlying_close):
+            underlying_close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+        return False
+
     def _get_hindsight_client(self):
         """Get or create the Hindsight client."""
         if self._hindsight_client is None:
             from hindsight_client import Hindsight
 
+            # Own this thread's loop before the client's first call so its
+            # cached session binds to our managed, reused loop.
+            ensure_loop()
             self._hindsight_client = Hindsight(
                 base_url=self._api_url,
                 api_key=self._api_key,
@@ -1434,8 +1511,6 @@ class HindsightAnthropic:
         Returns:
             The document's original_text, or None if not found.
         """
-        import asyncio
-
         from hindsight_client_api.api import documents_api
 
         try:
@@ -1451,13 +1526,7 @@ class HindsightAnthropic:
                         return None
                     raise
 
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-            return loop.run_until_complete(_fetch())
+            return run_sync(_fetch())
         except Exception as e:
             logger.debug(f"Failed to fetch document: {e}")
             return None
@@ -1699,6 +1768,9 @@ def wrap_openai(
         try:
             from hindsight_client import Hindsight
 
+            # Reuse this thread's managed loop for the bank-setup call too, so
+            # it doesn't auto-create an orphaned loop / trip the deprecation.
+            ensure_loop()
             hs_client = Hindsight(base_url=resolved_api_url, api_key=resolved_api_key, user_agent=USER_AGENT)
             hs_client.create_bank(
                 bank_id=settings_kwargs["bank_id"],
@@ -1801,6 +1873,9 @@ def wrap_anthropic(
         try:
             from hindsight_client import Hindsight
 
+            # Reuse this thread's managed loop for the bank-setup call too, so
+            # it doesn't auto-create an orphaned loop / trip the deprecation.
+            ensure_loop()
             hs_client = Hindsight(base_url=resolved_api_url, api_key=resolved_api_key, user_agent=USER_AGENT)
             hs_client.create_bank(
                 bank_id=settings_kwargs["bank_id"],

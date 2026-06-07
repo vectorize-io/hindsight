@@ -1,6 +1,6 @@
 [project]
 name = "hindsight-litellm"
-version = "0.5.3"
+version = "0.5.4"
 description = "Universal LLM memory integration via LiteLLM - works with 100+ providers"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,10 +28,12 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
 dependencies = [
+    "hindsight-client>=0.4.0",  # provides both hindsight_client and hindsight_client_api
     "litellm>=1.83.0", # 1.82.7/1.82.8 had a supply chain compromise (yanked); 1.83.0+ also fixes GHSA-jjhc-v7c2-5hh6 / GHSA-53mr-6c8q-9789
     # Transitive dependency security fixes
     "aiohttp>=3.13.3",  # Multiple DoS vulnerabilities
@@ -62,8 +64,12 @@ packages = ["hindsight_litellm"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "requires_real_llm: end-to-end test that needs live external services (a running Hindsight server and/or real LLM provider keys). Excluded from the deterministic PR-CI bucket via -m 'not requires_real_llm'; run on its own via -m requires_real_llm.",
+]
 
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "pytest-asyncio>=0.23.0",
 ]
