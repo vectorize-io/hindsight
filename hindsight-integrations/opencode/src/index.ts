@@ -75,5 +75,5 @@ export default HindsightPlugin;
 // Re-export types for consumers
 export type { HindsightConfig } from "./config.js";
 export type { PluginState } from "./hooks.js";
-export { loadConfig, DEFAULT_HINDSIGHT_API_URL } from "./config.js";
+export { loadConfig } from "./config.js";
 export { deriveBankId } from "./bank.js";

@@ -11,7 +11,8 @@ vi.mock("@vectorize-io/hindsight-client", () => {
   return { HindsightClient: MockHindsightClient };
 });
 
-import { HindsightPlugin, DEFAULT_HINDSIGHT_API_URL } from "./index.js";
+import { HindsightPlugin } from "./index.js";
+import { DEFAULT_HINDSIGHT_API_URL } from "./config.js";
 import { HindsightClient } from "@vectorize-io/hindsight-client";
 
 const mockPluginInput = {
@@ -145,5 +146,18 @@ describe("plugin default export", () => {
     // the same reference as the named HindsightPlugin export to avoid
     // running the factory twice.
     expect(mod.default).toBe(mod.HindsightPlugin);
+  });
+
+  it("does not expose non-function exports from the plugin entry (#2028)", async () => {
+    // OpenCode >=1.16 iterates EVERY export of the plugin entry and treats it
+    // as a Plugin factory, throwing "Plugin export is not a function" on any
+    // non-function value — a single re-exported constant (e.g. a string URL)
+    // bricks the whole plugin load. Keep the entry surface function-only.
+    const mod = await import("./index.js");
+    for (const [name, value] of Object.entries(mod)) {
+      expect(typeof value, `export "${name}" must be a function`).toBe(
+        "function"
+      );
+    }
   });
 });
