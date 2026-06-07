@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
 from ...config import get_config
 from ..llm_wrapper import LLMConfig, OutputTooLongError, sanitize_llm_output
+from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
 from .entity_labels import (
     EntityLabelsConfig,
@@ -111,6 +112,17 @@ def _infer_temporal_date(fact_text: str, event_date: datetime | None) -> str | N
 
 def _sanitize_text(text: str | None) -> str | None:
     return sanitize_llm_output(text)
+
+
+def _parse_result_metadata(raw_metadata: Any) -> dict[str, Any]:
+    """Parse async_operations.result_metadata from raw asyncpg or DatabaseBackend rows."""
+    if not raw_metadata:
+        return {}
+    if isinstance(raw_metadata, str):
+        return json.loads(raw_metadata)
+    if isinstance(raw_metadata, dict):
+        return raw_metadata
+    return dict(raw_metadata)
 
 
 class Entity(BaseModel):
@@ -1710,6 +1722,42 @@ logger = logging.getLogger(__name__)
 SECONDS_PER_FACT = 0.01
 
 
+async def _write_batch_extraction_errors(
+    pool: Any,
+    operation_id: str | None,
+    schema: str | None,
+    errors: RetainExtractionErrors,
+) -> None:
+    """Persist non-fatal Batch API extraction errors into operation result_metadata."""
+    if not pool or not operation_id or errors.count == 0:
+        return
+
+    from ..db_utils import acquire_with_retry
+    from ..task_backend import fq_table
+
+    table = fq_table("async_operations", schema)
+    async with acquire_with_retry(pool) as conn:
+        row = await conn.fetchrow(
+            f"SELECT result_metadata FROM {table} WHERE operation_id = $1",
+            operation_id,
+        )
+        existing_errors = RetainExtractionErrors()
+        if row:
+            existing_metadata = _parse_result_metadata(row["result_metadata"])
+            existing_errors.merge_metadata(existing_metadata)
+        existing_errors.merge_errors(errors)
+        await conn.execute(
+            f"""
+            UPDATE {table}
+            SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $2::jsonb,
+                updated_at = now()
+            WHERE operation_id = $1
+            """,
+            operation_id,
+            json.dumps(existing_errors.to_dict()),
+        )
+
+
 async def extract_facts_from_contents_batch_api(
     contents: list[RetainContent],
     llm_config,
@@ -1887,6 +1935,7 @@ async def extract_facts_from_contents_batch_api(
     all_facts_from_llm = []
     chunks_metadata = []
     total_usage = TokenUsage()
+    extraction_errors = RetainExtractionErrors()
 
     for chunk_idx, (chunk_content, content_index, chunk_index_in_content, event_date, context) in enumerate(
         all_chunks_info
@@ -1895,7 +1944,9 @@ async def extract_facts_from_contents_batch_api(
         result = results_by_id.get(custom_id)
 
         if not result:
-            logger.warning(f"Missing result for {custom_id}, skipping")
+            message = f"{custom_id}: missing batch result"
+            logger.warning(message)
+            extraction_errors.add(message)
             chunks_metadata.append(
                 ChunkMetadata(
                     chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
@@ -1905,7 +1956,9 @@ async def extract_facts_from_contents_batch_api(
 
         # Check for errors
         if result.get("error"):
-            logger.error(f"Error in {custom_id}: {result['error']}")
+            message = f"{custom_id}: {result['error']}"
+            logger.error(f"Error in {message}")
+            extraction_errors.add(message)
             chunks_metadata.append(
                 ChunkMetadata(
                     chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
@@ -1918,7 +1971,9 @@ async def extract_facts_from_contents_batch_api(
         choices = response_body.get("choices", [])
 
         if not choices:
-            logger.warning(f"No choices in response for {custom_id}")
+            message = f"{custom_id}: no choices in response"
+            logger.warning(message)
+            extraction_errors.add(message)
             chunks_metadata.append(
                 ChunkMetadata(
                     chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
@@ -1933,7 +1988,9 @@ async def extract_facts_from_contents_batch_api(
         try:
             extraction_response_json = json.loads(content_str)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON for {custom_id}: {e}")
+            message = f"{custom_id}: failed to parse JSON: {e}"
+            logger.error(message)
+            extraction_errors.add(message)
             chunks_metadata.append(
                 ChunkMetadata(
                     chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
@@ -2106,7 +2163,9 @@ async def extract_facts_from_contents_batch_api(
                 fact = Fact(fact=combined_text, fact_type=fact_type, **fact_data)
                 chunk_facts.append(fact)
             except Exception as e:
-                logger.error(f"Failed to create Fact model for fact {i}: {e}")
+                message = f"{custom_id}: failed to create Fact model for fact {i}: {e}"
+                logger.error(message)
+                extraction_errors.add(message)
                 continue
 
         all_facts_from_llm.extend(chunk_facts)
@@ -2170,6 +2229,8 @@ async def extract_facts_from_contents_batch_api(
 
     # Step 8: Auto-tag facts from label groups with tag=True
     _inject_label_tags(extracted_facts, config)
+
+    await _write_batch_extraction_errors(pool, operation_id, schema, extraction_errors)
 
     logger.info(f"Batch API extracted {len(extracted_facts)} facts from {len(all_chunks_info)} chunks")
 

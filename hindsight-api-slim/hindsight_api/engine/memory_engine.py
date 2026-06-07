@@ -57,7 +57,10 @@ from .operation_metadata import (
     BatchRetainParentMetadata,
     ConsolidationMetadata,
     RefreshMentalModelMetadata,
+    RetainExtractionErrors,
     RetainMetadata,
+    RetainOutcomeAggregate,
+    RetainOutcomeMetadata,
 )
 from .sql import SQLDialect, create_sql_dialect
 
@@ -2036,6 +2039,44 @@ class MemoryEngine(MemoryEngineInterface):
         except Exception as e:
             logger.error(f"Failed to mark operation as completed {operation_id}: {e}")
 
+    async def _write_retain_outcome_metadata(self, operation_id: str | None, unit_ids: list[list[str]]) -> None:
+        """Persist completed retain outcome fields before the operation is marked completed."""
+        if not operation_id:
+            return
+
+        unit_ids_count = sum(len(group) for group in unit_ids)
+        try:
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                row = await conn.fetchrow(
+                    f"SELECT result_metadata FROM {fq_table('async_operations')} WHERE operation_id = $1",
+                    uuid.UUID(operation_id),
+                )
+                if not row:
+                    return
+
+                metadata = conn.parse_json(row["result_metadata"]) or {}
+                extraction_errors = RetainExtractionErrors()
+                extraction_errors.merge_metadata(metadata)
+                outcome = RetainOutcomeMetadata(
+                    unit_ids_count=unit_ids_count,
+                    extraction_errors_count=extraction_errors.count,
+                    extraction_errors_sample=extraction_errors.sample,
+                )
+
+                await conn.execute(
+                    f"""
+                    UPDATE {fq_table("async_operations")}
+                    SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $2::jsonb,
+                        updated_at = now()
+                    WHERE operation_id = $1
+                    """,
+                    uuid.UUID(operation_id),
+                    json.dumps(outcome.to_dict()),
+                )
+        except Exception as e:
+            logger.debug(f"Failed to write retain outcome metadata for {operation_id}: {e}")
+
     async def _mark_operation_completed_and_fire_webhook(
         self,
         operation_id: str,
@@ -2147,14 +2188,16 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Get all sibling operations (including this one).
             # This query runs in the same transaction, so it sees the current
-            # child's updated status. Pull error_message too so a parent that
+            # child's updated status. Pull result_metadata for completed
+            # children so the parent exposes the same outcome counters as the
+            # individual retain operations. Pull error_message too so a parent that
             # fails can inherit a representative child reason -- otherwise
             # downstream consumers (dashboards, alert filters) lose the actual
             # cause once a batch has children. See the worker poller's
             # _summarise_child_error_messages for the propagation rationale.
             siblings = await conn.fetch(
                 f"""
-                SELECT status, error_message
+                SELECT status, error_message, result_metadata
                 FROM {fq_table("async_operations")}
                 WHERE bank_id = $1
                 AND result_metadata::jsonb @> $2::jsonb
@@ -2196,14 +2239,22 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             elif all_completed:
                 new_status = "completed"
+                outcome_aggregate = RetainOutcomeAggregate()
+                for sibling in siblings:
+                    sibling_metadata = conn.parse_json(sibling["result_metadata"]) or {}
+                    outcome_aggregate.add_metadata(sibling_metadata)
                 await conn.execute(
                     f"""
                     UPDATE {fq_table("async_operations")}
-                    SET status = $2, updated_at = NOW(), completed_at = NOW()
+                    SET status = $2,
+                        result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $3::jsonb,
+                        updated_at = NOW(),
+                        completed_at = NOW()
                     WHERE operation_id = $1
                     """,
                     uuid.UUID(parent_operation_id),
                     new_status,
+                    json.dumps(outcome_aggregate.to_outcome_metadata().to_dict()),
                 )
 
             logger.info(f"Updated parent operation {parent_operation_id} to status '{new_status}' (all children done)")
@@ -3120,6 +3171,8 @@ class MemoryEngine(MemoryEngineInterface):
             )
             # Progress for this path is emitted by the streaming pipeline as
             # "storing N/total chunks" via progress_callback (see _retain_batch_async_internal).
+
+        await self._write_retain_outcome_metadata(operation_id, result)
 
         # Call post-operation hook if validator is configured
         if self._operation_validator:
