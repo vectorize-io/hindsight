@@ -37,23 +37,18 @@ const state: PluginState = {
 const HindsightPlugin: Plugin = async (input, options) => {
   const config = loadConfig(options);
 
-  const apiUrl = config.hindsightApiUrl;
-  if (!apiUrl) {
-    console.error(
-      "[Hindsight] No API URL configured. Set HINDSIGHT_API_URL environment variable " +
-        "or add hindsightApiUrl to ~/.hindsight/opencode.json"
-    );
-    // Return empty hooks — graceful degradation
-    return {};
-  }
-
+  // hindsightApiUrl always resolves to a value (DEFAULT_HINDSIGHT_API_URL by default),
+  // so plugin instantiation never fails just because the URL is unset.
+  // Requests fail at call time if no API key is configured for a Cloud URL —
+  // that surfaces a clear, actionable error from the server rather than silently
+  // disabling the plugin.
   const client = new HindsightClient({
-    baseUrl: apiUrl,
+    baseUrl: config.hindsightApiUrl!,
     apiKey: config.hindsightApiToken || undefined,
   });
 
   const bankId = deriveBankId(config, input.directory);
-  debugLog(config, `Initialized with bank: ${bankId}, API: ${apiUrl}`);
+  debugLog(config, `Initialized with bank: ${bankId}, API: ${config.hindsightApiUrl}`);
 
   const tools = createTools(client, bankId, config, state.missionsSet);
   const hooks = createHooks(
@@ -80,5 +75,5 @@ export default HindsightPlugin;
 // Re-export types for consumers
 export type { HindsightConfig } from "./config.js";
 export type { PluginState } from "./hooks.js";
-export { loadConfig } from "./config.js";
+export { loadConfig, DEFAULT_HINDSIGHT_API_URL } from "./config.js";
 export { deriveBankId } from "./bank.js";

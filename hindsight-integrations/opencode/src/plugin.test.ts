@@ -11,7 +11,7 @@ vi.mock("@vectorize-io/hindsight-client", () => {
   return { HindsightClient: MockHindsightClient };
 });
 
-import { HindsightPlugin } from "./index.js";
+import { HindsightPlugin, DEFAULT_HINDSIGHT_API_URL } from "./index.js";
 import { HindsightClient } from "@vectorize-io/hindsight-client";
 
 const mockPluginInput = {
@@ -41,10 +41,19 @@ describe("HindsightPlugin", () => {
     process.env = { ...originalEnv };
   });
 
-  it("returns empty hooks when no API URL configured", async () => {
+  it("defaults to the hosted backend URL when no API URL is configured", async () => {
     const result = await HindsightPlugin(mockPluginInput as any);
-    expect(result).toEqual({});
-    expect(HindsightClient).not.toHaveBeenCalled();
+
+    expect(HindsightClient).toHaveBeenCalledWith({
+      baseUrl: DEFAULT_HINDSIGHT_API_URL,
+      apiKey: undefined,
+    });
+    // Full tool + hook surface still returned — the plugin doesn't disable
+    // itself just because the URL was left at its default.
+    expect(result.tool).toBeDefined();
+    expect(result.event).toBeDefined();
+    expect(result["experimental.session.compacting"]).toBeDefined();
+    expect(result["experimental.chat.system.transform"]).toBeDefined();
   });
 
   it("returns tools and hooks when configured", async () => {

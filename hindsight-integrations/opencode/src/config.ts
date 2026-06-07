@@ -12,6 +12,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
+/** Default API URL used when no override is supplied via env, file, or plugin options. */
+export const DEFAULT_HINDSIGHT_API_URL = "https://api.hindsight.vectorize.io";
+
 export interface HindsightConfig {
   // Recall
   autoRecall: boolean;
@@ -75,7 +78,7 @@ const DEFAULTS: HindsightConfig = {
   retainMetadata: {},
 
   // Connection
-  hindsightApiUrl: null,
+  hindsightApiUrl: DEFAULT_HINDSIGHT_API_URL,
   hindsightApiToken: null,
 
   // Bank

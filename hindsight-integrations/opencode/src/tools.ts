@@ -16,6 +16,9 @@ export interface HindsightTools {
   hindsight_retain: ToolDefinition;
   hindsight_recall: ToolDefinition;
   hindsight_reflect: ToolDefinition;
+  // Index signature so the object is assignable to OpenCode's Hooks.tool
+  // (Record<string, ToolDefinition>) without losing the specific keys above.
+  [key: string]: ToolDefinition;
 }
 
 export function createTools(
