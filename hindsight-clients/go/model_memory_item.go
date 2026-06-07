@@ -26,6 +26,7 @@ type MemoryItem struct {
 	Context NullableString `json:"context,omitempty"`
 	Metadata map[string]string `json:"metadata,omitempty"`
 	DocumentId NullableString `json:"document_id,omitempty"`
+	ClientTimezone NullableString `json:"client_timezone,omitempty"`
 	Entities []EntityInput `json:"entities,omitempty"`
 	Tags []string `json:"tags,omitempty"`
 	ObservationScopes NullableObservationScopes `json:"observation_scopes,omitempty"`
@@ -234,6 +235,48 @@ func (o *MemoryItem) SetDocumentIdNil() {
 // UnsetDocumentId ensures that no value is present for DocumentId, not even an explicit nil
 func (o *MemoryItem) UnsetDocumentId() {
 	o.DocumentId.Unset()
+}
+
+// GetClientTimezone returns the ClientTimezone field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MemoryItem) GetClientTimezone() string {
+	if o == nil || IsNil(o.ClientTimezone.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.ClientTimezone.Get()
+}
+
+// GetClientTimezoneOk returns a tuple with the ClientTimezone field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MemoryItem) GetClientTimezoneOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ClientTimezone.Get(), o.ClientTimezone.IsSet()
+}
+
+// HasClientTimezone returns a boolean if a field has been set.
+func (o *MemoryItem) HasClientTimezone() bool {
+	if o != nil && o.ClientTimezone.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetClientTimezone gets a reference to the given NullableString and assigns it to the ClientTimezone field.
+func (o *MemoryItem) SetClientTimezone(v string) {
+	o.ClientTimezone.Set(&v)
+}
+// SetClientTimezoneNil sets the value for ClientTimezone to be an explicit nil
+func (o *MemoryItem) SetClientTimezoneNil() {
+	o.ClientTimezone.Set(nil)
+}
+
+// UnsetClientTimezone ensures that no value is present for ClientTimezone, not even an explicit nil
+func (o *MemoryItem) UnsetClientTimezone() {
+	o.ClientTimezone.Unset()
 }
 
 // GetEntities returns the Entities field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -450,6 +493,9 @@ func (o MemoryItem) ToMap() (map[string]interface{}, error) {
 	}
 	if o.DocumentId.IsSet() {
 		toSerialize["document_id"] = o.DocumentId.Get()
+	}
+	if o.ClientTimezone.IsSet() {
+		toSerialize["client_timezone"] = o.ClientTimezone.Get()
 	}
 	if o.Entities != nil {
 		toSerialize["entities"] = o.Entities

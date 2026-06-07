@@ -13,6 +13,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
@@ -446,6 +447,7 @@ class MemoryItem(BaseModel):
             "example": {
                 "content": "Alice mentioned she's working on a new ML model",
                 "timestamp": "2024-01-15T10:30:00Z",
+                "client_timezone": "America/Los_Angeles",
                 "context": "team meeting",
                 "metadata": {"source": "slack", "channel": "engineering"},
                 "document_id": "meeting_notes_2024_01_15",
@@ -468,6 +470,14 @@ class MemoryItem(BaseModel):
     context: str | None = None
     metadata: dict[str, str] | None = None
     document_id: str | None = Field(default=None, description="Optional document ID for this memory item.")
+    client_timezone: str | None = Field(
+        default=None,
+        description=(
+            "Optional IANA timezone name for the client/user (e.g. 'Asia/Shanghai'). "
+            "When present, fact extraction renders natural-language time references in this local timezone while "
+            "stored timestamps remain normalized to UTC."
+        ),
+    )
     entities: list[EntityInput] | None = Field(
         default=None,
         description="Optional entities to combine with auto-extracted entities.",
@@ -544,6 +554,22 @@ class MemoryItem(BaseModel):
                     f"Invalid timestamp/event_date format: '{v}'. Expected ISO format like '2024-01-15T10:30:00' or '2024-01-15T10:30:00Z', or the special value 'unset' to store without a timestamp."
                 ) from e
         raise ValueError(f"timestamp must be a string or datetime, got {type(v).__name__}")
+
+    @field_validator("client_timezone", mode="before")
+    @classmethod
+    def validate_client_timezone(cls, v):
+        if v is None or v == "":
+            return None
+        if not isinstance(v, str):
+            raise ValueError(f"client_timezone must be a string, got {type(v).__name__}")
+        timezone_name = v.strip()
+        if not timezone_name:
+            return None
+        try:
+            ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError as e:
+            raise ValueError(f"Invalid client_timezone: '{v}'. Expected an IANA timezone like 'Asia/Shanghai'.") from e
+        return timezone_name
 
 
 class RetainRequest(BaseModel):
@@ -6060,6 +6086,8 @@ def _register_routes(app: FastAPI):
                     content_dict["event_date"] = None
                 elif item.timestamp:
                     content_dict["event_date"] = item.timestamp
+                if item.client_timezone:
+                    content_dict["client_timezone"] = item.client_timezone
                 if item.context:
                     content_dict["context"] = item.context
                 if item.metadata:

@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ...worker.stage import set_stage
 from ..db.base import DatabaseBackend
@@ -74,16 +75,30 @@ def parse_datetime_flexible(value: Any) -> datetime:
         # Ensure timezone-aware
         if value.tzinfo is None:
             return value.replace(tzinfo=UTC)
-        return value
+        return value.astimezone(UTC)
     elif isinstance(value, str):
         # Parse ISO format string (handles both 'Z' and '+00:00' timezone formats)
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
         # Ensure timezone-aware
         if dt.tzinfo is None:
             return dt.replace(tzinfo=UTC)
-        return dt
+        return dt.astimezone(UTC)
     else:
         raise TypeError(f"Expected datetime or string, got {type(value).__name__}")
+
+
+def _validate_client_timezone(value: str | None) -> str | None:
+    """Validate a caller-supplied IANA timezone name."""
+    if value is None:
+        return None
+    timezone_name = value.strip()
+    if not timezone_name:
+        return None
+    try:
+        ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as e:
+        raise ValueError(f"Invalid client_timezone '{value}'. Expected an IANA timezone like 'Asia/Shanghai'.") from e
+    return timezone_name
 
 
 import asyncpg
@@ -975,6 +990,7 @@ async def _streaming_retain_batch(
                 metadata=source.metadata,
                 entities=source.entities,
                 tags=source.tags,
+                client_timezone=source.client_timezone,
                 observation_scopes=source.observation_scopes,
             )
             # Attribute this chunk's extraction LLM call to its document, so the
@@ -2025,6 +2041,7 @@ def _build_contents(contents_dicts: list[RetainContentDict], document_tags: list
             metadata=item.get("metadata", {}),
             entities=item.get("entities", []),
             tags=merged_tags,
+            client_timezone=_validate_client_timezone(item.get("client_timezone")),
             observation_scopes=item.get("observation_scopes"),
         )
         contents.append(content)
@@ -2081,6 +2098,7 @@ def _build_delta_contents(
             metadata=template_content.metadata,
             entities=template_content.entities,
             tags=template_content.tags,
+            client_timezone=template_content.client_timezone,
             observation_scopes=template_content.observation_scopes,
         )
         delta_contents.append(delta_content)

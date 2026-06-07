@@ -2140,6 +2140,12 @@ export type MemoryItem = {
    */
   document_id?: string | null;
   /**
+   * Client Timezone
+   *
+   * Optional IANA timezone name for the client/user (e.g. 'Asia/Shanghai'). When present, fact extraction renders natural-language time references in this local timezone while stored timestamps remain normalized to UTC.
+   */
+  client_timezone?: string | null;
+  /**
    * Entities
    *
    * Optional entities to combine with auto-extracted entities.

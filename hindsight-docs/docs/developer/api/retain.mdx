@@ -86,6 +86,22 @@ When the event described in the content actually occurred. Three forms are accep
 
 The timestamp is injected into the LLM fact-extraction prompt so the model can resolve relative temporal references in the content — for example, if the content says "last Monday", the model uses the provided timestamp as the anchor to pin down the actual date. When `"unset"` is passed the prompt shows `Event Date: Unknown`, allowing the model to correctly return `N/A` for the `when` field of every extracted fact. Providing a real timestamp also enables temporal recall queries like "What happened last spring?" to work correctly.
 
+Offset-aware timestamps are normalized to UTC before storage. For example, `"2026-06-05T20:36:00+08:00"` is stored as the same instant as `"2026-06-05T12:36:00Z"`, not relabeled as `20:36Z`.
+
+### client_timezone
+
+Optional IANA timezone name for the user's local time, such as `"Asia/Shanghai"` or `"America/Los_Angeles"`. When present, Hindsight includes it in the fact-extraction prompt so natural-language time references in stored memory text use the user's local time, while database timestamps remain normalized to UTC.
+
+Use this when `timestamp` is a UTC instant but the source conversation happened in a user's local timezone:
+
+```json
+{
+  "content": "User said the outage started at 8:36 PM.",
+  "timestamp": "2026-06-05T12:36:00Z",
+  "client_timezone": "Asia/Shanghai"
+}
+```
+
 ### context
 
 A short label describing the source or situation — for example `"team meeting"`, `"slack"`, or `"support ticket"`. It is injected directly into the LLM prompt, so it actively shapes how facts are extracted. The same sentence can mean something very different depending on context: "the project was terminated" in a `"performance review"` context versus a `"product roadmap"` context produces different memories.

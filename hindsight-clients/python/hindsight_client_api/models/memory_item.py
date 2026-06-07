@@ -34,12 +34,13 @@ class MemoryItem(BaseModel):
     context: Optional[StrictStr] = None
     metadata: Optional[Dict[str, StrictStr]] = None
     document_id: Optional[StrictStr] = None
+    client_timezone: Optional[StrictStr] = None
     entities: Optional[List[EntityInput]] = None
     tags: Optional[List[StrictStr]] = None
     observation_scopes: Optional[ObservationScopes] = None
     strategy: Optional[StrictStr] = None
     update_mode: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["content", "timestamp", "context", "metadata", "document_id", "entities", "tags", "observation_scopes", "strategy", "update_mode"]
+    __properties: ClassVar[List[str]] = ["content", "timestamp", "context", "metadata", "document_id", "client_timezone", "entities", "tags", "observation_scopes", "strategy", "update_mode"]
 
     @field_validator('update_mode')
     def update_mode_validate_enum(cls, value):
@@ -123,6 +124,11 @@ class MemoryItem(BaseModel):
         if self.document_id is None and "document_id" in self.model_fields_set:
             _dict['document_id'] = None
 
+        # set to None if client_timezone (nullable) is None
+        # and model_fields_set contains the field
+        if self.client_timezone is None and "client_timezone" in self.model_fields_set:
+            _dict['client_timezone'] = None
+
         # set to None if entities (nullable) is None
         # and model_fields_set contains the field
         if self.entities is None and "entities" in self.model_fields_set:
@@ -165,6 +171,7 @@ class MemoryItem(BaseModel):
             "context": obj.get("context"),
             "metadata": obj.get("metadata"),
             "document_id": obj.get("document_id"),
+            "client_timezone": obj.get("client_timezone"),
             "entities": [EntityInput.from_dict(_item) for _item in obj["entities"]] if obj.get("entities") is not None else None,
             "tags": obj.get("tags"),
             "observation_scopes": ObservationScopes.from_dict(obj["observation_scopes"]) if obj.get("observation_scopes") is not None else None,

@@ -9062,6 +9062,18 @@
             "title": "Document Id",
             "description": "Optional document ID for this memory item."
           },
+          "client_timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Timezone",
+            "description": "Optional IANA timezone name for the client/user (e.g. 'Asia/Shanghai'). When present, fact extraction renders natural-language time references in this local timezone while stored timestamps remain normalized to UTC."
+          },
           "entities": {
             "anyOf": [
               {
@@ -9154,6 +9166,7 @@
         "title": "MemoryItem",
         "description": "Single memory item for retain.",
         "example": {
+          "client_timezone": "America/Los_Angeles",
           "content": "Alice mentioned she's working on a new ML model",
           "context": "team meeting",
           "document_id": "meeting_notes_2024_01_15",

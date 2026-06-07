@@ -22,6 +22,7 @@ class RetainContentDict(TypedDict, total=False):
         document_id: Document ID for this content item (optional)
         entities: User-provided entities to merge with extracted entities (optional)
         tags: Visibility scope tags for this content item (optional)
+        client_timezone: IANA timezone name for rendering local time in extraction prompts (optional)
         observation_scopes: How to scope observations for consolidation (optional).
             "per_tag" runs one pass per individual tag; "combined" (default) runs a
             single pass with all tags; a list[list[str]] specifies exact passes.
@@ -37,6 +38,7 @@ class RetainContentDict(TypedDict, total=False):
     document_id: str
     entities: list[dict[str, str]]  # [{"text": "...", "type": "..."}]
     tags: list[str]  # Visibility scope tags
+    client_timezone: str
     observation_scopes: (
         Literal["per_tag", "combined", "all_combinations"] | list[list[str]]
     )  # Observation scopes for consolidation
@@ -57,6 +59,7 @@ class RetainContent:
     metadata: dict[str, str] = field(default_factory=dict)
     entities: list[dict[str, str]] = field(default_factory=list)  # User-provided entities
     tags: list[str] = field(default_factory=list)  # Visibility scope tags
+    client_timezone: str | None = None  # IANA timezone for local-time prompt context
     observation_scopes: Literal["per_tag", "combined", "all_combinations"] | list[list[str]] | None = (
         None  # Observation scopes
     )

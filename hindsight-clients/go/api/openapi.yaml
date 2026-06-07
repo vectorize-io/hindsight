@@ -6026,6 +6026,7 @@ components:
     MemoryItem:
       description: Single memory item for retain.
       example:
+        client_timezone: America/Los_Angeles
         content: Alice mentioned she's working on a new ML model
         context: team meeting
         document_id: meeting_notes_2024_01_15
@@ -6054,6 +6055,9 @@ components:
             type: string
           nullable: true
         document_id:
+          nullable: true
+          type: string
+        client_timezone:
           nullable: true
           type: string
         entities:

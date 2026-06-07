@@ -9,8 +9,9 @@ import asyncio
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
@@ -111,6 +112,22 @@ def _infer_temporal_date(fact_text: str, event_date: datetime | None) -> str | N
 
 def _sanitize_text(text: str | None) -> str | None:
     return sanitize_llm_output(text)
+
+
+def _timezone_offset_label(timezone_name: str, reference: datetime | None) -> str:
+    """Return a compact UTC offset label for a timezone at the event instant."""
+    reference_dt = reference or datetime.now(UTC)
+    if reference_dt.tzinfo is None:
+        reference_dt = reference_dt.replace(tzinfo=UTC)
+    local_dt = reference_dt.astimezone(ZoneInfo(timezone_name))
+    offset = local_dt.utcoffset()
+    if offset is None:
+        return "UTC offset unavailable"
+    total_minutes = int(offset.total_seconds() // 60)
+    sign = "+" if total_minutes >= 0 else "-"
+    total_minutes = abs(total_minutes)
+    hours, minutes = divmod(total_minutes, 60)
+    return f"UTC{sign}{hours:02d}:{minutes:02d}"
 
 
 class Entity(BaseModel):
@@ -1021,6 +1038,7 @@ def _build_user_message(
     metadata: dict[str, str] | None = None,
     agent_name: str | None = None,
     mission_preamble: str = "",
+    client_timezone: str | None = None,
 ) -> str:
     """Build user message for fact extraction.
 
@@ -1035,9 +1053,24 @@ def _build_user_message(
 
     if event_date is not None:
         event_date = parse_datetime_flexible(event_date)
-        event_date_str = f"{event_date.strftime('%A, %B %d, %Y')} ({event_date.isoformat()})"
+        if client_timezone:
+            local_event_date = event_date.astimezone(ZoneInfo(client_timezone))
+            event_date_str = (
+                f"{local_event_date.strftime('%A, %B %d, %Y')} "
+                f"({local_event_date.isoformat()}, UTC instant {event_date.isoformat()})"
+            )
+        else:
+            event_date_str = f"{event_date.strftime('%A, %B %d, %Y')} ({event_date.isoformat()})"
     else:
         event_date_str = "Unknown"
+
+    timezone_section = ""
+    if client_timezone:
+        offset_label = _timezone_offset_label(client_timezone, event_date)
+        timezone_section = (
+            f"\nClient Timezone: {client_timezone} ({offset_label}). When generating date/time references in "
+            "extracted memory text, use this local timezone. Keep UTC only as the storage/reference instant."
+        )
 
     metadata_section = ""
     if metadata:
@@ -1064,7 +1097,7 @@ def _build_user_message(
 
 Chunk: {chunk_index + 1}/{total_chunks}
 Event Date: {event_date_str}
-Context: {sanitized_context}{metadata_section}{narrator_section}
+Context: {sanitized_context}{timezone_section}{metadata_section}{narrator_section}
 
 Text:
 {sanitized_chunk}"""
@@ -1110,6 +1143,7 @@ async def _extract_facts_from_chunk(
     config,
     agent_name: str = None,
     metadata: dict[str, str] | None = None,
+    client_timezone: str | None = None,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
     Extract facts from a single chunk (internal helper for parallel processing).
@@ -1140,6 +1174,7 @@ async def _extract_facts_from_chunk(
         metadata,
         agent_name,
         mission_preamble=_retain_mission_preamble(config),
+        client_timezone=client_timezone,
     )
 
     # Opt into context caching when the provider supports it. The prompt and
@@ -1489,6 +1524,7 @@ async def _extract_facts_with_auto_split(
     config,
     agent_name: str = None,
     metadata: dict[str, str] | None = None,
+    client_timezone: str | None = None,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
     Extract facts from a chunk with automatic splitting if output exceeds token limits.
@@ -1506,6 +1542,7 @@ async def _extract_facts_with_auto_split(
         config: Resolved HindsightConfig for this bank
         agent_name: Optional agent name (memory owner)
         metadata: Optional document metadata key-value pairs
+        client_timezone: Optional IANA timezone for local-time extraction context
 
     Returns:
         Tuple of (facts list, token usage) extracted from the chunk (possibly from sub-chunks)
@@ -1526,6 +1563,7 @@ async def _extract_facts_with_auto_split(
             config=config,
             agent_name=agent_name,
             metadata=metadata,
+            client_timezone=client_timezone,
         )
     except OutputTooLongError:
         # Output exceeded token limits - split the chunk in half and retry
@@ -1572,6 +1610,7 @@ async def _extract_facts_with_auto_split(
                 config=config,
                 agent_name=agent_name,
                 metadata=metadata,
+                client_timezone=client_timezone,
             ),
             _extract_facts_with_auto_split(
                 chunk=second_half,
@@ -1583,6 +1622,7 @@ async def _extract_facts_with_auto_split(
                 config=config,
                 agent_name=agent_name,
                 metadata=metadata,
+                client_timezone=client_timezone,
             ),
         ]
 
@@ -1608,6 +1648,7 @@ async def extract_facts_from_text(
     config,
     context: str = "",
     metadata: dict[str, str] | None = None,
+    client_timezone: str | None = None,
 ) -> tuple[list[Fact], list[tuple[str, int]], TokenUsage]:
     """
     Extract semantic facts from conversational or narrative text using LLM.
@@ -1626,6 +1667,7 @@ async def extract_facts_from_text(
         config: Resolved HindsightConfig for this bank
         context: Context about the conversation/document
         metadata: Optional document metadata key-value pairs
+        client_timezone: Optional IANA timezone for local-time extraction context
 
     Returns:
         Tuple of (facts, chunks, usage) where:
@@ -1659,6 +1701,7 @@ async def extract_facts_from_text(
             config=config,
             agent_name=agent_name,
             metadata=metadata,
+            client_timezone=client_timezone,
         )
         for i, chunk in enumerate(chunks)
     ]
@@ -1777,7 +1820,8 @@ async def extract_facts_from_contents_batch_api(
                 logger.info(f"Resuming existing batch: batch_id={batch_id} (crash recovery)")
 
     # Step 1: Chunk all contents and build batch requests (skip if resuming)
-    all_chunks_info = []  # List of (chunk_text, content_index, chunk_index_in_content, event_date, context)
+    # List of (chunk_text, content_index, chunk_index_in_content, event_date, context)
+    all_chunks_info = []
     batch_requests = []
 
     # Build prompt and schema once (same for all chunks)
@@ -1802,6 +1846,7 @@ async def extract_facts_from_contents_batch_api(
                 item.metadata or None,
                 agent_name,
                 mission_preamble=_retain_mission_preamble(config),
+                client_timezone=item.client_timezone,
             )
 
             # Build request body using helper function
@@ -2281,6 +2326,7 @@ async def extract_facts_from_contents(
             agent_name=agent_name,
             config=config,
             metadata=item.metadata or None,
+            client_timezone=item.client_timezone,
         )
         fact_extraction_tasks.append(task)
 
