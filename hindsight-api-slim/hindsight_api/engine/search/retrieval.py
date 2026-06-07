@@ -137,6 +137,7 @@ async def retrieve_semantic_bm25_combined(
     """
     result_dict: dict[str, tuple[list[RetrievalResult], list[RetrievalResult]]] = {ft: ([], []) for ft in fact_types}
 
+    config = get_config()
     tokens = tokenize_query(query_text)
 
     # Over-fetch for HNSW approximation; semantic results trimmed to limit in Python.
@@ -147,8 +148,6 @@ async def retrieve_semantic_bm25_combined(
         "fact_type, document_id, chunk_id, tags, metadata, proof_count"
     )
     table = fq_table("memory_units")
-
-    config = get_config()
 
     # Use the SQL dialect to build backend-specific query arms, avoiding
     # inline if/else branches for each database.
@@ -201,6 +200,7 @@ async def retrieve_semantic_bm25_combined(
             embedding_param="$1",
             bank_id_param="$2",
             fetch_limit=hnsw_fetch,
+            semantic_threshold=config.semantic_threshold,
             tags_clause=tags_clause,
             groups_clause=groups_clause,
             extra_where=created_range_clause,
@@ -274,6 +274,7 @@ async def retrieve_semantic_bm25_combined(
                     embedding_param="$1",
                     bank_id_param="$2",
                     fetch_limit=hnsw_fetch,
+                    semantic_threshold=config.semantic_threshold,
                     tags_clause=fb_tags_clause,
                     groups_clause=fb_groups_clause,
                     extra_where=fb_created_clause,

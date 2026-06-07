@@ -22,6 +22,7 @@ def setup_test_env():
         "HINDSIGHT_API_LLM_PROVIDER",
         "HINDSIGHT_API_LLM_MODEL",
         "HINDSIGHT_API_LLM_REASONING_EFFORT",
+        "HINDSIGHT_API_SEMANTIC_THRESHOLD",
         "HINDSIGHT_API_DATABASE_URL",
         "HINDSIGHT_API_MIGRATION_DATABASE_URL",
     ]
@@ -101,6 +102,26 @@ def test_valid_retain_config_succeeds():
     config = HindsightConfig.from_env()
     assert config.retain_max_completion_tokens == 64000
     assert config.retain_chunk_size == 3000
+
+
+def test_semantic_threshold_reads_from_env():
+    """Semantic retrieval threshold can be configured at the server level."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_SEMANTIC_THRESHOLD"] = "0.58"
+
+    config = HindsightConfig.from_env()
+    assert config.semantic_threshold == 0.58
+
+
+def test_semantic_threshold_must_be_between_zero_and_one():
+    """Invalid semantic thresholds fail fast during configuration loading."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_SEMANTIC_THRESHOLD"] = "1.5"
+
+    with pytest.raises(ValueError, match="semantic_threshold"):
+        HindsightConfig.from_env()
 
 
 def test_log_config_masks_database_urls(caplog):

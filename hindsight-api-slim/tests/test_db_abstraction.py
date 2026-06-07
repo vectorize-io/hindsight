@@ -194,9 +194,10 @@ class TestPostgreSQLDialect:
     def test_build_semantic_arm(self, d):
         arm = d.build_semantic_arm(
             table="schema.memory_units", cols="id, text", fact_type="world",
-            embedding_param="$1", bank_id_param="$2", fetch_limit=100,
+            embedding_param="$1", bank_id_param="$2", fetch_limit=100, semantic_threshold=0.58,
         )
         assert "1 - (embedding <=> $1::vector)" in arm
+        assert ">= 0.58" in arm
         assert "fact_type = 'world'" in arm
         assert "LIMIT 100" in arm
         assert "'semantic' AS source" in arm
@@ -360,9 +361,10 @@ class TestOracleDialect:
     def test_build_semantic_arm(self, d):
         arm = d.build_semantic_arm(
             table="memory_units", cols="id, text", fact_type="world",
-            embedding_param=":1", bank_id_param=":2", fetch_limit=100,
+            embedding_param=":1", bank_id_param=":2", fetch_limit=100, semantic_threshold=0.58,
         )
         assert "VECTOR_DISTANCE" in arm
+        assert ">= 0.58" in arm
         assert "fact_type = 'world'" in arm
         assert "FETCH FIRST 100 ROWS ONLY" in arm
         assert "'semantic' AS source" in arm
