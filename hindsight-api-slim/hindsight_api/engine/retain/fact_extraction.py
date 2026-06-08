@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
 from ...config import get_config
 from ..llm_wrapper import LLMConfig, OutputTooLongError, sanitize_llm_output
+from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
 from .entity_labels import (
     EntityLabelsConfig,
@@ -510,11 +511,11 @@ LANGUAGE: MANDATORY — Detect the language of the input text and produce ALL ou
 FACT FORMAT - BE CONCISE
 ══════════════════════════════════════════════════════════════════════════
 
-1. **what**: Core fact - concise but complete (1-2 sentences max)
-2. **when**: Temporal info if mentioned. "N/A" if none. Use day name when known.
-3. **where**: Location if relevant. "N/A" if none.
-4. **who**: People involved with relationships. "N/A" if just general info.
-5. **why**: Context/significance ONLY if important. "N/A" if obvious.
+1. "what": Core fact - concise but complete (1-2 sentences max)
+2. "when": Temporal info if mentioned. "N/A" if none. Use day name when known.
+3. "where": Location if relevant. "N/A" if none.
+4. "who": People involved with relationships. "N/A" if just general info.
+5. "why": Context/significance ONLY if important. "N/A" if obvious.
 
 CONCISENESS: Capture the essence, not every word. One good sentence beats three mediocre ones.
 
@@ -1710,6 +1711,39 @@ logger = logging.getLogger(__name__)
 SECONDS_PER_FACT = 0.01
 
 
+async def _write_batch_extraction_errors(
+    pool: Any,
+    operation_id: str | None,
+    schema: str | None,
+    errors: RetainExtractionErrors,
+) -> None:
+    """Persist non-fatal Batch API extraction errors into operation result_metadata."""
+    if not pool or not operation_id or errors.count == 0:
+        return
+
+    from ..db_utils import acquire_with_retry
+    from ..task_backend import fq_table
+
+    # `errors` is the complete set for this extraction run, so overwrite the
+    # extraction_errors_* keys rather than folding in what's already stored. On
+    # batch crash recovery the resumed batch reprocesses every result and
+    # recomputes `errors` from scratch; reading + merging the prior run's
+    # counters here would double-count them. The SQL `||` merge still preserves
+    # unrelated keys (e.g. batch_id) already on result_metadata.
+    table = fq_table("async_operations", schema)
+    async with acquire_with_retry(pool) as conn:
+        await conn.execute(
+            f"""
+            UPDATE {table}
+            SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $2::jsonb,
+                updated_at = now()
+            WHERE operation_id = $1
+            """,
+            operation_id,
+            json.dumps(errors.to_dict()),
+        )
+
+
 async def extract_facts_from_contents_batch_api(
     contents: list[RetainContent],
     llm_config,
@@ -1887,6 +1921,7 @@ async def extract_facts_from_contents_batch_api(
     all_facts_from_llm = []
     chunks_metadata = []
     total_usage = TokenUsage()
+    extraction_errors = RetainExtractionErrors()
 
     for chunk_idx, (chunk_content, content_index, chunk_index_in_content, event_date, context) in enumerate(
         all_chunks_info
@@ -1895,7 +1930,9 @@ async def extract_facts_from_contents_batch_api(
         result = results_by_id.get(custom_id)
 
         if not result:
-            logger.warning(f"Missing result for {custom_id}, skipping")
+            message = f"{custom_id}: missing batch result"
+            logger.warning(message)
+            extraction_errors.add(message)
             chunks_metadata.append(
                 ChunkMetadata(
                     chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
@@ -1905,7 +1942,9 @@ async def extract_facts_from_contents_batch_api(
 
         # Check for errors
         if result.get("error"):
-            logger.error(f"Error in {custom_id}: {result['error']}")
+            message = f"{custom_id}: {result['error']}"
+            logger.error(f"Error in {message}")
+            extraction_errors.add(message)
             chunks_metadata.append(
                 ChunkMetadata(
                     chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
@@ -1918,7 +1957,9 @@ async def extract_facts_from_contents_batch_api(
         choices = response_body.get("choices", [])
 
         if not choices:
-            logger.warning(f"No choices in response for {custom_id}")
+            message = f"{custom_id}: no choices in response"
+            logger.warning(message)
+            extraction_errors.add(message)
             chunks_metadata.append(
                 ChunkMetadata(
                     chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
@@ -1933,7 +1974,9 @@ async def extract_facts_from_contents_batch_api(
         try:
             extraction_response_json = json.loads(content_str)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON for {custom_id}: {e}")
+            message = f"{custom_id}: failed to parse JSON: {e}"
+            logger.error(message)
+            extraction_errors.add(message)
             chunks_metadata.append(
                 ChunkMetadata(
                     chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
@@ -2106,7 +2149,9 @@ async def extract_facts_from_contents_batch_api(
                 fact = Fact(fact=combined_text, fact_type=fact_type, **fact_data)
                 chunk_facts.append(fact)
             except Exception as e:
-                logger.error(f"Failed to create Fact model for fact {i}: {e}")
+                message = f"{custom_id}: failed to create Fact model for fact {i}: {e}"
+                logger.error(message)
+                extraction_errors.add(message)
                 continue
 
         all_facts_from_llm.extend(chunk_facts)
@@ -2170,6 +2215,8 @@ async def extract_facts_from_contents_batch_api(
 
     # Step 8: Auto-tag facts from label groups with tag=True
     _inject_label_tags(extracted_facts, config)
+
+    await _write_batch_extraction_errors(pool, operation_id, schema, extraction_errors)
 
     logger.info(f"Batch API extracted {len(extracted_facts)} facts from {len(all_chunks_info)} chunks")
 

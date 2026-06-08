@@ -49,6 +49,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "nemoclaw": IntegrationMeta("@vectorize-io/hindsight-nemoclaw", "NemoClaw"),
     "strands": IntegrationMeta("hindsight-strands", "Strands"),
     "claude-code": IntegrationMeta("hindsight-memory", "Claude Code"),
+    "claude-agent-sdk": IntegrationMeta("hindsight-claude-agent-sdk", "Claude Agent SDK"),
     "llamaindex": IntegrationMeta("hindsight-llamaindex", "LlamaIndex"),
     "codex": IntegrationMeta("hindsight-codex", "Codex"),
     "autogen": IntegrationMeta("hindsight-autogen", "AutoGen"),
@@ -65,6 +66,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "gemini-spark": IntegrationMeta("hindsight-gemini-spark", "Gemini Spark"),
     "flowise": IntegrationMeta("@vectorize-io/flowise-nodes-hindsight", "Flowise"),
     "google-adk": IntegrationMeta("hindsight-google-adk", "Google ADK"),
+    "superagent": IntegrationMeta("hindsight-superagent", "Superagent"),
     "roo-code": IntegrationMeta("hindsight-roo-code", "Roo Code"),
 }
 

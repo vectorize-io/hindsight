@@ -16,7 +16,7 @@
 import { basename, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import type { HindsightConfig } from "./config.js";
-import { debugLog } from "./config.js";
+import { Logger } from "./logger.js";
 import type { HindsightClient } from "@vectorize-io/hindsight-client";
 
 const DEFAULT_BANK_NAME = "opencode";
@@ -121,7 +121,8 @@ export async function ensureBankMission(
   client: HindsightClient,
   bankId: string,
   config: HindsightConfig,
-  missionsSet: Set<string>
+  missionsSet: Set<string>,
+  logger: Logger = new Logger({ silent: true })
 ): Promise<void> {
   const mission = config.bankMission;
   if (!mission?.trim()) return;
@@ -140,9 +141,9 @@ export async function ensureBankMission(
         missionsSet.delete(k);
       }
     }
-    debugLog(config, `Set mission for bank: ${bankId}`);
+    logger.debug(`Set mission for bank: ${bankId}`);
   } catch (e) {
     // Don't fail if mission set fails — bank may not exist yet
-    debugLog(config, `Could not set bank mission for ${bankId}: ${e}`);
+    logger.debug(`Could not set bank mission for ${bankId}`, { error: String(e) });
   }
 }

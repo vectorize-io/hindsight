@@ -42,6 +42,7 @@ from rich.table import Table
 # Reuse battle-tested building blocks from existing benchmarks
 from benchmarks.perf.recall_perf import (
     FACT_TEMPLATES,
+    _augment_query_with_temporal,
     _build_engine,
     _fill_template,
     _insert_synthetic_observations,
@@ -239,14 +240,23 @@ def _attach_mock_callback(engine: Any) -> None:
     engine._llm_config.set_response_callback(callback)
 
 
-async def _populate_bank(engine: Any, bank_id: str, size: int) -> None:
-    """Populate a bank with synthetic data using mock LLM + async retain."""
+async def _populate_bank(engine: Any, bank_id: str, size: int, event_date: str | None = None) -> None:
+    """Populate a bank with synthetic data using mock LLM + async retain.
+
+    When *event_date* (YYYY-MM-DD) is given, every item is stamped with that
+    same date so all memories cluster into one narrow time range — the dense
+    temporal zone the recall-temporal suite uses to stress the temporal arm
+    (mirrors ``recall_perf.py generate --event-date``).
+    """
     from hindsight_api.models import RequestContext
     from hindsight_api.worker.poller import WorkerPoller
 
     _attach_mock_callback(engine)
 
     contents = [{"content": _fill_template(FACT_TEMPLATES[i % len(FACT_TEMPLATES)])} for i in range(size)]
+    if event_date:
+        for item in contents:
+            item["event_date"] = event_date
 
     result = await engine.submit_async_retain(
         bank_id=bank_id,
@@ -586,6 +596,143 @@ async def run_recall_with_observations_suite(scale_cfg: dict[str, int]) -> Suite
 
     return SuiteResult(
         name="recall-with-observations",
+        duration_seconds=round(suite_duration, 3),
+        success=True,
+        recall=recall_result,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Suite: recall-temporal
+# ---------------------------------------------------------------------------
+
+# All memories are stamped with this date and every query is augmented with a
+# 1-day window on it, so the temporal entry-point scan matches (near-)all rows
+# — the dense-temporal-zone regime that degraded in PR #1958 / was bounded in
+# #1983. The specific date is arbitrary; only the clustering matters.
+RECALL_TEMPORAL_EVENT_DATE = "2025-01-15"
+
+
+async def run_recall_temporal_suite(scale_cfg: dict[str, int]) -> SuiteResult:
+    """Measure recall latency/throughput while forcing the temporal retrieval arm."""
+    from hindsight_api.engine.memory_engine import Budget
+    from hindsight_api.models import RequestContext
+
+    bank_size = scale_cfg["recall_bank_size"]
+    iterations = scale_cfg["recall_iterations"]
+    concurrency = scale_cfg["recall_concurrency"]
+    bank_id = f"perf-recall-temporal-{uuid.uuid4().hex[:8]}"
+
+    console.print(
+        f"\n[bold cyan]Suite: recall-temporal[/bold cyan]  "
+        f"bank_size={bank_size}  iterations={iterations}  concurrency={concurrency}  "
+        f"event_date={RECALL_TEMPORAL_EVENT_DATE}  bank={bank_id}"
+    )
+
+    engine = _build_engine()
+    await engine.initialize()
+
+    # Use RRF reranker to isolate DB performance from cross-encoder CPU cost
+    engine._cross_encoder_reranker = _RRFReranker()
+
+    # Cluster all memories on one date so the temporal entry-point scan is stressed
+    await _populate_bank(engine, bank_id, bank_size, event_date=RECALL_TEMPORAL_EVENT_DATE)
+
+    request_context = RequestContext()
+    durations: list[float] = []
+    all_phase_timings: dict[str, list[float]] = {}
+
+    async def recall_one(query: str) -> float:
+        # Append "on January 15, 2025" so the query analyzer extracts a 1-day
+        # window and the temporal arm fires against the clustered memories.
+        temporal_query = _augment_query_with_temporal(query, RECALL_TEMPORAL_EVENT_DATE)
+        t0 = time.perf_counter()
+        result = await engine.recall_async(
+            bank_id=bank_id,
+            query=temporal_query,
+            budget=Budget.HIGH,
+            max_tokens=4096,
+            enable_trace=True,
+            request_context=request_context,
+            _quiet=True,
+        )
+        elapsed = time.perf_counter() - t0
+        if result.trace:
+            summary = result.trace.get("summary", {})
+            for pm in summary.get("phase_metrics", []):
+                all_phase_timings.setdefault(pm["phase_name"], []).append(pm["duration_seconds"])
+        return elapsed
+
+    # Run recall iterations in parallel batches
+    remaining = iterations
+    query_idx = 0
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Running recall (temporal)…", total=iterations)
+        while remaining > 0:
+            batch_size = min(concurrency, remaining)
+            queries = [RECALL_QUERIES[(query_idx + i) % len(RECALL_QUERIES)] for i in range(batch_size)]
+            query_idx += batch_size
+            batch = await asyncio.gather(*[recall_one(q) for q in queries])
+            durations.extend(batch)
+            remaining -= batch_size
+            progress.advance(task, batch_size)
+
+    suite_duration = sum(durations)
+    throughput = iterations / (suite_duration / concurrency) if suite_duration > 0 else 0
+
+    await engine.delete_bank(bank_id=bank_id, request_context=RequestContext())
+    await engine.close()
+
+    latency_stats = PercentileStats.from_samples(durations)
+    phase_stats = {name: PercentileStats.from_samples(times) for name, times in all_phase_timings.items()}
+
+    recall_result = RecallResult(
+        bank_size=bank_size,
+        concurrency=concurrency,
+        latency=latency_stats,
+        throughput_queries_per_sec=round(throughput, 2),
+        phase_timings=phase_stats,
+    )
+
+    # Print summary
+    table = Table(title="Recall Latency (temporal arm forced)")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green", justify="right")
+    table.add_row("Bank size", f"{bank_size:,}")
+    table.add_row("Event date", RECALL_TEMPORAL_EVENT_DATE)
+    table.add_row("Iterations", str(iterations))
+    table.add_row("Concurrency", str(concurrency))
+    table.add_row("Throughput", f"{throughput:.2f} queries/s")
+    table.add_row("Mean", f"{latency_stats.mean:.3f}s")
+    table.add_row("p50", f"{latency_stats.p50:.3f}s")
+    table.add_row("p95", f"{latency_stats.p95:.3f}s")
+    table.add_row("p99", f"{latency_stats.p99:.3f}s")
+    table.add_row("Min", f"{latency_stats.min:.3f}s")
+    table.add_row("Max", f"{latency_stats.max:.3f}s")
+    console.print(table)
+
+    if phase_stats:
+        phase_table = Table(title="Per-Step Timing Breakdown (temporal)")
+        phase_table.add_column("Step", style="cyan")
+        phase_table.add_column("Mean", style="green", justify="right")
+        phase_table.add_column("p50", style="green", justify="right")
+        phase_table.add_column("p95", style="yellow", justify="right")
+        phase_table.add_column("Max", style="red", justify="right")
+
+        sorted_phases = sorted(phase_stats.items(), key=lambda x: x[1].mean, reverse=True)
+        for name, ps in sorted_phases:
+            phase_table.add_row(name, f"{ps.mean:.3f}s", f"{ps.p50:.3f}s", f"{ps.p95:.3f}s", f"{ps.max:.3f}s")
+        console.print(phase_table)
+
+    return SuiteResult(
+        name="recall-temporal",
         duration_seconds=round(suite_duration, 3),
         success=True,
         recall=recall_result,
@@ -1000,6 +1147,7 @@ SUITES = {
     "retain": run_retain_suite,
     "recall": run_recall_suite,
     "recall-with-observations": run_recall_with_observations_suite,
+    "recall-temporal": run_recall_temporal_suite,
     "consolidation": run_consolidation_suite,
     "graph-maintenance": run_graph_maintenance_suite,
 }

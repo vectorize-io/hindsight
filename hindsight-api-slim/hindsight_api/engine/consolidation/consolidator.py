@@ -2116,6 +2116,12 @@ async def _consolidate_batch_with_llm(
                 "response_format": response_model,
                 "scope": "consolidation",
             }
+            # Only request an explicit output budget when configured. Left unset by default the key is
+            # omitted, so each provider keeps its implicit default (backwards compatible). Operators on
+            # providers with a low hidden cap (notably Bedrock imported models, which truncate structured
+            # consolidation JSON) set HINDSIGHT_API_CONSOLIDATION_MAX_COMPLETION_TOKENS to fix it.
+            if config.consolidation_max_completion_tokens is not None:
+                call_kwargs["max_completion_tokens"] = config.consolidation_max_completion_tokens
             if inner_max_retries is not None:
                 call_kwargs["max_retries"] = inner_max_retries
             if cached_prefix_name is not None:
