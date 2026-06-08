@@ -358,12 +358,15 @@ class SearchTracer:
         """
         self.rrf_merged = []
         for rank, (doc_id, data, rrf_meta) in enumerate(merged_results, start=1):
+            source_ranks = rrf_meta.get("source_ranks")
+            if source_ranks is None:
+                source_ranks = {key: value for key, value in rrf_meta.items() if key.endswith("_rank")}
             self.rrf_merged.append(
                 RRFMergeResult(
                     node_id=doc_id,
                     text=data.get("text", ""),
                     rrf_score=rrf_meta.get("rrf_score", 0.0),
-                    source_ranks=rrf_meta.get("source_ranks", {}),
+                    source_ranks=source_ranks,
                     final_rrf_rank=rank,
                 )
             )

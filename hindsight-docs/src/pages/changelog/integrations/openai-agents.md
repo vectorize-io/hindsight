@@ -10,6 +10,12 @@ For the source code, see [`hindsight-integrations/openai-agents`](https://github
 
 ← [Back to main changelog](/changelog)
 
+## [0.1.2](https://github.com/vectorize-io/hindsight/tree/integrations/openai-agents/v0.1.2)
+
+**Improvements**
+
+- Improved OpenAI Agents integration reliability by defaulting to the Cloud backend and adding gated end-to-end tests with real-LLM bucketing.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/DK09876" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/DK09876.png?size=40" alt="@DK09876" width="18" height="18" style={{borderRadius: "50%"}} />@DK09876</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/c01fc12f" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>c01fc12f</a>
+
 ## [0.1.1](https://github.com/vectorize-io/hindsight/tree/integrations/openai-agents/v0.1.1)
 
 **Improvements**

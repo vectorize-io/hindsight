@@ -1,6 +1,6 @@
 [project]
 name = "hindsight-llamaindex"
-version = "0.1.4"
+version = "0.1.5"
 description = "LlamaIndex integration for Hindsight - persistent memory for AI agents"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -46,6 +46,10 @@ packages = ["hindsight_llamaindex"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "requires_real_llm: end-to-end test that needs live external services (a running Hindsight server and/or real LLM provider keys). Excluded from the deterministic PR-CI bucket via -m 'not requires_real_llm'; run on its own via -m requires_real_llm.",
+]
 
 [dependency-groups]
 dev = [

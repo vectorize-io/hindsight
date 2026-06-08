@@ -23,6 +23,7 @@ on:
           - retain
           - recall
           - recall-with-observations
+          - recall-temporal
           - consolidation
           - graph-maintenance
         default: ""

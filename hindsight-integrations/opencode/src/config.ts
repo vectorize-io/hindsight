@@ -12,6 +12,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
+/** Default API URL used when no override is supplied via env, file, or plugin options. */
+export const DEFAULT_HINDSIGHT_API_URL = "https://api.hindsight.vectorize.io";
+
 export interface HindsightConfig {
   // Recall
   autoRecall: boolean;
@@ -75,7 +78,7 @@ const DEFAULTS: HindsightConfig = {
   retainMetadata: {},
 
   // Connection
-  hindsightApiUrl: null,
+  hindsightApiUrl: DEFAULT_HINDSIGHT_API_URL,
   hindsightApiToken: null,
 
   // Bank
@@ -106,7 +109,10 @@ const ENV_OVERRIDES: Record<string, [keyof HindsightConfig, "string" | "bool" | 
   HINDSIGHT_RECALL_CONTEXT_TURNS: ["recallContextTurns", "int"],
   HINDSIGHT_DYNAMIC_BANK_ID: ["dynamicBankId", "bool"],
   HINDSIGHT_BANK_MISSION: ["bankMission", "string"],
-  HINDSIGHT_DEBUG: ["debug", "bool"],
+  // NOTE: `debug` is intentionally NOT an env override. It is a proper config
+  // option set via opencode.json plugin options or ~/.hindsight/opencode.json,
+  // because env vars are unreliable to set for OpenCode's plugin runtime
+  // (notably on Windows).
 };
 
 function castEnv(value: string, typ: "string" | "bool" | "int"): string | boolean | number | null {
@@ -204,10 +210,4 @@ export function loadConfig(pluginOptions?: Record<string, unknown>): HindsightCo
   }
 
   return result;
-}
-
-export function debugLog(config: HindsightConfig, ...args: unknown[]): void {
-  if (config.debug) {
-    console.error("[Hindsight]", ...args);
-  }
 }

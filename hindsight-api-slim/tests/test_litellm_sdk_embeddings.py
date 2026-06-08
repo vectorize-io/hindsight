@@ -454,7 +454,7 @@ class TestLiteLLMSDKEmbeddings:
         ):
             emb = LiteLLMSDKEmbeddings(
                 api_key="test_key",
-                model="gemini/gemini-embedding-2-preview",
+                model="gemini/gemini-embedding-2",
                 encoding_format="",
             )
             await emb.initialize()
@@ -542,7 +542,7 @@ class TestLiteLLMSDKEmbeddingsFactory:
         mock_config = MagicMock()
         mock_config.embeddings_provider = "litellm-sdk"
         mock_config.embeddings_litellm_sdk_api_key = "test_key"
-        mock_config.embeddings_litellm_sdk_model = "gemini/gemini-embedding-2-preview"
+        mock_config.embeddings_litellm_sdk_model = "gemini/gemini-embedding-2"
         mock_config.embeddings_litellm_sdk_api_base = None
         mock_config.embeddings_litellm_sdk_output_dimensions = 768
 

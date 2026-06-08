@@ -172,7 +172,8 @@ For each non-trivial change:
 If any files in `hindsight-integrations/` were added or changed, verify:
 - **Tests exist** — the integration must have tests that simulate/exercise the external framework (not just pure unit tests of helpers). Check for a `tests/` directory with meaningful test files.
 - **CI job exists** — check `.github/workflows/test.yml` for a corresponding `test-<name>-integration` job. If missing, flag it.
-- **Release process** — check that the integration name is in the `VALID_INTEGRATIONS` array in `scripts/release-integration.sh`. If missing, flag it.
+- **Release process** — check that the integration name is in the `VALID_INTEGRATIONS` array in `scripts/release-integration.sh` AND in the `INTEGRATIONS` dict in `hindsight-dev/hindsight_dev/generate_changelog.py` (the changelog generator keeps its own list; a release fails at the changelog step if the name is missing there). If either is missing, flag it.
+- **Docs gallery + sidebar entry** — the integration must have an entry in `hindsight-docs/src/data/integrations.json`. This file is the **single source of truth** that drives both the integrations gallery and the docs sidebar (the sidebar category is injected from it at render time across all docs versions). The entry needs an internal `/sdks/integrations/<slug>` `link` and a matching page at `hindsight-docs/docs-integrations/<slug>.md(x)`. The `hindsight-docs/scripts/check-integrations.mjs` build step enforces both directions — forward: every internal JSON entry has a doc page; reverse: every released tag (`integrations/<name>/vX.Y.Z`) appears in the JSON (private infra like `cloudflare-oauth-proxy` is in the script's `EXCLUDED` set). Flag any integration that is released (or being released) but missing from `integrations.json`, and any JSON entry without a doc page. Do **not** hand-edit `versioned_sidebars/*.json` to add integration links — they are positional placeholders filled from the JSON.
 - **Code standards** — the integration code must follow all Python style rules (type hints, no raw dicts, no tuple returns, etc.).
 
 ### 10. Check MCP tool registration completeness
@@ -217,6 +218,7 @@ Present a clear summary organized by severity:
 - Direct DB access (raw SQL / `acquire_with_retry` / `fq_table`) in an `api/` handler instead of a `MemoryEngine` method
 - Tenant-scoped data accessed without authentication enforced in the engine (`_authenticate_tenant` / `get_bank_profile`)
 - New integration missing tests, CI job, or release-integration.sh entry
+- Released/added integration missing from `hindsight-docs/src/data/integrations.json`, or a JSON entry with no `docs-integrations/<slug>` page (fails the docs build via `check-integrations.mjs`)
 - New PostgreSQL table missing from `BACKUP_TABLES` in `admin/cli.py` (silent data loss on restore)
 
 **Should fix** — issues that hurt code quality:

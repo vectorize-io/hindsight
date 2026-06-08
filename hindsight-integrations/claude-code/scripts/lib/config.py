@@ -56,6 +56,7 @@ DEFAULTS = {
     "llmModel": None,
     "llmApiKeyEnv": None,
     # Misc
+    "enableKnowledgeTools": True,
     "debug": False,
 }
 

@@ -44,6 +44,28 @@ class TestListPagesUsesMetadataProjection:
         assert "detail=metadata" in list_pages_body
 
 
+class TestDisabledKnowledgeToolsKeepsServerAlive:
+    """When `enableKnowledgeTools` is false the server must NOT exit at startup.
+
+    `.mcp.json` registers this server unconditionally, so Claude Code expects a
+    live process. If the server exits immediately (the old behavior), Claude
+    Code treats it as a crashed server and surfaces a `-32000` reconnect error
+    on every prompt (issue #1995). The disabled path must instead run an empty
+    MCP server (`mcp.run`) so the process stays alive with no tools registered.
+    """
+
+    def test_disabled_branch_runs_empty_server_not_bare_exit(self):
+        src = _read_mcp_server_source()
+        gate = src.find('if not _config.get("enableKnowledgeTools")')
+        assert gate > 0, "expected the enableKnowledgeTools startup gate"
+        # The disabled branch ends at the next top-level statement (`try:`).
+        branch = src[gate : src.find("\ntry:", gate)]
+        assert "mcp.run(transport=\"stdio\")" in branch, (
+            "disabled path must run an empty MCP server so the process stays "
+            "alive — exiting triggers a -32000 reconnect loop (issue #1995)"
+        )
+
+
 class TestGetPageUsesContentProjection:
     """`agent_knowledge_get_page` must request the API's `content` projection.
 

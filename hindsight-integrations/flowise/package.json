@@ -31,7 +31,7 @@
     "langchain"
   ],
   "dependencies": {
-    "@langchain/core": "^0.3.0",
+    "@langchain/core": "^1.1.48",
     "@vectorize-io/hindsight-client": "^0.5.6",
     "zod": "^3.23.0"
   },

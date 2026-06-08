@@ -2168,6 +2168,28 @@ async def apply_bank_template_manifest(
     )
 
 
+class OperationProgress(BaseModel):
+    """Last-known progress snapshot for a long-running async operation.
+
+    Written at coarse phase/batch boundaries by the worker (consolidation, batch
+    retain). Lets an operator polling the operation status API distinguish a healthy
+    long-running job (``processed`` advancing across polls) from a frozen one (same
+    numbers, no movement in ``at``). Absent (``null``) on operations that never
+    reached a checkpoint — completed-instantly or pre-feature rows.
+    """
+
+    stage: str = Field(description="Coarse phase the operation last reported (e.g. 'processing_batch').")
+    at: str = Field(description="ISO-8601 timestamp when this snapshot was written.")
+    processed: int | None = Field(
+        default=None, description="Units of work finished so far (sub-batches, memories), when known."
+    )
+    total: int | None = Field(default=None, description="Total units of work for the operation, when known.")
+    detail: dict[str, int] | None = Field(
+        default=None,
+        description="Operation-specific counters (e.g. observations_created, round, items_in_sub_batch).",
+    )
+
+
 class OperationResponse(BaseModel):
     """Response model for a single async operation."""
 
@@ -2192,6 +2214,10 @@ class OperationResponse(BaseModel):
     items_count: int
     document_id: str | None = None
     created_at: str
+    updated_at: str | None = Field(
+        default=None,
+        description="When this operation's row last changed (claim, progress heartbeat, or completion).",
+    )
     status: str
     error_message: str | None
     retry_count: int | None = Field(
@@ -2207,6 +2233,10 @@ class OperationResponse(BaseModel):
             "extension may have raised DeferOperation to park the task until "
             "some backpressure window opens. Always null for completed tasks."
         ),
+    )
+    progress: OperationProgress | None = Field(
+        default=None,
+        description="Last-known progress snapshot for a running operation; null if none was recorded.",
     )
 
 
@@ -2342,6 +2372,10 @@ class OperationStatusResponse(BaseModel):
             "(e.g. by an extension raising DeferOperation) rather than awaiting "
             "immediate pickup."
         ),
+    )
+    progress: OperationProgress | None = Field(
+        default=None,
+        description="Last-known progress snapshot for a running operation; null if none was recorded.",
     )
     result_metadata: dict[str, Any] | None = Field(
         default=None,

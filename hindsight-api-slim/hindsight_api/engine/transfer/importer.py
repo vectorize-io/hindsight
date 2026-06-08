@@ -218,6 +218,10 @@ async def import_documents(
 # Bank-level config/state tables restored verbatim from a whole-bank archive.
 # Order matters for foreign keys: banks (parent) is restored before any child.
 _BANK_CHILD_TABLES = ("mental_models", "directives", "webhooks")
+# Child-history carried verbatim; restored after its parent (mental_models) so the
+# foreign key resolves. Surrogate ids were dropped on export (the target reassigns
+# them), so these restore via fresh IDENTITY values.
+_CARRIED_HISTORY_TABLES = ("mental_model_history",)
 _HISTORY_TABLES = ("audit_log", "llm_requests")
 
 
@@ -230,6 +234,7 @@ class BankImportResult:
     facts_imported: int = 0
     observations_imported: int = 0
     mental_models_imported: int = 0
+    mental_model_history_imported: int = 0
     directives_imported: int = 0
     webhooks_imported: int = 0
     history_rows_imported: int = 0
@@ -258,7 +263,7 @@ def parse_bank_archive(archive_bytes: bytes) -> ParsedBankArchive:
                 f"Not a whole-bank archive (archive_type={manifest.archive_type!r}); use import_documents instead"
             )
         bank_rows: dict[str, list[dict]] = {}
-        for table in ("banks", *_BANK_CHILD_TABLES):
+        for table in ("banks", *_BANK_CHILD_TABLES, *_CARRIED_HISTORY_TABLES):
             fname = f"{table}.json"
             bank_rows[table] = json.loads(zf.read(fname)) if fname in names else []
         history_rows: dict[str, list[dict]] = {}
@@ -396,6 +401,10 @@ async def import_bank(
         result.mental_models_imported = await _restore_rows(
             conn, "mental_models", parsed.bank_rows.get("mental_models", [])
         )
+        # Restored after mental_models so the (mental_model_id, bank_id) FK resolves.
+        result.mental_model_history_imported = await _restore_rows(
+            conn, "mental_model_history", parsed.bank_rows.get("mental_model_history", [])
+        )
         result.directives_imported = await _restore_rows(conn, "directives", parsed.bank_rows.get("directives", []))
         result.webhooks_imported = await _restore_rows(conn, "webhooks", parsed.bank_rows.get("webhooks", []))
         if include_history:
@@ -404,12 +413,13 @@ async def import_bank(
 
     logger.info(
         "[transfer] Imported bank %s: %d doc(s), %d fact(s), %d observation(s), "
-        "%d mental model(s), %d directive(s), %d webhook(s), %d history row(s)",
+        "%d mental model(s), %d mm-history row(s), %d directive(s), %d webhook(s), %d history row(s)",
         bank_id,
         result.documents_imported,
         result.facts_imported,
         result.observations_imported,
         result.mental_models_imported,
+        result.mental_model_history_imported,
         result.directives_imported,
         result.webhooks_imported,
         result.history_rows_imported,
