@@ -234,7 +234,7 @@ class OracleDialect(SQLDialect):
         embedding_param: str,
         bank_id_param: str,
         fetch_limit: int,
-        semantic_threshold: float,
+        min_similarity: float,
         tags_clause: str = "",
         groups_clause: str = "",
         extra_where: str = "",
@@ -250,7 +250,7 @@ class OracleDialect(SQLDialect):
             f" WHERE bank_id = {bank_id_param}"
             f"   AND fact_type = '{fact_type}'"
             f"   AND embedding IS NOT NULL"
-            f"   AND (1 - VECTOR_DISTANCE(embedding, {embedding_param}, COSINE)) >= {semantic_threshold}"
+            f"   AND (1 - VECTOR_DISTANCE(embedding, {embedding_param}, COSINE)) >= {min_similarity}"
             f"   {tags_clause}"
             f"   {groups_clause}"
             f"   {extra_where}"
