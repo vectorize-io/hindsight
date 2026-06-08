@@ -245,6 +245,11 @@ async def test_embedding_utils_routes_query_embeddings_to_provider_hook():
     from hindsight_api.engine.retain.embedding_utils import generate_embeddings_batch
 
     class QueryAwareEmbeddings:
+        # 1-element vectors below — declare a matching dimension so the
+        # post-encode validation in generate_embeddings_batch passes (the
+        # EmbeddingsBackend Protocol requires a `dimension` property).
+        dimension = 1
+
         def encode(self, texts: list[str]) -> list[list[float]]:
             raise AssertionError("query embeddings should not use the generic encode method")
 
@@ -261,6 +266,11 @@ async def test_embedding_utils_routes_document_embeddings_to_provider_hook():
     from hindsight_api.engine.retain.embedding_utils import generate_embeddings_batch
 
     class DocumentAwareEmbeddings:
+        # 1-element vectors below — declare a matching dimension so the
+        # post-encode validation in generate_embeddings_batch passes (the
+        # EmbeddingsBackend Protocol requires a `dimension` property).
+        dimension = 1
+
         def encode(self, texts: list[str]) -> list[list[float]]:
             raise AssertionError("document embeddings should not use the generic encode method")
 

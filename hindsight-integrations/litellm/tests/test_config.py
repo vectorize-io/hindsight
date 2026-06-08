@@ -49,11 +49,11 @@ class TestConfigure:
         reset_config()
 
     def test_configure_with_no_arguments(self):
-        """Test configure() with no arguments uses defaults."""
+        """Test configure() with no arguments uses production URL and leaves bank_id unset."""
         config = configure()
 
         assert config.hindsight_api_url == DEFAULT_HINDSIGHT_API_URL
-        assert config.bank_id == DEFAULT_BANK_ID
+        assert config.bank_id is None
 
     def test_configure_reads_api_key_from_env(self):
         """Test configure() reads API key from environment variable."""
@@ -81,10 +81,10 @@ class TestConfigure:
         assert config.bank_id == "custom-bank"
         assert config.api_key == "custom-key"
 
-    def test_is_configured_true_with_defaults(self):
-        """Test is_configured() returns True with default config."""
+    def test_is_configured_false_without_explicit_bank_id(self):
+        """Test is_configured() returns False when configure() is called without bank_id."""
         configure()
-        assert is_configured() is True
+        assert is_configured() is False
 
     def test_is_configured_false_when_not_configured(self):
         """Test is_configured() returns False when not configured."""

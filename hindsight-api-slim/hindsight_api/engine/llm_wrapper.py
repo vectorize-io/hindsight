@@ -269,7 +269,11 @@ def create_llm_provider(
         reasoning_effort: Reasoning effort level for supported providers.
         groq_service_tier: Groq service tier (for Groq provider) - "on_demand", "flex", or "auto".
         openai_service_tier: OpenAI service tier (for OpenAI provider) - None (default) or "flex" (50% cheaper).
-        extra_body: Extra body params merged into OpenAI-compatible API calls.
+        extra_body: Extra request-body params merged into the provider's native
+            call. Threaded into OpenAI-compatible, Fireworks, Anthropic, Gemini/
+            VertexAI and LiteLLM providers (each merges them in its own parameter
+            space). Keys must use each provider's native names (e.g. ``max_tokens``
+            for OpenAI/Anthropic vs ``max_output_tokens`` for Gemini).
         default_headers: Custom headers passed as ``default_headers`` to provider SDK clients
             (used by operators routing through proxies / request-tracing middleware). Currently
             wired into the Anthropic provider; other providers may opt in as needed.
@@ -345,6 +349,7 @@ def create_llm_provider(
             vertexai_credentials=vertexai_credentials,
             gemini_safety_settings=gemini_safety_settings,
             prompt_cache_enabled=prompt_cache_enabled,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "anthropic":
@@ -355,6 +360,7 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             default_headers=default_headers,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "litellm":
@@ -364,6 +370,7 @@ def create_llm_provider(
             base_url=base_url,
             model=model,
             reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "litellmrouter":
@@ -381,6 +388,7 @@ def create_llm_provider(
             model=model,
             config=litellmrouter_config,
             reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "bedrock":
@@ -392,6 +400,7 @@ def create_llm_provider(
             base_url=base_url,
             model=bedrock_model,
             reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "llamacpp":
@@ -487,7 +496,8 @@ class LLMProvider:
             groq_service_tier: Groq service tier ("on_demand", "flex", "auto") - from config.
             openai_service_tier: OpenAI service tier (None or "flex") - from config.
             gemini_safety_settings: Safety settings for Gemini/VertexAI providers.
-            extra_body: Extra body params merged into OpenAI-compatible API calls.
+            extra_body: Extra request-body params merged into the provider's native call
+                (OpenAI-compatible, Fireworks, Anthropic, Gemini/VertexAI, LiteLLM).
             default_headers: Custom headers passed as ``default_headers`` to provider SDK clients.
                 Used by operators routing through proxies / request-tracing middleware. Falls
                 back to ``HindsightConfig.llm_default_headers`` (env: ``HINDSIGHT_API_LLM_DEFAULT_HEADERS``)
@@ -754,7 +764,10 @@ class LLMProvider:
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
             skip_validation: Return raw JSON without Pydantic validation.
-            strict_schema: Use strict JSON schema enforcement (OpenAI only). Guarantees all required fields.
+            strict_schema: Per-call override requesting grammar-enforced (json_schema strict)
+                structured output instead of the soft json_object path. The server-level
+                HINDSIGHT_API_LLM_STRICT_SCHEMA flag is OR-ed in here so it applies to every call;
+                providers without a strict mode ignore it.
             return_usage: If True, return tuple (result, TokenUsage) instead of just result.
 
         Returns:
@@ -773,6 +786,16 @@ class LLMProvider:
 
         structured = "+structured" if response_format is not None else ""
         set_stage(f"llm.{self.provider}.{scope}{structured}")
+
+        # Resolve strict-schema once, here, rather than in each provider: the
+        # per-call argument OR the server-level HINDSIGHT_API_LLM_STRICT_SCHEMA
+        # flag. Providers with a json_schema response_format (OpenAI-compatible,
+        # LiteLLM) then grammar-enforce structured output instead of the fragile
+        # soft json_object path; Gemini already enforces its native response_schema,
+        # and providers without a strict mode simply ignore the flag.
+        from ..config import get_config
+
+        strict_schema = strict_schema or get_config().llm_strict_schema
 
         # LLM call observability flows through the OTel GenAI recorder
         # (tracing.get_span_recorder().record_llm_call). Provider implementations

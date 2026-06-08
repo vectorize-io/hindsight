@@ -1,10 +1,29 @@
 """
 Test search tracing functionality.
 """
-import pytest
-from hindsight_api.engine.memory_engine import Budget
-from hindsight_api import SearchTrace, RequestContext
 from datetime import datetime, timezone
+
+import pytest
+
+from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.search.tracer import SearchTracer
+
+
+def test_rrf_trace_preserves_flattened_source_ranks():
+    """Source ranks flattened by the recall pipeline remain visible in traces."""
+    tracer = SearchTracer(query="test", budget=10, max_tokens=100)
+
+    tracer.add_rrf_merged(
+        [
+            (
+                "memory-1",
+                {"text": "alpha"},
+                {"rrf_score": 0.1, "semantic_rank": 1, "bm25_rank": 2},
+            )
+        ]
+    )
+
+    assert tracer.rrf_merged[0].source_ranks == {"semantic_rank": 1, "bm25_rank": 2}
 
 
 @pytest.mark.asyncio

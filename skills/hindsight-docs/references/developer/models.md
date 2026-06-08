@@ -37,6 +37,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - OpenAI Codex
 - Claude Code
 - AWS Bedrock
+- Fireworks AI
 - OpenAI Compatible
 - LiteLLM (100+)
 
@@ -93,6 +94,7 @@ Beyond basic generation, some providers support optional features that lower cos
 | OpenAI Codex (`openai-codex`) | — | — |
 | Claude Code (`claude-code`) | — | — |
 | AWS Bedrock (`bedrock`) | — | — |
+| Fireworks AI (`fireworks`) | ✅ | — |
 | LiteLLM (100+) (`litellm`) | — | — |
 
 - **Batch API** — submits bulk retain extraction through the provider's asynchronous batch endpoint, typically at ~50% lower cost. Used automatically when available; otherwise calls run synchronously.
@@ -121,9 +123,9 @@ The following models have been tested and verified to work correctly with Hindsi
 | **OpenAI** | `gpt-4o-mini` |
 | **Anthropic** | `claude-sonnet-4-20250514` |
 | **Anthropic** | `claude-3-5-sonnet-20241022` |
-| **Gemini** | `gemini-3-pro-preview` |
-| **Gemini** | `gemini-2.5-flash` |
-| **Gemini** | `gemini-2.5-flash-lite` |
+| **Gemini** | `gemini-3.5-flash` |
+| **Gemini** | `gemini-3.1-pro-preview` |
+| **Gemini** | `gemini-3.1-flash-lite` |
 | **Groq** | `openai/gpt-oss-120b` |
 | **Groq** | `openai/gpt-oss-20b` |
 
@@ -135,8 +137,8 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 |----------|--------------|
 | `openai` | `gpt-4o-mini` |
 | `anthropic` | `claude-haiku-4-5-20251001` |
-| `gemini` | `gemini-2.5-flash` |
-| `vertexai` | `gemini-2.0-flash-001` |
+| `gemini` | `gemini-3.5-flash` |
+| `vertexai` | `google/gemini-3.1-flash-lite` |
 | `groq` | `openai/gpt-oss-120b` |
 | `ollama` | `gemma3:12b` |
 | `ollama-cloud` | `gemma3:12b` |
@@ -151,6 +153,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `openai-codex` | `gpt-5.4-mini` |
 | `claude-code` | `claude-sonnet-4-5-20250929` |
 | `bedrock` | `us.amazon.nova-2-lite-v1:0` |
+| `fireworks` | `accounts/fireworks/models/llama-v3p1-8b-instruct` |
 | `litellm` | `gpt-4o-mini` |
 
 **Example:** Setting just the provider uses its default model:
@@ -194,6 +197,9 @@ export HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS=16000
 ```
 
 **Important:** `HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS` must be greater than `HINDSIGHT_API_RETAIN_CHUNK_SIZE` (default: 3000). The system will validate this on startup and provide an error message if the configuration is invalid.
+> **⚠️ Groq free tier is not suitable for Hindsight**
+> 
+Groq's free tier only allows 8,000 tokens per minute — far below what Hindsight needs for a single retain call (~64k). Free-tier Groq models therefore can't be used with Hindsight; use a paid Groq tier or a different provider.
 ### Configuration
 
 ```bash
@@ -210,7 +216,7 @@ export HINDSIGHT_API_LLM_MODEL=gpt-4o
 # Gemini
 export HINDSIGHT_API_LLM_PROVIDER=gemini
 export HINDSIGHT_API_LLM_API_KEY=xxxxxxxxxxxx
-export HINDSIGHT_API_LLM_MODEL=gemini-2.0-flash
+export HINDSIGHT_API_LLM_MODEL=gemini-3.5-flash
 
 # Anthropic
 export HINDSIGHT_API_LLM_PROVIDER=anthropic
@@ -254,7 +260,7 @@ export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
 
 # Vertex AI (Google Cloud)
 export HINDSIGHT_API_LLM_PROVIDER=vertexai
-export HINDSIGHT_API_LLM_MODEL=gemini-2.0-flash-001
+export HINDSIGHT_API_LLM_MODEL=gemini-3.1-flash-lite
 export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-gcp-project-id
 # Optional: region (default: us-central1)
 # export HINDSIGHT_API_LLM_VERTEXAI_REGION=us-central1
@@ -414,7 +420,7 @@ Google Cloud's Vertex AI provides access to Gemini models via the native Google 
 
    # Configure Hindsight
    export HINDSIGHT_API_LLM_PROVIDER=vertexai
-   export HINDSIGHT_API_LLM_MODEL=gemini-2.0-flash-001
+   export HINDSIGHT_API_LLM_MODEL=gemini-3.1-flash-lite
    export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-project-id
    ```
 
@@ -430,13 +436,13 @@ Google Cloud's Vertex AI provides access to Gemini models via the native Google 
 
    # Configure Hindsight
    export HINDSIGHT_API_LLM_PROVIDER=vertexai
-   export HINDSIGHT_API_LLM_MODEL=gemini-2.0-flash-001
+   export HINDSIGHT_API_LLM_MODEL=gemini-3.1-flash-lite
    export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-project-id
    export HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/path/to/key.json
    ```
 
 **Notes:**
-- Model names can optionally include the `google/` prefix (e.g., `google/gemini-2.0-flash-001`) — it will be stripped automatically
+- Model names can optionally include the `google/` prefix (e.g., `google/gemini-3.1-flash-lite`) — it will be stripped automatically
 - The native SDK handles token refresh automatically
 - Uses service account credentials if provided, otherwise falls back to ADC
 
@@ -453,6 +459,7 @@ Converts text into dense vector representations for semantic similarity search.
 | Provider | Description | Best For |
 |----------|-------------|----------|
 | `local` | SentenceTransformers (default) | Development, low latency |
+| `onnx` | In-process ONNX Runtime embedder (no Ollama/TEI/API sidecar) | Lightweight local CPU, multilingual |
 | `openai` | OpenAI embeddings API | Production, high quality |
 | `openai-codex` | OpenAI embeddings via Codex OAuth (ChatGPT Plus/Pro, no API key) | Existing ChatGPT/Codex subscribers |
 | `openrouter` | OpenRouter embeddings (OpenAI-compatible gateway) | Multi-provider setups |
@@ -510,6 +517,11 @@ Hindsight automatically detects the embedding dimension at startup and adjusts t
 # Local provider (default)
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=local
 export HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL=BAAI/bge-small-en-v1.5
+
+# ONNX provider (in-process local CPU, no Ollama/TEI/API sidecar; pip install hindsight-api-slim[local-onnx])
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=onnx
+export HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID=intfloat/multilingual-e5-small
+export HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS=384
 
 # OpenAI
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai

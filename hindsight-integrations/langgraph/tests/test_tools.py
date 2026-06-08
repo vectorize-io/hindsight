@@ -6,6 +6,7 @@ import pytest
 from hindsight_langgraph import (
     configure,
     create_hindsight_tools,
+    memory_instructions,
     reset_config,
 )
 from hindsight_langgraph.errors import HindsightError
@@ -102,9 +103,28 @@ class TestCreateHindsightTools:
         )
         assert len(tools) == 0
 
-    def test_raises_without_client_or_config(self):
-        with pytest.raises(HindsightError, match="No Hindsight API URL"):
+    def test_defaults_to_cloud_without_config(self, monkeypatch):
+        """With no client, config, or explicit URL, defaults to the cloud URL."""
+        from hindsight_langgraph.config import DEFAULT_HINDSIGHT_API_URL
+
+        monkeypatch.delenv("HINDSIGHT_API_KEY", raising=False)
+        with patch("hindsight_langgraph._client.Hindsight") as mock_cls:
+            mock_cls.return_value = _mock_client()
+            tools = create_hindsight_tools(bank_id="test")
+            assert len(tools) == 3
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs["base_url"] == DEFAULT_HINDSIGHT_API_URL
+            # No key configured → none passed; it only fails at call time.
+            assert "api_key" not in call_kwargs
+
+    def test_reads_api_key_from_env_without_config(self, monkeypatch):
+        """HINDSIGHT_API_KEY is honoured even when configure() was never called."""
+        monkeypatch.setenv("HINDSIGHT_API_KEY", "sk-from-env")
+        with patch("hindsight_langgraph._client.Hindsight") as mock_cls:
+            mock_cls.return_value = _mock_client()
             create_hindsight_tools(bank_id="test")
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs["api_key"] == "sk-from-env"
 
     def test_falls_back_to_global_config(self):
         configure(hindsight_api_url="http://localhost:8888")
@@ -112,9 +132,10 @@ class TestCreateHindsightTools:
             mock_cls.return_value = _mock_client()
             tools = create_hindsight_tools(bank_id="test")
             assert len(tools) == 3
-            mock_cls.assert_called_once_with(
-                base_url="http://localhost:8888", timeout=30.0
-            )
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs["base_url"] == "http://localhost:8888"
+            assert call_kwargs["timeout"] == 30.0
+            assert "user_agent" in call_kwargs
 
     def test_explicit_url_overrides_config(self):
         configure(hindsight_api_url="http://config:8888")
@@ -123,9 +144,9 @@ class TestCreateHindsightTools:
             create_hindsight_tools(
                 bank_id="test", hindsight_api_url="http://explicit:9999"
             )
-            mock_cls.assert_called_once_with(
-                base_url="http://explicit:9999", timeout=30.0
-            )
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs["base_url"] == "http://explicit:9999"
+            assert call_kwargs["timeout"] == 30.0
 
 
 class TestRetainTool:
@@ -398,3 +419,97 @@ class TestRecallExtendedParams:
         await tools[0].ainvoke("query")
         call_kwargs = client.arecall.call_args[1]
         assert call_kwargs["include_entities"] is True
+
+
+class TestMemoryInstructions:
+    @pytest.mark.asyncio
+    async def test_returns_base_instructions_when_no_memories(self):
+        client = _mock_client()
+        response = MagicMock()
+        response.results = []
+        client.arecall.return_value = response
+
+        fn = memory_instructions(
+            bank_id="test",
+            client=client,
+            base_instructions="You are helpful.",
+        )
+        result = await fn()
+        assert result == "You are helpful."
+
+    @pytest.mark.asyncio
+    async def test_appends_memories_to_base_instructions(self):
+        client = _mock_client()
+        client.arecall.return_value = _mock_recall_response(["likes Python", "uses VS Code"])
+
+        fn = memory_instructions(
+            bank_id="test",
+            client=client,
+            base_instructions="You are helpful.",
+        )
+        result = await fn()
+        assert result.startswith("You are helpful.")
+        assert "likes Python" in result
+        assert "uses VS Code" in result
+
+    @pytest.mark.asyncio
+    async def test_passes_recall_params(self):
+        client = _mock_client()
+        client.arecall.return_value = _mock_recall_response(["fact"])
+
+        fn = memory_instructions(
+            bank_id="test",
+            client=client,
+            budget="high",
+            max_tokens=2048,
+            tags=["scope:user"],
+            tags_match="all",
+        )
+        await fn()
+
+        call_kwargs = client.arecall.call_args[1]
+        assert call_kwargs["bank_id"] == "test"
+        assert call_kwargs["budget"] == "high"
+        assert call_kwargs["max_tokens"] == 2048
+        assert call_kwargs["tags"] == ["scope:user"]
+        assert call_kwargs["tags_match"] == "all"
+
+    @pytest.mark.asyncio
+    async def test_respects_max_results(self):
+        client = _mock_client()
+        client.arecall.return_value = _mock_recall_response(["a", "b", "c", "d"])
+
+        fn = memory_instructions(
+            bank_id="test",
+            client=client,
+            max_results=2,
+        )
+        result = await fn()
+        # Should only include 2 memories
+        assert "1." in result
+        assert "2." in result
+        assert "3." not in result
+
+    @pytest.mark.asyncio
+    async def test_custom_prefix(self):
+        client = _mock_client()
+        client.arecall.return_value = _mock_recall_response(["fact"])
+
+        fn = memory_instructions(
+            bank_id="test",
+            client=client,
+            prefix="\n\nContext:\n",
+        )
+        result = await fn()
+        assert "\n\nContext:\n" in result
+
+    @pytest.mark.asyncio
+    async def test_falls_back_on_error(self):
+        client = _mock_client()
+        client.arecall.side_effect = RuntimeError("connection refused")
+
+        fn = memory_instructions(
+            bank_id="test", client=client, base_instructions="You are helpful."
+        )
+        result = await fn()
+        assert result == "You are helpful."

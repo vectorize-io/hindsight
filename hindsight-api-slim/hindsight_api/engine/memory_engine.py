@@ -29,6 +29,7 @@ from ..config import (
     DEFAULT_RECALL_INCLUDE_CHUNKS,
     DEFAULT_RECALL_MAX_TOKENS,
     DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS,
+    ENV_MODEL_INIT_TIMEOUT,
     HindsightConfig,
     get_config,
 )
@@ -56,7 +57,10 @@ from .operation_metadata import (
     BatchRetainParentMetadata,
     ConsolidationMetadata,
     RefreshMentalModelMetadata,
+    RetainExtractionErrors,
     RetainMetadata,
+    RetainOutcomeAggregate,
+    RetainOutcomeMetadata,
 )
 from .sql import SQLDialect, create_sql_dialect
 
@@ -927,7 +931,6 @@ class MemoryEngine(MemoryEngineInterface):
             schema_getter=get_current_schema,
             enabled=config.audit_log_enabled,
             allowed_actions=config.audit_log_actions,
-            retention_days=config.audit_log_retention_days,
         )
 
         # Per-bank LLM request tracer (disabled by default). Registered as a
@@ -938,12 +941,17 @@ class MemoryEngine(MemoryEngineInterface):
             schema_getter=get_current_schema,
             enabled=config.llm_trace_enabled,
             allowed_scopes=config.llm_trace_scopes,
-            retention_days=config.llm_trace_retention_days,
             max_chars=config.llm_trace_max_chars,
         )
         from ..tracing import register_span_recorder
 
         register_span_recorder(self._llm_recorder)
+
+        # Background maintenance loop (retention sweeps + consolidation reconcile),
+        # created in initialize() once the pool/backend is ready.
+        from .maintenance import MaintenanceLoop
+
+        self._maintenance_loop: MaintenanceLoop | None = None
 
         # Backpressure mechanism: limit concurrent searches to prevent overwhelming the database
         # Configurable via HINDSIGHT_API_RECALL_MAX_CONCURRENT (default: 50)
@@ -1923,6 +1931,49 @@ class MemoryEngine(MemoryEngineInterface):
             logger.error(f"Failed to check operation liveness {operation_id}: {e}")
             return True  # Assume alive on DB error to avoid false-positive aborts
 
+    async def _write_operation_progress(
+        self,
+        operation_id: str | None,
+        *,
+        stage: str,
+        processed: int | None = None,
+        total: int | None = None,
+        detail: dict[str, int] | None = None,
+    ) -> None:
+        """Persist a last-known progress snapshot for a long-running async operation.
+
+        Merges a ``progress`` object into ``async_operations.result_metadata`` (top-level
+        ``||`` merge, so sibling keys such as ``is_parent`` survive) and bumps
+        ``updated_at``. Callers invoke this at coarse phase/batch boundaries — not per
+        row — so an operator polling the operation status API can see the current stage
+        and counters and tell a healthy long-running job from a frozen one.
+
+        Best-effort: a failed heartbeat must never fail the underlying job, so all errors
+        are swallowed with a debug log. A ``None`` operation_id (synchronous / untracked
+        call sites) is a no-op.
+        """
+        if not operation_id:
+            return
+        snapshot: dict[str, Any] = {"stage": stage, "at": datetime.now(UTC).isoformat()}
+        if processed is not None:
+            snapshot["processed"] = processed
+        if total is not None:
+            snapshot["total"] = total
+        if detail:
+            snapshot["detail"] = detail
+        try:
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                await conn.execute(
+                    f"UPDATE {fq_table('async_operations')} "
+                    f"SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $2::jsonb, "
+                    f"updated_at = now() WHERE operation_id = $1",
+                    uuid.UUID(operation_id),
+                    json.dumps({"progress": snapshot}),
+                )
+        except Exception as e:
+            logger.debug(f"Failed to write operation progress for {operation_id}: {e}")
+
     async def _mark_operation_failed(self, operation_id: str, error_message: str, error_traceback: str):
         """Helper to mark an operation as failed in the database.
 
@@ -1991,6 +2042,47 @@ class MemoryEngine(MemoryEngineInterface):
                     await self._maybe_update_parent_operation(operation_id, conn)
         except Exception as e:
             logger.error(f"Failed to mark operation as completed {operation_id}: {e}")
+
+    async def _write_retain_outcome_metadata(self, operation_id: str | None, unit_ids: list[list[str]]) -> None:
+        """Persist completed retain outcome fields before the operation is marked completed."""
+        if not operation_id:
+            return
+
+        unit_ids_count = sum(len(group) for group in unit_ids)
+        try:
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                row = await conn.fetchrow(
+                    f"SELECT result_metadata FROM {fq_table('async_operations')} WHERE operation_id = $1",
+                    uuid.UUID(operation_id),
+                )
+                if not row:
+                    return
+
+                metadata = conn.parse_json(row["result_metadata"]) or {}
+                extraction_errors = RetainExtractionErrors()
+                extraction_errors.merge_metadata(metadata)
+                outcome = RetainOutcomeMetadata(
+                    unit_ids_count=unit_ids_count,
+                    extraction_errors_count=extraction_errors.count,
+                    extraction_errors_sample=extraction_errors.sample,
+                )
+
+                await conn.execute(
+                    f"""
+                    UPDATE {fq_table("async_operations")}
+                    SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $2::jsonb,
+                        updated_at = now()
+                    WHERE operation_id = $1
+                    """,
+                    uuid.UUID(operation_id),
+                    json.dumps(outcome.to_dict()),
+                )
+        except Exception as e:
+            # Best-effort, but log loudly: the whole point of this metadata is to
+            # give clients a reliable success/silent-failure signal, so a missing
+            # write silently regresses them to the ambiguous pre-fix behaviour.
+            logger.warning(f"Failed to write retain outcome metadata for {operation_id}: {e}")
 
     async def _mark_operation_completed_and_fire_webhook(
         self,
@@ -2103,14 +2195,16 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Get all sibling operations (including this one).
             # This query runs in the same transaction, so it sees the current
-            # child's updated status. Pull error_message too so a parent that
+            # child's updated status. Pull result_metadata for completed
+            # children so the parent exposes the same outcome counters as the
+            # individual retain operations. Pull error_message too so a parent that
             # fails can inherit a representative child reason -- otherwise
             # downstream consumers (dashboards, alert filters) lose the actual
             # cause once a batch has children. See the worker poller's
             # _summarise_child_error_messages for the propagation rationale.
             siblings = await conn.fetch(
                 f"""
-                SELECT status, error_message
+                SELECT status, error_message, result_metadata
                 FROM {fq_table("async_operations")}
                 WHERE bank_id = $1
                 AND result_metadata::jsonb @> $2::jsonb
@@ -2152,14 +2246,22 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             elif all_completed:
                 new_status = "completed"
+                outcome_aggregate = RetainOutcomeAggregate()
+                for sibling in siblings:
+                    sibling_metadata = conn.parse_json(sibling["result_metadata"]) or {}
+                    outcome_aggregate.add_metadata(sibling_metadata)
                 await conn.execute(
                     f"""
                     UPDATE {fq_table("async_operations")}
-                    SET status = $2, updated_at = NOW(), completed_at = NOW()
+                    SET status = $2,
+                        result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $3::jsonb,
+                        updated_at = NOW(),
+                        completed_at = NOW()
                     WHERE operation_id = $1
                     """,
                     uuid.UUID(parent_operation_id),
                     new_status,
+                    json.dumps(outcome_aggregate.to_outcome_metadata().to_dict()),
                 )
 
             logger.info(f"Updated parent operation {parent_operation_id} to status '{new_status}' (all children done)")
@@ -2309,8 +2411,22 @@ class MemoryEngine(MemoryEngineInterface):
         if not self._skip_llm_verification:
             init_tasks.append(verify_llm())
 
-        # Run pg0 and selected model initializations in parallel
-        await asyncio.gather(*init_tasks)
+        # Run pg0 and selected model initializations in parallel.
+        # Cap the whole thing with a wall-clock timeout so a hung init task
+        # (e.g. an offline HuggingFace download or an unreachable provider)
+        # fails the daemon fast instead of leaving it stuck forever — neither
+        # started nor errored.
+        init_timeout = get_config().model_init_timeout
+        try:
+            await asyncio.wait_for(asyncio.gather(*init_tasks), timeout=init_timeout)
+        except TimeoutError as e:
+            raise RuntimeError(
+                f"Model/connection initialization did not complete within "
+                f"{init_timeout:g}s. A model load (embeddings/cross-encoder) or LLM "
+                f"verification is likely blocked — e.g. an offline model download or "
+                f"an unreachable provider. Increase {ENV_MODEL_INIT_TIMEOUT} if the "
+                f"first-time model download legitimately needs more time."
+            ) from e
 
         # Run database migrations if enabled
         if self._run_migrations:
@@ -2379,9 +2495,23 @@ class MemoryEngine(MemoryEngineInterface):
         self._dialect = create_sql_dialect(self._database_backend_type)
 
         stmt_timeout_s = self._db_statement_timeout
+        text_search_extension = get_config().text_search_extension
 
         # Per-connection initialization callback (PostgreSQL-specific for now)
         async def _init_connection(conn: asyncpg.Connection) -> None:
+            # VectorChord BM25 registers its objects in dedicated schemas
+            # (vchord_bm25 -> bm25_catalog, pg_tokenizer -> tokenizer_catalog).
+            # The BM25 distance operator `<&>` resolves its operand types via the
+            # session search_path, so a connection that lacks these schemas fails
+            # recall with `type "bm25vector" does not exist` (and retain with
+            # `function tokenize(...) does not exist`). The official vchord-suite
+            # image masks this by shipping them in search_path; an external
+            # Postgres does not, so we add them ourselves. Tenant tables are always
+            # accessed via fully-qualified names (fq_table), so this does not
+            # affect schema isolation. Only needed for the vchord backend.
+            if text_search_extension == "vchord":
+                await conn.execute('SET search_path TO "$user", public, bm25_catalog, tokenizer_catalog')
+
             # SET (not SET LOCAL) so per-backend ANN tuning persists for the
             # connection lifetime. Each backend exposes its own GUC: pgvector
             # uses hnsw.ef_search, vchord uses vchordrq.probes. The dispatcher
@@ -2513,11 +2643,13 @@ class MemoryEngine(MemoryEngineInterface):
         self._task_backend.set_executor(self.execute_task)
         await self._task_backend.initialize()
 
-        # Start audit log retention sweep (if configured)
-        self._audit_logger.start_retention_sweep()
+        # Start the background maintenance loop: cross-tenant retention sweeps
+        # (audit_log, llm_requests) plus the consolidation reconcile that
+        # re-schedules banks with eligible-but-unscheduled facts.
+        from .maintenance import MaintenanceLoop
 
-        # Start LLM trace retention sweep (if configured)
-        self._llm_recorder.start_retention_sweep()
+        self._maintenance_loop = MaintenanceLoop(self)
+        self._maintenance_loop.start()
 
         self._initialized = True
         logger.info("Memory system initialized (pool and task backend started)")
@@ -2582,11 +2714,11 @@ class MemoryEngine(MemoryEngineInterface):
         """Close the connection pool and shutdown background workers."""
         logger.info("close() started")
 
-        # Stop audit log retention sweep
-        await self._audit_logger.stop_retention_sweep()
+        # Stop the background maintenance loop (retention sweeps + reconcile)
+        if self._maintenance_loop is not None:
+            await self._maintenance_loop.stop()
 
-        # Stop LLM trace retention sweep and unregister the recorder
-        await self._llm_recorder.stop_retention_sweep()
+        # Unregister the LLM trace recorder span hook
         from ..tracing import unregister_span_recorder
 
         unregister_span_recorder(self._llm_recorder)
@@ -2964,6 +3096,10 @@ class MemoryEngine(MemoryEngineInterface):
                 logger.info(
                     f"Processing sub-batch {i}/{len(sub_batches)}: {len(sub_batch)} items, {sub_batch_tokens:,} tokens"
                 )
+                # Live worker stage for the in-flight sub-batch; the durable progress
+                # snapshot is written *after* the sub-batch commits (below) so processed
+                # reflects work actually done and reaches total on completion.
+                set_stage(f"batch_retain.sub_batch.{i}")
 
                 # Resolve the document this sub-batch writes to so we can offset
                 # its chunk_index past chunks already stored by earlier
@@ -3017,6 +3153,9 @@ class MemoryEngine(MemoryEngineInterface):
                     total_processed_content_tokens = None
                 else:
                     total_processed_content_tokens = total_processed_content_tokens + sub_processed
+                # Per-sub-batch progress is intentionally not written here: the streaming
+                # retain pipeline emits finer-grained "storing N/total chunks" snapshots
+                # via progress_callback as each sub-batch's chunks commit.
 
             total_time = time.time() - start_time
             logger.info(
@@ -3024,7 +3163,8 @@ class MemoryEngine(MemoryEngineInterface):
             )
             result = per_input_results
         else:
-            # Small batch - use internal method directly
+            # Small batch - use internal method directly (single sub-batch).
+            set_stage("batch_retain.sub_batch.1")
             result, total_usage, total_processed_content_tokens = await self._retain_batch_async_internal(
                 bank_id=bank_id,
                 contents=contents,
@@ -3038,6 +3178,10 @@ class MemoryEngine(MemoryEngineInterface):
                 outbox_callback=outbox_callback,
                 outbox_callback_factory=outbox_callback_factory,
             )
+            # Progress for this path is emitted by the streaming pipeline as
+            # "storing N/total chunks" via progress_callback (see _retain_batch_async_internal).
+
+        await self._write_retain_outcome_metadata(operation_id, result)
 
         # Call post-operation hook if validator is configured
         if self._operation_validator:
@@ -3203,6 +3347,9 @@ class MemoryEngine(MemoryEngineInterface):
                 db_semaphore=self._put_semaphore,
                 document_body_override=document_body_override,
                 chunk_index_offset=chunk_index_offset,
+                # Stream chunk-level "storing N/total" progress to the operation row as
+                # the document's chunks commit (more useful than the coarse sub-batch tick).
+                progress_callback=self._write_operation_progress,
             )
             # Map the created facts onto this retain's trace so the trace view can
             # show which memories the ingestion produced. result[0] is the
@@ -3295,7 +3442,9 @@ class MemoryEngine(MemoryEngineInterface):
         await self._authenticate_tenant(request_context)
         backend = await self._get_backend()
         # Ensure the bank (and its per-bank vector indexes) exist before inserts.
-        await bank_utils.get_or_create_bank_profile(backend, bank_id)
+        # Import has no single write transaction to join — the archive is written
+        # by a worker later — so the bank is created on its own connection.
+        await self._ensure_bank_exists(bank_id, request_context)
 
         # Stash the archive in file storage and reference it by key in the task
         # payload, rather than base64-ing megabytes into the operation JSON.
@@ -3341,7 +3490,9 @@ class MemoryEngine(MemoryEngineInterface):
         from .transfer import import_documents
 
         backend = await self._get_backend()
-        await bank_utils.get_or_create_bank_profile(backend, bank_id)
+        # Imports insert across many per-document transactions, so the bank is
+        # created up front on its own connection rather than coupled to a write.
+        await self._ensure_bank_exists(bank_id, request_context)
         resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
         outbox_factory = self._build_retain_outbox_callback_factory(
             bank_id=bank_id, operation_id=None, schema=_current_schema.get()
@@ -6231,7 +6382,7 @@ class MemoryEngine(MemoryEngineInterface):
         async with acquire_with_retry(backend) as conn:
             row = await conn.fetchrow(
                 f"""
-                SELECT fact_type, history, source_memory_ids
+                SELECT fact_type, source_memory_ids
                 FROM {fq_table("memory_units")}
                 WHERE id = $1 AND bank_id = $2
                 """,
@@ -6243,11 +6394,46 @@ class MemoryEngine(MemoryEngineInterface):
             if row["fact_type"] != "observation":
                 return []
 
-            raw_history = row["history"]
-            if isinstance(raw_history, str):
-                raw_history = json.loads(raw_history)
-            if not raw_history:
+            # History now lives in the dedicated observation_history table
+            # (one row per change), ordered oldest-first to match the prior
+            # append-order semantics the reconstruction below relies on.
+            history_rows = await conn.fetch(
+                f"""
+                SELECT content, changed_at
+                FROM {fq_table("observation_history")}
+                WHERE observation_id = $1
+                ORDER BY changed_at ASC, id ASC
+                """,
+                uuid.UUID(memory_id),
+            )
+            if not history_rows:
                 return []
+
+            def _iso(v: Any) -> Any:
+                return v.isoformat() if hasattr(v, "isoformat") else v
+
+            def _as_list(v: Any) -> list:
+                return list(v) if v else []
+
+            raw_history = []
+            for hr in history_rows:
+                # The snapshot fields live in the JSONB ``content`` blob (str on
+                # Oracle CLOB / when no jsonb codec is registered, dict otherwise).
+                content = hr["content"]
+                if isinstance(content, str):
+                    content = json.loads(content) if content else {}
+                content = content or {}
+                raw_history.append(
+                    {
+                        "previous_text": content.get("previous_text"),
+                        "previous_tags": _as_list(content.get("previous_tags")),
+                        "previous_occurred_start": content.get("previous_occurred_start"),
+                        "previous_occurred_end": content.get("previous_occurred_end"),
+                        "previous_mentioned_at": content.get("previous_mentioned_at"),
+                        "changed_at": _iso(hr["changed_at"]),
+                        "new_source_memory_ids": [str(s) for s in _as_list(content.get("new_source_memory_ids"))],
+                    }
+                )
 
             # Collect all source memory IDs (current full set + all historical new ones)
             current_source_ids: list[str] = [str(sid) for sid in (row["source_memory_ids"] or [])]
@@ -7130,7 +7316,8 @@ class MemoryEngine(MemoryEngineInterface):
                 return None
             profile, created = existing, False
         else:
-            profile, created = await bank_utils.get_or_create_bank_profile(backend, bank_id)
+            result = await bank_utils.get_or_create_bank_profile(backend, bank_id)
+            profile, created = result.profile, result.created
 
         # Apply HINDSIGHT_API_DEFAULT_BANK_TEMPLATE to freshly-created banks. Done
         # before reading the resolved config below so the template's overrides
@@ -7160,6 +7347,56 @@ class MemoryEngine(MemoryEngineInterface):
             "disposition": disposition,
             "mission": mission,
         }
+
+    async def _ensure_bank_exists(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+        *,
+        conn=None,
+    ) -> bool:
+        """Lazily create the bank row (the FK target for bank-scoped writes).
+
+        This is the single entry point every write path uses to mirror retain's
+        lazy bank auto-create, so a first write to a new bank (pinned mental
+        model, webhook, async operation, ...) behaves consistently instead of
+        surfacing a raw FK violation.
+
+        Transactionality:
+          * Pass ``conn`` (a connection with an open transaction) to run the
+            bank ``INSERT`` and its per-bank vector index creation on the
+            caller's connection. The bank row then commits — or rolls back —
+            atomically with the caller's write on that same transaction.
+          * Omit ``conn`` to ensure the bank on a dedicated connection (used by
+            paths that have no single write transaction to join, e.g. retain and
+            import, whose data is written later across many per-document
+            transactions).
+
+        The ``HINDSIGHT_API_DEFAULT_BANK_TEMPLATE`` hook is best-effort, opens
+        its own connections and can itself create pinned mental models, so it is
+        never run inside the caller's transaction. When ``conn`` is omitted it is
+        applied inline here. When ``conn`` is supplied the caller MUST apply it
+        after committing, gated on the returned flag::
+
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    created = await self._ensure_bank_exists(bank_id, rc, conn=conn)
+                    ...  # bank-scoped write on the same conn
+            if created:
+                await self._apply_default_bank_template(bank_id, rc)
+
+        Returns:
+            True if the bank was freshly created on this call.
+        """
+        backend = await self._get_backend()
+        if conn is not None:
+            result = await bank_utils.get_or_create_bank_profile_on_conn(conn, bank_id, ops=backend.ops)
+            return result.created
+
+        result = await bank_utils.get_or_create_bank_profile(backend, bank_id)
+        if result.created:
+            await self._apply_default_bank_template(bank_id, request_context)
+        return result.created
 
     async def _apply_default_bank_template(
         self,
@@ -8662,7 +8899,7 @@ class MemoryEngine(MemoryEngineInterface):
 
             rows = await conn.fetch(
                 f"""
-                SELECT id, bank_id, text, proof_count, history, tags, source_memory_ids, created_at, updated_at
+                SELECT id, bank_id, text, proof_count, tags, source_memory_ids, created_at, updated_at
                 FROM {fq_table("memory_units")}
                 WHERE bank_id = $1 AND fact_type = 'observation' {tag_filter}
                 ORDER BY updated_at DESC NULLS LAST
@@ -8698,7 +8935,7 @@ class MemoryEngine(MemoryEngineInterface):
         async with acquire_with_retry(backend) as conn:
             row = await conn.fetchrow(
                 f"""
-                SELECT id, bank_id, text, proof_count, history, tags, source_memory_ids, created_at, updated_at
+                SELECT id, bank_id, text, proof_count, tags, source_memory_ids, created_at, updated_at
                 FROM {fq_table("memory_units")}
                 WHERE bank_id = $1 AND id = $2 AND fact_type = 'observation'
                 """,
@@ -8739,14 +8976,6 @@ class MemoryEngine(MemoryEngineInterface):
 
     def _row_to_observation_consolidated(self, row: Any) -> dict[str, Any]:
         """Convert a database row to an observation dict."""
-        import json
-
-        history = row["history"]
-        if isinstance(history, str):
-            history = json.loads(history)
-        elif history is None:
-            history = []
-
         # Convert source_memory_ids to strings
         source_memory_ids = row.get("source_memory_ids") or []
         source_memory_ids = [str(sid) for sid in source_memory_ids]
@@ -8756,7 +8985,8 @@ class MemoryEngine(MemoryEngineInterface):
             "bank_id": row["bank_id"],
             "text": row["text"],
             "proof_count": row["proof_count"] or 1,
-            "history": history,
+            # Deprecated inline field — full history via GET .../{id}/history.
+            "history": [],
             "tags": row["tags"] or [],
             "source_memory_ids": source_memory_ids,
             "source_memories": [],  # Populated separately when fetching full details
@@ -8917,23 +9147,41 @@ class MemoryEngine(MemoryEngineInterface):
         await self._authenticate_tenant(request_context)
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
-            row = await conn.fetchrow(
-                f"""
-                SELECT history
-                FROM {fq_table("mental_models")}
-                WHERE bank_id = $1 AND id = $2
-                """,
+            exists = await conn.fetchrow(
+                f"SELECT id FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
                 bank_id,
                 mental_model_id,
             )
-            if row is None:
+            if exists is None:
                 return None
-            raw_history = row["history"]
-            if isinstance(raw_history, str):
-                raw_history = json.loads(raw_history)
-            if not raw_history:
-                return []
-            return list(reversed(raw_history))
+            # History now lives in the dedicated mental_model_history table (one
+            # row per refresh), returned most-recent-first. The snapshot fields
+            # live in the JSONB ``content`` blob.
+            rows = await conn.fetch(
+                f"""
+                SELECT content, changed_at
+                FROM {fq_table("mental_model_history")}
+                WHERE mental_model_id = $1 AND bank_id = $2
+                ORDER BY changed_at DESC, id DESC
+                """,
+                mental_model_id,
+                bank_id,
+            )
+            result: list[dict] = []
+            for r in rows:
+                content = r["content"]
+                if isinstance(content, str):
+                    content = json.loads(content) if content else {}
+                content = content or {}
+                changed_at = r["changed_at"]
+                result.append(
+                    {
+                        "previous_content": content.get("previous_content"),
+                        "previous_reflect_response": content.get("previous_reflect_response"),
+                        "changed_at": changed_at.isoformat() if hasattr(changed_at, "isoformat") else changed_at,
+                    }
+                )
+            return result
 
     async def create_mental_model(
         self,
@@ -8981,46 +9229,57 @@ class MemoryEngine(MemoryEngineInterface):
         if not mental_model_id:
             mental_model_id = f"mm-{uuid.uuid4().hex}"
 
+        # mental_models.bank_id has a FK to banks. Retain creates banks lazily;
+        # pinned model creation must do the same. The lazy bank-create runs inside
+        # the same transaction as the INSERT below, so a freshly-created bank never
+        # outlives a mental-model insert that ultimately fails.
         async with acquire_with_retry(backend) as conn:
-            if mental_model_id:
-                row = await conn.fetchrow(
-                    f"""
-                    INSERT INTO {fq_table("mental_models")}
-                    (id, bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger)
-                    VALUES ($1, $2, 'pinned', $3, ' ', $4, $5, $6, $7, COALESCE($8, 2048), COALESCE($9, '{{"refresh_after_consolidation": false}}'::jsonb))
-                    RETURNING id, bank_id, name, source_query, content, tags,
-                              last_refreshed_at, created_at, reflect_response,
-                              max_tokens, trigger, structured_content
-                    """,
-                    mental_model_id,
-                    bank_id,
-                    name,
-                    source_query,
-                    content,
-                    embedding_str,
-                    tags or [],
-                    max_tokens,
-                    json.dumps(trigger) if trigger else None,
-                )
-            else:
-                row = await conn.fetchrow(
-                    f"""
-                    INSERT INTO {fq_table("mental_models")}
-                    (bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger)
-                    VALUES ($1, 'pinned', $2, ' ', $3, $4, $5, $6, COALESCE($7, 2048), COALESCE($8, '{{"refresh_after_consolidation": false}}'::jsonb))
-                    RETURNING id, bank_id, name, source_query, content, tags,
-                              last_refreshed_at, created_at, reflect_response,
-                              max_tokens, trigger, structured_content
-                    """,
-                    bank_id,
-                    name,
-                    source_query,
-                    content,
-                    embedding_str,
-                    tags or [],
-                    max_tokens,
-                    json.dumps(trigger) if trigger else None,
-                )
+            async with conn.transaction():
+                created = await self._ensure_bank_exists(bank_id, request_context, conn=conn)
+                if mental_model_id:
+                    row = await conn.fetchrow(
+                        f"""
+                        INSERT INTO {fq_table("mental_models")}
+                        (id, bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger)
+                        VALUES ($1, $2, 'pinned', $3, ' ', $4, $5, $6, $7, COALESCE($8, 2048), COALESCE($9, '{{"refresh_after_consolidation": false}}'::jsonb))
+                        RETURNING id, bank_id, name, source_query, content, tags,
+                                  last_refreshed_at, created_at, reflect_response,
+                                  max_tokens, trigger, structured_content
+                        """,
+                        mental_model_id,
+                        bank_id,
+                        name,
+                        source_query,
+                        content,
+                        embedding_str,
+                        tags or [],
+                        max_tokens,
+                        json.dumps(trigger) if trigger else None,
+                    )
+                else:
+                    row = await conn.fetchrow(
+                        f"""
+                        INSERT INTO {fq_table("mental_models")}
+                        (bank_id, subtype, name, description, source_query, content, embedding, tags, max_tokens, trigger)
+                        VALUES ($1, 'pinned', $2, ' ', $3, $4, $5, $6, COALESCE($7, 2048), COALESCE($8, '{{"refresh_after_consolidation": false}}'::jsonb))
+                        RETURNING id, bank_id, name, source_query, content, tags,
+                                  last_refreshed_at, created_at, reflect_response,
+                                  max_tokens, trigger, structured_content
+                        """,
+                        bank_id,
+                        name,
+                        source_query,
+                        content,
+                        embedding_str,
+                        tags or [],
+                        max_tokens,
+                        json.dumps(trigger) if trigger else None,
+                    )
+
+        # Best-effort default-template hook runs after the bank-create commits
+        # (it opens its own connections and can create pinned models).
+        if created:
+            await self._apply_default_bank_template(bank_id, request_context)
 
         logger.info(f"[MENTAL_MODELS] Created pinned mental model '{name}' for bank {bank_id}")
         return self._row_to_mental_model(row)
@@ -9460,6 +9719,10 @@ class MemoryEngine(MemoryEngineInterface):
             params: list[Any] = [bank_id, mental_model_id]
             param_idx = 3
 
+            # History snapshot is written to mental_model_history after the UPDATE.
+            record_mm_history = False
+            slim_reflect_response: dict[str, Any] | None = None
+
             if name is not None:
                 updates.append(f"name = ${param_idx}")
                 params.append(name)
@@ -9470,54 +9733,19 @@ class MemoryEngine(MemoryEngineInterface):
                 params.append(content)
                 param_idx += 1
                 updates.append("last_refreshed_at = NOW()")
-                # Record history entry with the previous content.
-                #
-                # Cap the array to the most recent N entries at write time
-                # (see HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES).
-                #
-                # Each entry stores only the slim slice of previous_reflect_response
-                # that consumers actually read: `based_on` (the fact references that
-                # backed that version). The full reflect_response can be hundreds of
-                # KB once `text`, fact bodies, scoring, and embeddings are included;
-                # storing the full payload made each UPDATE rewrite ~10-20 MB of TOAST
-                # per refresh, which prevented HOT updates and accumulated dead
-                # tuples faster than autovacuum could reclaim them. The slim shape
-                # keeps per-row size in the ~hundreds-of-KB range, which fits in a
-                # single heap page and re-enables HOT updates.
+                # Snapshot the previous version for history. The actual write goes
+                # into the dedicated mental_model_history table after the UPDATE
+                # (see _append_mental_model_history); we only store the slim slice
+                # of previous_reflect_response that consumers read — `based_on`,
+                # the fact references that backed that version. The full
+                # reflect_response can be hundreds of KB (text, fact bodies,
+                # scoring, embeddings), so persisting it per entry is wasteful.
                 if get_config().enable_mental_model_history:
-                    slim_reflect_response: dict[str, Any] | None = None
                     if previous_reflect_response is not None:
                         based_on = previous_reflect_response.get("based_on")
                         if based_on is not None:
                             slim_reflect_response = {"based_on": based_on}
-                    history_entry = json.dumps(
-                        [
-                            {
-                                "previous_content": previous_content,
-                                "previous_reflect_response": slim_reflect_response,
-                                "changed_at": datetime.now(timezone.utc).isoformat(),
-                            }
-                        ]
-                    )
-                    max_entries = get_config().mental_model_history_max_entries
-                    history_param_idx = param_idx
-                    param_idx += 1
-                    max_entries_param_idx = param_idx
-                    param_idx += 1
-                    updates.append(
-                        "history = ("
-                        "  SELECT COALESCE(jsonb_agg(elem ORDER BY idx), '[]'::jsonb) "
-                        "  FROM jsonb_array_elements("
-                        f"    COALESCE(history, '[]'::jsonb) || ${history_param_idx}::jsonb"
-                        "  ) WITH ORDINALITY a(elem, idx) "
-                        "  WHERE idx > GREATEST("
-                        "    jsonb_array_length(COALESCE(history, '[]'::jsonb)) + 1"
-                        f"    - ${max_entries_param_idx}, 0"
-                        "  )"
-                        ")"
-                    )
-                    params.append(history_entry)
-                    params.append(max_entries)
+                    record_mm_history = True
                 # Also update embedding (convert to string for asyncpg vector type)
                 embedding_text = f"{name or ''} {content}"
                 embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [embedding_text])
@@ -9575,7 +9803,63 @@ class MemoryEngine(MemoryEngineInterface):
 
             row = await conn.fetchrow(query, *params)
 
+            # Persist the previous-version snapshot in the dedicated history table
+            # (one row per refresh), then trim to the configured cap. Replaces the
+            # old single-JSONB-column append, which rewrote the whole array (plus
+            # TOAST) on every refresh and was capped by entry count, not size.
+            if row is not None and record_mm_history:
+                await self._append_mental_model_history(
+                    conn,
+                    bank_id,
+                    mental_model_id,
+                    previous_content,
+                    slim_reflect_response,
+                    get_config().mental_model_history_max_entries,
+                )
+
             return self._row_to_mental_model(row) if row else None
+
+    async def _append_mental_model_history(
+        self,
+        conn: Any,
+        bank_id: str,
+        mental_model_id: str,
+        previous_content: str | None,
+        previous_reflect_response: dict[str, Any] | None,
+        max_entries: int,
+    ) -> None:
+        """Insert one refresh snapshot into mental_model_history, then delete the
+        oldest rows beyond ``max_entries`` for this model. The snapshot is stored
+        as a single JSONB ``content`` blob (per-row, so it stays small); bounding
+        by row count keeps per-model history from growing without bound."""
+        content = json.dumps(
+            {"previous_content": previous_content, "previous_reflect_response": previous_reflect_response}
+        )
+        await conn.execute(
+            f"""
+            INSERT INTO {fq_table("mental_model_history")} (mental_model_id, bank_id, content, changed_at)
+            VALUES ($1, $2, $3::jsonb, now())
+            """,
+            mental_model_id,
+            bank_id,
+            content,
+        )
+        if max_entries and max_entries > 0:
+            await conn.execute(
+                f"""
+                DELETE FROM {fq_table("mental_model_history")}
+                WHERE mental_model_id = $1 AND bank_id = $2
+                  AND id NOT IN (
+                      SELECT id FROM {fq_table("mental_model_history")}
+                      WHERE mental_model_id = $1 AND bank_id = $2
+                      ORDER BY changed_at DESC, id DESC
+                      LIMIT $3
+                  )
+                """,
+                mental_model_id,
+                bank_id,
+                max_entries,
+            )
 
     async def clear_mental_model(
         self,
@@ -10161,7 +10445,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Get operations with pagination (include result_metadata to check for parent operations)
             operations = await conn.fetch(
                 f"""
-                SELECT operation_id, operation_type, created_at, status, error_message,
+                SELECT operation_id, operation_type, created_at, updated_at, status, error_message,
                        result_metadata, retry_count, next_retry_at
                 FROM {fq_table("async_operations")}
                 WHERE {where_clause}
@@ -10191,10 +10475,12 @@ class MemoryEngine(MemoryEngineInterface):
                         "items_count": result_metadata.get("items_count", 0),
                         "document_id": None,
                         "created_at": row["created_at"].isoformat(),
+                        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
                         "status": row["status"],
                         "error_message": row["error_message"],
                         "retry_count": row["retry_count"] or 0,
                         "next_retry_at": next_retry_at.isoformat() if next_retry_at else None,
+                        "progress": result_metadata.get("progress"),
                     }
                 )
 
@@ -10324,6 +10610,7 @@ class MemoryEngine(MemoryEngineInterface):
                         "error_message": row["error_message"],
                         "retry_count": row["retry_count"] or 0,
                         "next_retry_at": row["next_retry_at"].isoformat() if row["next_retry_at"] else None,
+                        "progress": result_metadata.get("progress"),
                         "result_metadata": result_metadata,
                         "child_operations": child_statuses,
                         "task_payload": task_payload,
@@ -10340,6 +10627,7 @@ class MemoryEngine(MemoryEngineInterface):
                         "error_message": row["error_message"],
                         "retry_count": row["retry_count"] or 0,
                         "next_retry_at": row["next_retry_at"].isoformat() if row["next_retry_at"] else None,
+                        "progress": result_metadata.get("progress"),
                         "result_metadata": result_metadata,
                         "task_payload": task_payload,
                     }
@@ -10550,22 +10838,27 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
 
         # Ensure the bank row exists before inserting into webhooks (FK constraint).
-        _, created = await bank_utils.get_or_create_bank_profile(backend, bank_id)
+        # The lazy bank-create shares the webhook insert's transaction so the two
+        # commit (or roll back) atomically.
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                created = await self._ensure_bank_exists(bank_id, request_context, conn=conn)
+                row = await backend.ops.create_webhook(
+                    conn,
+                    fq_table("webhooks"),
+                    webhook_id,
+                    bank_id,
+                    url,
+                    secret,
+                    event_types,
+                    enabled,
+                    http_config_json,
+                )
+
+        # Best-effort default-template hook runs after the bank-create commits.
         if created:
             await self._apply_default_bank_template(bank_id, request_context)
 
-        async with acquire_with_retry(backend) as conn:
-            row = await backend.ops.create_webhook(
-                conn,
-                fq_table("webhooks"),
-                webhook_id,
-                bank_id,
-                url,
-                secret,
-                event_types,
-                enabled,
-                http_config_json,
-            )
         return dict(row) if row is not None else None
 
     async def list_webhooks(
@@ -10931,12 +11224,6 @@ class MemoryEngine(MemoryEngineInterface):
         parent_operation_id = uuid.uuid4()
         backend = await self._get_backend()
 
-        # Ensure the bank row exists before inserting async_operations (which now has a FK).
-        # Banks are created lazily on first retain, but the FK requires the row to exist first.
-        _, created = await bank_utils.get_or_create_bank_profile(self._backend, bank_id)
-        if created:
-            await self._apply_default_bank_template(bank_id, request_context)
-
         # Create typed metadata for parent operation
         parent_metadata = BatchRetainParentMetadata(
             items_count=len(contents),
@@ -10971,6 +11258,10 @@ class MemoryEngine(MemoryEngineInterface):
 
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
+                # async_operations.bank_id has a FK to banks. Create the bank
+                # lazily inside this same transaction so it is atomic with the
+                # parent + child operation rows.
+                created = await self._ensure_bank_exists(bank_id, request_context, conn=conn)
                 await conn.execute(
                     f"""
                     INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status)
@@ -11029,6 +11320,10 @@ class MemoryEngine(MemoryEngineInterface):
                         json.dumps(full_payload, default=_json_default),
                     )
                     deferred_child_payloads.append(full_payload)
+
+        # Best-effort default-template hook runs after the bank-create commits.
+        if created:
+            await self._apply_default_bank_template(bank_id, request_context)
 
         logger.info(f"Created parent operation {parent_operation_id} with {len(sub_batches)} child sub-batch(es)")
 

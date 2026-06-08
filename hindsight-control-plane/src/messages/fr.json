@@ -427,7 +427,7 @@
       "retain": "Retain",
       "consolidation": "Consolidation",
       "refreshMentalModel": "Actualisation du modèle mental",
-      "fileConvertRetain": "Conversion de fichier et Retain",
+      "fileConvertRetain": "Convertir le fichier",
       "webhookDelivery": "Livraison de webhook",
       "graphMaintenance": "Maintenance du graphe"
     },
@@ -437,7 +437,8 @@
       "created": "Créée",
       "status": "Statut",
       "index": "Index",
-      "items": "Éléments"
+      "items": "Éléments",
+      "actions": "Actions"
     },
     "action": {
       "cancel": "Annuler",
@@ -453,12 +454,21 @@
       "type": "Type",
       "created": "Créée",
       "updated": "Mise à jour",
-      "completed": "Terminée"
+      "completed": "Terminée",
+      "progress": "Progression",
+      "lastHeartbeat": "Dernier signal"
     },
     "metadata": "Métadonnées",
     "error": "Erreur",
     "rawPayloadParentHelp": "Il s'agit d'une opération parente : la charge utile brute est stockée dans chaque sous-lot. Ouvrez une opération enfant pour inspecter sa charge utile.",
-    "rawPayloadEmpty": "Aucune charge utile brute stockée pour cette opération."
+    "rawPayloadEmpty": "Aucune charge utile brute stockée pour cette opération.",
+    "heartbeat": {
+      "justNow": "à l'instant",
+      "secondsAgo": "il y a {secs}s",
+      "minutesAgo": "il y a {mins}min",
+      "hoursAgo": "il y a {hours}h"
+    },
+    "progressEstimateNote": "Le total est estimé au démarrage de la consolidation et peut augmenter si de nouveaux souvenirs arrivent pendant son exécution — c'est normal."
   },
   "dataView": {
     "loadingMemories": "Chargement des souvenirs...",
@@ -990,7 +1000,7 @@
     "actionDeleteMentalModel": "Supprimer un modèle mental",
     "actionCreateDirective": "Créer une directive",
     "actionDeleteDirective": "Supprimer une directive",
-    "actionFileConvertRetain": "Convertir et Retain un fichier",
+    "actionFileConvertRetain": "Convertir le fichier",
     "actionWebhookDelivery": "Livraison webhook",
     "transportAll": "Tous les transports",
     "transportHttp": "HTTP",
