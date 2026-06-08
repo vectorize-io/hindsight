@@ -351,6 +351,16 @@
       "icon": "/img/icons/roo-code.png"
     },
     {
+      "id": "omo",
+      "name": "OMO (oh-my-openagent)",
+      "description": "Automatic long-term memory for OMO agent harness via Hindsight hooks. Recalls context before each prompt and retains session learnings — zero config for cloud users.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/omo",
+      "icon": "/img/icons/omo.svg"
+    },
+    {
       "id": "flowise",
       "name": "Flowise",
       "description": "Drop-in Hindsight tool nodes for Flowise visual chatflows and agents. Retain, Recall, and Reflect work alongside any LangChain agent in the canvas.",
