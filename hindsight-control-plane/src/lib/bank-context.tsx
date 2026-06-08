@@ -58,7 +58,7 @@ export function BankProvider({ children }: { children: React.ReactNode }) {
 
   // Initialize bank from URL on mount
   useEffect(() => {
-    const bankMatch = pathname?.match(/^\/banks\/([^/?]+)/);
+    const bankMatch = pathname?.match(/\/banks\/([^/?]+)/);
     if (bankMatch) {
       setCurrentBank(decodeURIComponent(bankMatch[1]));
     }
