@@ -1,8 +1,8 @@
 ---
 title: "How oh-my-pi Built Persistent Codebase Memory on Hindsight"
 authors: [benfrank241, can1357]
-slug: "2026/06/05/oh-my-pi-hindsight-memory"
-date: 2026-06-05T12:00
+slug: "2026/06/08/oh-my-pi-hindsight-memory"
+date: 2026-06-08T12:00
 tags: [hindsight, coding, agents, memory, case-study, oh-my-pi, mental-models]
 description: "oh-my-pi — a 10k-star terminal coding agent — uses Hindsight as its long-term memory backend. Here's a walkthrough of the integration: bank scoping, mental-model seeding, and the auto-retain pipeline, with code straight from the repo."
 image: /img/blog/oh-my-pi-hindsight-memory.png
