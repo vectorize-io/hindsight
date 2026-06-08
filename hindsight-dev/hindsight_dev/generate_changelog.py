@@ -52,6 +52,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "claude-agent-sdk": IntegrationMeta("hindsight-claude-agent-sdk", "Claude Agent SDK"),
     "llamaindex": IntegrationMeta("hindsight-llamaindex", "LlamaIndex"),
     "codex": IntegrationMeta("hindsight-codex", "Codex"),
+    "cursor-cli": IntegrationMeta("hindsight-cursor-cli", "Cursor CLI"),
     "autogen": IntegrationMeta("hindsight-autogen", "AutoGen"),
     "paperclip": IntegrationMeta("@vectorize-io/hindsight-paperclip", "Paperclip"),
     "opencode": IntegrationMeta("@vectorize-io/opencode-hindsight", "OpenCode"),
