@@ -111,6 +111,16 @@
       "icon": "/img/icons/claudecode.svg"
     },
     {
+      "id": "claude-agent-sdk",
+      "name": "Claude Agent SDK",
+      "description": "Persistent long-term memory for Anthropic's Claude Agent SDK. Drop-in MCP memory tools plus hooks so Claude agents recall and retain context across sessions.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/claude-agent-sdk",
+      "icon": "/img/icons/claudecode.svg"
+    },
+    {
       "id": "grok-build",
       "name": "Grok Build",
       "description": "Automatic long-term memory for Grok Build (xAI) via Hindsight hooks. Captures every conversation, recalls relevant context on every prompt.",
@@ -191,6 +201,16 @@
       "icon": "/img/icons/nemoclaw.png"
     },
     {
+      "id": "paperclip",
+      "name": "Paperclip",
+      "description": "Persistent memory for Paperclip AI agents. Install the plugin once and every agent gets automatic recall before runs and retain after — no code changes.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/paperclip",
+      "icon": "/img/icons/nodejs.png"
+    },
+    {
       "id": "right-agent",
       "name": "Right Agent",
       "description": "Persistent memory for Right Agent — closed-box AI agents that run Claude Code inside OpenShell sandboxes. Hindsight is the native memory provider, selected during initialization.",
@@ -259,6 +279,16 @@
       "category": "framework",
       "link": "/sdks/integrations/openai-agents",
       "icon": "/img/icons/openai-agents.svg"
+    },
+    {
+      "id": "superagent",
+      "name": "Superagent",
+      "description": "Safety middleware for Hindsight memory operations via Superagent. Guards against prompt injection and redacts PII before content is stored.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/superagent",
+      "icon": "/img/icons/package.svg"
     },
     {
       "id": "pipecat",
