@@ -24,7 +24,7 @@ def mock_config():
     config.observations_mission = None
     config.consolidation_max_attempts = 3
     config.consolidation_llm_max_retries = None
-    config.consolidation_max_completion_tokens = 64000
+    config.consolidation_max_completion_tokens = None
     return config
 
 
@@ -81,6 +81,19 @@ class TestConsolidationRetryBudget:
             config=mock_config,
         )
         assert mock_llm_config.call.call_args.kwargs.get("max_completion_tokens") == 8192
+
+    @pytest.mark.asyncio
+    async def test_max_completion_tokens_not_passed_when_none(self, mock_llm_config, mock_config):
+        """When consolidation_max_completion_tokens is None, max_completion_tokens is omitted (no regression)."""
+        mock_config.consolidation_max_completion_tokens = None
+        await _consolidate_batch_with_llm(
+            llm_config=mock_llm_config,
+            memories=[{"id": "m1", "text": "test"}],
+            union_observations=[],
+            union_source_facts={},
+            config=mock_config,
+        )
+        assert "max_completion_tokens" not in mock_llm_config.call.call_args.kwargs
 
     @pytest.mark.asyncio
     async def test_max_retries_not_passed_when_none(self, mock_llm_config, mock_config):

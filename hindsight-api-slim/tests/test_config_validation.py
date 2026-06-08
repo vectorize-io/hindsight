@@ -125,14 +125,15 @@ def test_semantic_min_similarity_must_be_between_zero_and_one():
         HindsightConfig.from_env()
 
 
-def test_consolidation_max_completion_tokens_defaults_to_output_budget():
-    """Consolidation requests an explicit LLM output budget by default."""
+def test_consolidation_max_completion_tokens_defaults_to_unset():
+    """By default consolidation sends no explicit output budget (backwards compatible)."""
     from hindsight_api.config import HindsightConfig
 
     os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+    os.environ.pop("HINDSIGHT_API_CONSOLIDATION_MAX_COMPLETION_TOKENS", None)
 
     config = HindsightConfig.from_env()
-    assert config.consolidation_max_completion_tokens == 64000
+    assert config.consolidation_max_completion_tokens is None
 
 
 def test_consolidation_max_completion_tokens_env_override():
