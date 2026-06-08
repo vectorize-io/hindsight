@@ -11,6 +11,7 @@ import json
 import logging
 import threading
 import uuid
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from haystack.dataclasses import ChatMessage
@@ -309,16 +310,27 @@ class _HindsightToolBackend:
             return f"Failed to reflect on memory: {e!s:.200}"
 
 
-# -- Tool definitions mapping operation name -> (method name, description, parameter schema) --
-_TOOL_DEFS: dict[str, tuple[str, str, dict[str, Any]]] = {
-    "retain_memory": (
-        "retain_memory",
-        (
+@dataclass(frozen=True)
+class _ToolDef:
+    """Static definition of a Hindsight tool.
+
+    The dict key in ``_TOOL_DEFS`` doubles as both the tool name and the
+    backend method name (they are identical), so only the description and
+    parameter schema need to be stored here.
+    """
+
+    description: str
+    parameters: dict[str, Any]
+
+
+_TOOL_DEFS: dict[str, _ToolDef] = {
+    "retain_memory": _ToolDef(
+        description=(
             "Store information to long-term memory for later retrieval. "
             "Use this to save important facts, user preferences, decisions, "
             "or any information that should be remembered across conversations."
         ),
-        {
+        parameters={
             "type": "object",
             "properties": {
                 "content": {
@@ -329,14 +341,13 @@ _TOOL_DEFS: dict[str, tuple[str, str, dict[str, Any]]] = {
             "required": ["content"],
         },
     ),
-    "recall_memory": (
-        "recall_memory",
-        (
+    "recall_memory": _ToolDef(
+        description=(
             "Search long-term memory for relevant information. "
             "Use this to find previously stored facts, preferences, or context. "
             "Returns a numbered list of matching memories."
         ),
-        {
+        parameters={
             "type": "object",
             "properties": {
                 "query": {
@@ -347,14 +358,13 @@ _TOOL_DEFS: dict[str, tuple[str, str, dict[str, Any]]] = {
             "required": ["query"],
         },
     ),
-    "reflect_on_memory": (
-        "reflect_on_memory",
-        (
+    "reflect_on_memory": _ToolDef(
+        description=(
             "Synthesize a thoughtful answer from long-term memories. "
             "Use this when you need a coherent summary or reasoned response "
             "about what you know, rather than raw memory facts."
         ),
-        {
+        parameters={
             "type": "object",
             "properties": {
                 "query": {
@@ -383,12 +393,13 @@ class _HindsightTool(Tool):
         tool_name: str,
         backend_kwargs: dict[str, Any],
     ):
-        method_name, description, parameters = _TOOL_DEFS[tool_name]
+        # The tool name and the backend method name are identical.
+        tool_def = _TOOL_DEFS[tool_name]
         super().__init__(
             name=tool_name,
-            description=description,
-            function=getattr(backend, method_name),
-            parameters=parameters,
+            description=tool_def.description,
+            function=getattr(backend, tool_name),
+            parameters=tool_def.parameters,
         )
         self._backend = backend
         self._backend_kwargs = backend_kwargs
@@ -569,10 +580,11 @@ def create_hindsight_tools(
     Returns:
         List of Haystack Tool instances.
 
-    Raises:
-        HindsightError: If no client or API URL can be resolved during
-            tool creation. Tool invocations return error strings instead
-            of raising.
+    Note:
+        Tool *invocations* never raise — they catch errors and return an
+        error string so the agent can react. Connection resolution always
+        succeeds because the API URL defaults to Hindsight Cloud; a missing
+        API key only surfaces when a call is actually made.
     """
     backend_kwargs = _build_backend_kwargs(
         bank_id=bank_id,

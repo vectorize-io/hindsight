@@ -191,6 +191,16 @@
       "icon": "/img/icons/google-adk.png"
     },
     {
+      "id": "haystack",
+      "name": "Haystack",
+      "description": "Persistent memory for Haystack agents. Provides retain/recall/reflect Tools plus a HindsightToolset with optional auto-recall and auto-retain.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/haystack",
+      "icon": "/img/icons/haystack.svg"
+    },
+    {
       "id": "nemoclaw",
       "name": "NemoClaw",
       "description": "Persistent memory for NemoClaw sandboxed agents. One-command setup — no code changes required.",

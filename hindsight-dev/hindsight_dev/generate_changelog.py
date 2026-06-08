@@ -68,6 +68,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "flowise": IntegrationMeta("@vectorize-io/flowise-nodes-hindsight", "Flowise"),
     "google-adk": IntegrationMeta("hindsight-google-adk", "Google ADK"),
     "superagent": IntegrationMeta("hindsight-superagent", "Superagent"),
+    "haystack": IntegrationMeta("hindsight-haystack", "Haystack"),
     "roo-code": IntegrationMeta("hindsight-roo-code", "Roo Code"),
 }
 
