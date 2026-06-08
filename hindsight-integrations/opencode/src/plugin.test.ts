@@ -155,9 +155,7 @@ describe("plugin default export", () => {
     // bricks the whole plugin load. Keep the entry surface function-only.
     const mod = await import("./index.js");
     for (const [name, value] of Object.entries(mod)) {
-      expect(typeof value, `export "${name}" must be a function`).toBe(
-        "function"
-      );
+      expect(typeof value, `export "${name}" must be a function`).toBe("function");
     }
   });
 });
