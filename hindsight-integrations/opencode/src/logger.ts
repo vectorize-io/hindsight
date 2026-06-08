@@ -54,22 +54,28 @@ export class Logger {
   private emit(level: LogLevel, message: string, extra?: Record<string, unknown>): void {
     if (this.silent) return;
 
-    const log = this.client?.app?.log;
-    if (log) {
+    const app = this.client?.app;
+    if (app && typeof app.log === "function") {
       try {
-        const result = log({ body: { service: SERVICE, level, message, extra } });
+        // IMPORTANT: call as a method on `app` so `this` is preserved.
+        // OpenCode's `app.log` is a class method that uses `this` internally;
+        // calling a detached reference (`const log = app.log; log(...)`) throws
+        // `this._client is undefined`, which would otherwise be swallowed below
+        // and produce no log at all.
+        const result = app.log({ body: { service: SERVICE, level, message, extra } });
         // Fire-and-forget: a logging failure must never surface to OpenCode.
         if (result && typeof (result as Promise<unknown>).then === "function") {
           (result as Promise<unknown>).then(undefined, () => {});
         }
+        return;
       } catch {
-        // ignore — logging must never break the plugin
+        // Fall through to the console fallback if app.log throws synchronously.
       }
-      return;
     }
 
-    // Fallback when no OpenCode client is available. OpenCode captures plugin
-    // console output into its logs, so this stays visible and TUI-safe.
+    // Fallback when no OpenCode client is available (or app.log failed).
+    // OpenCode captures plugin console output into its logs, so this stays
+    // visible and TUI-safe.
     const line = extra
       ? `[Hindsight] ${message} ${JSON.stringify(extra)}`
       : `[Hindsight] ${message}`;
