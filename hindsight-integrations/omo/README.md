@@ -14,12 +14,15 @@ Long-term memory for [OMO](https://github.com/code-yeongyu/oh-my-openagent) agen
 3. **Copy the integration files** into your OMO setup:
    ```bash
    # Copy hooks
+   mkdir -p ~/.omo/hooks
    cp hooks/hooks.json ~/.omo/hooks/hindsight-hooks.json
 
    # Copy rules
+   mkdir -p .omo/rules
    cp rules/hindsight-memory.md .omo/rules/hindsight-memory.md
 
    # Copy scripts
+   mkdir -p ~/.omo/plugins/hindsight/scripts
    cp -r scripts/ ~/.omo/plugins/hindsight/scripts/
    cp settings.json ~/.omo/plugins/hindsight/settings.json
    ```

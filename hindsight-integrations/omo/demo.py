@@ -8,10 +8,10 @@ Usage:
 This simulates OMO's hook lifecycle:
   SessionStart → UserPromptSubmit (recall) → Stop (retain) → SessionEnd
 
-The demo uses http://localhost:8080 and creates a bank called "omo-demo".
+The demo uses http://localhost:8888 (or HINDSIGHT_API_URL) and creates a bank called "omo-demo".
 """
 
-import importlib
+import importlib.util
 import io
 import json
 import os
@@ -24,7 +24,7 @@ SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"
 sys.path.insert(0, SCRIPTS_DIR)
 
 # Demo config
-API_URL = os.environ.get("HINDSIGHT_API_URL", "http://localhost:8080")
+API_URL = os.environ.get("HINDSIGHT_API_URL", "http://localhost:8888")
 BANK_ID = "omo-demo"
 SESSION_ID = f"demo-{int(time.time())}"
 
