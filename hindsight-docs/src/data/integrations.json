@@ -28,7 +28,7 @@
       "by": "hindsight",
       "category": "framework",
       "link": "/sdks/integrations/pydantic-ai",
-      "icon": "/img/icons/pydanticai.png"
+      "icon": "/img/icons/pydantic-ai.png"
     },
     {
       "id": "vercel-ai-sdk",
@@ -38,7 +38,7 @@
       "by": "hindsight",
       "category": "framework",
       "link": "/sdks/integrations/ai-sdk",
-      "icon": "/img/icons/vercel.png"
+      "icon": "/img/icons/ai-sdk.png"
     },
     {
       "id": "vercel-chat",
@@ -48,7 +48,7 @@
       "by": "hindsight",
       "category": "framework",
       "link": "/sdks/integrations/chat",
-      "icon": "/img/icons/vercel.png"
+      "icon": "/img/icons/chat.png"
     },
     {
       "id": "agno",
@@ -78,7 +78,7 @@
       "by": "hindsight",
       "category": "mcp",
       "link": "/sdks/integrations/local-mcp",
-      "icon": "/img/icons/mcp.png"
+      "icon": "/img/icons/local-mcp.png"
     },
     {
       "id": "chatgpt",
@@ -88,7 +88,7 @@
       "by": "hindsight",
       "category": "tool",
       "link": "/sdks/integrations/chatgpt",
-      "icon": "/img/icons/chatgpt.png"
+      "icon": "/img/icons/chatgpt.svg"
     },
     {
       "id": "perplexity",
@@ -108,7 +108,7 @@
       "by": "hindsight",
       "category": "tool",
       "link": "/sdks/integrations/claude-code",
-      "icon": "/img/icons/claudecode.svg"
+      "icon": "/img/icons/claude-code.png"
     },
     {
       "id": "claude-agent-sdk",
@@ -118,7 +118,7 @@
       "by": "hindsight",
       "category": "framework",
       "link": "/sdks/integrations/claude-agent-sdk",
-      "icon": "/img/icons/claudecode.svg"
+      "icon": "/img/icons/claude-agent-sdk.png"
     },
     {
       "id": "grok-build",
@@ -128,7 +128,7 @@
       "by": "hindsight",
       "category": "tool",
       "link": "/sdks/integrations/grok-build",
-      "icon": "/img/icons/grok-build.png"
+      "icon": "/img/icons/grok-build.svg"
     },
     {
       "id": "codex",
@@ -138,7 +138,7 @@
       "by": "hindsight",
       "category": "tool",
       "link": "/sdks/integrations/codex",
-      "icon": "/img/icons/openai.png"
+      "icon": "/img/icons/codex.svg"
     },
     {
       "id": "openclaw",
@@ -148,7 +148,7 @@
       "by": "hindsight",
       "category": "framework",
       "link": "/sdks/integrations/openclaw",
-      "icon": "/img/icons/openclaw.png"
+      "icon": "/img/icons/openclaw.svg"
     },
     {
       "id": "skills",
@@ -168,7 +168,7 @@
       "by": "hindsight",
       "category": "framework",
       "link": "/sdks/integrations/langgraph",
-      "icon": "/img/icons/langgraph.png"
+      "icon": "/img/icons/langgraph.svg"
     },
     {
       "id": "llamaindex",
@@ -208,7 +208,7 @@
       "by": "hindsight",
       "category": "framework",
       "link": "/sdks/integrations/paperclip",
-      "icon": "/img/icons/nodejs.png"
+      "icon": "/img/icons/paperclip.svg"
     },
     {
       "id": "right-agent",
@@ -228,7 +228,7 @@
       "by": "hindsight",
       "category": "framework",
       "link": "/sdks/integrations/strands",
-      "icon": "/img/icons/strands.png"
+      "icon": "/img/icons/strands.svg"
     },
     {
       "id": "ag2",
@@ -248,7 +248,7 @@
       "by": "hindsight",
       "category": "framework",
       "link": "/sdks/integrations/autogen",
-      "icon": "/img/icons/autogen.svg"
+      "icon": "/img/icons/autogen.png"
     },
     {
       "id": "opencode",
@@ -258,7 +258,7 @@
       "by": "hindsight",
       "category": "tool",
       "link": "/sdks/integrations/opencode",
-      "icon": "/img/icons/opencode.svg"
+      "icon": "/img/icons/opencode.png"
     },
     {
       "id": "n8n",
@@ -268,7 +268,7 @@
       "by": "hindsight",
       "category": "framework",
       "link": "/sdks/integrations/n8n",
-      "icon": "/img/icons/n8n.svg"
+      "icon": "/img/icons/n8n.png"
     },
     {
       "id": "openai-agents",
@@ -288,7 +288,7 @@
       "by": "hindsight",
       "category": "tool",
       "link": "/sdks/integrations/superagent",
-      "icon": "/img/icons/package.svg"
+      "icon": "/img/icons/superagent.png"
     },
     {
       "id": "pipecat",
@@ -298,7 +298,7 @@
       "by": "hindsight",
       "category": "tool",
       "link": "/sdks/integrations/pipecat",
-      "icon": "/img/icons/pipecat.png"
+      "icon": "/img/icons/pipecat.svg"
     },
     {
       "id": "agentcore",
@@ -318,7 +318,7 @@
       "by": "hindsight",
       "category": "framework",
       "link": "/sdks/integrations/smolagents",
-      "icon": "/img/icons/smolagents.png"
+      "icon": "/img/icons/smolagents.svg"
     },
     {
       "id": "dify",
@@ -328,7 +328,7 @@
       "by": "hindsight",
       "category": "framework",
       "link": "/sdks/integrations/dify",
-      "icon": "/img/icons/dify.png"
+      "icon": "/img/icons/dify.svg"
     },
     {
       "id": "vapi",
@@ -388,7 +388,7 @@
       "by": "stefan-d-p",
       "category": "framework",
       "link": "https://www.outsystems.com/forge/component-overview/24766/hindsight-api-odc",
-      "icon": "/img/icons/outsystems.svg"
+      "icon": "/img/icons/outsystems.png"
     }
   ]
 }
