@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Cline">
+  <rect x="6" y="14" width="52" height="40" rx="10" fill="#1f2430"/>
+  <rect x="29" y="4" width="6" height="12" rx="3" fill="#1f2430"/>
+  <circle cx="32" cy="6" r="4" fill="#4f8cff"/>
+  <circle cx="22" cy="34" r="6" fill="#4f8cff"/>
+  <circle cx="42" cy="34" r="6" fill="#4f8cff"/>
+  <rect x="22" y="44" width="20" height="4" rx="2" fill="#3a4150"/>
+</svg>

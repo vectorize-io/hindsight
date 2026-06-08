@@ -141,6 +141,26 @@
       "icon": "/img/icons/codex.svg"
     },
     {
+      "id": "cline",
+      "name": "Cline",
+      "description": "Automatic long-term memory for the Cline coding agent via lifecycle hooks (no MCP). Recalls relevant context before each task and retains what happened after.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/cline",
+      "icon": "/img/icons/cline.svg"
+    },
+    {
+      "id": "cursor-cli",
+      "name": "Cursor CLI",
+      "description": "Automatic long-term memory for Cursor CLI via Hindsight hooks. Recalls relevant context before each prompt and retains conversations after each turn.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/cursor-cli",
+      "icon": "/img/icons/cursor-cli.svg"
+    },
+    {
       "id": "openclaw",
       "name": "OpenClaw",
       "description": "Integrate Hindsight with OpenClaw to add memory capabilities to Claude-based agent workflows.",
@@ -189,6 +209,16 @@
       "category": "framework",
       "link": "/sdks/integrations/google-adk",
       "icon": "/img/icons/google-adk.png"
+    },
+    {
+      "id": "haystack",
+      "name": "Haystack",
+      "description": "Persistent memory for Haystack agents. Provides retain/recall/reflect Tools plus a HindsightToolset with optional auto-recall and auto-retain.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/haystack",
+      "icon": "/img/icons/haystack.svg"
     },
     {
       "id": "nemoclaw",
@@ -349,6 +379,16 @@
       "category": "tool",
       "link": "/sdks/integrations/roo-code",
       "icon": "/img/icons/roo-code.png"
+    },
+    {
+      "id": "omo",
+      "name": "OMO (oh-my-openagent)",
+      "description": "Automatic long-term memory for OMO agent harness via Hindsight hooks. Recalls context before each prompt and retains session learnings — zero config for cloud users.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/omo",
+      "icon": "/img/icons/omo.svg"
     },
     {
       "id": "flowise",

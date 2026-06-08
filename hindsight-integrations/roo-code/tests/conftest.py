@@ -1,16 +1,9 @@
 """Shared fixtures for Roo Code Hindsight integration tests."""
 
 import json
-import sys
-import os
 from pathlib import Path
 
 import pytest
-
-# Make the integration root importable so tests can import install.py helpers
-INTEGRATION_DIR = Path(__file__).parent.parent
-if str(INTEGRATION_DIR) not in sys.path:
-    sys.path.insert(0, str(INTEGRATION_DIR))
 
 
 @pytest.fixture()
