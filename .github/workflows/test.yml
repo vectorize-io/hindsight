@@ -860,17 +860,28 @@ jobs:
       with:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
     - name: Set up Python
       uses: actions/setup-python@v6
       with:
-        python-version: '3.11'
+        python-version-file: ".python-version"
 
-    - name: Install pytest
-      run: pip install pytest
+    - name: Build roo-code integration
+      working-directory: ./hindsight-integrations/roo-code
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/roo-code
+      run: uv sync --frozen
 
     - name: Run tests
       working-directory: ./hindsight-integrations/roo-code
-      run: python -m pytest tests/ -v
+      run: uv run pytest tests -v
 
   build-control-plane:
     needs: [detect-changes]
