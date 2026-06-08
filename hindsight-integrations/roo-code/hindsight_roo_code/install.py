@@ -1,29 +1,28 @@
-#!/usr/bin/env python3
-"""Install Hindsight memory for Roo Code.
+"""Install logic for the Roo Code Hindsight integration.
 
-Writes two files:
-  1. .roo/mcp.json  — registers the Hindsight MCP server
-  2. .roo/rules/hindsight-memory.md — rules injected into every Roo system prompt
+Writes two files into a Roo Code config directory:
+  1. ``mcp.json``                — registers the Hindsight MCP server
+  2. ``rules/hindsight-memory.md`` — rules injected into every Roo system prompt
 
-Usage:
-    python install.py
-    python install.py --api-url http://localhost:8888
-    python install.py --project-dir /path/to/project
-    python install.py --global   # write to ~/.roo/ instead of ./.roo/
+The rules file is shipped as package data and read via ``importlib.resources``
+so it resolves correctly whether the package is installed as a wheel or run
+from a source checkout.
 """
 
-import argparse
 import json
-import os
-import shutil
 import sys
+from importlib import resources
 from pathlib import Path
-
-SCRIPT_DIR = Path(__file__).parent
-RULES_SRC = SCRIPT_DIR / "rules" / "hindsight-memory.md"
 
 DEFAULT_API_URL = "https://api.hindsight.vectorize.io"
 MCP_TIMEOUT_SECONDS = 30
+RULES_FILENAME = "hindsight-memory.md"
+
+
+def rules_text() -> str:
+    """Return the bundled rules-file content."""
+    resource = resources.files("hindsight_roo_code").joinpath("rules", RULES_FILENAME)
+    return resource.read_text(encoding="utf-8")
 
 
 def get_roo_dir(project_dir: Path, global_install: bool) -> Path:
@@ -63,40 +62,21 @@ def install_mcp(roo_dir: Path, api_url: str) -> None:
 def install_rules(roo_dir: Path) -> None:
     rules_dir = roo_dir / "rules"
     rules_dir.mkdir(parents=True, exist_ok=True)
-    dest = rules_dir / "hindsight-memory.md"
-    shutil.copy2(RULES_SRC, dest)
+    dest = rules_dir / RULES_FILENAME
+    dest.write_text(rules_text(), encoding="utf-8")
     print(f"Rules file written: {dest}")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Install Hindsight memory integration for Roo Code.")
-    parser.add_argument(
-        "--api-url",
-        default=os.environ.get("HINDSIGHT_API_URL", DEFAULT_API_URL),
-        help=f"Hindsight API base URL (default: {DEFAULT_API_URL})",
-    )
-    parser.add_argument(
-        "--project-dir",
-        default=".",
-        help="Project directory to install into (default: current directory)",
-    )
-    parser.add_argument(
-        "--global",
-        dest="global_install",
-        action="store_true",
-        help="Install globally to ~/.roo/ instead of the project directory",
-    )
-    args = parser.parse_args()
-
-    project_dir = Path(args.project_dir).resolve()
-    roo_dir = get_roo_dir(project_dir, args.global_install)
+def run_install(api_url: str, project_dir: Path, global_install: bool) -> None:
+    """Run the full install: write the MCP config and the rules file."""
+    roo_dir = get_roo_dir(project_dir.resolve(), global_install)
 
     print("Installing Hindsight memory for Roo Code...")
-    print(f"  API URL : {args.api_url}")
+    print(f"  API URL : {api_url}")
     print(f"  Roo dir : {roo_dir}")
     print()
 
-    install_mcp(roo_dir, args.api_url)
+    install_mcp(roo_dir, api_url)
     install_rules(roo_dir)
 
     print()
@@ -104,7 +84,3 @@ def main() -> None:
     print()
     print("To verify, open Roo Code and check:")
     print("  Settings → MCP Servers → hindsight (should show as connected)")
-
-
-if __name__ == "__main__":
-    main()
