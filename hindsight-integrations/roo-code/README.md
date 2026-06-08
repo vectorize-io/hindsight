@@ -24,22 +24,26 @@ hindsight-api  # starts on http://localhost:8888
 
 ## Installation
 
-From your project directory:
+```bash
+pip install hindsight-roo-code
+```
+
+Then, from your project directory:
 
 ```bash
-python /path/to/hindsight-integrations/roo-code/install.py
+hindsight-roo-code install
 ```
 
 Or with a custom API URL:
 
 ```bash
-python install.py --api-url https://my-hindsight.example.com
+hindsight-roo-code install --api-url https://my-hindsight.example.com
 ```
 
 Install globally (applies to all projects):
 
 ```bash
-python install.py --global
+hindsight-roo-code install --global
 ```
 
 This writes two files:
@@ -83,7 +87,7 @@ The installer writes to `.roo/mcp.json`:
 To change the API URL after installation, edit `.roo/mcp.json` directly or re-run the installer:
 
 ```bash
-python install.py --api-url https://new-url.example.com
+hindsight-roo-code install --api-url https://new-url.example.com
 ```
 
 ## Verifying Setup
@@ -96,6 +100,6 @@ python install.py --api-url https://new-url.example.com
 ## Development
 
 ```bash
-pip install pytest
-python -m pytest tests/ -v
+uv sync
+uv run pytest tests/ -v
 ```

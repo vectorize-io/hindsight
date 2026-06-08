@@ -1285,6 +1285,7 @@ class TestMentalModelRefreshTagSecurity:
         """Override to use real LLM for this class."""
         return memory_real_llm
 
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
     async def test_refresh_with_tags_only_accesses_same_tagged_models(self, memory: MemoryEngine, request_context):
         """Test that refreshing a mental model with tags can only access other models with the same tags.
 

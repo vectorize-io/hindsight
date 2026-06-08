@@ -1,7 +1,7 @@
 [project]
 name = "hindsight-langgraph"
-version = "0.1.2"
-description = "LangGraph integration for Hindsight - persistent memory tools, nodes, and store for AI agents"
+version = "0.2.0"
+description = "LangGraph integration for Hindsight - persistent memory tools, nodes, and memory instructions for AI agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -58,6 +58,9 @@ packages = ["hindsight_langgraph"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "requires_real_llm: end-to-end test that needs live external services (a running Hindsight server and/or real LLM provider keys). Excluded from the deterministic PR-CI bucket via -m 'not requires_real_llm'; run on its own via -m requires_real_llm.",
+]
 
 [dependency-groups]
 dev = [

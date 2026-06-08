@@ -309,6 +309,7 @@ ENV_RERANKER_LITELLM_TIMEOUT = "HINDSIGHT_API_RERANKER_LITELLM_TIMEOUT"
 ENV_RERANKER_LITELLM_SDK_TIMEOUT = "HINDSIGHT_API_RERANKER_LITELLM_SDK_TIMEOUT"
 ENV_RERANKER_GOOGLE_TIMEOUT = "HINDSIGHT_API_RERANKER_GOOGLE_TIMEOUT"
 ENV_RERANKER_MAX_CANDIDATES = "HINDSIGHT_API_RERANKER_MAX_CANDIDATES"
+ENV_SEMANTIC_MIN_SIMILARITY = "HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY"
 ENV_RERANKER_FLASHRANK_MODEL = "HINDSIGHT_API_RERANKER_FLASHRANK_MODEL"
 ENV_RERANKER_FLASHRANK_CACHE_DIR = "HINDSIGHT_API_RERANKER_FLASHRANK_CACHE_DIR"
 ENV_RERANKER_FLASHRANK_CPU_MEM_ARENA = "HINDSIGHT_API_RERANKER_FLASHRANK_CPU_MEM_ARENA"
@@ -437,6 +438,7 @@ ENV_CONSOLIDATION_LLM_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE"
 ENV_CONSOLIDATION_DEDUP_THRESHOLD = "HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD"
 ENV_CONSOLIDATION_LLM_PARALLELISM = "HINDSIGHT_API_CONSOLIDATION_LLM_PARALLELISM"
 ENV_CONSOLIDATION_MAX_TOKENS = "HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS"
+ENV_CONSOLIDATION_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_CONSOLIDATION_MAX_COMPLETION_TOKENS"
 ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS = "HINDSIGHT_API_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS"
 ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION = (
     "HINDSIGHT_API_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION"
@@ -552,6 +554,9 @@ ENV_LLM_TRACE_SCOPES = "HINDSIGHT_API_LLM_TRACE_SCOPES"
 ENV_LLM_TRACE_RETENTION_DAYS = "HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS"
 ENV_LLM_TRACE_MAX_CHARS = "HINDSIGHT_API_LLM_TRACE_MAX_CHARS"
 
+# Background maintenance settings
+ENV_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS = "HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS"
+
 # Disposition settings
 ENV_DISPOSITION_SKEPTICISM = "HINDSIGHT_API_DISPOSITION_SKEPTICISM"
 ENV_DISPOSITION_LITERALISM = "HINDSIGHT_API_DISPOSITION_LITERALISM"
@@ -661,6 +666,7 @@ DEFAULT_RERANKER_LITELLM_TIMEOUT = 60.0
 DEFAULT_RERANKER_LITELLM_SDK_TIMEOUT = 60.0
 DEFAULT_RERANKER_GOOGLE_TIMEOUT = 60.0
 DEFAULT_RERANKER_MAX_CANDIDATES = 300
+DEFAULT_SEMANTIC_MIN_SIMILARITY = 0.3
 # Minimum BM25 score a row must exceed to enter fusion. 0.0 gates out
 # zero-score (non-matching) rows on backends — notably VectorChord — whose
 # operator ranks every document rather than pre-filtering to term matches.
@@ -861,6 +867,10 @@ DEFAULT_CONSOLIDATION_LLM_PARALLELISM = (
     # scopes degrade to sequential automatically; matches retain_max_concurrent.
 )
 DEFAULT_CONSOLIDATION_MAX_TOKENS = 512  # Max tokens for recall when finding related observations
+# Unset by default: the key is omitted from the LLM call so every provider keeps its current implicit output
+# budget — 100% backwards compatible. Operators on providers with a low hidden default (notably Bedrock imported
+# models, which cap at 4096 and truncate structured consolidation JSON) set this explicitly to fix #1939.
+DEFAULT_CONSOLIDATION_MAX_COMPLETION_TOKENS = None
 DEFAULT_CONSOLIDATION_RECALL_BUDGET = "low"  # Budget level for consolidation recall (low/mid/high)
 DEFAULT_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS = (
     4096  # Total token budget for source facts in consolidation recall (-1 = unlimited)
@@ -938,6 +948,12 @@ DEFAULT_LLM_TRACE_ENABLED = True  # Enabled by default
 DEFAULT_LLM_TRACE_SCOPES = ""  # Empty = trace all call scopes
 DEFAULT_LLM_TRACE_RETENTION_DAYS = 1  # Retain trace rows for 1 day by default
 DEFAULT_LLM_TRACE_MAX_CHARS = 50000  # Truncate stored input/output beyond this many chars
+
+# Background maintenance defaults
+# Periodic reconcile that re-schedules consolidation for banks with eligible-but-unscheduled
+# facts (e.g. after a consolidation operation failed terminally and left them unscheduled).
+# 0 disables the reconcile sweep.
+DEFAULT_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS = 300
 
 # Default MCP tool descriptions (can be customized via env vars)
 DEFAULT_MCP_RETAIN_DESCRIPTION = """Store important information to long-term memory.
@@ -1324,6 +1340,7 @@ class HindsightConfig:
     reranker_tei_max_concurrent: int
     reranker_tei_http_timeout: float
     reranker_max_candidates: int
+    semantic_min_similarity: float
     bm25_min_score: float
     recall_max_candidates_per_source: int
     recall_strategy_boosts: dict[str, str]
@@ -1438,6 +1455,7 @@ class HindsightConfig:
     consolidation_llm_batch_size: int
     consolidation_llm_parallelism: int
     consolidation_max_tokens: int
+    consolidation_max_completion_tokens: int | None
     consolidation_recall_budget: str
     consolidation_source_facts_max_tokens: int
     consolidation_source_facts_max_tokens_per_observation: int
@@ -1530,6 +1548,11 @@ class HindsightConfig:
     llm_trace_scopes: list[str]  # Allowlist of call scopes to trace (empty = all)
     llm_trace_retention_days: int  # -1 = keep forever, >0 = delete after N days
     llm_trace_max_chars: int  # Truncate stored input/output beyond this many chars
+
+    # Background maintenance configuration (static - server-level only)
+    # Interval for the periodic sweep that re-schedules consolidation for banks with
+    # eligible-but-unscheduled facts. 0 = disabled.
+    consolidation_reconcile_interval_seconds: int
 
     # Webhook configuration (static - server-level only, not per-bank)
     webhook_url: str | None  # Global webhook URL (None = disabled)
@@ -1730,6 +1753,11 @@ class HindsightConfig:
         self.text_search_extension_pg_search_tokenizer = normalize_pg_search_tokenizer(
             self.text_search_extension_pg_search_tokenizer
         )
+
+        if not 0.0 <= self.semantic_min_similarity <= 1.0:
+            raise ValueError(
+                f"Invalid semantic_min_similarity: {self.semantic_min_similarity}. Must be between 0.0 and 1.0"
+            )
 
         # When LLM provider is "none", force chunks-only mode and disable LLM-dependent features
         if self.llm_provider == "none":
@@ -2108,6 +2136,7 @@ class HindsightConfig:
                 os.getenv(ENV_RERANKER_TEI_HTTP_TIMEOUT, str(DEFAULT_RERANKER_TEI_HTTP_TIMEOUT))
             ),
             reranker_max_candidates=int(os.getenv(ENV_RERANKER_MAX_CANDIDATES, str(DEFAULT_RERANKER_MAX_CANDIDATES))),
+            semantic_min_similarity=float(os.getenv(ENV_SEMANTIC_MIN_SIMILARITY, str(DEFAULT_SEMANTIC_MIN_SIMILARITY))),
             bm25_min_score=float(os.getenv(ENV_BM25_MIN_SCORE, str(DEFAULT_BM25_MIN_SCORE))),
             recall_max_candidates_per_source=int(
                 os.getenv(ENV_RECALL_MAX_CANDIDATES_PER_SOURCE, str(DEFAULT_RECALL_MAX_CANDIDATES_PER_SOURCE))
@@ -2334,6 +2363,11 @@ class HindsightConfig:
             consolidation_max_tokens=int(
                 os.getenv(ENV_CONSOLIDATION_MAX_TOKENS, str(DEFAULT_CONSOLIDATION_MAX_TOKENS))
             ),
+            consolidation_max_completion_tokens=(
+                int(os.getenv(ENV_CONSOLIDATION_MAX_COMPLETION_TOKENS))
+                if os.getenv(ENV_CONSOLIDATION_MAX_COMPLETION_TOKENS)
+                else DEFAULT_CONSOLIDATION_MAX_COMPLETION_TOKENS
+            ),
             consolidation_recall_budget=os.getenv(ENV_CONSOLIDATION_RECALL_BUDGET, DEFAULT_CONSOLIDATION_RECALL_BUDGET),
             consolidation_source_facts_max_tokens=int(
                 os.getenv(ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS, str(DEFAULT_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS))
@@ -2455,6 +2489,13 @@ class HindsightConfig:
                 os.getenv(ENV_LLM_TRACE_RETENTION_DAYS, str(DEFAULT_LLM_TRACE_RETENTION_DAYS))
             ),
             llm_trace_max_chars=int(os.getenv(ENV_LLM_TRACE_MAX_CHARS, str(DEFAULT_LLM_TRACE_MAX_CHARS))),
+            # Background maintenance configuration (static, server-level only)
+            consolidation_reconcile_interval_seconds=int(
+                os.getenv(
+                    ENV_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS,
+                    str(DEFAULT_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS),
+                )
+            ),
             # Webhook configuration (static, server-level only)
             webhook_url=os.getenv(ENV_WEBHOOK_URL) or DEFAULT_WEBHOOK_URL,
             webhook_secret=os.getenv(ENV_WEBHOOK_SECRET) or DEFAULT_WEBHOOK_SECRET,

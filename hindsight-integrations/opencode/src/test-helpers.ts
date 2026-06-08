@@ -18,7 +18,7 @@ export function makeConfig(overrides: Partial<HindsightConfig> = {}): HindsightC
     retainContext: "opencode",
     retainTags: [],
     retainMetadata: {},
-    hindsightApiUrl: null,
+    hindsightApiUrl: "https://api.hindsight.vectorize.io",
     hindsightApiToken: null,
     bankId: null,
     bankIdPrefix: "",

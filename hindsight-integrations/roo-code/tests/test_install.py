@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from install import build_mcp_entry, get_roo_dir, install_mcp, install_rules
+from hindsight_roo_code.install import (
+    build_mcp_entry,
+    get_roo_dir,
+    install_mcp,
+    install_rules,
+)
 
 
 # ---------------------------------------------------------------------------

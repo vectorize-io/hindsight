@@ -180,27 +180,8 @@
       "items": [
         {
           "type": "link",
-          "label": "Local MCP Server",
-          "customProps": {
-            "icon": "/img/icons/mcp.png"
-          },
-          "href": "/sdks/integrations/local-mcp"
-        },
-        {
-          "type": "link",
-          "label": "LiteLLM",
-          "customProps": {
-            "icon": "/img/icons/litellm.png"
-          },
-          "href": "/sdks/integrations/litellm"
-        },
-        {
-          "type": "link",
-          "label": "Skills",
-          "customProps": {
-            "icon": "/img/icons/skills.png"
-          },
-          "href": "/sdks/integrations/skills"
+          "href": "/integrations",
+          "label": "Browse all integrations"
         }
       ]
     },

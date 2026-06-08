@@ -296,7 +296,7 @@ class TestRemoteTEICrossEncoderParallelism:
                 concurrent_count[0] += 1
                 max_concurrent_observed[0] = max(max_concurrent_observed[0], concurrent_count[0])
 
-                await asyncio.sleep(0.03)  # Simulate latency
+                await asyncio.sleep(0.1)  # Simulate latency
 
                 concurrent_count[0] -= 1
                 body = kwargs.get("json", {})
@@ -325,8 +325,11 @@ class TestRemoteTEICrossEncoderParallelism:
         elapsed = time.time() - start
 
         assert len(scores) == 6
-        # If parallel, 3 batches with 30ms each should take ~30ms, not 90ms
-        assert elapsed < 0.08, f"Requests should run in parallel, took {elapsed}s"
+        # 6 docs = 3 batches at ~0.1s each: ~0.1s if parallel vs ~0.3s if serial.
+        # Assert comfortably below the serial time so CI scheduling jitter can't flake
+        # it (the previous ~0.08s bound was too tight); max_concurrent_observed below is
+        # the deterministic proof that the batches actually overlapped.
+        assert elapsed < 0.25, f"Requests should run in parallel, took {elapsed}s"
         assert max_concurrent_observed[0] > 1, "Multiple requests should run concurrently"
 
     @pytest.mark.asyncio

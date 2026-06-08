@@ -46,7 +46,6 @@ from ..config import (
     ENV_RERANKER_FLASHRANK_CPU_MEM_ARENA,
     ENV_RERANKER_FLASHRANK_MODEL,
     ENV_RERANKER_GOOGLE_PROJECT_ID,
-    ENV_RERANKER_LITELLM_SDK_API_KEY,
     ENV_RERANKER_LOCAL_FORCE_CPU,
     ENV_RERANKER_LOCAL_MAX_CONCURRENT,
     ENV_RERANKER_LOCAL_MODEL,
@@ -1199,7 +1198,7 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None = None,
         model: str = DEFAULT_RERANKER_LITELLM_SDK_MODEL,
         api_base: str | None = None,
         timeout: float = 60.0,
@@ -1209,7 +1208,8 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
         Initialize LiteLLM SDK cross-encoder client.
 
         Args:
-            api_key: API key for the reranking provider
+            api_key: API key for the reranking provider (optional — omit for
+                     providers that use ambient credentials, e.g. AWS Bedrock with IAM)
             model: Model name with provider prefix (e.g., "deepinfra/Qwen3-reranker-8B")
             api_base: Custom base URL for API (optional)
             timeout: Request timeout in seconds (default: 60.0)
@@ -1284,8 +1284,9 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
                 "model": self.model,
                 "query": query,
                 "documents": texts,
-                "api_key": self.api_key,
             }
+            if self.api_key:
+                rerank_kwargs["api_key"] = self.api_key
             if self.api_base:
                 rerank_kwargs["api_base"] = self.api_base
 
@@ -1697,13 +1698,8 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             timeout=config.reranker_litellm_timeout,
         )
     elif provider == "litellm-sdk":
-        api_key = config.reranker_litellm_sdk_api_key
-        if not api_key:
-            raise ValueError(
-                f"{ENV_RERANKER_LITELLM_SDK_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'litellm-sdk'"
-            )
         return LiteLLMSDKCrossEncoder(
-            api_key=api_key,
+            api_key=config.reranker_litellm_sdk_api_key or None,
             model=config.reranker_litellm_sdk_model,
             api_base=config.reranker_litellm_sdk_api_base,
             max_tokens_per_doc=config.reranker_litellm_max_tokens_per_doc,
