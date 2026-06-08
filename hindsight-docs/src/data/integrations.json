@@ -141,6 +141,16 @@
       "icon": "/img/icons/codex.svg"
     },
     {
+      "id": "cursor-cli",
+      "name": "Cursor CLI",
+      "description": "Automatic long-term memory for Cursor CLI via Hindsight hooks. Recalls relevant context before each prompt and retains conversations after each turn.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/cursor-cli",
+      "icon": "/img/icons/cursor-cli.svg"
+    },
+    {
       "id": "openclaw",
       "name": "OpenClaw",
       "description": "Integrate Hindsight with OpenClaw to add memory capabilities to Claude-based agent workflows.",
