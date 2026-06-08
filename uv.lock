@@ -1730,6 +1730,7 @@ all = [
     { name = "pg0-embedded" },
     { name = "safetensors" },
     { name = "sentence-transformers" },
+    { name = "tokenizers" },
     { name = "torch", version = "2.10.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
     { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
     { name = "transformers" },
@@ -1748,6 +1749,7 @@ local-ml = [
     { name = "mlx-lm", marker = "sys_platform != 'win32'" },
     { name = "safetensors" },
     { name = "sentence-transformers" },
+    { name = "tokenizers" },
     { name = "torch", version = "2.10.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
     { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
     { name = "transformers" },
@@ -1756,6 +1758,7 @@ local-onnx = [
     { name = "huggingface-hub" },
     { name = "numpy" },
     { name = "onnxruntime" },
+    { name = "tokenizers" },
     { name = "transformers" },
 ]
 oracle = [
@@ -1852,6 +1855,8 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.44,<2.1" },
     { name = "testcontainers", marker = "extra == 'test'", specifier = ">=4.0.0" },
     { name = "tiktoken", specifier = ">=0.12.0" },
+    { name = "tokenizers", marker = "extra == 'local-ml'", specifier = ">=0.22.0,<=0.23.0" },
+    { name = "tokenizers", marker = "extra == 'local-onnx'", specifier = ">=0.22.0,<=0.23.0" },
     { name = "torch", marker = "extra == 'local-ml'", specifier = ">=2.6.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "tornado", specifier = ">=6.5.5" },
     { name = "transformers", marker = "extra == 'local-ml'", specifier = ">=4.53.0" },
