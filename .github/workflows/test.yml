@@ -34,6 +34,7 @@ jobs:
       integrations-ai-sdk: ${{ steps.filter.outputs.integrations-ai-sdk }}
       integrations-chat: ${{ steps.filter.outputs.integrations-chat }}
       integrations-claude-code: ${{ steps.filter.outputs.integrations-claude-code }}
+      integrations-cline: ${{ steps.filter.outputs.integrations-cline }}
       integrations-codex: ${{ steps.filter.outputs.integrations-codex }}
       integrations-cursor-cli: ${{ steps.filter.outputs.integrations-cursor-cli }}
       integrations-crewai: ${{ steps.filter.outputs.integrations-crewai }}
@@ -60,6 +61,7 @@ jobs:
       integrations-flowise: ${{ steps.filter.outputs.integrations-flowise }}
       integrations-google-adk: ${{ steps.filter.outputs.integrations-google-adk }}
       integrations-omo: ${{ steps.filter.outputs.integrations-omo }}
+      integrations-haystack: ${{ steps.filter.outputs.integrations-haystack }}
       tools-agent-sdk: ${{ steps.filter.outputs.tools-agent-sdk }}
       integrations-roo-code: ${{ steps.filter.outputs.integrations-roo-code }}
       dev: ${{ steps.filter.outputs.dev }}
@@ -124,6 +126,8 @@ jobs:
             - 'hindsight-integrations/chat/**'
           integrations-claude-code:
             - 'hindsight-integrations/claude-code/**'
+          integrations-cline:
+            - 'hindsight-integrations/cline/**'
           integrations-codex:
             - 'hindsight-integrations/codex/**'
           integrations-cursor-cli:
@@ -142,6 +146,8 @@ jobs:
             - 'hindsight-integrations/langgraph/**'
           integrations-llamaindex:
             - 'hindsight-integrations/llamaindex/**'
+          integrations-haystack:
+            - 'hindsight-integrations/haystack/**'
           integrations-paperclip:
             - 'hindsight-integrations/paperclip/**'
           integrations-opencode:
@@ -445,6 +451,7 @@ jobs:
       needs.detect-changes.outputs.integrations-omo == 'true' ||
       needs.detect-changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
     - uses: actions/checkout@v6
@@ -461,6 +468,32 @@ jobs:
 
     - name: Run tests
       working-directory: ./hindsight-integrations/omo
+      run: python -m pytest tests/ -v
+
+  test-cline-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-cline == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+
+    - name: Install pytest
+      run: pip install pytest
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/cline
       run: python -m pytest tests/ -v
 
   test-codex-integration:
@@ -3301,6 +3334,45 @@ jobs:
       # (requires_real_llm) needs a live Hindsight server and runs separately.
       run: uv run pytest tests -v -m "not requires_real_llm"
 
+  test-haystack-integration:
+    needs: [detect-changes]
+    if: >-
+      github.event_name != 'pull_request_review' &&
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-haystack == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build haystack integration
+      working-directory: ./hindsight-integrations/haystack
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/haystack
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/haystack
+      # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
+      # (requires_real_llm) needs a live Hindsight server and runs separately.
+      run: uv run pytest tests -v -m "not requires_real_llm"
+
   test-openai-agents-integration:
     needs: [detect-changes]
     if: >-
@@ -4241,11 +4313,13 @@ jobs:
       - build-openclaw-integration
       - smoke-openclaw-install
       - test-claude-code-integration
+      - test-cline-integration
       - test-codex-integration
       - test-cursor-cli-integration
       - build-ai-sdk-integration
       - test-ai-sdk-integration-deno
       - test-opencode-integration
+      - test-omo-integration
       - test-cloudflare-oauth-proxy-integration
       - build-chat-integration
       - test-paperclip-integration
@@ -4285,6 +4359,7 @@ jobs:
       - test-llamaindex-integration
       - test-openai-agents-integration
       - test-agentcore-integration
+      - test-haystack-integration
       - test-pip-slim
       - test-embed
       - test-embed-windows
