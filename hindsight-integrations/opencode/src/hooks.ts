@@ -2,7 +2,8 @@
  * Hook implementations for the Hindsight OpenCode plugin.
  *
  * Hooks:
- *   - event (session.created) → recall memories and inject into system prompt
+ *   - experimental.chat.system.transform → recall memories once per session and
+ *     inject them into the system prompt (order-independent; see #1758)
  *   - event (session.idle) → auto-retain conversation transcript
  *   - experimental.session.compacting → inject memories into compaction context
  */
@@ -232,19 +233,11 @@ export function createHooks(
           await handleSessionIdle(sessionId);
         }
       }
-
-      if (evt.type === "session.created") {
-        const session = evt.properties.info as { id?: string; title?: string } | undefined;
-        const sessionId = session?.id;
-        if (sessionId && config.autoRecall && !state.recalledSessions.has(sessionId)) {
-          state.recalledSessions.add(sessionId);
-          // Cap tracked sessions
-          if (state.recalledSessions.size > 1000) {
-            const first = state.recalledSessions.values().next().value;
-            if (first) state.recalledSessions.delete(first);
-          }
-        }
-      }
+      // NOTE: autoRecall is driven entirely by `experimental.chat.system.transform`
+      // (see below). We deliberately do NOT key it off `session.created` — the
+      // relative firing order of `session.created` vs `system.transform` is an
+      // undocumented OpenCode implementation detail that has differed between
+      // versions, and relying on it silently disabled recall (see #1758).
     } catch (e) {
       logger.error("Event hook error", e);
     }
@@ -300,8 +293,11 @@ export function createHooks(
       const sessionId = input.sessionID;
       if (!sessionId) return;
 
-      // Only inject on first message of a session (tracked by recalledSessions)
-      if (!state.recalledSessions.has(sessionId)) return;
+      // Recall once per session, on the first system.transform we see for it.
+      // `recalledSessions` is a dedup marker for sessions we've ALREADY recalled
+      // into — not an event-ordering gate. This makes autoRecall independent of
+      // whether session.created fired first (see #1758).
+      if (state.recalledSessions.has(sessionId)) return;
 
       await ensureBankMission(hindsightClient, bankId, config, state.missionsSet, logger);
 
@@ -309,10 +305,15 @@ export function createHooks(
       const query = `project context and recent work`;
       const { context, ok } = await recallForContext(query);
 
-      // Consume after a successful API round-trip (even with 0 results).
-      // Only preserve retry for transient API failures (ok=false).
+      // Mark as recalled only after a successful API round-trip (even with 0
+      // results), so transient failures retry on the next message.
       if (ok) {
-        state.recalledSessions.delete(sessionId);
+        state.recalledSessions.add(sessionId);
+        // Cap tracked sessions
+        if (state.recalledSessions.size > 1000) {
+          const first = state.recalledSessions.values().next().value;
+          if (first) state.recalledSessions.delete(first);
+        }
       }
 
       if (context) {
