@@ -115,7 +115,14 @@ Create `~/.hindsight/opencode.json` for persistent configuration:
 | `HINDSIGHT_RECALL_MAX_TOKENS` | Max tokens for recall results       | `1024`                                |
 | `HINDSIGHT_DYNAMIC_BANK_ID`   | Enable dynamic bank ID derivation   | `false`                               |
 | `HINDSIGHT_BANK_MISSION`      | Bank mission/context                | (none)                                |
-| `HINDSIGHT_DEBUG`             | Enable debug logging                | `false`                               |
+
+> **Debug logging** is a config-only option (`"debug": true` in `opencode.json`
+> plugin options or `~/.hindsight/opencode.json`) — there is intentionally no
+> `HINDSIGHT_DEBUG` env var, because environment variables are unreliable to set
+> for OpenCode's plugin runtime (notably on Windows). Errors and the resolved
+> API URL/bank are logged regardless of this setting; `debug` only adds verbose
+> tracing. All plugin logs go to OpenCode's log stream (`service=hindsight`),
+> visible with `--print-logs` or in the OpenCode log files.
 
 ### Configuration Priority
 

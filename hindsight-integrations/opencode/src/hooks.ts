@@ -9,7 +9,7 @@
 
 import type { HindsightClient } from "@vectorize-io/hindsight-client";
 import type { HindsightConfig } from "./config.js";
-import { debugLog } from "./config.js";
+import { Logger } from "./logger.js";
 import {
   formatMemories,
   formatCurrentTime,
@@ -87,7 +87,8 @@ export function createHooks(
   bankId: string,
   config: HindsightConfig,
   state: PluginState,
-  opencodeClient: OpencodeClient
+  opencodeClient: OpencodeClient,
+  logger: Logger = new Logger({ silent: true })
 ): HindsightHooks {
   interface RecallOutcome {
     /** formatted context string, or null if no results */
@@ -119,7 +120,7 @@ export function createHooks(
         `</hindsight_memories>`;
       return { context, ok: true };
     } catch (e) {
-      debugLog(config, "Recall failed:", e);
+      logger.error("Recall failed", e);
       return { context: null, ok: false };
     }
   }
@@ -127,15 +128,14 @@ export function createHooks(
   /** Extract plain-text messages from an OpenCode session */
   async function getSessionMessages(sessionId: string): Promise<Message[]> {
     try {
-      debugLog(config, `getSessionMessages: fetching messages for session ${sessionId}`);
+      logger.debug(`getSessionMessages: fetching messages for session ${sessionId}`);
       const response = await opencodeClient.session.messages({
         path: { id: sessionId },
       });
       if (response.error) {
-        debugLog(
-          config,
-          `getSessionMessages: error=${JSON.stringify(response.error)?.substring(0, 500)}`
-        );
+        logger.warn("getSessionMessages: OpenCode returned an error", {
+          error: JSON.stringify(response.error)?.substring(0, 500),
+        });
       }
       const rawMessages = response.data || [];
       const messages: Message[] = [];
@@ -147,10 +147,10 @@ export function createHooks(
           messages.push({ role, content: textParts.join("\n") });
         }
       }
-      debugLog(config, `getSessionMessages: raw=${rawMessages.length}, parsed=${messages.length}`);
+      logger.debug(`getSessionMessages: raw=${rawMessages.length}, parsed=${messages.length}`);
       return messages;
     } catch (e) {
-      debugLog(config, "Failed to get session messages:", e);
+      logger.error("Failed to get session messages", e);
       return [];
     }
   }
@@ -179,7 +179,7 @@ export function createHooks(
     const { transcript } = prepareRetentionTranscript(targetMessages, true);
     if (!transcript) return;
 
-    await ensureBankMission(hindsightClient, bankId, config, state.missionsSet);
+    await ensureBankMission(hindsightClient, bankId, config, state.missionsSet, logger);
     await hindsightClient.retain(bankId, transcript, {
       documentId,
       context: config.retainContext,
@@ -193,7 +193,7 @@ export function createHooks(
 
   /** Auto-retain conversation transcript */
   async function handleSessionIdle(sessionId: string): Promise<void> {
-    debugLog(config, `handleSessionIdle called for session ${sessionId}`);
+    logger.debug(`handleSessionIdle called for session ${sessionId}`);
     if (!config.autoRetain) return;
 
     const messages = await getSessionMessages(sessionId);
@@ -202,8 +202,7 @@ export function createHooks(
     // Count user turns
     const userTurns = messages.filter((m) => m.role === "user").length;
     const lastRetained = state.lastRetainedTurn.get(sessionId) || 0;
-    debugLog(
-      config,
+    logger.debug(
       `handleSessionIdle: userTurns=${userTurns}, lastRetained=${lastRetained}, retainEveryNTurns=${config.retainEveryNTurns}`
     );
 
@@ -213,16 +212,19 @@ export function createHooks(
     try {
       await retainSession(sessionId, messages);
       state.lastRetainedTurn.set(sessionId, userTurns);
-      debugLog(config, `Auto-retained ${messages.length} messages for session ${sessionId}`);
+      logger.info(`Auto-retained ${messages.length} messages`, {
+        session: sessionId,
+        bank: bankId,
+      });
     } catch (e) {
-      debugLog(config, "Auto-retain failed:", e);
+      logger.error("Auto-retain failed", e);
     }
   }
 
   const event = async (input: EventInput): Promise<void> => {
     try {
       const { event: evt } = input;
-      debugLog(config, `event hook fired: type=${evt.type}`);
+      logger.debug(`event hook fired: type=${evt.type}`);
 
       if (evt.type === "session.idle") {
         const sessionId = (evt.properties as { sessionID?: string }).sessionID;
@@ -244,7 +246,7 @@ export function createHooks(
         }
       }
     } catch (e) {
-      debugLog(config, "Event hook error:", e);
+      logger.error("Event hook error", e);
     }
   };
 
@@ -258,9 +260,9 @@ export function createHooks(
           // Reset turn tracking — after compaction the message list shrinks,
           // so the old lastRetainedTurn value would block future idle retains.
           state.lastRetainedTurn.delete(input.sessionID);
-          debugLog(config, "Pre-compaction retain completed");
+          logger.debug("Pre-compaction retain completed");
         } catch (e) {
-          debugLog(config, "Pre-compaction retain failed:", e);
+          logger.error("Pre-compaction retain failed", e);
         }
       }
 
@@ -285,7 +287,7 @@ export function createHooks(
         }
       }
     } catch (e) {
-      debugLog(config, "Compaction hook error:", e);
+      logger.error("Compaction hook error", e);
     }
   };
 
@@ -301,7 +303,7 @@ export function createHooks(
       // Only inject on first message of a session (tracked by recalledSessions)
       if (!state.recalledSessions.has(sessionId)) return;
 
-      await ensureBankMission(hindsightClient, bankId, config, state.missionsSet);
+      await ensureBankMission(hindsightClient, bankId, config, state.missionsSet, logger);
 
       // Use a generic project-context query for session start
       const query = `project context and recent work`;
@@ -315,10 +317,10 @@ export function createHooks(
 
       if (context) {
         output.system.push(context);
-        debugLog(config, `Injected recall context for session ${sessionId}`);
+        logger.debug(`Injected recall context for session ${sessionId}`);
       }
     } catch (e) {
-      debugLog(config, "System transform hook error:", e);
+      logger.error("System transform hook error", e);
     }
   };
 

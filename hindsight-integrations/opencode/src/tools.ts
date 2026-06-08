@@ -11,6 +11,7 @@ import type { HindsightClient } from "@vectorize-io/hindsight-client";
 import type { HindsightConfig } from "./config.js";
 import { formatMemories, formatCurrentTime } from "./content.js";
 import { ensureBankMission } from "./bank.js";
+import { Logger } from "./logger.js";
 
 export interface HindsightTools {
   hindsight_retain: ToolDefinition;
@@ -25,7 +26,8 @@ export function createTools(
   client: HindsightClient,
   bankId: string,
   config: HindsightConfig,
-  missionsSet?: Set<string>
+  missionsSet?: Set<string>,
+  logger: Logger = new Logger({ silent: true })
 ): HindsightTools {
   const hindsight_retain = tool({
     description:
@@ -43,7 +45,7 @@ export function createTools(
     },
     async execute(args) {
       if (missionsSet) {
-        await ensureBankMission(client, bankId, config, missionsSet);
+        await ensureBankMission(client, bankId, config, missionsSet, logger);
       }
       await client.retain(bankId, args.content, {
         context: args.context || config.retainContext,
@@ -95,7 +97,7 @@ export function createTools(
     },
     async execute(args) {
       if (missionsSet) {
-        await ensureBankMission(client, bankId, config, missionsSet);
+        await ensureBankMission(client, bankId, config, missionsSet, logger);
       }
       const response = await client.reflect(bankId, args.query, {
         context: args.context,
