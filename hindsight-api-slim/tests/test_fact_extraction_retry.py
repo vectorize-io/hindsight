@@ -1,12 +1,12 @@
 """
 Unit tests for fact extraction retry logic.
 
-When the LLM returns non-dict JSON across all retries, extraction must raise a
+When the LLM returns unusable JSON across all retries, extraction must raise a
 RuntimeError (issue #1833 — never silently return [] and let the retain commit
 the document with 0 facts). This also guards the original TypeError bug: the
 raise must be a real exception, not `raise None` ('exceptions must derive from
 BaseException'), which happened when last_error was only set in the
-BadRequestError handler and not for non-dict JSON responses.
+BadRequestError handler and not for malformed JSON responses.
 """
 
 from datetime import datetime, timezone
@@ -59,8 +59,8 @@ async def test_non_dict_json_all_retries_raises():
 
     config = _make_config(llm_max_retries=3, retain_llm_max_retries=None)
 
-    # Mock: always returns a list (non-dict), which is invalid
-    llm_config = _make_llm_config(mock_response=[{"invalid": "response"}])
+    # Mock: always returns a string (non-dict), which is invalid
+    llm_config = _make_llm_config(mock_response="not a dict")
 
     with patch(
         "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
@@ -79,6 +79,80 @@ async def test_non_dict_json_all_retries_raises():
             )
 
     assert llm_config.call.call_count == 3
+    assert llm_config.call.call_args.kwargs["strict_schema"] is True
+
+
+@pytest.mark.asyncio
+async def test_bare_fact_list_response_is_normalized():
+    """
+    Some OpenAI-compatible providers can satisfy the fact item schema but drop
+    the top-level {"facts": ...} wrapper. Treat a bare list as facts, then run
+    the normal per-fact validation path.
+    """
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=1)
+    llm_config = _make_llm_config(
+        mock_response=[
+            {
+                "what": "Alice visited Paris",
+                "when": "2023",
+                "who": "Alice",
+                "why": "vacation",
+                "fact_type": "world",
+            }
+        ]
+    )
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, usage = await _extract_facts_from_chunk(
+            chunk="Alice visited Paris in 2023.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="travel notes",
+            llm_config=llm_config,
+            config=config,
+            agent_name="test-agent",
+        )
+
+    assert len(facts) == 1
+    assert "Alice visited Paris" in facts[0].fact
+    assert llm_config.call.call_args.kwargs["strict_schema"] is True
+
+
+@pytest.mark.asyncio
+async def test_bare_fact_list_with_malformed_facts_raises():
+    """
+    Bare-list normalization must not reintroduce silent zero-fact commits.
+    A list whose items do not contain usable facts still raises after retries.
+    """
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=2)
+    llm_config = _make_llm_config(mock_response=[{"invalid": "response"}])
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        with pytest.raises(RuntimeError, match="malformed facts"):
+            await _extract_facts_from_chunk(
+                chunk="Alice visited Paris in 2023.",
+                chunk_index=0,
+                total_chunks=1,
+                event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                context="travel notes",
+                llm_config=llm_config,
+                config=config,
+                agent_name="test-agent",
+            )
+
+    assert llm_config.call.call_count == 2
+    assert llm_config.call.call_args.kwargs["strict_schema"] is True
 
 
 @pytest.mark.asyncio
@@ -216,3 +290,4 @@ async def test_none_event_date_with_valid_facts_no_crash():
 
     assert len(facts) == 1
     assert "Alice visited Paris" in facts[0].fact
+    assert llm_config.call.call_args.kwargs["strict_schema"] is True

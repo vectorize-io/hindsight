@@ -1,17 +1,19 @@
 """Tests for link_utils datetime handling, temporal link computation, and semantic link splitting."""
-import numpy as np
-import pytest
-from datetime import datetime, timezone, timedelta
+
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
+import numpy as np
+import pytest
+
 from hindsight_api.engine.retain.link_utils import (
-    _normalize_datetime,
+    MAX_TEMPORAL_LINKS_PER_UNIT,
     _cap_links_per_unit,
-    compute_temporal_links,
-    compute_temporal_query_bounds,
+    _normalize_datetime,
     compute_semantic_links_ann,
     compute_semantic_links_within_batch,
-    MAX_TEMPORAL_LINKS_PER_UNIT,
+    compute_temporal_links,
+    compute_temporal_query_bounds,
 )
 
 
@@ -172,8 +174,8 @@ class TestComputeTemporalLinks:
         links = compute_temporal_links(units, candidates, time_window_hours=24)
 
         assert len(links) == 2
-        close_link = next(l for l in links if l[1] == "close")
-        far_link = next(l for l in links if l[1] == "far")
+        close_link = next(link for link in links if link[1] == "close")
+        far_link = next(link for link in links if link[1] == "far")
 
         assert close_link[3] > far_link[3]
 
@@ -206,8 +208,8 @@ class TestComputeTemporalLinks:
 
         # unit-1 should link to c1 only
         # unit-2 should link to c2 only
-        unit1_links = [l for l in links if l[0] == "unit-1"]
-        unit2_links = [l for l in links if l[0] == "unit-2"]
+        unit1_links = [link for link in links if link[0] == "unit-1"]
+        unit2_links = [link for link in links if link[0] == "unit-2"]
 
         assert len(unit1_links) == 1
         assert unit1_links[0][1] == "c1"
@@ -509,16 +511,13 @@ class TestComputeSemanticLinksAnnPgBouncerSafety:
         )
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("ext", "guc"),
-        [("pgvector", "hnsw.ef_search"), ("vchord", "vchordrq.probes")],
-    )
-    async def test_uses_set_local_for_ann_tuning(self, mock_conn, monkeypatch, ext, guc):
+    async def test_uses_set_local_for_pgvector_ann_tuning(self, mock_conn, monkeypatch):
         """The per-backend ANN tuning GUC must be set with SET LOCAL so the
         change is scoped to the transaction. Without SET LOCAL, the setting
         would leak onto the pooled backend and affect subsequent recall
         queries that land on the same backend."""
-        monkeypatch.setenv("HINDSIGHT_API_VECTOR_EXTENSION", ext)
+        monkeypatch.setenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector")
+        guc = "hnsw.ef_search"
         emb = [0.1] * 384
         await compute_semantic_links_ann(
             conn=mock_conn,
@@ -530,10 +529,31 @@ class TestComputeSemanticLinksAnnPgBouncerSafety:
 
         executed_sql = [call.args[0] for call in mock_conn.execute.call_args_list]
         tuning_statements = [s for s in executed_sql if guc in s]
-        assert tuning_statements, f"{guc} must be tuned for retain ANN under ext={ext}"
+        assert tuning_statements, f"{guc} must be tuned for retain ANN under pgvector"
         for stmt in tuning_statements:
             assert stmt.strip().startswith("SET LOCAL"), (
                 f"{guc} must use SET LOCAL, got: {stmt}"
             )
         # And there must not be a RESET — SET LOCAL handles it at commit.
         assert not any(f"RESET {guc}" in s for s in executed_sql)
+
+    @pytest.mark.asyncio
+    async def test_vchord_ann_does_not_set_fixed_probe_count(self, mock_conn, monkeypatch):
+        """VectorChord probe counts must come from index/default config.
+
+        VectorChord requires vchordrq.probes to match the index's
+        build.internal.lists shape. Hindsight must not apply one fixed session
+        GUC across listless and partitioned vchordrq indexes.
+        """
+        monkeypatch.setenv("HINDSIGHT_API_VECTOR_EXTENSION", "vchord")
+        emb = [0.1] * 384
+        await compute_semantic_links_ann(
+            conn=mock_conn,
+            bank_id="bank-1",
+            unit_ids=["u1"],
+            embeddings=[emb],
+            fact_types=["world"],
+        )
+
+        executed_sql = [call.args[0] for call in mock_conn.execute.call_args_list]
+        assert not any("vchordrq.probes" in s for s in executed_sql)

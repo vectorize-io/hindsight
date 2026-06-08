@@ -239,6 +239,7 @@ OUTPUT:"""
             response_format=DynamicModel,
             scope="reflect_structured",
             skip_validation=True,  # We'll handle the dict ourselves
+            strict_schema=True,
             return_usage=True,
         )
 

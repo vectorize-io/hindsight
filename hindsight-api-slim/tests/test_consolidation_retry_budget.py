@@ -1,8 +1,8 @@
 """Tests for consolidation retry budget configurability (issue #1042)."""
 
-import pytest
-
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from hindsight_api.engine.consolidation.consolidator import _consolidate_batch_with_llm
 
@@ -67,6 +67,18 @@ class TestConsolidationRetryBudget:
             config=mock_config,
         )
         assert mock_llm_config.call.call_args.kwargs.get("max_retries") == 3
+
+    @pytest.mark.asyncio
+    async def test_structured_call_uses_strict_schema(self, mock_llm_config, mock_config):
+        """Structured consolidation calls request strict schema enforcement."""
+        await _consolidate_batch_with_llm(
+            llm_config=mock_llm_config,
+            memories=[{"id": "m1", "text": "test"}],
+            union_observations=[],
+            union_source_facts={},
+            config=mock_config,
+        )
+        assert mock_llm_config.call.call_args.kwargs["strict_schema"] is True
 
     @pytest.mark.asyncio
     async def test_max_retries_not_passed_when_none(self, mock_llm_config, mock_config):

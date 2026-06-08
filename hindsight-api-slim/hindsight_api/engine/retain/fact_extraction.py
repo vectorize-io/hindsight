@@ -1192,6 +1192,7 @@ async def _extract_facts_from_chunk(
                 initial_backoff=initial_backoff,
                 max_backoff=max_backoff,
                 skip_validation=True,  # Get raw JSON, we'll validate leniently
+                strict_schema=True,
                 return_usage=True,
             )
             if cached_prefix_name is not None:
@@ -1203,6 +1204,12 @@ async def _extract_facts_from_chunk(
             # Lenient parsing of facts from raw JSON
             chunk_facts = []
             has_malformed_facts = False
+
+            # Some OpenAI-compatible providers can satisfy the item schema but
+            # drop the top-level {"facts": ...} wrapper. Treat that as the same
+            # retain payload shape, while still validating every fact below.
+            if isinstance(extraction_response_json, list):
+                extraction_response_json = {"facts": extraction_response_json}
 
             # Handle malformed LLM responses
             if not isinstance(extraction_response_json, dict):
@@ -1260,6 +1267,7 @@ async def _extract_facts_from_chunk(
                     # In verbatim mode, 'what' is intentionally absent — text is backfilled from chunk
                     if extraction_mode != "verbatim":
                         logger.warning(f"Skipping fact {i}: missing 'what' field")
+                        has_malformed_facts = True
                         continue
 
                 # Critical field: fact_type — "assistant" maps to "experience", everything else is "world".
@@ -1435,11 +1443,17 @@ async def _extract_facts_from_chunk(
                     continue
 
             # If we got malformed facts and haven't exhausted retries, try again
-            if has_malformed_facts and len(chunk_facts) < len(raw_facts) * 0.8 and attempt < llm_max_retries - 1:
-                logger.warning(
-                    f"Got {len(raw_facts) - len(chunk_facts)} malformed facts out of {len(raw_facts)} on attempt {attempt + 1}/{llm_max_retries}. Retrying..."
+            if has_malformed_facts and len(chunk_facts) < len(raw_facts) * 0.8:
+                malformed_count = len(raw_facts) - len(chunk_facts)
+                if attempt < llm_max_retries - 1:
+                    logger.warning(
+                        f"Got {malformed_count} malformed facts out of {len(raw_facts)} on attempt {attempt + 1}/{llm_max_retries}. Retrying..."
+                    )
+                    continue
+                raise RuntimeError(
+                    f"Fact extraction failed: LLM returned {malformed_count} malformed facts "
+                    f"out of {len(raw_facts)} after {llm_max_retries} attempts"
                 )
-                continue
 
             return chunk_facts, usage
 
