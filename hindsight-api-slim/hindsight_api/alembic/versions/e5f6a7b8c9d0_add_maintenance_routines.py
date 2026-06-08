@@ -34,7 +34,7 @@ Create Date: 2026-06-05
 
 from collections.abc import Sequence
 
-from alembic import op
+from alembic import context, op
 
 from hindsight_api.alembic._dialect import run_for_dialect
 
@@ -44,7 +44,21 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _is_base_schema_run() -> bool:
+    """True only for the base-schema migration (no per-tenant target_schema).
+
+    These routines live in the shared ``public`` schema, so they must be created
+    exactly once. Running ``CREATE OR REPLACE FUNCTION public....`` again from each
+    concurrent per-tenant migration aborts with ``tuple concurrently updated`` on
+    the ``pg_proc`` catalog row, so tenant runs skip it (the base run already
+    created the function for every tenant to use).
+    """
+    return not context.config.get_main_option("target_schema")
+
+
 def _pg_upgrade() -> None:
+    if not _is_base_schema_run():
+        return
     # Banks with eligible-but-unscheduled facts and no in-flight consolidation.
     # Auto-consolidation is filtered here only at the bank level (cheap prune);
     # the full hierarchical resolution (global -> tenant -> bank, plus
@@ -125,6 +139,8 @@ def _pg_upgrade() -> None:
 
 
 def _pg_downgrade() -> None:
+    if not _is_base_schema_run():
+        return
     op.execute("DROP FUNCTION IF EXISTS public.banks_needing_consolidation()")
     op.execute("DROP FUNCTION IF EXISTS public.schemas_with_expired_rows(text, text, int)")
 
