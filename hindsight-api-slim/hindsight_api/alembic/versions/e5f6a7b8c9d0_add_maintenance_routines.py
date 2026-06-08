@@ -28,7 +28,7 @@ table migrations). The routines live in ``public`` and are CREATE OR REPLACE, so
 running this migration once per tenant schema is idempotent.
 
 Revision ID: e5f6a7b8c9d0
-Revises: d3e4f5a6b7c8
+Revises: a7b8c9d0e1f2
 Create Date: 2026-06-05
 """
 
@@ -39,7 +39,7 @@ from alembic import op
 from hindsight_api.alembic._dialect import run_for_dialect
 
 revision: str = "e5f6a7b8c9d0"
-down_revision: str | Sequence[str] | None = "d3e4f5a6b7c8"
+down_revision: str | Sequence[str] | None = "a7b8c9d0e1f2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
