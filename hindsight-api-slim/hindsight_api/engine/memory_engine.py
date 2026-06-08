@@ -2075,7 +2075,10 @@ class MemoryEngine(MemoryEngineInterface):
                     json.dumps(outcome.to_dict()),
                 )
         except Exception as e:
-            logger.debug(f"Failed to write retain outcome metadata for {operation_id}: {e}")
+            # Best-effort, but log loudly: the whole point of this metadata is to
+            # give clients a reliable success/silent-failure signal, so a missing
+            # write silently regresses them to the ambiguous pre-fix behaviour.
+            logger.warning(f"Failed to write retain outcome metadata for {operation_id}: {e}")
 
     async def _mark_operation_completed_and_fire_webhook(
         self,

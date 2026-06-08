@@ -114,17 +114,6 @@ def _sanitize_text(text: str | None) -> str | None:
     return sanitize_llm_output(text)
 
 
-def _parse_result_metadata(raw_metadata: Any) -> dict[str, Any]:
-    """Parse async_operations.result_metadata from raw asyncpg or DatabaseBackend rows."""
-    if not raw_metadata:
-        return {}
-    if isinstance(raw_metadata, str):
-        return json.loads(raw_metadata)
-    if isinstance(raw_metadata, dict):
-        return raw_metadata
-    return dict(raw_metadata)
-
-
 class Entity(BaseModel):
     """An entity extracted from text."""
 
@@ -1735,17 +1724,14 @@ async def _write_batch_extraction_errors(
     from ..db_utils import acquire_with_retry
     from ..task_backend import fq_table
 
+    # `errors` is the complete set for this extraction run, so overwrite the
+    # extraction_errors_* keys rather than folding in what's already stored. On
+    # batch crash recovery the resumed batch reprocesses every result and
+    # recomputes `errors` from scratch; reading + merging the prior run's
+    # counters here would double-count them. The SQL `||` merge still preserves
+    # unrelated keys (e.g. batch_id) already on result_metadata.
     table = fq_table("async_operations", schema)
     async with acquire_with_retry(pool) as conn:
-        row = await conn.fetchrow(
-            f"SELECT result_metadata FROM {table} WHERE operation_id = $1",
-            operation_id,
-        )
-        existing_errors = RetainExtractionErrors()
-        if row:
-            existing_metadata = _parse_result_metadata(row["result_metadata"])
-            existing_errors.merge_metadata(existing_metadata)
-        existing_errors.merge_errors(errors)
         await conn.execute(
             f"""
             UPDATE {table}
@@ -1754,7 +1740,7 @@ async def _write_batch_extraction_errors(
             WHERE operation_id = $1
             """,
             operation_id,
-            json.dumps(existing_errors.to_dict()),
+            json.dumps(errors.to_dict()),
         )
 
 

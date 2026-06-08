@@ -75,13 +75,6 @@ class RetainExtractionErrors:
                 if isinstance(entry, str) and len(self.sample) < MAX_EXTRACTION_ERROR_SAMPLES:
                     self.sample.append(entry[:500])
 
-    def merge_errors(self, other: "RetainExtractionErrors") -> None:
-        """Merge another bounded extraction-error summary."""
-        self.count += other.count
-        for entry in other.sample:
-            if len(self.sample) < MAX_EXTRACTION_ERROR_SAMPLES:
-                self.sample.append(entry[:500])
-
     def to_dict(self) -> dict[str, Any]:
         """Convert to the public result_metadata field shape."""
         data: dict[str, Any] = {"extraction_errors_count": self.count}
