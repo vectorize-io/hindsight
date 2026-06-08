@@ -317,7 +317,12 @@ export function createHooks(
       }
 
       if (context) {
-        output.system.push(context);
+        // Fold recall into the FIRST system section rather than pushing a new
+        // one. OpenCode emits each system[] entry as a separate system message,
+        // and some providers/LLMs only honor the first — a pushed section can be
+        // silently dropped. Appending to system[0] guarantees recall is seen.
+        // (Original approach from #1988 by @sdrobov.)
+        output.system[0] = output.system[0] ? `${output.system[0]}\n\n${context}` : context;
         logger.debug(`Injected recall context for session ${sessionId}`);
       }
     } catch (e) {

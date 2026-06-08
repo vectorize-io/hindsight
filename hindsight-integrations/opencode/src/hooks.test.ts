@@ -325,6 +325,26 @@ describe("system transform hook", () => {
     expect(state.recalledSessions.has("sess-1")).toBe(true);
   });
 
+  it("appends recall into the existing first system section, not a new one", async () => {
+    // OpenCode emits each system[] entry as a separate system message and some
+    // providers only honor the first; recall must fold into system[0].
+    const client = makeClient();
+    client.recall.mockResolvedValue({
+      results: [{ text: "User is a developer", type: "world" }],
+    });
+    const state = makeState();
+    const output = { system: ["You are a helpful coding assistant."] as string[] };
+    const hooks = createHooks(client, "bank", makeConfig(), state, makeOpencodeClient());
+
+    await hooks["experimental.chat.system.transform"]({ sessionID: "sess-1", model: {} }, output);
+
+    // Still a single system section — appended, not pushed.
+    expect(output.system.length).toBe(1);
+    expect(output.system[0]).toContain("You are a helpful coding assistant.");
+    expect(output.system[0]).toContain("hindsight_memories");
+    expect(output.system[0]).toContain("User is a developer");
+  });
+
   it("deduplicates: does not recall again for an already-recalled session", async () => {
     const client = makeClient();
     const state = makeState();
