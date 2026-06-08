@@ -1,14 +1,11 @@
 """Tests for content processing utilities."""
 
 import pytest
-
 from lib.content import (
-    strip_memory_tags,
-    compose_recall_query,
-    truncate_recall_query,
-    slice_last_turns_by_user_boundary,
     format_memories,
     prepare_retention_transcript,
+    slice_last_turns_by_user_boundary,
+    strip_memory_tags,
 )
 
 
@@ -48,22 +45,6 @@ class TestSliceLastTurns:
 
     def test_empty_messages(self):
         assert slice_last_turns_by_user_boundary([], 1) == []
-
-
-class TestComposeRecallQuery:
-    def test_single_turn(self):
-        result = compose_recall_query("What is X?", [], 1)
-        assert result == "What is X?"
-
-    def test_multi_turn(self):
-        messages = [
-            {"role": "user", "content": "First question"},
-            {"role": "assistant", "content": "First answer"},
-            {"role": "user", "content": "Follow up"},
-        ]
-        result = compose_recall_query("Follow up", messages, 2)
-        assert "Prior context:" in result
-        assert "First question" in result
 
 
 class TestFormatMemories:
