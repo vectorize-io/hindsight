@@ -9,6 +9,8 @@ REQ_CACHED="${CLAUDE_PLUGIN_DATA}/requirements.txt"
 
 # Resolve the venv interpreter. On Windows-built venvs `bin/python` is
 # `python.exe`; bash's `[ -x ]` does not honor PATHEXT, so probe both forms.
+# Standard Windows CPython (python.org installer, Windows Store, `py -m venv`)
+# puts the interpreter under `Scripts/` instead of `bin/` — probe that too.
 resolve_py() {
   if [ -x "${VENV}/bin/python" ]; then
     PY="${VENV}/bin/python"
@@ -16,6 +18,9 @@ resolve_py() {
   elif [ -x "${VENV}/bin/python.exe" ]; then
     PY="${VENV}/bin/python.exe"
     PIP="${VENV}/bin/pip.exe"
+  elif [ -x "${VENV}/Scripts/python.exe" ]; then
+    PY="${VENV}/Scripts/python.exe"
+    PIP="${VENV}/Scripts/pip.exe"
   else
     PY=""
     PIP=""
@@ -30,7 +35,7 @@ if [ -z "${PY}" ]; then
   fi
   resolve_py
   if [ -z "${PY}" ]; then
-    echo "[Hindsight MCP] venv create failed: no python interpreter at ${VENV}/bin/" >&2
+    echo "[Hindsight MCP] venv create failed: no python interpreter at ${VENV}/bin/ or ${VENV}/Scripts/" >&2
     exit 1
   fi
 fi
