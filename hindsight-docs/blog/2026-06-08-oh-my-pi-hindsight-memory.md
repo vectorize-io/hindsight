@@ -15,6 +15,8 @@ hide_table_of_contents: true
 
 It's not a thin integration either: it features a complete memory subsystem built on top of Hindsight's API — bank scoping, mental-model seeding, debounced retain queues, auto-recall on the first turn. This post is a tour of how they built it, with code pulled straight from the public repo. If you're considering Hindsight for a coding agent of your own, this is a useful reference for the shape of a deep integration.
 
+<!-- truncate -->
+
 ## TL;DR
 
 - oh-my-pi exposes `retain` / `recall` / `reflect` as model-facing tools backed by Hindsight, plus an auto-retain / auto-recall lifecycle the model doesn't have to think about.
