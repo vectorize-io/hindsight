@@ -76,20 +76,22 @@ def warm_up_curve(control: list[TaskRecord], treatment: list[TaskRecord]) -> lis
         t = by_seq_t.get(c.seq)
         if t is None:
             continue
-        rows.append({
-            "seq": c.seq,
-            "instance_id": c.instance_id,
-            "control_tokens": c.total_tokens,
-            "treatment_tokens": t.total_tokens,
-            "token_delta": t.total_tokens - c.total_tokens,
-            "token_delta_pct": _pct(c.total_tokens, t.total_tokens),
-            "control_steps": c.n_steps,
-            "treatment_steps": t.n_steps,
-            "step_delta": t.n_steps - c.n_steps,
-            "control_resolved": c.resolved,
-            "treatment_resolved": t.resolved,
-            "treatment_recalled_chars": t.recalled_chars,
-        })
+        rows.append(
+            {
+                "seq": c.seq,
+                "instance_id": c.instance_id,
+                "control_tokens": c.total_tokens,
+                "treatment_tokens": t.total_tokens,
+                "token_delta": t.total_tokens - c.total_tokens,
+                "token_delta_pct": _pct(c.total_tokens, t.total_tokens),
+                "control_steps": c.n_steps,
+                "treatment_steps": t.n_steps,
+                "step_delta": t.n_steps - c.n_steps,
+                "control_resolved": c.resolved,
+                "treatment_resolved": t.resolved,
+                "treatment_recalled_chars": t.recalled_chars,
+            }
+        )
     return rows
 
 
@@ -105,8 +107,9 @@ def _sign_test_p(wins: int, losses: int) -> float | None:
     if n == 0:
         return None
     from math import comb
+
     k = min(wins, losses)
-    tail = sum(comb(n, i) for i in range(0, k + 1)) / (2 ** n)
+    tail = sum(comb(n, i) for i in range(0, k + 1)) / (2**n)
     return round(min(1.0, 2 * tail), 4)
 
 
@@ -127,15 +130,11 @@ def paired_analysis(control: list[TaskRecord], treatment: list[TaskRecord]) -> d
     tok_wins = sum(1 for c, t in pairs if t.total_tokens < c.total_tokens)
     tok_losses = sum(1 for c, t in pairs if t.total_tokens > c.total_tokens)
 
-    flips = [t.instance_id for c, t in pairs if t.resolved and not c.resolved]      # fail->pass
+    flips = [t.instance_id for c, t in pairs if t.resolved and not c.resolved]  # fail->pass
     regressions = [t.instance_id for c, t in pairs if c.resolved and not t.resolved]  # pass->fail
-    step_deltas_pct = [
-        _pct(c.n_steps, t.n_steps) for c, t in pairs if c.n_steps > 0
-    ]
+    step_deltas_pct = [_pct(c.n_steps, t.n_steps) for c, t in pairs if c.n_steps > 0]
     step_deltas_pct = [d for d in step_deltas_pct if d is not None]
-    median_step_pct = (
-        round(sorted(step_deltas_pct)[len(step_deltas_pct) // 2], 1) if step_deltas_pct else None
-    )
+    median_step_pct = round(sorted(step_deltas_pct)[len(step_deltas_pct) // 2], 1) if step_deltas_pct else None
 
     return {
         "n_paired_tasks": len(pairs),
@@ -147,12 +146,15 @@ def paired_analysis(control: list[TaskRecord], treatment: list[TaskRecord]) -> d
             "net_resolve_change": len(flips) - len(regressions),
         },
         "steps": {
-            "improved": step_wins, "regressed": step_losses, "tied": step_ties,
+            "improved": step_wins,
+            "regressed": step_losses,
+            "tied": step_ties,
             "sign_test_p": _sign_test_p(step_wins, step_losses),
             "median_delta_pct": median_step_pct,
         },
         "tokens": {
-            "improved": tok_wins, "regressed": tok_losses,
+            "improved": tok_wins,
+            "regressed": tok_losses,
             "sign_test_p": _sign_test_p(tok_wins, tok_losses),
         },
     }
@@ -172,9 +174,7 @@ def build_results(
         "resolve_rate_delta": round(t_sum["resolve_rate"] - c_sum["resolve_rate"], 4),
         "total_token_delta_pct": _pct(c_sum["total_tokens"], t_sum["total_tokens"]),
         "total_step_delta_pct": _pct(c_sum["total_steps"], t_sum["total_steps"]),
-        "mean_tokens_per_task_delta_pct": _pct(
-            c_sum["mean_tokens_per_task"], t_sum["mean_tokens_per_task"]
-        ),
+        "mean_tokens_per_task_delta_pct": _pct(c_sum["mean_tokens_per_task"], t_sum["mean_tokens_per_task"]),
     }
     return {
         "config": config,

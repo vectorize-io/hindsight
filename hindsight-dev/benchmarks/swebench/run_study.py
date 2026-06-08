@@ -117,6 +117,7 @@ def _patch_cluster_key(patch: str, depth: int) -> str | None:
     if not files:
         return None
     from collections import Counter
+
     keys = ["/".join(f.split("/")[:depth]) for f in files if "/" in f]
     if not keys:
         return None
@@ -154,8 +155,10 @@ def load_task_sequence(study: dict) -> list[dict]:
         else:  # pick the densest cluster
             chosen_key, chosen = max(groups.items(), key=lambda kv: len(kv[1]))
         chosen.sort(key=by_date)
-        print(f"Cluster '{chosen_key}': {len(chosen)} tasks available "
-              f"(clusters: {sorted(((k, len(v)) for k, v in groups.items()), key=lambda x: -x[1])[:6]})")
+        print(
+            f"Cluster '{chosen_key}': {len(chosen)} tasks available "
+            f"(clusters: {sorted(((k, len(v)) for k, v in groups.items()), key=lambda x: -x[1])[:6]})"
+        )
         return chosen[:limit]
 
     rows.sort(key=by_date)
@@ -165,6 +168,7 @@ def load_task_sequence(study: dict) -> list[dict]:
 # --------------------------------------------------------------------------------------
 # One arm
 # --------------------------------------------------------------------------------------
+
 
 def run_arm(
     *,
@@ -268,18 +272,28 @@ def run_arm(
 # Main
 # --------------------------------------------------------------------------------------
 
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="SWE-bench Hindsight memory study")
     ap.add_argument("--config", required=True, help="Path to study YAML (e.g. config/smoke.yaml)")
     ap.add_argument("--limit", type=int, default=None, help="Override dataset.max_tasks")
-    ap.add_argument("--step-limit", type=int, default=None, help="Override agent.step_limit (e.g. 80 for a fast directional run)")
+    ap.add_argument(
+        "--step-limit", type=int, default=None, help="Override agent.step_limit (e.g. 80 for a fast directional run)"
+    )
     ap.add_argument("--context-mode", choices=["recall", "reflect"], default=None, help="Override memory.context_mode")
-    ap.add_argument("--recall-types", default=None, help="Override memory.recall_types: 'all' or comma-separated (e.g. 'observation')")
+    ap.add_argument(
+        "--recall-types",
+        default=None,
+        help="Override memory.recall_types: 'all' or comma-separated (e.g. 'observation')",
+    )
     ap.add_argument("--arms", default="control,treatment", help="Comma-separated arms to run")
-    ap.add_argument("--control-from", default=None,
-                    help="Reuse a prior run's control arm from its results.json (control is "
-                         "deterministic at temperature 0, so re-running it per config is wasted "
-                         "compute). Must be the SAME task-set, model, and step_limit.")
+    ap.add_argument(
+        "--control-from",
+        default=None,
+        help="Reuse a prior run's control arm from its results.json (control is "
+        "deterministic at temperature 0, so re-running it per config is wasted "
+        "compute). Must be the SAME task-set, model, and step_limit.",
+    )
     ap.add_argument("--skip-score", action="store_true", help="Skip official Docker scoring")
     args = ap.parse_args()
 
@@ -296,7 +310,8 @@ def main() -> None:
         study["memory"]["context_mode"] = args.context_mode
     if args.recall_types is not None:
         study["memory"]["recall_types"] = (
-            None if args.recall_types.lower() == "all"
+            None
+            if args.recall_types.lower() == "all"
             else [t.strip() for t in args.recall_types.split(",") if t.strip()]
         )
 
@@ -320,6 +335,7 @@ def main() -> None:
     reused_control = None
     if args.control_from and "control" in arms:
         from .metrics import TaskRecord
+
         prior = json.loads(Path(args.control_from).read_text())
         reused = [TaskRecord.from_dict(d) for d in prior["per_task"]["control"]]
         prior_ids = [r.instance_id for r in reused]
@@ -329,9 +345,11 @@ def main() -> None:
                 f"instance list than the current run. Control reuse requires identical tasks."
             )
         reused_control = reused
-        print(f"Reusing control arm from {args.control_from} "
-              f"({sum(1 for r in reused if r.resolved)}/{len(reused)} resolved) — not re-running it.",
-              flush=True)
+        print(
+            f"Reusing control arm from {args.control_from} "
+            f"({sum(1 for r in reused if r.resolved)}/{len(reused)} resolved) — not re-running it.",
+            flush=True,
+        )
 
     for arm in arms:
         if arm == "control" and reused_control is not None:

@@ -61,9 +61,12 @@ class MemoryOpStats:
             "reflect_output_tokens": self.reflect_output_tokens,
             # Total Hindsight-side LLM tokens (write path + reflect; recall=0, consolidation N/A).
             "hindsight_llm_tokens": (
-                self.summary_input_tokens + self.summary_output_tokens
-                + self.retain_input_tokens + self.retain_output_tokens
-                + self.reflect_input_tokens + self.reflect_output_tokens
+                self.summary_input_tokens
+                + self.summary_output_tokens
+                + self.retain_input_tokens
+                + self.retain_output_tokens
+                + self.reflect_input_tokens
+                + self.reflect_output_tokens
             ),
         }
 

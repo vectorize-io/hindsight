@@ -47,9 +47,7 @@ class MeteredAgent(DefaultAgent):
             role = m.get("role", "?")
             content = m.get("content", "")
             if isinstance(content, list):  # multimodal blocks
-                content = " ".join(
-                    b.get("text", "") for b in content if isinstance(b, dict)
-                )
+                content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
             parts.append(f"[{role}]\n{content}")
         return "\n\n".join(parts)
 

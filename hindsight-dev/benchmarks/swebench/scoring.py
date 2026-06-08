@@ -36,14 +36,23 @@ def score_predictions(
     preds_path = preds_path.resolve()
     workdir = preds_path.parent  # harness writes its report relative to CWD; pin it here
     cmd = [
-        py, "-m", "swebench.harness.run_evaluation",
-        "--dataset_name", dataset_name,
-        "--split", split,
-        "--predictions_path", str(preds_path),  # absolute — CWD is workdir below
-        "--run_id", run_id,
-        "--max_workers", str(max_workers),
-        "--timeout", str(timeout),
-        "--cache_level", "env",
+        py,
+        "-m",
+        "swebench.harness.run_evaluation",
+        "--dataset_name",
+        dataset_name,
+        "--split",
+        split,
+        "--predictions_path",
+        str(preds_path),  # absolute — CWD is workdir below
+        "--run_id",
+        run_id,
+        "--max_workers",
+        str(max_workers),
+        "--timeout",
+        str(timeout),
+        "--cache_level",
+        "env",
     ]
     if namespace is not None:
         cmd += ["--namespace", namespace]
