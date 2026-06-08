@@ -12,6 +12,7 @@ vi.mock("@vectorize-io/hindsight-client", () => {
 });
 
 import { HindsightPlugin } from "./index.js";
+import { DEFAULT_HINDSIGHT_API_URL } from "./config.js";
 import { HindsightClient } from "@vectorize-io/hindsight-client";
 
 const mockPluginInput = {
@@ -41,10 +42,19 @@ describe("HindsightPlugin", () => {
     process.env = { ...originalEnv };
   });
 
-  it("returns empty hooks when no API URL configured", async () => {
+  it("defaults to the hosted backend URL when no API URL is configured", async () => {
     const result = await HindsightPlugin(mockPluginInput as any);
-    expect(result).toEqual({});
-    expect(HindsightClient).not.toHaveBeenCalled();
+
+    expect(HindsightClient).toHaveBeenCalledWith({
+      baseUrl: DEFAULT_HINDSIGHT_API_URL,
+      apiKey: undefined,
+    });
+    // Full tool + hook surface still returned — the plugin doesn't disable
+    // itself just because the URL was left at its default.
+    expect(result.tool).toBeDefined();
+    expect(result.event).toBeDefined();
+    expect(result["experimental.session.compacting"]).toBeDefined();
+    expect(result["experimental.chat.system.transform"]).toBeDefined();
   });
 
   it("returns tools and hooks when configured", async () => {
@@ -136,5 +146,18 @@ describe("plugin default export", () => {
     // the same reference as the named HindsightPlugin export to avoid
     // running the factory twice.
     expect(mod.default).toBe(mod.HindsightPlugin);
+  });
+
+  it("does not expose non-function exports from the plugin entry (#2028)", async () => {
+    // OpenCode >=1.16 iterates EVERY export of the plugin entry and treats it
+    // as a Plugin factory, throwing "Plugin export is not a function" on any
+    // non-function value — a single re-exported constant (e.g. a string URL)
+    // bricks the whole plugin load. Keep the entry surface function-only.
+    const mod = await import("./index.js");
+    for (const [name, value] of Object.entries(mod)) {
+      expect(typeof value, `export "${name}" must be a function`).toBe(
+        "function"
+      );
+    }
   });
 });

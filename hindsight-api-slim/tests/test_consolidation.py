@@ -464,7 +464,7 @@ class TestConsolidationIntegration:
         async with memory._pool.acquire() as conn:
             observations = await conn.fetch(
                 """
-                SELECT id, text, source_memory_ids, history
+                SELECT id, text, source_memory_ids
                 FROM memory_units
                 WHERE bank_id = $1 AND fact_type = 'observation'
                 """,

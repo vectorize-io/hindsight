@@ -5,11 +5,11 @@ LangGraph and LangChain integration for [Hindsight](https://github.com/vectorize
 Provides three integration patterns:
 - **Tools** — retain/recall/reflect as LangChain `@tool` functions for agent-driven memory. Works with **both LangChain and LangGraph**.
 - **Nodes** *(LangGraph)* — pre-built graph nodes for automatic memory injection and storage
-- **BaseStore** *(LangGraph)* — drop-in `BaseStore` adapter for LangGraph's built-in memory system
+- **Memory Instructions** — pre-fetch memories into a system prompt string. Works with **any LangChain model**, no graph needed.
 
 ## Prerequisites
 
-- A running Hindsight instance ([self-hosted via Docker](https://github.com/vectorize-io/hindsight#quick-start) or [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup))
+- A [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) account or a [self-hosted](https://github.com/vectorize-io/hindsight#quick-start) Hindsight instance
 - Python 3.10+
 
 ## Installation
@@ -23,13 +23,12 @@ pip install hindsight-langgraph
 Bind Hindsight memory tools to your LangGraph agent so it can store and retrieve memories on demand.
 
 ```python
-from hindsight_client import Hindsight
 from hindsight_langgraph import create_hindsight_tools
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
-client = Hindsight(base_url="http://localhost:8888")
-tools = create_hindsight_tools(client=client, bank_id="user-123")
+# Set HINDSIGHT_API_KEY env var to authenticate
+tools = create_hindsight_tools(bank_id="user-123")
 
 agent = create_react_agent(
     ChatOpenAI(model="gpt-4o"),
@@ -46,14 +45,11 @@ result = await agent.ainvoke(
 Add recall and retain nodes to your graph for automatic memory injection before LLM calls and storage after responses.
 
 ```python
-from hindsight_client import Hindsight
 from hindsight_langgraph import create_recall_node, create_retain_node
 from langgraph.graph import StateGraph, MessagesState, START, END
 
-client = Hindsight(base_url="http://localhost:8888")
-
-recall = create_recall_node(client=client, bank_id="user-123")
-retain = create_retain_node(client=client, bank_id="user-123")
+recall = create_recall_node(bank_id="user-123")
+retain = create_retain_node(bank_id="user-123")
 
 builder = StateGraph(MessagesState)
 builder.add_node("recall", recall)
@@ -73,8 +69,8 @@ graph = builder.compile()
 Use `bank_id_from_config` to resolve the bank per-request from the graph's config:
 
 ```python
-recall = create_recall_node(client=client, bank_id_from_config="user_id")
-retain = create_retain_node(client=client, bank_id_from_config="user_id")
+recall = create_recall_node(bank_id_from_config="user_id")
+retain = create_retain_node(bank_id_from_config="user_id")
 
 # Bank ID resolved at runtime
 result = await graph.ainvoke(
@@ -83,22 +79,25 @@ result = await graph.ainvoke(
 )
 ```
 
-## Quick Start: BaseStore
+## Quick Start: Memory Instructions
 
-Use Hindsight as a LangGraph `BaseStore` for cross-thread persistent memory with semantic search.
+Pre-fetch memories and inject them into a system prompt. Works with any LangChain model — no graph needed.
 
 ```python
-from hindsight_client import Hindsight
-from hindsight_langgraph import HindsightStore
+from hindsight_langgraph import memory_instructions
+from langchain_openai import ChatOpenAI
 
-client = Hindsight(base_url="http://localhost:8888")
-store = HindsightStore(client=client)
+get_instructions = memory_instructions(
+    bank_id="user-123",
+    base_instructions="You are a helpful assistant.",
+)
 
-graph = builder.compile(checkpointer=checkpointer, store=store)
-
-# Store and search memories via the store API
-await store.aput(("user", "123", "prefs"), "theme", {"value": "dark mode"})
-results = await store.asearch(("user", "123", "prefs"), query="theme preference")
+# Each call re-fetches memories, so it stays up to date
+instructions = await get_instructions()
+response = await ChatOpenAI(model="gpt-4o").ainvoke([
+    {"role": "system", "content": instructions},
+    {"role": "user", "content": "What do you know about me?"},
+])
 ```
 
 ## Configuration
@@ -109,11 +108,26 @@ results = await store.asearch(("user", "123", "prefs"), query="theme preference"
 from hindsight_langgraph import configure
 
 configure(
-    hindsight_api_url="http://localhost:8888",
     api_key="your-api-key",  # or set HINDSIGHT_API_KEY env var
     budget="mid",
     tags=["source:langgraph"],
 )
+```
+
+### Self-hosted instance
+
+To connect to a self-hosted Hindsight instance instead of Hindsight Cloud:
+
+```python
+configure(
+    hindsight_api_url="http://localhost:8888",
+)
+```
+
+Or pass `hindsight_api_url` directly to any factory function:
+
+```python
+tools = create_hindsight_tools(bank_id="user-123", hindsight_api_url="http://localhost:8888")
 ```
 
 ### Per-call overrides
@@ -135,7 +149,7 @@ All factory functions accept `client`, `hindsight_api_url`, and `api_key` to ove
 - Python 3.10+
 - `langchain-core >= 0.3.0`
 - `hindsight-client >= 0.4.0`
-- `langgraph >= 0.3.0` *(only for nodes and store patterns — install with `pip install hindsight-langgraph[langgraph]`)*
+- `langgraph >= 0.3.0` *(only for nodes pattern — install with `pip install hindsight-langgraph[langgraph]`)*
 
 ## Documentation
 

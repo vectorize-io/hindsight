@@ -22,7 +22,7 @@ import time
 import uuid
 from collections import defaultdict
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from itertools import combinations
 from typing import TYPE_CHECKING, Any, Literal
@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, field_validator
 
 from ...config import get_config
+from ...worker.stage import set_stage
 from ..db_utils import acquire_with_retry
 from ..llm_trace import (
     record_created_memory_ids,
@@ -717,6 +718,44 @@ async def _run_consolidation_job(
     logger.info(f"[CONSOLIDATION] bank={bank_id} total_unconsolidated={total_count}")
     perf.log(f"[1] Found {total_count} pending memories to consolidate")
 
+    # Initial durable progress snapshot so an operator polling the operation status
+    # API sees the job has started and how much work it found, before the first batch
+    # of LLM work completes (which can take minutes on a dense bank). Uses the same
+    # "consolidating" stage as the per-batch heartbeat so the operator sees a single
+    # phase advancing 0/N -> N/N rather than an opaque "scanning" -> "processing" hop.
+    set_stage("consolidation.consolidating")
+    await memory_engine._write_operation_progress(operation_id, stage="consolidating", processed=0, total=total_count)
+
+    async def _count_unconsolidated() -> int:
+        """Re-count memories still pending consolidation in this job's scope.
+
+        ``total_count`` is a point-in-time estimate from job start; memories retained
+        while consolidation runs get picked up by later fetches, so processed can pass
+        it. When that happens we re-count to report a real total (processed + remaining)
+        instead of pinning the bar at 100%."""
+        async with acquire_with_retry(pool) as count_conn:
+            pending = await count_conn.fetchval(
+                f"""
+                SELECT COUNT(*)
+                FROM {fq_table("memory_units")}
+                WHERE bank_id = $1
+                  AND consolidated_at IS NULL
+                  AND consolidation_failed_at IS NULL
+                  AND fact_type IN ('experience', 'world')
+                  {scope_clause}
+                """,
+                *scope_params,
+            )
+        return pending or 0
+
+    async def _progress_total(processed: int) -> int:
+        # Cheap path: while we're still within the start-of-job estimate it's exact, so
+        # no extra query. Only re-count once the estimate is exhausted (≈the final batch
+        # normally, or repeatedly only if memories keep arriving mid-run).
+        if processed < total_count:
+            return total_count
+        return processed + await _count_unconsolidated()
+
     # Process each memory with individual commits for crash recovery
     stats: dict[str, int] = {
         "memories_processed": 0,
@@ -737,10 +776,18 @@ async def _run_consolidation_job(
     hit_round_limit = False
 
     llm_batch_num = 0
-    # Cumulative count of memories processed across the whole job, shared by
-    # the per-batch log so it can still report processed/total under parallelism.
-    # Mutable container so the inner closure can update without a `nonlocal`.
-    cumulative_progress = {"processed": 0}
+    # Cumulative counters across the whole job, shared by the per-batch log and the
+    # durable progress snapshot so both report processed/total (and observation
+    # tallies) under parallelism. Mutable container so the inner closure can update
+    # without a `nonlocal`.
+    cumulative_progress = {
+        "processed": 0,
+        "observations_created": 0,
+        "observations_updated": 0,
+        "observations_merged": 0,
+        "observations_deleted": 0,
+        "memories_failed": 0,
+    }
     while True:
         # Cap fetch size by remaining round budget
         fetch_limit = (
@@ -961,12 +1008,18 @@ async def _run_consolidation_job(
                     local_stats["memories_failed"] += 1
 
             # Maintain the cumulative-progress indicator under parallelism:
-            # increment a shared counter and snapshot under the same statement
-            # so the snapshot includes this batch. No await between the read
-            # and write, so single-threaded asyncio gives us atomicity for free
-            # — no lock needed.
+            # increment shared counters and snapshot under the same statements so
+            # the snapshot includes this batch. No await between the reads and
+            # writes, so single-threaded asyncio gives us atomicity for free —
+            # no lock needed.
             cumulative_progress["processed"] += local_stats["memories_processed"]
+            cumulative_progress["observations_created"] += local_stats["observations_created"]
+            cumulative_progress["observations_updated"] += local_stats["observations_updated"]
+            cumulative_progress["observations_merged"] += local_stats["observations_merged"]
+            cumulative_progress["observations_deleted"] += local_stats["observations_deleted"]
+            cumulative_progress["memories_failed"] += local_stats["memories_failed"]
             cum_processed = cumulative_progress["processed"]
+            cum_snapshot = dict(cumulative_progress)
 
             # Per-batch log uses batch_perf so timings/llm-calls/tokens reflect
             # only this batch's own work, even when other batches are running
@@ -992,6 +1045,27 @@ async def _run_consolidation_job(
                 + (f" failed={local_stats['memories_failed']}" if local_stats["memories_failed"] else "")
                 + f" | input_tokens=~{input_tokens}"
                 f" | avg={llm_batch_time / max(1, len(llm_batch_local)):.3f}s/memory"
+            )
+
+            # Durable progress snapshot per LLM batch — this is the heartbeat an
+            # operator polls. The whole fetched batch is processed inside one outer
+            # round, so a round-boundary write would sit at the pre-round count for
+            # the entire (often minutes-long) LLM phase; writing here advances
+            # processed/total as each batch commits. set_stage mirrors it for the
+            # live worker log.
+            set_stage(f"consolidation.llm_batch.{batch_num_local}")
+            await memory_engine._write_operation_progress(
+                operation_id,
+                stage="consolidating",
+                processed=cum_processed,
+                total=await _progress_total(cum_processed),
+                detail={
+                    "observations_created": cum_snapshot["observations_created"],
+                    "observations_updated": cum_snapshot["observations_updated"],
+                    "observations_merged": cum_snapshot["observations_merged"],
+                    "observations_deleted": cum_snapshot["observations_deleted"],
+                    "memories_failed": cum_snapshot["memories_failed"],
+                },
             )
 
             # Fold batch counters into the job-level perf so the final summary
@@ -1132,6 +1206,13 @@ async def _run_consolidation_job(
         stats["mental_models_refreshed"] = 0
         logger.info(f"[CONSOLIDATION] bank={bank_id} skipping mental model refresh (round limit hit, re-queued)")
     else:
+        set_stage("consolidation.refreshing_mental_models")
+        await memory_engine._write_operation_progress(
+            operation_id,
+            stage="refreshing_mental_models",
+            processed=stats["memories_processed"],
+            total=await _progress_total(stats["memories_processed"]),
+        )
         # SECURITY: Only refresh mental models with matching tags (or all if no tags were consolidated)
         mental_models_refreshed = await _trigger_mental_model_refreshes(
             memory_engine=memory_engine,
@@ -1520,6 +1601,64 @@ def _max_date(dates: "Any") -> "datetime | None":
     return max((d for d in dates if d is not None), default=None)
 
 
+@dataclass(frozen=True)
+class _ObservationHistorySnapshot:
+    """Pre-update state of an observation, persisted as the ``content`` JSON blob
+    of one observation_history row.
+
+    Temporal fields are the ISO strings carried on MemoryFact; new_source_memory_ids
+    are the ids added by the update.
+    """
+
+    previous_text: str | None
+    previous_tags: list[str]
+    previous_occurred_start: str | None
+    previous_occurred_end: str | None
+    previous_mentioned_at: str | None
+    new_source_memory_ids: list[str]
+
+
+async def _append_observation_history(
+    conn: "Connection",
+    bank_id: str,
+    observation_id: str,
+    snapshot: _ObservationHistorySnapshot,
+    max_entries: int,
+) -> None:
+    """Insert one pre-update snapshot into ``observation_history``, then delete the
+    oldest rows beyond ``max_entries`` for this observation.
+
+    The snapshot is stored as a single JSONB ``content`` blob (per-row, so it stays
+    small). Bounding by row count keeps a frequently-reinforced observation's
+    history from growing without bound.
+    """
+    obs_uuid = uuid.UUID(observation_id)
+    await conn.execute(
+        f"""
+        INSERT INTO {fq_table("observation_history")} (observation_id, bank_id, content, changed_at)
+        VALUES ($1, $2, $3::jsonb, now())
+        """,
+        obs_uuid,
+        bank_id,
+        json.dumps(asdict(snapshot)),
+    )
+    if max_entries and max_entries > 0:
+        await conn.execute(
+            f"""
+            DELETE FROM {fq_table("observation_history")}
+            WHERE observation_id = $1
+              AND id NOT IN (
+                  SELECT id FROM {fq_table("observation_history")}
+                  WHERE observation_id = $1
+                  ORDER BY changed_at DESC, id DESC
+                  LIMIT $2
+              )
+            """,
+            obs_uuid,
+            max_entries,
+        )
+
+
 async def _execute_update_action(
     conn: "Connection",
     memory_engine: "MemoryEngine",
@@ -1559,15 +1698,14 @@ async def _execute_update_action(
 
     from ...config import get_config
 
-    history_entry = {
-        "previous_text": model.text,
-        "previous_tags": list(model.tags or []),
-        "previous_occurred_start": model.occurred_start,
-        "previous_occurred_end": model.occurred_end,
-        "previous_mentioned_at": model.mentioned_at,
-        "changed_at": datetime.now(timezone.utc).isoformat(),
-        "new_source_memory_ids": [str(mid) for mid in source_memory_ids],
-    }
+    history_entry = _ObservationHistorySnapshot(
+        previous_text=model.text,
+        previous_tags=list(model.tags or []),
+        previous_occurred_start=model.occurred_start,
+        previous_occurred_end=model.occurred_end,
+        previous_mentioned_at=model.mentioned_at,
+        new_source_memory_ids=[str(mid) for mid in source_memory_ids],
+    )
 
     source_ids = list(model.source_fact_ids or []) + source_memory_ids
 
@@ -1583,9 +1721,6 @@ async def _execute_update_action(
         perf.record_timing("embedding", time.time() - t0)
 
     config = get_config()
-    history_clause = (
-        "history = COALESCE(history, '[]'::jsonb) || $3::jsonb," if config.enable_observation_history else ""
-    )
 
     t0 = time.time()
     await conn.execute(
@@ -1593,19 +1728,17 @@ async def _execute_update_action(
         UPDATE {fq_table("memory_units")}
         SET text = $1,
             embedding = $2::vector,
-            {history_clause}
-            source_memory_ids = $4,
-            proof_count = $5,
-            tags = $10,
+            source_memory_ids = $3,
+            proof_count = $4,
+            tags = $9,
             updated_at = now(),
-            occurred_start = LEAST(occurred_start, COALESCE($7, occurred_start)),
-            occurred_end = GREATEST(occurred_end, COALESCE($8, occurred_end)),
-            mentioned_at = GREATEST(mentioned_at, COALESCE($9, mentioned_at))
-        WHERE id = $6
+            occurred_start = LEAST(occurred_start, COALESCE($6, occurred_start)),
+            occurred_end = GREATEST(occurred_end, COALESCE($7, occurred_end)),
+            mentioned_at = GREATEST(mentioned_at, COALESCE($8, mentioned_at))
+        WHERE id = $5
         """,
         new_text,
         embedding_str,
-        json.dumps([history_entry]),
         source_ids,
         len(source_ids),
         uuid.UUID(observation_id),
@@ -1614,6 +1747,15 @@ async def _execute_update_action(
         source_mentioned_at,
         merged_tags,
     )
+
+    # Record the pre-update snapshot in the dedicated observation_history table
+    # (one row per change), then trim to the configured cap. History lived in a
+    # single unbounded JSONB column before; an often-reinforced observation grew
+    # it until it crossed Postgres's 256MB jsonb limit and got stuck.
+    if config.enable_observation_history:
+        await _append_observation_history(
+            conn, bank_id, observation_id, history_entry, config.observation_history_max_entries
+        )
 
     # Sync observation_sources junction table (Oracle only — PG uses native array ops).
     if memory_engine._backend.ops.uses_observation_sources_table:
@@ -2055,10 +2197,10 @@ async def _create_observation_directly(
         # VectorChord: manually tokenize and insert search_vector
         query = f"""
             INSERT INTO {fq_table("memory_units")} (
-                id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids, history,
+                id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids,
                 tags, event_date, occurred_start, occurred_end, mentioned_at, search_vector
             )
-            VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, '[]'::jsonb, $6, $7, $8, $9, $10,
+            VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, $6, $7, $8, $9, $10,
                     tokenize($3, 'llmlingua2')::bm25_catalog.bm25vector)
             RETURNING id
         """
@@ -2074,10 +2216,10 @@ async def _create_observation_directly(
         # re-ingested. Tracking a separate fix for that gap.
         query = f"""
             INSERT INTO {fq_table("memory_units")} (
-                id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids, history,
+                id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids,
                 tags, event_date, occurred_start, occurred_end, mentioned_at
             )
-            VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, '[]'::jsonb, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, $6, $7, $8, $9, $10)
             RETURNING id
         """
 

@@ -103,6 +103,11 @@ async def test_small_async_batch_no_splitting(memory, request_context):
     assert status["result_metadata"]["num_sub_batches"] == 1  # Single sub-batch
     assert len(status["child_operations"]) == 1
     assert status["child_operations"][0]["status"] == "completed"
+    child_meta = await _child_metadata(memory, bank_id, operation_id, request_context)
+    assert child_meta["unit_ids_count"] > 0
+    assert child_meta["extraction_errors_count"] == 0
+    assert status["result_metadata"]["unit_ids_count"] == child_meta["unit_ids_count"]
+    assert status["result_metadata"]["extraction_errors_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -166,6 +171,19 @@ async def test_large_async_batch_auto_splits(memory, request_context):
 
     # Parent status should be aggregated as "completed"
     assert parent_status["status"] == "completed"
+    child_unit_counts = []
+    for child in child_ops:
+        child_status = await memory.get_operation_status(
+            bank_id=bank_id,
+            operation_id=child["operation_id"],
+            request_context=request_context,
+        )
+        child_meta = child_status["result_metadata"]
+        assert child_meta["unit_ids_count"] > 0
+        assert child_meta["extraction_errors_count"] == 0
+        child_unit_counts.append(child_meta["unit_ids_count"])
+    assert parent_status["result_metadata"]["unit_ids_count"] == sum(child_unit_counts)
+    assert parent_status["result_metadata"]["extraction_errors_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -459,6 +477,42 @@ async def _child_metadata(memory, bank_id: str, parent_operation_id: str, reques
         request_context=request_context,
     )
     return child["result_metadata"]
+
+
+@pytest.mark.asyncio
+async def test_retain_outcome_metadata_records_zero_counts(memory, request_context, monkeypatch):
+    """Completed retain operations expose explicit zero outcome counters."""
+    from hindsight_api.engine.response_models import TokenUsage
+    from hindsight_api.engine.retain import fact_extraction
+
+    async def empty_extract_facts_from_contents(
+        *args: object, **kwargs: object
+    ) -> tuple[list[object], list[object], TokenUsage]:
+        return [], [], TokenUsage()
+
+    monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", empty_extract_facts_from_contents)
+
+    bank_id = "test_retain_outcome_zero_counts"
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=[{"content": "No extracted facts for this item."}],
+        request_context=request_context,
+    )
+    await asyncio.sleep(0.2)
+
+    parent = await memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=result["operation_id"],
+        request_context=request_context,
+    )
+    child_meta = await _child_metadata(memory, bank_id, result["operation_id"], request_context)
+
+    assert child_meta["unit_ids_count"] == 0
+    assert child_meta["extraction_errors_count"] == 0
+    assert "extraction_errors_sample" not in child_meta
+    assert parent["result_metadata"]["unit_ids_count"] == 0
+    assert parent["result_metadata"]["extraction_errors_count"] == 0
+    assert "extraction_errors_sample" not in parent["result_metadata"]
 
 
 @pytest.mark.asyncio

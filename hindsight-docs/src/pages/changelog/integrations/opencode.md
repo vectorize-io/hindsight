@@ -10,6 +10,18 @@ For the source code, see [`hindsight-integrations/opencode`](https://github.com/
 
 ← [Back to main changelog](/changelog)
 
+## [0.2.2](https://github.com/vectorize-io/hindsight/tree/integrations/opencode/v0.2.2)
+
+**Bug Fixes**
+
+- Fixed the OpenCode integration plugin export to avoid exposing a non-function entry point.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/r266-tech" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/r266-tech.png?size=40" alt="@r266-tech" width="18" height="18" style={{borderRadius: "50%"}} />@r266-tech</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/e68d32583" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>e68d32583</a>
+
+## [0.2.1](https://github.com/vectorize-io/hindsight/tree/integrations/opencode/v0.2.1)
+
+**Bug Fixes**
+
+- Opencode integration now defaults to using Hindsight Cloud, with live end-to-end tests gated to prevent unintended runs.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/DK09876" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}><img src="https://github.com/DK09876.png?size=40" alt="@DK09876" width="18" height="18" style={{borderRadius: "50%"}} />@DK09876</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/06f36b8b" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>06f36b8b</a>
+
 ## [0.2.0](https://github.com/vectorize-io/hindsight/tree/integrations/opencode/v0.2.0)
 
 **Features**

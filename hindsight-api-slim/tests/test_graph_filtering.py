@@ -186,8 +186,8 @@ async def test_graph_document_filter_includes_observations_via_source_memories(
         # World fact tied to the document.
         await conn.execute(
             """
-            INSERT INTO memory_units (id, bank_id, text, fact_type, document_id, history)
-            VALUES ($1, $2, $3, 'world', $4, '[]'::jsonb)
+            INSERT INTO memory_units (id, bank_id, text, fact_type, document_id)
+            VALUES ($1, $2, $3, 'world', $4)
             """,
             fact_id,
             bank_id,
@@ -198,8 +198,8 @@ async def test_graph_document_filter_includes_observations_via_source_memories(
         # Unrelated fact NOT tied to the document.
         await conn.execute(
             """
-            INSERT INTO memory_units (id, bank_id, text, fact_type, history)
-            VALUES ($1, $2, $3, 'world', '[]'::jsonb)
+            INSERT INTO memory_units (id, bank_id, text, fact_type)
+            VALUES ($1, $2, $3, 'world')
             """,
             other_fact_id,
             bank_id,
@@ -210,9 +210,9 @@ async def test_graph_document_filter_includes_observations_via_source_memories(
         await conn.execute(
             """
             INSERT INTO memory_units (
-                id, bank_id, text, fact_type, source_memory_ids, history, proof_count
+                id, bank_id, text, fact_type, source_memory_ids, proof_count
             )
-            VALUES ($1, $2, $3, 'observation', $4::uuid[], '[]'::jsonb, 1)
+            VALUES ($1, $2, $3, 'observation', $4::uuid[], 1)
             """,
             observation_id,
             bank_id,
@@ -224,9 +224,9 @@ async def test_graph_document_filter_includes_observations_via_source_memories(
         await conn.execute(
             """
             INSERT INTO memory_units (
-                id, bank_id, text, fact_type, source_memory_ids, history, proof_count
+                id, bank_id, text, fact_type, source_memory_ids, proof_count
             )
-            VALUES ($1, $2, $3, 'observation', $4::uuid[], '[]'::jsonb, 1)
+            VALUES ($1, $2, $3, 'observation', $4::uuid[], 1)
             """,
             unrelated_observation_id,
             bank_id,

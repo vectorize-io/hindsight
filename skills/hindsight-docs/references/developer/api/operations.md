@@ -188,6 +188,30 @@ hindsight operation get my-bank "$OPERATION_ID"
 # Section 'operations-get' not found in api/operations.go
 ```
 
+Query parameters:
+
+| Param | Description |
+|-------|-------------|
+| `include_payload` | Include the raw task payload (the submission params) in the response as `task_payload`. Default `false`; may be large. |
+
+A few response fields are worth calling out:
+
+| Field | Description |
+|-------|-------------|
+| `updated_at` | When the operation's row last changed — claim, progress heartbeat, or completion. |
+| `progress` | Last-known progress snapshot for a running operation, or `null` if none was recorded (completed-instantly or pre-feature rows). |
+| `task_payload` | The raw submission params; only populated when `include_payload=true`. |
+
+`progress` is written at coarse phase/batch boundaries (consolidation, batch retain) and lets you tell a healthy long-running job from a frozen one: if `processed` keeps advancing across polls the job is alive; identical numbers with no movement in `at` mean it's stuck. Its shape:
+
+| Field | Description |
+|-------|-------------|
+| `stage` | Coarse phase the operation last reported (e.g. `processing_batch`). |
+| `at` | ISO-8601 timestamp when this snapshot was written. |
+| `processed` | Units of work finished so far (sub-batches, memories), when known. |
+| `total` | Total units of work for the operation, when known. |
+| `detail` | Operation-specific counters (e.g. `observations_created`, `round`, `items_in_sub_batch`). |
+
 ### Cancel a pending operation
 
 Returns `409` if the operation is already in `processing`, `completed`, or `failed` state.

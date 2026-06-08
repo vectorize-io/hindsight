@@ -20,6 +20,16 @@ from hindsight_api.pg0 import EmbeddedPostgres
 DEFAULT_PG0_INSTANCE_NAME = "hindsight-test"
 DEFAULT_PG0_PORT = int(os.environ.get("HINDSIGHT_TEST_PG_PORT", "5556"))
 
+# Keep the background MaintenanceLoop from auto-starting during tests. In
+# production it sweeps retention and re-schedules consolidation, but its timers
+# would race shared-pg0 test data (e.g. delete llm_requests/audit_log rows a test
+# just inserted). Disabling the reconcile interval and llm-trace retention — with
+# audit retention already off by default — leaves no job enabled, so the loop
+# never starts. Tests that exercise it call MaintenanceLoop methods
+# (_run_reconcile / _purge_expired) directly.
+os.environ.setdefault("HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS", "0")
+os.environ.setdefault("HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS", "-1")
+
 
 # Load environment variables from .env at the start of test session
 def pytest_configure(config):

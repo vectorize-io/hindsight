@@ -35,8 +35,6 @@ from .db_utils import acquire_with_retry
 
 logger = logging.getLogger(__name__)
 
-_SWEEP_INTERVAL_SECONDS = 3600  # Run retention sweep every hour
-
 
 # ── bank/operation attribution (carried across the async call chain) ──────────
 
@@ -310,8 +308,8 @@ class LLMTraceRecorder:
 
     Implements ``record_llm_call`` so it can be registered with
     :func:`hindsight_api.tracing.register_span_recorder`. Writes are
-    fire-and-forget and never surface errors into the calling path; an optional
-    retention sweep deletes rows older than ``retention_days``.
+    fire-and-forget and never surface errors into the calling path. Retention of
+    old rows is handled by the background :class:`MaintenanceLoop`.
     """
 
     def __init__(
@@ -320,16 +318,13 @@ class LLMTraceRecorder:
         schema_getter: Callable[[], str],
         enabled: bool,
         allowed_scopes: list[str],
-        retention_days: int = -1,
         max_chars: int = 50000,
     ) -> None:
         self._pool_getter = pool_getter
         self._schema_getter = schema_getter
         self._enabled = enabled
         self._allowed_scopes: frozenset[str] | None = frozenset(allowed_scopes) if allowed_scopes else None
-        self._retention_days = retention_days
         self._max_chars = max_chars
-        self._sweep_task: asyncio.Task | None = None
         # In-flight fire-and-forget write tasks, bucketed by trace_id so
         # attach_memory_ids can await only *its own* operation's writes before the
         # post-operation UPDATE (otherwise the UPDATE could race ahead of the
@@ -543,46 +538,3 @@ class LLMTraceRecorder:
                 )
         except Exception as e:
             logger.warning(f"LLM trace memory_id attach failed for trace={trace_id}: {e}")
-
-    # ── retention sweep ───────────────────────────────────────────────────────
-
-    def start_retention_sweep(self) -> None:
-        """Start the periodic retention sweep if retention is configured."""
-        if self._retention_days <= 0 or not self._enabled:
-            return
-        try:
-            self._sweep_task = asyncio.create_task(self._sweep_loop())
-        except RuntimeError:
-            logger.debug("Cannot start llm trace retention sweep: no running event loop")
-
-    async def stop_retention_sweep(self) -> None:
-        """Stop the periodic retention sweep."""
-        if self._sweep_task and not self._sweep_task.done():
-            self._sweep_task.cancel()
-            try:
-                await self._sweep_task
-            except asyncio.CancelledError:
-                pass
-            self._sweep_task = None
-
-    async def _sweep_loop(self) -> None:
-        while True:
-            await self._run_sweep()
-            await asyncio.sleep(_SWEEP_INTERVAL_SECONDS)
-
-    async def _run_sweep(self) -> None:
-        """Delete trace rows older than retention_days. Concurrent-safe."""
-        pool = self._pool_getter()
-        if pool is None:
-            return
-        try:
-            schema = self._schema_getter()
-            table = f"{schema}.llm_requests"
-            async with acquire_with_retry(pool, max_retries=1) as conn:
-                result = await conn.execute(
-                    f"DELETE FROM {table} WHERE started_at < NOW() - INTERVAL '{self._retention_days} days'"
-                )
-                if result and result != "DELETE 0":
-                    logger.info(f"LLM trace retention sweep: {result}")
-        except Exception as e:
-            logger.warning(f"LLM trace retention sweep failed: {e}")

@@ -427,7 +427,7 @@
       "retain": "Retain",
       "consolidation": "통합",
       "refreshMentalModel": "멘탈 모델 새로고침",
-      "fileConvertRetain": "파일 변환 및 Retain",
+      "fileConvertRetain": "파일 변환",
       "webhookDelivery": "Webhook 전달",
       "graphMaintenance": "그래프 유지관리"
     },
@@ -437,7 +437,8 @@
       "created": "생성일",
       "status": "상태",
       "index": "인덱스",
-      "items": "항목"
+      "items": "항목",
+      "actions": "작업"
     },
     "action": {
       "cancel": "취소",
@@ -453,12 +454,21 @@
       "type": "유형",
       "created": "생성일",
       "updated": "업데이트됨",
-      "completed": "완료됨"
+      "completed": "완료됨",
+      "progress": "진행 상황",
+      "lastHeartbeat": "마지막 신호"
     },
     "metadata": "메타데이터",
     "error": "오류",
     "rawPayloadParentHelp": "이 작업은 상위 작업입니다. 원시 페이로드는 각 하위 배치에 저장됩니다. 하위 작업을 열어 페이로드를 확인하세요.",
-    "rawPayloadEmpty": "이 작업에 저장된 원시 페이로드가 없습니다."
+    "rawPayloadEmpty": "이 작업에 저장된 원시 페이로드가 없습니다.",
+    "heartbeat": {
+      "justNow": "방금",
+      "secondsAgo": "{secs}초 전",
+      "minutesAgo": "{mins}분 전",
+      "hoursAgo": "{hours}시간 전"
+    },
+    "progressEstimateNote": "총계는 통합 시작 시점의 추정치이며, 실행 중 새 메모리가 추가되면 늘어날 수 있습니다 — 정상입니다."
   },
   "dataView": {
     "loadingMemories": "메모리 불러오는 중...",
@@ -990,7 +1000,7 @@
     "actionDeleteMentalModel": "멘탈 모델 삭제",
     "actionCreateDirective": "지시문 생성",
     "actionDeleteDirective": "지시문 삭제",
-    "actionFileConvertRetain": "파일 변환 및 Retain",
+    "actionFileConvertRetain": "파일 변환",
     "actionWebhookDelivery": "Webhook 전송",
     "transportAll": "모든 전송",
     "transportHttp": "HTTP",

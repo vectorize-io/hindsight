@@ -228,7 +228,7 @@ The plugin runs an MCP server that exposes `agent_knowledge_*` tools, letting Cl
 
 | Setting | Env Var | Default | Description |
 |---------|---------|---------|-------------|
-| `enableKnowledgeTools` | `HINDSIGHT_ENABLE_KNOWLEDGE_TOOLS` | `false` | Master switch for the MCP knowledge tools. When `false`, the MCP server exits at startup and none of the `agent_knowledge_*` tools are exposed. |
+| `enableKnowledgeTools` | `HINDSIGHT_ENABLE_KNOWLEDGE_TOOLS` | `true` | Master switch for the MCP knowledge tools. When `false`, the MCP server stays alive as an empty server exposing no `agent_knowledge_*` tools (it does not exit — exiting would trigger a `-32000` reconnect error in Claude Code). |
 
 ---
 

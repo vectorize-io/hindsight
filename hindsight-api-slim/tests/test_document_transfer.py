@@ -99,12 +99,19 @@ def test_export_bank_covers_schema():
     from hindsight_api.admin.cli import BACKUP_TABLES
     from hindsight_api.engine.transfer.export import (
         _BANK_ROW_TABLES,
+        _CARRIED_HISTORY_TABLES,
         _HISTORY_TABLES,
         _REPLAYED_TABLES,
         _SKIP_TABLES,
     )
 
-    buckets = [set(_REPLAYED_TABLES), set(_BANK_ROW_TABLES), set(_HISTORY_TABLES), set(_SKIP_TABLES)]
+    buckets = [
+        set(_REPLAYED_TABLES),
+        set(_BANK_ROW_TABLES),
+        set(_CARRIED_HISTORY_TABLES),
+        set(_HISTORY_TABLES),
+        set(_SKIP_TABLES),
+    ]
     classified = set().union(*buckets)
     assert classified == set(BACKUP_TABLES), (
         f"export-bank classification drifted from BACKUP_TABLES: "
@@ -149,6 +156,7 @@ async def test_export_bank_contents(memory, request_context):
         assert manifest.document_count == 1
         assert manifest.webhook_count == 1
         assert "mental_models.json" in names and "directives.json" in names
+        assert "mental_model_history.json" in names
         assert any(d.endswith(".json") and d.startswith("documents/") for d in names)
         # No history files unless requested.
         assert not any(n.startswith("history/") for n in names)
@@ -312,6 +320,47 @@ async def test_bank_export_import_exact_roundtrip(memory, request_context):
         assert after_semantic > 0, "semantic links should be regenerated on import"
         # Facts were re-embedded on import (no NULL vectors).
         assert after["null_embeddings"] == 0
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_bank_roundtrip_carries_mental_model_history(memory, request_context):
+    """Mental-model refresh history survives export/import. Mental models keep a
+    stable (id, bank_id), so the dedicated mental_model_history rows are carried
+    (the surrogate id is dropped on export; the target reassigns it)."""
+    bank = _unique_bank("bank_mm_hist")
+    try:
+        await memory.get_bank_profile(bank, request_context=request_context)
+        await memory.create_mental_model(
+            bank,
+            name="Work model",
+            source_query="where do people work",
+            content="v1",
+            mental_model_id="mm-1",
+            request_context=request_context,
+        )
+        await memory.update_mental_model(
+            bank, mental_model_id="mm-1", content="v2", request_context=request_context
+        )
+        await memory.update_mental_model(
+            bank, mental_model_id="mm-1", content="v3", request_context=request_context
+        )
+        # Two refreshes → two snapshots (previous content v1 then v2), newest-first.
+        before = await memory.get_mental_model_history(bank, "mm-1", request_context=request_context)
+        assert [h["previous_content"] for h in before] == ["v2", "v1"]
+
+        from hindsight_api.engine.transfer import export_bank
+
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, bank)
+        await memory.delete_bank(bank, request_context=request_context)
+        result = await memory.import_bank_async(archive, request_context)
+        assert result.mental_model_history_imported == 2
+
+        after = await memory.get_mental_model_history(bank, "mm-1", request_context=request_context)
+        assert [h["previous_content"] for h in after] == ["v2", "v1"]
     finally:
         await memory.delete_bank(bank, request_context=request_context)
 

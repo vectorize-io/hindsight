@@ -427,7 +427,7 @@
       "retain": "Retain",
       "consolidation": "Consolidation",
       "refreshMentalModel": "Mental Model Refresh",
-      "fileConvertRetain": "File Convert & Retain",
+      "fileConvertRetain": "Convert File",
       "webhookDelivery": "Webhook Delivery",
       "graphMaintenance": "Graph Maintenance"
     },
@@ -437,7 +437,8 @@
       "created": "Created",
       "status": "Status",
       "index": "Index",
-      "items": "Items"
+      "items": "Items",
+      "actions": "Actions"
     },
     "action": {
       "cancel": "Cancel",
@@ -453,12 +454,21 @@
       "type": "Type",
       "created": "Created",
       "updated": "Updated",
-      "completed": "Completed"
+      "completed": "Completed",
+      "progress": "Progress",
+      "lastHeartbeat": "Last heartbeat"
     },
     "metadata": "Metadata",
     "error": "Error",
     "rawPayloadParentHelp": "This is a parent operation — the raw payload is stored on each sub-batch. Open a child operation to inspect its payload.",
-    "rawPayloadEmpty": "No raw payload stored for this operation."
+    "rawPayloadEmpty": "No raw payload stored for this operation.",
+    "heartbeat": {
+      "justNow": "just now",
+      "secondsAgo": "{secs}s ago",
+      "minutesAgo": "{mins}m ago",
+      "hoursAgo": "{hours}h ago"
+    },
+    "progressEstimateNote": "The total is estimated when consolidation starts and can grow if new memories arrive while it runs — that's expected."
   },
   "dataView": {
     "loadingMemories": "Loading memories...",
@@ -990,7 +1000,7 @@
     "actionDeleteMentalModel": "Delete Mental Model",
     "actionCreateDirective": "Create Directive",
     "actionDeleteDirective": "Delete Directive",
-    "actionFileConvertRetain": "File Convert & Retain",
+    "actionFileConvertRetain": "Convert File",
     "actionWebhookDelivery": "Webhook Delivery",
     "transportAll": "All transports",
     "transportHttp": "HTTP",

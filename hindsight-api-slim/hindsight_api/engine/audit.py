@@ -107,11 +107,11 @@ def _safe_json(data: Any) -> str | None:
         return None
 
 
-_SWEEP_INTERVAL_SECONDS = 3600  # Run retention sweep every hour
-
-
 class AuditLogger:
-    """Fire-and-forget audit log writer with optional retention sweep."""
+    """Fire-and-forget audit log writer.
+
+    Retention of old rows is handled by the background :class:`MaintenanceLoop`.
+    """
 
     def __init__(
         self,
@@ -119,14 +119,11 @@ class AuditLogger:
         schema_getter: Callable[[], str],
         enabled: bool,
         allowed_actions: list[str],
-        retention_days: int = -1,
     ) -> None:
         self._pool_getter = pool_getter
         self._schema_getter = schema_getter
         self._enabled = enabled
         self._allowed_actions: frozenset[str] | None = frozenset(allowed_actions) if allowed_actions else None
-        self._retention_days = retention_days
-        self._sweep_task: asyncio.Task | None = None
 
     def is_enabled(self, action: str) -> bool:
         """Check if audit logging is enabled for this action."""
@@ -175,48 +172,6 @@ class AuditLogger:
                 )
         except Exception as e:
             logger.warning(f"Audit log write failed for action={entry.action}: {e}")
-
-    def start_retention_sweep(self) -> None:
-        """Start the periodic retention sweep if retention is configured."""
-        if self._retention_days <= 0 or not self._enabled:
-            return
-        try:
-            self._sweep_task = asyncio.create_task(self._sweep_loop())
-        except RuntimeError:
-            logger.debug("Cannot start retention sweep: no running event loop")
-
-    async def stop_retention_sweep(self) -> None:
-        """Stop the periodic retention sweep."""
-        if self._sweep_task and not self._sweep_task.done():
-            self._sweep_task.cancel()
-            try:
-                await self._sweep_task
-            except asyncio.CancelledError:
-                pass
-            self._sweep_task = None
-
-    async def _sweep_loop(self) -> None:
-        """Periodically delete audit log entries older than retention_days."""
-        while True:
-            await self._run_sweep()
-            await asyncio.sleep(_SWEEP_INTERVAL_SECONDS)
-
-    async def _run_sweep(self) -> None:
-        """Delete expired audit log entries. Concurrent-safe via row-level deletes."""
-        pool = self._pool_getter()
-        if pool is None:
-            return
-        try:
-            schema = self._schema_getter()
-            table = f"{schema}.audit_log"
-            async with acquire_with_retry(pool, max_retries=1) as conn:
-                result = await conn.execute(
-                    f"DELETE FROM {table} WHERE started_at < NOW() - INTERVAL '{self._retention_days} days'"
-                )
-                if result and result != "DELETE 0":
-                    logger.info(f"Audit log retention sweep: {result}")
-        except Exception as e:
-            logger.warning(f"Audit log retention sweep failed: {e}")
 
 
 @asynccontextmanager
