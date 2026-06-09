@@ -1762,6 +1762,16 @@ class HindsightConfig:
                 f"Invalid semantic_min_similarity: {self.semantic_min_similarity}. Must be between 0.0 and 1.0"
             )
 
+        # Validate bedrock_service_tier
+        valid_bedrock_tiers = (None, "flex", "priority", "reserved")
+        if self.llm_bedrock_service_tier not in valid_bedrock_tiers:
+            raise ValueError(
+                f"Invalid HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER: "
+                f"{self.llm_bedrock_service_tier!r}. Must be one of: "
+                f"{', '.join(t for t in valid_bedrock_tiers if t is not None)}. "
+                f"Note: 'standard' is not a valid Bedrock service tier -- use unset for default tier."
+            )
+
         # When LLM provider is "none", force chunks-only mode and disable LLM-dependent features
         if self.llm_provider == "none":
             self.retain_extraction_mode = "chunks"
@@ -1875,7 +1885,7 @@ class HindsightConfig:
             llm_reasoning_effort=os.getenv(ENV_LLM_REASONING_EFFORT, DEFAULT_LLM_REASONING_EFFORT),
             llm_groq_service_tier=os.getenv(ENV_LLM_GROQ_SERVICE_TIER, DEFAULT_LLM_GROQ_SERVICE_TIER),
             llm_openai_service_tier=os.getenv(ENV_LLM_OPENAI_SERVICE_TIER, DEFAULT_LLM_OPENAI_SERVICE_TIER),
-            llm_bedrock_service_tier=os.getenv(ENV_LLM_BEDROCK_SERVICE_TIER, DEFAULT_LLM_BEDROCK_SERVICE_TIER),
+            llm_bedrock_service_tier=os.getenv(ENV_LLM_BEDROCK_SERVICE_TIER) or None,
             llm_extra_body=json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null")),
             llm_default_headers=json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null")),
             llm_strict_schema=os.getenv(ENV_LLM_STRICT_SCHEMA, str(DEFAULT_LLM_STRICT_SCHEMA)).lower() in ("true", "1"),
