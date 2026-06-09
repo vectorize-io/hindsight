@@ -124,8 +124,6 @@ class TestE2ETools:
 
     def test_recall_empty_bank(self, live):
         client, bank_id = live
-        tools = create_hindsight_tools(
-            bank_id=bank_id, client=client, include_retain=False, include_reflect=False
-        )
+        tools = create_hindsight_tools(bank_id=bank_id, client=client, include_retain=False, include_reflect=False)
         result = _tool(tools, "recall_memory").invoke(query="anything at all")
         assert result == _NO_MEMORIES
