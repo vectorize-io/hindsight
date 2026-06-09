@@ -28,18 +28,6 @@ members = [
 ]
 
 [[package]]
-name = "agent-memory-guard"
-version = "0.2.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyyaml" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/30/07/4c8f17d0ac1ea755640d714a165c9b39b71df311b197fcb80af4482e0efd/agent_memory_guard-0.2.2.tar.gz", hash = "sha256:b90f03d71352577264afcb1c610a3007b36579a19fc7b102e060f2ed7d941d03", size = 19869, upload-time = "2026-05-03T00:02:40.092Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e3/8a/3029fab55927506b584d1a809353b89c03c302f777f086d269f843ff14d1/agent_memory_guard-0.2.2-py3-none-any.whl", hash = "sha256:c0bc76eb691e28138e081a490518ca5035128ba7867a020539f4bd795f804705", size = 21126, upload-time = "2026-05-03T00:02:38.659Z" },
-]
-
-[[package]]
 name = "aiofile"
 version = "3.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1676,7 +1664,6 @@ name = "hindsight-api-slim"
 version = "0.8.0"
 source = { editable = "hindsight-api-slim" }
 dependencies = [
-    { name = "agent-memory-guard" },
     { name = "aiohttp" },
     { name = "alembic" },
     { name = "anthropic" },
@@ -1802,7 +1789,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-memory-guard", specifier = ">=0.2.1,<0.3" },
     { name = "aiohttp", specifier = ">=3.13.3" },
     { name = "alembic", specifier = ">=1.17.1" },
     { name = "anthropic", specifier = ">=0.40.0" },

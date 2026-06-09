@@ -9,7 +9,6 @@ description = "Hindsight: Agent Memory That Works Like Human Memory"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "agent-memory-guard>=0.2.1,<0.3",
     "asyncpg>=0.29.0",
     "python-dotenv>=1.0.0",
     "openai>=1.0.0",

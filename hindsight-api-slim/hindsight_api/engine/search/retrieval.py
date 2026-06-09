@@ -145,7 +145,7 @@ async def retrieve_semantic_bm25_combined(
 
     cols = (
         "id, text, context, event_date, occurred_start, occurred_end, mentioned_at, "
-        "fact_type, document_id, chunk_id, tags, metadata, proof_count, status"
+        "fact_type, document_id, chunk_id, tags, metadata, proof_count"
     )
     table = fq_table("memory_units")
 
@@ -605,7 +605,7 @@ async def retrieve_temporal_combined(
             # bank_id on memory_units lets the planner use idx_memory_units_bank_fact_type.
             neighbors = await conn.fetch(
                 f"""
-                SELECT src.from_unit_id, mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start, mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.metadata, mu.status,
+                SELECT src.from_unit_id, mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start, mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.metadata,
                        l.weight, l.link_type,
                        1 - (mu.embedding <=> $1::vector) AS similarity
                 FROM unnest($2::uuid[]) AS src(from_unit_id)

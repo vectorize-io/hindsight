@@ -976,11 +976,12 @@ class MemoryEngine(MemoryEngineInterface):
             tenant_extension = DefaultTenantExtension(config={})
         self._tenant_extension = tenant_extension
 
-        # Load memory defense extension; default to Lite when env var is unset.
-        # Lazy imports avoid a circular dependency: extensions/__init__ imports
-        # MCPExtension which imports MemoryEngine at module level.
-        from ..extensions.builtin.memory_defense_lite import (  # noqa: PLC0415
-            MemoryDefenseLiteExtension,
+        # Load memory defense extension; default to the regex extension when the
+        # env var is unset. Lazy imports avoid a circular dependency:
+        # extensions/__init__ imports MCPExtension which imports MemoryEngine at
+        # module level.
+        from ..extensions.builtin.memory_defense_regex import (  # noqa: PLC0415
+            MemoryDefenseRegexExtension,
         )
         from ..extensions.context import DefaultExtensionContext  # noqa: PLC0415
         from ..extensions.loader import load_extension  # noqa: PLC0415
@@ -1000,9 +1001,9 @@ class MemoryEngine(MemoryEngineInterface):
         if loaded is not None:
             self._memory_defense: MemoryDefenseExtension = loaded
         else:
-            lite = MemoryDefenseLiteExtension({})
-            lite.set_context(self._ext_ctx)
-            self._memory_defense = lite
+            regex_defense = MemoryDefenseRegexExtension({})
+            regex_defense.set_context(self._ext_ctx)
+            self._memory_defense = regex_defense
 
         # Cache for get_bank_stats — short TTL + concurrent-loader coalescing.
         # The query joins memory_links to memory_units and can be a multi-second
@@ -4421,21 +4422,6 @@ class MemoryEngine(MemoryEngineInterface):
                     {"reranker_type": rerank_kind, "candidates_reranked": len(scored_results)},
                 )
 
-            # Step 4.8: Post-filter by quarantine status.
-            # Applied after reranking so score ordering is preserved.
-            # Quarantined rows are never surfaced via recall; they remain in the DB
-            # as audit-only orphans. None status (e.g. graph-expanded rows) is
-            # treated as active.
-            pre_filter_len = len(scored_results)
-            filtered: list = []
-            for sr in scored_results:
-                if sr.retrieval.status == "quarantined":
-                    continue
-                filtered.append(sr)
-            if len(filtered) != pre_filter_len:
-                log_buffer.append(f"  [4.8] Quarantine filter: {pre_filter_len} -> {len(filtered)}")
-            scored_results = filtered
-
             # Step 5: Truncate to thinking_budget * 2 for token filtering
             rerank_limit = thinking_budget * 2
             top_scored = scored_results[:rerank_limit]
@@ -4760,7 +4746,6 @@ class MemoryEngine(MemoryEngineInterface):
                         chunk_id=result_dict.get("chunk_id"),
                         tags=result_dict.get("tags"),
                         source_fact_ids=source_fact_ids_by_obs.get(result_id) if include_source_facts else None,
-                        status=result_dict.get("status"),
                     )
                 )
 
@@ -6242,7 +6227,7 @@ class MemoryEngine(MemoryEngineInterface):
 
             units = await conn.fetch(
                 f"""
-                SELECT id, text, event_date, context, fact_type, status, document_id,
+                SELECT id, text, event_date, context, fact_type, document_id,
                        mentioned_at, occurred_start, occurred_end, chunk_id, proof_count,
                        tags, consolidated_at, consolidation_failed_at
                 FROM {fq_table("memory_units")}
@@ -6291,7 +6276,6 @@ class MemoryEngine(MemoryEngineInterface):
                         "context": row["context"] if row["context"] else "",
                         "date": row["event_date"].isoformat() if row["event_date"] else "",
                         "fact_type": row["fact_type"],
-                        "status": row["status"],
                         "document_id": row["document_id"],
                         "mentioned_at": row["mentioned_at"].isoformat() if row["mentioned_at"] else None,
                         "occurred_start": row["occurred_start"].isoformat() if row["occurred_start"] else None,

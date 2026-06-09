@@ -49,7 +49,6 @@ class RetrievalResult:
     tags: list[str] | None = None  # Visibility scope tags
     metadata: dict[str, str] | None = None  # User-provided metadata
     proof_count: int | None = None  # Number of supporting memories (observations only)
-    status: str | None = None  # Memory Defense: active | quarantined | pending_review
 
     # Retrieval-specific scores (only one will be set depending on retrieval method)
     similarity: float | None = None  # Semantic retrieval
@@ -75,7 +74,6 @@ class RetrievalResult:
             tags=row.get("tags"),
             metadata=row.get("metadata"),
             proof_count=row.get("proof_count"),
-            status=row.get("status"),
             similarity=row.get("similarity"),
             bm25_score=row.get("bm25_score"),
             activation=row.get("activation"),
@@ -162,7 +160,6 @@ class ScoredResult:
             "metadata": self.retrieval.metadata,
             "semantic_similarity": self.retrieval.similarity,
             "bm25_score": self.retrieval.bm25_score,
-            "status": self.retrieval.status,
         }
 
         # Add temporal scores if present

@@ -82,7 +82,7 @@ async def _find_semantic_seeds(
     rows = await conn.fetch(
         f"""
         SELECT id, text, context, event_date, occurred_start, occurred_end,
-               mentioned_at, fact_type, document_id, chunk_id, tags, proof_count, status,
+               mentioned_at, fact_type, document_id, chunk_id, tags, proof_count,
                1 - (embedding <=> $1::vector) AS similarity
         FROM {fq_table("memory_units")}
         WHERE bank_id = $2

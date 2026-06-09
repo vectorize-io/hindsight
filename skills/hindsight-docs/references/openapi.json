@@ -9092,18 +9092,6 @@
             "title": "Tags",
             "description": "Optional tags for visibility scoping. Memories with tags can be filtered during recall."
           },
-          "receipt_uri": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Receipt Uri",
-            "description": "Optional URI referencing a security receipt for this memory item."
-          },
           "observation_scopes": {
             "anyOf": [
               {

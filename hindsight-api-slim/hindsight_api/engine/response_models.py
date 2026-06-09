@@ -181,9 +181,6 @@ class MemoryFact(BaseModel):
         None,
         description="IDs of source facts this observation was derived from (observation type only, when source_facts is enabled)",
     )
-    status: str | None = Field(
-        None, description="Memory Defense: lifecycle status (active, quarantined, pending_review)"
-    )
 
 
 class ChunkInfo(BaseModel):

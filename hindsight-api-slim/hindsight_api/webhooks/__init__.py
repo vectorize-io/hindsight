@@ -3,6 +3,7 @@
 from .manager import WebhookManager
 from .models import (
     ConsolidationEventData,
+    MemoryDefenseEventData,
     RetainEventData,
     WebhookConfig,
     WebhookEvent,
@@ -15,5 +16,6 @@ __all__ = [
     "WebhookEvent",
     "WebhookEventType",
     "ConsolidationEventData",
+    "MemoryDefenseEventData",
     "RetainEventData",
 ]

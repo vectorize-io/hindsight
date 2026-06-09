@@ -49,14 +49,3 @@ async def test_patch_rejects_unknown_detector(api_client) -> None:
     )
     assert r.status_code == 422, r.text
     assert "on" in str(r.json()["detail"]).lower()
-
-
-@pytest.mark.asyncio
-async def test_patch_rejects_invalid_default_action(api_client) -> None:
-    r1 = await api_client.put("/v1/default/banks/mg-15-3", json={})
-    assert r1.status_code in {200, 201}
-    r = await api_client.patch(
-        "/v1/default/banks/mg-15-3/config",
-        json={"updates": {"memory_defense": {"enabled": True, "default_action": "nuke_from_orbit"}}},
-    )
-    assert r.status_code == 422, r.text

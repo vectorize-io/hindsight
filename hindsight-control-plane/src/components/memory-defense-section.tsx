@@ -23,7 +23,6 @@ const DETECTORS = {
 type Detector = (typeof DETECTORS)[keyof typeof DETECTORS];
 
 type Action = "allow" | "redact" | "block";
-type Severity = "low" | "medium" | "high" | "critical";
 
 function coerceAction(raw: unknown): Action {
   if (raw === "allow" || raw === "redact" || raw === "block") return raw;
@@ -33,19 +32,16 @@ function coerceAction(raw: unknown): Action {
 interface PolicyRule {
   on: Detector;
   action: Action;
-  min_severity?: Severity;
 }
 
 interface MemoryDefensePolicy {
   enabled: boolean;
-  default_action: Action;
   rules: PolicyRule[];
 }
 
 function emptyPolicy(): MemoryDefensePolicy {
   return {
     enabled: false,
-    default_action: "redact",
     rules: [],
   };
 }
@@ -55,14 +51,12 @@ function readPolicy(config: Record<string, any>): MemoryDefensePolicy {
   if (!raw || typeof raw !== "object") return emptyPolicy();
   return {
     enabled: Boolean(raw.enabled),
-    default_action: coerceAction(raw.default_action ?? "redact"),
     rules: Array.isArray(raw.rules)
       ? raw.rules
           .filter((r: any) => r && typeof r.on === "string" && r.on === DETECTORS.SENSITIVE_DATA)
           .map((r: any) => ({
             on: r.on as Detector,
             action: coerceAction(r.action ?? "redact"),
-            min_severity: (r.min_severity as Severity | undefined) ?? "low",
           }))
       : [],
   };
@@ -83,11 +77,9 @@ function removeRule(rules: PolicyRule[], on: Detector): PolicyRule[] {
 function writePolicy(p: MemoryDefensePolicy): Record<string, any> {
   return {
     enabled: p.enabled,
-    default_action: p.default_action,
     rules: p.rules.map((r) => ({
       on: r.on,
       action: r.action,
-      min_severity: r.min_severity ?? "low",
     })),
   };
 }
@@ -147,7 +139,6 @@ export function MemoryDefenseSection({ bankId }: MemoryDefenseSectionProps) {
           ? upsertRule(p.rules, {
               on: DETECTORS.SENSITIVE_DATA,
               action,
-              min_severity: "low",
             })
           : removeRule(p.rules, DETECTORS.SENSITIVE_DATA),
       };

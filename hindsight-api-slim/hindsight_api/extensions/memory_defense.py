@@ -4,10 +4,8 @@ Lives in extensions/ (not engine/) because it defines the public contract
 between the retain orchestrator and any installed Memory Defense extension —
 the same shape as TenantExtension and OperationValidatorExtension.
 
-api-slim ships the :class:`MemoryDefenseExtension` protocol and a Lite default
-that scrubs the ``sensitive_data`` detector. Any richer policy enforcement
-(block, additional detectors, security_events persistence) is provided by a
-separate extension that subclasses this protocol.
+api-slim ships the :class:`MemoryDefenseExtension` protocol and a regex default
+that scrubs known secret/PII patterns from retained content.
 """
 
 from __future__ import annotations
@@ -17,17 +15,8 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal
-
-from agent_memory_guard import Policy as OwaspPolicy
-from agent_memory_guard.events import Action as OwaspAction
-from agent_memory_guard.events import Severity as OwaspSeverity
-from agent_memory_guard.policies.policy import PolicyRule as OwaspPolicyRule
 
 from hindsight_api.extensions.base import Extension
-
-if TYPE_CHECKING:
-    import asyncpg
 
 logger = logging.getLogger(__name__)
 
@@ -39,67 +28,47 @@ class DefenseAction(str, Enum):
 
 
 _VALID_ACTIONS = {a.value for a in DefenseAction}
-_VALID_SEVERITIES = {"low", "medium", "high", "critical"}
 
-# Canonical set of detector identifiers that are valid as ``policy.rules[*].on``.
-#
-# Lite (the OSS default extension) only enforces ``sensitive_data``. The other
-# names are reserved for Cloud-tier extensions (``prompt_injection``,
-# ``size_anomaly``, ``protected_keys``, ``detect_secrets``, ``base64_decode``,
-# ``llm_screen``). api-slim's parser accepts the full union so cloud-style
-# policies pass through cleanly without 422'ing at PATCH or retain time;
-# extensions enforce their own entitlement/dispatch semantics, and Lite
-# silently ignores rules it cannot enforce.
-_VALID_DETECTORS = {
-    "sensitive_data",
-    "prompt_injection",
-    "size_anomaly",
-    "protected_keys",
-    "detect_secrets",
-    "base64_decode",
-    "llm_screen",
-}
+# Detector identifiers valid as ``policy.rules[*].on``. The OSS extension only
+# screens for sensitive data (secrets/PII), so that's the only accepted value.
+_VALID_DETECTORS = {"sensitive_data"}
 
 
 @dataclass(frozen=True)
 class PolicyRule:
     on: str
     action: DefenseAction
-    min_severity: Literal["low", "medium", "high", "critical"] = "low"
 
 
 @dataclass(frozen=True)
 class DefensePolicy:
     enabled: bool = False
-    default_action: DefenseAction = DefenseAction.ALLOW
-    protected_tag_namespaces: tuple[str, ...] = ()
-    immutable_tag_namespaces: tuple[str, ...] = ()
     rules: tuple[PolicyRule, ...] = ()
-    detector_overrides: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class DefenseDecision:
     action: DefenseAction
     detector: str | None = None
-    severity: str | None = None
     message: str = ""
     redacted_content: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    matched_types: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RedactionResult:
+    content: str
+    matched_types: list[str]
 
 
 def parse_policy(raw: dict | None) -> DefensePolicy:
     """Parse a raw bank-config dict into a frozen DefensePolicy.
 
-    Raises ValueError for unknown actions or severities; the HTTP layer
+    Raises ValueError for unknown detectors or actions; the HTTP layer
     converts those into a 422 response.
     """
     if raw is None:
         return DefensePolicy()
-
-    default_action_raw = raw.get("default_action", "allow")
-    if default_action_raw not in _VALID_ACTIONS:
-        raise ValueError(f"invalid default_action {default_action_raw!r}")
 
     rules: list[PolicyRule] = []
     for item in raw.get("rules", []) or []:
@@ -109,40 +78,15 @@ def parse_policy(raw: dict | None) -> DefensePolicy:
         action_raw = item.get("action")
         if action_raw not in _VALID_ACTIONS:
             raise ValueError(f"invalid action {action_raw!r}; must be one of {sorted(_VALID_ACTIONS)}")
-        severity = item.get("min_severity", "low")
-        if severity not in _VALID_SEVERITIES:
-            raise ValueError(f"invalid min_severity {severity!r}")
-        rules.append(PolicyRule(on=on_raw, action=DefenseAction(action_raw), min_severity=severity))
+        rules.append(PolicyRule(on=on_raw, action=DefenseAction(action_raw)))
 
     return DefensePolicy(
         enabled=bool(raw.get("enabled", False)),
-        default_action=DefenseAction(default_action_raw),
-        protected_tag_namespaces=tuple(raw.get("protected_tag_namespaces", ()) or ()),
-        immutable_tag_namespaces=tuple(raw.get("immutable_tag_namespaces", ()) or ()),
         rules=tuple(rules),
-        detector_overrides=dict(raw.get("detector_overrides", {}) or {}),
     )
 
 
-def to_owasp_policy(policy: DefensePolicy) -> OwaspPolicy:
-    return OwaspPolicy(
-        default_action=OwaspAction(policy.default_action.value),
-        protected_keys=tuple(f"{ns}:*" for ns in policy.protected_tag_namespaces),
-        immutable_keys=tuple(f"{ns}:*" for ns in policy.immutable_tag_namespaces),
-        rules=[
-            OwaspPolicyRule(
-                name=f"{r.on}_{r.action.value}",
-                on=r.on,
-                action=OwaspAction(r.action.value),
-                min_severity=OwaspSeverity(r.min_severity),
-            )
-            for r in policy.rules
-        ],
-    )
-
-
-# Secret/PII redaction — shared between lite and any richer extension so the
-# substitution is identical regardless of which extension is loaded.
+# Secret/PII redaction patterns.
 #
 # Scope: high-confidence patterns with unambiguous prefixes (low false-positive
 # rate). Context-dependent matches (e.g. Cohere/Mistral keys that only stand
@@ -219,25 +163,28 @@ _COMPILED_REDACTIONS: list[tuple[str, re.Pattern]] = [
 ]
 
 
-def apply_redaction(content: str) -> str:
+def apply_redaction(content: str) -> RedactionResult:
     """Scrub known secret/PII patterns from content with [REDACTED:type] markers.
 
-    Covers the same pattern set OWASP SensitiveDataDetector matches by default,
-    so anything the detector flags is also scrubbed.
+    Returns the (possibly unchanged) content alongside the list of pattern
+    labels that matched (empty when nothing matched).
     """
+    matched: list[str] = []
     for label, pattern in _COMPILED_REDACTIONS:
-        content = pattern.sub(f"[REDACTED:{label}]", content)
-    return content
+        new_content = pattern.sub(f"[REDACTED:{label}]", content)
+        if new_content != content:
+            matched.append(label)
+            content = new_content
+    return RedactionResult(content=content, matched_types=matched)
 
 
 class MemoryDefenseExtension(Extension, ABC):
     """Abstract base for Memory Defense extensions.
 
     Implementations decide whether to allow, redact, or block a given retain
-    item by inspecting its content/tags against a per-bank policy. They also
-    persist any side effects (security_events rows, webhook events, etc.)
-    themselves — the orchestrator delegates the full decision lifecycle to
-    the extension.
+    item by inspecting its content against a per-bank policy. The orchestrator
+    applies the returned decision (redacts content / drops blocked items) and
+    fires a webhook for non-allow decisions when one is configured.
     """
 
     @abstractmethod
@@ -251,22 +198,4 @@ class MemoryDefenseExtension(Extension, ABC):
         tags: list[str],
     ) -> DefenseDecision:
         """Inspect content under the given policy and return a decision."""
-        ...
-
-    @abstractmethod
-    async def record_violation(
-        self,
-        conn: "asyncpg.Connection",
-        *,
-        bank_id: str,
-        document_id: str | None,
-        memory_unit_id: Any | None,
-        decision: DefenseDecision,
-        receipt_uri: str | None,
-    ) -> None:
-        """Persist a security event and emit any side effects (webhook, SIEM, etc.).
-
-        Called once per non-ALLOW decision. Implementations that don't track
-        events (e.g. lite) can no-op.
-        """
         ...

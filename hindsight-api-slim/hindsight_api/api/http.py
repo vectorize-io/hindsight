@@ -476,10 +476,6 @@ class MemoryItem(BaseModel):
         default=None,
         description="Optional tags for visibility scoping. Memories with tags can be filtered during recall.",
     )
-    receipt_uri: str | None = Field(
-        default=None,
-        description="Optional URI referencing a security receipt for this memory item.",
-    )
 
     @field_validator("content")
     @classmethod

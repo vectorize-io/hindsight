@@ -1,15 +1,12 @@
-"""OWASP injection-payload benchmark for the Memory Defense engine.
+"""Redaction benchmark for the Memory Defense regex engine.
 
-If the wrapped detector pipeline silently degrades, this fails CI.
-Run in standard pytest — NOT gated behind a marker, so regressions are loud.
-
-Note: Lite only runs the sensitive_data detector. Prompt injection and size_anomaly
-enforcement is tested in hindsight-deployment (Cloud extension).
+If the redaction pattern set silently degrades, this fails CI. Run in standard
+pytest — NOT gated behind a marker, so regressions are loud.
 """
 
 import pytest
 
-from hindsight_api.extensions.builtin.memory_defense_lite import MemoryDefenseLiteExtension
+from hindsight_api.extensions.builtin.memory_defense_regex import MemoryDefenseRegexExtension
 from hindsight_api.extensions.memory_defense import (
     DefenseAction,
     parse_policy,
@@ -26,8 +23,8 @@ REDACT_POLICY = parse_policy(
 
 
 @pytest.fixture
-def lite() -> MemoryDefenseLiteExtension:
-    return MemoryDefenseLiteExtension({})
+def regex_defense() -> MemoryDefenseRegexExtension:
+    return MemoryDefenseRegexExtension({})
 
 
 @pytest.mark.asyncio
@@ -40,8 +37,8 @@ def lite() -> MemoryDefenseLiteExtension:
         "AKIA" + "D" * 16,
     ],
 )
-async def test_redacts_known_secret_patterns(payload: str, lite: MemoryDefenseLiteExtension) -> None:
-    d = await lite.screen(
+async def test_redacts_known_secret_patterns(payload: str, regex_defense: MemoryDefenseRegexExtension) -> None:
+    d = await regex_defense.screen(
         policy=REDACT_POLICY,
         bank_id="b",
         document_id="d",
@@ -60,13 +57,13 @@ async def test_redacts_known_secret_patterns(payload: str, lite: MemoryDefenseLi
         "Reminder about Tuesday",
     ],
 )
-async def test_allows_benign_payloads(payload: str, lite: MemoryDefenseLiteExtension) -> None:
-    """Benign payloads either ALLOW or REDACT (no secrets detected) — never BLOCK."""
-    d = await lite.screen(
+async def test_allows_benign_payloads(payload: str, regex_defense: MemoryDefenseRegexExtension) -> None:
+    """Benign payloads have no secret to scrub, so they're ALLOWed."""
+    d = await regex_defense.screen(
         policy=REDACT_POLICY,
         bank_id="b",
         document_id="d",
         content=payload,
         tags=[],
     )
-    assert d.action in {DefenseAction.ALLOW, DefenseAction.REDACT}
+    assert d.action is DefenseAction.ALLOW

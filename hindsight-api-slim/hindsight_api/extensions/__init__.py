@@ -18,7 +18,7 @@ with the system (e.g., running migrations for tenant schemas).
 from hindsight_api.extensions.base import Extension
 from hindsight_api.extensions.builtin import (
     ApiKeyTenantExtension,
-    MemoryDefenseLiteExtension,
+    MemoryDefenseRegexExtension,
     SupabaseTenantExtension,
 )
 from hindsight_api.extensions.context import DefaultExtensionContext, ExtensionContext
@@ -33,7 +33,6 @@ from hindsight_api.extensions.memory_defense import (
     PolicyRule,
     apply_redaction,
     parse_policy,
-    to_owasp_policy,
 )
 from hindsight_api.extensions.operation_validator import (
     # Bank Management operations
@@ -123,9 +122,8 @@ __all__ = [
     "DefenseDecision",
     "DefensePolicy",
     "MemoryDefenseExtension",
-    "MemoryDefenseLiteExtension",
+    "MemoryDefenseRegexExtension",
     "PolicyRule",
     "apply_redaction",
     "parse_policy",
-    "to_owasp_policy",
 ]

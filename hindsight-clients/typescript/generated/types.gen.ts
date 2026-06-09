@@ -2152,12 +2152,6 @@ export type MemoryItem = {
    */
   tags?: Array<string> | null;
   /**
-   * Receipt Uri
-   *
-   * Optional URI referencing a security receipt for this memory item.
-   */
-  receipt_uri?: string | null;
-  /**
    * ObservationScopes
    *
    * How to scope observations during consolidation. 'per_tag' runs one consolidation pass per individual tag, creating separate observations for each tag. 'combined' (default) runs a single pass with all tags together. A list of tag lists runs one pass per inner list, giving full control over which combinations to use.

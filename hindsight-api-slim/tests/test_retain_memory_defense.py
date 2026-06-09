@@ -1,8 +1,7 @@
-"""End-to-end: retain runs through Memory Defense extension before fact extraction.
+"""End-to-end: retain runs through the Memory Defense extension before fact extraction.
 
-Tests here cover the lite-compatible subset: ALLOW and REDACT actions.
-BLOCK enforcement (security_events rows, 422 on full-block) is provided
-by the Cloud extension and lives in hindsight-deployment tests.
+Covers the ALLOW and REDACT actions. BLOCK enforcement (422 on full-block) is
+covered in test_retain_memory_defense_regex.py.
 """
 
 import pytest

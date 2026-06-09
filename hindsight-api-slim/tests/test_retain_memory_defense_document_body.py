@@ -1,4 +1,4 @@
-"""End-to-end retain → verify Memory Defense Lite scrubs secrets/PII from BOTH
+"""End-to-end retain → verify Memory Defense scrubs secrets/PII from BOTH
 memory_units AND the document body (documents.original_text).
 
 This is the regression test for the "ghp_AAA... persists in raw documents" leak:
@@ -12,8 +12,7 @@ Both paths are covered here.
 
 import pytest
 
-# Mix of patterns: covers OWASP detector (ghp_, AKIA, ssn) AND extended set
-# (xai, gsk, hf, stripe, twilio, db url, etc.) where OWASP would no-match.
+# Mix of secret patterns covered by the redactor (keys, tokens, PII, DB URLs).
 SECRETS = {
     "ssn": "123-45-6789",
     "github_pat": "ghp_" + "A" * 36,
@@ -31,7 +30,7 @@ SECRETS = {
 
 
 @pytest.mark.asyncio
-async def test_lite_scrubs_secrets_from_document_body(api_client) -> None:
+async def test_regex_scrubs_secrets_from_document_body(api_client) -> None:
     bank = "md-doc-body-1"
     await api_client.put(f"/v1/default/banks/{bank}", json={})
     await api_client.patch(
@@ -75,7 +74,7 @@ async def test_lite_scrubs_secrets_from_document_body(api_client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_lite_scrubs_ssn_from_short_message(api_client) -> None:
+async def test_regex_scrubs_ssn_from_short_message(api_client) -> None:
     """The exact phrasing the user pasted that triggered the rage report:
     a single short message containing a US SSN.
     """
@@ -115,7 +114,7 @@ async def test_lite_scrubs_ssn_from_short_message(api_client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_lite_scrubs_secrets_in_multi_doc_batch(api_client) -> None:
+async def test_regex_scrubs_secrets_in_multi_doc_batch(api_client) -> None:
     """Multiple items with distinct document_ids in a single POST trigger the
     multi-doc grouping recursion in retain_batch(). The recursion previously
     dropped memory_defense_extension, so screening was skipped for every item
@@ -151,7 +150,7 @@ async def test_lite_scrubs_secrets_in_multi_doc_batch(api_client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_lite_scrubs_secrets_from_oversized_chunked_input(api_client) -> None:
+async def test_regex_scrubs_secrets_from_oversized_chunked_input(api_client) -> None:
     """When a single content item exceeds retain_batch_tokens (default 10k),
     `_split_contents_into_sub_batches` chunks it and carries the FULL original
     body in `document_body_override`. That override bypasses per-chunk

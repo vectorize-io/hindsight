@@ -59,7 +59,46 @@ def _redact_document_body(body: str, config: Any) -> str:
         return body
     if not any(r.on == "sensitive_data" for r in policy.rules):
         return body
-    return apply_redaction(body)
+    return apply_redaction(body).content
+
+
+async def _fire_memory_defense_webhook(
+    webhook_manager: Any,
+    *,
+    conn: Any,
+    schema: str | None,
+    bank_id: str,
+    operation_id: str | None,
+    document_id: str | None,
+    decision: Any,
+) -> None:
+    """Fire a memory_defense.triggered webhook for a non-allow decision.
+
+    No-op when no webhook manager is wired or none is subscribed. Delivery
+    failures are swallowed so screening never blocks a retain.
+    """
+    if webhook_manager is None:
+        return
+    try:
+        from ...webhooks import MemoryDefenseEventData, WebhookEvent, WebhookEventType
+
+        event = WebhookEvent(
+            event=WebhookEventType.MEMORY_DEFENSE_TRIGGERED,
+            bank_id=bank_id,
+            operation_id=operation_id or "",
+            status=decision.action.value,
+            timestamp=utcnow(),
+            data=MemoryDefenseEventData(
+                action=decision.action.value,
+                detector=decision.detector,
+                document_id=document_id,
+                matched_types=decision.matched_types or None,
+                message=decision.message or None,
+            ),
+        )
+        await webhook_manager.fire_event_with_conn(event, conn, schema=schema)
+    except Exception:
+        logger.warning("memory_defense webhook delivery failed", exc_info=True)
 
 
 def _merge_processed_content_tokens(a: int | None, b: int | None) -> int | None:
@@ -564,19 +603,19 @@ async def retain_batch(
             return result_unit_ids, total_usage, total_processed_tokens
 
     # --- Memory Defense pre-extraction screening ---
-    # Delegate to the loaded extension (lite or cloud).  `config` is a resolved
-    # HindsightConfig object at this point (see _retain_batch_async_internal).
+    # Delegate to the loaded extension. `config` is a resolved HindsightConfig
+    # object at this point (see _retain_batch_async_internal). On a non-allow
+    # decision we redact in place or drop the item, and fire a
+    # memory_defense.triggered webhook when one is configured.
     _policy = parse_policy(getattr(config, "memory_defense", None))
     _blocked_violations: list[dict] = []  # type: ignore[type-arg]
 
     if memory_defense_extension is not None and _policy.enabled:
         async with acquire_with_retry(pool) as _defense_conn:
             for _idx, _content in enumerate(contents):
-                # Prefer the per-item document_id over the batch-level value
-                # so screen() / record_violation() / security_events all carry
-                # the document the caller submitted, not whichever doc_id the
-                # batch happens to share. The batch fallback is preserved for
-                # legacy callers that only set a single batch-level doc_id.
+                # Prefer the per-item document_id over the batch-level value so
+                # the decision and webhook carry the document the caller
+                # submitted, not whichever doc_id the batch happens to share.
                 _item_doc_id = contents_dicts[_idx].get("document_id") or document_id
 
                 _decision = await memory_defense_extension.screen(
@@ -590,36 +629,31 @@ async def retain_batch(
                 if _decision.action is DefenseAction.ALLOW:
                     continue
 
-                _memory_unit_id: uuid.UUID | None = None
                 if _decision.action is DefenseAction.REDACT:
                     _redacted = _decision.redacted_content or _content.content
                     _content.content = _redacted
                     # Mirror the redaction into the raw dict so the document
-                    # body persisted by upsert_document_metadata (built from
-                    # contents_dicts further down the pipeline) also stores
-                    # the redacted text, not the verbatim secret.
+                    # body persisted further down the pipeline also stores the
+                    # redacted text, not the verbatim secret.
                     contents_dicts[_idx]["content"] = _redacted
                 elif _decision.action is DefenseAction.BLOCK:
                     _blocked_violations.append(
                         {
                             "index": _idx,
                             "detector": _decision.detector,
-                            "severity": _decision.severity,
                             "message": _decision.message,
                         }
                     )
 
-                try:
-                    await memory_defense_extension.record_violation(
-                        _defense_conn,
-                        bank_id=bank_id,
-                        document_id=_item_doc_id,
-                        memory_unit_id=_memory_unit_id,
-                        decision=_decision,
-                        receipt_uri=None,
-                    )
-                except Exception:
-                    logger.warning("memory_defense record_violation failed", exc_info=True)
+                await _fire_memory_defense_webhook(
+                    webhook_manager,
+                    conn=_defense_conn,
+                    schema=schema,
+                    bank_id=bank_id,
+                    operation_id=operation_id,
+                    document_id=_item_doc_id,
+                    decision=_decision,
+                )
 
     if _blocked_violations:
         # All items blocked → raise so the HTTP layer can return 422.
