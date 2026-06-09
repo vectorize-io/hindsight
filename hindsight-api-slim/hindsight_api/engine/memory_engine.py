@@ -2392,7 +2392,7 @@ class MemoryEngine(MemoryEngineInterface):
                             f"Configuration error: HINDSIGHT_API_RETAIN_BATCH_ENABLED=true "
                             f"but the retain LLM provider '{self._retain_llm_config.provider}' "
                             f"does not support the batch API. Either switch to a provider "
-                            f"that supports batch operations (e.g. 'openai', 'groq') or "
+                            f"that supports batch operations (e.g. 'openai', 'groq', 'gemini') or "
                             f"set HINDSIGHT_API_RETAIN_BATCH_ENABLED=false."
                         )
 
