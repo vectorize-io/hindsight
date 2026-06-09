@@ -6066,6 +6066,9 @@ components:
             type: string
           nullable: true
           type: array
+        receipt_uri:
+          nullable: true
+          type: string
         observation_scopes:
           $ref: '#/components/schemas/ObservationScopes'
         strategy:

@@ -28,6 +28,7 @@ type MemoryItem struct {
 	DocumentId NullableString `json:"document_id,omitempty"`
 	Entities []EntityInput `json:"entities,omitempty"`
 	Tags []string `json:"tags,omitempty"`
+	ReceiptUri NullableString `json:"receipt_uri,omitempty"`
 	ObservationScopes NullableObservationScopes `json:"observation_scopes,omitempty"`
 	Strategy NullableString `json:"strategy,omitempty"`
 	UpdateMode NullableString `json:"update_mode,omitempty"`
@@ -302,6 +303,48 @@ func (o *MemoryItem) SetTags(v []string) {
 	o.Tags = v
 }
 
+// GetReceiptUri returns the ReceiptUri field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MemoryItem) GetReceiptUri() string {
+	if o == nil || IsNil(o.ReceiptUri.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.ReceiptUri.Get()
+}
+
+// GetReceiptUriOk returns a tuple with the ReceiptUri field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MemoryItem) GetReceiptUriOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ReceiptUri.Get(), o.ReceiptUri.IsSet()
+}
+
+// HasReceiptUri returns a boolean if a field has been set.
+func (o *MemoryItem) HasReceiptUri() bool {
+	if o != nil && o.ReceiptUri.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetReceiptUri gets a reference to the given NullableString and assigns it to the ReceiptUri field.
+func (o *MemoryItem) SetReceiptUri(v string) {
+	o.ReceiptUri.Set(&v)
+}
+// SetReceiptUriNil sets the value for ReceiptUri to be an explicit nil
+func (o *MemoryItem) SetReceiptUriNil() {
+	o.ReceiptUri.Set(nil)
+}
+
+// UnsetReceiptUri ensures that no value is present for ReceiptUri, not even an explicit nil
+func (o *MemoryItem) UnsetReceiptUri() {
+	o.ReceiptUri.Unset()
+}
+
 // GetObservationScopes returns the ObservationScopes field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *MemoryItem) GetObservationScopes() ObservationScopes {
 	if o == nil || IsNil(o.ObservationScopes.Get()) {
@@ -456,6 +499,9 @@ func (o MemoryItem) ToMap() (map[string]interface{}, error) {
 	}
 	if o.Tags != nil {
 		toSerialize["tags"] = o.Tags
+	}
+	if o.ReceiptUri.IsSet() {
+		toSerialize["receipt_uri"] = o.ReceiptUri.Get()
 	}
 	if o.ObservationScopes.IsSet() {
 		toSerialize["observation_scopes"] = o.ObservationScopes.Get()
