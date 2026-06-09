@@ -113,7 +113,6 @@ mod tests {
                     observation_scopes: None,
                     strategy: None,
                     update_mode: None,
-                    receipt_uri: None,
                 },
                 types::MemoryItem {
                     content: "Bob works with Alice on the search team".to_string(),
@@ -126,7 +125,6 @@ mod tests {
                     observation_scopes: None,
                     strategy: None,
                     update_mode: None,
-                    receipt_uri: None,
                 },
             ],
             document_tags: None,
