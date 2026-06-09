@@ -85,7 +85,7 @@ Cline hooks run on **macOS and Linux only**. They use Python 3 (any modern syste
 
 ## Hindsight Cloud (Recommended)
 
-The fastest path is Hindsight Cloud: no daemon to keep alive, memory syncs across machines, and the extraction work happens server-side. The installer's `--api-url` and `--api-token` flags configure it in one step. Your connection settings land in `~/.hindsight/cline.json`, which is stable across reinstalls:
+The fastest path is Hindsight Cloud: no daemon to keep alive, memory syncs across machines, and the extraction work happens server-side. That matters more for Cline than for a server-side agent. Cline lives in VS Code, which most developers use across a laptop, a desktop, and sometimes a remote dev box; Cloud means the same memory bank shows up everywhere without copying files around. Because extraction runs server-side, you also don't have to thread an LLM API key into the hook environment (the retain hook would otherwise need one to call the extraction model), and there's no `hindsight-api` process you have to remember to start before opening VS Code. The installer's `--api-url` and `--api-token` flags configure it in one step. Your connection settings land in `~/.hindsight/cline.json`, which is stable across reinstalls:
 
 ```json
 {
