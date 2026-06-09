@@ -2513,11 +2513,9 @@ class MemoryEngine(MemoryEngineInterface):
                 await conn.execute('SET search_path TO "$user", public, bm25_catalog, tokenizer_catalog')
 
             # SET (not SET LOCAL) so per-backend ANN tuning persists for the
-            # connection lifetime. Each backend exposes its own GUC: pgvector
-            # uses hnsw.ef_search, vchord uses vchordrq.probes. The dispatcher
-            # returns the right one for the configured extension, tuned for
-            # the higher recall the per-fact_type semantic queries in
-            # retrieve_semantic_bm25_combined() need.
+            # connection lifetime. The dispatcher returns only safe, portable
+            # knobs for the configured extension; VectorChord probe tuning is
+            # index-shaped and should be stored on vchordrq indexes instead.
             for guc, value in ann_search_tuning_settings(configured_vector_extension(), kind="high_recall"):
                 try:
                     await conn.execute(f"SET {guc} = {value}")
