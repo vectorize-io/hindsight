@@ -177,6 +177,10 @@ class MemoryFact(BaseModel):
         None, description="ID of the chunk this fact was extracted from (format: bank_id_document_id_chunk_index)"
     )
     tags: list[str] | None = Field(None, description="Visibility scope tags associated with this fact")
+    score: float | None = Field(
+        None,
+        description="Relevance score of this memory fact to the query. Only present when include_scores is enabled.",
+    )
     source_fact_ids: list[str] | None = Field(
         None,
         description="IDs of source facts this observation was derived from (observation type only, when source_facts is enabled)",
