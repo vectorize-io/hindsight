@@ -78,6 +78,10 @@ Hindsight didn't lead from day one — and that's the most encouraging part of t
 
 And note the contrast in *shape*. The bought-star project's growth was a single vertical wall in week one. Hindsight's is a months-long ramp that gets steeper as more people use it — the signature of real word-of-mouth, not a one-time transaction. That inflection tracks with the moment production deployments started working, the integration ecosystem filled out, and the [BEAM benchmark results](https://hindsight.vectorize.io/blog/2026/04/02/beam-sota) gave teams a reason to trust agent memory enough to build on it. People didn't star Hindsight on launch-day hype. They starred it after they used it.
 
+The picture is starkest in absolute time. Hindsight is the red line in the bottom-right corner — a near-vertical climb to 16,000 stars, the steepest slope on the chart, while every older and larger project rises gradually:
+
+[![GitHub star-history comparison showing Hindsight with the steepest slope of any agent-memory project, despite being the youngest line by years](/img/blog/star-history-comparison.png)](https://star-history.com/#vectorize-io/hindsight&mem0ai/mem0&supermemoryai/supermemory&letta-ai/letta&getzep/graphiti&topoteretes/cognee&Date)
+
 ---
 
 ## How we measured this
@@ -93,10 +97,6 @@ So you can reproduce it:
 A few details worth naming. Mem0's repository began life as *embedchain* before it was renamed, so its first 222 days partly reflect a different project's early audience — which only flatters Mem0's numbers, and Hindsight still leads by 2.3×. Letta's repository was originally *MemGPT*, which went viral on release, making it the strongest honest comparison on the list; Hindsight still beats its day-222 count by 1.6×. And Supermemory isn't actually open source in the way Hindsight is — its core product is closed, and the public repository is a companion to a proprietary service. We include it because its stars are still a meaningful proxy for developer interest in that product, but it's worth being clear that it's not a like-for-like open-source comparison: Hindsight's stars measure adoption of the actual thing you run, not interest in a closed system behind it.
 
 One last note on what stars do and don't mean: they measure mindshare and momentum, not revenue or production usage. This is a growth claim. For the adoption story, see the [10,000-stars retrospective](https://hindsight.vectorize.io/blog/2026/04/22/hindsight-10k-stars).
-
-Here's the live star-history chart for the legitimately-grown set, in absolute time:
-
-[![Star History Chart](https://api.star-history.com/svg?repos=vectorize-io/hindsight,mem0ai/mem0,supermemoryai/supermemory,letta-ai/letta,getzep/graphiti,topoteretes/cognee&type=Date)](https://star-history.com/#vectorize-io/hindsight&mem0ai/mem0&supermemoryai/supermemory&letta-ai/letta&getzep/graphiti&topoteretes/cognee&Date)
 
 ---
 
