@@ -141,6 +141,16 @@
       "icon": "/img/icons/codex.svg"
     },
     {
+      "id": "cursor",
+      "name": "Cursor",
+      "description": "Biomimetic long-term memory for the Cursor editor via Hindsight. Recalls relevant context at session start and retains conversation transcripts for future sessions.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/cursor",
+      "icon": "/img/icons/cursor.svg"
+    },
+    {
       "id": "cline",
       "name": "Cline",
       "description": "Automatic long-term memory for the Cline coding agent via lifecycle hooks (no MCP). Recalls relevant context before each task and retains what happened after.",
