@@ -463,7 +463,6 @@ pub fn retain(
         observation_scopes: None,
         strategy: None,
         update_mode: None,
-        receipt_uri: None,
     };
 
     let request = RetainRequest {

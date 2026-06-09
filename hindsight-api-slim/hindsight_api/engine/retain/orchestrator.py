@@ -17,6 +17,7 @@ from typing import Any
 
 from ...extensions.memory_defense import (
     DefenseAction,
+    DefenseDecision,
     MemoryDefenseExtension,
     apply_redaction,
     parse_policy,
@@ -28,10 +29,19 @@ from ..memory_engine import count_tokens, fq_table
 from . import bank_utils
 
 
+@dataclass
+class BlockedViolation:
+    """One item blocked by the Memory Defense policy (surfaced in the 422 body)."""
+
+    index: int
+    detector: str | None
+    message: str
+
+
 class MemoryDefenseAllBlockedError(Exception):
     """Raised when every item in a retain batch is blocked by the Memory Defense policy."""
 
-    def __init__(self, violations: list[dict]) -> None:  # type: ignore[type-arg]
+    def __init__(self, violations: list[BlockedViolation]) -> None:
         self.violations = violations
         super().__init__(f"all {len(violations)} items blocked by Memory Defense policy")
 
@@ -70,7 +80,7 @@ async def _fire_memory_defense_webhook(
     bank_id: str,
     operation_id: str | None,
     document_id: str | None,
-    decision: Any,
+    decision: DefenseDecision,
 ) -> None:
     """Fire a memory_defense.triggered webhook for a non-allow decision.
 
@@ -608,7 +618,7 @@ async def retain_batch(
     # decision we redact in place or drop the item, and fire a
     # memory_defense.triggered webhook when one is configured.
     _policy = parse_policy(getattr(config, "memory_defense", None))
-    _blocked_violations: list[dict] = []  # type: ignore[type-arg]
+    _blocked_violations: list[BlockedViolation] = []
 
     if memory_defense_extension is not None and _policy.enabled:
         async with acquire_with_retry(pool) as _defense_conn:
@@ -638,11 +648,11 @@ async def retain_batch(
                     contents_dicts[_idx]["content"] = _redacted
                 elif _decision.action is DefenseAction.BLOCK:
                     _blocked_violations.append(
-                        {
-                            "index": _idx,
-                            "detector": _decision.detector,
-                            "message": _decision.message,
-                        }
+                        BlockedViolation(
+                            index=_idx,
+                            detector=_decision.detector,
+                            message=_decision.message,
+                        )
                     )
 
                 await _fire_memory_defense_webhook(
@@ -661,7 +671,7 @@ async def retain_batch(
             raise MemoryDefenseAllBlockedError(_blocked_violations)
 
         # Remove blocked items from the pipeline.
-        _skip_indices = {v["index"] for v in _blocked_violations}
+        _skip_indices = {v.index for v in _blocked_violations}
         if _skip_indices:
             _surviving = [i for i in range(len(contents)) if i not in _skip_indices]
             contents = [contents[i] for i in _surviving]

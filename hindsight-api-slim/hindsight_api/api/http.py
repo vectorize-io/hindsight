@@ -6165,10 +6165,15 @@ def _register_routes(app: FastAPI):
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
+            from dataclasses import asdict
+
             from hindsight_api.engine.retain.orchestrator import MemoryDefenseAllBlockedError
 
             if isinstance(e, MemoryDefenseAllBlockedError):
-                raise HTTPException(status_code=422, detail={"violations": e.violations})
+                raise HTTPException(
+                    status_code=422,
+                    detail={"violations": [asdict(v) for v in e.violations]},
+                )
             import traceback
 
             # Create a summary of the input for debugging

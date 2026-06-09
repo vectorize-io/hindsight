@@ -61,6 +61,3 @@ hindsight-integrations/_drafts/
 
 blog-post*
 .worktrees/
-
-# Local-only plan + scratch directory (not part of the repo)
-docs/

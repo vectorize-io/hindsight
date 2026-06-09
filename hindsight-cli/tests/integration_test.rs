@@ -111,7 +111,6 @@ fn test_memory_item_timestamp_serializes_as_plain_string() {
         observation_scopes: None,
         strategy: None,
         update_mode: None,
-        receipt_uri: None,
     };
     let json = serde_json::to_string(&item).expect("MemoryItem must serialize");
     assert!(
