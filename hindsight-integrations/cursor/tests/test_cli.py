@@ -45,7 +45,9 @@ class TestInit:
         project.mkdir()
 
         with patch("hindsight_cursor.cli._plugin_data_dir", return_value=fake_plugin_data):
-            cmd_init(_Args(project=str(project), force=False, api_url=None, api_token=None, bank_id="cursor", no_mcp=False))
+            cmd_init(
+                _Args(project=str(project), force=False, api_url=None, api_token=None, bank_id="cursor", no_mcp=False)
+            )
 
         dest = project / ".cursor-plugin" / "hindsight-memory"
         assert dest.exists()
@@ -61,7 +63,9 @@ class TestInit:
         dest.mkdir(parents=True)
 
         with patch("hindsight_cursor.cli._plugin_data_dir", return_value=fake_plugin_data):
-            cmd_init(_Args(project=str(project), force=False, api_url=None, api_token=None, bank_id="cursor", no_mcp=False))
+            cmd_init(
+                _Args(project=str(project), force=False, api_url=None, api_token=None, bank_id="cursor", no_mcp=False)
+            )
 
         out = capsys.readouterr().out
         assert "already installed" in out
@@ -74,7 +78,9 @@ class TestInit:
         (dest / "old-file.txt").write_text("old")
 
         with patch("hindsight_cursor.cli._plugin_data_dir", return_value=fake_plugin_data):
-            cmd_init(_Args(project=str(project), force=True, api_url=None, api_token=None, bank_id="cursor", no_mcp=False))
+            cmd_init(
+                _Args(project=str(project), force=True, api_url=None, api_token=None, bank_id="cursor", no_mcp=False)
+            )
 
         assert (dest / "hooks" / "hooks.json").exists()
 
@@ -119,7 +125,16 @@ class TestInit:
             patch("hindsight_cursor.cli._USER_CONFIG_DIR", config_dir),
             patch("hindsight_cursor.cli._USER_CONFIG_FILE", config_file),
         ):
-            cmd_init(_Args(project=str(project), force=False, api_url="http://x", api_token=None, bank_id="cursor", no_mcp=False))
+            cmd_init(
+                _Args(
+                    project=str(project),
+                    force=False,
+                    api_url="http://x",
+                    api_token=None,
+                    bank_id="cursor",
+                    no_mcp=False,
+                )
+            )
 
         # Original config should be untouched
         cfg = json.loads(config_file.read_text())
@@ -162,7 +177,9 @@ class TestInit:
         project.mkdir()
 
         with patch("hindsight_cursor.cli._plugin_data_dir", return_value=fake_plugin_data):
-            cmd_init(_Args(project=str(project), force=False, api_url=None, api_token=None, bank_id="cursor", no_mcp=False))
+            cmd_init(
+                _Args(project=str(project), force=False, api_url=None, api_token=None, bank_id="cursor", no_mcp=False)
+            )
 
         mcp_file = project / ".cursor" / "mcp.json"
         assert not mcp_file.exists()
@@ -191,9 +208,7 @@ class TestInit:
         project.mkdir()
         mcp_dir = project / ".cursor"
         mcp_dir.mkdir()
-        (mcp_dir / "mcp.json").write_text(json.dumps({
-            "mcpServers": {"other-server": {"url": "http://other"}}
-        }))
+        (mcp_dir / "mcp.json").write_text(json.dumps({"mcpServers": {"other-server": {"url": "http://other"}}}))
 
         with patch("hindsight_cursor.cli._plugin_data_dir", return_value=fake_plugin_data):
             cmd_init(
@@ -239,12 +254,16 @@ class TestUninstall:
 
         mcp_dir = project / ".cursor"
         mcp_dir.mkdir()
-        (mcp_dir / "mcp.json").write_text(json.dumps({
-            "mcpServers": {
-                "hindsight": {"url": "http://localhost:8888/mcp/cursor/"},
-                "other": {"url": "http://other"},
-            }
-        }))
+        (mcp_dir / "mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "hindsight": {"url": "http://localhost:8888/mcp/cursor/"},
+                        "other": {"url": "http://other"},
+                    }
+                }
+            )
+        )
 
         cmd_uninstall(_Args(project=str(project)))
 

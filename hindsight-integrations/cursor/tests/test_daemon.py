@@ -42,9 +42,12 @@ class TestGetApiUrlResolution:
         """If the opt-in daemon start fails, fall back to the hosted backend
         rather than hard-erroring — the plugin should keep working."""
         config = {"hindsightApiUrl": "", "apiPort": 65535, "useLocalDaemon": True}
-        with patch("lib.daemon._check_health", return_value=False), patch(
-            "lib.daemon._ensure_daemon_running",
-            side_effect=RuntimeError("hindsight-embed not found"),
+        with (
+            patch("lib.daemon._check_health", return_value=False),
+            patch(
+                "lib.daemon._ensure_daemon_running",
+                side_effect=RuntimeError("hindsight-embed not found"),
+            ),
         ):
             assert get_api_url(config, allow_daemon_start=True) == DEFAULT_HINDSIGHT_API_URL
 
