@@ -20,7 +20,7 @@ This post is a walkthrough of the new Hindsight + Cline integration. It uses **C
 <!-- truncate -->
 
 - Cline has no persistent memory built in. Tasks restart from zero each time.
-- The Hindsight integration installs four lifecycle hook scripts (`TaskStart`, `UserPromptSubmit`, `TaskComplete`, `TaskCancel`) plus a small Python lib. One installer command, no `pip install` for runtime use.
+- The Hindsight integration installs four lifecycle hook scripts (`TaskStart`, `UserPromptSubmit`, `TaskComplete`, `TaskCancel`) plus a small Python lib. `pip install hindsight-cline`, one `install` command, and the hooks themselves run on stdlib Python 3 — no runtime dependencies.
 - **Recall is deterministic.** Because it runs on hooks, memory is injected automatically. There's no MCP tool the model can forget to use.
 - Recalled memories appear inside Cline as a `<hindsight_memories>` block, scoped to the current task description and your in-progress prompt.
 - Hindsight Cloud means no local daemon. Memory is stored server-side and follows you across machines. [Sign up free.](https://ui.hindsight.vectorize.io/signup)
@@ -38,12 +38,12 @@ Hindsight closes that gap by giving Cline a persistent memory bank, and the life
 
 Cline supports [lifecycle hooks](https://docs.cline.bot/customization/hooks): small executable scripts it runs at key moments. The Hindsight integration installs four of them and routes each event to a Hindsight API call:
 
-| Cline hook | What Hindsight does |
-| --- | --- |
-| `TaskStart` | Recall context for the new task description; inject it. |
+| Cline hook         | What Hindsight does                                                   |
+| ------------------ | --------------------------------------------------------------------- |
+| `TaskStart`        | Recall context for the new task description; inject it.               |
 | `UserPromptSubmit` | Recall memories for your message; record the prompt for retain later. |
-| `TaskComplete` | Retain the task's accumulated transcript and final summary. |
-| `TaskCancel` | Retain the partial transcript of a cancelled task. |
+| `TaskComplete`     | Retain the task's accumulated transcript and final summary.           |
+| `TaskCancel`       | Retain the partial transcript of a cancelled task.                    |
 
 Because it runs on hooks, memory is **deterministic**. There's no MCP tool the model can forget to call and no extra latency from a tool-use round-trip. The recall and retain logic runs at well-defined points in Cline's task lifecycle.
 
@@ -59,12 +59,16 @@ One Cline-specific detail worth knowing: **Cline doesn't hand hooks a transcript
 
 ## Installing
 
-The installer is a small Python script that copies the four hook files (plus their shared lib and a `settings.json`) into Cline's hooks directory.
-
-From your project directory:
+The installer is a small CLI that copies the four hook files (plus their shared lib and a `settings.json`) into Cline's hooks directory. Install it with pip:
 
 ```bash
-python /path/to/hindsight-integrations/cline/install.py \
+pip install hindsight-cline
+```
+
+Then, from your project directory:
+
+```bash
+hindsight-cline install \
   --api-url https://api.hindsight.vectorize.io \
   --api-token YOUR_KEY
 ```
@@ -72,12 +76,12 @@ python /path/to/hindsight-integrations/cline/install.py \
 That installs to `.clinerules/hooks/`; commit it to share with your team. To install globally (apply to every project), add `--global`:
 
 ```bash
-python install.py --global \
+hindsight-cline install --global \
   --api-url https://api.hindsight.vectorize.io \
   --api-token YOUR_KEY
 ```
 
-This drops hooks into `~/Documents/Cline/Rules/Hooks/` instead.
+This drops hooks into `~/Documents/Cline/Rules/Hooks/` instead. (`hindsight-cline uninstall` removes them.)
 
 **Final step, enable hooks in Cline:** Settings → Features → Hooks (toggle on).
 
@@ -168,16 +172,16 @@ See [Shared Memory for AI Coding Agents](https://hindsight.vectorize.io/blog/202
 
 Settings live in `~/.hindsight/cline.json` (personal overrides) or the installed `settings.json` (defaults). Every setting can also be set via `HINDSIGHT_*` environment variables.
 
-| Setting | Default | What it does |
-|---------|---------|--------------|
-| `bankId` | `cline` | Memory bank for this integration. |
-| `autoRecall` | `true` | Inject memories before tasks/prompts. |
-| `autoRetain` | `true` | Retain the task transcript when it ends. |
-| `recallBudget` | `mid` | Recall depth: `low` (fast) / `mid` / `high` (thorough). |
-| `recallTypes` | `["world","experience"]` | Memory categories to recall. |
-| `retainMission` | generic | Steers fact extraction; tell it what to focus on. |
-| `dynamicBankId` | `false` | Per-project bank isolation. |
-| `debug` | `false` | Log activity to stderr. |
+| Setting         | Default                  | What it does                                            |
+| --------------- | ------------------------ | ------------------------------------------------------- |
+| `bankId`        | `cline`                  | Memory bank for this integration.                       |
+| `autoRecall`    | `true`                   | Inject memories before tasks/prompts.                   |
+| `autoRetain`    | `true`                   | Retain the task transcript when it ends.                |
+| `recallBudget`  | `mid`                    | Recall depth: `low` (fast) / `mid` / `high` (thorough). |
+| `recallTypes`   | `["world","experience"]` | Memory categories to recall.                            |
+| `retainMission` | generic                  | Steers fact extraction; tell it what to focus on.       |
+| `dynamicBankId` | `false`                  | Per-project bank isolation.                             |
+| `debug`         | `false`                  | Log activity to stderr.                                 |
 
 A focused `retainMission` makes the extracted memories meaningfully better:
 
@@ -207,20 +211,20 @@ echo '{"hookName":"UserPromptSubmit","prompt":"how do we authenticate?","taskId"
 
 **Recall adds latency.** Every prompt triggers a Hindsight query before Cline sees it. With Hindsight Cloud and a fast connection that's typically under 300ms, imperceptible in interactive use. Drop `recallBudget` to `"low"`, or set `autoRecall: false`, if you need to skip it.
 
-**Retain runs at task end, not mid-task.** Memories from the task you're in become available *after* it completes. If you cancel a task you'd otherwise want to recall from, the `TaskCancel` hook still retains the partial transcript, but you have to actually cancel to trigger it.
+**Retain runs at task end, not mid-task.** Memories from the task you're in become available _after_ it completes. If you cancel a task you'd otherwise want to recall from, the `TaskCancel` hook still retains the partial transcript, but you have to actually cancel to trigger it.
 
 **Extraction quality depends on conversation quality.** Hindsight extracts facts from what's in the transcript. If a task is all file edits and no narration, there's little for the extractor to work with. A few sentences explaining what you decided and why go a long way.
 
 ## Recap
 
-| | Cline default | With Hindsight |
-|---|---|---|
-| Memory across tasks | None | Automatic |
-| Memory setup | Manual `.clinerules` / docs | Extracted from task transcripts |
-| Recall mechanism | Files Cline reads each task | Semantic search, injected per task/prompt |
-| Per-project isolation | No | Optional via `dynamicBankId` |
-| Team shared memory | No | Shared bank via Hindsight Cloud |
-| Model tool-calling needed | n/a | No (lifecycle hooks) |
+|                           | Cline default               | With Hindsight                            |
+| ------------------------- | --------------------------- | ----------------------------------------- |
+| Memory across tasks       | None                        | Automatic                                 |
+| Memory setup              | Manual `.clinerules` / docs | Extracted from task transcripts           |
+| Recall mechanism          | Files Cline reads each task | Semantic search, injected per task/prompt |
+| Per-project isolation     | No                          | Optional via `dynamicBankId`              |
+| Team shared memory        | No                          | Shared bank via Hindsight Cloud           |
+| Model tool-calling needed | n/a                         | No (lifecycle hooks)                      |
 
 ## Next Steps
 

@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 # The hook scripts do `sys.path.insert(0, <hooks dir>)` so `lib.*` resolves.
-# Mirror that here so the tests import the same modules.
-HOOKS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "hooks"))
+# Mirror that here (the hook payload now lives under the package as data).
+HOOKS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "hindsight_cline", "hooks"))
 if HOOKS_DIR not in sys.path:
     sys.path.insert(0, HOOKS_DIR)
 

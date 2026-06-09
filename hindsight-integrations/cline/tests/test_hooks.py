@@ -49,7 +49,9 @@ def test_task_start_recalls_and_seeds_transcript(http):
 
 def test_retain_posts_accumulated_transcript(http):
     content.append_turn("done1", "user", "build the parser")
-    hooks_impl.handle_retain(make_hook(hook_name="TaskComplete", task_id="done1", task="parser built"), base_config(), "completed")
+    hooks_impl.handle_retain(
+        make_hook(hook_name="TaskComplete", task_id="done1", task="parser built"), base_config(), "completed"
+    )
     posts = http.retain_calls()
     assert len(posts) == 1
     item = posts[0].body["items"][0]
@@ -87,7 +89,9 @@ def test_retain_tags_render_task_id(http):
 
 def test_main_user_prompt_submit_emits_cline_json(http, monkeypatch, capsys):
     http.results = [make_memory("uses Postgres")]
-    payload = json.dumps({"hookName": "UserPromptSubmit", "prompt": "which database?", "taskId": "m1", "workspaceRoots": ["/x"]})
+    payload = json.dumps(
+        {"hookName": "UserPromptSubmit", "prompt": "which database?", "taskId": "m1", "workspaceRoots": ["/x"]}
+    )
     monkeypatch.setattr("sys.stdin", io.StringIO(payload))
     hooks_impl.main_user_prompt_submit()
     out = json.loads(capsys.readouterr().out)
@@ -98,7 +102,9 @@ def test_main_user_prompt_submit_emits_cline_json(http, monkeypatch, capsys):
 
 def test_main_degrades_gracefully_when_server_down(http, monkeypatch, capsys):
     http.fail = True  # every request raises
-    payload = json.dumps({"hookName": "UserPromptSubmit", "prompt": "a real question", "taskId": "m2", "workspaceRoots": ["/x"]})
+    payload = json.dumps(
+        {"hookName": "UserPromptSubmit", "prompt": "a real question", "taskId": "m2", "workspaceRoots": ["/x"]}
+    )
     monkeypatch.setattr("sys.stdin", io.StringIO(payload))
     hooks_impl.main_user_prompt_submit()  # must not raise
     out = json.loads(capsys.readouterr().out)
