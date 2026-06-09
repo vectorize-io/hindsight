@@ -54,9 +54,7 @@ class TestToolRecallIncludeChunks:
     async def test_max_chunk_tokens_propagates(self, mock_request_context):
         engine = _make_mock_engine()
 
-        await tool_recall(
-            engine, "bank-1", "q", mock_request_context, max_chunk_tokens=2500, max_tokens=512
-        )
+        await tool_recall(engine, "bank-1", "q", mock_request_context, max_chunk_tokens=2500, max_tokens=512)
 
         kwargs = engine.recall_async.call_args.kwargs
         assert kwargs["max_chunk_tokens"] == 2500

@@ -394,9 +394,7 @@ class TestContextManager:
 
         configure(hindsight_api_url=HINDSIGHT_API_URL)
         set_defaults(bank_id=bank_id)
-        texts = _recall_until_contains(
-            "programming language preference", ["typescript", "javascript"]
-        )
+        texts = _recall_until_contains("programming language preference", ["typescript", "javascript"])
         assert "typescript" in texts or "javascript" in texts, f"Expected stored fact, got: {texts}"
 
     def test_context_manager_with_session_id(self, bank_id):

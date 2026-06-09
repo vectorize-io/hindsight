@@ -143,9 +143,7 @@ class TestCreateHindsightTools:
         configure(hindsight_api_url="http://config:8888")
         with patch("hindsight_ag2._client.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
-            create_hindsight_tools(
-                bank_id="test", hindsight_api_url="http://explicit:9999"
-            )
+            create_hindsight_tools(bank_id="test", hindsight_api_url="http://explicit:9999")
             mock_cls.assert_called_once()
             assert mock_cls.call_args.kwargs["base_url"] == "http://explicit:9999"
             assert mock_cls.call_args.kwargs["timeout"] == 30.0
@@ -162,9 +160,7 @@ class TestRetainTool:
         )
         result = tools[0]("The user likes Python")
         assert result == "Memory stored successfully."
-        client.retain.assert_called_once_with(
-            bank_id="test-bank", content="The user likes Python"
-        )
+        client.retain.assert_called_once_with(bank_id="test-bank", content="The user likes Python")
 
     def test_retain_passes_tags(self):
         client = _mock_client()
@@ -221,9 +217,7 @@ class TestRetainTool:
 class TestRecallTool:
     def test_recall_returns_numbered_results(self):
         client = _mock_client()
-        client.recall.return_value = _mock_recall_response(
-            ["User likes Python", "User is in NYC"]
-        )
+        client.recall.return_value = _mock_recall_response(["User likes Python", "User is in NYC"])
         tools = create_hindsight_tools(
             bank_id="test-bank",
             client=client,
@@ -469,9 +463,7 @@ class TestRegisterHindsightTools:
         agent.register_for_llm.return_value = lambda fn: fn
         executor.register_for_execution.return_value = lambda fn: fn
 
-        tools = register_hindsight_tools(
-            agent, executor, bank_id="test", client=client
-        )
+        tools = register_hindsight_tools(agent, executor, bank_id="test", client=client)
 
         assert len(tools) == 3
         assert agent.register_for_llm.call_count == 3

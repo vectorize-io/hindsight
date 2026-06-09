@@ -111,7 +111,7 @@ async def test_maintenance_loop_targets_only_affected_tenants(
             )
             if i % 2 == 0:
                 await conn.execute(
-                    f"INSERT INTO \"{s}\".audit_log (action, transport, started_at) "
+                    f'INSERT INTO "{s}".audit_log (action, transport, started_at) '
                     f"VALUES ('OLD', 'system', now() - INTERVAL '10 days')"
                 )
                 audit_with_old.add(s)
@@ -119,7 +119,7 @@ async def test_maintenance_loop_targets_only_affected_tenants(
             await conn.execute(f"INSERT INTO \"{s}\".llm_requests (status, started_at) VALUES ('success', now())")
             if i % 3 == 0:
                 await conn.execute(
-                    f"INSERT INTO \"{s}\".llm_requests (status, started_at) "
+                    f'INSERT INTO "{s}".llm_requests (status, started_at) '
                     f"VALUES ('success', now() - INTERVAL '3 days')"
                 )
                 llm_with_old.add(s)

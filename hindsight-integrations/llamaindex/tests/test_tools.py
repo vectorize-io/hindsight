@@ -164,9 +164,7 @@ class TestCreateHindsightTools:
         configure(hindsight_api_url="http://config:8888")
         with patch("hindsight_llamaindex._client.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
-            create_hindsight_tools(
-                bank_id="test", hindsight_api_url="http://explicit:9999"
-            )
+            create_hindsight_tools(bank_id="test", hindsight_api_url="http://explicit:9999")
             mock_cls.assert_called_once()
             assert mock_cls.call_args.kwargs["base_url"] == "http://explicit:9999"
             assert mock_cls.call_args.kwargs["timeout"] == 30.0
@@ -187,9 +185,7 @@ class TestRetainTool:
     def test_retain_passes_tags(self):
         client = _mock_client()
         client.retain.return_value = _mock_retain_response()
-        spec = HindsightToolSpec(
-            bank_id="test-bank", client=client, tags=["source:chat"]
-        )
+        spec = HindsightToolSpec(bank_id="test-bank", client=client, tags=["source:chat"])
         spec.retain_memory("some content")
         call_kwargs = client.retain.call_args[1]
         assert call_kwargs["tags"] == ["source:chat"]
@@ -209,9 +205,7 @@ class TestRetainTool:
     def test_retain_passes_explicit_document_id(self):
         client = _mock_client()
         client.retain.return_value = _mock_retain_response()
-        spec = HindsightToolSpec(
-            bank_id="test", client=client, retain_document_id="session-123"
-        )
+        spec = HindsightToolSpec(bank_id="test", client=client, retain_document_id="session-123")
         spec.retain_memory("content")
         call_kwargs = client.retain.call_args[1]
         assert call_kwargs["document_id"] == "session-123"
@@ -257,9 +251,7 @@ class TestRetainTool:
 class TestRecallTool:
     def test_recall_returns_numbered_results(self):
         client = _mock_client()
-        client.recall.return_value = _mock_recall_response(
-            ["User likes Python", "User is in NYC"]
-        )
+        client.recall.return_value = _mock_recall_response(["User likes Python", "User is in NYC"])
         spec = HindsightToolSpec(bank_id="test-bank", client=client)
         result = spec.recall_memory("user preferences")
         assert "1. User likes Python" in result
@@ -275,9 +267,7 @@ class TestRecallTool:
     def test_recall_passes_budget_and_max_tokens(self):
         client = _mock_client()
         client.recall.return_value = _mock_recall_response(["fact"])
-        spec = HindsightToolSpec(
-            bank_id="test", client=client, budget="high", max_tokens=2048
-        )
+        spec = HindsightToolSpec(bank_id="test", client=client, budget="high", max_tokens=2048)
         spec.recall_memory("query")
         call_kwargs = client.recall.call_args[1]
         assert call_kwargs["budget"] == "high"
@@ -312,9 +302,7 @@ class TestRecallTool:
     def test_recall_passes_include_entities(self):
         client = _mock_client()
         client.recall.return_value = _mock_recall_response(["fact"])
-        spec = HindsightToolSpec(
-            bank_id="test", client=client, recall_include_entities=True
-        )
+        spec = HindsightToolSpec(bank_id="test", client=client, recall_include_entities=True)
         spec.recall_memory("query")
         call_kwargs = client.recall.call_args[1]
         assert call_kwargs["include_entities"] is True
@@ -336,9 +324,7 @@ class TestReflectTool:
         )
         spec = HindsightToolSpec(bank_id="test-bank", client=client)
         result = spec.reflect_on_memory("What do you know about the user?")
-        assert (
-            result == "The user is a Python developer who prefers functional patterns."
-        )
+        assert result == "The user is a Python developer who prefers functional patterns."
 
     def test_reflect_empty_returns_fallback(self):
         client = _mock_client()
@@ -423,9 +409,7 @@ class TestBankMission:
     def test_creates_bank_with_mission_on_first_use(self):
         client = _mock_client()
         client.retain.return_value = _mock_retain_response()
-        spec = HindsightToolSpec(
-            bank_id="test-bank", client=client, mission="Track user preferences"
-        )
+        spec = HindsightToolSpec(bank_id="test-bank", client=client, mission="Track user preferences")
         spec.retain_memory("content")
         client.create_bank.assert_called_once_with(
             bank_id="test-bank",
@@ -437,9 +421,7 @@ class TestBankMission:
         client = _mock_client()
         client.retain.return_value = _mock_retain_response()
         client.recall.return_value = _mock_recall_response(["fact"])
-        spec = HindsightToolSpec(
-            bank_id="test-bank", client=client, mission="my mission"
-        )
+        spec = HindsightToolSpec(bank_id="test-bank", client=client, mission="my mission")
         spec.retain_memory("content")
         spec.recall_memory("query")
         # create_bank should only be called once
@@ -449,9 +431,7 @@ class TestBankMission:
         client = _mock_client()
         client.create_bank.side_effect = RuntimeError("already exists")
         client.retain.return_value = _mock_retain_response()
-        spec = HindsightToolSpec(
-            bank_id="test-bank", client=client, mission="my mission"
-        )
+        spec = HindsightToolSpec(bank_id="test-bank", client=client, mission="my mission")
         # Should not raise
         result = spec.retain_memory("content")
         assert result == "Memory stored successfully."

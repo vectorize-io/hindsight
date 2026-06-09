@@ -35,16 +35,12 @@ class TestCollectCoercibleTypes:
 
     def test_anyof_nullable_array(self):
         """list[str] | None → anyOf with array and null."""
-        arrays, objects = self._run(
-            {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "null"}]}
-        )
+        arrays, objects = self._run({"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "null"}]})
         assert "p" in arrays
 
     def test_oneof_nullable_array(self):
         """oneOf variant."""
-        arrays, objects = self._run(
-            {"oneOf": [{"type": "array", "items": {"type": "string"}}, {"type": "null"}]}
-        )
+        arrays, objects = self._run({"oneOf": [{"type": "array", "items": {"type": "string"}}, {"type": "null"}]})
         assert "p" in arrays
 
     # --- object types ---
@@ -136,9 +132,7 @@ class TestCoerceStringJson:
         assert result["metadata"] == {}
 
     def test_native_dict_passthrough(self):
-        result = _coerce_string_json(
-            {"metadata": {"key": "value"}}, array_params=set(), object_params={"metadata"}
-        )
+        result = _coerce_string_json({"metadata": {"key": "value"}}, array_params=set(), object_params={"metadata"})
         assert result["metadata"] == {"key": "value"}
 
     # --- non-coercible values left untouched ---
@@ -153,16 +147,12 @@ class TestCoerceStringJson:
 
     def test_wrong_json_type_not_coerced_list(self):
         """String that parses to a dict should NOT be coerced for an array param."""
-        result = _coerce_string_json(
-            {"tags": '{"key": "value"}'}, array_params={"tags"}, object_params=set()
-        )
+        result = _coerce_string_json({"tags": '{"key": "value"}'}, array_params={"tags"}, object_params=set())
         assert result["tags"] == '{"key": "value"}'
 
     def test_wrong_json_type_not_coerced_dict(self):
         """String that parses to a list should NOT be coerced for an object param."""
-        result = _coerce_string_json(
-            {"metadata": '["a", "b"]'}, array_params=set(), object_params={"metadata"}
-        )
+        result = _coerce_string_json({"metadata": '["a", "b"]'}, array_params=set(), object_params={"metadata"})
         assert result["metadata"] == '["a", "b"]'
 
     def test_string_param_not_touched(self):
@@ -175,15 +165,11 @@ class TestCoerceStringJson:
         assert result["query"] == '["looks", "like", "json"]'
 
     def test_integer_param_not_touched(self):
-        result = _coerce_string_json(
-            {"max_tokens": 4096}, array_params=set(), object_params=set()
-        )
+        result = _coerce_string_json({"max_tokens": 4096}, array_params=set(), object_params=set())
         assert result["max_tokens"] == 4096
 
     def test_boolean_param_not_touched(self):
-        result = _coerce_string_json(
-            {"verbose": True}, array_params=set(), object_params=set()
-        )
+        result = _coerce_string_json({"verbose": True}, array_params=set(), object_params=set())
         assert result["verbose"] is True
 
     def test_missing_param_no_error(self):
@@ -277,13 +263,15 @@ class TestMakeToolsTolerantIntegration:
         mcp, captured = self._create_mcp_with_tool()
         _make_tools_tolerant(mcp)
         tool = _get_mcp_tools(mcp)["test_tool"]
-        await tool.run({
-            "query": "hi",
-            "max_tokens": 200,
-            "verbose": True,
-            "tags": ["x"],
-            "metadata": {"a": "b"},
-        })
+        await tool.run(
+            {
+                "query": "hi",
+                "max_tokens": 200,
+                "verbose": True,
+                "tags": ["x"],
+                "metadata": {"a": "b"},
+            }
+        )
         assert captured["query"] == "hi"
         assert captured["max_tokens"] == 200
         assert captured["verbose"] is True
@@ -296,11 +284,13 @@ class TestMakeToolsTolerantIntegration:
         mcp, captured = self._create_mcp_with_tool()
         _make_tools_tolerant(mcp)
         tool = _get_mcp_tools(mcp)["test_tool"]
-        await tool.run({
-            "query": "hi",
-            "tags": '["x"]',
-            "explanation": "LLM added this",
-        })
+        await tool.run(
+            {
+                "query": "hi",
+                "tags": '["x"]',
+                "explanation": "LLM added this",
+            }
+        )
         assert captured["tags"] == ["x"]
         assert "explanation" not in captured
 

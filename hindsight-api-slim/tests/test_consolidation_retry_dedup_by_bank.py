@@ -230,8 +230,7 @@ async def test_backoff_matches_schedule_by_retry_count(memory, retry_count):
 
     delta = (excinfo.value.retry_at - before).total_seconds()
     assert expected_backoff <= delta <= expected_backoff + 10, (
-        f"retry_count={retry_count}: expected backoff ~{expected_backoff}s, "
-        f"got delta={delta:.2f}s"
+        f"retry_count={retry_count}: expected backoff ~{expected_backoff}s, got delta={delta:.2f}s"
     )
 
     await _cleanup(pool, bank_id, op_id)
@@ -266,8 +265,6 @@ async def test_retry_is_indefinite(memory):
 
     delta = (excinfo.value.retry_at - before).total_seconds()
     cap = _CONSOLIDATION_RETRY_BACKOFF_MAX_SECONDS
-    assert cap <= delta <= cap + 10, (
-        f"At retry_count=100 expected backoff at cap (~{cap}s), got {delta:.2f}s"
-    )
+    assert cap <= delta <= cap + 10, f"At retry_count=100 expected backoff at cap (~{cap}s), got {delta:.2f}s"
 
     await _cleanup(pool, bank_id, op_id)

@@ -33,9 +33,7 @@ def _make_client(create_side_effect=None):
     elif callable(create_side_effect):
         create_mock.side_effect = create_side_effect
     else:
-        create_mock.return_value = SimpleNamespace(
-            name="cachedContents/test-cache-name-001"
-        )
+        create_mock.return_value = SimpleNamespace(name="cachedContents/test-cache-name-001")
 
     client = MagicMock()
     client.aio = MagicMock()
@@ -127,18 +125,12 @@ async def test_first_call_creates_subsequent_reuses():
 @pytest.mark.asyncio
 async def test_different_prefixes_create_separately():
     client, create_mock = _make_client(
-        create_side_effect=lambda *a, **kw: SimpleNamespace(
-            name=f"cachedContents/created-{create_mock.call_count}"
-        )
+        create_side_effect=lambda *a, **kw: SimpleNamespace(name=f"cachedContents/created-{create_mock.call_count}")
     )
     mgr = GeminiCacheManager(client)
 
-    name_a = await mgr.get_or_create(
-        model="m", system_instruction="A", response_schema=None
-    )
-    name_b = await mgr.get_or_create(
-        model="m", system_instruction="B", response_schema=None
-    )
+    name_a = await mgr.get_or_create(model="m", system_instruction="A", response_schema=None)
+    name_b = await mgr.get_or_create(model="m", system_instruction="B", response_schema=None)
     assert name_a != name_b
     assert create_mock.call_count == 2
 
@@ -155,9 +147,7 @@ async def test_minimum_token_count_error_returns_none():
     client, _ = _make_client(create_side_effect=err)
     mgr = GeminiCacheManager(client)
 
-    result = await mgr.get_or_create(
-        model="m", system_instruction="tiny", response_schema=None
-    )
+    result = await mgr.get_or_create(model="m", system_instruction="tiny", response_schema=None)
     assert result is None
 
 
@@ -169,9 +159,7 @@ async def test_other_sdk_errors_also_return_none():
     client, _ = _make_client(create_side_effect=err)
     mgr = GeminiCacheManager(client)
 
-    result = await mgr.get_or_create(
-        model="m", system_instruction="ok-sized prefix", response_schema=None
-    )
+    result = await mgr.get_or_create(model="m", system_instruction="ok-sized prefix", response_schema=None)
     assert result is None
 
 
@@ -194,12 +182,8 @@ async def test_failed_create_does_not_poison_cache():
 
     mgr = GeminiCacheManager(client)
 
-    first = await mgr.get_or_create(
-        model="m", system_instruction="prefix", response_schema=None
-    )
-    second = await mgr.get_or_create(
-        model="m", system_instruction="prefix", response_schema=None
-    )
+    first = await mgr.get_or_create(model="m", system_instruction="prefix", response_schema=None)
+    second = await mgr.get_or_create(model="m", system_instruction="prefix", response_schema=None)
 
     assert first is None
     assert second == "cachedContents/recovered"
@@ -214,9 +198,7 @@ async def test_refreshes_after_ttl_margin(monkeypatch):
     """An entry created at t=0 with ttl=10 and margin=2 should be
     treated as stale at t>=8 and trigger a recreate."""
     client, create_mock = _make_client(
-        create_side_effect=lambda *a, **kw: SimpleNamespace(
-            name=f"cachedContents/v{create_mock.call_count}"
-        )
+        create_side_effect=lambda *a, **kw: SimpleNamespace(name=f"cachedContents/v{create_mock.call_count}")
     )
     mgr = GeminiCacheManager(client, ttl_seconds=10, refresh_margin_seconds=2)
 
@@ -226,24 +208,18 @@ async def test_refreshes_after_ttl_margin(monkeypatch):
         lambda: fake_now["t"],
     )
 
-    first = await mgr.get_or_create(
-        model="m", system_instruction="p", response_schema=None
-    )
+    first = await mgr.get_or_create(model="m", system_instruction="p", response_schema=None)
     assert first == "cachedContents/v1"
 
     # Advance to just before the refresh boundary — should reuse.
     fake_now["t"] = 1000.0 + 7.0
-    again = await mgr.get_or_create(
-        model="m", system_instruction="p", response_schema=None
-    )
+    again = await mgr.get_or_create(model="m", system_instruction="p", response_schema=None)
     assert again == "cachedContents/v1"
     assert create_mock.call_count == 1
 
     # Advance past the refresh boundary — should recreate.
     fake_now["t"] = 1000.0 + 9.0
-    refreshed = await mgr.get_or_create(
-        model="m", system_instruction="p", response_schema=None
-    )
+    refreshed = await mgr.get_or_create(model="m", system_instruction="p", response_schema=None)
     assert refreshed == "cachedContents/v2"
     assert create_mock.call_count == 2
 
@@ -295,9 +271,7 @@ async def test_gemini_llm_uses_cache_when_enabled(monkeypatch):
     # Replace the SDK-shaped client with a fake whose caches.create returns
     # a predictable name. The lazy import inside get_or_create_cached_prefix
     # picks up the patched module-level GeminiCacheManager naturally.
-    fake_create = AsyncMock(
-        return_value=SimpleNamespace(name="cachedContents/from-llm-test")
-    )
+    fake_create = AsyncMock(return_value=SimpleNamespace(name="cachedContents/from-llm-test"))
     llm._client = MagicMock()
     llm._client.aio = MagicMock()
     llm._client.aio.caches = MagicMock()
@@ -333,7 +307,9 @@ async def test_call_falls_back_to_uncached_when_cache_400s():
     from hindsight_api.engine.providers.gemini_cache import GeminiCacheManager, _CacheEntry
     from hindsight_api.engine.providers.gemini_llm import GeminiLLM
 
-    llm = GeminiLLM(provider="gemini", api_key="not-real-key", base_url="", model="gemini-test", prompt_cache_enabled=True)
+    llm = GeminiLLM(
+        provider="gemini", api_key="not-real-key", base_url="", model="gemini-test", prompt_cache_enabled=True
+    )
 
     # Seed a cache manager entry that maps to the (now invalid) cache name.
     mgr = GeminiCacheManager(client=MagicMock())
@@ -413,9 +389,7 @@ def test_fingerprint_changes_with_tools():
     """Two prefixes that differ ONLY in tools must hash differently —
     otherwise a loop that adds a tool would silently reuse a stale
     cache that doesn't know about it."""
-    tools_a = [
-        {"type": "function", "function": {"name": "search", "description": "search", "parameters": {}}}
-    ]
+    tools_a = [{"type": "function", "function": {"name": "search", "description": "search", "parameters": {}}}]
     tools_b = [
         {"type": "function", "function": {"name": "search", "description": "search", "parameters": {}}},
         {"type": "function", "function": {"name": "fetch", "description": "fetch", "parameters": {}}},
@@ -455,7 +429,10 @@ async def test_get_or_create_passes_tools_to_create():
 
     mgr = GeminiCacheManager(client)
     tools = [
-        {"type": "function", "function": {"name": "search", "description": "do a search", "parameters": {"type": "object"}}}
+        {
+            "type": "function",
+            "function": {"name": "search", "description": "do a search", "parameters": {"type": "object"}},
+        }
     ]
     name = await mgr.get_or_create(
         model="gemini-3.1-flash-lite",

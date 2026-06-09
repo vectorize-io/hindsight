@@ -109,9 +109,7 @@ class TestE2ETools:
 
     def test_recall_empty_bank(self, live):
         client, bank_id = live
-        tools = create_hindsight_tools(
-            bank_id=bank_id, client=client, include_retain=False, include_reflect=False
-        )
+        tools = create_hindsight_tools(bank_id=bank_id, client=client, include_retain=False, include_reflect=False)
         result = str(_tool(tools, "recall_memory").call(query="anything at all"))
         assert result == _NO_MEMORIES
 
@@ -139,6 +137,4 @@ class TestE2EHindsightMemory:
             if "postgresql" in joined:
                 return
             time.sleep(1.0)
-        pytest.fail(
-            "HindsightMemory.aget never surfaced the retained PostgreSQL fact after ~12s"
-        )
+        pytest.fail("HindsightMemory.aget never surfaced the retained PostgreSQL fact after ~12s")

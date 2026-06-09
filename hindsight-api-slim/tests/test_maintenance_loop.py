@@ -50,7 +50,9 @@ async def _insert_fact(conn, bank_id: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_reconcile_submits_eligible_skips_disabled_and_in_flight(memory: MemoryEngine, request_context, monkeypatch):
+async def test_reconcile_submits_eligible_skips_disabled_and_in_flight(
+    memory: MemoryEngine, request_context, monkeypatch
+):
     """Reconcile enqueues consolidation for eligible banks and skips banks that
     disabled auto-consolidation or already have an in-flight consolidation."""
     eligible = await _make_bank(

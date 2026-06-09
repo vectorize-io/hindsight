@@ -1,4 +1,5 @@
 """Tests for link_utils datetime handling, temporal link computation, and semantic link splitting."""
+
 import numpy as np
 import pytest
 from datetime import datetime, timezone, timedelta
@@ -374,6 +375,7 @@ class TestComputeSemanticLinksWithinBatch:
         links = compute_semantic_links_within_batch(unit_ids, embs, top_k=3, threshold=0.5)
         # Each unit should have at most 3 outgoing links
         from collections import Counter
+
         from_counts = Counter(lnk[0] for lnk in links)
         for count in from_counts.values():
             assert count <= 3
@@ -532,8 +534,6 @@ class TestComputeSemanticLinksAnnPgBouncerSafety:
         tuning_statements = [s for s in executed_sql if guc in s]
         assert tuning_statements, f"{guc} must be tuned for retain ANN under ext={ext}"
         for stmt in tuning_statements:
-            assert stmt.strip().startswith("SET LOCAL"), (
-                f"{guc} must use SET LOCAL, got: {stmt}"
-            )
+            assert stmt.strip().startswith("SET LOCAL"), f"{guc} must use SET LOCAL, got: {stmt}"
         # And there must not be a RESET — SET LOCAL handles it at commit.
         assert not any(f"RESET {guc}" in s for s in executed_sql)

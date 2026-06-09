@@ -1,6 +1,7 @@
 """
 Test chunking functionality for large documents.
 """
+
 import pytest
 from hindsight_api.engine.retain.fact_extraction import chunk_text
 
@@ -53,4 +54,3 @@ def test_chunk_text_64k():
     # Verify we didn't lose content
     combined_length = sum(len(chunk) for chunk in chunks)
     assert combined_length >= len(text) * 0.95, "Lost too much content during chunking"
-

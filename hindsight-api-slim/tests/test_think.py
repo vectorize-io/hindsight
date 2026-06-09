@@ -1,6 +1,7 @@
 """
 Test reflect (think) function.
 """
+
 import pytest
 from datetime import datetime, timezone
 from hindsight_api.engine.memory_engine import Budget
@@ -28,4 +29,3 @@ async def test_think_without_prior_context(memory, request_context):
     # Should still return an answer (even if it says it doesn't have enough info)
     assert result.text, "Should return some answer"
     assert result.based_on, "Should return based_on structure"
-

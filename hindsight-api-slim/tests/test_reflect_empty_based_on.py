@@ -34,8 +34,8 @@ async def test_reflect_with_no_memories_empty_bank(api_client):
             "budget": "low",
             "include": {
                 "facts": {}  # Request facts but bank is empty
-            }
-        }
+            },
+        },
     )
 
     assert response.status_code == 200
@@ -43,10 +43,11 @@ async def test_reflect_with_no_memories_empty_bank(api_client):
 
     # DEBUG: Print what the API actually returned
     import json
-    print("\n" + "="*80)
+
+    print("\n" + "=" * 80)
     print("API Response:")
     print(json.dumps(data, indent=2))
-    print("="*80 + "\n")
+    print("=" * 80 + "\n")
 
     # Verify response structure
     assert "text" in data
@@ -87,9 +88,9 @@ async def test_reflect_without_include_facts(api_client):
         f"/v1/default/banks/{bank_id}/reflect",
         json={
             "query": "Hello world",
-            "budget": "low"
+            "budget": "low",
             # No include.facts
-        }
+        },
     )
 
     assert response.status_code == 200

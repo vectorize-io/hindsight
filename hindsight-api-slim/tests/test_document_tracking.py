@@ -1,6 +1,7 @@
 """
 Tests for document tracking and upsert functionality.
 """
+
 import logging
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -357,9 +358,7 @@ async def test_document_persisted_with_zero_facts_async_submit(memory_real_llm, 
             elapsed += wait_interval
 
             # Check if document exists
-            doc = await memory.get_document(
-                "doc-async-zero-facts", bank_id, request_context=request_context
-            )
+            doc = await memory.get_document("doc-async-zero-facts", bank_id, request_context=request_context)
             if doc is not None:
                 break
 

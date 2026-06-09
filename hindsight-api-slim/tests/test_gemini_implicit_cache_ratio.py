@@ -34,9 +34,7 @@ from hindsight_api.engine.consolidation.consolidator import run_consolidation_jo
 from hindsight_api.engine.llm_trace import LLMRequestEntry
 from hindsight_api.engine.llm_wrapper import LLMConfig
 
-_GEMINI_API_KEY = (
-    os.getenv("HINDSIGHT_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-)
+_GEMINI_API_KEY = os.getenv("HINDSIGHT_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 _RUN = os.getenv("HINDSIGHT_RUN_GEMINI_EVALS") == "1" and bool(_GEMINI_API_KEY)
 
 pytestmark = pytest.mark.skipif(

@@ -371,9 +371,7 @@ class TestRecoverConsolidation:
                     mem_id,
                 )
 
-        result = await memory_no_llm_verify.retry_failed_consolidation(
-            bank_id, request_context=request_context
-        )
+        result = await memory_no_llm_verify.retry_failed_consolidation(bank_id, request_context=request_context)
 
         assert result["retried_count"] == 2
 
@@ -394,9 +392,7 @@ class TestRecoverConsolidation:
         bank_id = f"test-recover-zero-{uuid.uuid4().hex[:8]}"
         await memory_no_llm_verify.get_bank_profile(bank_id=bank_id, request_context=request_context)
 
-        result = await memory_no_llm_verify.retry_failed_consolidation(
-            bank_id, request_context=request_context
-        )
+        result = await memory_no_llm_verify.retry_failed_consolidation(bank_id, request_context=request_context)
 
         assert result["retried_count"] == 0
 
@@ -410,14 +406,10 @@ class TestRecoverConsolidation:
 
         async with memory_no_llm_verify._pool.acquire() as conn:
             (mem_id,) = await _insert_memories(conn, bank_id, ["Grace is an expert rock climber."])
-            await conn.execute(
-                "UPDATE memory_units SET consolidation_failed_at = NOW() WHERE id = $1", mem_id
-            )
+            await conn.execute("UPDATE memory_units SET consolidation_failed_at = NOW() WHERE id = $1", mem_id)
 
         # Recover
-        recover_result = await memory_no_llm_verify.retry_failed_consolidation(
-            bank_id, request_context=request_context
-        )
+        recover_result = await memory_no_llm_verify.retry_failed_consolidation(bank_id, request_context=request_context)
         assert recover_result["retried_count"] == 1
 
         # Now consolidate with a healthy LLM
@@ -460,9 +452,7 @@ class TestRecoverConsolidation:
                 ["Henry is a professional chef.", "Henry trained at Le Cordon Bleu."],
             )
             for mem_id in ids:
-                await conn.execute(
-                    "UPDATE memory_units SET consolidation_failed_at = NOW() WHERE id = $1", mem_id
-                )
+                await conn.execute("UPDATE memory_units SET consolidation_failed_at = NOW() WHERE id = $1", mem_id)
 
         app = create_app(memory_no_llm_verify, initialize_memory=False)
         transport = httpx.ASGITransport(app=app)

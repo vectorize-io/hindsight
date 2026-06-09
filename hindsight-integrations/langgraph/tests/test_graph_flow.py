@@ -48,14 +48,10 @@ async def test_compiled_graph_recall_agent_retain_flow():
     builder.add_edge("retain", END)
     graph = builder.compile()
 
-    result = await graph.ainvoke(
-        {"messages": [HumanMessage(content="What do I enjoy outdoors?")]}
-    )
+    result = await graph.ainvoke({"messages": [HumanMessage(content="What do I enjoy outdoors?")]})
 
     # recall node injected the mocked memory as a SystemMessage
-    system_text = " ".join(
-        m.content for m in result["messages"] if isinstance(m, SystemMessage)
-    ).lower()
+    system_text = " ".join(m.content for m in result["messages"] if isinstance(m, SystemMessage)).lower()
     assert "hiking" in system_text, f"memory not injected into graph state: {system_text}"
 
     # retain node stored the human message

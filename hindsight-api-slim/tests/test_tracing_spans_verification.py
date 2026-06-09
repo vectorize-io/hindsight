@@ -48,6 +48,7 @@ async def test_recall_span_hierarchy(mock_tracer, memory, request_context):
 
         # Wait a bit for any background tasks to settle
         import asyncio
+
         await asyncio.sleep(0.5)
 
         # Reset mocks after retain

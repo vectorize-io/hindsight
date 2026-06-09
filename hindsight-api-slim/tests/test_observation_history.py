@@ -66,13 +66,9 @@ class TestObservationHistory:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
-    async def test_returns_none_for_missing_observation(
-        self, memory: MemoryEngine, request_context: Any
-    ) -> None:
+    async def test_returns_none_for_missing_observation(self, memory: MemoryEngine, request_context: Any) -> None:
         bank_id = f"test-obs-hist-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
-        result = await memory.get_observation_history(
-            bank_id, str(uuid.uuid4()), request_context=request_context
-        )
+        result = await memory.get_observation_history(bank_id, str(uuid.uuid4()), request_context=request_context)
         assert result is None
         await memory.delete_bank(bank_id, request_context=request_context)

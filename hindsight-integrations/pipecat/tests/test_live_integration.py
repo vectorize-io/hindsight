@@ -53,6 +53,7 @@ def _http_get(path: str) -> dict:
 def _make_frame(messages: list[dict[str, Any]]) -> MagicMock:
     """Build a mock OpenAILLMContextFrame that the processor will recognize."""
     from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContextFrame
+
     frame = MagicMock(spec=OpenAILLMContextFrame)
     ctx = MagicMock()
     ctx.messages = messages
@@ -143,10 +144,7 @@ async def run_live_test() -> bool:
     # 5. Verify Inject — <hindsight_memories> system message added
     print("\n[4] Verify Inject (hindsight_memories system message)")
     injected_messages = frame2.context.messages
-    memory_msgs = [
-        m for m in injected_messages
-        if m.get("role") == "system" and _MEMORY_MARKER in m.get("content", "")
-    ]
+    memory_msgs = [m for m in injected_messages if m.get("role") == "system" and _MEMORY_MARKER in m.get("content", "")]
     if not memory_msgs:
         print("  ❌ No <hindsight_memories> system message injected")
         return False
@@ -171,8 +169,7 @@ async def run_live_test() -> bool:
     print("\n[6] Verify Idempotency (re-inject should not duplicate)")
     frame3 = await _run_turn(service, messages_t2)
     injected_msgs_after = [
-        m for m in frame3.context.messages
-        if m.get("role") == "system" and _MEMORY_MARKER in m.get("content", "")
+        m for m in frame3.context.messages if m.get("role") == "system" and _MEMORY_MARKER in m.get("content", "")
     ]
     _print("hindsight_memories system messages", len(injected_msgs_after))
     if len(injected_msgs_after) != 1:

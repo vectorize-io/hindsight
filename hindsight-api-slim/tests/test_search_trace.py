@@ -1,6 +1,7 @@
 """
 Test search tracing functionality.
 """
+
 from datetime import datetime, timezone
 
 import pytest
@@ -33,7 +34,6 @@ async def test_search_with_trace(memory, request_context):
     bank_id = f"test_trace_{datetime.now(timezone.utc).timestamp()}"
 
     try:
-
         # Store some test memories
         await memory.retain_async(
             bank_id=bank_id,
@@ -59,7 +59,7 @@ async def test_search_with_trace(memory, request_context):
             bank_id=bank_id,
             query="Who works at Google?",
             fact_type=["world"],
-            budget=Budget.LOW, # 20,
+            budget=Budget.LOW,  # 20,
             max_tokens=512,
             enable_trace=True,
             request_context=request_context,
@@ -134,7 +134,6 @@ async def test_search_without_trace(memory, request_context):
     bank_id = f"test_no_trace_{datetime.now(timezone.utc).timestamp()}"
 
     try:
-
         # Store a test memory
         await memory.retain_async(
             bank_id=bank_id,
@@ -148,7 +147,7 @@ async def test_search_without_trace(memory, request_context):
             bank_id=bank_id,
             query="test",
             fact_type=["world"],
-            budget=Budget.LOW, # 10,
+            budget=Budget.LOW,  # 10,
             max_tokens=512,
             enable_trace=False,
             request_context=request_context,

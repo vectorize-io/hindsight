@@ -141,9 +141,7 @@ class TestCreateHindsightTools:
         configure(hindsight_api_url="http://config:8888")
         with patch("hindsight_langgraph._client.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
-            create_hindsight_tools(
-                bank_id="test", hindsight_api_url="http://explicit:9999"
-            )
+            create_hindsight_tools(bank_id="test", hindsight_api_url="http://explicit:9999")
             call_kwargs = mock_cls.call_args[1]
             assert call_kwargs["base_url"] == "http://explicit:9999"
             assert call_kwargs["timeout"] == 30.0
@@ -162,9 +160,7 @@ class TestRetainTool:
         )
         result = await tools[0].ainvoke("The user likes Python")
         assert result == "Memory stored successfully."
-        client.aretain.assert_called_once_with(
-            bank_id="test-bank", content="The user likes Python"
-        )
+        client.aretain.assert_called_once_with(bank_id="test-bank", content="The user likes Python")
 
     @pytest.mark.asyncio
     async def test_retain_passes_tags(self):
@@ -199,9 +195,7 @@ class TestRecallTool:
     @pytest.mark.asyncio
     async def test_recall_returns_numbered_results(self):
         client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(
-            ["User likes Python", "User is in NYC"]
-        )
+        client.arecall.return_value = _mock_recall_response(["User likes Python", "User is in NYC"])
         tools = create_hindsight_tools(
             bank_id="test-bank",
             client=client,
@@ -274,9 +268,7 @@ class TestReflectTool:
             include_recall=False,
         )
         result = await tools[0].ainvoke("What do you know about the user?")
-        assert (
-            result == "The user is a Python developer who prefers functional patterns."
-        )
+        assert result == "The user is a Python developer who prefers functional patterns."
 
     @pytest.mark.asyncio
     async def test_reflect_empty_returns_fallback(self):
@@ -508,8 +500,6 @@ class TestMemoryInstructions:
         client = _mock_client()
         client.arecall.side_effect = RuntimeError("connection refused")
 
-        fn = memory_instructions(
-            bank_id="test", client=client, base_instructions="You are helpful."
-        )
+        fn = memory_instructions(bank_id="test", client=client, base_instructions="You are helpful.")
         result = await fn()
         assert result == "You are helpful."

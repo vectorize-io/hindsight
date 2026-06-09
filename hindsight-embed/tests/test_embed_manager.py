@@ -102,8 +102,7 @@ def test_find_ui_command_uses_npx_yes_flag_when_npx_not_on_path(monkeypatch):
     manager = DaemonEmbedManager()
     monkeypatch.setenv("HINDSIGHT_EMBED_CP_VERSION", "9.9.9")
 
-    with patch("pathlib.Path.exists", return_value=False), \
-         patch("shutil.which", return_value=None):
+    with patch("pathlib.Path.exists", return_value=False), patch("shutil.which", return_value=None):
         assert manager._find_ui_command() == [
             "npx",
             "-y",
@@ -118,8 +117,7 @@ def test_find_ui_command_resolves_npx_absolute_path_with_yes_flag(monkeypatch):
     manager = DaemonEmbedManager()
     monkeypatch.setenv("HINDSIGHT_EMBED_CP_VERSION", "9.9.9")
 
-    with patch("pathlib.Path.exists", return_value=False), \
-         patch("shutil.which", return_value="/usr/local/bin/npx"):
+    with patch("pathlib.Path.exists", return_value=False), patch("shutil.which", return_value="/usr/local/bin/npx"):
         cmd = manager._find_ui_command()
 
     assert cmd == [
@@ -143,7 +141,9 @@ def test_find_api_command_prefers_installed_binary_over_uvx(tmp_path, monkeypatc
 
     manager = DaemonEmbedManager()
     # Point __file__ away from monorepo so dev-mode check doesn't trigger
-    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py"))
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py")
+    )
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
 
@@ -185,7 +185,9 @@ def test_find_api_command_falls_back_to_uvx_when_no_binary(tmp_path, monkeypatch
     # No hindsight-api binary in scripts_dir
 
     manager = DaemonEmbedManager()
-    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py"))
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py")
+    )
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
     monkeypatch.setenv("HINDSIGHT_EMBED_API_VERSION", "1.2.3")
@@ -212,7 +214,9 @@ def test_find_api_command_windows_uses_exe_suffix(tmp_path, monkeypatch):
 
     manager = DaemonEmbedManager()
     # Point __file__ away from monorepo so dev-mode check doesn't trigger
-    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py"))
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py")
+    )
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sys.executable", str(interp_dir / "python.exe"))
@@ -237,7 +241,9 @@ def test_find_api_command_windows_prefers_gui_interpreter(tmp_path, monkeypatch)
 
     manager = DaemonEmbedManager()
     # Point __file__ away from monorepo so dev-mode check doesn't trigger
-    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py"))
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py")
+    )
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sys.executable", str(scripts_dir / "python.exe"))
