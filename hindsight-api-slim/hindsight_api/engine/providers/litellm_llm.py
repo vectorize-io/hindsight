@@ -49,6 +49,7 @@ class LiteLLMLLM(LLMInterface):
         reasoning_effort: str = "low",
         timeout: float = 300.0,
         extra_body: dict[str, Any] | None = None,
+        bedrock_service_tier: str | None = None,
         **kwargs: Any,
     ):
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
@@ -60,6 +61,7 @@ class LiteLLMLLM(LLMInterface):
         # drops any the target model rejects (litellm.drop_params=True below).
         # Sourced from llm_extra_body (env: HINDSIGHT_API_LLM_EXTRA_BODY).
         self._extra_body: dict[str, Any] = extra_body or {}
+        self.bedrock_service_tier = bedrock_service_tier
 
         try:
             import litellm
@@ -118,6 +120,10 @@ class LiteLLMLLM(LLMInterface):
         # so explicit per-call params (model, messages, temperature, …) always win.
         for key, value in self._extra_body.items():
             kwargs.setdefault(key, value)
+
+        # Bedrock service tier: flex (50% cheaper), priority, or reserved
+        if self.model.startswith("bedrock/") and self.bedrock_service_tier is not None:
+            kwargs["service_tier"] = self.bedrock_service_tier
 
         return kwargs
 

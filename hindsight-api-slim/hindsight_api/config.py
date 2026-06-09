@@ -141,6 +141,7 @@ ENV_LLM_TIMEOUT = "HINDSIGHT_API_LLM_TIMEOUT"
 ENV_LLM_REASONING_EFFORT = "HINDSIGHT_API_LLM_REASONING_EFFORT"
 ENV_LLM_GROQ_SERVICE_TIER = "HINDSIGHT_API_LLM_GROQ_SERVICE_TIER"
 ENV_LLM_OPENAI_SERVICE_TIER = "HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER"
+ENV_LLM_BEDROCK_SERVICE_TIER = "HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER"
 ENV_LLM_EXTRA_BODY = "HINDSIGHT_API_LLM_EXTRA_BODY"
 ENV_LLM_DEFAULT_HEADERS = "HINDSIGHT_API_LLM_DEFAULT_HEADERS"
 ENV_LLM_STRICT_SCHEMA = "HINDSIGHT_API_LLM_STRICT_SCHEMA"
@@ -156,6 +157,7 @@ ENV_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG"
 # Defaults for service tiers
 DEFAULT_LLM_GROQ_SERVICE_TIER = "auto"  # "on_demand", "flex", or "auto"
 DEFAULT_LLM_OPENAI_SERVICE_TIER = None  # None (default) or "flex" (50% cheaper)
+DEFAULT_LLM_BEDROCK_SERVICE_TIER = None  # None (default), "flex", "priority", or "reserved"
 DEFAULT_LLM_EXTRA_BODY = None  # None = no extra body params; JSON dict merged into OpenAI extra_body
 DEFAULT_LLM_DEFAULT_HEADERS = (
     None  # None = no extra headers; JSON dict passed as default_headers to provider SDK clients
@@ -1212,6 +1214,7 @@ class HindsightConfig:
     llm_reasoning_effort: str
     llm_groq_service_tier: str  # Groq: "on_demand", "flex", or "auto"
     llm_openai_service_tier: str | None  # OpenAI: None (default) or "flex" (50% cheaper)
+    llm_bedrock_service_tier: str | None  # Bedrock: None (default), "flex", "priority", or "reserved"
     llm_extra_body: (
         dict | None
     )  # Extra body params merged into OpenAI-compatible API calls (e.g. {"chat_template_kwargs": {"enable_thinking": true}})
@@ -1872,6 +1875,7 @@ class HindsightConfig:
             llm_reasoning_effort=os.getenv(ENV_LLM_REASONING_EFFORT, DEFAULT_LLM_REASONING_EFFORT),
             llm_groq_service_tier=os.getenv(ENV_LLM_GROQ_SERVICE_TIER, DEFAULT_LLM_GROQ_SERVICE_TIER),
             llm_openai_service_tier=os.getenv(ENV_LLM_OPENAI_SERVICE_TIER, DEFAULT_LLM_OPENAI_SERVICE_TIER),
+            llm_bedrock_service_tier=os.getenv(ENV_LLM_BEDROCK_SERVICE_TIER, DEFAULT_LLM_BEDROCK_SERVICE_TIER),
             llm_extra_body=json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null")),
             llm_default_headers=json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null")),
             llm_strict_schema=os.getenv(ENV_LLM_STRICT_SCHEMA, str(DEFAULT_LLM_STRICT_SCHEMA)).lower() in ("true", "1"),
