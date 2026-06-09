@@ -144,27 +144,27 @@ jobs:
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-        # The runner authenticates github.com pushes as the default GITHUB_TOKEN
-        # (github-actions[bot]), which has no access to the dedicated repo (→ 403).
-        # Two steps are needed:
-        #   1. Unset actions/checkout's bot extraheader. `http.extraheader` is
-        #      multi-valued, so if left in place our header would be ADDED to it
-        #      → two Authorization headers → GitHub 400.
-        #   2. Supply our own Authorization header (OBSIDIAN_DIST_TOKEN) via
-        #      `git -c`. An explicit header bypasses the credential helper that
-        #      would otherwise re-supply the bot token, and `git -c` propagates
-        #      to subtree's internal `git push` via GIT_CONFIG_PARAMETERS.
-        git config --local --unset-all http.https://github.com/.extraheader || true
-        AUTH_B64="$(printf 'x-access-token:%s' "$DIST_TOKEN" | base64 | tr -d '\n')"
+        # DIAGNOSTIC: the runner kept sending a second Authorization header (the
+        # default GITHUB_TOKEN) regardless of unsetting the local extraheader or
+        # the credential helper. Print where every auth source is defined so we
+        # know the scope (local / global / system) that's injecting the bot.
+        echo "::group::git auth config (extraheader + credential.helper)"
+        git config --show-origin --get-all "http.https://github.com/.extraheader" || echo "(no extraheader)"
+        git config --show-origin --get-all credential.helper || echo "(no credential.helper)"
+        echo "::endgroup::"
 
-        # Mirror the subdir to the dedicated repo's root (one-way; the dedicated
-        # repo is only ever written here, so the split fast-forwards each time).
-        # `credential.helper=` (empty) resets the whole helper chain so the
-        # runner's helper doesn't ALSO add an Authorization header — otherwise
-        # extraheader + helper = two Authorization headers → GitHub 400.
-        git -c credential.helper= \
-          -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH_B64}" \
-          subtree push --prefix="$OBS_DIR" "https://github.com/${DIST_REPO}.git" main
+        # Mirror the subdir to the dedicated repo's root. Split locally, then push
+        # from a fully isolated git context so the ONLY Authorization is the
+        # dist-token in the push URL:
+        #   - GIT_CONFIG_GLOBAL/SYSTEM=/dev/null drops any global/system extraheader;
+        #   - --unset-all drops the local (checkout) extraheader;
+        #   - -c credential.helper= disables every credential helper;
+        #   - the token is supplied via the push URL → a single Authorization.
+        git config --local --unset-all "http.https://github.com/.extraheader" || true
+        git subtree split --prefix="$OBS_DIR" -b _obs_dist
+        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
+          git -c credential.helper= \
+          push "https://x-access-token:${DIST_TOKEN}@github.com/${DIST_REPO}.git" _obs_dist:main
 
         # Cut the BRAT / community-store release. Bare version tag (e.g. 0.1.0)
         # to match manifest.json — idempotent so re-runs just refresh the assets.
