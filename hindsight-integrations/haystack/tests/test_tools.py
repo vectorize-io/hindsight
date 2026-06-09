@@ -141,9 +141,7 @@ class TestCreateHindsightTools:
         configure(hindsight_api_url="http://config:8888")
         with patch("hindsight_haystack._client.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
-            create_hindsight_tools(
-                bank_id="test", hindsight_api_url="http://explicit:9999"
-            )
+            create_hindsight_tools(bank_id="test", hindsight_api_url="http://explicit:9999")
             mock_cls.assert_called_once()
             assert mock_cls.call_args.kwargs["base_url"] == "http://explicit:9999"
             assert mock_cls.call_args.kwargs["timeout"] == 30.0
@@ -165,9 +163,7 @@ class TestRetainTool:
     def test_retain_passes_tags(self):
         client = _mock_client()
         client.aretain.return_value = _mock_retain_response()
-        tools = create_hindsight_tools(
-            bank_id="test-bank", client=client, tags=["source:chat"]
-        )
+        tools = create_hindsight_tools(bank_id="test-bank", client=client, tags=["source:chat"])
         retain_tool = [t for t in tools if t.name == "retain_memory"][0]
         retain_tool.invoke(content="some content")
         call_kwargs = client.aretain.call_args[1]
@@ -189,9 +185,7 @@ class TestRetainTool:
     def test_retain_passes_explicit_document_id(self):
         client = _mock_client()
         client.aretain.return_value = _mock_retain_response()
-        tools = create_hindsight_tools(
-            bank_id="test", client=client, retain_document_id="session-123"
-        )
+        tools = create_hindsight_tools(bank_id="test", client=client, retain_document_id="session-123")
         retain_tool = [t for t in tools if t.name == "retain_memory"][0]
         retain_tool.invoke(content="content")
         call_kwargs = client.aretain.call_args[1]
@@ -213,9 +207,7 @@ class TestRetainTool:
     def test_retain_passes_context_label(self):
         client = _mock_client()
         client.aretain.return_value = _mock_retain_response()
-        tools = create_hindsight_tools(
-            bank_id="test", client=client, retain_context="my-app"
-        )
+        tools = create_hindsight_tools(bank_id="test", client=client, retain_context="my-app")
         retain_tool = [t for t in tools if t.name == "retain_memory"][0]
         retain_tool.invoke(content="content")
         call_kwargs = client.aretain.call_args[1]
@@ -244,9 +236,7 @@ class TestRetainTool:
 class TestRecallTool:
     def test_recall_returns_numbered_results(self):
         client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(
-            ["User likes Python", "User is in NYC"]
-        )
+        client.arecall.return_value = _mock_recall_response(["User likes Python", "User is in NYC"])
         tools = create_hindsight_tools(bank_id="test-bank", client=client)
         recall_tool = [t for t in tools if t.name == "recall_memory"][0]
         result = recall_tool.invoke(query="user preferences")
@@ -264,9 +254,7 @@ class TestRecallTool:
     def test_recall_passes_budget_and_max_tokens(self):
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response(["fact"])
-        tools = create_hindsight_tools(
-            bank_id="test", client=client, budget="high", max_tokens=2048
-        )
+        tools = create_hindsight_tools(bank_id="test", client=client, budget="high", max_tokens=2048)
         recall_tool = [t for t in tools if t.name == "recall_memory"][0]
         recall_tool.invoke(query="query")
         call_kwargs = client.arecall.call_args[1]
@@ -304,9 +292,7 @@ class TestRecallTool:
     def test_recall_passes_include_entities(self):
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response(["fact"])
-        tools = create_hindsight_tools(
-            bank_id="test", client=client, recall_include_entities=True
-        )
+        tools = create_hindsight_tools(bank_id="test", client=client, recall_include_entities=True)
         recall_tool = [t for t in tools if t.name == "recall_memory"][0]
         recall_tool.invoke(query="query")
         call_kwargs = client.arecall.call_args[1]
@@ -331,9 +317,7 @@ class TestReflectTool:
         tools = create_hindsight_tools(bank_id="test-bank", client=client)
         reflect_tool = [t for t in tools if t.name == "reflect_on_memory"][0]
         result = reflect_tool.invoke(query="What do you know about the user?")
-        assert (
-            result == "The user is a Python developer who prefers functional patterns."
-        )
+        assert result == "The user is a Python developer who prefers functional patterns."
 
     def test_reflect_empty_returns_fallback(self):
         client = _mock_client()
@@ -346,9 +330,7 @@ class TestReflectTool:
     def test_reflect_passes_budget(self):
         client = _mock_client()
         client.areflect.return_value = _mock_reflect_response("answer")
-        tools = create_hindsight_tools(
-            bank_id="test", client=client, budget="high"
-        )
+        tools = create_hindsight_tools(bank_id="test", client=client, budget="high")
         reflect_tool = [t for t in tools if t.name == "reflect_on_memory"][0]
         reflect_tool.invoke(query="query")
         call_kwargs = client.areflect.call_args[1]
@@ -427,9 +409,7 @@ class TestBankMission:
     def test_creates_bank_with_mission_on_first_use(self):
         client = _mock_client()
         client.aretain.return_value = _mock_retain_response()
-        tools = create_hindsight_tools(
-            bank_id="test-bank", client=client, mission="Track user preferences"
-        )
+        tools = create_hindsight_tools(bank_id="test-bank", client=client, mission="Track user preferences")
         retain_tool = [t for t in tools if t.name == "retain_memory"][0]
         retain_tool.invoke(content="content")
         client.acreate_bank.assert_called_once_with(
@@ -442,9 +422,7 @@ class TestBankMission:
         client = _mock_client()
         client.aretain.return_value = _mock_retain_response()
         client.arecall.return_value = _mock_recall_response(["fact"])
-        tools = create_hindsight_tools(
-            bank_id="test-bank", client=client, mission="my mission"
-        )
+        tools = create_hindsight_tools(bank_id="test-bank", client=client, mission="my mission")
         retain_tool = [t for t in tools if t.name == "retain_memory"][0]
         recall_tool = [t for t in tools if t.name == "recall_memory"][0]
         retain_tool.invoke(content="content")
@@ -456,9 +434,7 @@ class TestBankMission:
         client = _mock_client()
         client.acreate_bank.side_effect = RuntimeError("already exists")
         client.aretain.return_value = _mock_retain_response()
-        tools = create_hindsight_tools(
-            bank_id="test-bank", client=client, mission="my mission"
-        )
+        tools = create_hindsight_tools(bank_id="test-bank", client=client, mission="my mission")
         retain_tool = [t for t in tools if t.name == "retain_memory"][0]
         # Should not raise
         result = retain_tool.invoke(content="content")
@@ -528,9 +504,7 @@ class TestHaystackCompatibility:
         """Tool.invoke() should call retain_memory correctly."""
         client = _mock_client()
         client.aretain.return_value = _mock_retain_response()
-        tools = create_hindsight_tools(
-            bank_id="test", client=client, include_recall=False, include_reflect=False
-        )
+        tools = create_hindsight_tools(bank_id="test", client=client, include_recall=False, include_reflect=False)
         tool = tools[0]
 
         result = tool.invoke(content="test memory")
@@ -541,9 +515,7 @@ class TestHaystackCompatibility:
         """Tool.invoke() should call recall_memory correctly."""
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response(["some fact"])
-        tools = create_hindsight_tools(
-            bank_id="test", client=client, include_retain=False, include_reflect=False
-        )
+        tools = create_hindsight_tools(bank_id="test", client=client, include_retain=False, include_reflect=False)
         tool = tools[0]
 
         result = tool.invoke(query="test query")
@@ -614,9 +586,8 @@ class TestHaystackCompatibility:
 
             # And it shouldn't be hiding under another name anywhere in the dump
             import json
-            assert "client-key" not in json.dumps(d), (
-                "the literal api_key value leaked into the serialized dict"
-            )
+
+            assert "client-key" not in json.dumps(d), "the literal api_key value leaked into the serialized dict"
 
             # Round-trip: from_dict picks the URL from the serialized dict and the key
             # from the env var (HINDSIGHT_API_KEY) via resolve_client.
@@ -635,9 +606,7 @@ class TestHaystackCompatibility:
         client = _mock_client()
         client._base_url = "http://from-client:8888"
 
-        tools = create_hindsight_tools(
-            bank_id="test", client=client, hindsight_api_url="http://explicit:9999"
-        )
+        tools = create_hindsight_tools(bank_id="test", client=client, hindsight_api_url="http://explicit:9999")
         d = tools[0].to_dict()
         # Explicit URL should take precedence
         assert d["data"]["backend_kwargs"]["hindsight_api_url"] == "http://explicit:9999"
@@ -753,12 +722,8 @@ class TestReflectStructuredOutput:
         client = _mock_client()
         schema = {"type": "object", "properties": {"summary": {"type": "string"}}}
         structured = {"summary": "User prefers Python"}
-        client.areflect.return_value = _mock_reflect_response(
-            "Some prose", structured_output=structured
-        )
-        tools = create_hindsight_tools(
-            bank_id="test", client=client, reflect_response_schema=schema
-        )
+        client.areflect.return_value = _mock_reflect_response("Some prose", structured_output=structured)
+        tools = create_hindsight_tools(bank_id="test", client=client, reflect_response_schema=schema)
         reflect_tool = [t for t in tools if t.name == "reflect_on_memory"][0]
         result = reflect_tool.invoke(query="query")
         import json
@@ -767,9 +732,7 @@ class TestReflectStructuredOutput:
 
     def test_reflect_returns_text_when_no_schema(self):
         client = _mock_client()
-        client.areflect.return_value = _mock_reflect_response(
-            "Plain prose", structured_output={"summary": "data"}
-        )
+        client.areflect.return_value = _mock_reflect_response("Plain prose", structured_output={"summary": "data"})
         tools = create_hindsight_tools(bank_id="test", client=client)
         reflect_tool = [t for t in tools if t.name == "reflect_on_memory"][0]
         result = reflect_tool.invoke(query="query")
@@ -778,12 +741,8 @@ class TestReflectStructuredOutput:
     def test_reflect_falls_back_to_text_when_structured_output_is_none(self):
         client = _mock_client()
         schema = {"type": "object", "properties": {"summary": {"type": "string"}}}
-        client.areflect.return_value = _mock_reflect_response(
-            "Fallback prose", structured_output=None
-        )
-        tools = create_hindsight_tools(
-            bank_id="test", client=client, reflect_response_schema=schema
-        )
+        client.areflect.return_value = _mock_reflect_response("Fallback prose", structured_output=None)
+        tools = create_hindsight_tools(bank_id="test", client=client, reflect_response_schema=schema)
         reflect_tool = [t for t in tools if t.name == "reflect_on_memory"][0]
         result = reflect_tool.invoke(query="query")
         assert result == "Fallback prose"
@@ -799,9 +758,7 @@ class TestBankCreationRetry:
             None,  # succeeds on second try
         ]
         client.aretain.return_value = _mock_retain_response()
-        tools = create_hindsight_tools(
-            bank_id="test", client=client, mission="my mission"
-        )
+        tools = create_hindsight_tools(bank_id="test", client=client, mission="my mission")
         retain_tool = [t for t in tools if t.name == "retain_memory"][0]
         # First call — bank creation fails transiently
         retain_tool.invoke(content="first")
@@ -813,9 +770,7 @@ class TestBankCreationRetry:
         client = _mock_client()
         client.acreate_bank.side_effect = RuntimeError("bank already exists")
         client.aretain.return_value = _mock_retain_response()
-        tools = create_hindsight_tools(
-            bank_id="test", client=client, mission="my mission"
-        )
+        tools = create_hindsight_tools(bank_id="test", client=client, mission="my mission")
         retain_tool = [t for t in tools if t.name == "retain_memory"][0]
         retain_tool.invoke(content="first")
         retain_tool.invoke(content="second")
@@ -826,9 +781,7 @@ class TestBankCreationRetry:
         client = _mock_client()
         client.acreate_bank.side_effect = RuntimeError("409 Conflict")
         client.aretain.return_value = _mock_retain_response()
-        tools = create_hindsight_tools(
-            bank_id="test", client=client, mission="my mission"
-        )
+        tools = create_hindsight_tools(bank_id="test", client=client, mission="my mission")
         retain_tool = [t for t in tools if t.name == "retain_memory"][0]
         retain_tool.invoke(content="first")
         retain_tool.invoke(content="second")
@@ -887,12 +840,8 @@ class TestToolsetAutoRecall:
 
     def test_auto_recall_enriches_system_prompt(self):
         client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(
-            ["User likes Python", "User is in NYC"]
-        )
-        toolset = HindsightToolset(
-            bank_id="test", client=client, auto_recall=True
-        )
+        client.arecall.return_value = _mock_recall_response(["User likes Python", "User is in NYC"])
+        toolset = HindsightToolset(bank_id="test", client=client, auto_recall=True)
 
         # Create a mock agent
         agent = MagicMock()
@@ -902,9 +851,7 @@ class TestToolsetAutoRecall:
             "last_message": ChatMessage.from_assistant("response"),
         }
 
-        toolset.run(
-            agent, messages=[ChatMessage.from_user("What do you know about me?")]
-        )
+        toolset.run(agent, messages=[ChatMessage.from_user("What do you know about me?")])
 
         # Agent.run should have been called with enriched system_prompt
         call_kwargs = agent.run.call_args[1]
@@ -915,9 +862,7 @@ class TestToolsetAutoRecall:
     def test_auto_recall_uses_agent_system_prompt_when_none_provided(self):
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response(["some memory"])
-        toolset = HindsightToolset(
-            bank_id="test", client=client, auto_recall=True
-        )
+        toolset = HindsightToolset(bank_id="test", client=client, auto_recall=True)
 
         agent = MagicMock()
         agent.system_prompt = "Agent default prompt."
@@ -933,9 +878,7 @@ class TestToolsetAutoRecall:
     def test_auto_recall_overrides_with_explicit_system_prompt(self):
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response(["memory"])
-        toolset = HindsightToolset(
-            bank_id="test", client=client, auto_recall=True
-        )
+        toolset = HindsightToolset(bank_id="test", client=client, auto_recall=True)
 
         agent = MagicMock()
         agent.system_prompt = "Agent default."
@@ -956,9 +899,7 @@ class TestToolsetAutoRecall:
 
     def test_auto_recall_skips_when_no_user_message(self):
         client = _mock_client()
-        toolset = HindsightToolset(
-            bank_id="test", client=client, auto_recall=True
-        )
+        toolset = HindsightToolset(bank_id="test", client=client, auto_recall=True)
 
         agent = MagicMock()
         agent.system_prompt = "base prompt"
@@ -988,9 +929,7 @@ class TestToolsetAutoRecall:
     def test_auto_recall_respects_max_recall_results(self):
         client = _mock_client()
         # Return many results
-        client.arecall.return_value = _mock_recall_response(
-            [f"Memory {i}" for i in range(20)]
-        )
+        client.arecall.return_value = _mock_recall_response([f"Memory {i}" for i in range(20)])
         toolset = HindsightToolset(
             bank_id="test",
             client=client,
@@ -1015,9 +954,7 @@ class TestToolsetAutoRecall:
     def test_auto_recall_no_memories_passes_base_prompt(self):
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response([])
-        toolset = HindsightToolset(
-            bank_id="test", client=client, auto_recall=True
-        )
+        toolset = HindsightToolset(bank_id="test", client=client, auto_recall=True)
 
         agent = MagicMock()
         agent.system_prompt = "base prompt"
@@ -1037,9 +974,7 @@ class TestToolsetAutoRetain:
     def test_auto_retain_stores_user_and_assistant_messages(self):
         client = _mock_client()
         client.aretain.return_value = _mock_retain_response()
-        toolset = HindsightToolset(
-            bank_id="test", client=client, auto_retain=True
-        )
+        toolset = HindsightToolset(bank_id="test", client=client, auto_retain=True)
 
         agent = MagicMock()
         agent.system_prompt = None
@@ -1049,9 +984,7 @@ class TestToolsetAutoRetain:
             "last_message": last_msg,
         }
 
-        toolset.run(
-            agent, messages=[ChatMessage.from_user("My favorite color is blue.")]
-        )
+        toolset.run(agent, messages=[ChatMessage.from_user("My favorite color is blue.")])
 
         # Should have retained user message + assistant response
         assert client.aretain.call_count == 2
@@ -1062,9 +995,7 @@ class TestToolsetAutoRetain:
     def test_auto_retain_includes_role_metadata(self):
         client = _mock_client()
         client.aretain.return_value = _mock_retain_response()
-        toolset = HindsightToolset(
-            bank_id="test", client=client, auto_retain=True
-        )
+        toolset = HindsightToolset(bank_id="test", client=client, auto_retain=True)
 
         agent = MagicMock()
         agent.system_prompt = None
@@ -1086,9 +1017,7 @@ class TestToolsetAutoRetain:
     def test_auto_retain_skips_system_messages(self):
         client = _mock_client()
         client.aretain.return_value = _mock_retain_response()
-        toolset = HindsightToolset(
-            bank_id="test", client=client, auto_retain=True
-        )
+        toolset = HindsightToolset(bank_id="test", client=client, auto_retain=True)
 
         agent = MagicMock()
         agent.system_prompt = None
@@ -1126,9 +1055,7 @@ class TestToolsetAutoRetain:
     def test_auto_retain_handles_error_gracefully(self):
         client = _mock_client()
         client.aretain.side_effect = RuntimeError("connection refused")
-        toolset = HindsightToolset(
-            bank_id="test", client=client, auto_retain=True
-        )
+        toolset = HindsightToolset(bank_id="test", client=client, auto_retain=True)
 
         agent = MagicMock()
         agent.system_prompt = None
@@ -1139,9 +1066,7 @@ class TestToolsetAutoRetain:
         }
 
         # Should not raise even though retain fails
-        result = toolset.run(
-            agent, messages=[ChatMessage.from_user("hello")]
-        )
+        result = toolset.run(agent, messages=[ChatMessage.from_user("hello")])
         assert result is not None
 
 
@@ -1167,9 +1092,7 @@ class TestToolsetAutoRecallAndRetain:
             "last_message": last_msg,
         }
 
-        toolset.run(
-            agent, messages=[ChatMessage.from_user("Tell me about myself")]
-        )
+        toolset.run(agent, messages=[ChatMessage.from_user("Tell me about myself")])
 
         # Recall was called for prompt enrichment
         client.arecall.assert_called_once()
