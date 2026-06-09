@@ -20,7 +20,11 @@ from hindsight_api.config import (
     ENV_EMBEDDINGS_PROVIDER,
     HindsightConfig,
 )
-from hindsight_api.engine.embeddings import GeminiEmbeddings, create_embeddings_from_env
+from hindsight_api.engine.embeddings import (
+    GeminiEmbeddings,
+    _gemini_model_aggregates_inputs,
+    create_embeddings_from_env,
+)
 
 
 def _make_mock_embedding(values: list[float]) -> MagicMock:
@@ -239,6 +243,40 @@ class TestGeminiEmbeddings:
         emb.encode(["hello"])
         assert mock_client.models.embed_content.call_args.kwargs["config"] is emb._embed_config
 
+    def test_encode_aggregating_model_embeds_one_per_call(self):
+        """Gemini Embedding 2+ aggregates multi-input requests, so each text must
+        be embedded in its own call to keep 1:1 input→vector alignment."""
+        emb = GeminiEmbeddings(model="gemini-embedding-2-preview", api_key="test-key", batch_size=100)
+        mock_client = MagicMock()
+        mock_client.models.embed_content = MagicMock(
+            side_effect=[
+                _make_mock_embed_result([[0.1]]),
+                _make_mock_embed_result([[0.2]]),
+                _make_mock_embed_result([[0.3]]),
+            ]
+        )
+        emb._client = mock_client
+        emb._dimension = 1
+
+        assert emb.encode(["a", "b", "c"]) == [[0.1], [0.2], [0.3]]
+        # One call per input despite batch_size=100.
+        assert mock_client.models.embed_content.call_count == 3
+        for call in mock_client.models.embed_content.call_args_list:
+            assert len(call.kwargs["contents"]) == 1
+
+    def test_encode_raises_on_misaligned_vector_count(self):
+        """A backend that aggregates inputs (returns fewer vectors than texts)
+        must raise rather than silently misalign vectors with inputs."""
+        emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key", batch_size=100)
+        mock_client = MagicMock()
+        # 3 inputs in one batch but only 1 vector returned (aggregation).
+        mock_client.models.embed_content = MagicMock(return_value=_make_mock_embed_result([[0.1]]))
+        emb._client = mock_client
+        emb._dimension = 1
+
+        with pytest.raises(RuntimeError, match="expected exact 1:1 alignment"):
+            emb.encode(["a", "b", "c"])
+
     def test_encode_empty_list(self):
         emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key")
         emb._client = MagicMock()
@@ -272,6 +310,20 @@ class TestGeminiEmbeddings:
     def test_custom_region(self):
         emb = GeminiEmbeddings(model="m", vertexai_project_id="proj", vertexai_region="europe-west1")
         assert emb.vertexai_region == "europe-west1"
+
+    @pytest.mark.parametrize(
+        "model,expected",
+        [
+            ("gemini-embedding-001", False),
+            ("gemini-embedding-2-preview", True),
+            ("gemini-embedding-2", True),
+            ("models/gemini-embedding-2-preview", True),
+            ("google/gemini-embedding-2", True),
+            ("text-embedding-004", False),
+        ],
+    )
+    def test_aggregating_model_detection(self, model, expected):
+        assert _gemini_model_aggregates_inputs(model) is expected
 
 
 class TestGeminiEmbeddingsFactory:

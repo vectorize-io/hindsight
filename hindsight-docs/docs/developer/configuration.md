@@ -504,7 +504,7 @@ two slots that retain/consolidation cannot consume.
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS` | Optional output embedding dimensions (provider-dependent, e.g., `768` for Gemini embedding models) | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT` | Encoding format for embedding responses. Set to empty string to omit the parameter (needed for Voyage AI, Gemini). | `float` |
 | `HINDSIGHT_API_EMBEDDINGS_GEMINI_API_KEY` | Gemini API key for embeddings (falls back to `HINDSIGHT_API_LLM_API_KEY`) | - |
-| `HINDSIGHT_API_EMBEDDINGS_GEMINI_MODEL` | Gemini embedding model | `gemini-embedding-001` |
+| `HINDSIGHT_API_EMBEDDINGS_GEMINI_MODEL` | Gemini embedding model. The `gemini-embedding-2` family (e.g. `gemini-embedding-2-preview`) is supported on both the Gemini API and Vertex AI — because these multimodal models aggregate a multi-input request into one embedding, Hindsight automatically embeds one input per call to keep per-fact vectors. | `gemini-embedding-001` |
 | `HINDSIGHT_API_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY` | Output embedding dimensions (Gemini supports configurable dimensionality) | `768` |
 | `HINDSIGHT_API_EMBEDDINGS_GEMINI_FORCE_IPV4` | Force the Gemini embeddings client to use an IPv4-only HTTP transport. Useful in environments where IPv6 egress is broken (e.g. some Docker/VPC setups) and AAAA DNS records cause long hangs. | `false` |
 | `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_PROJECT_ID` | Vertex AI project ID for embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID`) | - |

@@ -1347,6 +1347,21 @@ class LiteLLMSDKEmbeddings(Embeddings):
         return all_embeddings
 
 
+# Gemini Embedding 2+ multimodal models return a SINGLE aggregated embedding
+# for a multi-input request instead of one vector per input (see
+# https://ai.google.dev/gemini-api/docs/embeddings#embedding-aggregation). For
+# these models we must embed one input per call to preserve the 1:1 input→vector
+# alignment the rest of the pipeline relies on. The marker matches preview and GA
+# names (e.g. "gemini-embedding-2-preview", "gemini-embedding-2"), with or
+# without a "google/" or "models/" prefix.
+_GEMINI_AGGREGATING_MODEL_MARKER = "gemini-embedding-2"
+
+
+def _gemini_model_aggregates_inputs(model: str) -> bool:
+    """Whether the model aggregates a multi-input request into one embedding."""
+    return _GEMINI_AGGREGATING_MODEL_MARKER in model.lower()
+
+
 class GeminiEmbeddings(Embeddings):
     """
     Google embeddings via the google.genai SDK.
@@ -1356,6 +1371,10 @@ class GeminiEmbeddings(Embeddings):
     2. Vertex AI with service account or Application Default Credentials (ADC)
 
     Uses the embed_content API: client.models.embed_content(model, contents)
+
+    Gemini Embedding 2+ multimodal models aggregate a multi-input request into a
+    single embedding, so for those the batch size is forced to 1 (one input per
+    call) to keep one vector per input.
     """
 
     def __init__(
@@ -1510,9 +1529,13 @@ class GeminiEmbeddings(Embeddings):
 
         all_embeddings = []
 
+        # Gemini Embedding 2+ multimodal models return one aggregated vector for a
+        # multi-input request, so embed one input per call to keep 1:1 alignment.
+        batch_size = 1 if _gemini_model_aggregates_inputs(self.model) else self.batch_size
+
         # Process in batches
-        for i in range(0, len(texts), self.batch_size):
-            batch = texts[i : i + self.batch_size]
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
 
             embed_kwargs = {"model": self.model, "contents": batch}
             if self._embed_config is not None:
@@ -1520,7 +1543,13 @@ class GeminiEmbeddings(Embeddings):
 
             result = self._client.models.embed_content(**embed_kwargs)
 
-            all_embeddings.extend([emb.values for emb in result.embeddings])
+            embeddings = result.embeddings or []
+            if len(embeddings) != len(batch):
+                raise RuntimeError(
+                    f"Gemini embeddings backend returned {len(embeddings)} vectors for "
+                    f"{len(batch)} input texts (model {self.model}); expected exact 1:1 alignment"
+                )
+            all_embeddings.extend([emb.values for emb in embeddings])
 
         # L2-normalize when output_dimensionality is set — Gemini only returns
         # normalized vectors at full 3072 dims; truncated dims need re-normalization
