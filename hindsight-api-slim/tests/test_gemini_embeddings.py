@@ -10,6 +10,7 @@ These tests cover:
 6. Factory function (create from env, validation errors)
 """
 
+import os
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -413,3 +414,55 @@ class TestGeminiEmbeddingsFactory:
         with patch("hindsight_api.config.get_config", return_value=config):
             emb = create_embeddings_from_env()
         assert emb.output_dimensionality == 256
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID"),
+    reason="Vertex AI integration tests require HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID",
+)
+async def test_gemini_embedding_2_vertexai_one_vector_per_input():
+    """Real Vertex AI check that the gemini-embedding-2 family stays 1:1.
+
+    These multimodal models aggregate a multi-input request into a single
+    embedding, so encode() must embed one input per call. Before the fix this
+    returned a single aggregated vector for the whole batch (the bug in #1139).
+    Runs in the CI jobs that provide GCP credentials; skips locally otherwise.
+    """
+    project_id = os.getenv("HINDSIGHT_API_EMBEDDINGS_VERTEXAI_PROJECT_ID") or os.getenv(
+        "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID"
+    )
+    region = (
+        os.getenv("HINDSIGHT_API_EMBEDDINGS_VERTEXAI_REGION")
+        or os.getenv("HINDSIGHT_API_LLM_VERTEXAI_REGION")
+        or "us-central1"
+    )
+    service_account_key = os.getenv("HINDSIGHT_API_EMBEDDINGS_VERTEXAI_SERVICE_ACCOUNT_KEY") or os.getenv(
+        "HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY"
+    )
+    # Overridable so the model can be bumped (e.g. to GA) without a code change.
+    model = os.getenv("HINDSIGHT_API_EMBEDDINGS_GEMINI_MODEL", "gemini-embedding-2-preview")
+
+    emb = GeminiEmbeddings(
+        model=model,
+        vertexai_project_id=project_id,
+        vertexai_region=region,
+        vertexai_service_account_key=service_account_key,
+        output_dimensionality=768,
+    )
+    await emb.initialize()
+
+    texts = [
+        "The sky is blue.",
+        "I visited Paris in 2023.",
+        "Python is a programming language.",
+    ]
+    vectors = emb.encode(texts)
+
+    # The fix: one vector per input, not a single aggregated vector.
+    assert len(vectors) == len(texts)
+    assert all(len(v) == emb.dimension for v in vectors)
+    # Distinct inputs must produce distinct vectors (proves no aggregation).
+    assert vectors[0] != vectors[1]
+    assert vectors[1] != vectors[2]
+    assert vectors[0] != vectors[2]
