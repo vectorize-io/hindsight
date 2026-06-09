@@ -640,7 +640,8 @@
     "importConflictLabel": "ドキュメントが既に存在する場合",
     "importConflictSkip": "スキップ — 既存のドキュメントを保持",
     "importConflictReplace": "置換 — インポート版で上書き",
-    "importConflictNewId": "両方保持 — 新しい id でインポート"
+    "importConflictNewId": "両方保持 — 新しい id でインポート",
+    "textNotStoredWarning": "このサーバーでは元のテキストは保存されません。抽出されたメモリのみが保持されます。"
   },
   "entitiesView": {
     "viewRelations": "関係",
@@ -1444,7 +1445,8 @@
     "observationScopeAllCombinations": "すべての組み合わせ",
     "observationScopesEmpty": "観察スコープをプレビューするには、上にタグを追加してください",
     "metadataHelpText": "1行に1つの <code>key: value</code>",
-    "entitiesHelpText": "自動抽出されたエンティティとマージされるカンマ区切りのヒント"
+    "entitiesHelpText": "自動抽出されたエンティティとマージされるカンマ区切りのヒント",
+    "textNotStoredWarning": "このサーバーでは文書の元テキストは保存されません。抽出されたメモリのみが保持されます。"
   },
   "dashboard": {
     "welcome": "Hindsightへようこそ",

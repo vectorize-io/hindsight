@@ -14,6 +14,7 @@ import re
 import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from ...config import get_config
 from .models import DirectiveInfo, LLMCall, ReflectAgentResult, TokenUsageSummary, ToolCall
 from .prompts import (
     _extract_directive_rules,
@@ -376,12 +377,16 @@ async def run_reflect_agent(
     # Extract directive rules for tool schema (if any)
     directive_rules = _extract_directive_rules(directives) if directives else None
 
-    # Get tools for this agent (with directive compliance field if directives exist)
+    # Get tools for this agent (with directive compliance field if directives exist).
+    # The expand tool only reads back raw source text (chunks/documents), so it is
+    # useless and excluded when document text storage is disabled.
+    include_expand = get_config().store_document_text
     tools = get_reflect_tools(
         directive_rules=directive_rules,
         include_mental_models=has_mental_models,
         include_observations=include_observations,
         include_recall=include_recall,
+        include_expand=include_expand,
     )
     # Build set of enabled tool names to guard against LLM hallucinating disabled tool calls
     enabled_tools: frozenset[str] = frozenset(t["function"]["name"] for t in tools if t.get("type") == "function")
@@ -908,7 +913,9 @@ async def run_reflect_agent(
             hallucinated_tools = []
             for tc in other_tools:
                 norm = _normalize_tool_name(tc.name)
-                if enabled_tools is not None and norm not in enabled_tools and norm not in ("done", "expand"):
+                # "done" is always available. "expand" is governed by enabled_tools
+                # (it is excluded when text storage is disabled), so it is not hardcoded here.
+                if enabled_tools is not None and norm not in enabled_tools and norm != "done":
                     hallucinated_tools.append(tc)
                 else:
                     allowed_tools.append(tc)
@@ -1236,8 +1243,10 @@ async def _execute_tool(
     # Normalize tool name for various LLM output formats
     tool_name = _normalize_tool_name(tool_name)
 
-    # Guard against LLMs hallucinating calls to tools that were not provided
-    if enabled_tools is not None and tool_name not in enabled_tools and tool_name not in ("done", "expand"):
+    # Guard against LLMs hallucinating calls to tools that were not provided.
+    # "done" is always available; "expand" is governed by enabled_tools (excluded
+    # when text storage is disabled), so it is not hardcoded as always-allowed here.
+    if enabled_tools is not None and tool_name not in enabled_tools and tool_name != "done":
         return {"error": f"Tool '{tool_name}' is not available. Use only the tools provided to you."}
 
     if tool_name == "search_mental_models":

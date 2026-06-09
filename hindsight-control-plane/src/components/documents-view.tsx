@@ -73,6 +73,7 @@ import {
   Activity,
   Download,
   Upload,
+  Lock,
 } from "lucide-react";
 
 const ITEMS_PER_PAGE = 50;
@@ -1204,8 +1205,13 @@ export function DocumentsView() {
               <div className="flex-1 overflow-y-auto mt-4">
                 {/* Content Tab */}
                 <TabsContent value="content" className="mt-0">
-                  {selectedDocument.original_text !== undefined &&
-                    (editingContent ? (
+                  {!features?.store_document_text && !selectedDocument.original_text ? (
+                    <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-700 dark:text-amber-400">
+                      <Lock className="h-4 w-4 mt-0.5 shrink-0" />
+                      <span>{t("textNotStoredWarning")}</span>
+                    </div>
+                  ) : selectedDocument.original_text !== undefined ? (
+                    editingContent ? (
                       <div className="space-y-2">
                         <div className="flex items-center justify-end mb-2">
                           <div className="flex gap-2">
@@ -1269,7 +1275,8 @@ export function DocumentsView() {
                           {selectedDocument.original_text}
                         </pre>
                       </div>
-                    ))}
+                    )
+                  ) : null}
                 </TabsContent>
 
                 {/* General Tab */}
@@ -1436,6 +1443,12 @@ export function DocumentsView() {
 
                 {/* Chunks Tab */}
                 <TabsContent value="chunks" className="mt-0">
+                  {!features?.store_document_text && (
+                    <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 mb-3 text-xs text-amber-700 dark:text-amber-400">
+                      <Lock className="h-4 w-4 mt-0.5 shrink-0" />
+                      <span>{t("textNotStoredWarning")}</span>
+                    </div>
+                  )}
                   {loadingChunks ? (
                     <div className="flex items-center justify-center py-20">
                       <div className="text-center">

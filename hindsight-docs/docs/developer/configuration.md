@@ -1010,6 +1010,7 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE` | Max unique entity names per fuzzy candidate lookup query (`trigram` on PG, `oracle_fuzzy` on Oracle). Bounds query size so very wide retain batches don't time out a single `unnest(...)` join on banks with many entities. | `100` |
 | `HINDSIGHT_API_RETAIN_DEFAULT_STRATEGY` | Default retain strategy name. When set, all retain calls without an explicit `strategy` parameter use this strategy. | - |
 | `HINDSIGHT_API_RETAIN_BATCH_POLL_INTERVAL_SECONDS` | Batch API polling interval in seconds | `60` |
+| `HINDSIGHT_API_STORE_DOCUMENT_TEXT` | Persist the raw source text alongside extracted memories. Set to `false` to skip storing it. Static, server-level. | `true` |
 
 > **Batch-capable providers.** `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` only works with a retain LLM provider that implements a batch API: `openai`, `groq`, and `fireworks`. Batch always requires async retain (`async=true`); a sync retain with batch enabled errors. Other providers fail fast at startup.
 
@@ -1033,6 +1034,31 @@ export HINDSIGHT_API_RETAIN_BATCH_ENABLED=true
 ```
 
 > **Entity labels** (`entity_labels`) and **free-form entity extraction** (`entities_allow_free_form`) are configured per bank via the [bank config API](/developer/api/memory-banks#retain-configuration), not as global environment variables — each bank can have its own controlled vocabulary. See [Entity Labels](/developer/retain#entity-labels) for details.
+
+#### Skip storing raw document text
+
+By default Hindsight keeps a verbatim copy of everything you retain so you can later read the source, re-process a document, or export it. For deployments that only want to keep the extracted memories (facts, entities, mental models) and not the source text, set:
+
+```bash
+export HINDSIGHT_API_STORE_DOCUMENT_TEXT=false
+```
+
+When disabled, the full retain pipeline still runs — chunking, fact extraction, embedding, and entity linking are unchanged, so **memory quality and recall are not affected** (recall reads from the extracted memories, never from the raw text). The difference is purely what gets persisted:
+
+- `documents.original_text` is stored as `NULL` instead of the raw payload.
+- The raw chunk text is dropped (stored as empty), while the chunk's content hash is still kept so incremental re-retain of the same document continues to deduplicate correctly.
+
+**`update_mode="append"` is rejected when text storage is disabled.** Append rebuilds a document by reading back its previously stored text and adding to it. With nothing stored, appending would silently drop the prior content, so an append retain returns an error instead. Use `update_mode="replace"` (the default).
+
+**Features that degrade when text storage is disabled** (because they read the source text back):
+
+- **Document export** carries no source text; re-importing such a bank cannot re-run extraction from the original payload.
+- **Reading a document's source** (the get-document, list-chunks, and get-chunk endpoints, including their MCP equivalents) returns empty content.
+- **Recall with `include_chunks=true`** returns empty `chunk_text` — the facts themselves are unaffected, but the surrounding source-chunk context is no longer available.
+- **Reflect** no longer offers the `expand` tool (which fetches a memory's source chunk/document), and its `recall` step stops attaching source chunks, since there is no stored text to return. Reflection over the extracted memories is otherwise unaffected.
+- **Reprocessing a document** from its stored text is a no-op (there is nothing to reprocess).
+
+This is a static, server-level setting and cannot be overridden per bank.
 
 #### Customizing retain: when to use what
 

@@ -3000,6 +3000,19 @@ class MemoryEngine(MemoryEngineInterface):
             if item.get("update_mode") == "append" and not item.get("document_id"):
                 raise ValueError("update_mode='append' requires a document_id")
 
+        # Append mode rebuilds the full document by reading back the previously
+        # stored original_text and prepending it. With store_document_text
+        # disabled there is no stored text to read, so the append would silently
+        # drop all prior content — reject it explicitly instead.
+        if not get_config().store_document_text:
+            for item in contents:
+                if item.get("update_mode") == "append":
+                    raise ValueError(
+                        "update_mode='append' is not supported when HINDSIGHT_API_STORE_DOCUMENT_TEXT "
+                        "is disabled: the prior document text is not stored and cannot be appended to. "
+                        "Use update_mode='replace' instead."
+                    )
+
         # Auto-chunk large batches by token count to avoid timeouts and memory issues
         # Calculate total token count
         total_tokens = sum(count_tokens(item.get("content", "")) for item in contents)
@@ -7723,6 +7736,11 @@ class MemoryEngine(MemoryEngineInterface):
             if recall_include_chunks is not None
             else config_dict.get("recall_include_chunks", DEFAULT_RECALL_INCLUDE_CHUNKS)
         )
+        # With document text storage disabled there is no raw chunk text, so
+        # fetching chunks would only attach empty strings to every recall
+        # result. Force it off (pairs with excluding the expand tool below).
+        if not get_config().store_document_text:
+            effective_recall_include_chunks = False
         effective_recall_max_tokens = (
             recall_max_tokens_override
             if recall_max_tokens_override is not None
