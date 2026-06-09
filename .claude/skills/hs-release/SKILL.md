@@ -47,12 +47,16 @@ Verify after: `gh run list --limit 5` should show the `Release v<version>` workf
 
 ## Step 2 — Changelog + blog PR (separate)
 
-Done **after** the tag exists, as its own PR (precedent: v0.8.0 = #2053, v0.8.1 = #2080). Create a
-fresh worktree off the new `main`:
+Done **after** the tag exists, as its own PR (precedent: v0.8.0 = #2053, v0.8.1 = #2080). Work on a
+branch off the new `main`:
 
 ```bash
-git worktree add ../hindsight-changelog-<version> -b docs-changelog-<version> origin/main
+git checkout -b docs-changelog-<version> origin/main
 ```
+
+Only spin up a separate worktree (`git worktree add ../hindsight-changelog-<version> -b
+docs-changelog-<version> origin/main`) if you can't get a clean checkout otherwise — e.g. `main` is
+held in another worktree and the current one has work you don't want to disturb.
 
 **Branch naming:** use the `docs-` (hyphen) convention, e.g. `docs-changelog-0.8.1`. A remote
 branch literally named `docs` exists, so any `docs/...` branch is rejected on push with
@@ -107,5 +111,6 @@ mirror, and the skill `openapi.json` version sync.
 
 ## Cleanup
 
-Remove the temporary changelog worktree when the PR is up: `git worktree remove ../hindsight-changelog-<version>`
-(the branch stays on origin). Restore any stash you popped in Step 0.
+If you created a temporary worktree, remove it once the PR is up
+(`git worktree remove ../hindsight-changelog-<version>`; the branch stays on origin). Restore any
+stash you popped in Step 0.
