@@ -1,5 +1,5 @@
 """
-Tests for the HINDSIGHT_API_STORE_DOCUMENT_TEXT privacy flag.
+Tests for the HINDSIGHT_API_STORE_DOCUMENT_TEXT flag.
 
 When disabled, the retain pipeline still extracts facts/entities and embeds
 them, but the raw source text is dropped: documents.original_text is stored as
@@ -58,10 +58,12 @@ def store_document_text_disabled():
 
 
 @pytest.mark.asyncio
-async def test_privacy_mode_nulls_text_but_keeps_memories(memory, request_context, store_document_text_disabled):
+async def test_text_storage_disabled_nulls_text_but_keeps_memories(
+    memory, request_context, store_document_text_disabled
+):
     """With the flag off, raw text is dropped but facts/recall still work."""
-    bank_id = f"test_privacy_off_{datetime.now(timezone.utc).timestamp()}"
-    document_id = "doc-privacy-001"
+    bank_id = f"test_text_off_{datetime.now(timezone.utc).timestamp()}"
+    document_id = "doc-text-001"
 
     try:
         unit_ids = await memory.retain_async(
@@ -73,7 +75,7 @@ async def test_privacy_mode_nulls_text_but_keeps_memories(memory, request_contex
         )
 
         # Pipeline still ran: facts were extracted and stored.
-        assert len(unit_ids) > 0, "Facts should still be extracted in privacy mode"
+        assert len(unit_ids) > 0, "Facts should still be extracted when text storage is disabled"
 
         # documents.original_text is dropped (NULL).
         doc = await memory.get_document(document_id, bank_id, request_context=request_context)
@@ -97,7 +99,7 @@ async def test_privacy_mode_nulls_text_but_keeps_memories(memory, request_contex
             max_tokens=500,
             request_context=request_context,
         )
-        assert len(result.results) > 0, "Recall must still return facts in privacy mode"
+        assert len(result.results) > 0, "Recall must still return facts when text storage is disabled"
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -105,8 +107,8 @@ async def test_privacy_mode_nulls_text_but_keeps_memories(memory, request_contex
 @pytest.mark.asyncio
 async def test_default_mode_stores_text(memory, request_context):
     """By default (flag on) raw document and chunk text are persisted."""
-    bank_id = f"test_privacy_on_{datetime.now(timezone.utc).timestamp()}"
-    document_id = "doc-privacy-002"
+    bank_id = f"test_text_on_{datetime.now(timezone.utc).timestamp()}"
+    document_id = "doc-text-002"
 
     try:
         await memory.retain_async(
@@ -132,14 +134,14 @@ async def test_default_mode_stores_text(memory, request_context):
 
 
 @pytest.mark.asyncio
-async def test_append_mode_rejected_in_privacy_mode(memory, request_context, store_document_text_disabled):
+async def test_append_mode_rejected_when_text_disabled(memory, request_context, store_document_text_disabled):
     """update_mode='append' must be rejected when document text storage is disabled.
 
     Append rebuilds the document by reading back the stored original_text; with
     storage off there is nothing to read, so appending would silently drop the
     prior content. The pipeline rejects it instead of losing data.
     """
-    bank_id = f"test_append_privacy_{datetime.now(timezone.utc).timestamp()}"
+    bank_id = f"test_append_text_off_{datetime.now(timezone.utc).timestamp()}"
 
     with pytest.raises(ValueError, match="update_mode='append' is not supported"):
         await memory.retain_batch_async(
@@ -147,7 +149,7 @@ async def test_append_mode_rejected_in_privacy_mode(memory, request_context, sto
             contents=[
                 {
                     "content": "Some content",
-                    "document_id": "doc-append-privacy",
+                    "document_id": "doc-append-text-off",
                     "update_mode": "append",
                 }
             ],
@@ -164,8 +166,8 @@ async def test_get_document_endpoint_returns_null_text(
     The DocumentResponse model declares original_text as optional; a non-optional
     str would raise ResponseValidationError -> HTTP 500 when the text is NULL.
     """
-    bank_id = f"test_get_doc_privacy_{datetime.now(timezone.utc).timestamp()}"
-    document_id = "doc-http-privacy"
+    bank_id = f"test_get_doc_text_off_{datetime.now(timezone.utc).timestamp()}"
+    document_id = "doc-http-text-off"
 
     try:
         retain = await api_client.post(
@@ -177,7 +179,7 @@ async def test_get_document_endpoint_returns_null_text(
         resp = await api_client.get(f"/v1/default/banks/{bank_id}/documents/{document_id}")
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert body["original_text"] is None, "Raw text must be null in privacy mode"
+        assert body["original_text"] is None, "Raw text must be null when text storage is disabled"
         assert body["memory_unit_count"] > 0
 
         # Append to the same document is rejected as a client error (400), not a 500.
@@ -200,7 +202,7 @@ async def test_version_endpoint_reports_store_document_text(api_client, store_do
 
 
 def test_reflect_excludes_expand_tool_when_text_disabled():
-    """The reflect 'expand' tool (get chunk/document source text) is dropped in privacy mode."""
+    """The reflect 'expand' tool (get chunk/document source text) is dropped when text storage is disabled."""
     with_text = {t["function"]["name"] for t in get_reflect_tools(include_expand=True)}
     without_text = {t["function"]["name"] for t in get_reflect_tools(include_expand=False)}
 

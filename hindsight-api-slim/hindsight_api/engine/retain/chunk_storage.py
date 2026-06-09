@@ -89,9 +89,9 @@ async def store_chunks_batch(
     if not chunks:
         return {}
 
-    # Privacy mode: when document text storage is disabled, persist empty
-    # chunk_text (the column is NOT NULL) while still computing content_hash from
-    # the real text so delta-retain dedup is unaffected.
+    # When document text storage is disabled, persist empty chunk_text (the
+    # column is NOT NULL) while still computing content_hash from the real text
+    # so delta-retain dedup is unaffected.
     store_text = get_config().store_document_text
 
     # Prepare chunk data for batch insert

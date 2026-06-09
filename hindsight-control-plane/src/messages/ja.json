@@ -641,7 +641,7 @@
     "importConflictSkip": "スキップ — 既存のドキュメントを保持",
     "importConflictReplace": "置換 — インポート版で上書き",
     "importConflictNewId": "両方保持 — 新しい id でインポート",
-    "textNotStoredWarning": "このサーバーでは元のテキストは保存されません（プライバシーモード）。抽出されたメモリのみが保持されます。"
+    "textNotStoredWarning": "このサーバーでは元のテキストは保存されません。抽出されたメモリのみが保持されます。"
   },
   "entitiesView": {
     "viewRelations": "関係",
@@ -1446,7 +1446,7 @@
     "observationScopesEmpty": "観察スコープをプレビューするには、上にタグを追加してください",
     "metadataHelpText": "1行に1つの <code>key: value</code>",
     "entitiesHelpText": "自動抽出されたエンティティとマージされるカンマ区切りのヒント",
-    "textNotStoredWarning": "このサーバーでは文書の元テキストは保存されません（プライバシーモード）。抽出されたメモリのみが保持されます。"
+    "textNotStoredWarning": "このサーバーでは文書の元テキストは保存されません。抽出されたメモリのみが保持されます。"
   },
   "dashboard": {
     "welcome": "Hindsightへようこそ",

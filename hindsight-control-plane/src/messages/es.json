@@ -641,7 +641,7 @@
     "importConflictSkip": "Omitir — conservar el documento existente",
     "importConflictReplace": "Reemplazar — sobrescribir con el importado",
     "importConflictNewId": "Conservar ambos — importar con un nuevo id",
-    "textNotStoredWarning": "El texto original no se almacena en este servidor (modo de privacidad): solo se conservan las memorias extraídas."
+    "textNotStoredWarning": "El texto original no se almacena en este servidor: solo se conservan las memorias extraídas."
   },
   "entitiesView": {
     "viewRelations": "Relaciones",
@@ -1446,7 +1446,7 @@
     "observationScopesEmpty": "Añade etiquetas arriba para previsualizar los ámbitos de observación",
     "metadataHelpText": "Un <code>key: value</code> por línea",
     "entitiesHelpText": "Sugerencias separadas por comas que se combinan con las entidades extraídas automáticamente",
-    "textNotStoredWarning": "El texto original del documento no se almacenará en este servidor (modo de privacidad): solo se conservan las memorias extraídas."
+    "textNotStoredWarning": "El texto original del documento no se almacenará en este servidor: solo se conservan las memorias extraídas."
   },
   "dashboard": {
     "welcome": "Bienvenido a Hindsight",

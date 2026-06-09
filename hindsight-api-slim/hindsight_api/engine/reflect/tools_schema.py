@@ -249,8 +249,8 @@ def get_reflect_tools(
         include_observations: Whether to include the search_observations tool.
         include_recall: Whether to include the recall tool.
         include_expand: Whether to include the expand tool. Disabled when raw
-            document/chunk text is not stored (privacy mode), since expand only
-            reads back source text and would return empty results.
+            document/chunk text is not stored, since expand only reads back
+            source text and would return empty results.
 
     Returns:
         List of tool definitions in OpenAI format

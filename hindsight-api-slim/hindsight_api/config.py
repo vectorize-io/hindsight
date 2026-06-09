@@ -1441,7 +1441,7 @@ class HindsightConfig:
     file_conversion_max_batch_size: int  # Max files per request
     enable_file_upload_api: bool
     file_delete_after_retain: bool
-    store_document_text: bool  # When False, store NULL original_text / empty chunk_text (privacy mode)
+    store_document_text: bool  # When False, store NULL original_text / empty chunk_text
     enable_document_export_api: bool
     enable_document_import_api: bool
 

@@ -400,7 +400,7 @@ async def _upsert_document_row(
     keeps the original creation timestamp. ``updated_at`` is always set to
     ``NOW()`` on both INSERT and the ON CONFLICT UPDATE branch.
 
-    When ``store_document_text`` is disabled (privacy mode), the raw source text
+    When ``store_document_text`` is disabled, the raw source text
     is dropped and ``original_text`` is stored as NULL. The ``content_hash`` is
     still computed from the real content so delta-retain dedup is unaffected.
     """

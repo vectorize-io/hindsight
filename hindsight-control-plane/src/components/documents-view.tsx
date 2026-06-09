@@ -1443,6 +1443,12 @@ export function DocumentsView() {
 
                 {/* Chunks Tab */}
                 <TabsContent value="chunks" className="mt-0">
+                  {!features?.store_document_text && (
+                    <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 mb-3 text-xs text-amber-700 dark:text-amber-400">
+                      <Lock className="h-4 w-4 mt-0.5 shrink-0" />
+                      <span>{t("textNotStoredWarning")}</span>
+                    </div>
+                  )}
                   {loadingChunks ? (
                     <div className="flex items-center justify-center py-20">
                       <div className="text-center">

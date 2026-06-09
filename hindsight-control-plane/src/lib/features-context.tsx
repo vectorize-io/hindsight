@@ -33,7 +33,7 @@ const defaultFeatures: Features = {
   audit_log: false,
   llm_trace: false,
   // Default to true so the "text not stored" warning only appears when the
-  // server explicitly reports the privacy flag is on (and not on fetch errors).
+  // server explicitly reports text storage is disabled (and not on fetch errors).
   store_document_text: true,
 };
 

@@ -1010,7 +1010,7 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE` | Max unique entity names per fuzzy candidate lookup query (`trigram` on PG, `oracle_fuzzy` on Oracle). Bounds query size so very wide retain batches don't time out a single `unnest(...)` join on banks with many entities. | `100` |
 | `HINDSIGHT_API_RETAIN_DEFAULT_STRATEGY` | Default retain strategy name. When set, all retain calls without an explicit `strategy` parameter use this strategy. | - |
 | `HINDSIGHT_API_RETAIN_BATCH_POLL_INTERVAL_SECONDS` | Batch API polling interval in seconds | `60` |
-| `HINDSIGHT_API_STORE_DOCUMENT_TEXT` | Persist the raw source text alongside extracted memories. Set to `false` for privacy-sensitive deployments to drop it. Static, server-level. | `true` |
+| `HINDSIGHT_API_STORE_DOCUMENT_TEXT` | Persist the raw source text alongside extracted memories. Set to `false` to skip storing it. Static, server-level. | `true` |
 
 > **Batch-capable providers.** `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` only works with a retain LLM provider that implements a batch API: `openai`, `groq`, and `fireworks`. Batch always requires async retain (`async=true`); a sync retain with batch enabled errors. Other providers fail fast at startup.
 
@@ -1035,9 +1035,9 @@ export HINDSIGHT_API_RETAIN_BATCH_ENABLED=true
 
 > **Entity labels** (`entity_labels`) and **free-form entity extraction** (`entities_allow_free_form`) are configured per bank via the [bank config API](api/memory-banks.md#retain-configuration), not as global environment variables — each bank can have its own controlled vocabulary. See [Entity Labels](retain.md#entity-labels) for details.
 
-#### Privacy mode: skip storing raw document text
+#### Skip storing raw document text
 
-By default Hindsight keeps a verbatim copy of everything you retain so you can later read the source, re-process a document, or export it. For privacy-sensitive deployments that only want to keep the extracted, anonymised memories (facts, entities, mental models), set:
+By default Hindsight keeps a verbatim copy of everything you retain so you can later read the source, re-process a document, or export it. For deployments that only want to keep the extracted memories (facts, entities, mental models) and not the source text, set:
 
 ```bash
 export HINDSIGHT_API_STORE_DOCUMENT_TEXT=false
@@ -1048,9 +1048,9 @@ When disabled, the full retain pipeline still runs — chunking, fact extraction
 - `documents.original_text` is stored as `NULL` instead of the raw payload.
 - The raw chunk text is dropped (stored as empty), while the chunk's content hash is still kept so incremental re-retain of the same document continues to deduplicate correctly.
 
-**`update_mode="append"` is rejected in this mode.** Append rebuilds a document by reading back its previously stored text and adding to it. With nothing stored, appending would silently drop the prior content, so an append retain returns an error instead. Use `update_mode="replace"` (the default).
+**`update_mode="append"` is rejected when text storage is disabled.** Append rebuilds a document by reading back its previously stored text and adding to it. With nothing stored, appending would silently drop the prior content, so an append retain returns an error instead. Use `update_mode="replace"` (the default).
 
-**Features that degrade in this mode** (because they read the source text back):
+**Features that degrade when text storage is disabled** (because they read the source text back):
 
 - **Document export** carries no source text; re-importing such a bank cannot re-run extraction from the original payload.
 - **Reading a document's source** (the get-document, list-chunks, and get-chunk endpoints, including their MCP equivalents) returns empty content.

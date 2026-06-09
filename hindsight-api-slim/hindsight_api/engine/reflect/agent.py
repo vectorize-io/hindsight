@@ -379,7 +379,7 @@ async def run_reflect_agent(
 
     # Get tools for this agent (with directive compliance field if directives exist).
     # The expand tool only reads back raw source text (chunks/documents), so it is
-    # useless and excluded when document text storage is disabled (privacy mode).
+    # useless and excluded when document text storage is disabled.
     include_expand = get_config().store_document_text
     tools = get_reflect_tools(
         directive_rules=directive_rules,
@@ -914,7 +914,7 @@ async def run_reflect_agent(
             for tc in other_tools:
                 norm = _normalize_tool_name(tc.name)
                 # "done" is always available. "expand" is governed by enabled_tools
-                # (it is excluded in privacy mode), so it is not hardcoded here.
+                # (it is excluded when text storage is disabled), so it is not hardcoded here.
                 if enabled_tools is not None and norm not in enabled_tools and norm != "done":
                     hallucinated_tools.append(tc)
                 else:
@@ -1245,7 +1245,7 @@ async def _execute_tool(
 
     # Guard against LLMs hallucinating calls to tools that were not provided.
     # "done" is always available; "expand" is governed by enabled_tools (excluded
-    # in privacy mode), so it is not hardcoded as always-allowed here.
+    # when text storage is disabled), so it is not hardcoded as always-allowed here.
     if enabled_tools is not None and tool_name not in enabled_tools and tool_name != "done":
         return {"error": f"Tool '{tool_name}' is not available. Use only the tools provided to you."}
 

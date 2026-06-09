@@ -7738,9 +7738,9 @@ class MemoryEngine(MemoryEngineInterface):
             if recall_include_chunks is not None
             else config_dict.get("recall_include_chunks", DEFAULT_RECALL_INCLUDE_CHUNKS)
         )
-        # Privacy mode stores no raw chunk text, so fetching chunks would only
-        # attach empty strings to every recall result. Force it off (this also
-        # pairs with the expand tool being excluded from the reflect toolset).
+        # With document text storage disabled there is no raw chunk text, so
+        # fetching chunks would only attach empty strings to every recall
+        # result. Force it off (pairs with excluding the expand tool below).
         if not get_config().store_document_text:
             effective_recall_include_chunks = False
         effective_recall_max_tokens = (

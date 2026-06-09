@@ -641,7 +641,7 @@
     "importConflictSkip": "Skip — keep the existing document",
     "importConflictReplace": "Replace — overwrite with the imported one",
     "importConflictNewId": "Keep both — import under a new id",
-    "textNotStoredWarning": "Source text isn't stored on this server (privacy mode) — only the extracted memories are kept."
+    "textNotStoredWarning": "Source text isn't stored on this server — only the extracted memories are kept."
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -1446,7 +1446,7 @@
     "observationScopesEmpty": "Add tags above to preview observation scopes",
     "metadataHelpText": "One <code>key: value</code> per line",
     "entitiesHelpText": "Comma-separated hints merged with auto-extracted entities",
-    "textNotStoredWarning": "Raw document text won't be stored on this server (privacy mode) — only the extracted memories are kept."
+    "textNotStoredWarning": "Raw document text won't be stored on this server — only the extracted memories are kept."
   },
   "dashboard": {
     "welcome": "Welcome to Hindsight",

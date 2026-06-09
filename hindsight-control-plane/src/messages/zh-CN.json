@@ -641,7 +641,7 @@
     "importConflictSkip": "跳过 — 保留现有文档",
     "importConflictReplace": "替换 — 用导入的覆盖",
     "importConflictNewId": "两者都保留 — 以新 id 导入",
-    "textNotStoredWarning": "此服务器不存储原始文本（隐私模式），仅保留提取的记忆。"
+    "textNotStoredWarning": "此服务器不存储原始文本，仅保留提取的记忆。"
   },
   "entitiesView": {
     "viewRelations": "关系",
@@ -1446,7 +1446,7 @@
     "observationScopesEmpty": "在上方添加标签以预览观察范围",
     "metadataHelpText": "每行一个 <code>key: value</code>",
     "entitiesHelpText": "逗号分隔的提示，与自动提取的实体合并",
-    "textNotStoredWarning": "此服务器不会存储文档原始文本（隐私模式），仅保留提取的记忆。"
+    "textNotStoredWarning": "此服务器不会存储文档原始文本，仅保留提取的记忆。"
   },
   "dashboard": {
     "welcome": "欢迎使用 Hindsight",
