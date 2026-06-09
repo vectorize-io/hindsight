@@ -7,6 +7,26 @@ import { toast } from "sonner";
 import { bankApi, bankStatsApi, documentApi, memoryApi } from "./bank-url";
 import { stripBasePath, withBasePath } from "./base-path";
 
+/**
+ * Reduce an API error `details` value to a string safe to render in a toast.
+ * Endpoints may return a plain string or a structured object (e.g. a Memory
+ * Defense block returns `{violations: [{message}]}`); objects cannot be passed
+ * to sonner/React directly.
+ */
+function describeErrorDetails(details: unknown): string | undefined {
+  if (details == null) return undefined;
+  if (typeof details === "string") return details;
+  if (typeof details === "object") {
+    const violations = (details as { violations?: Array<{ message?: string }> }).violations;
+    if (Array.isArray(violations)) {
+      const messages = violations.map((v) => v?.message).filter(Boolean);
+      if (messages.length > 0) return messages.join("; ");
+    }
+    return JSON.stringify(details);
+  }
+  return String(details);
+}
+
 export interface WebhookHttpConfig {
   method: string;
   timeout_seconds: number;
@@ -208,7 +228,7 @@ export class ControlPlaneClient {
 
         // Try to parse error response
         let errorMessage = `HTTP ${response.status}`;
-        let errorDetails: string | undefined;
+        let errorDetails: unknown;
 
         try {
           const errorData = await response.json();
@@ -226,8 +246,11 @@ export class ControlPlaneClient {
           }
         }
 
-        // Show toast with different styles based on status code
-        const description = errorDetails || errorMessage;
+        // Coerce details into a string for the toast. Some endpoints return a
+        // structured detail object — e.g. a Memory Defense block responds with
+        // {violations: [{message, ...}]} — and React/sonner cannot render an
+        // object as a child (it throws "Objects are not valid as a React child").
+        const description = describeErrorDetails(errorDetails) || errorMessage;
         const status = response.status;
 
         if (status >= 400 && status < 500) {
