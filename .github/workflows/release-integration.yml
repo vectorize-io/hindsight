@@ -144,6 +144,12 @@ jobs:
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+        # actions/checkout injects an auth header for the default GITHUB_TOKEN
+        # (github-actions[bot]) that overrides URL-embedded credentials — so the
+        # push below would use the bot, which has no access to the dedicated repo.
+        # Drop it so the OBSIDIAN_DIST_TOKEN in the push URL is used instead.
+        git config --local --unset-all http.https://github.com/.extraheader || true
+
         # Mirror the subdir to the dedicated repo's root (one-way; the dedicated
         # repo is only ever written here, so the split fast-forwards each time).
         git subtree push --prefix="$OBS_DIR" \
