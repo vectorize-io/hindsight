@@ -4,7 +4,9 @@ import { locales, defaultLocale } from "./config";
 export const routing = defineRouting({
   locales,
   defaultLocale,
-  // Don't add locale prefix for the default locale (English)
-  // /dashboard instead of /en/dashboard
-  localePrefix: "as-needed",
+  // Never expose the locale in the URL. The active locale is resolved from the
+  // NEXT_LOCALE cookie (Accept-Language as fallback) and next-intl rewrites
+  // internally to the [locale] segment, so paths stay clean (/banks/x, never
+  // /es/banks/x). Keeps the control plane locale-agnostic in the address bar.
+  localePrefix: "never",
 });

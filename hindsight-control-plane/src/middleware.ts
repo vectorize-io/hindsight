@@ -22,17 +22,6 @@ const PUBLIC_PATTERNS = [
 
 const intlMiddleware = createIntlMiddleware(routing);
 
-function stripLocalePrefix(pathname: string): string {
-  // Strip a leading /<locale> segment when present so auth rules can match
-  // against the canonical path (e.g. /es/login → /login).
-  const segments = pathname.split("/");
-  if (segments.length >= 2 && (routing.locales as readonly string[]).includes(segments[1])) {
-    const rest = "/" + segments.slice(2).join("/");
-    return rest === "/" ? "/" : rest;
-  }
-  return pathname;
-}
-
 export async function middleware(request: NextRequest) {
   const accessKey = process.env.HINDSIGHT_CP_ACCESS_KEY;
   const { pathname } = request.nextUrl;
@@ -65,11 +54,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Page routes: enforce auth first (using locale-stripped path), then delegate
-  // to the i18n middleware for locale negotiation and rewriting.
+  // Page routes: enforce auth first, then delegate to the i18n middleware for
+  // locale negotiation and rewriting. With localePrefix "never" the locale is
+  // never in the path, so appPathname is already the canonical route.
   if (accessKey) {
-    const canonicalPath = stripLocalePrefix(appPathname);
-    const isPublic = PUBLIC_PATTERNS.some((pattern) => canonicalPath.startsWith(pattern));
+    const isPublic = PUBLIC_PATTERNS.some((pattern) => appPathname.startsWith(pattern));
 
     if (!isPublic) {
       const sessionCookie = request.cookies.get(ACCESS_KEY_COOKIE)?.value;
