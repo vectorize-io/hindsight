@@ -1480,6 +1480,7 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     retainRoles: Array.isArray(config.retainRoles) ? config.retainRoles : undefined,
     retainFormat: config.retainFormat === "text" ? "text" : "json",
     retainToolCalls: config.retainToolCalls !== false,
+    retainDocumentScope: config.retainDocumentScope === "turn" ? "turn" : "session",
     recallBudget: config.recallBudget || "mid",
     recallMaxTokens: config.recallMaxTokens || 1024,
     recallTypes: Array.isArray(config.recallTypes) ? config.recallTypes : ["observation"],

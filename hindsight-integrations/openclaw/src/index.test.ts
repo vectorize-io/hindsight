@@ -1356,6 +1356,24 @@ function makeApi(rawConfig: Record<string, unknown>): MoltbotPluginAPI {
   } as unknown as MoltbotPluginAPI;
 }
 
+describe("getPluginConfig — retainDocumentScope whitelist", () => {
+  it("passes retainDocumentScope='turn' through when set", () => {
+    const cfg = getPluginConfig(makeApi({ retainDocumentScope: "turn" }));
+
+    expect(cfg.retainDocumentScope).toBe("turn");
+  });
+
+  it("defaults retainDocumentScope to session for missing or invalid values", () => {
+    expect(getPluginConfig(makeApi({})).retainDocumentScope).toBe("session");
+    expect(getPluginConfig(makeApi({ retainDocumentScope: "session" })).retainDocumentScope).toBe(
+      "session"
+    );
+    expect(getPluginConfig(makeApi({ retainDocumentScope: "window" })).retainDocumentScope).toBe(
+      "session"
+    );
+  });
+});
+
 describe("getPluginConfig — retainQueue whitelist (#1443)", () => {
   it("passes retainQueuePath through when set to a non-empty string", () => {
     const cfg = getPluginConfig(makeApi({ retainQueuePath: "/custom/path/retain.jsonl" }));
