@@ -369,10 +369,30 @@ async def test_retain_blocks_secret_item(api_client) -> None:
     assert r2.status_code == 200, r2.text
 
 
+async def _memory_defense_webhook_events(memory, bank: str) -> list[dict]:
+    """Return the fully-parsed WebhookEvent bodies of the memory_defense.triggered
+    deliveries queued for ``bank``. The webhook_delivery task_payload nests the
+    serialized event under ``payload`` (a JSON string)."""
+    async with memory._pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT task_payload FROM async_operations WHERE operation_type = 'webhook_delivery' AND bank_id = $1",
+            bank,
+        )
+    events: list[dict] = []
+    for row in rows:
+        task = row["task_payload"]
+        if isinstance(task, str):
+            task = json.loads(task)
+        if task.get("event_type") != "memory_defense.triggered":
+            continue
+        events.append(json.loads(task["payload"]))
+    return events
+
+
 @pytest.mark.asyncio
 async def test_retain_fires_webhook_on_redact(api_client, memory) -> None:
-    """A redact decision queues a memory_defense.triggered webhook delivery
-    when a webhook is subscribed to that event type."""
+    """A redact decision queues a memory_defense.triggered delivery whose payload
+    reports the action, detector, and matched pattern labels."""
     bank = "md-retain-wh"
     await api_client.put(f"/v1/default/banks/{bank}", json={})
     wr = await api_client.post(
@@ -389,18 +409,48 @@ async def test_retain_fires_webhook_on_redact(api_client, memory) -> None:
     )
     assert rr.status_code == 200, rr.text
 
-    async with memory._pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT task_payload FROM async_operations WHERE operation_type = 'webhook_delivery' AND bank_id = $1",
-            bank,
-        )
-    event_types = []
-    for row in rows:
-        payload = row["task_payload"]
-        if isinstance(payload, str):
-            payload = json.loads(payload)
-        event_types.append(payload.get("event_type"))
-    assert "memory_defense.triggered" in event_types, event_types
+    events = await _memory_defense_webhook_events(memory, bank)
+    assert len(events) >= 1, events
+    ev = events[0]
+    assert ev["event"] == "memory_defense.triggered"
+    assert ev["status"] == "redact"
+    data = ev["data"]
+    assert data["action"] == "redact"
+    assert data["detector"] == "sensitive_data"
+    assert "github_token" in data["matched_types"]
+    assert data["message"]
+
+
+@pytest.mark.asyncio
+async def test_retain_fires_webhook_on_block(api_client, memory) -> None:
+    """A block decision also fires the webhook (before the 422 is raised), with
+    action=block in the payload."""
+    bank = "md-retain-wh-block"
+    await api_client.put(f"/v1/default/banks/{bank}", json={})
+    wr = await api_client.post(
+        f"/v1/default/banks/{bank}/webhooks",
+        json={"url": "https://example.com/hook", "event_types": ["memory_defense.triggered"]},
+    )
+    assert wr.status_code in {200, 201}, wr.text
+    await _set_policy(
+        api_client,
+        bank,
+        {"memory_defense": {"enabled": True, "rules": [{"on": "sensitive_data", "action": "block"}]}},
+    )
+
+    secret = "AKIA" + "A" * 16
+    rr = await api_client.post(
+        f"/v1/default/banks/{bank}/memories",
+        json={"items": [{"content": f"key {secret}"}]},
+    )
+    assert rr.status_code == 422, rr.text  # all items blocked
+
+    events = await _memory_defense_webhook_events(memory, bank)
+    assert any(ev["data"]["action"] == "block" for ev in events), events
+    blocked = next(ev for ev in events if ev["data"]["action"] == "block")
+    assert blocked["status"] == "block"
+    assert blocked["data"]["detector"] == "sensitive_data"
+    assert "aws_access_key" in blocked["data"]["matched_types"]
 
 
 # ---------------------------------------------------------------------------
