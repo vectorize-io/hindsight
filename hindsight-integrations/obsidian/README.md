@@ -36,7 +36,7 @@ Your own frontmatter `tags`/`aliases` are carried through too.
 
 > ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — sign up free, get an API key, and skip self-hosting.
 
-While in beta, install via [BRAT](https://github.com/TfTHacker/obsidian42-brat): add the repo `vectorize-io/hindsight`, select the Hindsight plugin, then enable it under **Settings → Community plugins**.
+While in beta, install via [BRAT](https://github.com/TfTHacker/obsidian42-brat): add the repo [`vectorize-io/hindsight-obsidian`](https://github.com/vectorize-io/hindsight-obsidian) — the dedicated plugin repo BRAT installs from (see [Distribution](#distribution--maintainers)) — then enable it under **Settings → Community plugins**.
 
 **Self-hosting alternative:**
 
@@ -92,3 +92,21 @@ npm run build    # esbuild → main.js
 
 To try it in a real vault, copy `main.js`, `manifest.json`, and `styles.css` into
 `<vault>/.obsidian/plugins/hindsight/` and enable the plugin.
+
+## Distribution & maintainers
+
+> ⚠️ **This plugin lives in two repos. When you change it, you must update both.**
+
+| Repo                                                                                    | Role                                                                                                                                                        |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hindsight-integrations/obsidian/` (this monorepo)                                      | **Source of truth.** All code, tests, and the npm package (`@vectorize-io/hindsight-obsidian`) live here.                                                   |
+| [`vectorize-io/hindsight-obsidian`](https://github.com/vectorize-io/hindsight-obsidian) | **Distribution repo for BRAT + the Obsidian community store.** Holds the built `main.js` / `manifest.json` / `styles.css` and a GitHub Release per version. |
+
+**Why two repos?** Obsidian's BRAT and community store install from a repo's **latest GitHub Release**. We can't create those releases in this monorepo — they pollute the core product's release list and steal the "Latest" badge (and BRAT would read the core app's release, not the plugin). So distribution releases go to the dedicated repo instead.
+
+**Releasing an update:**
+
+1. Make changes here, then cut the monorepo release as usual (`./scripts/release-integration.sh obsidian <version>`). This publishes the npm package and tags the monorepo — but creates **no** GitHub Release.
+2. Mirror the built `main.js` / `manifest.json` / `styles.css` to [`vectorize-io/hindsight-obsidian`](https://github.com/vectorize-io/hindsight-obsidian) and cut a GitHub Release there tagged with the bare version (e.g. `0.1.0`, matching `manifest.json`) so BRAT / the community store pick it up.
+
+Keep `manifest.json` `version` in sync across both repos.

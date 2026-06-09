@@ -113,25 +113,15 @@ jobs:
       working-directory: ./hindsight-integrations/${{ steps.info.outputs.integration }}
       run: npm run build
 
-    # ── Obsidian plugin — attach BRAT / community-store install assets ───────
-    # Obsidian plugins install from GitHub *release assets* (main.js,
-    # manifest.json, styles.css), not from npm — the npm publish below only
-    # gives us a versioned artifact. BRAT and the community store read these
-    # three files off the release for the tag.
-    - name: Attach Obsidian release assets
-      if: steps.type.outputs.type == 'typescript' && steps.info.outputs.integration == 'obsidian'
-      working-directory: ./hindsight-integrations/obsidian
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: |
-        TAG="${{ steps.info.outputs.tag }}"
-        if gh release view "$TAG" >/dev/null 2>&1; then
-          gh release upload "$TAG" main.js manifest.json styles.css --clobber
-        else
-          gh release create "$TAG" main.js manifest.json styles.css \
-            --title "Obsidian plugin v${{ steps.info.outputs.version }}" \
-            --notes "Hindsight Obsidian plugin v${{ steps.info.outputs.version }}. Install via BRAT (point it at this release) or copy main.js/manifest.json/styles.css into <vault>/.obsidian/plugins/hindsight/."
-        fi
+    # NOTE: We intentionally do NOT create a GitHub Release for the Obsidian
+    # plugin here. Per-integration GitHub Releases pollute the repo's release
+    # list (which is for the core Hindsight product) and steal the "Latest"
+    # badge. BRAT / the Obsidian community store also can't target a tag inside
+    # a multi-release monorepo — they read a repo's *latest* release. So
+    # BRAT / community-store distribution lives in the dedicated plugin repo
+    # github.com/vectorize-io/hindsight-obsidian (see this integration's
+    # README → "Distribution"). The monorepo remains the source of truth and
+    # still publishes the npm package below.
 
     - name: Publish TypeScript package to npm
       if: steps.type.outputs.type == 'typescript'
