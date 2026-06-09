@@ -4,6 +4,7 @@ Integration test for API base path support.
 Tests that the API works correctly when deployed with a base path (e.g., /hindsight)
 for reverse proxy deployments.
 """
+
 import os
 import pytest
 import pytest_asyncio
@@ -27,10 +28,7 @@ async def api_client_with_base_path(memory):
 
     # Use base_url with base path
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(
-        transport=transport,
-        base_url=f"http://test{base_path}"
-    ) as client:
+    async with httpx.AsyncClient(transport=transport, base_url=f"http://test{base_path}") as client:
         yield client
 
     # Cleanup: unset base path
@@ -122,10 +120,10 @@ async def test_base_path_full_workflow(api_client_with_base_path):
             "items": [
                 {
                     "content": "The API supports base path deployment for reverse proxy use cases.",
-                    "context": "testing base path feature"
+                    "context": "testing base path feature",
                 }
             ]
-        }
+        },
     )
     assert response.status_code == 200
     result = response.json()
@@ -133,10 +131,7 @@ async def test_base_path_full_workflow(api_client_with_base_path):
 
     # 3. Recall the memory
     response = await api_client_with_base_path.post(
-        f"/v1/default/banks/{bank_id}/memories/recall",
-        json={
-            "query": "base path support"
-        }
+        f"/v1/default/banks/{bank_id}/memories/recall", json={"query": "base path support"}
     )
     assert response.status_code == 200
     recall_result = response.json()

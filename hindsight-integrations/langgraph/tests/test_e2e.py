@@ -139,9 +139,7 @@ class TestE2ETools:
         result = await retain.ainvoke("The team uses PostgreSQL 16 and deploys to us-east-1.")
         assert result == "Memory stored successfully."
 
-        recalled = await _recall_tool_until_nonempty(
-            recall, "What technologies does the team use?"
-        )
+        recalled = await _recall_tool_until_nonempty(recall, "What technologies does the team use?")
         lowered = recalled.lower()
         assert "postgresql" in lowered or "us-east-1" in lowered, (
             f"Recall surfaced results but none referenced the stored content: {recalled}"
@@ -191,9 +189,7 @@ class TestE2ENodes:
         retain_node = create_retain_node(client=client, bank_id=bank_id, retain_human=True)
         recall_node = create_recall_node(client=client, bank_id=bank_id)
 
-        await retain_node(
-            {"messages": [HumanMessage(content="The team uses PostgreSQL 16 and deploys to us-east-1.")]}
-        )
+        await retain_node({"messages": [HumanMessage(content="The team uses PostgreSQL 16 and deploys to us-east-1.")]})
 
         out = await _recall_node_until_nonempty(recall_node, "What database does the team use?")
         text = " ".join(m.content for m in out["messages"]).lower()
@@ -232,12 +228,8 @@ class TestE2ENodes:
         # Wait until the stored memory is queryable before the second turn.
         await _recall_node_until_nonempty(recall, "What outdoor activities do I enjoy?")
 
-        result = await graph.ainvoke(
-            {"messages": [HumanMessage(content="What outdoor activities do I enjoy?")]}
-        )
-        injected = " ".join(
-            m.content for m in result["messages"] if isinstance(m, SystemMessage)
-        ).lower()
+        result = await graph.ainvoke({"messages": [HumanMessage(content="What outdoor activities do I enjoy?")]})
+        injected = " ".join(m.content for m in result["messages"] if isinstance(m, SystemMessage)).lower()
         assert "hiking" in injected or "mountain" in injected, (
             f"Recall node didn't inject the stored hiking memory into the graph: {injected}"
         )

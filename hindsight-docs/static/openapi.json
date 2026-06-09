@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.7.2"
+    "version": "0.8.1"
   },
   "paths": {
     "/health": {
@@ -7715,7 +7715,14 @@
             "title": "Bank Id"
           },
           "original_text": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Original Text"
           },
           "content_hash": {
@@ -8239,6 +8246,11 @@
             "type": "boolean",
             "title": "Llm Trace",
             "description": "Whether per-bank LLM request tracing is enabled"
+          },
+          "store_document_text": {
+            "type": "boolean",
+            "title": "Store Document Text",
+            "description": "Whether raw source text is persisted. When false, document/chunk source text is not stored."
           }
         },
         "type": "object",
@@ -8251,7 +8263,8 @@
           "document_export_api",
           "document_import_api",
           "audit_log",
-          "llm_trace"
+          "llm_trace",
+          "store_document_text"
         ],
         "title": "FeaturesInfo",
         "description": "Feature flags indicating which capabilities are enabled."

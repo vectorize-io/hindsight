@@ -23,7 +23,7 @@ import { loadConfig } from "./config.js";
 import { deriveBankId } from "./bank.js";
 import { createTools } from "./tools.js";
 import { createHooks, type PluginState } from "./hooks.js";
-import { debugLog } from "./config.js";
+import { Logger, type OpencodeLogClient } from "./logger.js";
 
 // Module-level state persists across sessions (plugin is instantiated per session,
 // but the module is loaded once per OpenCode server process).
@@ -37,6 +37,13 @@ const state: PluginState = {
 const HindsightPlugin: Plugin = async (input, options) => {
   const config = loadConfig(options);
 
+  // Route logs through OpenCode's server log stream (TUI-safe). error/warn/info
+  // are always emitted; debug is gated on config.debug.
+  const logger = new Logger({
+    client: input.client as unknown as OpencodeLogClient,
+    debug: config.debug,
+  });
+
   // hindsightApiUrl always resolves to a value (DEFAULT_HINDSIGHT_API_URL by default),
   // so plugin instantiation never fails just because the URL is unset.
   // Requests fail at call time if no API key is configured for a Cloud URL —
@@ -48,15 +55,24 @@ const HindsightPlugin: Plugin = async (input, options) => {
   });
 
   const bankId = deriveBankId(config, input.directory);
-  debugLog(config, `Initialized with bank: ${bankId}, API: ${config.hindsightApiUrl}`);
+  // Always log the resolved endpoint + bank so users can see which instance the
+  // plugin is talking to (a common source of "memories aren't saving" confusion).
+  logger.info("Hindsight plugin initialized", {
+    api: config.hindsightApiUrl,
+    bank: bankId,
+    authenticated: Boolean(config.hindsightApiToken),
+    autoRecall: config.autoRecall,
+    autoRetain: config.autoRetain,
+  });
 
-  const tools = createTools(client, bankId, config, state.missionsSet);
+  const tools = createTools(client, bankId, config, state.missionsSet, logger);
   const hooks = createHooks(
     client,
     bankId,
     config,
     state,
-    input.client as unknown as Parameters<typeof createHooks>[4]
+    input.client as unknown as Parameters<typeof createHooks>[4],
+    logger
   );
 
   return {
@@ -75,5 +91,5 @@ export default HindsightPlugin;
 // Re-export types for consumers
 export type { HindsightConfig } from "./config.js";
 export type { PluginState } from "./hooks.js";
-export { loadConfig, DEFAULT_HINDSIGHT_API_URL } from "./config.js";
+export { loadConfig } from "./config.js";
 export { deriveBankId } from "./bank.js";

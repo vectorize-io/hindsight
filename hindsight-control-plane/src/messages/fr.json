@@ -640,7 +640,8 @@
     "importConflictLabel": "Si un document existe déjà",
     "importConflictSkip": "Ignorer — conserver le document existant",
     "importConflictReplace": "Remplacer — écraser par celui importé",
-    "importConflictNewId": "Conserver les deux — importer sous un nouvel id"
+    "importConflictNewId": "Conserver les deux — importer sous un nouvel id",
+    "textNotStoredWarning": "Le texte source n'est pas conservé sur ce serveur — seules les mémoires extraites sont conservées."
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -1444,7 +1445,8 @@
     "observationScopeAllCombinations": "Toutes les combinaisons",
     "observationScopesEmpty": "Ajoutez des tags ci-dessus pour prévisualiser les portées d'observation",
     "metadataHelpText": "Un <code>key: value</code> par ligne",
-    "entitiesHelpText": "Indications séparées par des virgules fusionnées avec les entités extraites automatiquement"
+    "entitiesHelpText": "Indications séparées par des virgules fusionnées avec les entités extraites automatiquement",
+    "textNotStoredWarning": "Le texte brut du document ne sera pas conservé sur ce serveur — seules les mémoires extraites sont conservées."
   },
   "dashboard": {
     "welcome": "Bienvenue sur Hindsight",

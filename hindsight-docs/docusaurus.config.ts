@@ -179,7 +179,9 @@ const config: Config = {
         id: 'integrations',
         path: './docs-integrations',
         routeBasePath: 'sdks/integrations',
-        sidebarPath: false,
+        // Unversioned plugin: gives the integration pages a sidebar generated
+        // from src/data/integrations.json without versioning them.
+        sidebarPath: './sidebars-integrations.ts',
       },
     ],
     [

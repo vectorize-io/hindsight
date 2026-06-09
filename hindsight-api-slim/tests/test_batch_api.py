@@ -7,21 +7,24 @@ Tests cover:
 - Hard error when provider doesn't support the batch API (no silent fallback)
 - Worker recovery on restart
 """
-import pytest
+
 import asyncio
-import logging
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from hindsight_api import RequestContext
-from hindsight_api.engine.retain.fact_extraction import (
-    extract_facts_from_contents_batch_api,
-    extract_facts_from_contents,
-    RetainContent,
-)
 from hindsight_api.config import HindsightConfig
 from hindsight_api.engine.llm_wrapper import create_llm_provider
+from hindsight_api.engine.retain.fact_extraction import (
+    RetainContent,
+    extract_facts_from_contents,
+    extract_facts_from_contents_batch_api,
+)
 from hindsight_api.worker.poller import WorkerPoller
 
 logger = logging.getLogger(__name__)
@@ -103,19 +106,21 @@ async def test_batch_api_normal_flow(mock_llm_config, test_contents, hindsight_c
                         "choices": [
                             {
                                 "message": {
-                                    "content": json.dumps({
-                                        "facts": [
-                                            {
-                                                "what": "Alice is a senior software engineer at TechCorp",
-                                                "when": "present",
-                                                "where": "TechCorp",
-                                                "who": "Alice",
-                                                "why": "Professional background information",
-                                                "fact_type": "world",
-                                                "fact_kind": "conversation",
-                                            }
-                                        ]
-                                    })
+                                    "content": json.dumps(
+                                        {
+                                            "facts": [
+                                                {
+                                                    "what": "Alice is a senior software engineer at TechCorp",
+                                                    "when": "present",
+                                                    "where": "TechCorp",
+                                                    "who": "Alice",
+                                                    "why": "Professional background information",
+                                                    "fact_type": "world",
+                                                    "fact_kind": "conversation",
+                                                }
+                                            ]
+                                        }
+                                    )
                                 }
                             }
                         ],
@@ -130,19 +135,21 @@ async def test_batch_api_normal_flow(mock_llm_config, test_contents, hindsight_c
                         "choices": [
                             {
                                 "message": {
-                                    "content": json.dumps({
-                                        "facts": [
-                                            {
-                                                "what": "Bob joined the team last month as a junior developer",
-                                                "when": "last month",
-                                                "where": "team",
-                                                "who": "Bob",
-                                                "why": "New team member information",
-                                                "fact_type": "world",
-                                                "fact_kind": "conversation",
-                                            }
-                                        ]
-                                    })
+                                    "content": json.dumps(
+                                        {
+                                            "facts": [
+                                                {
+                                                    "what": "Bob joined the team last month as a junior developer",
+                                                    "when": "last month",
+                                                    "where": "team",
+                                                    "who": "Bob",
+                                                    "why": "New team member information",
+                                                    "fact_type": "world",
+                                                    "fact_kind": "conversation",
+                                                }
+                                            ]
+                                        }
+                                    )
                                 }
                             }
                         ],
@@ -211,6 +218,7 @@ async def test_batch_api_crash_recovery(mock_llm_config, test_contents, hindsigh
         schema = request_context.tenant_id
 
         from hindsight_api.engine.task_backend import fq_table
+
         table = fq_table("async_operations", schema)
 
         # Create operation with batch_id already stored
@@ -221,11 +229,13 @@ async def test_batch_api_crash_recovery(mock_llm_config, test_contents, hindsigh
             """,
             operation_id,
             bank_id,
-            json.dumps({
-                "batch_id": batch_id,
-                "batch_provider": "openai",
-                "chunk_count": 2,
-            }),
+            json.dumps(
+                {
+                    "batch_id": batch_id,
+                    "batch_provider": "openai",
+                    "chunk_count": 2,
+                }
+            ),
         )
 
         # Mock batch API responses for resume scenario
@@ -248,19 +258,21 @@ async def test_batch_api_crash_recovery(mock_llm_config, test_contents, hindsigh
                         "choices": [
                             {
                                 "message": {
-                                    "content": json.dumps({
-                                        "facts": [
-                                            {
-                                                "what": "Alice is a senior software engineer",
-                                                "when": "present",
-                                                "where": "TechCorp",
-                                                "who": "Alice",
-                                                "why": "Background",
-                                                "fact_type": "world",
-                                                "fact_kind": "conversation",
-                                            }
-                                        ]
-                                    })
+                                    "content": json.dumps(
+                                        {
+                                            "facts": [
+                                                {
+                                                    "what": "Alice is a senior software engineer",
+                                                    "when": "present",
+                                                    "where": "TechCorp",
+                                                    "who": "Alice",
+                                                    "why": "Background",
+                                                    "fact_type": "world",
+                                                    "fact_kind": "conversation",
+                                                }
+                                            ]
+                                        }
+                                    )
                                 }
                             }
                         ],
@@ -275,19 +287,21 @@ async def test_batch_api_crash_recovery(mock_llm_config, test_contents, hindsigh
                         "choices": [
                             {
                                 "message": {
-                                    "content": json.dumps({
-                                        "facts": [
-                                            {
-                                                "what": "Bob is a junior developer",
-                                                "when": "last month",
-                                                "where": "team",
-                                                "who": "Bob",
-                                                "why": "New member",
-                                                "fact_type": "world",
-                                                "fact_kind": "conversation",
-                                            }
-                                        ]
-                                    })
+                                    "content": json.dumps(
+                                        {
+                                            "facts": [
+                                                {
+                                                    "what": "Bob is a junior developer",
+                                                    "when": "last month",
+                                                    "where": "team",
+                                                    "who": "Bob",
+                                                    "why": "New member",
+                                                    "fact_type": "world",
+                                                    "fact_kind": "conversation",
+                                                }
+                                            ]
+                                        }
+                                    )
                                 }
                             }
                         ],
@@ -325,6 +339,105 @@ async def test_batch_api_crash_recovery(mock_llm_config, test_contents, hindsigh
 
     finally:
         # Cleanup
+        try:
+            await memory.delete_bank(bank_id, request_context=request_context)
+        except Exception:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_batch_api_records_non_fatal_extraction_errors(
+    mock_llm_config, test_contents, hindsight_config, memory, request_context
+):
+    """Batch API skipped chunks are surfaced in operation result_metadata."""
+    bank_id = f"test_batch_errors_{datetime.now(timezone.utc).timestamp()}"
+    operation_id = str(uuid.uuid4())
+
+    try:
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+        pool = memory._pool
+        schema = request_context.tenant_id
+
+        from hindsight_api.engine.task_backend import fq_table
+
+        table = fq_table("async_operations", schema)
+        await pool.execute(
+            f"""
+            INSERT INTO {table} (operation_id, operation_type, bank_id, status, result_metadata)
+            VALUES ($1, 'retain', $2, 'processing', $3::jsonb)
+            """,
+            operation_id,
+            bank_id,
+            json.dumps({}),
+        )
+
+        batch_id = "batch_partial_errors"
+        mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
+        mock_llm_config._provider_impl.submit_batch = AsyncMock(return_value={"batch_id": batch_id})
+        mock_llm_config._provider_impl.get_batch_status = AsyncMock(
+            return_value={
+                "status": "completed",
+                "request_counts": {"total": 2, "completed": 2, "failed": 0},
+            }
+        )
+        mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
+            return_value=[
+                {
+                    "custom_id": "chunk_0",
+                    "response": {
+                        "body": {
+                            "choices": [
+                                {
+                                    "message": {
+                                        "content": json.dumps(
+                                            {
+                                                "facts": [
+                                                    {
+                                                        "what": "Alice is a senior software engineer",
+                                                        "when": "present",
+                                                        "where": "TechCorp",
+                                                        "who": "Alice",
+                                                        "why": "Background",
+                                                        "fact_type": "world",
+                                                        "fact_kind": "conversation",
+                                                    }
+                                                ]
+                                            }
+                                        )
+                                    }
+                                }
+                            ],
+                            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+                        }
+                    },
+                }
+            ]
+        )
+
+        facts, chunks, usage = await extract_facts_from_contents_batch_api(
+            contents=test_contents,
+            llm_config=mock_llm_config,
+            agent_name="test_agent",
+            config=hindsight_config,
+            pool=pool,
+            operation_id=operation_id,
+            schema=schema,
+        )
+
+        assert len(facts) == 1
+        assert len(chunks) == 2
+        assert chunks[1].fact_count == 0
+        assert usage.total_tokens == 150
+
+        row = await pool.fetchrow(f"SELECT result_metadata FROM {table} WHERE operation_id = $1", operation_id)
+        metadata = (
+            json.loads(row["result_metadata"]) if isinstance(row["result_metadata"], str) else row["result_metadata"]
+        )
+        assert metadata["batch_id"] == batch_id
+        assert metadata["extraction_errors_count"] == 1
+        assert metadata["extraction_errors_sample"] == ["chunk_1: missing batch result"]
+
+    finally:
         try:
             await memory.delete_bank(bank_id, request_context=request_context)
         except Exception:
@@ -372,6 +485,7 @@ async def test_worker_batch_recovery(memory, request_context):
         schema = request_context.tenant_id
 
         from hindsight_api.engine.task_backend import fq_table
+
         table = fq_table("async_operations", schema)
 
         # Create orphaned batch operation (simulates worker crash during polling)
@@ -389,16 +503,19 @@ async def test_worker_batch_recovery(memory, request_context):
             """,
             operation_id,
             bank_id,
-            json.dumps({
-                "batch_id": batch_id,
-                "batch_provider": "openai",
-                "chunk_count": 1,
-            }),
+            json.dumps(
+                {
+                    "batch_id": batch_id,
+                    "batch_provider": "openai",
+                    "chunk_count": 1,
+                }
+            ),
             json.dumps(task_payload),
         )
 
         # Create WorkerPoller
         from hindsight_api.extensions.builtin.tenant import DefaultTenantExtension
+
         tenant_extension = DefaultTenantExtension(config={"schema": schema} if schema else {})
 
         poller = WorkerPoller(
@@ -462,13 +579,7 @@ async def test_batch_api_via_extract_facts_from_contents(
                     "custom_id": "chunk_0",
                     "response": {
                         "body": {
-                            "choices": [
-                                {
-                                    "message": {
-                                        "content": json.dumps({"facts": []})
-                                    }
-                                }
-                            ],
+                            "choices": [{"message": {"content": json.dumps({"facts": []})}}],
                             "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
                         }
                     },

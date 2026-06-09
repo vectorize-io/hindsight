@@ -1307,6 +1307,7 @@ export class ControlPlaneClient {
         document_import_api: boolean;
         audit_log: boolean;
         llm_trace: boolean;
+        store_document_text: boolean;
       };
     }>("/api/version");
   }

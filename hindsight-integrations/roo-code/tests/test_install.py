@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from install import build_mcp_entry, get_roo_dir, install_mcp, install_rules
+from hindsight_roo_code.install import (
+    build_mcp_entry,
+    get_roo_dir,
+    install_mcp,
+    install_rules,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -84,9 +89,7 @@ def test_fresh_install_creates_roo_dir(tmp_project: Path, hindsight_url: str) ->
 # ---------------------------------------------------------------------------
 
 
-def test_merge_preserves_existing_servers(
-    project_with_existing_mcp: Path, hindsight_url: str
-) -> None:
+def test_merge_preserves_existing_servers(project_with_existing_mcp: Path, hindsight_url: str) -> None:
     roo_dir = project_with_existing_mcp / ".roo"
     install_mcp(roo_dir, hindsight_url)
 
@@ -96,9 +99,7 @@ def test_merge_preserves_existing_servers(
     assert "hindsight" in data["mcpServers"]
 
 
-def test_merge_does_not_duplicate(
-    project_with_existing_mcp: Path, hindsight_url: str
-) -> None:
+def test_merge_does_not_duplicate(project_with_existing_mcp: Path, hindsight_url: str) -> None:
     roo_dir = project_with_existing_mcp / ".roo"
     install_mcp(roo_dir, hindsight_url)
     install_mcp(roo_dir, hindsight_url)  # second call

@@ -181,9 +181,7 @@ class TestWrapOpenAI:
         # Verify all settings were applied
         for field_name, expected_value in settings_kwargs.items():
             actual_value = getattr(wrapped._default_settings, field_name)
-            assert actual_value == expected_value, (
-                f"Field {field_name}: expected {expected_value}, got {actual_value}"
-            )
+            assert actual_value == expected_value, f"Field {field_name}: expected {expected_value}, got {actual_value}"
 
 
 class TestWrapAnthropic:
@@ -275,9 +273,7 @@ class TestWrapAnthropic:
         # Verify all settings were applied
         for field_name, expected_value in settings_kwargs.items():
             actual_value = getattr(wrapped._default_settings, field_name)
-            assert actual_value == expected_value, (
-                f"Field {field_name}: expected {expected_value}, got {actual_value}"
-            )
+            assert actual_value == expected_value, f"Field {field_name}: expected {expected_value}, got {actual_value}"
 
 
 class TestMergeSettings:
@@ -434,22 +430,10 @@ class TestHindsightCallSettingsConsistency:
         anthropic_wrapped = wrap_anthropic(mock_anthropic_client, **settings_kwargs)
 
         # Both should have identical settings
-        assert (
-            openai_wrapped._default_settings.bank_id
-            == anthropic_wrapped._default_settings.bank_id
-        )
-        assert (
-            openai_wrapped._default_settings.budget
-            == anthropic_wrapped._default_settings.budget
-        )
-        assert (
-            openai_wrapped._default_settings.use_reflect
-            == anthropic_wrapped._default_settings.use_reflect
-        )
-        assert (
-            openai_wrapped._default_settings.verbose
-            == anthropic_wrapped._default_settings.verbose
-        )
+        assert openai_wrapped._default_settings.bank_id == anthropic_wrapped._default_settings.bank_id
+        assert openai_wrapped._default_settings.budget == anthropic_wrapped._default_settings.budget
+        assert openai_wrapped._default_settings.use_reflect == anthropic_wrapped._default_settings.use_reflect
+        assert openai_wrapped._default_settings.verbose == anthropic_wrapped._default_settings.verbose
 
     def test_new_field_works_for_both_wrappers(self):
         """Test that all HindsightCallSettings fields work for both wrappers."""
@@ -465,9 +449,7 @@ class TestHindsightCallSettingsConsistency:
 
         for field_name in all_field_names:
             # Both should have the field accessible
-            assert hasattr(openai_wrapped._default_settings, field_name), (
-                f"OpenAI wrapper missing field: {field_name}"
-            )
+            assert hasattr(openai_wrapped._default_settings, field_name), f"OpenAI wrapper missing field: {field_name}"
             assert hasattr(anthropic_wrapped._default_settings, field_name), (
                 f"Anthropic wrapper missing field: {field_name}"
             )

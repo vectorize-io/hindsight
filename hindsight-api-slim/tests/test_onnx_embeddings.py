@@ -139,7 +139,9 @@ async def test_onnx_embeddings_dimension_mismatch_raises_value_error():
         tokenizer_name_or_path="/models/e5",
         dimensions=3,
     )
-    fake_transformers = SimpleNamespace(AutoTokenizer=SimpleNamespace(from_pretrained=MagicMock(return_value=FakeTokenizer())))
+    fake_transformers = SimpleNamespace(
+        AutoTokenizer=SimpleNamespace(from_pretrained=MagicMock(return_value=FakeTokenizer()))
+    )
     fake_onnxruntime = SimpleNamespace(InferenceSession=MagicMock(return_value=FakeOnnxSession()))
 
     with patch.dict(sys.modules, {"transformers": fake_transformers, "onnxruntime": fake_onnxruntime}):
@@ -153,7 +155,9 @@ async def test_onnx_embeddings_downloads_external_data_sidecar_when_needed():
     download = MagicMock(return_value="/hf/bge-m3")
     session = MagicMock(return_value=FakeOnnxSession())
     fake_hf = SimpleNamespace(snapshot_download=download)
-    fake_transformers = SimpleNamespace(AutoTokenizer=SimpleNamespace(from_pretrained=MagicMock(return_value=FakeTokenizer())))
+    fake_transformers = SimpleNamespace(
+        AutoTokenizer=SimpleNamespace(from_pretrained=MagicMock(return_value=FakeTokenizer()))
+    )
     fake_onnxruntime = SimpleNamespace(InferenceSession=session)
 
     with patch.dict(

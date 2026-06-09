@@ -7,7 +7,7 @@ info:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
   title: Hindsight HTTP API
-  version: 0.7.2
+  version: 0.8.1
 servers:
 - url: /
 paths:
@@ -5135,7 +5135,7 @@ components:
           title: Bank Id
           type: string
         original_text:
-          title: Original Text
+          nullable: true
           type: string
         content_hash:
           nullable: true
@@ -5426,6 +5426,11 @@ components:
           description: Whether per-bank LLM request tracing is enabled
           title: Llm Trace
           type: boolean
+        store_document_text:
+          description: "Whether raw source text is persisted. When false, document/chunk\
+            \ source text is not stored."
+          title: Store Document Text
+          type: boolean
       required:
       - audit_log
       - bank_config_api
@@ -5435,6 +5440,7 @@ components:
       - llm_trace
       - mcp
       - observations
+      - store_document_text
       - worker
       title: FeaturesInfo
     FileRetainResponse:

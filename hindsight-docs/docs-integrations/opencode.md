@@ -133,9 +133,20 @@ Create `~/.hindsight/opencode.json` for persistent configuration that applies ac
 | `HINDSIGHT_RECALL_TAGS_MATCH` | Tag match mode: `any`, `all`, `any_strict`, `all_strict` | `any` |
 | `HINDSIGHT_DYNAMIC_BANK_ID` | Enable dynamic bank ID derivation | `false` |
 | `HINDSIGHT_BANK_MISSION` | Bank mission/context for reflect | |
-| `HINDSIGHT_DEBUG` | Enable debug logging to stderr | `false` |
 
 Configuration priority (later wins): defaults < `~/.hindsight/opencode.json` < plugin options < env vars.
+
+### Logging & debugging
+
+The plugin logs through OpenCode's own log stream (`service=hindsight`), visible with `opencode --print-logs` or in the OpenCode log files. Errors (failed retain/recall, unreachable API, auth problems) and the resolved API URL + bank are logged **by default** — so if memories aren't saving, the reason is visible without any opt-in.
+
+Verbose tracing is controlled by the `debug` option, which is **config-only** (set `"debug": true` in `opencode.json` plugin options or `~/.hindsight/opencode.json`). There is intentionally no `HINDSIGHT_DEBUG` environment variable: env vars are unreliable to set for OpenCode's plugin runtime (notably on Windows, where a persistent OpenCode server may never see them).
+
+```json
+{
+  "plugin": [["@vectorize-io/opencode-hindsight", { "debug": true }]]
+}
+```
 
 ## Dynamic Bank IDs
 

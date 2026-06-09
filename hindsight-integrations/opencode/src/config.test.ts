@@ -39,7 +39,6 @@ describe("loadConfig", () => {
     process.env.HINDSIGHT_AUTO_RECALL = "false";
     process.env.HINDSIGHT_AUTO_RETAIN = "0";
     process.env.HINDSIGHT_RECALL_MAX_TOKENS = "2048";
-    process.env.HINDSIGHT_DEBUG = "true";
 
     const config = loadConfig();
     expect(config.hindsightApiUrl).toBe("https://example.com");
@@ -48,7 +47,15 @@ describe("loadConfig", () => {
     expect(config.autoRecall).toBe(false);
     expect(config.autoRetain).toBe(false);
     expect(config.recallMaxTokens).toBe(2048);
-    expect(config.debug).toBe(true);
+  });
+
+  it("does not read debug from the environment (config-only)", () => {
+    // `debug` is intentionally NOT an env override — env vars are unreliable to
+    // set for OpenCode's plugin runtime (notably on Windows). It must come from
+    // plugin options or ~/.hindsight/opencode.json.
+    process.env.HINDSIGHT_DEBUG = "true";
+    expect(loadConfig().debug).toBe(false);
+    expect(loadConfig({ debug: true }).debug).toBe(true);
   });
 
   it("plugin options override defaults", () => {
@@ -56,10 +63,12 @@ describe("loadConfig", () => {
       bankId: "plugin-bank",
       autoRecall: false,
       recallBudget: "high",
+      debug: true,
     });
     expect(config.bankId).toBe("plugin-bank");
     expect(config.autoRecall).toBe(false);
     expect(config.recallBudget).toBe("high");
+    expect(config.debug).toBe(true);
   });
 
   it("env vars override plugin options", () => {

@@ -1372,7 +1372,7 @@ export type DocumentResponse = {
   /**
    * Original Text
    */
-  original_text: string;
+  original_text: string | null;
   /**
    * Content Hash
    */
@@ -1688,6 +1688,12 @@ export type FeaturesInfo = {
    * Whether per-bank LLM request tracing is enabled
    */
   llm_trace: boolean;
+  /**
+   * Store Document Text
+   *
+   * Whether raw source text is persisted. When false, document/chunk source text is not stored.
+   */
+  store_document_text: boolean;
 };
 
 /**

@@ -7,6 +7,7 @@ Regression tests:
 - Cancel used to delete the operation row; now it sets status to 'cancelled'.
 - Retry now accepts both 'failed' and 'cancelled' operations.
 """
+
 import uuid
 from datetime import datetime
 
@@ -124,9 +125,7 @@ async def test_get_operation_returns_processing_status(api_client, memory, test_
 
     processing_id = await _insert_operation(pool, test_bank_id, "processing")
 
-    response = await api_client.get(
-        f"/v1/default/banks/{test_bank_id}/operations/{processing_id}"
-    )
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{processing_id}")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "processing"
@@ -154,9 +153,7 @@ async def test_all_statuses_returned_correctly(api_client, memory, test_bank_id)
 
     # Verify get endpoint for each
     for status, op_id in ids.items():
-        response = await api_client.get(
-            f"/v1/default/banks/{test_bank_id}/operations/{op_id}"
-        )
+        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
         assert response.status_code == 200
         assert response.json()["status"] == status, f"Get: expected {status} for {op_id}"
 
@@ -170,16 +167,12 @@ async def test_cancel_sets_cancelled_status(api_client, memory, test_bank_id):
     op_id = await _insert_operation(pool, test_bank_id, "pending")
 
     # Cancel the operation
-    response = await api_client.delete(
-        f"/v1/default/banks/{test_bank_id}/operations/{op_id}"
-    )
+    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
     assert response.status_code == 200
     assert response.json()["success"] is True
 
     # Verify the operation still exists with 'cancelled' status
-    response = await api_client.get(
-        f"/v1/default/banks/{test_bank_id}/operations/{op_id}"
-    )
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
     assert response.status_code == 200
     assert response.json()["status"] == "cancelled"
 
@@ -203,16 +196,12 @@ async def test_retry_cancelled_operation(api_client, memory, test_bank_id):
     op_id = await _insert_operation(pool, test_bank_id, "cancelled")
 
     # Retry the cancelled operation
-    response = await api_client.post(
-        f"/v1/default/banks/{test_bank_id}/operations/{op_id}/retry"
-    )
+    response = await api_client.post(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/retry")
     assert response.status_code == 200
     assert response.json()["success"] is True
 
     # Verify the operation is now pending
-    response = await api_client.get(
-        f"/v1/default/banks/{test_bank_id}/operations/{op_id}"
-    )
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
     assert response.status_code == 200
     assert response.json()["status"] == "pending"
 
@@ -225,9 +214,7 @@ async def test_retry_rejects_non_retriable_statuses(api_client, memory, test_ban
 
     for status in ("pending", "processing", "completed"):
         op_id = await _insert_operation(pool, test_bank_id, status)
-        response = await api_client.post(
-            f"/v1/default/banks/{test_bank_id}/operations/{op_id}/retry"
-        )
+        response = await api_client.post(f"/v1/default/banks/{test_bank_id}/operations/{op_id}/retry")
         assert response.status_code == 409, f"Expected 409 for {status}, got {response.status_code}"
 
 
@@ -239,7 +226,5 @@ async def test_cancel_rejects_non_pending_operations(api_client, memory, test_ba
 
     for status in ("processing", "completed", "failed"):
         op_id = await _insert_operation(pool, test_bank_id, status)
-        response = await api_client.delete(
-            f"/v1/default/banks/{test_bank_id}/operations/{op_id}"
-        )
+        response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/operations/{op_id}")
         assert response.status_code == 409, f"Expected 409 for {status}, got {response.status_code}"

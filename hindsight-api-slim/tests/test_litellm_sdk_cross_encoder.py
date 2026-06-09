@@ -104,6 +104,35 @@ class TestLiteLLMSDKCrossEncoder:
             assert len(call_args.kwargs["documents"]) == 3
             assert call_args.kwargs["api_key"] == "test_key"
 
+    def test_constructor_without_api_key(self):
+        """api_key is optional (e.g. AWS Bedrock reranker with ambient IAM creds)."""
+        encoder = LiteLLMSDKCrossEncoder(model="bedrock/cohere.rerank-v3-5:0")
+        assert encoder.api_key is None
+
+    @pytest.mark.asyncio
+    async def test_predict_omits_api_key_for_ambient_credentials(self):
+        """When no api_key is set, it must not be injected into the rerank call.
+
+        litellm maps an explicit ``api_key`` to ``aws_access_key_id`` for Bedrock,
+        which overrides ambient IAM/task-role credentials; omitting it lets litellm
+        resolve credentials from the environment (regression test for IAM auth).
+        """
+        encoder = LiteLLMSDKCrossEncoder(model="bedrock/cohere.rerank-v3-5:0")
+
+        mock_response = MagicMock()
+        mock_response.results = [{"index": 0, "relevance_score": 0.9}]
+
+        mock_litellm = MagicMock()
+        mock_litellm.arerank = AsyncMock(return_value=mock_response)
+
+        with patch.dict("sys.modules", {"litellm": mock_litellm}):
+            await encoder.initialize()
+            await encoder.predict([("query", "document")])
+
+            mock_litellm.arerank.assert_called_once()
+            call_kwargs = mock_litellm.arerank.call_args.kwargs
+            assert "api_key" not in call_kwargs
+
     @pytest.mark.asyncio
     async def test_predict_multiple_queries(self):
         """Test prediction with multiple different queries (grouped efficiently)."""
@@ -278,11 +307,11 @@ class TestFactoryFunction:
                 assert encoder.model == "deepinfra/Qwen3-reranker-8B"
 
     @pytest.mark.asyncio
-    async def test_create_litellm_sdk_missing_api_key(self):
-        """Test that factory raises error when API key is missing."""
+    async def test_create_litellm_sdk_without_api_key(self):
+        """Test that litellm-sdk works without an API key (e.g. AWS Bedrock with IAM)."""
         env_vars = {
             "HINDSIGHT_API_RERANKER_PROVIDER": "litellm-sdk",
-            "HINDSIGHT_API_RERANKER_LITELLM_SDK_MODEL": "deepinfra/Qwen3-reranker-8B",
+            "HINDSIGHT_API_RERANKER_LITELLM_SDK_MODEL": "bedrock/cohere.rerank-v3-5:0",
         }
 
         with patch.dict(os.environ, env_vars, clear=False):
@@ -295,8 +324,11 @@ class TestFactoryFunction:
             config = HindsightConfig.from_env()
 
             with patch("hindsight_api.config.get_config", return_value=config):
-                with pytest.raises(ValueError, match="HINDSIGHT_API_RERANKER_LITELLM_SDK_API_KEY is required"):
-                    create_cross_encoder_from_env()
+                encoder = create_cross_encoder_from_env()
+
+                assert isinstance(encoder, LiteLLMSDKCrossEncoder)
+                assert encoder.api_key is None
+                assert encoder.model == "bedrock/cohere.rerank-v3-5:0"
 
     @pytest.mark.asyncio
     async def test_create_litellm_sdk_with_custom_api_base(self):

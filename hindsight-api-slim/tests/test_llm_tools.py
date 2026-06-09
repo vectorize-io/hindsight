@@ -51,9 +51,11 @@ class TestMockToolCalling:
         llm = LLMProvider(provider="mock", api_key="", base_url="", model="mock")
 
         # Set mock response to return tool calls
-        llm.set_mock_response([
-            {"name": "get_weather", "arguments": {"location": "Paris", "unit": "celsius"}},
-        ])
+        llm.set_mock_response(
+            [
+                {"name": "get_weather", "arguments": {"location": "Paris", "unit": "celsius"}},
+            ]
+        )
 
         result = await llm.call_with_tools(
             messages=[{"role": "user", "content": "What's the weather in Paris?"}],
@@ -105,10 +107,12 @@ class TestMockToolCalling:
         """Test handling multiple tool calls in one response."""
         llm = LLMProvider(provider="mock", api_key="", base_url="", model="mock")
 
-        llm.set_mock_response([
-            {"name": "get_weather", "arguments": {"location": "Paris"}},
-            {"name": "search", "arguments": {"query": "weather forecast"}},
-        ])
+        llm.set_mock_response(
+            [
+                {"name": "get_weather", "arguments": {"location": "Paris"}},
+                {"name": "search", "arguments": {"query": "weather forecast"}},
+            ]
+        )
 
         result = await llm.call_with_tools(
             messages=[{"role": "user", "content": "Weather in Paris and search for forecasts"}],

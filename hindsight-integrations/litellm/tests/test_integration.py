@@ -294,9 +294,7 @@ class TestCallback:
         ]
         memory_context = "# Relevant Memories\n1. User is John"
 
-        result = callback._inject_memories_into_messages(
-            messages, memory_context, config
-        )
+        result = callback._inject_memories_into_messages(messages, memory_context, config)
 
         assert len(result) == 2
         assert result[0]["role"] == "system"
@@ -321,9 +319,7 @@ class TestCallback:
         ]
         memory_context = "# Relevant Memories\n1. User is John"
 
-        result = callback._inject_memories_into_messages(
-            messages, memory_context, config
-        )
+        result = callback._inject_memories_into_messages(messages, memory_context, config)
 
         assert len(result) == 2
         assert result[0]["role"] == "system"
@@ -347,9 +343,7 @@ class TestCallback:
         ]
         memory_context = "# Relevant Memories\n1. User is John"
 
-        result = callback._inject_memories_into_messages(
-            messages, memory_context, config
-        )
+        result = callback._inject_memories_into_messages(messages, memory_context, config)
 
         assert len(result) == 1
         assert result[0]["role"] == "user"
@@ -693,6 +687,7 @@ class TestStreamingResponseHandling:
 
         class FakeStreamWrapper:
             """Mimics litellm.utils.CustomStreamWrapper which lacks .choices."""
+
             pass
 
         messages = [{"role": "user", "content": "Hello"}]
@@ -740,8 +735,7 @@ class TestStreamingResponseHandling:
             hindsight_litellm._store_conversation(messages, response, "gpt-4o-mini")
             mock_retain.assert_called_once()
             assert mock_retain.call_args.kwargs.get("sync") is True, (
-                "sync_storage=True must forward sync=True to retain() so the POST "
-                "completes before the function returns"
+                "sync_storage=True must forward sync=True to retain() so the POST completes before the function returns"
             )
 
     def test_sync_storage_streamed_forwards_sync_true_to_retain(self):
@@ -753,9 +747,7 @@ class TestStreamingResponseHandling:
         set_defaults(bank_id="test-bank")
 
         with patch.object(hindsight_litellm, "retain") as mock_retain:
-            hindsight_litellm._store_conversation_from_text(
-                "USER: hi\n\nASSISTANT: hello", "gpt-4o-mini"
-            )
+            hindsight_litellm._store_conversation_from_text("USER: hi\n\nASSISTANT: hello", "gpt-4o-mini")
             mock_retain.assert_called_once()
             assert mock_retain.call_args.kwargs.get("sync") is True
 
@@ -776,6 +768,7 @@ class TestStreamingResponseHandling:
 
         with patch("litellm.completion", return_value=fake_stream):
             import hindsight_litellm
+
             response = hindsight_litellm.completion(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": "Hello"}],
@@ -1454,9 +1447,7 @@ class TestInjectionPathPassesApiKey:
         call_args = gc.call_args
         # Tolerate positional or keyword forms — both end up at the same callsite.
         url = call_args.kwargs.get("api_url") or (call_args.args[0] if call_args.args else None)
-        key = call_args.kwargs.get("api_key") or (
-            call_args.args[1] if len(call_args.args) > 1 else None
-        )
+        key = call_args.kwargs.get("api_key") or (call_args.args[1] if len(call_args.args) > 1 else None)
         assert url == "https://api.hindsight.vectorize.io", (
             f"inject path did not forward configured URL to _get_client: got url={url!r}"
         )
@@ -1486,6 +1477,7 @@ class TestQueryField:
 
         # Manually set query on defaults
         import hindsight_litellm.config as cfg
+
         cfg._global_config.default_settings.query = "favorite language"
 
         mock_result = MagicMock()
@@ -1512,6 +1504,7 @@ class TestQueryField:
         set_defaults(bank_id="test")
 
         import hindsight_litellm.config as cfg
+
         cfg._global_config.default_settings.query = "default query"
 
         mock_client = MagicMock()

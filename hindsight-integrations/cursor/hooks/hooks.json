@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "python3 \"${CURSOR_PLUGIN_ROOT}/scripts/session_start.py\"",
+        "timeout": 15
+      }
+    ],
+    "stop": [
+      {
+        "command": "python3 \"${CURSOR_PLUGIN_ROOT}/scripts/retain.py\"",
+        "timeout": 15
+      }
+    ]
+  }
+}

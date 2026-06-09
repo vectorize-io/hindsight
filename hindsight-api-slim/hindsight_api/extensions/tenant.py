@@ -40,6 +40,11 @@ class Tenant:
     """
 
     schema: str
+    # Optional tenant identifier. When provided, background maintenance (e.g. the
+    # consolidation reconcile sweep) can build a RequestContext carrying this id so
+    # tenant-level config overrides are honored. Leave as None for single-tenant
+    # setups or extensions that do not key config by tenant id.
+    tenant_id: str | None = None
 
 
 class TenantExtension(Extension, ABC):

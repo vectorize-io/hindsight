@@ -371,6 +371,7 @@ class SQLDialect(ABC):
         embedding_param: str,
         bank_id_param: str,
         fetch_limit: int,
+        min_similarity: float,
         tags_clause: str = "",
         groups_clause: str = "",
         extra_where: str = "",
@@ -387,6 +388,7 @@ class SQLDialect(ABC):
             embedding_param: Parameter placeholder for query embedding.
             bank_id_param: Parameter placeholder for bank_id.
             fetch_limit: Max rows to fetch (over-fetched for HNSW approximation).
+            min_similarity: Minimum cosine similarity to include.
             tags_clause: Optional WHERE clause fragment for tag filtering.
             groups_clause: Optional WHERE clause fragment for tag group filtering.
             extra_where: Optional additional WHERE clause fragment (e.g. time range filter).

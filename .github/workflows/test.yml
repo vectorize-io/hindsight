@@ -34,7 +34,9 @@ jobs:
       integrations-ai-sdk: ${{ steps.filter.outputs.integrations-ai-sdk }}
       integrations-chat: ${{ steps.filter.outputs.integrations-chat }}
       integrations-claude-code: ${{ steps.filter.outputs.integrations-claude-code }}
+      integrations-cline: ${{ steps.filter.outputs.integrations-cline }}
       integrations-codex: ${{ steps.filter.outputs.integrations-codex }}
+      integrations-cursor-cli: ${{ steps.filter.outputs.integrations-cursor-cli }}
       integrations-crewai: ${{ steps.filter.outputs.integrations-crewai }}
       integrations-litellm: ${{ steps.filter.outputs.integrations-litellm }}
       integrations-pydantic-ai: ${{ steps.filter.outputs.integrations-pydantic-ai }}
@@ -44,6 +46,7 @@ jobs:
       integrations-llamaindex: ${{ steps.filter.outputs.integrations-llamaindex }}
       integrations-paperclip: ${{ steps.filter.outputs.integrations-paperclip }}
       integrations-opencode: ${{ steps.filter.outputs.integrations-opencode }}
+      integrations-cursor: ${{ steps.filter.outputs.integrations-cursor }}
       integrations-n8n: ${{ steps.filter.outputs.integrations-n8n }}
       integrations-cloudflare-oauth-proxy: ${{ steps.filter.outputs.integrations-cloudflare-oauth-proxy }}
       integrations-superagent: ${{ steps.filter.outputs.integrations-superagent }}
@@ -58,6 +61,9 @@ jobs:
       integrations-vapi: ${{ steps.filter.outputs.integrations-vapi }}
       integrations-flowise: ${{ steps.filter.outputs.integrations-flowise }}
       integrations-google-adk: ${{ steps.filter.outputs.integrations-google-adk }}
+      integrations-obsidian: ${{ steps.filter.outputs.integrations-obsidian }}
+      integrations-omo: ${{ steps.filter.outputs.integrations-omo }}
+      integrations-haystack: ${{ steps.filter.outputs.integrations-haystack }}
       tools-agent-sdk: ${{ steps.filter.outputs.tools-agent-sdk }}
       integrations-roo-code: ${{ steps.filter.outputs.integrations-roo-code }}
       dev: ${{ steps.filter.outputs.dev }}
@@ -101,6 +107,9 @@ jobs:
           docs:
             - 'hindsight-docs/**'
             - '*.md'
+            # Integration changes can add/rename integrations, which the docs
+            # build's integrations check validates against integrations.json.
+            - 'hindsight-integrations/**'
           embed:
             - 'hindsight-embed/**'
           all-npm:
@@ -119,8 +128,12 @@ jobs:
             - 'hindsight-integrations/chat/**'
           integrations-claude-code:
             - 'hindsight-integrations/claude-code/**'
+          integrations-cline:
+            - 'hindsight-integrations/cline/**'
           integrations-codex:
             - 'hindsight-integrations/codex/**'
+          integrations-cursor-cli:
+            - 'hindsight-integrations/cursor-cli/**'
           integrations-crewai:
             - 'hindsight-integrations/crewai/**'
           integrations-litellm:
@@ -135,10 +148,14 @@ jobs:
             - 'hindsight-integrations/langgraph/**'
           integrations-llamaindex:
             - 'hindsight-integrations/llamaindex/**'
+          integrations-haystack:
+            - 'hindsight-integrations/haystack/**'
           integrations-paperclip:
             - 'hindsight-integrations/paperclip/**'
           integrations-opencode:
             - 'hindsight-integrations/opencode/**'
+          integrations-cursor:
+            - 'hindsight-integrations/cursor/**'
           integrations-n8n:
             - 'hindsight-integrations/n8n/**'
           integrations-cloudflare-oauth-proxy:
@@ -169,6 +186,10 @@ jobs:
             - 'hindsight-integrations/flowise/**'
           integrations-google-adk:
             - 'hindsight-integrations/google-adk/**'
+          integrations-obsidian:
+            - 'hindsight-integrations/obsidian/**'
+          integrations-omo:
+            - 'hindsight-integrations/omo/**'
           tools-agent-sdk:
             - 'hindsight-tools/hindsight-agent-sdk/**'
           integrations-roo-code:
@@ -429,6 +450,95 @@ jobs:
       working-directory: ./hindsight-integrations/claude-code
       run: python -m pytest tests/ -v
 
+  test-cursor-integration:
+    needs: [detect-changes]
+    if: >-
+      github.event_name != 'pull_request_review' &&
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-cursor == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+
+    - name: Install pytest
+      run: pip install pytest
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/cursor
+      run: python -m pytest tests/ -v
+
+  test-omo-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-omo == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+
+    - name: Install pytest
+      run: pip install pytest
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/omo
+      run: python -m pytest tests/ -v
+
+  test-cline-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-cline == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build cline integration
+      working-directory: ./hindsight-integrations/cline
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/cline
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/cline
+      run: uv run pytest tests -v
+
   test-codex-integration:
     needs: [detect-changes]
     if: >-
@@ -454,6 +564,43 @@ jobs:
     - name: Run tests
       working-directory: ./hindsight-integrations/codex
       run: python -m pytest tests/ -v
+
+  test-cursor-cli-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-cursor-cli == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build cursor-cli integration
+      working-directory: ./hindsight-integrations/cursor-cli
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/cursor-cli
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/cursor-cli
+      run: uv run pytest tests -v
 
   build-ai-sdk-integration:
     needs: [detect-changes]
@@ -828,17 +975,28 @@ jobs:
       with:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
     - name: Set up Python
       uses: actions/setup-python@v6
       with:
-        python-version: '3.11'
+        python-version-file: ".python-version"
 
-    - name: Install pytest
-      run: pip install pytest
+    - name: Build roo-code integration
+      working-directory: ./hindsight-integrations/roo-code
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/roo-code
+      run: uv sync --frozen
 
     - name: Run tests
       working-directory: ./hindsight-integrations/roo-code
-      run: python -m pytest tests/ -v
+      run: uv run pytest tests -v
 
   build-control-plane:
     needs: [detect-changes]
@@ -920,6 +1078,7 @@ jobs:
     - uses: actions/checkout@v6
       with:
         ref: ${{ github.event.pull_request.head.sha || '' }}
+        fetch-depth: 0 # fetch tags so check-released-integrations can see them
 
     - name: Set up Node.js
       uses: actions/setup-node@v6
@@ -927,6 +1086,12 @@ jobs:
         node-version: '20'
         cache: 'npm'
         cache-dependency-path: package-lock.json
+
+    # Fail fast before the (slow) build: every integrations.json entry must have a
+    # doc page, and every released integration tag must be in integrations.json.
+    # Needs no npm install (pure Node) and uses the tags fetched above.
+    - name: Check integrations (single source of truth)
+      run: node hindsight-docs/scripts/check-integrations.mjs
 
     - name: Install dependencies
       run: npm ci --workspace=hindsight-docs
@@ -2955,6 +3120,41 @@ jobs:
       working-directory: ./hindsight-integrations/flowise
       run: npm test
 
+  test-obsidian-integration:
+    needs: [detect-changes]
+    if: >-
+      github.event_name != 'pull_request_review' &&
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-obsidian == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/obsidian
+      run: npm install --no-audit --no-fund
+
+    - name: Type check
+      working-directory: ./hindsight-integrations/obsidian
+      run: npx tsc --noEmit
+
+    - name: Build
+      working-directory: ./hindsight-integrations/obsidian
+      run: npm run build
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/obsidian
+      run: npm test
+
   test-crewai-integration:
     needs: [detect-changes]
     if: >-
@@ -3219,6 +3419,45 @@ jobs:
 
     - name: Run tests
       working-directory: ./hindsight-integrations/llamaindex
+      # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
+      # (requires_real_llm) needs a live Hindsight server and runs separately.
+      run: uv run pytest tests -v -m "not requires_real_llm"
+
+  test-haystack-integration:
+    needs: [detect-changes]
+    if: >-
+      github.event_name != 'pull_request_review' &&
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-haystack == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build haystack integration
+      working-directory: ./hindsight-integrations/haystack
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/haystack
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/haystack
       # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
       # (requires_real_llm) needs a live Hindsight server and runs separately.
       run: uv run pytest tests -v -m "not requires_real_llm"
@@ -4163,10 +4402,14 @@ jobs:
       - build-openclaw-integration
       - smoke-openclaw-install
       - test-claude-code-integration
+      - test-cursor-integration
+      - test-cline-integration
       - test-codex-integration
+      - test-cursor-cli-integration
       - build-ai-sdk-integration
       - test-ai-sdk-integration-deno
       - test-opencode-integration
+      - test-omo-integration
       - test-cloudflare-oauth-proxy-integration
       - build-chat-integration
       - test-paperclip-integration
@@ -4198,6 +4441,7 @@ jobs:
       - test-smolagents-integration
       - test-dify-integration
       - test-flowise-integration
+      - test-obsidian-integration
       - test-crewai-integration
       - test-langgraph-integration
       - test-superagent-integration
@@ -4206,6 +4450,7 @@ jobs:
       - test-llamaindex-integration
       - test-openai-agents-integration
       - test-agentcore-integration
+      - test-haystack-integration
       - test-pip-slim
       - test-embed
       - test-embed-windows

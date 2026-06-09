@@ -33,9 +33,7 @@ async def main():
 
         # First invocation — no memories yet
         print("--- First call (no memories) ---")
-        result = await graph.ainvoke(
-            {"messages": [HumanMessage(content="I love hiking in the mountains")]}
-        )
+        result = await graph.ainvoke({"messages": [HumanMessage(content="I love hiking in the mountains")]})
         for msg in result["messages"]:
             print(f"  [{msg.type}] {msg.content[:100]}")
 
@@ -43,9 +41,7 @@ async def main():
 
         # Second invocation — should recall the hiking memory
         print("\n--- Second call (should recall hiking) ---")
-        result = await graph.ainvoke(
-            {"messages": [HumanMessage(content="What outdoor activities do I enjoy?")]}
-        )
+        result = await graph.ainvoke({"messages": [HumanMessage(content="What outdoor activities do I enjoy?")]})
         for msg in result["messages"]:
             print(f"  [{msg.type}] {msg.content[:100]}")
 

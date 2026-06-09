@@ -640,7 +640,8 @@
     "importConflictLabel": "Wenn ein Dokument bereits existiert",
     "importConflictSkip": "Überspringen — vorhandenes Dokument behalten",
     "importConflictReplace": "Ersetzen — durch das importierte überschreiben",
-    "importConflictNewId": "Beide behalten — unter neuer id importieren"
+    "importConflictNewId": "Beide behalten — unter neuer id importieren",
+    "textNotStoredWarning": "Der Quelltext wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten."
   },
   "entitiesView": {
     "viewRelations": "Beziehungen",
@@ -1444,7 +1445,8 @@
     "observationScopeAllCombinations": "Alle Kombinationen",
     "observationScopesEmpty": "Fügen Sie oben Tags hinzu, um Beobachtungsbereiche vorzuschauen",
     "metadataHelpText": "Ein <code>key: value</code> pro Zeile",
-    "entitiesHelpText": "Kommagetrennte Hinweise, die mit automatisch extrahierten Entitäten zusammengeführt werden"
+    "entitiesHelpText": "Kommagetrennte Hinweise, die mit automatisch extrahierten Entitäten zusammengeführt werden",
+    "textNotStoredWarning": "Der Rohtext des Dokuments wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten."
   },
   "dashboard": {
     "welcome": "Willkommen bei Hindsight",

@@ -78,10 +78,13 @@ async def test_filter_mcp_tools_returns_empty_set():
     class DenyAllValidator(OperationValidatorExtension):
         async def validate_retain(self, ctx):
             return ValidationResult.accept()
+
         async def validate_recall(self, ctx):
             return ValidationResult.accept()
+
         async def validate_reflect(self, ctx):
             return ValidationResult.accept()
+
         async def filter_mcp_tools(self, bank_id, request_context, tools):
             return frozenset()
 
@@ -189,10 +192,13 @@ async def test_validator_cannot_add_tools_beyond_bank_config():
     class PermissiveValidator(OperationValidatorExtension):
         async def validate_retain(self, ctx):
             return ValidationResult.accept()
+
         async def validate_recall(self, ctx):
             return ValidationResult.accept()
+
         async def validate_reflect(self, ctx):
             return ValidationResult.accept()
+
         async def filter_mcp_tools(self, bank_id, request_context, tools):
             return tools | {"retain", "delete_bank"}
 
@@ -241,15 +247,19 @@ async def test_validator_cannot_add_tools_beyond_bank_config():
 async def test_validator_exception_fails_open(caplog):
     """If filter_mcp_tools raises, all tools remain visible and warning is logged."""
     import logging
+
     caplog.set_level(logging.WARNING)
 
     class BrokenValidator(OperationValidatorExtension):
         async def validate_retain(self, ctx):
             return ValidationResult.accept()
+
         async def validate_recall(self, ctx):
             return ValidationResult.accept()
+
         async def validate_reflect(self, ctx):
             return ValidationResult.accept()
+
         async def filter_mcp_tools(self, bank_id, request_context, tools):
             raise RuntimeError("Policy backend unreachable")
 

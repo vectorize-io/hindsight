@@ -1,0 +1,67 @@
+[project]
+name = "hindsight-cursor-cli"
+version = "0.2.0"
+description = "Cursor CLI integration for Hindsight - persistent long-term memory via Cursor CLI hooks"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Vectorize", email = "support@vectorize.io" }
+]
+keywords = [
+    "ai",
+    "memory",
+    "cursor",
+    "cursor-cli",
+    "hooks",
+    "agents",
+    "hindsight",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = []
+
+[project.scripts]
+hindsight-cursor-cli = "hindsight_cursor_cli.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/vectorize-io/hindsight"
+Documentation = "https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/cursor-cli"
+Repository = "https://github.com/vectorize-io/hindsight"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hindsight_cursor_cli"]
+# The hook payload under hindsight_cursor_cli/hooks/ (scripts + JSON) ships as
+# package data; the installer extracts it via importlib.resources.
+artifacts = [
+    "hindsight_cursor_cli/hooks/**/*",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "hindsight_cursor_cli/**/*",
+    "tests/**/*",
+    "README.md",
+    "LICENSE",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.8.0",
+]

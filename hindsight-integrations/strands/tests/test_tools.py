@@ -334,25 +334,19 @@ class TestRetainTool:
         t = self._retain_tool(client)
         result = _call_tool(t, content="I like dark mode")
         assert result == "Memory stored successfully."
-        client.retain.assert_called_once_with(
-            bank_id="my-bank", content="I like dark mode"
-        )
+        client.retain.assert_called_once_with(bank_id="my-bank", content="I like dark mode")
 
     def test_retain_with_tags(self):
         client = _mock_client()
         t = self._retain_tool(client, tags=["env:test"])
         _call_tool(t, content="tagged content")
-        client.retain.assert_called_once_with(
-            bank_id="my-bank", content="tagged content", tags=["env:test"]
-        )
+        client.retain.assert_called_once_with(bank_id="my-bank", content="tagged content", tags=["env:test"])
 
     def test_retain_config_tags(self):
         configure(hindsight_api_url="http://localhost:8888", tags=["config-tag"])
         with patch("hindsight_strands.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
-            tools = create_hindsight_tools(
-                bank_id="test", enable_recall=False, enable_reflect=False
-            )
+            tools = create_hindsight_tools(bank_id="test", enable_recall=False, enable_reflect=False)
         client = mock_cls.return_value
         _call_tool(tools[0], content="content")
         assert client.retain.call_args[1]["tags"] == ["config-tag"]
@@ -478,9 +472,7 @@ class TestRecallTool:
     def test_recall_with_tags(self):
         client = _mock_client()
         client.recall.return_value = _mock_recall_response(["fact"])
-        t = self._recall_tool(
-            client, recall_tags=["scope:global"], recall_tags_match="all"
-        )
+        t = self._recall_tool(client, recall_tags=["scope:global"], recall_tags_match="all")
         _call_tool(t, query="query")
         call_kwargs = client.recall.call_args[1]
         assert call_kwargs["tags"] == ["scope:global"]
@@ -624,9 +616,7 @@ class TestMemoryInstructions:
 
     def test_respects_max_results(self):
         client = _mock_client()
-        client.recall.return_value = _mock_recall_response(
-            ["a", "b", "c", "d", "e", "f"]
-        )
+        client.recall.return_value = _mock_recall_response(["a", "b", "c", "d", "e", "f"])
         result = memory_instructions(bank_id="test", client=client, max_results=3)
         lines = result.strip().split("\n")
         assert len(lines) == 5  # prefix + blank line + 3 results
@@ -641,9 +631,7 @@ class TestMemoryInstructions:
     def test_passes_query_and_budget(self):
         client = _mock_client()
         client.recall.return_value = _mock_recall_response([])
-        memory_instructions(
-            bank_id="test", client=client, query="custom query", budget="high"
-        )
+        memory_instructions(bank_id="test", client=client, query="custom query", budget="high")
         call_kwargs = client.recall.call_args[1]
         assert call_kwargs["query"] == "custom query"
         assert call_kwargs["budget"] == "high"
@@ -657,9 +645,7 @@ class TestMemoryInstructions:
     def test_passes_tags(self):
         client = _mock_client()
         client.recall.return_value = _mock_recall_response([])
-        memory_instructions(
-            bank_id="test", client=client, tags=["scope:global"], tags_match="all"
-        )
+        memory_instructions(bank_id="test", client=client, tags=["scope:global"], tags_match="all")
         call_kwargs = client.recall.call_args[1]
         assert call_kwargs["tags"] == ["scope:global"]
         assert call_kwargs["tags_match"] == "all"

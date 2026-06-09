@@ -174,9 +174,7 @@ def test_async_children_packs_small_items_by_budget():
     num_items = max(4, (tokens_per_batch // max(item_tokens, 1)) * 3)
     contents = [{"content": item_text, "document_id": f"doc-{i}"} for i in range(num_items)]
     total = sum(count_tokens(c["content"]) for c in contents)
-    assert total > tokens_per_batch, (
-        f"Test setup error: {total} tokens does not exceed budget {tokens_per_batch}"
-    )
+    assert total > tokens_per_batch, f"Test setup error: {total} tokens does not exceed budget {tokens_per_batch}"
 
     children = _split_contents_into_async_children(contents, tokens_per_batch)
 

@@ -24,6 +24,7 @@ The API service handles all memory operations (retain, recall, reflect).
 | `HINDSIGHT_API_MIGRATION_DATABASE_URL` | Direct PostgreSQL URL for running migrations, bypassing connection poolers (e.g. PgBouncer). When set, advisory locks and Alembic migrations use this URL instead of `DATABASE_URL`. | Falls back to `DATABASE_URL` |
 | `HINDSIGHT_API_DATABASE_SCHEMA` | PostgreSQL schema name for tables | `public` |
 | `HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP` | Run database migrations on API startup | `true` |
+| `HINDSIGHT_API_DATABASE_BACKEND` | Database engine backend: `postgresql` or `oracle` (Oracle 23ai) | `postgresql` |
 
 If not provided, the server uses embedded `pg0` — convenient for development but not recommended for production.
 
@@ -490,12 +491,12 @@ two slots that retain/consolidation cannot consume.
 | `HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT` | Response encoding: `float` or `base64`. Hindsight decodes either format to float vectors before storage. | `float` |
 | `HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE` | Max inputs per ZeroEntropy embed request | `100` |
 | `HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_LATENCY` | Optional latency mode: `fast` or `slow`. Leave unset to use ZeroEntropy's default routing. | - |
-| `HINDSIGHT_API_EMBEDDINGS_COHERE_API_KEY` | Cohere API key for embeddings | - |
+| `HINDSIGHT_API_EMBEDDINGS_COHERE_API_KEY` | Cohere API key for embeddings (falls back to `HINDSIGHT_API_COHERE_API_KEY`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_COHERE_MODEL` | Cohere embedding model | `embed-english-v3.0` |
 | `HINDSIGHT_API_EMBEDDINGS_COHERE_BASE_URL` | Custom base URL for Cohere-compatible API (e.g., Azure-hosted) | - |
 | `HINDSIGHT_API_EMBEDDINGS_COHERE_OUTPUT_DIMENSIONS` | Output embedding dimensions for Cohere (e.g., `256`, `512`, `1024`). When set, overrides the model's default dimension. | - |
-| `HINDSIGHT_API_EMBEDDINGS_LITELLM_API_BASE` | LiteLLM proxy base URL for embeddings | `http://localhost:4000` |
-| `HINDSIGHT_API_EMBEDDINGS_LITELLM_API_KEY` | LiteLLM proxy API key for embeddings (optional, depends on proxy config) | - |
+| `HINDSIGHT_API_EMBEDDINGS_LITELLM_API_BASE` | LiteLLM proxy base URL for embeddings (falls back to `HINDSIGHT_API_LITELLM_API_BASE`) | `http://localhost:4000` |
+| `HINDSIGHT_API_EMBEDDINGS_LITELLM_API_KEY` | LiteLLM proxy API key for embeddings (optional, depends on proxy config; falls back to `HINDSIGHT_API_LITELLM_API_KEY`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_MODEL` | LiteLLM embedding model (use provider prefix, e.g., `cohere/embed-english-v3.0`) | `text-embedding-3-small` |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_KEY` | LiteLLM SDK API key for direct embedding provider access (optional — omit for providers that use ambient credentials, e.g. AWS Bedrock with IAM) | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL` | LiteLLM SDK embedding model (use provider prefix, e.g., `cohere/embed-english-v3.0`) | `cohere/embed-english-v3.0` |
@@ -503,7 +504,7 @@ two slots that retain/consolidation cannot consume.
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS` | Optional output embedding dimensions (provider-dependent, e.g., `768` for Gemini embedding models) | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_ENCODING_FORMAT` | Encoding format for embedding responses. Set to empty string to omit the parameter (needed for Voyage AI, Gemini). | `float` |
 | `HINDSIGHT_API_EMBEDDINGS_GEMINI_API_KEY` | Gemini API key for embeddings (falls back to `HINDSIGHT_API_LLM_API_KEY`) | - |
-| `HINDSIGHT_API_EMBEDDINGS_GEMINI_MODEL` | Gemini embedding model | `gemini-embedding-001` |
+| `HINDSIGHT_API_EMBEDDINGS_GEMINI_MODEL` | Gemini embedding model. The `gemini-embedding-2` family (e.g. `gemini-embedding-2-preview`) is supported on both the Gemini API and Vertex AI — because these multimodal models aggregate a multi-input request into one embedding, Hindsight automatically embeds one input per call to keep per-fact vectors. | `gemini-embedding-001` |
 | `HINDSIGHT_API_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY` | Output embedding dimensions (Gemini supports configurable dimensionality) | `768` |
 | `HINDSIGHT_API_EMBEDDINGS_GEMINI_FORCE_IPV4` | Force the Gemini embeddings client to use an IPv4-only HTTP transport. Useful in environments where IPv6 egress is broken (e.g. some Docker/VPC setups) and AAAA DNS records cause long hangs. | `false` |
 | `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_PROJECT_ID` | Vertex AI project ID for embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID`) | - |
@@ -770,12 +771,12 @@ ZeroEntropy's `zembed-1` supports Matryoshka dimensions: `2560`, `1280`, `640`, 
 | `HINDSIGHT_API_RERANKER_OPENROUTER_API_KEY` | OpenRouter API key for reranking (falls back to `HINDSIGHT_API_OPENROUTER_API_KEY`, then `HINDSIGHT_API_LLM_API_KEY`) | - |
 | `HINDSIGHT_API_RERANKER_OPENROUTER_MODEL` | OpenRouter rerank model | `cohere/rerank-v3.5` |
 | `HINDSIGHT_API_RERANKER_OPENROUTER_TIMEOUT` | HTTP request timeout for OpenRouter reranker (seconds). | `60.0` |
-| `HINDSIGHT_API_RERANKER_COHERE_API_KEY` | Cohere API key for reranking | - |
+| `HINDSIGHT_API_RERANKER_COHERE_API_KEY` | Cohere API key for reranking (falls back to `HINDSIGHT_API_COHERE_API_KEY`) | - |
 | `HINDSIGHT_API_RERANKER_COHERE_MODEL` | Cohere rerank model | `rerank-english-v3.0` |
 | `HINDSIGHT_API_RERANKER_COHERE_BASE_URL` | Custom base URL for any Cohere-compatible `/rerank` endpoint (Azure AI Foundry, Jina, Voyage, self-hosted BGE, etc.). When set, the `cohere` provider bypasses the Cohere SDK and calls the endpoint directly via HTTP. | - |
 | `HINDSIGHT_API_RERANKER_COHERE_TIMEOUT` | Request timeout for the Cohere reranker (seconds). Applies to both the native Cohere SDK and the Cohere-compatible HTTP path enabled by `HINDSIGHT_API_RERANKER_COHERE_BASE_URL`. | `60.0` |
-| `HINDSIGHT_API_RERANKER_LITELLM_API_BASE` | LiteLLM proxy base URL for reranking | `http://localhost:4000` |
-| `HINDSIGHT_API_RERANKER_LITELLM_API_KEY` | LiteLLM proxy API key for reranking (optional, depends on proxy config) | - |
+| `HINDSIGHT_API_RERANKER_LITELLM_API_BASE` | LiteLLM proxy base URL for reranking (falls back to `HINDSIGHT_API_LITELLM_API_BASE`) | `http://localhost:4000` |
+| `HINDSIGHT_API_RERANKER_LITELLM_API_KEY` | LiteLLM proxy API key for reranking (optional, depends on proxy config; falls back to `HINDSIGHT_API_LITELLM_API_KEY`) | - |
 | `HINDSIGHT_API_RERANKER_LITELLM_MODEL` | LiteLLM **proxy** rerank model (use provider prefix, e.g., `cohere/rerank-english-v3.0`) | `cohere/rerank-english-v3.0` |
 | `HINDSIGHT_API_RERANKER_LITELLM_TIMEOUT` | HTTP request timeout for the LiteLLM proxy reranker (seconds). | `60.0` |
 | `HINDSIGHT_API_RERANKER_LITELLM_SDK_API_KEY` | LiteLLM **SDK** API key for direct reranking (no proxy needed) | - |
@@ -956,6 +957,7 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_RECALL_CONNECTION_BUDGET` | Max concurrent DB connections per recall operation | `4` |
 | `HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS` | Maximum token length of a recall query; requests exceeding this limit are rejected with HTTP 400 | `500` |
 | `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` | Max candidates to rerank per recall (RRF pre-filters the rest) | `300` |
+| `HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY` | Minimum cosine similarity a candidate must reach to be returned by the semantic retrieval strategy. Must be between `0` and `1`. | `0.3` |
 | `HINDSIGHT_API_BM25_MIN_SCORE` | Minimum BM25 score a row must exceed to enter fusion. Gates out zero-score, non-matching rows on backends (notably `vchord`) whose operator ranks every document instead of pre-filtering to query-term matches. `0` keeps only genuine term matches; raise it to require stronger matches. | `0` |
 | `HINDSIGHT_API_RECALL_MAX_CANDIDATES_PER_SOURCE` | Cap on candidates each retrieval source (semantic, BM25, graph, temporal) contributes to RRF, applied before the global reranker cap. Prevents one over-expanding backend from filling the reranker budget on its own. `0` disables the cap. | `0` |
 | `HINDSIGHT_API_RECALL_STRATEGY_BOOSTS` | Prioritise one or more retrieval sources over the others on recall, as a comma-separated `strategy:level` list (e.g. `graph:high` to strongly favour graph hits, or `graph:high,bm25:low`). Strategies: `semantic`, `bm25`, `graph`, `temporal`. Levels: `low` (gentle — mainly protects the source's candidates from being dropped before reranking), `medium` (moderate preference), `high` (strong — the source dominates the candidate pool and outranks most other matches, only a strong direct match still wins). The boost is applied in two places: before the reranker cap (so favoured candidates survive the `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` budget) and after reranking (to nudge them up the final order); a named level is used because those two stages live on different score scales. Only the strategies you list are boosted — any you omit keep their normal weight (no implicit boost). A strategy written without a level (`graph` or `graph:`) defaults to `medium`. Empty disables the feature. | _(empty)_ |
@@ -1008,6 +1010,7 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE` | Max unique entity names per fuzzy candidate lookup query (`trigram` on PG, `oracle_fuzzy` on Oracle). Bounds query size so very wide retain batches don't time out a single `unnest(...)` join on banks with many entities. | `100` |
 | `HINDSIGHT_API_RETAIN_DEFAULT_STRATEGY` | Default retain strategy name. When set, all retain calls without an explicit `strategy` parameter use this strategy. | - |
 | `HINDSIGHT_API_RETAIN_BATCH_POLL_INTERVAL_SECONDS` | Batch API polling interval in seconds | `60` |
+| `HINDSIGHT_API_STORE_DOCUMENT_TEXT` | Persist the raw source text alongside extracted memories. Set to `false` to skip storing it. Static, server-level. | `true` |
 
 > **Batch-capable providers.** `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` only works with a retain LLM provider that implements a batch API: `openai`, `groq`, and `fireworks`. Batch always requires async retain (`async=true`); a sync retain with batch enabled errors. Other providers fail fast at startup.
 
@@ -1031,6 +1034,31 @@ export HINDSIGHT_API_RETAIN_BATCH_ENABLED=true
 ```
 
 > **Entity labels** (`entity_labels`) and **free-form entity extraction** (`entities_allow_free_form`) are configured per bank via the [bank config API](api/memory-banks.md#retain-configuration), not as global environment variables — each bank can have its own controlled vocabulary. See [Entity Labels](retain.md#entity-labels) for details.
+
+#### Skip storing raw document text
+
+By default Hindsight keeps a verbatim copy of everything you retain so you can later read the source, re-process a document, or export it. For deployments that only want to keep the extracted memories (facts, entities, mental models) and not the source text, set:
+
+```bash
+export HINDSIGHT_API_STORE_DOCUMENT_TEXT=false
+```
+
+When disabled, the full retain pipeline still runs — chunking, fact extraction, embedding, and entity linking are unchanged, so **memory quality and recall are not affected** (recall reads from the extracted memories, never from the raw text). The difference is purely what gets persisted:
+
+- `documents.original_text` is stored as `NULL` instead of the raw payload.
+- The raw chunk text is dropped (stored as empty), while the chunk's content hash is still kept so incremental re-retain of the same document continues to deduplicate correctly.
+
+**`update_mode="append"` is rejected when text storage is disabled.** Append rebuilds a document by reading back its previously stored text and adding to it. With nothing stored, appending would silently drop the prior content, so an append retain returns an error instead. Use `update_mode="replace"` (the default).
+
+**Features that degrade when text storage is disabled** (because they read the source text back):
+
+- **Document export** carries no source text; re-importing such a bank cannot re-run extraction from the original payload.
+- **Reading a document's source** (the get-document, list-chunks, and get-chunk endpoints, including their MCP equivalents) returns empty content.
+- **Recall with `include_chunks=true`** returns empty `chunk_text` — the facts themselves are unaffected, but the surrounding source-chunk context is no longer available.
+- **Reflect** no longer offers the `expand` tool (which fetches a memory's source chunk/document), and its `recall` step stops attaching source chunks, since there is no stored text to return. Reflection over the extracted memories is otherwise unaffected.
+- **Reprocessing a document** from its stored text is a no-op (there is nothing to reprocess).
+
+This is a static, server-level setting and cannot be overridden per bank.
 
 #### Customizing retain: when to use what
 
@@ -1328,12 +1356,14 @@ Observations are deduplicated, evidence-grounded knowledge consolidated from mul
 |----------|-------------|---------|
 | `HINDSIGHT_API_ENABLE_OBSERVATIONS` | Enable observation consolidation | `true` |
 | `HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION` | Automatically trigger consolidation after retain, delete, and update operations. When `false`, consolidation only runs when explicitly triggered via the [consolidate endpoint](api/operations.md#consolidation). Configurable per bank. | `true` |
+| `HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS` | Interval for the background sweep that re-schedules consolidation for banks with unconsolidated facts but no consolidation in progress — recovering facts left unscheduled when a consolidation operation failed terminally (e.g. the LLM provider was unavailable). Only applies to banks with auto-consolidation enabled. `0` disables the sweep. | `300` |
 | `HINDSIGHT_API_ENABLE_OBSERVATION_HISTORY` | Track history of changes to each observation (previous text/tags/dates + timestamp), stored one row per change in the `observation_history` table. Set to `false` to disable entirely — no history rows are written. **This is how you turn the feature off** (not a zero cap). | `true` |
 | `HINDSIGHT_API_OBSERVATION_HISTORY_MAX_ENTRIES` | Max history rows kept per observation. On each update the previous version is inserted into the `observation_history` table and the oldest rows beyond this cap are deleted, so an often-reinforced observation's history can't grow without bound. `0` or a negative value **removes the cap** (unbounded); to turn history off entirely set `HINDSIGHT_API_ENABLE_OBSERVATION_HISTORY=false` instead. | `50` |
 | `HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS` | Outer retry attempts for the consolidation LLM batch call. Each attempt uses the inner retry budget (`HINDSIGHT_API_CONSOLIDATION_LLM_MAX_RETRIES`). Worst-case API calls per batch = `MAX_ATTEMPTS × (LLM_MAX_RETRIES + 1)`. | `3` |
 | `HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE` | Memories to load per batch (internal optimization) | `50` |
 | `HINDSIGHT_API_CONSOLIDATION_MAX_MEMORIES_PER_ROUND` | Maximum memories processed per consolidation round. When the limit is reached, the job yields its worker slot and re-queues itself so other banks get fair scheduling. Mental model refreshes only run on the final round. `0` = unlimited. Configurable per bank. | `100` |
 | `HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS` | Max tokens for recall when finding related observations during consolidation | `1024` |
+| `HINDSIGHT_API_CONSOLIDATION_MAX_COMPLETION_TOKENS` | Max completion tokens requested for each consolidation LLM batch call. Unset by default, so each provider keeps its implicit output budget. Set this when a provider applies a low hidden cap (e.g. Bedrock imported models) that truncates consolidation output. | `unset` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE` | Number of facts sent to the LLM in a single consolidation call. Higher values reduce LLM calls and improve throughput at the cost of larger prompts. Set to `1` to disable batching. Configurable per bank. | `8` |
 | `HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD` | Cosine similarity at/above which a newly-created or freshly-updated observation is reconciled against an existing near-identical one via a focused 1-by-1 LLM "merge or keep" call (the model reads both texts, so a number/negation/entity difference is respected). Catches near-duplicate observations that weaker consolidation models emit even when shown the twin, as well as duplicates that arise when an update rewrites an observation into a near-twin of another. Set to `1.0` to disable. Postgres only — consolidation skips reconciliation on Oracle regardless of this value. | `0.97` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_PARALLELISM` | Maximum number of tag groups consolidated concurrently within one consolidation op. Each group acquires per-scope locks before processing, so groups whose write scopes overlap (e.g. under `per_tag` / `all_combinations` / explicit-list `observation_scopes`) automatically serialise on the overlapping scopes — actual concurrency may be lower than this cap when scopes contend. Set to `1` for fully sequential behaviour. Higher values raise peak LLM QPS and connection-pool usage during consolidation proportionally — tune down if your LLM provider rate-limits tightly or your DB pool is small. Configurable per bank. | `4` |

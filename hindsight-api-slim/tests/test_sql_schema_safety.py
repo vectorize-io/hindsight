@@ -93,9 +93,7 @@ def find_unqualified_table_refs(content: str, filename: str) -> list[tuple[int, 
                 qualified_pattern = rf"\.\s*{table}(?:\s|$|,|\))"
                 fq_table_pattern = rf'fq_table\s*\(\s*["\']?{table}'
 
-                if not re.search(qualified_pattern, line) and not re.search(
-                    fq_table_pattern, line
-                ):
+                if not re.search(qualified_pattern, line) and not re.search(fq_table_pattern, line):
                     # Additional check: line must have SQL indicators
                     # This avoids false positives in docstrings like "split into chunks"
                     if sql_indicators.search(line):
@@ -117,8 +115,7 @@ class TestSQLSchemaSafety:
 
             for line_num, table, line in violations:
                 all_violations.append(
-                    f"{py_file.relative_to(py_file.parent.parent)}:{line_num} - "
-                    f"unqualified '{table}': {line[:80]}..."
+                    f"{py_file.relative_to(py_file.parent.parent)}:{line_num} - unqualified '{table}': {line[:80]}..."
                 )
 
         if all_violations:

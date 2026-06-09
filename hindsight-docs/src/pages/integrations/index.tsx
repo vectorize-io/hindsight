@@ -3,7 +3,7 @@ import Link from '@docusaurus/Link';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
 import IntegrationsBanner from '@site/src/components/IntegrationsBanner';
-import integrationsData from '@site/src/data/integrations.json';
+import {integrationsSorted} from '@site/src/lib/integrations';
 import styles from './index.module.css';
 
 const INTEGRATIONS_JSON_URL =
@@ -60,7 +60,7 @@ export default function IntegrationsHub(): React.ReactElement {
   const [search, setSearch] = useState('');
   const [selectedType, setSelectedType] = useState<IntegrationType | 'all'>('all');
 
-  const integrations = integrationsData.integrations as Integration[];
+  const integrations = integrationsSorted as unknown as Integration[];
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();

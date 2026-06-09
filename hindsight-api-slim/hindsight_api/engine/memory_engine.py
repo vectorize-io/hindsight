@@ -57,7 +57,10 @@ from .operation_metadata import (
     BatchRetainParentMetadata,
     ConsolidationMetadata,
     RefreshMentalModelMetadata,
+    RetainExtractionErrors,
     RetainMetadata,
+    RetainOutcomeAggregate,
+    RetainOutcomeMetadata,
 )
 from .sql import SQLDialect, create_sql_dialect
 
@@ -928,7 +931,6 @@ class MemoryEngine(MemoryEngineInterface):
             schema_getter=get_current_schema,
             enabled=config.audit_log_enabled,
             allowed_actions=config.audit_log_actions,
-            retention_days=config.audit_log_retention_days,
         )
 
         # Per-bank LLM request tracer (disabled by default). Registered as a
@@ -939,12 +941,17 @@ class MemoryEngine(MemoryEngineInterface):
             schema_getter=get_current_schema,
             enabled=config.llm_trace_enabled,
             allowed_scopes=config.llm_trace_scopes,
-            retention_days=config.llm_trace_retention_days,
             max_chars=config.llm_trace_max_chars,
         )
         from ..tracing import register_span_recorder
 
         register_span_recorder(self._llm_recorder)
+
+        # Background maintenance loop (retention sweeps + consolidation reconcile),
+        # created in initialize() once the pool/backend is ready.
+        from .maintenance import MaintenanceLoop
+
+        self._maintenance_loop: MaintenanceLoop | None = None
 
         # Backpressure mechanism: limit concurrent searches to prevent overwhelming the database
         # Configurable via HINDSIGHT_API_RECALL_MAX_CONCURRENT (default: 50)
@@ -2036,6 +2043,47 @@ class MemoryEngine(MemoryEngineInterface):
         except Exception as e:
             logger.error(f"Failed to mark operation as completed {operation_id}: {e}")
 
+    async def _write_retain_outcome_metadata(self, operation_id: str | None, unit_ids: list[list[str]]) -> None:
+        """Persist completed retain outcome fields before the operation is marked completed."""
+        if not operation_id:
+            return
+
+        unit_ids_count = sum(len(group) for group in unit_ids)
+        try:
+            backend = await self._get_backend()
+            async with acquire_with_retry(backend) as conn:
+                row = await conn.fetchrow(
+                    f"SELECT result_metadata FROM {fq_table('async_operations')} WHERE operation_id = $1",
+                    uuid.UUID(operation_id),
+                )
+                if not row:
+                    return
+
+                metadata = conn.parse_json(row["result_metadata"]) or {}
+                extraction_errors = RetainExtractionErrors()
+                extraction_errors.merge_metadata(metadata)
+                outcome = RetainOutcomeMetadata(
+                    unit_ids_count=unit_ids_count,
+                    extraction_errors_count=extraction_errors.count,
+                    extraction_errors_sample=extraction_errors.sample,
+                )
+
+                await conn.execute(
+                    f"""
+                    UPDATE {fq_table("async_operations")}
+                    SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $2::jsonb,
+                        updated_at = now()
+                    WHERE operation_id = $1
+                    """,
+                    uuid.UUID(operation_id),
+                    json.dumps(outcome.to_dict()),
+                )
+        except Exception as e:
+            # Best-effort, but log loudly: the whole point of this metadata is to
+            # give clients a reliable success/silent-failure signal, so a missing
+            # write silently regresses them to the ambiguous pre-fix behaviour.
+            logger.warning(f"Failed to write retain outcome metadata for {operation_id}: {e}")
+
     async def _mark_operation_completed_and_fire_webhook(
         self,
         operation_id: str,
@@ -2147,14 +2195,16 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Get all sibling operations (including this one).
             # This query runs in the same transaction, so it sees the current
-            # child's updated status. Pull error_message too so a parent that
+            # child's updated status. Pull result_metadata for completed
+            # children so the parent exposes the same outcome counters as the
+            # individual retain operations. Pull error_message too so a parent that
             # fails can inherit a representative child reason -- otherwise
             # downstream consumers (dashboards, alert filters) lose the actual
             # cause once a batch has children. See the worker poller's
             # _summarise_child_error_messages for the propagation rationale.
             siblings = await conn.fetch(
                 f"""
-                SELECT status, error_message
+                SELECT status, error_message, result_metadata
                 FROM {fq_table("async_operations")}
                 WHERE bank_id = $1
                 AND result_metadata::jsonb @> $2::jsonb
@@ -2196,14 +2246,22 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             elif all_completed:
                 new_status = "completed"
+                outcome_aggregate = RetainOutcomeAggregate()
+                for sibling in siblings:
+                    sibling_metadata = conn.parse_json(sibling["result_metadata"]) or {}
+                    outcome_aggregate.add_metadata(sibling_metadata)
                 await conn.execute(
                     f"""
                     UPDATE {fq_table("async_operations")}
-                    SET status = $2, updated_at = NOW(), completed_at = NOW()
+                    SET status = $2,
+                        result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $3::jsonb,
+                        updated_at = NOW(),
+                        completed_at = NOW()
                     WHERE operation_id = $1
                     """,
                     uuid.UUID(parent_operation_id),
                     new_status,
+                    json.dumps(outcome_aggregate.to_outcome_metadata().to_dict()),
                 )
 
             logger.info(f"Updated parent operation {parent_operation_id} to status '{new_status}' (all children done)")
@@ -2455,11 +2513,9 @@ class MemoryEngine(MemoryEngineInterface):
                 await conn.execute('SET search_path TO "$user", public, bm25_catalog, tokenizer_catalog')
 
             # SET (not SET LOCAL) so per-backend ANN tuning persists for the
-            # connection lifetime. Each backend exposes its own GUC: pgvector
-            # uses hnsw.ef_search, vchord uses vchordrq.probes. The dispatcher
-            # returns the right one for the configured extension, tuned for
-            # the higher recall the per-fact_type semantic queries in
-            # retrieve_semantic_bm25_combined() need.
+            # connection lifetime. The dispatcher returns only safe, portable
+            # knobs for the configured extension; VectorChord probe tuning is
+            # index-shaped and should be stored on vchordrq indexes instead.
             for guc, value in ann_search_tuning_settings(configured_vector_extension(), kind="high_recall"):
                 try:
                     await conn.execute(f"SET {guc} = {value}")
@@ -2585,11 +2641,13 @@ class MemoryEngine(MemoryEngineInterface):
         self._task_backend.set_executor(self.execute_task)
         await self._task_backend.initialize()
 
-        # Start audit log retention sweep (if configured)
-        self._audit_logger.start_retention_sweep()
+        # Start the background maintenance loop: cross-tenant retention sweeps
+        # (audit_log, llm_requests) plus the consolidation reconcile that
+        # re-schedules banks with eligible-but-unscheduled facts.
+        from .maintenance import MaintenanceLoop
 
-        # Start LLM trace retention sweep (if configured)
-        self._llm_recorder.start_retention_sweep()
+        self._maintenance_loop = MaintenanceLoop(self)
+        self._maintenance_loop.start()
 
         self._initialized = True
         logger.info("Memory system initialized (pool and task backend started)")
@@ -2654,11 +2712,11 @@ class MemoryEngine(MemoryEngineInterface):
         """Close the connection pool and shutdown background workers."""
         logger.info("close() started")
 
-        # Stop audit log retention sweep
-        await self._audit_logger.stop_retention_sweep()
+        # Stop the background maintenance loop (retention sweeps + reconcile)
+        if self._maintenance_loop is not None:
+            await self._maintenance_loop.stop()
 
-        # Stop LLM trace retention sweep and unregister the recorder
-        await self._llm_recorder.stop_retention_sweep()
+        # Unregister the LLM trace recorder span hook
         from ..tracing import unregister_span_recorder
 
         unregister_span_recorder(self._llm_recorder)
@@ -2942,6 +3000,19 @@ class MemoryEngine(MemoryEngineInterface):
             if item.get("update_mode") == "append" and not item.get("document_id"):
                 raise ValueError("update_mode='append' requires a document_id")
 
+        # Append mode rebuilds the full document by reading back the previously
+        # stored original_text and prepending it. With store_document_text
+        # disabled there is no stored text to read, so the append would silently
+        # drop all prior content — reject it explicitly instead.
+        if not get_config().store_document_text:
+            for item in contents:
+                if item.get("update_mode") == "append":
+                    raise ValueError(
+                        "update_mode='append' is not supported when HINDSIGHT_API_STORE_DOCUMENT_TEXT "
+                        "is disabled: the prior document text is not stored and cannot be appended to. "
+                        "Use update_mode='replace' instead."
+                    )
+
         # Auto-chunk large batches by token count to avoid timeouts and memory issues
         # Calculate total token count
         total_tokens = sum(count_tokens(item.get("content", "")) for item in contents)
@@ -3120,6 +3191,8 @@ class MemoryEngine(MemoryEngineInterface):
             )
             # Progress for this path is emitted by the streaming pipeline as
             # "storing N/total chunks" via progress_callback (see _retain_batch_async_internal).
+
+        await self._write_retain_outcome_metadata(operation_id, result)
 
         # Call post-operation hook if validator is configured
         if self._operation_validator:
@@ -7663,6 +7736,11 @@ class MemoryEngine(MemoryEngineInterface):
             if recall_include_chunks is not None
             else config_dict.get("recall_include_chunks", DEFAULT_RECALL_INCLUDE_CHUNKS)
         )
+        # With document text storage disabled there is no raw chunk text, so
+        # fetching chunks would only attach empty strings to every recall
+        # result. Force it off (pairs with excluding the expand tool below).
+        if not get_config().store_document_text:
+            effective_recall_include_chunks = False
         effective_recall_max_tokens = (
             recall_max_tokens_override
             if recall_max_tokens_override is not None

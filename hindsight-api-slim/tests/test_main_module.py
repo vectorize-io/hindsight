@@ -43,14 +43,15 @@ class TestMainModuleExtensionLoading:
             loaded_extensions[name] = result
             return result
 
-        with patch("hindsight_api.main.MemoryEngine") as mock_engine, \
-             patch("hindsight_api.main.create_app") as mock_create_app, \
-             patch("hindsight_api.main._get_raw_config") as mock_get_config, \
-             patch("hindsight_api.main.load_extension", side_effect=tracking_load_extension), \
-             patch("hindsight_api.main.DefaultExtensionContext"), \
-             patch("hindsight_api.main.print_banner"), \
-             patch("uvicorn.run"):  # Don't actually start uvicorn
-
+        with (
+            patch("hindsight_api.main.MemoryEngine") as mock_engine,
+            patch("hindsight_api.main.create_app") as mock_create_app,
+            patch("hindsight_api.main._get_raw_config") as mock_get_config,
+            patch("hindsight_api.main.load_extension", side_effect=tracking_load_extension),
+            patch("hindsight_api.main.DefaultExtensionContext"),
+            patch("hindsight_api.main.print_banner"),
+            patch("uvicorn.run"),
+        ):  # Don't actually start uvicorn
             mock_config = MagicMock()
             mock_config.host = "0.0.0.0"
             mock_config.port = 8888
@@ -63,17 +64,21 @@ class TestMainModuleExtensionLoading:
             mock_create_app.return_value = MagicMock()
 
             # Mock sys.argv to simulate CLI invocation
-            with patch.object(sys, 'argv', ['hindsight-api']):
+            with patch.object(sys, "argv", ["hindsight-api"]):
                 from hindsight_api.main import main
+
                 main()
 
         # Verify TENANT extension was loaded
-        assert "TENANT" in loaded_extensions, \
+        assert "TENANT" in loaded_extensions, (
             "main.py did not call load_extension('TENANT', ...) - extensions not loaded!"
-        assert loaded_extensions["TENANT"] is not None, \
+        )
+        assert loaded_extensions["TENANT"] is not None, (
             "load_extension('TENANT', ...) returned None despite env var being set"
-        assert isinstance(loaded_extensions["TENANT"], MockTenantExtension), \
+        )
+        assert isinstance(loaded_extensions["TENANT"], MockTenantExtension), (
             f"Expected MockTenantExtension, got {type(loaded_extensions['TENANT'])}"
+        )
 
     def test_main_loads_operation_validator_when_configured(self, monkeypatch):
         """
@@ -94,14 +99,15 @@ class TestMainModuleExtensionLoading:
             loaded_extensions[name] = result
             return result
 
-        with patch("hindsight_api.main.MemoryEngine") as mock_engine, \
-             patch("hindsight_api.main.create_app") as mock_create_app, \
-             patch("hindsight_api.main._get_raw_config") as mock_get_config, \
-             patch("hindsight_api.main.load_extension", side_effect=tracking_load_extension), \
-             patch("hindsight_api.main.DefaultExtensionContext"), \
-             patch("hindsight_api.main.print_banner"), \
-             patch("uvicorn.run"):
-
+        with (
+            patch("hindsight_api.main.MemoryEngine") as mock_engine,
+            patch("hindsight_api.main.create_app") as mock_create_app,
+            patch("hindsight_api.main._get_raw_config") as mock_get_config,
+            patch("hindsight_api.main.load_extension", side_effect=tracking_load_extension),
+            patch("hindsight_api.main.DefaultExtensionContext"),
+            patch("hindsight_api.main.print_banner"),
+            patch("uvicorn.run"),
+        ):
             mock_config = MagicMock()
             mock_config.host = "0.0.0.0"
             mock_config.port = 8888
@@ -113,12 +119,14 @@ class TestMainModuleExtensionLoading:
             mock_engine.return_value = MagicMock()
             mock_create_app.return_value = MagicMock()
 
-            with patch.object(sys, 'argv', ['hindsight-api']):
+            with patch.object(sys, "argv", ["hindsight-api"]):
                 from hindsight_api.main import main
+
                 main()
 
-        assert "OPERATION_VALIDATOR" in loaded_extensions, \
+        assert "OPERATION_VALIDATOR" in loaded_extensions, (
             "main.py did not call load_extension('OPERATION_VALIDATOR', ...)"
+        )
         assert loaded_extensions["OPERATION_VALIDATOR"] is not None
         assert isinstance(loaded_extensions["OPERATION_VALIDATOR"], MockOperationValidator)
 
@@ -141,13 +149,14 @@ class TestMainModuleExtensionLoading:
             memory_engine_calls.append({"args": args, "kwargs": kwargs})
             return MagicMock()
 
-        with patch("hindsight_api.main.MemoryEngine", side_effect=capture_memory_engine), \
-             patch("hindsight_api.main.create_app") as mock_create_app, \
-             patch("hindsight_api.main._get_raw_config") as mock_get_config, \
-             patch("hindsight_api.main.DefaultExtensionContext"), \
-             patch("hindsight_api.main.print_banner"), \
-             patch("uvicorn.run"):
-
+        with (
+            patch("hindsight_api.main.MemoryEngine", side_effect=capture_memory_engine),
+            patch("hindsight_api.main.create_app") as mock_create_app,
+            patch("hindsight_api.main._get_raw_config") as mock_get_config,
+            patch("hindsight_api.main.DefaultExtensionContext"),
+            patch("hindsight_api.main.print_banner"),
+            patch("uvicorn.run"),
+        ):
             mock_config = MagicMock()
             mock_config.host = "0.0.0.0"
             mock_config.port = 8888
@@ -158,8 +167,9 @@ class TestMainModuleExtensionLoading:
             mock_get_config.return_value = mock_config
             mock_create_app.return_value = MagicMock()
 
-            with patch.object(sys, 'argv', ['hindsight-api']):
+            with patch.object(sys, "argv", ["hindsight-api"]):
                 from hindsight_api.main import main
+
                 main()
 
         # Verify MemoryEngine was called
@@ -168,10 +178,10 @@ class TestMainModuleExtensionLoading:
         call_kwargs = memory_engine_calls[0]["kwargs"]
 
         # THE CRITICAL ASSERTION: tenant_extension must be passed and not None
-        assert "tenant_extension" in call_kwargs, \
-            "MemoryEngine was not called with tenant_extension parameter!"
-        assert call_kwargs["tenant_extension"] is not None, \
+        assert "tenant_extension" in call_kwargs, "MemoryEngine was not called with tenant_extension parameter!"
+        assert call_kwargs["tenant_extension"] is not None, (
             "tenant_extension was None - main.py did not pass loaded extension to MemoryEngine!"
+        )
 
     def test_main_sets_extension_context_on_tenant_extension(self, monkeypatch):
         """
@@ -198,13 +208,14 @@ class TestMainModuleExtensionLoading:
             context_created.append(ctx)
             return ctx
 
-        with patch("hindsight_api.main.MemoryEngine", side_effect=capture_memory_engine), \
-             patch("hindsight_api.main.create_app") as mock_create_app, \
-             patch("hindsight_api.main._get_raw_config") as mock_get_config, \
-             patch("hindsight_api.main.DefaultExtensionContext", side_effect=capture_context), \
-             patch("hindsight_api.main.print_banner"), \
-             patch("uvicorn.run"):
-
+        with (
+            patch("hindsight_api.main.MemoryEngine", side_effect=capture_memory_engine),
+            patch("hindsight_api.main.create_app") as mock_create_app,
+            patch("hindsight_api.main._get_raw_config") as mock_get_config,
+            patch("hindsight_api.main.DefaultExtensionContext", side_effect=capture_context),
+            patch("hindsight_api.main.print_banner"),
+            patch("uvicorn.run"),
+        ):
             mock_config = MagicMock()
             mock_config.host = "0.0.0.0"
             mock_config.port = 8888
@@ -215,15 +226,15 @@ class TestMainModuleExtensionLoading:
             mock_get_config.return_value = mock_config
             mock_create_app.return_value = MagicMock()
 
-            with patch.object(sys, 'argv', ['hindsight-api']):
+            with patch.object(sys, "argv", ["hindsight-api"]):
                 from hindsight_api.main import main
+
                 main()
 
         # Verify context was created and set
         assert len(context_created) == 1, "DefaultExtensionContext should be created"
         assert captured_tenant_ext[0] is not None, "Tenant extension should be captured"
-        assert captured_tenant_ext[0]._context_set, \
-            "set_context was not called on tenant extension"
+        assert captured_tenant_ext[0]._context_set, "set_context was not called on tenant extension"
 
     def test_main_works_without_extensions(self, monkeypatch):
         """
@@ -240,12 +251,13 @@ class TestMainModuleExtensionLoading:
             memory_engine_calls.append({"args": args, "kwargs": kwargs})
             return MagicMock()
 
-        with patch("hindsight_api.main.MemoryEngine", side_effect=capture_memory_engine), \
-             patch("hindsight_api.main.create_app") as mock_create_app, \
-             patch("hindsight_api.main._get_raw_config") as mock_get_config, \
-             patch("hindsight_api.main.print_banner"), \
-             patch("uvicorn.run"):
-
+        with (
+            patch("hindsight_api.main.MemoryEngine", side_effect=capture_memory_engine),
+            patch("hindsight_api.main.create_app") as mock_create_app,
+            patch("hindsight_api.main._get_raw_config") as mock_get_config,
+            patch("hindsight_api.main.print_banner"),
+            patch("uvicorn.run"),
+        ):
             mock_config = MagicMock()
             mock_config.host = "0.0.0.0"
             mock_config.port = 8888
@@ -256,8 +268,9 @@ class TestMainModuleExtensionLoading:
             mock_get_config.return_value = mock_config
             mock_create_app.return_value = MagicMock()
 
-            with patch.object(sys, 'argv', ['hindsight-api']):
+            with patch.object(sys, "argv", ["hindsight-api"]):
                 from hindsight_api.main import main
+
                 main()
 
         # Should work without extensions
@@ -285,12 +298,13 @@ class TestMainModuleExtensionLoading:
 
         mock_app = MagicMock()
 
-        with patch("hindsight_api.main.MemoryEngine") as mock_engine, \
-             patch("hindsight_api.main.create_app", return_value=mock_app), \
-             patch("hindsight_api.main._get_raw_config") as mock_get_config, \
-             patch("hindsight_api.main.print_banner"), \
-             patch("uvicorn.run", side_effect=capture_uvicorn_run):
-
+        with (
+            patch("hindsight_api.main.MemoryEngine") as mock_engine,
+            patch("hindsight_api.main.create_app", return_value=mock_app),
+            patch("hindsight_api.main._get_raw_config") as mock_get_config,
+            patch("hindsight_api.main.print_banner"),
+            patch("uvicorn.run", side_effect=capture_uvicorn_run),
+        ):
             mock_config = MagicMock()
             mock_config.host = "0.0.0.0"
             mock_config.port = 8888
@@ -301,14 +315,14 @@ class TestMainModuleExtensionLoading:
             mock_get_config.return_value = mock_config
             mock_engine.return_value = MagicMock()
 
-            with patch.object(sys, 'argv', ['hindsight-api', '--workers', '1']):
+            with patch.object(sys, "argv", ["hindsight-api", "--workers", "1"]):
                 from hindsight_api.main import main
+
                 main()
 
         assert len(uvicorn_calls) == 1
         # With workers=1, should pass app object, not import string
-        assert uvicorn_calls[0]["app"] is mock_app, \
-            "main.py should pass app object (not import string) when workers=1"
+        assert uvicorn_calls[0]["app"] is mock_app, "main.py should pass app object (not import string) when workers=1"
 
     def test_main_uses_import_string_for_multiple_workers(self, monkeypatch):
         """
@@ -325,12 +339,13 @@ class TestMainModuleExtensionLoading:
         def capture_uvicorn_run(**kwargs):
             uvicorn_calls.append(kwargs)
 
-        with patch("hindsight_api.main.MemoryEngine") as mock_engine, \
-             patch("hindsight_api.main.create_app") as mock_create_app, \
-             patch("hindsight_api.main._get_raw_config") as mock_get_config, \
-             patch("hindsight_api.main.print_banner"), \
-             patch("uvicorn.run", side_effect=capture_uvicorn_run):
-
+        with (
+            patch("hindsight_api.main.MemoryEngine") as mock_engine,
+            patch("hindsight_api.main.create_app") as mock_create_app,
+            patch("hindsight_api.main._get_raw_config") as mock_get_config,
+            patch("hindsight_api.main.print_banner"),
+            patch("uvicorn.run", side_effect=capture_uvicorn_run),
+        ):
             mock_config = MagicMock()
             mock_config.host = "0.0.0.0"
             mock_config.port = 8888
@@ -342,14 +357,16 @@ class TestMainModuleExtensionLoading:
             mock_engine.return_value = MagicMock()
             mock_create_app.return_value = MagicMock()
 
-            with patch.object(sys, 'argv', ['hindsight-api', '--workers', '2']):
+            with patch.object(sys, "argv", ["hindsight-api", "--workers", "2"]):
                 from hindsight_api.main import main
+
                 main()
 
         assert len(uvicorn_calls) == 1
         # With workers > 1, should use import string
-        assert uvicorn_calls[0]["app"] == "hindsight_api.server:app", \
+        assert uvicorn_calls[0]["app"] == "hindsight_api.server:app", (
             "main.py should use import string when workers > 1"
+        )
         assert uvicorn_calls[0]["workers"] == 2
 
     def test_main_sets_keepalive_timeout(self, monkeypatch):
@@ -366,12 +383,13 @@ class TestMainModuleExtensionLoading:
         def capture_uvicorn_run(**kwargs):
             uvicorn_calls.append(kwargs)
 
-        with patch("hindsight_api.main.MemoryEngine") as mock_engine, \
-             patch("hindsight_api.main.create_app") as mock_create_app, \
-             patch("hindsight_api.main._get_raw_config") as mock_get_config, \
-             patch("hindsight_api.main.print_banner"), \
-             patch("uvicorn.run", side_effect=capture_uvicorn_run):
-
+        with (
+            patch("hindsight_api.main.MemoryEngine") as mock_engine,
+            patch("hindsight_api.main.create_app") as mock_create_app,
+            patch("hindsight_api.main._get_raw_config") as mock_get_config,
+            patch("hindsight_api.main.print_banner"),
+            patch("uvicorn.run", side_effect=capture_uvicorn_run),
+        ):
             mock_config = MagicMock()
             mock_config.host = "0.0.0.0"
             mock_config.port = 8888
@@ -383,15 +401,16 @@ class TestMainModuleExtensionLoading:
             mock_engine.return_value = MagicMock()
             mock_create_app.return_value = MagicMock()
 
-            with patch.object(sys, 'argv', ['hindsight-api']):
+            with patch.object(sys, "argv", ["hindsight-api"]):
                 from hindsight_api.main import main
+
                 main()
 
         assert len(uvicorn_calls) == 1
-        assert "timeout_keep_alive" in uvicorn_calls[0], \
-            "uvicorn config must set timeout_keep_alive"
-        assert uvicorn_calls[0]["timeout_keep_alive"] > 15, \
+        assert "timeout_keep_alive" in uvicorn_calls[0], "uvicorn config must set timeout_keep_alive"
+        assert uvicorn_calls[0]["timeout_keep_alive"] > 15, (
             "timeout_keep_alive must exceed aiohttp's 15s client default"
+        )
 
 
 # Mock extensions for testing
