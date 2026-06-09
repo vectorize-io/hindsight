@@ -112,6 +112,25 @@ RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
 RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
 
 
+def _resolve_narrator(profile_name: str, bank_id: str) -> str | None:
+    """Resolve the narrator (memory owner) used to prime fact extraction.
+
+    The narrator is injected as a "Narrator: {name}" line in fact extraction and
+    is stamped into the who-dimension of every first-person fact — and the
+    observations later consolidated from those facts. That is correct for a named
+    agent retaining its own logs, but harmful when ``name`` is just the bank_id:
+    on auto-create the bank ``name`` defaults to ``bank_id``, which is typically a
+    routing key (e.g. ``my-agent::channel-456::user-789``), not a speaker. Priming
+    extraction with a routing key embeds that string into stored fact text and
+    pollutes downstream observations (issue #1680). Suppress it in that case.
+
+    Returns the narrator name, or ``None`` to omit the Narrator line entirely.
+    """
+    if profile_name == bank_id:
+        return None
+    return profile_name
+
+
 def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None):
     """Build retain_params and merged_tags from content dicts."""
     if doc_contents is not None:
@@ -405,6 +424,7 @@ async def retain_batch(
     db_semaphore: "asyncio.Semaphore | None" = None,
     document_body_override: str | None = None,
     chunk_index_offset: int = 0,
+    progress_callback: "Callable[..., Awaitable[None]] | None" = None,
 ) -> tuple[list[list[str]], TokenUsage, int | None]:
     """
     Process a batch of content through the retain pipeline.
@@ -440,7 +460,9 @@ async def retain_batch(
 
     # Get bank profile
     profile = await bank_utils.get_bank_profile(pool, bank_id)
-    agent_name = profile["name"]
+    # Suppress the narrator when name == bank_id (auto-create default) — see
+    # _resolve_narrator for why a routing-key narrator pollutes extraction (#1680).
+    agent_name = _resolve_narrator(profile["name"], bank_id)
 
     # Convert dicts to RetainContent objects
     contents = _build_contents(contents_dicts, document_tags)
@@ -693,6 +715,7 @@ async def retain_batch(
         db_semaphore=db_semaphore,
         document_body_override=document_body_override,
         chunk_index_offset=chunk_index_offset,
+        progress_callback=progress_callback,
     )
 
 
@@ -832,6 +855,7 @@ async def _streaming_retain_batch(
     db_semaphore: "asyncio.Semaphore | None" = None,
     document_body_override: str | None = None,
     chunk_index_offset: int = 0,
+    progress_callback: "Callable[..., Awaitable[None]] | None" = None,
 ) -> tuple[list[list[str]], TokenUsage]:
     """
     Process a large document in streaming mini-batches to bound memory usage.
@@ -953,19 +977,29 @@ async def _streaming_retain_batch(
                 tags=source.tags,
                 observation_scopes=source.observation_scopes,
             )
-            extracted, processed, chunk_meta, usage = await _extract_and_embed(
-                [content],
-                llm_config,
-                agent_name,
-                config,
-                embeddings_model,
-                format_date_fn,
-                fact_type_override,
-                log_buffer,
-                pool,
-                operation_id,
-                schema,
-            )
+            # Attribute this chunk's extraction LLM call to its document, so the
+            # trace row carries document_id (a document accrues one such trace
+            # per retain/re-retain). Per-call: the operation-level trace context
+            # is shared across a batch's documents.
+            from ..llm_trace import reset_call_metadata, set_call_metadata
+
+            meta_token = set_call_metadata({"document_id": effective_doc_id})
+            try:
+                extracted, processed, chunk_meta, usage = await _extract_and_embed(
+                    [content],
+                    llm_config,
+                    agent_name,
+                    config,
+                    embeddings_model,
+                    format_date_fn,
+                    fact_type_override,
+                    log_buffer,
+                    pool,
+                    operation_id,
+                    schema,
+                )
+            finally:
+                reset_call_metadata(meta_token)
             await chunk_queue.put((global_idx, content, extracted, processed, chunk_meta, usage))
             # Memory: release the chunk text from the shared list now that it's
             # been extracted and queued. The queued RetainContent holds its own copy.
@@ -1000,6 +1034,25 @@ async def _streaming_retain_batch(
     async def _db_consumer() -> None:
         batch: list[tuple] = []
         consumer_batch_idx = 0
+        chunks_committed = 0
+
+        # Best-effort durable progress: how many chunks of this document have been
+        # extracted+committed so far. Written per consumer batch so an operator polling
+        # the retain operation sees "storing 200/1200 chunks" advancing instead of a
+        # single opaque sub-batch tick. Never lets a heartbeat failure break retain.
+        async def _emit_chunk_progress() -> None:
+            if not (progress_callback and operation_id):
+                return
+            try:
+                await progress_callback(
+                    operation_id,
+                    stage="storing",
+                    processed=chunks_committed,
+                    total=total_chunks,
+                    detail={"facts_committed": len(all_unit_ids)},
+                )
+            except Exception:
+                logger.debug("retain chunk-progress write failed", exc_info=True)
 
         while True:
             item = await chunk_queue.get()
@@ -1011,6 +1064,8 @@ async def _streaming_retain_batch(
                         consumer_batch_idx,
                         is_last=True,
                     )
+                    chunks_committed += len(batch)
+                    await _emit_chunk_progress()
                 break
 
             batch.append(item)
@@ -1030,6 +1085,8 @@ async def _streaming_retain_batch(
                     is_last=False,
                 )
                 consumer_batch_idx += 1
+                chunks_committed += len(batch)
+                await _emit_chunk_progress()
                 batch = []
 
     async def _process_db_batch(
@@ -1182,30 +1239,17 @@ async def _streaming_retain_batch(
             async with acquire_with_retry(pool) as conn:
                 async with conn.transaction():
                     # --- Document ownership gate ---
-                    # Lock the document row to serialize all concurrent writers.
-                    #
-                    # We do this with a SINGLE upsert that both creates the row (if
-                    # absent) and locks it (if present) atomically. The earlier
-                    # two-step form — INSERT ... ON CONFLICT DO NOTHING followed by a
-                    # separate SELECT ... FOR UPDATE — could deadlock under concurrent
-                    # same-document retains: DO NOTHING takes no row lock on an
-                    # existing row, so writers interleaved the speculative-insert
-                    # ShareLock with the later FOR UPDATE and cascade-DELETE in
-                    # inconsistent orders, producing 3-way lock cycles in
-                    # handle_document_tracking. ON CONFLICT DO UPDATE always takes the
-                    # row lock as part of the same statement, so all writers serialize
-                    # on the document row in a single, consistent step.
-                    #
-                    # The SET is a no-op self-assignment (content_hash unchanged) used
-                    # only to acquire the lock; the real hash is written immediately
-                    # below by handle_document_tracking / upsert_document_metadata.
-                    # ``RETURNING`` yields the pre-existing hash (or '__pending__' for a
-                    # freshly inserted row).
-                    existing_hash = await conn.fetchval(
-                        f"INSERT INTO {fq_table('documents')} (id, bank_id, original_text, content_hash) "
-                        f"VALUES ($1, $2, '', '__pending__') "
-                        f"ON CONFLICT (id, bank_id) DO UPDATE SET content_hash = {fq_table('documents')}.content_hash "
-                        f"RETURNING content_hash",
+                    # Ensure the document row exists, lock it to serialize all
+                    # concurrent same-document writers, and read its pre-existing
+                    # hash. The lock prevents interleaved retains from corrupting
+                    # each other in handle_document_tracking; the returned hash
+                    # ('__pending__' for a freshly inserted row) drives the
+                    # takeover check for later batches below. The PG/Oracle split
+                    # lives in the ops layer because Oracle can't do this upsert +
+                    # RETURNING in a single statement.
+                    existing_hash = await pool.ops.lock_document_for_write(
+                        conn,
+                        fq_table("documents"),
                         effective_doc_id,
                         bank_id,
                     )
@@ -1718,20 +1762,28 @@ async def _try_delta_retain(
         logger.info("\n" + "\n".join(log_buffer) + "\n")
         return None
 
-    # Extract facts and generate embeddings (shared pipeline)
-    extracted_facts, processed_facts, new_chunk_metadata, usage = await _extract_and_embed(
-        delta_contents,
-        llm_config,
-        agent_name,
-        config,
-        embeddings_model,
-        format_date_fn,
-        fact_type_override,
-        log_buffer,
-        pool,
-        operation_id,
-        schema,
-    )
+    # Extract facts and generate embeddings (shared pipeline). Attribute these
+    # extraction calls to the document so the delta re-retain's trace also binds
+    # to it (a document accrues one trace per full/delta retain).
+    from ..llm_trace import reset_call_metadata, set_call_metadata
+
+    meta_token = set_call_metadata({"document_id": effective_doc_id})
+    try:
+        extracted_facts, processed_facts, new_chunk_metadata, usage = await _extract_and_embed(
+            delta_contents,
+            llm_config,
+            agent_name,
+            config,
+            embeddings_model,
+            format_date_fn,
+            fact_type_override,
+            log_buffer,
+            pool,
+            operation_id,
+            schema,
+        )
+    finally:
+        reset_call_metadata(meta_token)
 
     # Database transaction
     result_unit_ids: list[list[str]] = []

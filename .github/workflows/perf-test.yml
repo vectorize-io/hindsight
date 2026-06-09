@@ -23,6 +23,7 @@ on:
           - retain
           - recall
           - recall-with-observations
+          - recall-temporal
           - consolidation
           - graph-maintenance
         default: ""
@@ -34,6 +35,18 @@ on:
         description: "Skip LoComo job"
         type: boolean
         default: false
+      obs_skip:
+        description: "Skip observation-dedup benchmark job"
+        type: boolean
+        default: false
+      obs_dataset:
+        description: "Obs benchmark dataset substring (blank = English hermes transcript)."
+        type: string
+        default: ""
+      obs_fraction:
+        description: "Obs benchmark fraction (0-1] of each document to run."
+        type: string
+        default: "1.0"
       ref:
         description: "Git ref to test (branch, tag, or SHA). Defaults to main."
         type: string
@@ -199,3 +212,86 @@ jobs:
         PERF_DASHBOARD_TOKEN: ${{ secrets.PERF_DASHBOARD_TOKEN }}
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: ./scripts/benchmarks/publish-locomo-results.sh hindsight-dev/benchmarks/locomo/results/benchmark_results.json
+
+  obs:
+    # Observation-dedup quality benchmark: ingests a transcript, drains consolidation
+    # (serial SyncTaskBackend + embedded pg0 — no external DB / worker), and reports the
+    # near-duplicate observation rate. Real LLM via VertexAI, mirroring the LoComo job.
+    if: inputs.obs_skip != true
+    runs-on: ubuntu-latest
+    env:
+      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
+      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
+      HINDSIGHT_API_ENABLE_OBSERVATIONS: "true"
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ inputs.ref || github.ref }}
+
+    - name: Setup GCP credentials
+      run: |
+        printf '%s' '${{ secrets.GCP_VERTEXAI_CREDENTIALS }}' > /tmp/gcp-credentials.json
+        PROJECT_ID=$(jq -r '.project_id' /tmp/gcp-credentials.json)
+        echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Cache HuggingFace models
+      uses: actions/cache@v5
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-huggingface-
+
+    - name: Pre-download models
+      working-directory: ./hindsight-api-slim
+      run: |
+        uv run --frozen --all-extras --index-strategy unsafe-best-match python -c "
+        from sentence_transformers import SentenceTransformer
+        print('Downloading embedding model...')
+        SentenceTransformer('BAAI/bge-small-en-v1.5')
+        print('Model downloaded successfully')
+        "
+
+    - name: Install hindsight-dev dependencies
+      run: |
+        cd hindsight-dev && uv sync --frozen --all-extras --index-strategy unsafe-best-match
+
+    - name: Run obs benchmark
+      # Default to the English hermes transcript at full fraction — a clean, deterministic
+      # consolidation-dedup signal (the Chinese variant adds a cross-lingual embedding
+      # confound). Override dataset/fraction via workflow_dispatch.
+      run: |
+        DATASET="${{ inputs.obs_dataset }}"
+        if [ -z "$DATASET" ]; then DATASET="hermes_session_2026-05-15_en"; fi
+        FRACTION="${{ inputs.obs_fraction }}"
+        if [ -z "$FRACTION" ]; then FRACTION="1.0"; fi
+        cd hindsight-dev
+        uv run python -m benchmarks.obs.obs_benchmark \
+          --dataset "$DATASET" --fraction "$FRACTION" --wipe-bank --output obs-results.json
+
+    - name: Upload obs results
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: obs-results-${{ github.sha }}
+        path: hindsight-dev/obs-results.json
+        retention-days: 90
+
+    - name: Publish obs to dashboard
+      if: success() && (github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      env:
+        PERF_DASHBOARD_TOKEN: ${{ secrets.PERF_DASHBOARD_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: ./scripts/benchmarks/publish-obs-results.sh hindsight-dev/obs-results.json

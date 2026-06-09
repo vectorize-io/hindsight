@@ -309,9 +309,7 @@ async def test_api_errors_surface_the_response_body():
     llm = _make_fireworks(http_client=client)
 
     with pytest.raises(httpx.HTTPStatusError, match="invalid field 'userUploaded'"):
-        await llm.submit_batch(
-            [{"custom_id": "c0", "method": "POST", "url": "/v1/chat/completions", "body": {}}]
-        )
+        await llm.submit_batch([{"custom_id": "c0", "method": "POST", "url": "/v1/chat/completions", "body": {}}])
 
     await client.aclose()
 

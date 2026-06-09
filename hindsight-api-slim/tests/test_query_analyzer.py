@@ -1,6 +1,7 @@
 """
 Test query analyzer for temporal extraction.
 """
+
 import pytest
 from datetime import datetime
 from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer, QueryAnalysis
@@ -312,8 +313,4 @@ def test_query_analyzer_dateparser_crash_returns_no_constraint(query_analyzer, m
     assert analysis.temporal_constraint is None, (
         "dateparser failures should be treated as no temporal constraint, not propagated"
     )
-    assert any("dateparser" in rec.message for rec in caplog.records), (
-        "Should log a warning when dateparser fails"
-    )
-
-
+    assert any("dateparser" in rec.message for rec in caplog.records), "Should log a warning when dateparser fails"

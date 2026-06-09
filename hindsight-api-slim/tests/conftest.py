@@ -1,6 +1,7 @@
 """
 Pytest configuration and shared fixtures.
 """
+
 import asyncio
 import os
 from pathlib import Path
@@ -19,6 +20,16 @@ from hindsight_api.pg0 import EmbeddedPostgres
 # Default pg0 instance configuration for tests
 DEFAULT_PG0_INSTANCE_NAME = "hindsight-test"
 DEFAULT_PG0_PORT = int(os.environ.get("HINDSIGHT_TEST_PG_PORT", "5556"))
+
+# Keep the background MaintenanceLoop from auto-starting during tests. In
+# production it sweeps retention and re-schedules consolidation, but its timers
+# would race shared-pg0 test data (e.g. delete llm_requests/audit_log rows a test
+# just inserted). Disabling the reconcile interval and llm-trace retention — with
+# audit retention already off by default — leaves no job enabled, so the loop
+# never starts. Tests that exercise it call MaintenanceLoop methods
+# (_run_reconcile / _purge_expired) directly.
+os.environ.setdefault("HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS", "0")
+os.environ.setdefault("HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS", "-1")
 
 
 # Load environment variables from .env at the start of test session
@@ -66,6 +77,7 @@ def pg0_db_url(db_url, tmp_path_factory, worker_id):
     if db_url and not _parse_pg0_url(db_url)[0]:
         # Plain postgresql:// URL - use it directly but still run migrations
         from hindsight_api.migrations import run_migrations
+
         run_migrations(db_url)
         return db_url
 
@@ -117,6 +129,7 @@ def pg0_db_url(db_url, tmp_path_factory, worker_id):
     # Run migrations - uses PostgreSQL advisory lock internally,
     # so safe to call from multiple workers (only one will actually run migrations)
     from hindsight_api.migrations import run_migrations
+
     run_migrations(url)
 
     # Clean up stale test data from previous sessions. Per-bank vector indexes
@@ -147,8 +160,7 @@ def _cleanup_stale_test_data(db_url: str) -> None:
         conn = await asyncpg.connect(db_url)
         try:
             idx_rows = await conn.fetch(
-                "SELECT indexname FROM pg_indexes "
-                "WHERE schemaname = 'public' AND indexname LIKE 'idx_mu_emb_%'"
+                "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname LIKE 'idx_mu_emb_%'"
             )
             if idx_rows:
                 for row in idx_rows:
@@ -156,10 +168,20 @@ def _cleanup_stale_test_data(db_url: str) -> None:
 
             # Truncate test data in dependency order
             for table in [
-                "entity_cooccurrences", "unit_entities", "memory_links",
-                "entities", "memory_units", "chunks", "documents",
-                "mental_models", "directives", "async_operations",
-                "audit_log", "webhooks", "file_storage", "banks",
+                "entity_cooccurrences",
+                "unit_entities",
+                "memory_links",
+                "entities",
+                "memory_units",
+                "chunks",
+                "documents",
+                "mental_models",
+                "directives",
+                "async_operations",
+                "audit_log",
+                "webhooks",
+                "file_storage",
+                "banks",
             ]:
                 try:
                     await conn.execute(f"TRUNCATE {table} CASCADE")
@@ -242,8 +264,7 @@ def oracle_db_url(_oracle_admin_dsn):
         # Create test user (idempotent — skip if already exists)
         try:
             cursor.execute(
-                f'CREATE USER {test_user} IDENTIFIED BY "{test_pass}" '
-                f"DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS"
+                f'CREATE USER {test_user} IDENTIFIED BY "{test_pass}" DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS'
             )
         except oracledb.DatabaseError as e:
             if hasattr(e.args[0], "code") and e.args[0].code == 1920:
@@ -410,11 +431,10 @@ def cross_encoder(tmp_path_factory, worker_id):
 
     return ce
 
+
 @pytest.fixture(scope="session")
 def query_analyzer():
     return DateparserQueryAnalyzer()
-
-
 
 
 @pytest_asyncio.fixture(scope="function")

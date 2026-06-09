@@ -127,9 +127,7 @@ class TestRenderer:
         assert render_block(block) == "```\nraw text\n```"
 
     def test_section_heading_level(self):
-        section = Section(
-            id="purpose", heading="Purpose", level=3, blocks=[ParagraphBlock(text="hi")]
-        )
+        section = Section(id="purpose", heading="Purpose", level=3, blocks=[ParagraphBlock(text="hi")])
         assert render_section(section).startswith("### Purpose\n\nhi")
 
     def test_document_round_trip_is_stable(self):
@@ -157,18 +155,7 @@ class TestRenderer:
 class TestParser:
     def test_simple_document(self):
         markdown = (
-            "# Team Overview\n"
-            "\n"
-            "Quick summary.\n"
-            "\n"
-            "## Members\n"
-            "\n"
-            "- Alice\n"
-            "- Bob\n"
-            "\n"
-            "## Cadence\n"
-            "\n"
-            "Standups daily.\n"
+            "# Team Overview\n\nQuick summary.\n\n## Members\n\n- Alice\n- Bob\n\n## Cadence\n\nStandups daily.\n"
         )
         doc = parse_markdown(markdown)
         assert [s.id for s in doc.sections] == ["team-overview", "members", "cadence"]
@@ -182,11 +169,7 @@ class TestParser:
         doc = parse_markdown(markdown)
         assert [s.id for s in doc.sections] == ["rules", "stop"]
         # Horizontal rule must NOT become a paragraph.
-        assert all(
-            not (isinstance(b, ParagraphBlock) and "---" in b.text)
-            for s in doc.sections
-            for b in s.blocks
-        )
+        assert all(not (isinstance(b, ParagraphBlock) and "---" in b.text) for s in doc.sections for b in s.blocks)
 
     def test_ordered_list(self):
         markdown = "## Steps\n\n1. one\n2. two\n3. three\n"
@@ -275,9 +258,7 @@ class TestApplyOperations:
 
     def test_insert_block_out_of_range_skipped(self):
         doc = _team_overview_doc()
-        op = InsertBlockOp(
-            section_id="members", index=99, block=ParagraphBlock(text="x")
-        )
+        op = InsertBlockOp(section_id="members", index=99, block=ParagraphBlock(text="x"))
         result = apply_operations(doc, [op])
         assert result.applied == []
         assert "index out of range" in result.skipped[0]["reason"]
@@ -381,13 +362,9 @@ class TestApplyOperations:
         )
         result = apply_operations(doc, [op])
         before_overview = render_section(doc.section_by_id("team-overview"))
-        after_overview = render_section(
-            result.document.section_by_id("team-overview")
-        )
+        after_overview = render_section(result.document.section_by_id("team-overview"))
         before_cadence = render_section(doc.section_by_id("cadence"))
-        after_cadence = render_section(
-            result.document.section_by_id("cadence")
-        )
+        after_cadence = render_section(result.document.section_by_id("cadence"))
         assert before_overview == after_overview
         assert before_cadence == after_cadence
 
@@ -418,9 +395,7 @@ class TestDeltaOperationListSchema:
 
     def test_invalid_op_field_rejected(self):
         with pytest.raises(Exception):  # pydantic ValidationError
-            DeltaOperationList.model_validate(
-                {"operations": [{"op": "not_a_real_op", "section_id": "x"}]}
-            )
+            DeltaOperationList.model_validate({"operations": [{"op": "not_a_real_op", "section_id": "x"}]})
 
     def test_extra_field_rejected(self):
         with pytest.raises(Exception):

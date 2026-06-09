@@ -24,7 +24,9 @@ def test_provider_default_models():
 
             config = HindsightConfig.from_env()
             assert config.llm_provider == provider, f"Provider mismatch for {provider}"
-            assert config.llm_model == expected_model, f"Expected {expected_model} for {provider}, got {config.llm_model}"
+            assert config.llm_model == expected_model, (
+                f"Expected {expected_model} for {provider}, got {config.llm_model}"
+            )
 
     finally:
         # Restore original env vars
@@ -96,9 +98,9 @@ def test_per_operation_provider_default_model():
         assert config.llm_model == "gpt-4o-mini", f"Expected gpt-4o-mini, got {config.llm_model}"
 
         # Retain should use Anthropic default
-        assert (
-            config.retain_llm_model == "claude-haiku-4-5"
-        ), f"Expected claude-haiku-4-5, got {config.retain_llm_model}"
+        assert config.retain_llm_model == "claude-haiku-4-5", (
+            f"Expected claude-haiku-4-5, got {config.retain_llm_model}"
+        )
 
     finally:
         clear_config_cache()

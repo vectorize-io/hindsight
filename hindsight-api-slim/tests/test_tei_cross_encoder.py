@@ -296,7 +296,7 @@ class TestRemoteTEICrossEncoderParallelism:
                 concurrent_count[0] += 1
                 max_concurrent_observed[0] = max(max_concurrent_observed[0], concurrent_count[0])
 
-                await asyncio.sleep(0.03)  # Simulate latency
+                await asyncio.sleep(0.1)  # Simulate latency
 
                 concurrent_count[0] -= 1
                 body = kwargs.get("json", {})
@@ -325,8 +325,11 @@ class TestRemoteTEICrossEncoderParallelism:
         elapsed = time.time() - start
 
         assert len(scores) == 6
-        # If parallel, 3 batches with 30ms each should take ~30ms, not 90ms
-        assert elapsed < 0.08, f"Requests should run in parallel, took {elapsed}s"
+        # 6 docs = 3 batches at ~0.1s each: ~0.1s if parallel vs ~0.3s if serial.
+        # Assert comfortably below the serial time so CI scheduling jitter can't flake
+        # it (the previous ~0.08s bound was too tight); max_concurrent_observed below is
+        # the deterministic proof that the batches actually overlapped.
+        assert elapsed < 0.25, f"Requests should run in parallel, took {elapsed}s"
         assert max_concurrent_observed[0] > 1, "Multiple requests should run concurrently"
 
     @pytest.mark.asyncio
@@ -627,13 +630,13 @@ async def test_tei_reranker_performance():
 
     # Test configurations: (batch_size, max_concurrent)
     configs = [
-        (128, 8),   # Default
-        (256, 4),   # Larger batches, fewer concurrent
-        (256, 8),   # Larger batches, same concurrent
-        (512, 2),   # Very large batches, few concurrent
-        (512, 4),   # Very large batches, moderate concurrent
-        (64, 16),   # Smaller batches, more concurrent
-        (800, 1),   # Single batch (all at once)
+        (128, 8),  # Default
+        (256, 4),  # Larger batches, fewer concurrent
+        (256, 8),  # Larger batches, same concurrent
+        (512, 2),  # Very large batches, few concurrent
+        (512, 4),  # Very large batches, moderate concurrent
+        (64, 16),  # Smaller batches, more concurrent
+        (800, 1),  # Single batch (all at once)
     ]
 
     results = []
@@ -662,17 +665,21 @@ async def test_tei_reranker_performance():
 
         avg_time = sum(times) / len(times)
         min_time = min(times)
-        results.append({
-            "batch_size": batch_size,
-            "max_concurrent": max_concurrent,
-            "avg_ms": avg_time * 1000,
-            "min_ms": min_time * 1000,
-            "num_batches": (num_pairs + batch_size - 1) // batch_size,
-        })
+        results.append(
+            {
+                "batch_size": batch_size,
+                "max_concurrent": max_concurrent,
+                "avg_ms": avg_time * 1000,
+                "min_ms": min_time * 1000,
+                "num_batches": (num_pairs + batch_size - 1) // batch_size,
+            }
+        )
 
-        print(f"   batch_size={batch_size:4d}, max_concurrent={max_concurrent:2d}: "
-              f"avg={avg_time * 1000:6.1f}ms, min={min_time * 1000:6.1f}ms "
-              f"({results[-1]['num_batches']} batches)")
+        print(
+            f"   batch_size={batch_size:4d}, max_concurrent={max_concurrent:2d}: "
+            f"avg={avg_time * 1000:6.1f}ms, min={min_time * 1000:6.1f}ms "
+            f"({results[-1]['num_batches']} batches)"
+        )
 
     # Find best configuration
     best = min(results, key=lambda x: x["avg_ms"])
@@ -703,21 +710,19 @@ async def test_tei_reranker_concurrent_requests():
     num_concurrent_requests = 4
 
     query = "Tell me about machine learning and AI training"
-    test_pairs = [
-        (query, f"Document {i} about ML and training.")
-        for i in range(num_pairs_per_request)
-    ]
+    test_pairs = [(query, f"Document {i} about ML and training.") for i in range(num_pairs_per_request)]
 
     # Test configurations
     configs = [
-        (128, 8),   # Default
-        (256, 4),   # Larger batches
-        (512, 2),   # Very large batches
-        (200, 1),   # Single batch per request
+        (128, 8),  # Default
+        (256, 4),  # Larger batches
+        (512, 2),  # Very large batches
+        (200, 1),  # Single batch per request
     ]
 
-    print(f"\n⏱️  Concurrent Load Test: {num_concurrent_requests} parallel requests, "
-          f"{num_pairs_per_request} pairs each:\n")
+    print(
+        f"\n⏱️  Concurrent Load Test: {num_concurrent_requests} parallel requests, {num_pairs_per_request} pairs each:\n"
+    )
 
     for batch_size, max_concurrent in configs:
         encoder = RemoteTEICrossEncoder(
@@ -744,17 +749,21 @@ async def test_tei_reranker_concurrent_requests():
             total_time = time.time() - start
 
             individual_times = [r[0] for r in results]
-            times.append({
-                "total": total_time,
-                "max_individual": max(individual_times),
-                "avg_individual": sum(individual_times) / len(individual_times),
-            })
+            times.append(
+                {
+                    "total": total_time,
+                    "max_individual": max(individual_times),
+                    "avg_individual": sum(individual_times) / len(individual_times),
+                }
+            )
 
         avg_total = sum(t["total"] for t in times) / len(times)
         avg_max_individual = sum(t["max_individual"] for t in times) / len(times)
 
-        print(f"   batch_size={batch_size:4d}, max_concurrent={max_concurrent:2d}: "
-              f"total={avg_total * 1000:6.1f}ms, slowest_req={avg_max_individual * 1000:6.1f}ms")
+        print(
+            f"   batch_size={batch_size:4d}, max_concurrent={max_concurrent:2d}: "
+            f"total={avg_total * 1000:6.1f}ms, slowest_req={avg_max_individual * 1000:6.1f}ms"
+        )
 
 
 @requires_tei_server

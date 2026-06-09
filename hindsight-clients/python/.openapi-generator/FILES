@@ -5,9 +5,11 @@ hindsight_client_api/api/audit_api.py
 hindsight_client_api/api/bank_templates_api.py
 hindsight_client_api/api/banks_api.py
 hindsight_client_api/api/directives_api.py
+hindsight_client_api/api/document_transfer_api.py
 hindsight_client_api/api/documents_api.py
 hindsight_client_api/api/entities_api.py
 hindsight_client_api/api/files_api.py
+hindsight_client_api/api/llm_traces_api.py
 hindsight_client_api/api/memory_api.py
 hindsight_client_api/api/mental_models_api.py
 hindsight_client_api/api/monitoring_api.py
@@ -55,6 +57,7 @@ hindsight_client_api/models/delete_response.py
 hindsight_client_api/models/directive_list_response.py
 hindsight_client_api/models/directive_response.py
 hindsight_client_api/models/disposition_traits.py
+hindsight_client_api/models/document_import_submit_response.py
 hindsight_client_api/models/document_response.py
 hindsight_client_api/models/entity_detail_response.py
 hindsight_client_api/models/entity_graph_response.py
@@ -73,6 +76,11 @@ hindsight_client_api/models/list_chunks_response.py
 hindsight_client_api/models/list_documents_response.py
 hindsight_client_api/models/list_memory_units_response.py
 hindsight_client_api/models/list_tags_response.py
+hindsight_client_api/models/llm_request_entry.py
+hindsight_client_api/models/llm_request_list_response.py
+hindsight_client_api/models/llm_request_stats_bucket.py
+hindsight_client_api/models/llm_request_stats_response.py
+hindsight_client_api/models/llm_request_token_sums.py
 hindsight_client_api/models/memories_timeseries_response.py
 hindsight_client_api/models/memory_item.py
 hindsight_client_api/models/memory_timeseries_bucket.py
@@ -85,6 +93,7 @@ hindsight_client_api/models/mental_model_trigger_output_tag_groups_inner.py
 hindsight_client_api/models/model_not.py
 hindsight_client_api/models/not1.py
 hindsight_client_api/models/observation_scopes.py
+hindsight_client_api/models/operation_progress.py
 hindsight_client_api/models/operation_response.py
 hindsight_client_api/models/operation_status_response.py
 hindsight_client_api/models/operations_list_response.py

@@ -38,6 +38,17 @@ reprocess_document = "UI-only endpoint for the control plane document detail dia
 # Clear mental model content is a new endpoint; CLI subcommand not yet implemented.
 clear_mental_model = "Not yet exposed in the CLI; use the HTTP API or SDK"
 
+# UI-only endpoints powering the control-plane LLM Requests (per-bank tracing) tab.
+# The trace waterfall, token charts, and metadata viewers don't map to a useful
+# CLI command.
+list_llm_requests = "UI-only endpoint for the control plane LLM Requests tab"
+llm_request_stats = "UI-only endpoint for the control plane LLM Requests stats chart"
+
+# Document transfer (export/import) is an admin/ops operation used from the API
+# and the control plane, not the end-user Rust CLI.
+export_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
+import_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
+
 # ---------------------------------------------------------------------------
 # Per-operation parameter skips
 # ---------------------------------------------------------------------------

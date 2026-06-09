@@ -81,15 +81,17 @@ def test_ann_search_tuning_settings_pgvector_dispatches_hnsw_ef_search():
     assert ann_search_tuning_settings("pgvector", kind="high_recall") == (("hnsw.ef_search", "200"),)
 
 
-def test_ann_search_tuning_settings_vchord_dispatches_vchordrq_probes():
-    # vchord doesn't recognize hnsw.ef_search; the dispatcher must route to
-    # the vchordrq equivalent (probes), otherwise the GUC silently does nothing.
-    assert ann_search_tuning_settings("vchord", kind="low_latency") == (("vchordrq.probes", "10"),)
-    assert ann_search_tuning_settings("vchord", kind="high_recall") == (("vchordrq.probes", "30"),)
+def test_ann_search_tuning_settings_vchord_leaves_probes_to_index_defaults():
+    # vchordrq.probes must match the index's build.internal.lists shape.
+    # VectorChord 1.1 supports per-index fallback parameters for this; a
+    # session GUC would override every index and can be invalid for listless or
+    # mixed-layout indexes.
+    assert ann_search_tuning_settings("vchord", kind="low_latency") == ()
+    assert ann_search_tuning_settings("vchord", kind="high_recall") == ()
 
 
 def test_ann_search_tuning_settings_returns_empty_for_backends_without_knob():
-    for ext in ("pgvectorscale", "pg_diskann", "scann"):
+    for ext in ("vchord", "pgvectorscale", "pg_diskann", "scann"):
         assert ann_search_tuning_settings(ext, kind="low_latency") == ()
         assert ann_search_tuning_settings(ext, kind="high_recall") == ()
 

@@ -74,6 +74,8 @@
     "auditLogs": "Registros de auditoria",
     "webhooksDescription": "Gerencie endpoints de webhook para receber notificações de eventos deste banco de memória.",
     "auditLogsDescription": "Visualize o registro de auditoria de todas as operações realizadas neste banco de memória.",
+    "llmRequests": "Requisições LLM",
+    "llmRequestsDescription": "Rastreie todas as chamadas LLM feitas para este banco de memória, incluindo falhas.",
     "recallAnalyzer": "Analisador de Recall",
     "recallAnalyzerDescription": "Analise o recall de memória com informações detalhadas de rastreamento e métodos de recuperação.",
     "reflect": "Reflect",
@@ -147,6 +149,10 @@
     "clearObservationsDetailedWarning": "Todas as memórias de observação serão permanentemente excluídas. Esta ação não pode ser desfeita.",
     "observationsNotEnabled": "Observações não habilitadas",
     "observationsDisabledMessage": "A consolidação de observações está desabilitada neste servidor. Defina <envVar></envVar> para habilitar.",
+    "auditLogsNotEnabled": "Registros de auditoria não habilitados",
+    "auditLogsDisabledMessage": "O registro de auditoria está desabilitado neste servidor. Defina <envVar></envVar> para habilitar.",
+    "llmRequestsNotEnabled": "Requisições LLM não habilitadas",
+    "llmRequestsDisabledMessage": "O rastreamento de requisições LLM está desabilitado neste servidor. Defina <envVar></envVar> para habilitar.",
     "deleteWillDeleteDetails": "Isso excluirá {memories, plural, one {# memória} other {# memórias}}, {documents, plural, one {# documento} other {# documentos}} e {links, plural, one {# link} other {# links}}.",
     "deleteWillDeleteObservations": "Isso excluirá {count, plural, one {# observação} other {# observações}}."
   },
@@ -403,7 +409,66 @@
     "subBatchesCount": "Sublotes ({count})",
     "rawPayload": "Payload bruto",
     "loadRaw": "Carregar bruto",
-    "rawPayloadHelp": "Mostra os parâmetros completos com os quais a operação foi enviada (pode ser grande)."
+    "rawPayloadHelp": "Mostra os parâmetros completos com os quais a operação foi enviada (pode ser grande).",
+    "operationCount": "{count} operações",
+    "unknown": "Desconhecido",
+    "notAvailable": "N/D",
+    "operationDetailsLoadError": "Falha ao carregar os detalhes da operação",
+    "status": {
+      "all": "Todos",
+      "pending": "Pendente",
+      "processing": "Em processamento",
+      "completed": "Concluída",
+      "failed": "Falha",
+      "cancelled": "Cancelada"
+    },
+    "operationType": {
+      "all": "Todos os tipos",
+      "retain": "Retain",
+      "consolidation": "Consolidação",
+      "refreshMentalModel": "Atualização do modelo mental",
+      "fileConvertRetain": "Converter arquivo",
+      "webhookDelivery": "Entrega de webhook",
+      "graphMaintenance": "Manutenção do grafo"
+    },
+    "table": {
+      "id": "ID da operação",
+      "type": "Tipo",
+      "created": "Criada",
+      "status": "Status",
+      "index": "Índice",
+      "items": "Itens",
+      "actions": "Ações"
+    },
+    "action": {
+      "cancel": "Cancelar",
+      "retry": "Tentar novamente"
+    },
+    "pagination": "Mostrando {start}-{end} de {total}",
+    "paginationPrevious": "Anterior",
+    "paginationNext": "Próximo",
+    "emptyState": "Nenhuma operação",
+    "emptyStateWithStatus": "Nenhuma operação com status {status}",
+    "field": {
+      "status": "Status",
+      "type": "Tipo",
+      "created": "Criada",
+      "updated": "Atualizada",
+      "completed": "Concluída",
+      "progress": "Progresso",
+      "lastHeartbeat": "Último sinal"
+    },
+    "metadata": "Metadados",
+    "error": "Erro",
+    "rawPayloadParentHelp": "Esta é uma operação pai: o payload bruto é armazenado em cada sublote. Abra uma operação filha para inspecionar seu payload.",
+    "rawPayloadEmpty": "Nenhum payload bruto armazenado para esta operação.",
+    "heartbeat": {
+      "justNow": "agora mesmo",
+      "secondsAgo": "há {secs}s",
+      "minutesAgo": "há {mins}min",
+      "hoursAgo": "há {hours}h"
+    },
+    "progressEstimateNote": "O total é estimado quando a consolidação inicia e pode crescer se novas memórias chegarem durante a execução — isso é esperado."
   },
   "dataView": {
     "loadingMemories": "Carregando memórias...",
@@ -552,9 +617,31 @@
     "tagsInputPlaceholder": "tag1, tag2, tag3",
     "labelEventDate": "Data do evento",
     "memoryCompositionTitle": "Composição da memória",
+    "retainTracesTitle": "Rastreamentos de retenção",
+    "retainTracesSummary": "{calls, plural, one {# chamada} other {# chamadas}} · {tokens} tokens",
     "loadingChunks": "Carregando fragmentos...",
     "noChunksFound": "Nenhum fragmento encontrado para este documento",
-    "clickChunksTabToLoad": "Clique na aba Fragmentos para carregar os fragmentos"
+    "clickChunksTabToLoad": "Clique na aba Fragmentos para carregar os fragmentos",
+    "exportButton": "Exportar",
+    "importButton": "Importar de zip",
+    "exporting": "Exportando…",
+    "importing": "Importando…",
+    "exportSuccess": "Documentos exportados",
+    "importSuccess": "{imported} documento(s), {facts} fato(s) importado(s); {skipped} ignorado(s)",
+    "importFailed": "Falha na importação",
+    "importTimeout": "A importação está demorando mais que o esperado; verifique novamente em breve",
+    "exportDialogTitle": "Exportar documentos",
+    "exportDialogDescription": "Baixe os documentos deste banco e seus fatos extraídos como um arquivo .zip. Embeddings não são incluídos — ao importar, são regenerados com o modelo do banco de destino.",
+    "exportIncludeObservationsLabel": "Incluir observações consolidadas",
+    "exportIncludeObservationsHint": "Exportar também as observações sintetizadas. Se desativado, o banco de destino as regenera durante a consolidação.",
+    "importDialogTitle": "Importar documentos",
+    "importDialogDescription": "Envie um arquivo .zip exportado anteriormente de um banco. Não é um upload de documento comum — os fatos são reincorporados e relinkados neste banco. A importação roda em segundo plano.",
+    "actionsButton": "Ações",
+    "importConflictLabel": "Se um documento já existir",
+    "importConflictSkip": "Ignorar — manter o documento existente",
+    "importConflictReplace": "Substituir — sobrescrever pelo importado",
+    "importConflictNewId": "Manter ambos — importar com novo id",
+    "textNotStoredWarning": "O texto de origem não é armazenado neste servidor — apenas as memórias extraídas são mantidas."
   },
   "entitiesView": {
     "viewRelations": "Relações",
@@ -914,7 +1001,7 @@
     "actionDeleteMentalModel": "Excluir Modelo Mental",
     "actionCreateDirective": "Criar Diretiva",
     "actionDeleteDirective": "Excluir Diretiva",
-    "actionFileConvertRetain": "Converter Arquivo e Retain",
+    "actionFileConvertRetain": "Converter arquivo",
     "actionWebhookDelivery": "Entrega de Webhook",
     "transportAll": "Todos os transportes",
     "transportHttp": "HTTP",
@@ -947,6 +1034,73 @@
     "detailResponse": "Resposta",
     "detailMetadata": "Metadados",
     "entryCount": "{count, plural, one {# entrada} other {# entradas}}"
+  },
+  "llmRequestsView": {
+    "callVolume": "Volume de Chamadas",
+    "tokenVolume": "Volume de Tokens",
+    "metricCalls": "Chamadas",
+    "metricTokens": "Tokens",
+    "tokenModeTotal": "Total",
+    "tokenModeBreakdown": "Detalhamento",
+    "cumulative": "Cumulativo",
+    "tokensInput": "Entrada",
+    "tokensOutput": "Saída",
+    "tokensCached": "Em cache",
+    "tokensTotal": "Total",
+    "tableHeaderTokens": "Tokens",
+    "chartLoading": "Carregando...",
+    "chartNoData": "Sem dados para este período",
+    "statusAll": "Todos os status",
+    "statusSuccess": "Sucesso",
+    "statusError": "Erro",
+    "operationAll": "Todas as operações",
+    "operationRetain": "Retain",
+    "operationReflect": "Reflect",
+    "operationConsolidation": "Consolidação",
+    "operationRefreshMentalModel": "Atualização do modelo mental",
+    "periodToday": "Hoje",
+    "periodLast7Days": "Últimos 7 dias",
+    "periodLast30Days": "Últimos 30 dias",
+    "dateRangeAll": "Todo o período",
+    "dateRangeLastHour": "Última hora",
+    "dateRangeLast24Hours": "Últimas 24 horas",
+    "dateRangeLast7Days": "Últimos 7 dias",
+    "dateRangeLast30Days": "Últimos 30 dias",
+    "refresh": "Atualizar",
+    "tableHeaderTime": "Hora",
+    "tableHeaderOperation": "Operação",
+    "tableHeaderScope": "Escopo",
+    "tableHeaderStatus": "Status",
+    "tableHeaderDuration": "Duração",
+    "tableLoading": "Carregando...",
+    "tableNoRequests": "Nenhuma requisição LLM encontrada",
+    "paginationPage": "Página {current} de {total}",
+    "previous": "Anterior",
+    "next": "Próximo",
+    "detailDialogTitle": "Requisição LLM: {operation}",
+    "detailOperation": "Operação:",
+    "detailScope": "Escopo:",
+    "detailProvider": "Provedor:",
+    "detailModel": "Modelo:",
+    "detailStatus": "Status:",
+    "detailStarted": "Iniciado:",
+    "detailDuration": "Duração:",
+    "detailInput": "Entrada",
+    "detailOutput": "Saída",
+    "detailError": "Erro",
+    "detailLlmInfo": "Informações LLM",
+    "detailMetadata": "Metadados",
+    "detailTrace": "Trace:",
+    "detailSpan": "Span:",
+    "detailParentSpan": "Span pai:",
+    "detailViewRun": "Ver todas as chamadas nesta execução",
+    "traceFilterActive": "Execução da operação:",
+    "traceFilterClear": "Limpar",
+    "groupByRun": "Agrupar",
+    "groupByRunHint": "Agrupar chamadas de LLM por execução de operação",
+    "entryCount": "{count, plural, one {# entrada} other {# entradas}}",
+    "memoriesCreated": "Memórias criadas ({count}):",
+    "memoriesSource": "Memórias de origem ({count}):"
   },
   "observationHistory": {
     "unchanged": "sem alteração",
@@ -1081,7 +1235,10 @@
     "sourceMentioned": "Mencionado",
     "viewDocumentButton": "Ver Documento",
     "viewChunkButton": "Ver Bloco",
-    "viewHistory": "Ver histórico"
+    "viewHistory": "Ver histórico",
+    "tracedByTitle": "Criado por",
+    "tracedBySummary": "{calls} chamadas · {tokens} tokens",
+    "consolidatedByTitle": "Consolidado por"
   },
   "documentChunkModal": {
     "documentTitle": "Detalhes do Documento",
@@ -1210,7 +1367,8 @@
     "legendMany": "muitas",
     "linkTypeSemantic": "semântico",
     "linkTypeTemporal": "temporal",
-    "linkTypeEntity": "entidade"
+    "linkTypeEntity": "entidade",
+    "linkTypeCausal": "causal"
   },
   "metadata": {
     "title": "Hindsight Cloud",
@@ -1287,7 +1445,8 @@
     "observationScopeAllCombinations": "Todas as combinações",
     "observationScopesEmpty": "Adicione tags acima para visualizar os escopos de observação",
     "metadataHelpText": "Um <code>key: value</code> por linha",
-    "entitiesHelpText": "Sugestões separadas por vírgula mescladas com entidades extraídas automaticamente"
+    "entitiesHelpText": "Sugestões separadas por vírgula mescladas com entidades extraídas automaticamente",
+    "textNotStoredWarning": "O texto bruto do documento não será armazenado neste servidor — apenas as memórias extraídas são mantidas."
   },
   "dashboard": {
     "welcome": "Bem-vindo ao Hindsight",
@@ -1319,7 +1478,8 @@
         "bankAndModelIdRequired": "bank_id e model_id são obrigatórios",
         "operationIdRequired": "operation_id é obrigatório",
         "missingRequestData": "Dados da solicitação ausentes",
-        "missingBankId": "bank_id ausente"
+        "missingBankId": "bank_id ausente",
+        "fileRequired": "É necessário um arquivo"
       },
       "generic": {
         "failed": "Falha",
@@ -1357,7 +1517,9 @@
         "updateTags": "Falha ao atualizar tags do documento",
         "delete": "Falha ao excluir documento",
         "chunks": "Falha ao buscar fragmentos do documento",
-        "reprocess": "Falha ao reprocessar documento"
+        "reprocess": "Falha ao reprocessar documento",
+        "export": "Falha ao exportar documentos",
+        "import": "Falha ao importar documentos"
       },
       "files": {
         "upload": "Falha ao enviar arquivos"
@@ -1406,6 +1568,10 @@
       "auditLogs": {
         "list": "Falha ao listar registros de auditoria",
         "stats": "Falha ao buscar estatísticas dos registros de auditoria"
+      },
+      "llmRequests": {
+        "list": "Falha ao listar requisições LLM",
+        "stats": "Falha ao buscar estatísticas de requisições LLM"
       },
       "tags": {
         "list": "Falha ao listar tags"

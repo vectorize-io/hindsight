@@ -344,4 +344,7 @@ class TestFactoryFunction:
                 assert isinstance(encoder, CohereCrossEncoder)
                 assert encoder.api_key == "test_key"
                 assert encoder.model == "cohere-rerank-v3-english"
-                assert encoder.base_url == "https://my-endpoint.inference.ai.azure.com/models/cohere-rerank-v3-english/invoke"
+                assert (
+                    encoder.base_url
+                    == "https://my-endpoint.inference.ai.azure.com/models/cohere-rerank-v3-english/invoke"
+                )

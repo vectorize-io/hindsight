@@ -75,6 +75,75 @@ export interface AuditStatsResponse {
   buckets: AuditStatsBucket[];
 }
 
+export interface LLMRequestEntry {
+  id: string;
+  bank_id: string | null;
+  operation: string | null;
+  scope: string | null;
+  trace_id: string | null;
+  span_id: string | null;
+  parent_span_id: string | null;
+  provider: string | null;
+  model: string | null;
+  status: string;
+  started_at: string | null;
+  ended_at: string | null;
+  duration_ms: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cached_tokens: number | null;
+  total_tokens: number | null;
+  input: unknown | null;
+  output: unknown | null;
+  error: string | null;
+  llm_info: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+}
+
+export interface LLMRequestsResponse {
+  bank_id: string;
+  total: number;
+  limit: number;
+  offset: number;
+  items: LLMRequestEntry[];
+}
+
+export interface LLMRequestTokenSums {
+  input: number;
+  output: number;
+  cached: number;
+  total: number;
+}
+
+export interface LLMRequestStatsBucket {
+  time: string;
+  statuses: Record<string, number>;
+  total: number;
+  tokens: LLMRequestTokenSums;
+}
+
+export interface LLMRequestStatsResponse {
+  bank_id: string;
+  period: string;
+  trunc: string;
+  start: string;
+  buckets: LLMRequestStatsBucket[];
+}
+
+/**
+ * Last-known progress snapshot for a long-running async operation (consolidation,
+ * batch retain). Written at coarse phase/batch boundaries by the worker; null until
+ * the operation reaches its first checkpoint. `processed`/`total` advancing across
+ * polls (with a moving `at`) means healthy; frozen numbers mean worth investigating.
+ */
+export interface OperationProgress {
+  stage: string;
+  at: string;
+  processed?: number | null;
+  total?: number | null;
+  detail?: Record<string, number> | null;
+}
+
 export type TagsMatch = "any" | "all" | "any_strict" | "all_strict";
 
 export type TagGroup =
@@ -396,8 +465,10 @@ export class ControlPlaneClient {
         items_count: number;
         document_id: string | null;
         created_at: string;
+        updated_at?: string | null;
         status: string;
         error_message: string | null;
+        progress?: OperationProgress | null;
       }>;
     }>(`/api/operations/${encodeURIComponent(bankId)}${query ? `?${query}` : ""}`);
   }
@@ -890,6 +961,7 @@ export class ControlPlaneClient {
       updated_at: string | null;
       completed_at: string | null;
       error_message: string | null;
+      progress?: OperationProgress | null;
       result_metadata?: {
         items_count?: number;
         total_tokens?: number;
@@ -1231,8 +1303,77 @@ export class ControlPlaneClient {
         worker: boolean;
         bank_config_api: boolean;
         file_upload_api: boolean;
+        document_export_api: boolean;
+        document_import_api: boolean;
+        audit_log: boolean;
+        llm_trace: boolean;
+        store_document_text: boolean;
       };
     }>("/api/version");
+  }
+
+  /**
+   * Export documents from a bank as a transfer ZIP archive (no LLM re-extraction).
+   * Pass documentIds to export specific documents, or omit to export the whole bank.
+   * Set includeObservations to also carry consolidated observations.
+   * Returns the raw zip Blob so callers can trigger a download.
+   */
+  async exportDocuments(
+    bankId: string,
+    documentIds?: string[],
+    includeObservations = false
+  ): Promise<Blob> {
+    const params = new URLSearchParams({ bank_id: bankId });
+    (documentIds || []).forEach((id) => params.append("document_id", id));
+    if (includeObservations) params.set("include_observations", "true");
+    // Direct fetch (not fetchApi) because the response is a binary zip, not JSON.
+    const response = await fetch(withBasePath(`/api/documents/transfer?${params.toString()}`));
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorMessage;
+      } catch {
+        // Ignore parse errors
+      }
+      const error = new Error(errorMessage);
+      (error as any).status = response.status;
+      throw error;
+    }
+    return response.blob();
+  }
+
+  /**
+   * Submit a transfer ZIP archive for async import into a bank. Facts are
+   * re-embedded with the target bank's model and entities re-resolved — no LLM.
+   * Returns an operation_id; poll getOperationStatus for the result counts.
+   */
+  async importDocuments(
+    bankId: string,
+    zipFile: File,
+    onConflict: "skip" | "replace" | "new-id" = "skip"
+  ): Promise<{ operation_id: string; status: string }> {
+    const formData = new FormData();
+    formData.append("file", zipFile);
+    const params = new URLSearchParams({ bank_id: bankId, on_conflict: onConflict });
+    // Direct fetch for multipart/form-data; browser sets the boundary header.
+    const response = await fetch(withBasePath(`/api/documents/transfer?${params.toString()}`), {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorMessage;
+      } catch {
+        // Ignore parse errors
+      }
+      const error = new Error(errorMessage);
+      (error as any).status = response.status;
+      throw error;
+    }
+    return response.json();
   }
 
   /**
@@ -1448,6 +1589,58 @@ export class ControlPlaneClient {
     const query = params.toString();
     return this.fetchApi<AuditStatsResponse>(
       bankApi(bankId, `/audit-logs/stats${query ? `?${query}` : ""}`)
+    );
+  }
+
+  /**
+   * List traced LLM requests for a bank
+   */
+  async listLLMRequests(
+    bankId: string,
+    options?: {
+      status?: string;
+      operation?: string;
+      scope?: string;
+      provider?: string;
+      trace_id?: string;
+      document_id?: string;
+      memory_id?: string;
+      group?: boolean;
+      start_date?: string;
+      end_date?: string;
+      limit?: number;
+      offset?: number;
+    }
+  ): Promise<LLMRequestsResponse> {
+    const params = new URLSearchParams();
+    if (options?.status) params.append("status", options.status);
+    if (options?.operation) params.append("operation", options.operation);
+    if (options?.scope) params.append("scope", options.scope);
+    if (options?.provider) params.append("provider", options.provider);
+    if (options?.trace_id) params.append("trace_id", options.trace_id);
+    if (options?.document_id) params.append("document_id", options.document_id);
+    if (options?.memory_id) params.append("memory_id", options.memory_id);
+    if (options?.group) params.append("group", "true");
+    if (options?.start_date) params.append("start_date", options.start_date);
+    if (options?.end_date) params.append("end_date", options.end_date);
+    if (options?.limit) params.append("limit", options.limit.toString());
+    if (options?.offset) params.append("offset", options.offset.toString());
+    const query = params.toString();
+    return this.fetchApi<LLMRequestsResponse>(
+      bankApi(bankId, `/llm-requests${query ? `?${query}` : ""}`)
+    );
+  }
+
+  async getLLMRequestStats(
+    bankId: string,
+    options?: { operation?: string; period?: string }
+  ): Promise<LLMRequestStatsResponse> {
+    const params = new URLSearchParams();
+    if (options?.operation) params.append("operation", options.operation);
+    if (options?.period) params.append("period", options.period);
+    const query = params.toString();
+    return this.fetchApi<LLMRequestStatsResponse>(
+      bankApi(bankId, `/llm-requests/stats${query ? `?${query}` : ""}`)
     );
   }
 }

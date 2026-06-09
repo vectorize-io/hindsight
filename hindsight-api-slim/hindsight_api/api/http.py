@@ -23,6 +23,7 @@ from hindsight_api.engine.audit import (
     AuditLogListResponse,
     AuditLogStatsResponse,
 )
+from hindsight_api.engine.llm_trace import LLMRequestListResponse, LLMRequestStatsResponse
 from hindsight_api.extensions import AuthenticationError
 
 
@@ -1351,7 +1352,8 @@ class DocumentResponse(BaseModel):
 
     id: str
     bank_id: str
-    original_text: str
+    # None when document text storage is disabled (HINDSIGHT_API_STORE_DOCUMENT_TEXT=false).
+    original_text: str | None
     content_hash: str | None
     created_at: str
     updated_at: str
@@ -1447,6 +1449,18 @@ class ReprocessDocumentResponse(BaseModel):
     success: bool
     operation_id: str
     items_count: int
+
+
+class DocumentImportSubmitResponse(BaseModel):
+    """Response for the async document-import endpoint (202).
+
+    The import runs in the background; poll the operations endpoint for status.
+    The imported/skipped counts (documents_imported, facts_imported,
+    observations_imported, etc.) are written to the operation's result_metadata.
+    """
+
+    operation_id: str
+    status: str = "pending"
 
 
 class DeleteResponse(BaseModel):
@@ -2155,6 +2169,28 @@ async def apply_bank_template_manifest(
     )
 
 
+class OperationProgress(BaseModel):
+    """Last-known progress snapshot for a long-running async operation.
+
+    Written at coarse phase/batch boundaries by the worker (consolidation, batch
+    retain). Lets an operator polling the operation status API distinguish a healthy
+    long-running job (``processed`` advancing across polls) from a frozen one (same
+    numbers, no movement in ``at``). Absent (``null``) on operations that never
+    reached a checkpoint — completed-instantly or pre-feature rows.
+    """
+
+    stage: str = Field(description="Coarse phase the operation last reported (e.g. 'processing_batch').")
+    at: str = Field(description="ISO-8601 timestamp when this snapshot was written.")
+    processed: int | None = Field(
+        default=None, description="Units of work finished so far (sub-batches, memories), when known."
+    )
+    total: int | None = Field(default=None, description="Total units of work for the operation, when known.")
+    detail: dict[str, int] | None = Field(
+        default=None,
+        description="Operation-specific counters (e.g. observations_created, round, items_in_sub_batch).",
+    )
+
+
 class OperationResponse(BaseModel):
     """Response model for a single async operation."""
 
@@ -2179,6 +2215,10 @@ class OperationResponse(BaseModel):
     items_count: int
     document_id: str | None = None
     created_at: str
+    updated_at: str | None = Field(
+        default=None,
+        description="When this operation's row last changed (claim, progress heartbeat, or completion).",
+    )
     status: str
     error_message: str | None
     retry_count: int | None = Field(
@@ -2194,6 +2234,10 @@ class OperationResponse(BaseModel):
             "extension may have raised DeferOperation to park the task until "
             "some backpressure window opens. Always null for completed tasks."
         ),
+    )
+    progress: OperationProgress | None = Field(
+        default=None,
+        description="Last-known progress snapshot for a running operation; null if none was recorded.",
     )
 
 
@@ -2330,6 +2374,10 @@ class OperationStatusResponse(BaseModel):
             "immediate pickup."
         ),
     )
+    progress: OperationProgress | None = Field(
+        default=None,
+        description="Last-known progress snapshot for a running operation; null if none was recorded.",
+    )
     result_metadata: dict[str, Any] | None = Field(
         default=None,
         description="Internal metadata for debugging. Structure may change without notice. Not for production use.",
@@ -2367,6 +2415,13 @@ class FeaturesInfo(BaseModel):
     worker: bool = Field(description="Whether the background worker is enabled")
     bank_config_api: bool = Field(description="Whether per-bank configuration API is enabled")
     file_upload_api: bool = Field(description="Whether file upload/conversion API is enabled")
+    document_export_api: bool = Field(description="Whether the document export endpoint is enabled")
+    document_import_api: bool = Field(description="Whether the document import endpoint is enabled")
+    audit_log: bool = Field(description="Whether audit logging is enabled")
+    llm_trace: bool = Field(description="Whether per-bank LLM request tracing is enabled")
+    store_document_text: bool = Field(
+        description="Whether raw source text is persisted. When false, document/chunk source text is not stored."
+    )
 
 
 class VersionResponse(BaseModel):
@@ -2382,6 +2437,8 @@ class VersionResponse(BaseModel):
                     "worker": True,
                     "bank_config_api": False,
                     "file_upload_api": True,
+                    "document_export_api": True,
+                    "document_import_api": True,
                 },
             }
         }
@@ -3028,6 +3085,11 @@ def _register_routes(app: FastAPI):
                 worker=config.worker_enabled,
                 bank_config_api=config.enable_bank_config_api,
                 file_upload_api=config.enable_file_upload_api,
+                document_export_api=config.enable_document_export_api,
+                document_import_api=config.enable_document_import_api,
+                audit_log=config.audit_log_enabled,
+                llm_trace=config.llm_trace_enabled,
+                store_document_text=config.store_document_text,
             ),
         )
 
@@ -5270,6 +5332,124 @@ def _register_routes(app: FastAPI):
             logger.error(f"Error in GET /v1/default/banks/{bank_id}/export: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
+    # =====================================================================
+    # Document Transfer (Export / Import between banks — no LLM re-extraction)
+    # =====================================================================
+
+    @app.get(
+        # Dedicated path (not under /documents/) to avoid colliding with the
+        # greedy GET /documents/{document_id:path} route, which would otherwise
+        # capture "export"/"import" as a document id.
+        "/v1/default/banks/{bank_id}/document-transfer",
+        summary="Export documents",
+        description="Export documents (extracted facts, entity names, causal links, chunks) from a bank as a "
+        "transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target "
+        "bank's model and re-resolves entities. Consolidated observations are excluded unless include_observations=true. "
+        "Pass document_id query params to export specific documents, or omit to export the whole bank.",
+        operation_id="export_documents",
+        tags=["Document Transfer"],
+        responses={200: {"content": {"application/zip": {}}, "description": "Transfer archive"}},
+    )
+    async def api_export_documents(
+        bank_id: str,
+        document_id: list[str] | None = Query(default=None, description="Document id(s) to export; omit for all"),
+        include_observations: bool = Query(
+            default=False, description="Also export consolidated observations (restored on import)"
+        ),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Export documents from a bank into a transfer ZIP archive."""
+        from fastapi.responses import Response
+
+        try:
+            if not get_config().enable_document_export_api:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Document export API is disabled. "
+                    "Set HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API=true to enable.",
+                )
+            profile = await app.state.memory.get_bank_profile(
+                bank_id, request_context=request_context, create_if_missing=False
+            )
+            if profile is None:
+                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
+
+            try:
+                archive = await app.state.memory.export_documents_async(
+                    bank_id,
+                    request_context,
+                    list(document_id) if document_id else None,
+                    include_observations=include_observations,
+                )
+            except ValueError as e:
+                # e.g. include_observations combined with a document_id subset.
+                raise HTTPException(status_code=400, detail=str(e))
+            return Response(
+                content=archive,
+                media_type="application/zip",
+                headers={"Content-Disposition": f'attachment; filename="{bank_id}-documents.zip"'},
+            )
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/document-transfer: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/document-transfer",
+        response_model=DocumentImportSubmitResponse,
+        status_code=202,
+        summary="Import documents (async)",
+        description="Submit a transfer archive (produced by the export endpoint) for import into a bank. Runs as a "
+        "background operation: facts are re-embedded with the target bank's embedding model and entities are "
+        "re-resolved — no LLM extraction. Returns an operation_id; poll "
+        "GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the imported/skipped counts in "
+        "result_metadata. Use on_conflict to control existing document ids: skip (default), replace, or new-id.",
+        operation_id="import_documents",
+        tags=["Document Transfer"],
+    )
+    @audited("import_documents", request_param=None)
+    async def api_import_documents(
+        bank_id: str,
+        file: UploadFile = File(..., description="Transfer ZIP archive"),
+        on_conflict: str = Query(default="skip", description="skip | replace | new-id"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Submit a transfer archive for async import into a bank."""
+        try:
+            if not get_config().enable_document_import_api:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Document import API is disabled. "
+                    "Set HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API=true to enable.",
+                )
+            if on_conflict not in ("skip", "replace", "new-id"):
+                raise HTTPException(
+                    status_code=400, detail=f"Invalid on_conflict '{on_conflict}' (expected skip|replace|new-id)"
+                )
+            archive_bytes = await file.read()
+            try:
+                submission = await app.state.memory.import_documents_async(
+                    bank_id, archive_bytes, request_context, on_conflict
+                )
+            except ValueError as e:
+                # Invalid archive / unsupported schema version — fail fast.
+                raise HTTPException(status_code=400, detail=str(e))
+            return DocumentImportSubmitResponse(operation_id=submission["operation_id"])
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            logger.error(f"Error in POST /v1/default/banks/{bank_id}/document-transfer: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=str(e))
+
     @app.get(
         "/v1/bank-template-schema",
         summary="Get bank template JSON Schema",
@@ -5980,6 +6160,11 @@ def _register_routes(app: FastAPI):
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
             raise
+        except ValueError as e:
+            # Invalid request parameters (e.g. duplicate document_ids, or
+            # update_mode='append' when document text storage is disabled) are
+            # client errors, not server faults.
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             import traceback
 
@@ -6210,6 +6395,11 @@ def _register_routes(app: FastAPI):
     # Response models live in engine/audit.py so the MemoryEngine read methods
     # (list_audit_logs / audit_log_stats) can build and return them directly.
 
+    # ---- LLM Request Traces ----
+    # Response models + queries live in the engine (engine/llm_trace.py and
+    # MemoryEngine.list_llm_requests / llm_request_stats). The handlers below
+    # only parse params, delegate to the engine, and map a missing bank to 404.
+
     @app.get(
         "/v1/default/banks/{bank_id}/audit-logs",
         summary="List audit logs",
@@ -6286,4 +6476,99 @@ def _register_routes(app: FastAPI):
             import traceback
 
             logger.error(f"Error getting audit log stats: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/llm-requests",
+        summary="List LLM request traces",
+        description="List traced LLM requests for a bank, ordered by most recent first. "
+        "Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED).",
+        operation_id="list_llm_requests",
+        tags=["LLM Traces"],
+        response_model=LLMRequestListResponse,
+    )
+    async def api_list_llm_requests(
+        bank_id: str,
+        status: str | None = Query(None, description="Filter by status (success, error)"),
+        operation: str | None = Query(None, description="Filter by operation (retain, reflect, consolidation)"),
+        scope: str | None = Query(None, description="Filter by call scope"),
+        provider: str | None = Query(None, description="Filter by LLM provider"),
+        trace_id: str | None = Query(None, description="Filter to one operation run (all LLM calls sharing a trace)"),
+        document_id: str | None = Query(None, description="Filter to LLM calls that processed a given document"),
+        memory_id: str | None = Query(
+            None, description="Filter to the operation run(s) that produced or consumed a given memory_unit"
+        ),
+        group: bool = Query(
+            False, description="Paginate by operation run (trace) instead of by call; returns whole runs"
+        ),
+        start_date: str | None = Query(None, description="Filter from this ISO datetime (inclusive)"),
+        end_date: str | None = Query(None, description="Filter until this ISO datetime (exclusive)"),
+        limit: int = Query(50, ge=1, le=500, description="Max items to return"),
+        offset: int = Query(0, ge=0, description="Offset for pagination"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """List traced LLM requests for a bank."""
+        try:
+            result = await app.state.memory.list_llm_requests(
+                bank_id,
+                request_context=request_context,
+                status=status,
+                operation=operation,
+                scope=scope,
+                provider=provider,
+                trace_id=trace_id,
+                document_id=document_id,
+                memory_id=memory_id,
+                group=group,
+                start_date=datetime.fromisoformat(start_date.replace("Z", "+00:00")) if start_date else None,
+                end_date=datetime.fromisoformat(end_date.replace("Z", "+00:00")) if end_date else None,
+                limit=limit,
+                offset=offset,
+            )
+            if result is None:
+                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
+            return result
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            logger.error(f"Error listing LLM requests: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/llm-requests/stats",
+        summary="LLM request statistics",
+        description="Get LLM request counts grouped by time bucket and status for charting.",
+        operation_id="llm_request_stats",
+        tags=["LLM Traces"],
+        response_model=LLMRequestStatsResponse,
+    )
+    async def api_llm_request_stats(
+        bank_id: str,
+        operation: str | None = Query(None, description="Filter by operation"),
+        period: str = Query("7d", description="Time period: 1d, 7d, or 30d"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Get LLM request counts grouped by time bucket and status."""
+        try:
+            result = await app.state.memory.llm_request_stats(
+                bank_id,
+                request_context=request_context,
+                operation=operation,
+                period=period,
+            )
+            if result is None:
+                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
+            return result
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            logger.error(f"Error getting LLM request stats: {traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=str(e))

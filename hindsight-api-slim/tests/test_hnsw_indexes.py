@@ -7,6 +7,7 @@ Covers:
 - Per-bank vector indexes dropped on bank deletion
 - retrieve_semantic_bm25_combined groups results correctly by fact_type and source
 """
+
 import uuid
 from datetime import datetime, timezone
 
@@ -152,10 +153,7 @@ async def test_retrieve_semantic_bm25_grouped_by_fact_type(memory, request_conte
     try:
         await memory.retain_async(
             bank_id=bank_id,
-            content=(
-                "Alice is a software engineer at TechCorp. "
-                "She visited Paris in 2023 for a conference."
-            ),
+            content=("Alice is a software engineer at TechCorp. She visited Paris in 2023 for a conference."),
             context="background",
             event_date=datetime(2023, 6, 1, tzinfo=timezone.utc),
             request_context=request_context,

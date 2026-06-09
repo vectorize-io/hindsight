@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "python3 \"__SCRIPTS_DIR__/session_start.py\"",
+        "timeout": 5
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "python3 \"__SCRIPTS_DIR__/recall.py\"",
+        "timeout": 12
+      }
+    ],
+    "stop": [
+      {
+        "command": "python3 \"__SCRIPTS_DIR__/retain.py\"",
+        "timeout": 30
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "python3 \"__SCRIPTS_DIR__/session_end.py\"",
+        "timeout": 30
+      }
+    ]
+  }
+}

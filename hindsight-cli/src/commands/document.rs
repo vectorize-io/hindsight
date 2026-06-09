@@ -237,7 +237,10 @@ pub fn get(
                 println!("  Created: {}", doc.created_at);
                 println!("  Updated: {}", doc.updated_at);
                 println!("  Memory Units: {}", doc.memory_unit_count);
-                println!("\n  Text:\n{}", doc.original_text);
+                println!(
+                    "\n  Text:\n{}",
+                    doc.original_text.as_deref().unwrap_or("(not stored)")
+                );
             } else {
                 output::print_output(&doc, output_format)?;
             }

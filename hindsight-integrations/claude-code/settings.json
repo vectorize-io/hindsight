@@ -33,6 +33,6 @@
   "llmProvider": null,
   "llmModel": null,
   "llmApiKeyEnv": null,
-  "enableKnowledgeTools": false,
+  "enableKnowledgeTools": true,
   "debug": false
 }

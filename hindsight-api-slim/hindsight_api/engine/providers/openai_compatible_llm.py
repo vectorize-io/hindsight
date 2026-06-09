@@ -44,6 +44,16 @@ logger = logging.getLogger(__name__)
 DEFAULT_LLM_SEED = 4242
 JSON_MODE_USER_HINT = "Return valid json only."
 
+# Self-hosted OpenAI-compatible servers that advertise tool_choice="required"
+# but silently ignore it: instead of forcing a tool call they return
+# finish_reason "stop"/"tool_calls" with an EMPTY tool_calls array and no error.
+# Reflect's agent loop then sees no tool call, runs synthesis with no retrieval,
+# and answers "I don't have information" even when the bank holds the answer.
+# See issues #1563 (LM Studio), #1179 (LM Studio + Qwen), #1877 (vLLM with
+# --enable-auto-tool-choice). llama-server (the "llamacpp" provider) honors
+# "required" correctly and is intentionally excluded (#1179).
+_TOOL_CHOICE_REQUIRED_UNSUPPORTED_PROVIDERS = frozenset({"lmstudio", "ollama"})
+
 
 class ProviderResponseError(RuntimeError):
     """Raised when a provider returns a success response without usable content."""
@@ -360,6 +370,21 @@ class OpenAICompatibleLLM(LLMInterface):
             f"base_url={self.base_url or 'default'}"
         )
 
+    def _drops_tool_choice_required(self) -> bool:
+        """Whether this endpoint silently ignores ``tool_choice="required"``.
+
+        True for self-hosted OpenAI-compatible servers known to return an empty
+        tool_calls array for "required" instead of forcing a call (#1563/#1179/
+        #1877). Covers LM Studio / Ollama directly, plus any server reached via
+        the generic "openai" provider with a custom ``base_url`` (e.g. a local
+        vLLM endpoint). The real OpenAI API (no base_url override) honors
+        "required", and cloud providers keep their own default base_urls, so both
+        are left untouched.
+        """
+        if self.provider in _TOOL_CHOICE_REQUIRED_UNSUPPORTED_PROVIDERS:
+            return True
+        return self.provider == "openai" and bool(self.base_url)
+
     async def verify_connection(self) -> None:
         """
         Verify that the provider is configured correctly by making a simple test call.
@@ -460,7 +485,9 @@ class OpenAICompatibleLLM(LLMInterface):
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
             skip_validation: Return raw JSON without Pydantic validation.
-            strict_schema: Use strict JSON schema enforcement (OpenAI only).
+            strict_schema: Use strict json_schema (grammar-enforced) response_format instead of
+                the soft json_object path. Supported by OpenAI and schema-capable self-hosted
+                backends (llama.cpp, vLLM). Server-wide via HINDSIGHT_API_LLM_STRICT_SCHEMA.
             return_usage: If True, return tuple (result, TokenUsage) instead of just result.
 
         Returns:
@@ -650,6 +677,9 @@ class OpenAICompatibleLLM(LLMInterface):
                 input_tokens = usage.prompt_tokens or 0 if usage else 0
                 output_tokens = usage.completion_tokens or 0 if usage else 0
                 total_tokens = usage.total_tokens or 0 if usage else 0
+                cached_tokens = 0
+                if usage and getattr(usage, "prompt_tokens_details", None):
+                    cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
 
                 # Record LLM metrics
                 metrics = get_metrics_collector()
@@ -679,14 +709,12 @@ class OpenAICompatibleLLM(LLMInterface):
                     duration=duration,
                     finish_reason=finish_reason,
                     error=None,
+                    cached_tokens=cached_tokens,
                 )
 
                 # Log slow calls
                 if duration > 10.0 and usage:
                     ratio = max(1, output_tokens) / max(1, input_tokens)
-                    cached_tokens = 0
-                    if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
-                        cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
                     cache_info = f", cached_tokens={cached_tokens}" if cached_tokens > 0 else ""
                     logger.info(
                         f"slow llm call: scope={scope}, model={self.provider}/{self.model}, "
@@ -699,6 +727,7 @@ class OpenAICompatibleLLM(LLMInterface):
                         input_tokens=input_tokens,
                         output_tokens=output_tokens,
                         total_tokens=total_tokens,
+                        cached_tokens=cached_tokens,
                     )
                     return result, token_usage
                 return result
@@ -865,6 +894,16 @@ class OpenAICompatibleLLM(LLMInterface):
         # only when the caller asks for a non-default behaviour avoids those 400s
         # without changing semantics for compliant providers.
         if request_tool_choice == "auto":
+            request_tool_choice = None
+
+        # vLLM (--enable-auto-tool-choice), LM Studio, Ollama and similar
+        # self-hosted servers silently drop tool_choice="required", returning an
+        # empty tool_calls array instead of forcing a call (#1563/#1179/#1877).
+        # Downgrade to auto (None) so the model still gets to call a tool. Named
+        # tool_choice dicts were already normalized to "required" + a single
+        # filtered tool above, so the call stays practically forced even under
+        # auto. The real OpenAI API honors "required" and is left untouched.
+        if request_tool_choice == "required" and self._drops_tool_choice_required():
             request_tool_choice = None
 
         # DeepSeek tool-call replies can carry provider-specific reasoning_content.

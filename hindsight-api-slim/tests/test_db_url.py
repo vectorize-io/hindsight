@@ -36,16 +36,10 @@ class TestPassthrough:
 
 class TestSchemeNormalization:
     def test_asyncpg_scheme_stripped(self) -> None:
-        assert (
-            to_libpq_url("postgresql+asyncpg://user:pass@host:5432/db")
-            == "postgresql://user:pass@host:5432/db"
-        )
+        assert to_libpq_url("postgresql+asyncpg://user:pass@host:5432/db") == "postgresql://user:pass@host:5432/db"
 
     def test_postgres_asyncpg_scheme_normalized(self) -> None:
-        assert (
-            to_libpq_url("postgres+asyncpg://user:pass@host/db")
-            == "postgresql://user:pass@host/db"
-        )
+        assert to_libpq_url("postgres+asyncpg://user:pass@host/db") == "postgresql://user:pass@host/db"
 
     def test_bare_postgres_scheme_normalized_to_postgresql(self) -> None:
         assert to_libpq_url("postgres://user:pass@host/db") == "postgresql://user:pass@host/db"
@@ -68,9 +62,7 @@ class TestSslParamRename:
         assert to_libpq_url("postgresql://h/d?ssl=require") == "postgresql://h/d?sslmode=require"
 
     def test_ssl_param_preserved_among_other_params(self) -> None:
-        result = to_libpq_url(
-            "postgresql+asyncpg://h/d?ssl=require&application_name=hindsight&connect_timeout=10"
-        )
+        result = to_libpq_url("postgresql+asyncpg://h/d?ssl=require&application_name=hindsight&connect_timeout=10")
         assert result.startswith("postgresql://h/d?")
         # Query order should be preserved; ssl renamed, others untouched.
         assert "sslmode=require" in result
@@ -80,10 +72,7 @@ class TestSslParamRename:
 
     def test_sslmode_not_double_renamed(self) -> None:
         """An already-correct sslmode= param must not be altered."""
-        assert (
-            to_libpq_url("postgresql+asyncpg://h/d?sslmode=require")
-            == "postgresql://h/d?sslmode=require"
-        )
+        assert to_libpq_url("postgresql+asyncpg://h/d?sslmode=require") == "postgresql://h/d?sslmode=require"
 
 
 class TestProductionConfigs:
@@ -132,10 +121,7 @@ class TestEdgeCases:
         assert result == "postgresql://user:my%2Basyncpgpass@host/db"
 
     def test_url_without_query_string(self) -> None:
-        assert (
-            to_libpq_url("postgresql+asyncpg://user:pass@host/db")
-            == "postgresql://user:pass@host/db"
-        )
+        assert to_libpq_url("postgresql+asyncpg://user:pass@host/db") == "postgresql://user:pass@host/db"
 
     def test_url_with_port_and_path_only(self) -> None:
         assert to_libpq_url("postgresql+asyncpg://host:5432/db") == "postgresql://host:5432/db"
