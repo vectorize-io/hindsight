@@ -21,6 +21,7 @@ class TestSessionStartHook:
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"workspace_roots": ["/tmp/test"]})))
 
         import session_start
+
         importlib.reload(session_start)
         session_start.main()
 
@@ -39,12 +40,15 @@ class TestSessionStartHook:
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
 
         import session_start
+
         importlib.reload(session_start)
 
-        with patch.object(session_start, "get_api_url", return_value="http://localhost:8888"), \
-             patch.object(session_start, "HindsightClient", return_value=mock_client), \
-             patch.object(session_start, "ensure_bank_mission"), \
-             patch.object(session_start, "write_state"):
+        with (
+            patch.object(session_start, "get_api_url", return_value="http://localhost:8888"),
+            patch.object(session_start, "HindsightClient", return_value=mock_client),
+            patch.object(session_start, "ensure_bank_mission"),
+            patch.object(session_start, "write_state"),
+        ):
             session_start.main()
 
         output = capsys.readouterr()
@@ -63,11 +67,14 @@ class TestSessionStartHook:
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
 
         import session_start
+
         importlib.reload(session_start)
 
-        with patch.object(session_start, "get_api_url", return_value="http://localhost:8888"), \
-             patch.object(session_start, "HindsightClient", return_value=mock_client), \
-             patch.object(session_start, "ensure_bank_mission"):
+        with (
+            patch.object(session_start, "get_api_url", return_value="http://localhost:8888"),
+            patch.object(session_start, "HindsightClient", return_value=mock_client),
+            patch.object(session_start, "ensure_bank_mission"),
+        ):
             session_start.main()
 
         output = capsys.readouterr()
@@ -77,20 +84,21 @@ class TestSessionStartHook:
         monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
 
         mock_client = MagicMock()
-        mock_client.recall.return_value = {
-            "results": [{"text": "Uses FastAPI", "type": "world"}]
-        }
+        mock_client.recall.return_value = {"results": [{"text": "Uses FastAPI", "type": "world"}]}
 
         hook_input = {"workspace_roots": ["/home/user/projects/my-app"]}
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
 
         import session_start
+
         importlib.reload(session_start)
 
-        with patch.object(session_start, "get_api_url", return_value="http://localhost:8888"), \
-             patch.object(session_start, "HindsightClient", return_value=mock_client), \
-             patch.object(session_start, "ensure_bank_mission"), \
-             patch.object(session_start, "write_state"):
+        with (
+            patch.object(session_start, "get_api_url", return_value="http://localhost:8888"),
+            patch.object(session_start, "HindsightClient", return_value=mock_client),
+            patch.object(session_start, "ensure_bank_mission"),
+            patch.object(session_start, "write_state"),
+        ):
             session_start.main()
 
         # Verify the query included the project name
@@ -108,12 +116,15 @@ class TestSessionStartHook:
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
 
         import session_start
+
         importlib.reload(session_start)
 
         mock_get_url = MagicMock(return_value="http://localhost:9077")
-        with patch.object(session_start, "get_api_url", mock_get_url), \
-             patch.object(session_start, "HindsightClient", return_value=mock_client), \
-             patch.object(session_start, "ensure_bank_mission"):
+        with (
+            patch.object(session_start, "get_api_url", mock_get_url),
+            patch.object(session_start, "HindsightClient", return_value=mock_client),
+            patch.object(session_start, "ensure_bank_mission"),
+        ):
             session_start.main()
 
         # Verify allow_daemon_start=True was passed
@@ -129,6 +140,7 @@ class TestRetainHook:
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"conversation_id": "c1"})))
 
         import retain
+
         importlib.reload(retain)
         retain.main()
 
@@ -143,6 +155,7 @@ class TestRetainHook:
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
 
         import retain
+
         importlib.reload(retain)
         retain.main()
 
@@ -150,11 +163,9 @@ class TestRetainHook:
         """Sanity: flat shape {role, content} still works after the parser
         rewrite."""
         import retain
+
         transcript = tmp_path / "flat.jsonl"
-        transcript.write_text(
-            '{"role": "user", "content": "Hello"}\n'
-            '{"role": "assistant", "content": "Hi back"}\n'
-        )
+        transcript.write_text('{"role": "user", "content": "Hello"}\n{"role": "assistant", "content": "Hi back"}\n')
         msgs = retain.read_transcript(str(transcript))
         assert len(msgs) == 2
         assert msgs[0] == {"role": "user", "content": "Hello"}
@@ -163,6 +174,7 @@ class TestRetainHook:
     def test_read_transcript_parses_type_nested_format(self, tmp_path):
         """Sanity: type-nested shape {type: "user", message: {...}}."""
         import retain
+
         transcript = tmp_path / "typenested.jsonl"
         transcript.write_text(
             '{"type": "user", "message": {"role": "user", "content": "Hello"}}\n'
@@ -184,6 +196,7 @@ class TestRetainHook:
         transcript file existed and had real content.
         """
         import retain
+
         transcript = tmp_path / "cursor3.jsonl"
         transcript.write_text(
             '{"role":"user","message":{"content":[{"type":"text","text":"Remember Vim over Emacs"}]}}\n'
@@ -225,11 +238,14 @@ class TestRetainHook:
         monkeypatch.setenv("CURSOR_PLUGIN_DATA", str(tmp_path / "data"))
 
         import retain
+
         importlib.reload(retain)
 
-        with patch.object(retain, "get_api_url", return_value="http://localhost:8888"), \
-             patch.object(retain, "HindsightClient", return_value=mock_client), \
-             patch.object(retain, "ensure_bank_mission"):
+        with (
+            patch.object(retain, "get_api_url", return_value="http://localhost:8888"),
+            patch.object(retain, "HindsightClient", return_value=mock_client),
+            patch.object(retain, "ensure_bank_mission"),
+        ):
             retain.main()
 
         mock_client.retain.assert_called_once()
@@ -240,9 +256,7 @@ class TestRetainHook:
 
 class TestManifest:
     def test_plugin_json_valid(self):
-        plugin_path = os.path.join(
-            os.path.dirname(__file__), "..", ".cursor-plugin", "plugin.json"
-        )
+        plugin_path = os.path.join(os.path.dirname(__file__), "..", ".cursor-plugin", "plugin.json")
         with open(plugin_path) as f:
             manifest = json.load(f)
 
@@ -252,9 +266,7 @@ class TestManifest:
         assert manifest["license"] == "MIT"
 
     def test_hooks_json_valid(self):
-        hooks_path = os.path.join(
-            os.path.dirname(__file__), "..", "hooks", "hooks.json"
-        )
+        hooks_path = os.path.join(os.path.dirname(__file__), "..", "hooks", "hooks.json")
         with open(hooks_path) as f:
             hooks = json.load(f)
 
@@ -265,9 +277,7 @@ class TestManifest:
         assert "beforeSubmitPrompt" not in hooks["hooks"]
 
     def test_settings_json_valid(self):
-        settings_path = os.path.join(
-            os.path.dirname(__file__), "..", "settings.json"
-        )
+        settings_path = os.path.join(os.path.dirname(__file__), "..", "settings.json")
         with open(settings_path) as f:
             settings = json.load(f)
 
