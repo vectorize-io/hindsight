@@ -38,7 +38,7 @@ class WebhookEvent(BaseModel):
     event: WebhookEventType
     bank_id: str
     operation_id: str
-    status: str  # "completed" or "failed"
+    status: str  # "completed"/"failed" for retain/consolidation; the action ("redact"/"block") for memory_defense
     timestamp: datetime
     data: ConsolidationEventData | RetainEventData | MemoryDefenseEventData
 
