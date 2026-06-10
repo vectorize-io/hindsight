@@ -16,12 +16,16 @@ Persistent memory for [Cline](https://github.com/cline/cline) using [Hindsight](
 [Sign up free](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key — no self-hosting required.
 :::
 
-From your project directory, run the installer with your Hindsight URL and key:
+Install the CLI, then run the installer from your project directory with your Hindsight URL and key:
 
 ```bash
-python /path/to/hindsight-integrations/cline/install.py \
+pip install hindsight-cline
+
+hindsight-cline install \
   --api-url https://api.hindsight.vectorize.io --api-token YOUR_KEY
 ```
+
+Use `hindsight-cline install --global` to install for all projects, or `hindsight-cline uninstall` to remove it.
 
 Then **enable hooks in Cline**: Settings → Features → Hooks.
 
@@ -31,12 +35,12 @@ Cline hooks run on **macOS and Linux only** (no Windows) and require Python 3.
 
 ## How It Works
 
-| Cline hook | What Hindsight does |
-| --- | --- |
-| `TaskStart` | Recall context for the new task and inject it. |
+| Cline hook         | What Hindsight does                                                   |
+| ------------------ | --------------------------------------------------------------------- |
+| `TaskStart`        | Recall context for the new task and inject it.                        |
 | `UserPromptSubmit` | Recall memories for your message; record the prompt for later retain. |
-| `TaskComplete` | Retain the task's transcript and summary. |
-| `TaskCancel` | Retain the partial transcript of a cancelled task. |
+| `TaskComplete`     | Retain the task's transcript and summary.                             |
+| `TaskCancel`       | Retain the partial transcript of a cancelled task.                    |
 
 Recalled memories are injected as a `<hindsight_memories>` context block. Cline doesn't hand hooks a transcript, so the integration accumulates each task's prompts locally and retains them at task end. Memories land in a single bank (`cline` by default).
 

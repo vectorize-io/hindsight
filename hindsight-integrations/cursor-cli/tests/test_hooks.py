@@ -18,7 +18,16 @@ import pytest
 from conftest import SCRIPTS_DIR, FakeHTTPResponse, make_hook_input, make_memory, make_transcript_file, make_user_config
 
 
-def _run_hook(module_name, hook_input, monkeypatch, tmp_path, urlopen_side_effect=None, user_config=None, env_overrides=None, set_default_api_url=True):
+def _run_hook(
+    module_name,
+    hook_input,
+    monkeypatch,
+    tmp_path,
+    urlopen_side_effect=None,
+    user_config=None,
+    env_overrides=None,
+    set_default_api_url=True,
+):
     """Import and run a hook script's main() with mocked stdin/stdout/HTTP."""
     monkeypatch.setenv("HOME", str(tmp_path))
 
@@ -72,7 +81,10 @@ class TestRecallHook:
 
         hook_input = make_hook_input(prompt="What is the capital of France?")
         output = _run_hook(
-            "recall", hook_input, monkeypatch, tmp_path,
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=lambda *a, **kw: response,
         )
 
@@ -98,7 +110,10 @@ class TestRecallHook:
 
         hook_input = make_hook_input(prompt="What is my project about?")
         output = _run_hook(
-            "recall", hook_input, monkeypatch, tmp_path,
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=raise_error,
         )
         assert output.strip() == ""
@@ -109,7 +124,10 @@ class TestRecallHook:
 
         hook_input = make_hook_input(prompt="What language should I use?")
         output = _run_hook(
-            "recall", hook_input, monkeypatch, tmp_path,
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=lambda *a, **kw: response,
         )
 
@@ -136,7 +154,10 @@ class TestRecallHook:
 
         hook_input = make_hook_input(prompt="What language should I use?", transcript_path=transcript)
         _run_hook(
-            "recall", hook_input, monkeypatch, tmp_path,
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=capture_and_respond,
             user_config={"recallContextTurns": 2},
         )
@@ -154,7 +175,10 @@ class TestRecallHook:
 
         hook_input = make_hook_input(prompt="What language should I use?")
         _run_hook(
-            "recall", hook_input, monkeypatch, tmp_path,
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=capture_timeout,
             user_config={"recallTimeout": 42},
         )
@@ -164,7 +188,10 @@ class TestRecallHook:
     def test_disabled_auto_recall_produces_no_output(self, monkeypatch, tmp_path):
         hook_input = make_hook_input(prompt="What is the capital of France?")
         output = _run_hook(
-            "recall", hook_input, monkeypatch, tmp_path,
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             user_config={"autoRecall": False},
         )
         assert output.strip() == ""
@@ -174,7 +201,10 @@ class TestRecallHook:
         response = FakeHTTPResponse({"results": [make_memory("anything")]})
         hook_input = make_hook_input(prompt="anything goes here")
         output = _run_hook(
-            "recall", hook_input, monkeypatch, tmp_path,
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=lambda *a, **kw: response,
         )
         data = json.loads(output)
@@ -193,7 +223,10 @@ class TestRecallHook:
         monkeypatch.delenv("CURSOR_PROJECT_DIR", raising=False)
         hook_input = make_hook_input(prompt="anything goes here", workspace_roots=["/work/myapp"])
         _run_hook(
-            "recall", hook_input, monkeypatch, tmp_path,
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=capture,
         )
         assert captured.get("ua", "").startswith("hindsight-cursor-cli/")
@@ -299,7 +332,10 @@ class TestRetainHook:
 
         hook_input = make_hook_input(transcript_path=transcript)
         _run_hook(
-            "retain", hook_input, monkeypatch, tmp_path,
+            "retain",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=capture,
             user_config={"retainEveryNTurns": 3},
         )
@@ -307,7 +343,8 @@ class TestRetainHook:
 
     def test_retain_uses_conversation_id_as_document_id(self, monkeypatch, tmp_path):
         messages = [
-            {"role": "user", "content": "question"}, {"role": "assistant", "content": "answer"},
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
         ]
         transcript = make_transcript_file(tmp_path, messages)
         hook_input = make_hook_input(transcript_path=transcript, conversation_id="conv-doc-test")
@@ -364,7 +401,10 @@ class TestRetainHook:
             return FakeHTTPResponse({})
 
         _run_hook(
-            "retain", hook_input, monkeypatch, tmp_path,
+            "retain",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=capture,
             user_config={"autoRetain": False},
         )
@@ -397,7 +437,10 @@ class TestRetainHook:
         transcript = make_transcript_file(tmp_path, messages)
         hook_input = make_hook_input(transcript_path=transcript)
         output = _run_hook(
-            "retain", hook_input, monkeypatch, tmp_path,
+            "retain",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=lambda *a, **kw: FakeHTTPResponse({}),
         )
         assert output.strip() == ""
@@ -483,7 +526,10 @@ class TestSessionStartHook:
 
         hook_input = make_hook_input()
         output = _run_hook(
-            "session_start", hook_input, monkeypatch, tmp_path,
+            "session_start",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=health_then_empty,
             set_default_api_url=False,
         )
@@ -495,7 +541,10 @@ class TestSessionStartHook:
 
         hook_input = make_hook_input()
         output = _run_hook(
-            "session_start", hook_input, monkeypatch, tmp_path,
+            "session_start",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=raise_error,
             set_default_api_url=False,
         )
@@ -505,7 +554,10 @@ class TestSessionStartHook:
     def test_both_disabled_produces_no_output(self, monkeypatch, tmp_path):
         hook_input = make_hook_input()
         output = _run_hook(
-            "session_start", hook_input, monkeypatch, tmp_path,
+            "session_start",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             user_config={"autoRecall": False, "autoRetain": False},
         )
         assert output.strip() == ""

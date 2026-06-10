@@ -78,7 +78,7 @@ Beyond basic generation, some providers support optional features that lower cos
 |----------|:---------:|:-----------------------:|
 | OpenAI (`openai`) | ✅ | — |
 | Anthropic (`anthropic`) | — | — |
-| Google Gemini (`gemini`) | — | ✅ |
+| Google Gemini (`gemini`) | ✅ | ✅ |
 | Vertex AI (`vertexai`) | — | ✅ |
 | Groq (`groq`) | ✅ | — |
 | Ollama (`ollama`) | — | — |

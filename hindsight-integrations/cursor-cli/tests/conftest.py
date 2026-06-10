@@ -7,10 +7,10 @@ import sys
 
 import pytest
 
-# Make scripts/ importable as the root — the hook scripts do:
+# Make the packaged scripts/ importable as the root — the hook scripts do:
 #   sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # so lib.* imports resolve relative to scripts/
-SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "scripts")
+SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "hindsight_cursor_cli", "hooks", "scripts")
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, os.path.abspath(SCRIPTS_DIR))
 

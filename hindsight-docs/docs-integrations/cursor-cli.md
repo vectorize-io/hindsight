@@ -17,20 +17,27 @@ Persistent memory for [Cursor CLI](https://docs.cursor.com/en/cli/overview) usin
 :::
 
 ```bash
-export HINDSIGHT_API_URL=https://api.hindsight.vectorize.io
-export HINDSIGHT_API_TOKEN=your-api-key
+# Install the CLI
+pip install hindsight-cursor-cli
 
-git clone https://github.com/vectorize-io/hindsight.git
-cd hindsight/hindsight-integrations/cursor-cli
-./scripts/install.sh
+# Install the hooks (defaults to Hindsight Cloud)
+hindsight-cursor-cli install --api-url https://api.hindsight.vectorize.io --api-token your-api-key
+
+# Restart Cursor CLI — memory is live
 ```
 
-The installer copies the hook scripts to `~/.cursor/hooks/cursor-cli/`, writes `~/.cursor/hooks.json` (merged with any existing entries), and creates `~/.hindsight/cursor-cli.json` for your personal config. Restart Cursor CLI — memory is live.
+The installer copies the hook scripts to `~/.cursor/hooks/cursor-cli/`, writes `~/.cursor/hooks.json` (merged with any existing entries), and creates `~/.hindsight/cursor-cli.json` for your personal config.
+
+**Self-hosting alternative** — connect to a local `hindsight-embed` daemon by omitting the flags:
+
+```bash
+hindsight-cursor-cli install
+```
 
 To uninstall:
 
 ```bash
-./scripts/uninstall.sh
+hindsight-cursor-cli uninstall
 ```
 
 ## Features
@@ -39,7 +46,7 @@ To uninstall:
 - **Auto-retain** — after each response, and again on session end, stores the conversation to Hindsight for future recall
 - **Dynamic bank IDs** — supports per-project memory isolation based on the working directory
 - **Session-level upsert** — uses the session ID as the document ID so re-running the same session updates rather than duplicates stored content
-- **Zero dependencies** — pure Python stdlib, no pip install required
+- **Zero runtime dependencies** — the hook scripts are pure Python stdlib; the `pip install` only ships the one-time installer
 
 ## Architecture
 
@@ -169,7 +176,7 @@ With this config, running Cursor in `~/projects/api` and `~/projects/frontend` s
 
 ## Troubleshooting
 
-**Hooks not firing**: Confirm `~/.cursor/hooks.json` exists and that `python3` is on your shell's `$PATH`. Re-run `./scripts/install.sh` to rewrite the hook entries.
+**Hooks not firing**: Confirm `~/.cursor/hooks.json` exists and that `python3` is on your shell's `$PATH`. Re-run `hindsight-cursor-cli install` to rewrite the hook entries.
 
 **No memories recalled**: Recall returns results only after something has been retained. Complete one Cursor session first, then start a new one.
 

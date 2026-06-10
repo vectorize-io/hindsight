@@ -96,7 +96,7 @@ class TestRecallSourceFactsPerObservationCap:
                 fact_type=["observation"],
                 max_tokens=4096,
                 include_source_facts=True,
-                max_source_facts_tokens=4096,   # large global budget
+                max_source_facts_tokens=4096,  # large global budget
                 max_source_facts_tokens_per_observation=512,  # reasonable per-obs limit
                 budget=Budget.MID,
                 request_context=request_context,

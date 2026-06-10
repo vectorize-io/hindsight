@@ -426,6 +426,7 @@ ENV_FILE_CONVERSION_MAX_BATCH_SIZE_MB = "HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH
 ENV_FILE_CONVERSION_MAX_BATCH_SIZE = "HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE"
 ENV_ENABLE_FILE_UPLOAD_API = "HINDSIGHT_API_ENABLE_FILE_UPLOAD_API"
 ENV_FILE_DELETE_AFTER_RETAIN = "HINDSIGHT_API_FILE_DELETE_AFTER_RETAIN"
+ENV_STORE_DOCUMENT_TEXT = "HINDSIGHT_API_STORE_DOCUMENT_TEXT"
 
 # Document transfer (export/import documents between banks without re-running the LLM)
 ENV_ENABLE_DOCUMENT_EXPORT_API = "HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API"
@@ -833,6 +834,7 @@ DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE_MB = 100  # Max total batch size in MB (a
 DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE = 10  # Max files per batch upload
 DEFAULT_ENABLE_FILE_UPLOAD_API = True  # Enable file upload endpoint
 DEFAULT_FILE_DELETE_AFTER_RETAIN = True  # Delete file bytes after retain (saves storage)
+DEFAULT_STORE_DOCUMENT_TEXT = True  # Persist raw source text in documents.original_text / chunks.chunk_text
 
 # Document transfer defaults (export/import enabled by default; gated independently)
 DEFAULT_ENABLE_DOCUMENT_EXPORT_API = True
@@ -1442,6 +1444,7 @@ class HindsightConfig:
     file_conversion_max_batch_size: int  # Max files per request
     enable_file_upload_api: bool
     file_delete_after_retain: bool
+    store_document_text: bool  # When False, store NULL original_text / empty chunk_text
     enable_document_export_api: bool
     enable_document_import_api: bool
 
@@ -2316,6 +2319,7 @@ class HindsightConfig:
                 ENV_FILE_DELETE_AFTER_RETAIN, str(DEFAULT_FILE_DELETE_AFTER_RETAIN)
             ).lower()
             == "true",
+            store_document_text=os.getenv(ENV_STORE_DOCUMENT_TEXT, str(DEFAULT_STORE_DOCUMENT_TEXT)).lower() == "true",
             enable_document_export_api=os.getenv(
                 ENV_ENABLE_DOCUMENT_EXPORT_API, str(DEFAULT_ENABLE_DOCUMENT_EXPORT_API)
             ).lower()

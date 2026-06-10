@@ -98,9 +98,7 @@ def seaweedfs_container():
         DockerContainer(image="chrislusf/seaweedfs:latest")
         .with_exposed_ports(SEAWEEDFS_S3_PORT)
         .with_volume_mapping(s3_config_file.name, "/etc/seaweedfs/s3.json", "ro")
-        .with_command(
-            f"server -s3 -s3.port={SEAWEEDFS_S3_PORT} -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0"
-        )
+        .with_command(f"server -s3 -s3.port={SEAWEEDFS_S3_PORT} -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0")
     )
 
     container.start()

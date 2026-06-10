@@ -85,10 +85,7 @@ async def test_retain_chinese_content(memory_real_llm, request_context):
             for fact in result.results:
                 logger.info(f"Fact: {fact.text[:100]}...")
                 # Check for common Chinese characters or the name
-                if any(
-                    char in fact.text
-                    for char in ["张", "伟", "腾讯", "软件", "工程师", "分布式", "系统", "代码"]
-                ):
+                if any(char in fact.text for char in ["张", "伟", "腾讯", "软件", "工程师", "分布式", "系统", "代码"]):
                     chinese_facts_found += 1
 
             logger.info(f"Found {chinese_facts_found} facts with Chinese content")
@@ -185,7 +182,7 @@ async def test_reflect_chinese_content(memory_real_llm, request_context):
                 expected_names = set()
                 for fact in result.based_on.get("world", []):
                     # Extract Chinese entity names from the fact
-                    for entity in (fact.entities or []):
+                    for entity in fact.entities or []:
                         # Check if entity contains Chinese characters
                         if any("\u4e00" <= char <= "\u9fff" for char in entity):
                             expected_names.add(entity)
@@ -277,8 +274,7 @@ async def test_retain_japanese_content(memory_real_llm, request_context):
                     japanese_facts_found += 1
 
             assert japanese_facts_found > 0, (
-                f"Expected facts to contain Japanese characters. "
-                f"Facts: {[f.text for f in result.results]}"
+                f"Expected facts to contain Japanese characters. Facts: {[f.text for f in result.results]}"
             )
 
             logger.info("Japanese retain test passed - facts preserved in Japanese")
@@ -350,8 +346,7 @@ async def test_english_content_stays_english(memory_real_llm, request_context):
 
             # Count Japanese characters (hiragana, katakana)
             japanese_chars = sum(
-                1 for char in fact.text
-                if ("\u3040" <= char <= "\u309f") or ("\u30a0" <= char <= "\u30ff")
+                1 for char in fact.text if ("\u3040" <= char <= "\u309f") or ("\u30a0" <= char <= "\u30ff")
             )
 
             # Count Chinese/CJK characters (excluding those also used in Japanese)
@@ -426,8 +421,7 @@ async def test_italian_content_stays_italian(memory_real_llm, request_context):
             # Count CJK characters
             cjk_chars = sum(1 for char in fact.text if "\u4e00" <= char <= "\u9fff")
             japanese_chars = sum(
-                1 for char in fact.text
-                if ("\u3040" <= char <= "\u309f") or ("\u30a0" <= char <= "\u30ff")
+                1 for char in fact.text if ("\u3040" <= char <= "\u309f") or ("\u30a0" <= char <= "\u30ff")
             )
 
             total_chars = len(fact.text)
@@ -503,13 +497,9 @@ async def test_mixed_language_entities(memory_real_llm, request_context):
 
         # Should contain Chinese name and/or English company names
         has_chinese_name = "王芳" in all_text
-        has_english_company = any(
-            company in all_text for company in ["Google", "Microsoft", "Amazon", "YouTube"]
-        )
+        has_english_company = any(company in all_text for company in ["Google", "Microsoft", "Amazon", "YouTube"])
 
-        assert has_chinese_name or has_english_company, (
-            f"Expected mixed language entities. Facts: {all_text}"
-        )
+        assert has_chinese_name or has_english_company, f"Expected mixed language entities. Facts: {all_text}"
 
         logger.info("Mixed language entity test passed")
 

@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _bank_id(prefix: str = "oracle") -> str:
     return f"test-{prefix}-{uuid.uuid4().hex[:8]}"
 
@@ -136,21 +137,25 @@ class TestCoreCRUD:
         try:
             await oracle_memory.retain_batch_async(
                 bank_id=bank_id,
-                contents=[{
-                    "content": "Dan is an expert in distributed systems.",
-                    "context": "engineering",
-                    "event_date": datetime(2024, 5, 1, tzinfo=timezone.utc),
-                }],
+                contents=[
+                    {
+                        "content": "Dan is an expert in distributed systems.",
+                        "context": "engineering",
+                        "event_date": datetime(2024, 5, 1, tzinfo=timezone.utc),
+                    }
+                ],
                 document_tags=["backend"],
                 request_context=request_context,
             )
             await oracle_memory.retain_batch_async(
                 bank_id=bank_id,
-                contents=[{
-                    "content": "Eve designs beautiful user interfaces.",
-                    "context": "design",
-                    "event_date": datetime(2024, 5, 2, tzinfo=timezone.utc),
-                }],
+                contents=[
+                    {
+                        "content": "Eve designs beautiful user interfaces.",
+                        "context": "design",
+                        "event_date": datetime(2024, 5, 2, tzinfo=timezone.utc),
+                    }
+                ],
                 document_tags=["frontend"],
                 request_context=request_context,
             )
@@ -236,9 +241,7 @@ class TestCoreCRUD:
             memory_id = unit_ids[0]
 
             # Delete the memory
-            await oracle_memory.delete_memory_unit(
-                str(memory_id), request_context=request_context
-            )
+            await oracle_memory.delete_memory_unit(str(memory_id), request_context=request_context)
 
             # Verify deletion
             mem = await oracle_memory.get_memory_unit(
@@ -306,9 +309,7 @@ class TestCoreCRUD:
                     event_date=datetime(2024, 6, i + 1, tzinfo=timezone.utc),
                     request_context=request_context,
                 )
-            memories = await oracle_memory.list_memory_units(
-                bank_id=bank_id, request_context=request_context
-            )
+            memories = await oracle_memory.list_memory_units(bank_id=bank_id, request_context=request_context)
             # Each retain may extract multiple facts
             assert len(memories) >= 3
         finally:
@@ -361,7 +362,7 @@ class TestRetainPipeline:
                 "Leonardo da Vinci painted the Mona Lisa between 1503 and 1519, and it now hangs in the Louvre Museum in Paris.",
                 "The International Space Station orbits Earth at an altitude of approximately 250 miles at a speed of 17,500 mph.",
             ]
-            long_content = " ".join(f"Section {i+1}: {fact} " * 3 for i, fact in enumerate(facts))
+            long_content = " ".join(f"Section {i + 1}: {fact} " * 3 for i, fact in enumerate(facts))
             unit_ids = await oracle_memory.retain_async(
                 bank_id=bank_id,
                 content=long_content,
@@ -514,11 +515,13 @@ class TestRetainPipeline:
         try:
             await oracle_memory.retain_batch_async(
                 bank_id=bank_id,
-                contents=[{
-                    "content": "Tagged memory about machine learning models.",
-                    "context": "ml",
-                    "event_date": datetime(2024, 6, 1, tzinfo=timezone.utc),
-                }],
+                contents=[
+                    {
+                        "content": "Tagged memory about machine learning models.",
+                        "context": "ml",
+                        "event_date": datetime(2024, 6, 1, tzinfo=timezone.utc),
+                    }
+                ],
                 document_tags=["ml", "models"],
                 request_context=request_context,
             )
@@ -654,7 +657,7 @@ class TestSearchRetrieval:
             for i in range(5):
                 await oracle_memory.retain_async(
                     bank_id=bank_id,
-                    content=f"Fact {i}: Machine learning model {i} achieved {90+i}% accuracy.",
+                    content=f"Fact {i}: Machine learning model {i} achieved {90 + i}% accuracy.",
                     context="ml",
                     event_date=datetime(2024, 1, i + 1, tzinfo=timezone.utc),
                     request_context=request_context,
@@ -818,9 +821,7 @@ class TestAdvancedFeatures:
             assert model["id"] is not None
 
             # List
-            models = await oracle_memory.list_mental_models(
-                bank_id=bank_id, request_context=request_context
-            )
+            models = await oracle_memory.list_mental_models(bank_id=bank_id, request_context=request_context)
             assert len(models) > 0
 
             # Get
@@ -899,16 +900,12 @@ class TestAdvancedFeatures:
                 )
             # Verify facts were stored (consolidation is async and may run inline
             # via SyncTaskBackend, but the key assertion is that all 5 retains persisted)
-            memories = await oracle_memory.list_memory_units(
-                bank_id=bank_id, request_context=request_context
-            )
+            memories = await oracle_memory.list_memory_units(bank_id=bank_id, request_context=request_context)
             items = memories.get("items", memories) if isinstance(memories, dict) else memories
             assert len(items) >= 5, f"Expected at least 5 stored memories, got {len(items)}"
             # Verify facts contain expected content
             texts = [item.get("text", "") for item in items]
-            assert any("dark mode" in t for t in texts), (
-                f"Expected 'dark mode' in stored facts, got: {texts[:3]}"
-            )
+            assert any("dark mode" in t for t in texts), f"Expected 'dark mode' in stored facts, got: {texts[:3]}"
         finally:
             await _safe_cleanup(oracle_memory, bank_id, request_context)
 
@@ -923,9 +920,7 @@ class TestAdvancedFeatures:
                 event_date=datetime(2024, 6, 1, tzinfo=timezone.utc),
                 request_context=request_context,
             )
-            ops = await oracle_memory.list_operations(
-                bank_id=bank_id, request_context=request_context
-            )
+            ops = await oracle_memory.list_operations(bank_id=bank_id, request_context=request_context)
             # Retain creates async operations (consolidation at minimum)
             assert ops is not None
             items = ops.get("items", ops) if isinstance(ops, dict) else ops
@@ -948,9 +943,7 @@ class TestAdvancedFeatures:
             )
             assert directive is not None
 
-            directives = await oracle_memory.list_directives(
-                bank_id=bank_id, request_context=request_context
-            )
+            directives = await oracle_memory.list_directives(bank_id=bank_id, request_context=request_context)
             assert len(directives) > 0
 
             await oracle_memory.delete_directive(
@@ -967,17 +960,17 @@ class TestAdvancedFeatures:
         try:
             await oracle_memory.retain_batch_async(
                 bank_id=bank_id,
-                contents=[{
-                    "content": "Tag listing test.",
-                    "context": "test",
-                    "event_date": datetime(2024, 6, 1, tzinfo=timezone.utc),
-                }],
+                contents=[
+                    {
+                        "content": "Tag listing test.",
+                        "context": "test",
+                        "event_date": datetime(2024, 6, 1, tzinfo=timezone.utc),
+                    }
+                ],
                 document_tags=["alpha", "beta"],
                 request_context=request_context,
             )
-            tags = await oracle_memory.list_tags(
-                bank_id=bank_id, request_context=request_context
-            )
+            tags = await oracle_memory.list_tags(bank_id=bank_id, request_context=request_context)
             assert len(tags) > 0
         finally:
             await _safe_cleanup(oracle_memory, bank_id, request_context)
@@ -994,9 +987,7 @@ class TestAdvancedFeatures:
                 event_date=datetime(2024, 6, 1, tzinfo=timezone.utc),
                 request_context=request_context,
             )
-            ops = await oracle_memory.list_operations(
-                bank_id=bank_id, request_context=request_context
-            )
+            ops = await oracle_memory.list_operations(bank_id=bank_id, request_context=request_context)
             assert ops is not None
             items = ops.get("items", ops) if isinstance(ops, dict) else ops
             assert len(items) > 0, "Retain should enqueue at least one task"
@@ -1098,9 +1089,7 @@ class TestOracleSpecific:
                 mission="Test JSON CLOB storage",
                 request_context=request_context,
             )
-            profile = await oracle_memory.get_bank_profile(
-                bank_id=bank_id, request_context=request_context
-            )
+            profile = await oracle_memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
             assert profile is not None
             assert profile["name"] == "JSON Test Bank"
             assert profile["mission"] == "Test JSON CLOB storage"
@@ -1167,9 +1156,7 @@ class TestEdgeCases:
                 event_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
                 request_context=request_context,
             )
-            memories = await oracle_memory.list_memory_units(
-                bank_id=bank_id, request_context=request_context
-            )
+            memories = await oracle_memory.list_memory_units(bank_id=bank_id, request_context=request_context)
             items = memories.get("items", memories) if isinstance(memories, dict) else memories
             assert len(items) >= 1
         finally:
@@ -1197,19 +1184,13 @@ class TestEdgeCases:
                 event_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
                 request_context=request_context,
             )
-            memories = await oracle_memory.list_memory_units(
-                bank_id=bank_id, request_context=request_context
-            )
+            memories = await oracle_memory.list_memory_units(bank_id=bank_id, request_context=request_context)
             items = memories.get("items", memories) if isinstance(memories, dict) else memories
             # Large content (~10KB, 50 paragraphs) should produce multiple memory units
             # from LLM fact extraction. At minimum we expect several facts.
-            assert len(items) >= 3, (
-                f"Expected large content to produce at least 3 memory units, got {len(items)}"
-            )
+            assert len(items) >= 3, f"Expected large content to produce at least 3 memory units, got {len(items)}"
             # Verify operations completed without errors (catches background datetime issues etc.)
-            ops = await oracle_memory.list_operations(
-                bank_id=bank_id, request_context=request_context
-            )
+            ops = await oracle_memory.list_operations(bank_id=bank_id, request_context=request_context)
             if ops:
                 op_list = ops.get("items", ops) if isinstance(ops, dict) else ops
                 failed = [o for o in op_list if isinstance(o, dict) and o.get("status") == "failed"]
@@ -1272,19 +1253,13 @@ class TestEdgeCases:
             # not a code bug. Allow up to 1 deadlock failure.
             deadlocks = [r for r in results if isinstance(r, Exception) and "ORA-00060" in str(r)]
             other_failures = [r for r in results if isinstance(r, Exception) and "ORA-00060" not in str(r)]
-            assert len(other_failures) == 0, (
-                f"Non-deadlock failures: {[str(e)[:100] for e in other_failures]}"
-            )
+            assert len(other_failures) == 0, f"Non-deadlock failures: {[str(e)[:100] for e in other_failures]}"
             successes = len(results) - len(deadlocks)
             assert successes >= 2, f"Expected at least 2 successful retains, got {successes}"
 
-            memories = await oracle_memory.list_memory_units(
-                bank_id=bank_id, request_context=request_context
-            )
+            memories = await oracle_memory.list_memory_units(bank_id=bank_id, request_context=request_context)
             items = memories.get("items", memories) if isinstance(memories, dict) else memories
-            assert len(items) >= successes, (
-                f"Expected at least {successes} memories, got {len(items)}"
-            )
+            assert len(items) >= successes, f"Expected at least {successes} memories, got {len(items)}"
         finally:
             await _safe_cleanup(oracle_memory, bank_id, request_context)
 
@@ -1311,9 +1286,7 @@ class TestEdgeCases:
     async def test_delete_nonexistent_bank(self, oracle_memory: MemoryEngine, request_context: RequestContext):
         """Verify deleting a non-existent bank doesn't raise."""
         # Should not raise an exception
-        await oracle_memory.delete_bank(
-            f"nonexistent-{uuid.uuid4().hex[:8]}", request_context=request_context
-        )
+        await oracle_memory.delete_bank(f"nonexistent-{uuid.uuid4().hex[:8]}", request_context=request_context)
 
     @pytest.mark.asyncio
     async def test_retain_and_delete_cycle(self, oracle_memory: MemoryEngine, request_context: RequestContext):
@@ -1369,19 +1342,13 @@ class TestEdgeCases:
                     request_context=request_context,
                 )
 
-            docs = await oracle_memory.list_documents(
-                bank_id=bank_id, request_context=request_context
-            )
+            docs = await oracle_memory.list_documents(bank_id=bank_id, request_context=request_context)
             items = docs.get("items", docs.get("documents", []))
             assert len(items) >= 3
 
             # Delete one document, verify others remain
-            await oracle_memory.delete_document(
-                bank_id=bank_id, document_id="doc-1", request_context=request_context
-            )
-            docs_after = await oracle_memory.list_documents(
-                bank_id=bank_id, request_context=request_context
-            )
+            await oracle_memory.delete_document(bank_id=bank_id, document_id="doc-1", request_context=request_context)
+            docs_after = await oracle_memory.list_documents(bank_id=bank_id, request_context=request_context)
             items_after = docs_after.get("items", docs_after.get("documents", []))
             assert len(items_after) >= 2
         finally:

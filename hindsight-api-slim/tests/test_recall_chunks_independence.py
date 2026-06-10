@@ -26,16 +26,18 @@ async def test_recall_chunks_independent_of_max_tokens(memory, request_context):
     bank_id = "test-chunks-independence"
 
     try:
-
         # Retain some test content with substantial size to generate chunks
-        test_content = """
+        test_content = (
+            """
         The quantum computing research team at MIT has made significant breakthroughs.
         Dr. Sarah Chen leads the team and focuses on quantum error correction.
         The team published three papers in Nature Physics this year.
         Their work on topological qubits shows promise for scalable quantum computers.
         Collaborators include IBM Research and Google Quantum AI.
         The research is funded by a $5M NSF grant running through 2026.
-        """ * 10  # Repeat to ensure we get multiple chunks
+        """
+            * 10
+        )  # Repeat to ensure we get multiple chunks
 
         await memory.retain_async(
             bank_id=bank_id,
@@ -98,7 +100,6 @@ async def test_recall_chunks_batching_with_varying_sizes(memory, request_context
     bank_id = "test-chunks-batching"
 
     try:
-
         # Retain multiple documents with different content sizes
         # Document 1: Short content (small chunks)
         await memory.retain_async(
@@ -109,12 +110,15 @@ async def test_recall_chunks_batching_with_varying_sizes(memory, request_context
         )
 
         # Document 2: Medium content
-        content_bob = """
+        content_bob = (
+            """
         Bob works as a data scientist at a tech startup in San Francisco.
         He has expertise in natural language processing and computer vision.
         Bob completed his PhD at Stanford University in 2020.
         He leads a team of five engineers working on AI-powered recommendation systems.
-        """ * 5
+        """
+            * 5
+        )
         await memory.retain_async(
             bank_id=bank_id,
             content=content_bob,
@@ -123,14 +127,17 @@ async def test_recall_chunks_batching_with_varying_sizes(memory, request_context
         )
 
         # Document 3: Long content (large chunks)
-        content_charlie = """
+        content_charlie = (
+            """
         Charlie is the CTO of a growing AI company focused on healthcare applications.
         He has over 15 years of experience in software architecture and distributed systems.
         Charlie's team builds machine learning models for medical image analysis and diagnosis.
         The company recently raised $50 million in Series B funding.
         They have partnerships with major hospitals in the United States and Europe.
         Charlie holds several patents in medical imaging and deep learning.
-        """ * 20
+        """
+            * 20
+        )
         await memory.retain_async(
             bank_id=bank_id,
             content=content_charlie,
@@ -178,7 +185,6 @@ async def test_recall_chunks_ordering_by_relevance(memory, request_context):
     bank_id = "test-chunks-ordering"
 
     try:
-
         # Retain content with different relevance to query
         await memory.retain_async(
             bank_id=bank_id,
@@ -223,8 +229,9 @@ async def test_recall_chunks_ordering_by_relevance(memory, request_context):
         all_chunk_text = " ".join(chunk.chunk_text for chunk in result.chunks.values())
         # At least some chunks should mention Python (higher relevance)
         # This is a soft check since exact ordering depends on scoring
-        assert "Python" in all_chunk_text or "python" in all_chunk_text.lower(), \
+        assert "Python" in all_chunk_text or "python" in all_chunk_text.lower(), (
             "Chunks should include content about Python (relevant to query)"
+        )
 
     finally:
         # Cleanup
@@ -243,13 +250,16 @@ async def test_recall_chunks_for_observations(memory, request_context):
 
     try:
         # Retain content that will generate observations via consolidation
-        test_content = """
+        test_content = (
+            """
         Alice is a senior software engineer at a large technology company.
         She specializes in distributed systems and has 10 years of experience.
         Alice leads a team of 8 engineers working on cloud infrastructure.
         She holds a PhD in computer science from Stanford University.
         Alice has published several papers on fault-tolerant distributed systems.
-        """ * 8
+        """
+            * 8
+        )
 
         await memory.retain_async(
             bank_id=bank_id,
@@ -296,7 +306,6 @@ async def test_recall_chunks_without_include_flag(memory, request_context):
     bank_id = "test-chunks-no-include"
 
     try:
-
         # Retain content
         test_content = """
         Sarah is a product manager at a fintech company in New York.
@@ -321,8 +330,7 @@ async def test_recall_chunks_without_include_flag(memory, request_context):
 
         # Should have facts but no chunks
         assert len(result.results) > 0, "Should return facts"
-        assert result.chunks is None or len(result.chunks) == 0, \
-            "Should NOT return chunks when include_chunks=False"
+        assert result.chunks is None or len(result.chunks) == 0, "Should NOT return chunks when include_chunks=False"
 
     finally:
         # Cleanup

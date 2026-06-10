@@ -1352,7 +1352,8 @@ class DocumentResponse(BaseModel):
 
     id: str
     bank_id: str
-    original_text: str
+    # None when document text storage is disabled (HINDSIGHT_API_STORE_DOCUMENT_TEXT=false).
+    original_text: str | None
     content_hash: str | None
     created_at: str
     updated_at: str
@@ -2418,6 +2419,9 @@ class FeaturesInfo(BaseModel):
     document_import_api: bool = Field(description="Whether the document import endpoint is enabled")
     audit_log: bool = Field(description="Whether audit logging is enabled")
     llm_trace: bool = Field(description="Whether per-bank LLM request tracing is enabled")
+    store_document_text: bool = Field(
+        description="Whether raw source text is persisted. When false, document/chunk source text is not stored."
+    )
 
 
 class VersionResponse(BaseModel):
@@ -3085,6 +3089,7 @@ def _register_routes(app: FastAPI):
                 document_import_api=config.enable_document_import_api,
                 audit_log=config.audit_log_enabled,
                 llm_trace=config.llm_trace_enabled,
+                store_document_text=config.store_document_text,
             ),
         )
 
@@ -6155,6 +6160,11 @@ def _register_routes(app: FastAPI):
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
             raise
+        except ValueError as e:
+            # Invalid request parameters (e.g. duplicate document_ids, or
+            # update_mode='append' when document text storage is disabled) are
+            # client errors, not server faults.
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             import traceback
 

@@ -26,17 +26,17 @@ A hard rule of this integration: **Hindsight never becomes a second source of tr
 - **Implicit scoping** — every note is auto-tagged on ingest with its **vault**, **folder** (and sub-folders), and **created/updated dates**. You never think about scope until you recall — then filter by any combination via Hindsight's `tag_groups`. Multiple vaults share one bank and stay separable by their `vault:` tag.
 - **Same data from UI and API** — the Obsidian chat panel and your automations (n8n, Hermes, …) hit the same bank with the same tags, so they see the same scoped view.
 - **Grounded chat** — a side panel that answers questions over your notes via Reflect, with collapsible **citations** (click to open the source note) and a **reasoning** disclosure.
-- **Manual or automatic** — sync on every edit, or run *Sync vault now* on demand.
+- **Manual or automatic** — sync on every edit, or run _Sync vault now_ on demand.
 
 ### Scoping
 
 Recall/reflect (from the UI or an API call) can filter by any combination of:
 
-| Dimension | Tag(s) |
-| --- | --- |
-| Vault | `vault:<name>` |
+| Dimension            | Tag(s)                               |
+| -------------------- | ------------------------------------ |
+| Vault                | `vault:<name>`                       |
 | Folder (+ ancestors) | `folder:Work`, `folder:Work/Clients` |
-| Date | `created:2026-03`, `updated:2026-06` |
+| Date                 | `created:2026-03`, `updated:2026-06` |
 
 Your own frontmatter `tags`/`aliases` are carried through too.
 
@@ -44,7 +44,7 @@ Your own frontmatter `tags`/`aliases` are carried through too.
 
 > ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — sign up free, get an API key, and skip self-hosting.
 
-While the plugin is in beta it installs via [BRAT](https://github.com/TfTHacker/obsidian42-brat): add the repository `vectorize-io/hindsight` and select the Hindsight plugin, then enable it in **Settings → Community plugins**.
+While the plugin is in beta it installs via [BRAT](https://github.com/TfTHacker/obsidian42-brat): add the repository [`vectorize-io/hindsight-obsidian`](https://github.com/vectorize-io/hindsight-obsidian) (the dedicated plugin repo BRAT installs from) and enable it in **Settings → Community plugins**.
 
 **Self-hosting alternative** — run Hindsight locally:
 
@@ -58,15 +58,15 @@ hindsight-api
 
 Open **Settings → Hindsight**:
 
-| Setting | Default | Description |
-| --- | --- | --- |
-| API URL | `https://api.hindsight.vectorize.io` | Hindsight server (use `http://localhost:8888` for self-hosted) |
-| API key | — | Hindsight Cloud API key |
-| Bank name | `obsidian` | Shared bank for all vaults (separated by `vault:` tags) |
-| Include / exclude folders | — | Limit which notes sync |
-| Sync on edit | on | Re-ingest notes automatically as you edit |
-| Default chat depth | low | Reflect budget for chat answers |
-| Remember conversations | **off** | When on, chat turns are stored in Hindsight (creates memory outside your vault) |
+| Setting                   | Default                              | Description                                                                     |
+| ------------------------- | ------------------------------------ | ------------------------------------------------------------------------------- |
+| API URL                   | `https://api.hindsight.vectorize.io` | Hindsight server (use `http://localhost:8888` for self-hosted)                  |
+| API key                   | —                                    | Hindsight Cloud API key                                                         |
+| Bank name                 | `obsidian`                           | Shared bank for all vaults (separated by `vault:` tags)                         |
+| Include / exclude folders | —                                    | Limit which notes sync                                                          |
+| Sync on edit              | on                                   | Re-ingest notes automatically as you edit                                       |
+| Default chat depth        | low                                  | Reflect budget for chat answers                                                 |
+| Remember conversations    | **off**                              | When on, chat turns are stored in Hindsight (creates memory outside your vault) |
 
 ## Commands
 

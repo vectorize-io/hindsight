@@ -32,14 +32,14 @@ class TestCleanAnswerText:
 
     def test_clean_text_with_done_call(self):
         """Text ending with done() call should have it stripped."""
-        text = '''The team's OKRs focus on performance.done({"answer":"The team's OKRs","memory_ids":[]})'''
+        text = """The team's OKRs focus on performance.done({"answer":"The team's OKRs","memory_ids":[]})"""
         cleaned = _clean_answer_text(text)
         assert cleaned == "The team's OKRs focus on performance."
         assert "done(" not in cleaned
 
     def test_clean_text_with_done_call_and_whitespace(self):
         """done() call with whitespace should be stripped."""
-        text = '''Answer text here. done( {"answer": "short", "memory_ids": []} )'''
+        text = """Answer text here. done( {"answer": "short", "memory_ids": []} )"""
         cleaned = _clean_answer_text(text)
         assert cleaned == "Answer text here."
 
@@ -61,10 +61,10 @@ class TestCleanAnswerText:
 
     def test_clean_text_multiline_done(self):
         """done() call spanning multiple lines should be stripped."""
-        text = '''Summary of findings.done({
+        text = """Summary of findings.done({
             "answer": "Summary",
             "memory_ids": ["id1", "id2"]
-        })'''
+        })"""
         cleaned = _clean_answer_text(text)
         assert cleaned == "Summary of findings."
 
@@ -74,22 +74,22 @@ class TestCleanDoneAnswer:
 
     def test_clean_answer_with_leaked_json_code_block(self):
         """Answer with leaked JSON code block at the end should be cleaned."""
-        text = '''The user's favorite color is blue.
+        text = """The user's favorite color is blue.
 
 ```json
 {"observation_ids": ["obs-1", "obs-2"]}
-```'''
+```"""
         cleaned = _clean_done_answer(text)
         assert cleaned == "The user's favorite color is blue."
         assert "observation_ids" not in cleaned
 
     def test_clean_answer_with_memory_ids_code_block(self):
         """Answer with leaked memory_ids JSON code block should be cleaned."""
-        text = '''Here is the answer.
+        text = """Here is the answer.
 
 ```json
 {"memory_ids": ["mem-1"]}
-```'''
+```"""
         cleaned = _clean_done_answer(text)
         assert cleaned == "Here is the answer."
 
@@ -101,13 +101,13 @@ class TestCleanDoneAnswer:
 
     def test_clean_answer_with_trailing_ids_pattern(self):
         """Answer with 'observation_ids: [...]' pattern at the end should be cleaned."""
-        text = "This is the answer.\n\nobservation_ids: [\"obs-1\", \"obs-2\"]"
+        text = 'This is the answer.\n\nobservation_ids: ["obs-1", "obs-2"]'
         cleaned = _clean_done_answer(text)
         assert cleaned == "This is the answer."
 
     def test_clean_answer_with_memory_ids_equals(self):
         """Answer with 'memory_ids = [...]' pattern at the end should be cleaned."""
-        text = "Answer text here.\nmemory_ids = [\"mem-1\"]"
+        text = 'Answer text here.\nmemory_ids = ["mem-1"]'
         cleaned = _clean_done_answer(text)
         assert cleaned == "Answer text here."
 
@@ -129,13 +129,13 @@ class TestCleanDoneAnswer:
 
     def test_clean_answer_multiline_with_markdown(self):
         """Answer with markdown and leaked JSON at end should clean only the leak."""
-        text = '''Summary:
+        text = """Summary:
 - Point 1
 - Point 2
 
 ```json
 {"mental_model_ids": ["mm-1"]}
-```'''
+```"""
         cleaned = _clean_done_answer(text)
         assert "Point 1" in cleaned
         assert "Point 2" in cleaned
@@ -244,7 +244,10 @@ class TestReflectAgentMocked:
         llm.call_with_tools = AsyncMock()
         # Also mock call() for final iteration fallback - returns (response, usage) tuple
         llm.call = AsyncMock(
-            return_value=("Fallback answer from final iteration", TokenUsage(input_tokens=100, output_tokens=50, total_tokens=150))
+            return_value=(
+                "Fallback answer from final iteration",
+                TokenUsage(input_tokens=100, output_tokens=50, total_tokens=150),
+            )
         )
         return llm
 
@@ -284,9 +287,7 @@ class TestReflectAgentMocked:
             self._mm_call(),
             LLMToolCallResult(
                 tool_calls=[
-                    LLMToolCall(
-                        id="2", name="done", arguments={"answer": "Be concise.", "mental_model_ids": ["mm-1"]}
-                    )
+                    LLMToolCall(id="2", name="done", arguments={"answer": "Be concise.", "mental_model_ids": ["mm-1"]})
                 ],
                 finish_reason="tool_calls",
             ),
@@ -326,7 +327,9 @@ class TestReflectAgentMocked:
             self._mm_call(),
             LLMToolCallResult(
                 tool_calls=[
-                    LLMToolCall(id="2", name="recall", arguments={"reason": "verify", "query": "launch completion proof"})
+                    LLMToolCall(
+                        id="2", name="recall", arguments={"reason": "verify", "query": "launch completion proof"}
+                    )
                 ],
                 finish_reason="tool_calls",
             ),
@@ -472,9 +475,7 @@ class TestReflectAgentMocked:
                 finish_reason="tool_calls",
             ),
             LLMToolCallResult(
-                tool_calls=[
-                    LLMToolCall(id="4", name="done", arguments={"answer": "Done.", "memory_ids": ["mem-1"]})
-                ],
+                tool_calls=[LLMToolCall(id="4", name="done", arguments={"answer": "Done.", "memory_ids": ["mem-1"]})],
                 finish_reason="tool_calls",
             ),
         ]
@@ -679,10 +680,7 @@ class TestReflectAgentMocked:
         """
         # Build a long response that's well over the cap in cl100k_base tokens.
         long_answer = " ".join(
-            [
-                "This is a detailed paragraph about the team, their roles, and their recurring meetings."
-            ]
-            * 80
+            ["This is a detailed paragraph about the team, their roles, and their recurring meetings."] * 80
         )
         # The short-circuit path: tool_calls empty, content populated.
         mock_llm.call_with_tools.return_value = LLMToolCallResult(
@@ -715,8 +713,7 @@ class TestReflectAgentMocked:
         )
         rewrite_kwargs = mock_llm.call.await_args.kwargs
         assert rewrite_kwargs.get("max_completion_tokens") == cap, (
-            f"rewrite call should use max_completion_tokens={cap}, "
-            f"got {rewrite_kwargs.get('max_completion_tokens')}"
+            f"rewrite call should use max_completion_tokens={cap}, got {rewrite_kwargs.get('max_completion_tokens')}"
         )
 
         # The final answer is the rewritten text, not the oversized original.
@@ -824,7 +821,14 @@ class TestContextOverflowHelpers:
                 "role": "tool",
                 "tool_call_id": "x",
                 "name": "recall",
-                "content": '{"memories": [' + ', '.join([f'{{"id": "m{i}", "content": "A long memory fact about some topic that goes on and on."}}' for i in range(50)]) + ']}',
+                "content": '{"memories": ['
+                + ", ".join(
+                    [
+                        f'{{"id": "m{i}", "content": "A long memory fact about some topic that goes on and on."}}'
+                        for i in range(50)
+                    ]
+                )
+                + "]}",
             },
         ]
         small = _count_messages_tokens(small_messages)
@@ -833,7 +837,11 @@ class TestContextOverflowHelpers:
 
     def test_is_context_overflow_error_openai(self):
         assert _is_context_overflow_error(Exception("context_length_exceeded: too many tokens"))
-        assert _is_context_overflow_error(Exception("This model's maximum context length is 128000 tokens. However, your messages resulted in 142164 tokens."))
+        assert _is_context_overflow_error(
+            Exception(
+                "This model's maximum context length is 128000 tokens. However, your messages resulted in 142164 tokens."
+            )
+        )
 
     def test_is_context_overflow_error_anthropic(self):
         assert _is_context_overflow_error(Exception("prompt_too_long"))
@@ -860,17 +868,17 @@ class TestContextOverflowBehavior:
         llm = MagicMock()
         llm.call_with_tools = AsyncMock()
         llm.call = AsyncMock(
-            return_value=("Synthesized answer from gathered evidence.", TokenUsage(input_tokens=50, output_tokens=20, total_tokens=70))
+            return_value=(
+                "Synthesized answer from gathered evidence.",
+                TokenUsage(input_tokens=50, output_tokens=20, total_tokens=70),
+            )
         )
         return llm
 
     @pytest.fixture
     def mock_functions_with_large_output(self):
         """Mock functions that return a large enough payload to exceed a tiny token budget."""
-        large_memories = [
-            {"id": f"mem-{i}", "content": f"Memory fact number {i}: " + "A" * 200}
-            for i in range(20)
-        ]
+        large_memories = [{"id": f"mem-{i}", "content": f"Memory fact number {i}: " + "A" * 200} for i in range(20)]
         return {
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
             "search_observations_fn": AsyncMock(return_value={"observations": []}),
@@ -910,9 +918,7 @@ class TestContextOverflowBehavior:
     async def test_context_overflow_error_skips_retry(self, mock_llm, mock_functions_with_large_output):
         """A context_length_exceeded error from the LLM should NOT be retried —
         it should immediately fall back to final synthesis."""
-        mock_llm.call_with_tools.side_effect = Exception(
-            "context_length_exceeded: messages resulted in 150000 tokens."
-        )
+        mock_llm.call_with_tools.side_effect = Exception("context_length_exceeded: messages resulted in 150000 tokens.")
 
         result = await run_reflect_agent(
             llm_config=mock_llm,
@@ -969,8 +975,7 @@ class TestDirectiveLeakageOnEmptyBank:
 
             # The directive content must NOT leak into the answer.
             assert directive_text not in result.text, (
-                f"Directive content leaked into the answer verbatim. "
-                f"Got: {result.text!r}"
+                f"Directive content leaked into the answer verbatim. Got: {result.text!r}"
             )
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
@@ -1023,6 +1028,7 @@ class TestContextOverflowIntegration:
             class _TinyContextProxy:
                 """Forwards all attribute access to the real config proxy except
                 reflect_max_context_tokens which is forced to 1."""
+
                 _real = _real_get_config()
 
                 def __getattr__(self, name: str):

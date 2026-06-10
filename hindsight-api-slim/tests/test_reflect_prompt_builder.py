@@ -386,9 +386,7 @@ class TestBudgetBranches:
             include_observations=False,
             budget="low",
         )
-        assert actual == _assemble(
-            _RETRIEVAL_RECALL_ONLY, _WORKFLOW_RECALL_ONLY, budget=_BUDGET_LOW
-        )
+        assert actual == _assemble(_RETRIEVAL_RECALL_ONLY, _WORKFLOW_RECALL_ONLY, budget=_BUDGET_LOW)
 
     def test_budget_mid_inserts_moderate_block(self):
         actual = build_system_prompt_for_tools(
@@ -397,9 +395,7 @@ class TestBudgetBranches:
             include_observations=False,
             budget="mid",
         )
-        assert actual == _assemble(
-            _RETRIEVAL_RECALL_ONLY, _WORKFLOW_RECALL_ONLY, budget=_BUDGET_MID
-        )
+        assert actual == _assemble(_RETRIEVAL_RECALL_ONLY, _WORKFLOW_RECALL_ONLY, budget=_BUDGET_MID)
 
     def test_budget_high_inserts_deep_block(self):
         actual = build_system_prompt_for_tools(
@@ -408,9 +404,7 @@ class TestBudgetBranches:
             include_observations=False,
             budget="high",
         )
-        assert actual == _assemble(
-            _RETRIEVAL_RECALL_ONLY, _WORKFLOW_RECALL_ONLY, budget=_BUDGET_HIGH
-        )
+        assert actual == _assemble(_RETRIEVAL_RECALL_ONLY, _WORKFLOW_RECALL_ONLY, budget=_BUDGET_HIGH)
 
     def test_unknown_budget_inserts_nothing(self):
         # The builder only recognises low/mid/high; any other value is a no-op.
@@ -544,7 +538,5 @@ def test_include_observations_defaults_to_true():
     """Callers that don't pass ``include_observations`` get the original
     observations-enabled prompt — this guards the API default so reflect
     paths that don't gate the flag aren't silently changed."""
-    actual = build_system_prompt_for_tools(
-        bank_profile=BANK, has_mental_models=False
-    )
+    actual = build_system_prompt_for_tools(bank_profile=BANK, has_mental_models=False)
     assert actual == _assemble(_RETRIEVAL_OBS_ONLY, _WORKFLOW_OBS_ONLY)

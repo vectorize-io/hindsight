@@ -167,9 +167,7 @@ class TestEnqueueRelinkVictims:
             assert await _queue_unit_ids(conn, bank_id) == [str(survivor)]
 
     @pytest.mark.asyncio
-    async def test_excludes_deleted_units_themselves(
-        self, memory: MemoryEngine, request_context: RequestContext
-    ):
+    async def test_excludes_deleted_units_themselves(self, memory: MemoryEngine, request_context: RequestContext):
         """A unit being deleted that linked TO another deleted unit must not enqueue itself."""
         bank_id = f"test-gm-self-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
@@ -270,9 +268,7 @@ class TestDeleteDocumentEnqueue:
 
 class TestRelinkPass:
     @pytest.mark.asyncio
-    async def test_drains_empty_queue_cleanly(
-        self, memory: MemoryEngine, request_context: RequestContext
-    ):
+    async def test_drains_empty_queue_cleanly(self, memory: MemoryEngine, request_context: RequestContext):
         bank_id = f"test-gm-empty-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
 
@@ -285,9 +281,7 @@ class TestRelinkPass:
         }
 
     @pytest.mark.asyncio
-    async def test_skips_missing_unit_silently(
-        self, memory: MemoryEngine, request_context: RequestContext
-    ):
+    async def test_skips_missing_unit_silently(self, memory: MemoryEngine, request_context: RequestContext):
         """Unit deleted between enqueue and drain: worker dequeues and no-ops."""
         bank_id = f"test-gm-miss-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
@@ -309,9 +303,7 @@ class TestRelinkPass:
             assert await _queue_unit_ids(conn, bank_id) == []
 
     @pytest.mark.asyncio
-    async def test_tops_up_temporal_when_under_cap(
-        self, memory: MemoryEngine, request_context: RequestContext
-    ):
+    async def test_tops_up_temporal_when_under_cap(self, memory: MemoryEngine, request_context: RequestContext):
         """A victim under the temporal cap gets new outgoing links to neighbours
         that were never linked at retain time."""
         bank_id = f"test-gm-topup-{uuid.uuid4().hex[:8]}"
@@ -365,9 +357,7 @@ class TestRelinkPass:
             assert await _queue_unit_ids(conn, bank_id) == []
 
     @pytest.mark.asyncio
-    async def test_no_topup_when_victim_at_cap(
-        self, memory: MemoryEngine, request_context: RequestContext
-    ):
+    async def test_no_topup_when_victim_at_cap(self, memory: MemoryEngine, request_context: RequestContext):
         """If the victim already has cap links, probing is skipped."""
         bank_id = f"test-gm-atcap-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
@@ -414,9 +404,7 @@ class TestRelinkPass:
 
 class TestOrphanEntityPrune:
     @pytest.mark.asyncio
-    async def test_prunes_entities_with_no_unit_references(
-        self, memory: MemoryEngine, request_context: RequestContext
-    ):
+    async def test_prunes_entities_with_no_unit_references(self, memory: MemoryEngine, request_context: RequestContext):
         """An entity with zero unit_entities rows is an orphan and should be
         deleted by the sweep."""
         bank_id = f"test-gm-orphan-{uuid.uuid4().hex[:8]}"
@@ -435,9 +423,7 @@ class TestOrphanEntityPrune:
         assert result["orphan_entities_pruned"] == 2
 
         async with pool.acquire() as conn:
-            survivors = await conn.fetch(
-                "SELECT id FROM entities WHERE bank_id = $1 ORDER BY id", bank_id
-            )
+            survivors = await conn.fetch("SELECT id FROM entities WHERE bank_id = $1 ORDER BY id", bank_id)
             survivor_ids = {str(r["id"]) for r in survivors}
             assert survivor_ids == {str(referenced)}
             # Confirm orphans are gone.
@@ -445,9 +431,7 @@ class TestOrphanEntityPrune:
                 assert orphan not in survivor_ids
 
     @pytest.mark.asyncio
-    async def test_does_not_touch_other_banks(
-        self, memory: MemoryEngine, request_context: RequestContext
-    ):
+    async def test_does_not_touch_other_banks(self, memory: MemoryEngine, request_context: RequestContext):
         """The sweep is scoped by bank — orphan entities in OTHER banks
         must not be touched."""
         bank_a = f"test-gm-scopea-{uuid.uuid4().hex[:8]}"
@@ -478,9 +462,7 @@ class TestOrphanEntityPrune:
 
 class TestStaleCooccurrencePrune:
     @pytest.mark.asyncio
-    async def test_prunes_cooccurrence_with_no_shared_unit(
-        self, memory: MemoryEngine, request_context: RequestContext
-    ):
+    async def test_prunes_cooccurrence_with_no_shared_unit(self, memory: MemoryEngine, request_context: RequestContext):
         """Both entities still exist but no unit references both of them — the
         cooccurrence row is stale and should be pruned."""
         bank_id = f"test-gm-cocc-{uuid.uuid4().hex[:8]}"
@@ -515,9 +497,7 @@ class TestStaleCooccurrencePrune:
             assert remaining == 0
 
     @pytest.mark.asyncio
-    async def test_keeps_cooccurrence_with_shared_unit(
-        self, memory: MemoryEngine, request_context: RequestContext
-    ):
+    async def test_keeps_cooccurrence_with_shared_unit(self, memory: MemoryEngine, request_context: RequestContext):
         """If at least one unit still references both entities, the cooccurrence
         row stays."""
         bank_id = f"test-gm-keep-{uuid.uuid4().hex[:8]}"

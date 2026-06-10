@@ -508,7 +508,7 @@ When `async: true`, the call returns immediately with an `operation_id`. Process
 
 ### Cut Costs 50% with Provider Batch APIs
 
-When using async retain, enable the provider Batch API to reduce LLM fact-extraction costs by 50%. OpenAI and Groq both offer this discount in exchange for a processing window of up to 24 hours — a trade-off that's typically invisible when retain already runs in the background.
+When using async retain, enable the provider Batch API to reduce LLM fact-extraction costs by 50%. OpenAI, Groq, and Gemini all offer this discount in exchange for a processing window of up to 24 hours — a trade-off that's typically invisible when retain already runs in the background.
 
 ```bash
 export HINDSIGHT_API_RETAIN_BATCH_ENABLED=true
@@ -517,4 +517,4 @@ export HINDSIGHT_API_RETAIN_BATCH_ENABLED=true
 Hindsight submits fact extraction calls as a batch job to the provider, polls for completion, and processes results automatically. No changes to your API calls are needed.
 
 :::note
-Batch API cost savings require `async=true` in your retain request and a compatible provider (OpenAI or Groq).
+Batch API cost savings require `async=true` in your retain request and a compatible provider (OpenAI, Groq, or Gemini).

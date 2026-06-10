@@ -21,51 +21,39 @@ Four Cursor CLI hooks keep memory in sync automatically:
 
 ## Installation
 
-### 1. Configure Hindsight
-
-Sign up free at [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup) — or run a local server.
-
-For local mode (`hindsight-embed`):
+Sign up free at [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup) for a Hindsight Cloud API key — or run a local server.
 
 ```bash
-export OPENAI_API_KEY=sk-your-key
-# or
-export ANTHROPIC_API_KEY=your-key
+pip install hindsight-cursor-cli
 ```
 
-For Hindsight Cloud:
+Then run the installer once:
 
 ```bash
-export HINDSIGHT_API_URL=https://api.hindsight.vectorize.io
-export HINDSIGHT_API_TOKEN=your-api-key
-```
+# Hindsight Cloud
+hindsight-cursor-cli install --api-url https://api.hindsight.vectorize.io --api-token your-api-key
 
-### 2. Install the hooks
-
-Clone this repo and run the install script:
-
-```bash
-git clone https://github.com/vectorize-io/hindsight.git
-cd hindsight/hindsight-integrations/cursor-cli
-./scripts/install.sh
+# Local daemon (hindsight-embed) — omit the flags
+hindsight-cursor-cli install
 ```
 
 The installer:
 
-1. Copies scripts to `~/.cursor/hooks/cursor-cli/`
+1. Copies the hook scripts to `~/.cursor/hooks/cursor-cli/`
 2. Writes `~/.cursor/hooks.json` (merged with any existing entries) with absolute paths to the scripts
-3. Adds `~/.hindsight/cursor-cli.json` if it doesn't exist (so you can drop in your `hindsightApiToken`)
+3. Seeds `~/.hindsight/cursor-cli.json` if it doesn't exist (drop your `hindsightApiToken` here later)
 
-### 3. Restart Cursor CLI
-
-Open a new session. If memories are not recalled or retained, check
+Restart Cursor CLI to load the hooks. If memories are not recalled or retained, check that
 `~/.cursor/hooks.json` exists and that `python3` is on `$PATH` from your shell.
 
 ### Uninstall
 
 ```bash
-./scripts/uninstall.sh
+hindsight-cursor-cli uninstall
 ```
+
+This removes the hook scripts and strips Hindsight's entries from `~/.cursor/hooks.json`. Your
+personal config at `~/.hindsight/cursor-cli.json` is preserved.
 
 ## Configuration
 
@@ -150,7 +138,8 @@ To share memory across all worktrees of the same repo, use `gitProject` instead 
 
 ```bash
 cd hindsight-integrations/cursor-cli
-python -m pytest tests/ -v
+uv sync
+uv run pytest tests/ -v
 ```
 
 The tests mock the HTTP client, the stdin/stdout pipe, and the file-based state. No live Hindsight server is required.

@@ -80,11 +80,7 @@ def test_parse_entity_labels_dict_format():
 
 def test_parse_entity_labels_dict_format_defaults():
     """Dict format parses attributes correctly."""
-    raw = {
-        "attributes": [
-            {"key": "topic", "values": [{"value": "math", "description": "Mathematics"}]}
-        ]
-    }
+    raw = {"attributes": [{"key": "topic", "values": [{"value": "math", "description": "Mathematics"}]}]}
     result = parse_entity_labels(raw)
     assert result is not None
     assert len(result.attributes) == 1
@@ -178,9 +174,7 @@ def test_build_labels_model_free_values_optional():
     """type='text', optional=True → str | None field."""
     from hindsight_api.engine.retain.entity_labels import build_labels_model
 
-    labels_cfg = EntityLabelsConfig(
-        attributes=[LabelGroup(key="topic", type="text", optional=True, values=[])]
-    )
+    labels_cfg = EntityLabelsConfig(attributes=[LabelGroup(key="topic", type="text", optional=True, values=[])])
     Model = build_labels_model(labels_cfg)
     assert Model is not None
     schema = Model.model_json_schema()
@@ -194,9 +188,7 @@ def test_build_labels_model_free_values_always_optional():
     """type='text' with optional=False is still treated as str | None — always optional."""
     from hindsight_api.engine.retain.entity_labels import build_labels_model
 
-    labels_cfg = EntityLabelsConfig(
-        attributes=[LabelGroup(key="topic", type="text", optional=False, values=[])]
-    )
+    labels_cfg = EntityLabelsConfig(attributes=[LabelGroup(key="topic", type="text", optional=False, values=[])])
     Model = build_labels_model(labels_cfg)
     assert Model is not None
     schema = Model.model_json_schema()
@@ -210,9 +202,7 @@ def test_build_labels_model_free_values_multi_still_optional():
     """type='text' is always str | None — multi-values only applies to enum types."""
     from hindsight_api.engine.retain.entity_labels import build_labels_model
 
-    labels_cfg = EntityLabelsConfig(
-        attributes=[LabelGroup(key="tags", type="text", values=[])]
-    )
+    labels_cfg = EntityLabelsConfig(attributes=[LabelGroup(key="tags", type="text", values=[])])
     Model = build_labels_model(labels_cfg)
     assert Model is not None
     schema = Model.model_json_schema()
@@ -226,9 +216,7 @@ def test_build_labels_model_free_values_no_values_still_creates_field():
     """type='text' group with no values still creates a field (description holds examples)."""
     from hindsight_api.engine.retain.entity_labels import build_labels_model
 
-    labels_cfg = EntityLabelsConfig(
-        attributes=[LabelGroup(key="mood", type="text", values=[])]
-    )
+    labels_cfg = EntityLabelsConfig(attributes=[LabelGroup(key="mood", type="text", values=[])])
     Model = build_labels_model(labels_cfg)
     assert Model is not None
     assert "mood" in Model.model_json_schema()["properties"]
@@ -549,9 +537,7 @@ def test_label_entity_post_processing_invalid_value_ignored():
     from hindsight_api.engine.retain.entity_labels import build_labels_lookup, parse_entity_labels
     from hindsight_api.engine.retain.fact_extraction import Entity
 
-    labels_cfg = parse_entity_labels(
-        [{"key": "pedagogy", "values": [{"value": "scaffolding", "description": ""}]}]
-    )
+    labels_cfg = parse_entity_labels([{"key": "pedagogy", "values": [{"value": "scaffolding", "description": ""}]}])
     labels_lookup = build_labels_lookup(labels_cfg)
 
     labels_data = {"pedagogy": "unknown_value"}
@@ -665,9 +651,7 @@ def test_free_values_label_is_single_value():
     """type='text' groups are always single-value (str | None)."""
     from hindsight_api.engine.retain.entity_labels import build_labels_model, parse_entity_labels
 
-    labels_cfg = parse_entity_labels(
-        [{"key": "topic", "type": "text", "values": []}]
-    )
+    labels_cfg = parse_entity_labels([{"key": "topic", "type": "text", "values": []}])
     Model = build_labels_model(labels_cfg)
     assert Model is not None
     schema = Model.model_json_schema()
@@ -681,9 +665,7 @@ def test_free_values_label_not_in_lookup():
     """type='text' group values do NOT appear in the lookup set (no fixed vocabulary)."""
     from hindsight_api.engine.retain.entity_labels import build_labels_lookup, parse_entity_labels
 
-    labels_cfg = parse_entity_labels(
-        [{"key": "topic", "type": "text", "values": [{"value": "algebra"}]}]
-    )
+    labels_cfg = parse_entity_labels([{"key": "topic", "type": "text", "values": [{"value": "algebra"}]}])
     lookup = build_labels_lookup(labels_cfg)
     assert "topic:algebra" not in lookup  # example hints not added to lookup
     assert len(lookup) == 0
@@ -725,9 +707,7 @@ def test_optional_label_string_none_produces_no_entity():
 
     # LLM returned the string "None" instead of JSON null — must not be stored
     entity_texts = _run_label_post_processing(labels_cfg, {"engagement": "None"})
-    assert entity_texts == set(), (
-        f"String 'None' must not produce engagement:None entity, got: {entity_texts}"
-    )
+    assert entity_texts == set(), f"String 'None' must not produce engagement:None entity, got: {entity_texts}"
 
 
 def test_optional_label_null_does_not_affect_other_labels():
@@ -744,9 +724,7 @@ def test_optional_label_null_does_not_affect_other_labels():
     # engagement is null, but topic is set
     entity_texts = _run_label_post_processing(labels_cfg, {"engagement": None, "topic": "math"})
     assert "topic:math" in entity_texts, f"Expected topic:math entity, got: {entity_texts}"
-    assert not any("engagement" in t for t in entity_texts), (
-        f"engagement should not appear, got: {entity_texts}"
-    )
+    assert not any("engagement" in t for t in entity_texts), f"engagement should not appear, got: {entity_texts}"
 
 
 def test_free_form_entities_false_clears_entities():
@@ -982,9 +960,7 @@ async def test_retain_extracts_single_value_label(memory_real_llm, request_conte
             )
 
         entity_names = {r["canonical_name"].lower() for r in rows}
-        assert "engagement:active" in entity_names, (
-            f"Expected 'engagement:active' label entity. Got: {entity_names}"
-        )
+        assert "engagement:active" in entity_names, f"Expected 'engagement:active' label entity. Got: {entity_names}"
         # In labels-only mode, free-form entities like 'Maria' should be absent
         assert not any("maria" in n for n in entity_names), (
             f"Free-form entity 'Maria' should not appear in labels-only mode. Got: {entity_names}"
@@ -1054,9 +1030,7 @@ async def test_retain_extracts_multi_value_label(memory_real_llm, request_contex
         entity_names = {r["canonical_name"].lower() for r in rows}
         # At least one pedagogy label should be assigned
         pedagogy_labels = {n for n in entity_names if n.startswith("pedagogy:")}
-        assert len(pedagogy_labels) > 0, (
-            f"Expected at least one pedagogy:* label entity. Got: {entity_names}"
-        )
+        assert len(pedagogy_labels) > 0, f"Expected at least one pedagogy:* label entity. Got: {entity_names}"
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -1118,9 +1092,7 @@ async def test_retain_extracts_free_values_label(memory_real_llm, request_contex
         entity_names = {r["canonical_name"].lower() for r in rows}
         # A topic:* entity must exist — value is free-form so we only check the prefix
         topic_entities = {n for n in entity_names if n.startswith("topic:")}
-        assert len(topic_entities) > 0, (
-            f"Expected at least one topic:* free-value entity. Got: {entity_names}"
-        )
+        assert len(topic_entities) > 0, f"Expected at least one topic:* free-value entity. Got: {entity_names}"
         # The value must not be the literal string "none" or "null"
         assert not any(n in ("topic:none", "topic:null", "topic:n/a") for n in topic_entities), (
             f"topic entity should not be a null sentinel. Got: {topic_entities}"
@@ -1188,18 +1160,14 @@ async def test_retain_extracts_map_type_entities(memory_real_llm, request_contex
         entity_names = {r["canonical_name"].lower() for r in rows}
         # Should have person:name:* entity
         name_entities = {n for n in entity_names if n.startswith("person:name:")}
-        assert len(name_entities) > 0, (
-            f"Expected at least one person:name:* entity. Got: {entity_names}"
-        )
+        assert len(name_entities) > 0, f"Expected at least one person:name:* entity. Got: {entity_names}"
         # Name should contain "alice" somewhere
         assert any("alice" in n for n in name_entities), (
             f"Expected person:name entity containing 'alice'. Got: {name_entities}"
         )
         # Should have person:organization:* entity mentioning google
         org_entities = {n for n in entity_names if n.startswith("person:organization:")}
-        assert len(org_entities) > 0, (
-            f"Expected at least one person:organization:* entity. Got: {entity_names}"
-        )
+        assert len(org_entities) > 0, f"Expected at least one person:organization:* entity. Got: {entity_names}"
         assert any("google" in n for n in org_entities), (
             f"Expected person:organization entity containing 'google'. Got: {org_entities}"
         )
@@ -2036,9 +2004,7 @@ async def test_retain_multivalue_tag_entities_all_stored(memory_real_llm, reques
 
         # The core assertion from GH-1558: tags and entities should match
         # Tags show both but entities only show a subset → BUG
-        assert len(use_tags) >= 2, (
-            f"Expected at least 2 use:* tags. Got: {use_tags}"
-        )
+        assert len(use_tags) >= 2, f"Expected at least 2 use:* tags. Got: {use_tags}"
         assert len(use_entities) >= 2, (
             f"GH-1558 BUG: Expected at least 2 use:* entities in unit_entities, "
             f"but only got {len(use_entities)}: {use_entities}. "
@@ -2097,8 +2063,7 @@ async def test_retain_multivalue_tag_entities_second_retain(memory_real_llm, req
         await memory_real_llm.retain_async(
             bank_id=bank_id,
             content=(
-                "## Authentication Flow (use-001)\n\n"
-                "The authentication flow use-001 handles user login via OAuth2."
+                "## Authentication Flow (use-001)\n\nThe authentication flow use-001 handles user login via OAuth2."
             ),
             request_context=request_context,
         )
@@ -2145,9 +2110,7 @@ async def test_retain_multivalue_tag_entities_second_retain(memory_real_llm, req
         use_entities = {n for n in entity_names if n.startswith("use:")}
         use_tags = {t for t in all_tags if t.startswith("use:")}
 
-        assert len(use_tags) >= 2, (
-            f"Expected at least 2 use:* tags on second retain. Got: {use_tags}"
-        )
+        assert len(use_tags) >= 2, f"Expected at least 2 use:* tags on second retain. Got: {use_tags}"
         assert len(use_entities) >= 2, (
             f"GH-1558 BUG: On second retain, expected at least 2 use:* entities "
             f"but only got {len(use_entities)}: {use_entities}. "
@@ -2155,9 +2118,7 @@ async def test_retain_multivalue_tag_entities_second_retain(memory_real_llm, req
             f"Entity resolution may be merging similar names."
         )
         missing = use_tags - use_entities
-        assert len(missing) == 0, (
-            f"GH-1558 BUG: Tags present but entities missing after second retain: {missing}"
-        )
+        assert len(missing) == 0, f"GH-1558 BUG: Tags present but entities missing after second retain: {missing}"
     finally:
         await memory_real_llm.delete_bank(bank_id, request_context=request_context)
 
@@ -2243,9 +2204,7 @@ async def test_entity_resolution_does_not_merge_distinct_label_values(memory, re
             )
 
         # We should get 2 DISTINCT entity IDs, not the same ID twice
-        assert len(resolved_entity_ids) == 2, (
-            f"Expected 2 resolved entity IDs, got {len(resolved_entity_ids)}"
-        )
+        assert len(resolved_entity_ids) == 2, f"Expected 2 resolved entity IDs, got {len(resolved_entity_ids)}"
         unique_ids = set(resolved_entity_ids)
         assert len(unique_ids) == 2, (
             f"GH-1558 BUG: Entity resolution merged 'use:use-001' and 'use:use-002' "

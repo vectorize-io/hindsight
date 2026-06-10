@@ -36,7 +36,7 @@ Your own frontmatter `tags`/`aliases` are carried through too.
 
 > ✨ **Recommended:** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — sign up free, get an API key, and skip self-hosting.
 
-While in beta, install via [BRAT](https://github.com/TfTHacker/obsidian42-brat): add the repo `vectorize-io/hindsight`, select the Hindsight plugin, then enable it under **Settings → Community plugins**.
+While in beta, install via [BRAT](https://github.com/TfTHacker/obsidian42-brat): add the repo [`vectorize-io/hindsight-obsidian`](https://github.com/vectorize-io/hindsight-obsidian) — the dedicated plugin repo BRAT installs from (see [Distribution](#distribution--maintainers)) — then enable it under **Settings → Community plugins**.
 
 **Self-hosting alternative:**
 
@@ -92,3 +92,28 @@ npm run build    # esbuild → main.js
 
 To try it in a real vault, copy `main.js`, `manifest.json`, and `styles.css` into
 `<vault>/.obsidian/plugins/hindsight/` and enable the plugin.
+
+## Distribution & maintainers
+
+> **Edit only this monorepo.** The dedicated repo is generated automatically on release — never commit to it directly.
+
+| Repo                                                                                    | Role                                                                                                                                                                    |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hindsight-integrations/obsidian/` (this monorepo)                                      | **Source of truth.** All code, tests, and the npm package (`@vectorize-io/hindsight-obsidian`) live here.                                                               |
+| [`vectorize-io/hindsight-obsidian`](https://github.com/vectorize-io/hindsight-obsidian) | **Generated distribution repo** for BRAT + the Obsidian community store. The release workflow mirrors this folder here (via `git subtree`) and cuts the GitHub Release. |
+
+**Why two repos?** Obsidian's BRAT and community store install from a repo's **latest GitHub Release**. We can't use this monorepo's releases — they pollute the core product's release list and steal the "Latest" badge, and BRAT reads a repo's _latest_ release (the core app), not a tag. So distribution releases go to a dedicated repo.
+
+**Releasing an update** — just cut the monorepo release as usual:
+
+```bash
+./scripts/release-integration.sh obsidian <version>
+```
+
+The `Release Integration` workflow then automatically (see `.github/workflows/release-integration.yml` → "Mirror Obsidian plugin"):
+
+1. publishes the npm package `@vectorize-io/hindsight-obsidian`,
+2. mirrors this folder to the **root** of `vectorize-io/hindsight-obsidian` with `git subtree push --prefix=hindsight-integrations/obsidian`, and
+3. cuts a GitHub Release there tagged with the bare version (e.g. `0.1.0`, matching `manifest.json`) so BRAT / the community store pick it up.
+
+No manual second-repo step. The mirror needs a repo/org secret **`OBSIDIAN_DIST_TOKEN`** — a token with `contents: write` on `vectorize-io/hindsight-obsidian`.

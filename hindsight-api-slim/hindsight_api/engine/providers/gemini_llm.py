@@ -8,6 +8,7 @@ This provider supports both:
 
 import asyncio
 import base64
+import io
 import json
 import logging
 import os
@@ -41,6 +42,14 @@ try:
     VERTEXAI_AVAILABLE = True
 except ImportError:
     VERTEXAI_AVAILABLE = False
+
+
+def _to_int(value: Any) -> int:
+    """Coerce Gemini's optional/string completion counts to int, defaulting to 0."""
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return 0
 
 
 class GeminiLLM(LLMInterface):
@@ -825,6 +834,282 @@ class GeminiLLM(LLMInterface):
             response_schema=response_schema,
             tools=tools,
         )
+
+    # ── Batch API (Gemini API only — not Vertex AI) ─────────────────────────
+    #
+    # Google's Gemini Batch API gives a flat 50% discount on input + output
+    # tokens with a 24h completion SLA (https://ai.google.dev/gemini-api/docs/batch-api).
+    # The retain orchestrator and ``fact_extraction`` consumer speak the
+    # OpenAI-batch interface contract, so these overrides translate that shape
+    # to/from Gemini's file-upload → ``batches.create`` → ``batches.get`` →
+    # download flow — nothing downstream changes (same pattern as FireworksLLM).
+    #
+    # Interface contract preserved (see fact_extraction.py result handling)::
+    #     result["response"]["body"]["choices"][0]["message"]["content"]
+
+    async def supports_batch_api(self) -> bool:
+        """True for the Gemini API; False for Vertex AI.
+
+        Only ``provider="gemini"`` is supported: it exposes the file-upload
+        Batch API used below. Vertex AI's batch path is GCS/BigQuery-backed (no
+        file-upload analogue), so it stays unsupported here — the startup
+        validation then surfaces a clear error instead of silently falling back
+        to synchronous, full-price calls.
+        """
+        return self.provider == "gemini"
+
+    async def submit_batch(
+        self,
+        requests: list[dict[str, Any]],
+        endpoint: str = "/v1/chat/completions",
+        completion_window: str = "24h",
+    ) -> dict[str, Any]:
+        """Submit a batch of (OpenAI-shaped) requests to the Gemini Batch API."""
+        if not await self.supports_batch_api():
+            raise NotImplementedError(f"Batch API not supported for provider: {self.provider}")
+
+        # endpoint/completion_window are part of the shared LLMInterface batch
+        # contract (used by the OpenAI path) but have no analogue on Gemini: the
+        # request shape is fixed (generateContent) and the SLA is server-side.
+        # Kept for signature compatibility with the shared retain driver.
+        logger.info(f"Submitting Gemini batch with {len(requests)} requests")
+
+        jsonl = self._translate_requests(requests)
+
+        # Upload the JSONL as a Gemini file (mime_type must be "jsonl"; a
+        # BytesIO has no path for the SDK to infer it from).
+        file_obj = io.BytesIO(jsonl.encode("utf-8"))
+        uploaded = await self._client.aio.files.upload(
+            file=file_obj,
+            config=genai_types.UploadFileConfig(mime_type="jsonl", display_name="hindsight-batch-input"),
+        )
+
+        batch = await self._client.aio.batches.create(
+            model=self.model,
+            src=uploaded.name,
+            config=genai_types.CreateBatchJobConfig(display_name="hindsight-batch"),
+        )
+
+        logger.info(f"Gemini batch submitted: {batch.name}, state={self._state_name(batch.state)}")
+
+        return {
+            "batch_id": batch.name,
+            "status": self._normalize_state(batch.state),
+            "input_file_id": uploaded.name,
+            "request_count": len(requests),
+        }
+
+    async def get_batch_status(self, batch_id: str) -> dict[str, Any]:
+        """Get the status of a Gemini batch job, in the shared status shape."""
+        if not await self.supports_batch_api():
+            raise NotImplementedError(f"Batch API not supported for provider: {self.provider}")
+
+        batch = await self._client.aio.batches.get(name=batch_id)
+
+        stats = batch.completion_stats
+        successful = _to_int(getattr(stats, "successful_count", None)) if stats else 0
+        failed = _to_int(getattr(stats, "failed_count", None)) if stats else 0
+        incomplete = _to_int(getattr(stats, "incomplete_count", None)) if stats else 0
+
+        result: dict[str, Any] = {
+            "batch_id": batch.name,
+            "status": self._normalize_state(batch.state),
+            "request_counts": {
+                "total": successful + failed + incomplete,
+                "completed": successful,
+                "failed": failed,
+            },
+        }
+
+        if batch.dest and getattr(batch.dest, "file_name", None):
+            result["output_file_id"] = batch.dest.file_name
+        if batch.error:
+            result["errors"] = self._error_to_dict(batch.error)
+
+        return result
+
+    async def retrieve_batch_results(self, batch_id: str) -> list[dict[str, Any]]:
+        """Download and normalize completed Gemini batch results."""
+        if not await self.supports_batch_api():
+            raise NotImplementedError(f"Batch API not supported for provider: {self.provider}")
+
+        batch = await self._client.aio.batches.get(name=batch_id)
+
+        status = self._normalize_state(batch.state)
+        if status != "completed":
+            raise ValueError(f"Gemini batch {batch_id} is not completed yet (state: {self._state_name(batch.state)})")
+
+        dest = batch.dest
+        if not dest or not getattr(dest, "file_name", None):
+            raise ValueError(
+                f"Gemini batch {batch_id} completed but reported no output file "
+                f"(submit_batch always uses file mode, so this is unexpected)"
+            )
+
+        content = await self._client.aio.files.download(file=dest.file_name)
+        text = content.decode("utf-8") if isinstance(content, (bytes, bytearray)) else str(content)
+
+        # The output is a JSONL error file plus results merged into one stream;
+        # error lines carry an `error` so partial failures surface per key
+        # instead of vanishing (JOB_STATE_PARTIALLY_SUCCEEDED maps to completed).
+        results: list[dict[str, Any]] = []
+        for line in text.strip().split("\n"):
+            if line.strip():
+                results.append(self._normalize_output_line(json.loads(line)))
+
+        logger.info(f"Retrieved {len(results)} results for Gemini batch {batch_id}")
+        return results
+
+    # ----- pure translation/normalization helpers (unit-tested) ----------
+
+    @staticmethod
+    def _translate_requests(requests: list[dict[str, Any]]) -> str:
+        """OpenAI batch requests -> Gemini batch input JSONL.
+
+        Each output line is ``{"key": <custom_id>, "request": <GenerateContentRequest>}``;
+        the model is supplied to ``batches.create`` so it is omitted per-line.
+        """
+        lines = []
+        for req in requests:
+            gemini_request = GeminiLLM._openai_body_to_gemini_request(req.get("body") or {})
+            lines.append(json.dumps({"key": req.get("custom_id"), "request": gemini_request}, ensure_ascii=False))
+        return "\n".join(lines)
+
+    @staticmethod
+    def _openai_body_to_gemini_request(body: dict[str, Any]) -> dict[str, Any]:
+        """OpenAI chat-completions body -> Gemini ``GenerateContentRequest`` JSON.
+
+        Mirrors the synchronous ``call`` path: system messages become
+        ``systemInstruction``; a ``response_format`` json_schema forces JSON
+        output (``responseMimeType``), appends the schema as a textual hint, and
+        grammar-enforces via ``responseJsonSchema`` when ``strict`` is set.
+        """
+        system_texts: list[str] = []
+        contents: list[dict[str, Any]] = []
+        for msg in body.get("messages") or []:
+            role = msg.get("role", "user")
+            text = msg.get("content", "") or ""
+            if role == "system":
+                system_texts.append(text)
+            elif role == "assistant":
+                contents.append({"role": "model", "parts": [{"text": text}]})
+            else:
+                contents.append({"role": "user", "parts": [{"text": text}]})
+
+        generation_config: dict[str, Any] = {}
+        if body.get("temperature") is not None:
+            generation_config["temperature"] = body["temperature"]
+        if body.get("max_completion_tokens") is not None:
+            generation_config["maxOutputTokens"] = body["max_completion_tokens"]
+
+        response_format = body.get("response_format")
+        if isinstance(response_format, dict) and response_format.get("type") == "json_schema":
+            json_schema = response_format.get("json_schema") or {}
+            schema = json_schema.get("schema")
+            generation_config["responseMimeType"] = "application/json"
+            if schema:
+                system_texts.append(
+                    "You must respond with valid JSON matching this schema:\n" + json.dumps(schema, ensure_ascii=False)
+                )
+                if json_schema.get("strict"):
+                    generation_config["responseJsonSchema"] = schema
+
+        request: dict[str, Any] = {"contents": contents}
+        if system_texts:
+            request["systemInstruction"] = {"parts": [{"text": "\n\n".join(system_texts)}]}
+        if generation_config:
+            request["generationConfig"] = generation_config
+        return request
+
+    @staticmethod
+    def _normalize_output_line(line: dict[str, Any]) -> dict[str, Any]:
+        """Gemini batch output line -> OpenAI-batch-output shape.
+
+        Target: ``{"custom_id", "response": {"body": {"choices": [...], "usage": {...}}}, "error"}``
+        so the consumer's ``result["response"]["body"]["choices"][0]...`` works and
+        it can read ``body["usage"]`` for token accounting (the consumer reports
+        zero usage otherwise).
+        """
+        custom_id = line.get("key") if line.get("key") is not None else line.get("custom_id")
+        error = line.get("error")
+        if error:
+            return {"custom_id": custom_id, "response": None, "error": error}
+
+        response = line.get("response") or {}
+        body: dict[str, Any] = {"choices": [{"message": {"content": GeminiLLM._extract_text_from_response(response)}}]}
+        usage = GeminiLLM._usage_from_response(response)
+        if usage is not None:
+            body["usage"] = usage
+        return {"custom_id": custom_id, "response": {"body": body}, "error": None}
+
+    @staticmethod
+    def _extract_text_from_response(response: dict[str, Any]) -> str:
+        """Concatenate the text parts of a (JSON) GenerateContentResponse."""
+        candidates = response.get("candidates") or []
+        if not candidates:
+            return ""
+        content = candidates[0].get("content") or {}
+        parts = content.get("parts") or []
+        return "".join(p.get("text", "") for p in parts if isinstance(p, dict) and p.get("text"))
+
+    @staticmethod
+    def _usage_from_response(response: dict[str, Any]) -> dict[str, Any] | None:
+        """Gemini ``usageMetadata`` -> OpenAI-shaped ``usage`` block, or None.
+
+        The batch consumer accumulates token usage from ``body["usage"]`` using
+        OpenAI key names, so translate here to keep the output contract uniform
+        across providers. Handles both the REST camelCase (downloaded JSONL) and
+        snake_case spellings defensively.
+        """
+        meta = response.get("usageMetadata") or response.get("usage_metadata")
+        if not isinstance(meta, dict):
+            return None
+        prompt = meta.get("promptTokenCount") or meta.get("prompt_token_count") or 0
+        completion = meta.get("candidatesTokenCount") or meta.get("candidates_token_count") or 0
+        total = meta.get("totalTokenCount") or meta.get("total_token_count") or 0
+        return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": total}
+
+    @staticmethod
+    def _normalize_state(state: Any) -> str:
+        """Gemini ``JobState`` -> the retain driver's status strings.
+
+        Unknown / in-flight states map to ``in_progress`` so the driver keeps
+        polling; ``PARTIALLY_SUCCEEDED`` maps to ``completed`` (per-line errors
+        surface the partial failures during retrieval).
+        """
+        name = GeminiLLM._state_name(state).upper()
+        if name in ("JOB_STATE_SUCCEEDED", "JOB_STATE_PARTIALLY_SUCCEEDED"):
+            return "completed"
+        if name == "JOB_STATE_FAILED":
+            return "failed"
+        if name in ("JOB_STATE_CANCELLED", "JOB_STATE_CANCELLING"):
+            return "cancelled"
+        if name == "JOB_STATE_EXPIRED":
+            return "expired"
+        return "in_progress"
+
+    @staticmethod
+    def _state_name(state: Any) -> str:
+        """Extract the bare ``JOB_STATE_*`` name from a JobState enum or string."""
+        if state is None:
+            return ""
+        name = getattr(state, "name", None)
+        if name:
+            return str(name)
+        text = str(state)
+        if "." in text:
+            text = text.rsplit(".", 1)[-1]
+        return text
+
+    @staticmethod
+    def _error_to_dict(error: Any) -> dict[str, Any]:
+        """Coerce a Gemini JobError into a JSON-serializable dict for logging."""
+        if hasattr(error, "model_dump"):
+            try:
+                return error.model_dump(exclude_none=True)
+            except Exception:
+                pass
+        return {"message": str(error)}
 
     async def cleanup(self) -> None:
         """Clean up resources (close connections, etc.)."""

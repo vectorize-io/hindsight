@@ -1,6 +1,7 @@
 """
 Pytest configuration and shared fixtures.
 """
+
 import asyncio
 import os
 from pathlib import Path
@@ -76,6 +77,7 @@ def pg0_db_url(db_url, tmp_path_factory, worker_id):
     if db_url and not _parse_pg0_url(db_url)[0]:
         # Plain postgresql:// URL - use it directly but still run migrations
         from hindsight_api.migrations import run_migrations
+
         run_migrations(db_url)
         return db_url
 
@@ -127,6 +129,7 @@ def pg0_db_url(db_url, tmp_path_factory, worker_id):
     # Run migrations - uses PostgreSQL advisory lock internally,
     # so safe to call from multiple workers (only one will actually run migrations)
     from hindsight_api.migrations import run_migrations
+
     run_migrations(url)
 
     # Clean up stale test data from previous sessions. Per-bank vector indexes
@@ -157,8 +160,7 @@ def _cleanup_stale_test_data(db_url: str) -> None:
         conn = await asyncpg.connect(db_url)
         try:
             idx_rows = await conn.fetch(
-                "SELECT indexname FROM pg_indexes "
-                "WHERE schemaname = 'public' AND indexname LIKE 'idx_mu_emb_%'"
+                "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname LIKE 'idx_mu_emb_%'"
             )
             if idx_rows:
                 for row in idx_rows:
@@ -166,10 +168,20 @@ def _cleanup_stale_test_data(db_url: str) -> None:
 
             # Truncate test data in dependency order
             for table in [
-                "entity_cooccurrences", "unit_entities", "memory_links",
-                "entities", "memory_units", "chunks", "documents",
-                "mental_models", "directives", "async_operations",
-                "audit_log", "webhooks", "file_storage", "banks",
+                "entity_cooccurrences",
+                "unit_entities",
+                "memory_links",
+                "entities",
+                "memory_units",
+                "chunks",
+                "documents",
+                "mental_models",
+                "directives",
+                "async_operations",
+                "audit_log",
+                "webhooks",
+                "file_storage",
+                "banks",
             ]:
                 try:
                     await conn.execute(f"TRUNCATE {table} CASCADE")
@@ -252,8 +264,7 @@ def oracle_db_url(_oracle_admin_dsn):
         # Create test user (idempotent — skip if already exists)
         try:
             cursor.execute(
-                f'CREATE USER {test_user} IDENTIFIED BY "{test_pass}" '
-                f"DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS"
+                f'CREATE USER {test_user} IDENTIFIED BY "{test_pass}" DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS'
             )
         except oracledb.DatabaseError as e:
             if hasattr(e.args[0], "code") and e.args[0].code == 1920:
@@ -420,11 +431,10 @@ def cross_encoder(tmp_path_factory, worker_id):
 
     return ce
 
+
 @pytest.fixture(scope="session")
 def query_analyzer():
     return DateparserQueryAnalyzer()
-
-
 
 
 @pytest_asyncio.fixture(scope="function")

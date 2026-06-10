@@ -87,7 +87,7 @@ async def _judge_once(
             "content": (
                 "You are a test evaluation judge. Given a response and evaluation criteria, "
                 "determine whether the response meets the criteria. "
-                "Respond with JSON: {\"meets_criteria\": true/false, \"reasoning\": \"brief explanation\"}"
+                'Respond with JSON: {"meets_criteria": true/false, "reasoning": "brief explanation"}'
             ),
         },
         {
@@ -163,9 +163,7 @@ async def evaluate(
 
     if met > not_met:
         agreeing = next(v for v in verdicts if v.meets_criteria)
-        logger.info(
-            f"Judge: primary 'not met' overruled by majority ({met}/{len(verdicts)} met). Criteria: {criteria}"
-        )
+        logger.info(f"Judge: primary 'not met' overruled by majority ({met}/{len(verdicts)} met). Criteria: {criteria}")
         return JudgeVerdict(
             meets_criteria=True,
             reasoning=f"Majority of {len(verdicts)} judges met criteria (primary verdict overruled as noise). {agreeing.reasoning}",

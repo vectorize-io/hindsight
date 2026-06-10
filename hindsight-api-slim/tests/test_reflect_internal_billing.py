@@ -30,9 +30,7 @@ class _FakeRequestContext:
 
 def _mock_engine():
     engine = MagicMock()
-    engine.recall_async = AsyncMock(
-        return_value=RecallResult(results=[], source_facts={})
-    )
+    engine.recall_async = AsyncMock(return_value=RecallResult(results=[], source_facts={}))
     return engine
 
 

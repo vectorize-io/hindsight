@@ -13,6 +13,7 @@ interface Features {
   document_import_api: boolean;
   audit_log: boolean;
   llm_trace: boolean;
+  store_document_text: boolean;
 }
 
 interface FeaturesContextType {
@@ -31,6 +32,9 @@ const defaultFeatures: Features = {
   document_import_api: false,
   audit_log: false,
   llm_trace: false,
+  // Default to true so the "text not stored" warning only appears when the
+  // server explicitly reports text storage is disabled (and not on fetch errors).
+  store_document_text: true,
 };
 
 const FeaturesContext = createContext<FeaturesContextType | undefined>(undefined);

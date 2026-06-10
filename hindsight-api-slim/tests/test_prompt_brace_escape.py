@@ -63,9 +63,7 @@ class TestConsolidationBraceSafety:
         )
 
         note = "Use shape {limit, used}"
-        prompt = build_batch_consolidation_prompt(
-            observations_mission="m", observation_capacity_note=note
-        )
+        prompt = build_batch_consolidation_prompt(observations_mission="m", observation_capacity_note=note)
         rendered = prompt.format(facts_text="<facts>", observations_text="<obs>")
         assert "{limit, used}" in rendered
 

@@ -2,8 +2,8 @@ apiVersion: v2
 name: hindsight
 description: Hindsight helm chart
 type: application
-version: 0.8.0
-appVersion: "0.8.0"
+version: 0.8.1
+appVersion: "0.8.1"
 keywords:
   - ai
   - memory

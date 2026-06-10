@@ -65,9 +65,7 @@ class TestCreation:
         assert svc._bank_id("apple", "alice") == "apple::alice"
 
     def test_bank_id_custom_template(self):
-        svc = HindsightMemoryService.from_client(
-            _mock_client(), bank_id_template="ns::{user_id}"
-        )
+        svc = HindsightMemoryService.from_client(_mock_client(), bank_id_template="ns::{user_id}")
         assert svc._bank_id("anything", "bob") == "ns::bob"
 
 
@@ -103,9 +101,7 @@ class TestAddSessionToMemory:
     async def test_tags_include_app_and_user(self):
         client = _mock_client()
         svc = HindsightMemoryService.from_client(client, tags=["env:prod"])
-        await svc.add_session_to_memory(
-            _session("apple", "alice", [_event("user", "hi")])
-        )
+        await svc.add_session_to_memory(_session("apple", "alice", [_event("user", "hi")]))
         kwargs = client.aretain.await_args.kwargs
         assert "app:apple" in kwargs["tags"]
         assert "user:alice" in kwargs["tags"]
@@ -114,17 +110,13 @@ class TestAddSessionToMemory:
     async def test_document_id_is_session_id(self):
         client = _mock_client()
         svc = HindsightMemoryService.from_client(client)
-        await svc.add_session_to_memory(
-            _session("apple", "alice", [_event("user", "hi")], session_id="sess-xyz")
-        )
+        await svc.add_session_to_memory(_session("apple", "alice", [_event("user", "hi")], session_id="sess-xyz"))
         assert client.aretain.await_args.kwargs["document_id"] == "sess-xyz"
 
     async def test_bank_id_derived_from_app_and_user(self):
         client = _mock_client()
         svc = HindsightMemoryService.from_client(client)
-        await svc.add_session_to_memory(
-            _session("orange", "bob", [_event("user", "hi")])
-        )
+        await svc.add_session_to_memory(_session("orange", "bob", [_event("user", "hi")]))
         assert client.aretain.await_args.kwargs["bank_id"] == "orange::bob"
 
     async def test_retain_failure_is_logged_not_raised(self, caplog):
@@ -132,9 +124,7 @@ class TestAddSessionToMemory:
         client.aretain.side_effect = RuntimeError("boom")
         svc = HindsightMemoryService.from_client(client)
         with caplog.at_level("ERROR"):
-            await svc.add_session_to_memory(
-                _session("apple", "alice", [_event("user", "hi")])
-            )
+            await svc.add_session_to_memory(_session("apple", "alice", [_event("user", "hi")]))
         assert "retain failed" in caplog.text.lower()
 
 
@@ -172,9 +162,7 @@ class TestAddEventsToMemory:
     async def test_no_session_id_yields_events_document_prefix(self):
         client = _mock_client()
         svc = HindsightMemoryService.from_client(client)
-        await svc.add_events_to_memory(
-            app_name="apple", user_id="alice", events=[_event("user", "delta")]
-        )
+        await svc.add_events_to_memory(app_name="apple", user_id="alice", events=[_event("user", "delta")])
         assert client.aretain.await_args.kwargs["document_id"].startswith("events-")
 
     async def test_custom_metadata_merged(self):
@@ -279,21 +267,13 @@ class TestSearchMemory:
 class TestBankMission:
     async def test_create_bank_called_once_when_mission_set(self):
         client = _mock_client()
-        svc = HindsightMemoryService.from_client(
-            client, mission="Track user preferences"
-        )
-        await svc.add_session_to_memory(
-            _session("apple", "alice", [_event("user", "hi")])
-        )
-        await svc.add_session_to_memory(
-            _session("apple", "alice", [_event("user", "hi again")], session_id="sess-2")
-        )
+        svc = HindsightMemoryService.from_client(client, mission="Track user preferences")
+        await svc.add_session_to_memory(_session("apple", "alice", [_event("user", "hi")]))
+        await svc.add_session_to_memory(_session("apple", "alice", [_event("user", "hi again")], session_id="sess-2"))
         assert client.acreate_bank.await_count == 1
 
     async def test_create_bank_not_called_without_mission(self):
         client = _mock_client()
         svc = HindsightMemoryService.from_client(client)
-        await svc.add_session_to_memory(
-            _session("apple", "alice", [_event("user", "hi")])
-        )
+        await svc.add_session_to_memory(_session("apple", "alice", [_event("user", "hi")]))
         client.acreate_bank.assert_not_awaited()

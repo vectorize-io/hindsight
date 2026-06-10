@@ -230,9 +230,7 @@ async def test_litellm_explicit_param_wins_over_extra_body():
     provider._acompletion = AsyncMock(return_value=_fake_litellm_response())
 
     with patch("hindsight_api.engine.providers.litellm_llm.get_metrics_collector"):
-        await provider.call(
-            messages=[{"role": "user", "content": "hi"}], temperature=0.9, scope="test", max_retries=0
-        )
+        await provider.call(messages=[{"role": "user", "content": "hi"}], temperature=0.9, scope="test", max_retries=0)
 
     assert provider._acompletion.call_args.kwargs.get("temperature") == 0.9
 

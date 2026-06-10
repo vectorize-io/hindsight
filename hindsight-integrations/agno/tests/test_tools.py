@@ -82,53 +82,41 @@ class TestResolveClient:
         with patch("hindsight_agno.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, "http://localhost:8888", None)
-            mock_cls.assert_called_once_with(
-                base_url="http://localhost:8888", timeout=30.0
-            )
+            mock_cls.assert_called_once_with(base_url="http://localhost:8888", timeout=30.0)
 
     def test_creates_client_with_api_key(self):
         with patch("hindsight_agno.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, "http://localhost:8888", "my-key")
-            mock_cls.assert_called_once_with(
-                base_url="http://localhost:8888", timeout=30.0, api_key="my-key"
-            )
+            mock_cls.assert_called_once_with(base_url="http://localhost:8888", timeout=30.0, api_key="my-key")
 
     def test_falls_back_to_global_config_url(self):
         configure(hindsight_api_url="http://config:8888")
         with patch("hindsight_agno.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, None, None)
-            mock_cls.assert_called_once_with(
-                base_url="http://config:8888", timeout=30.0
-            )
+            mock_cls.assert_called_once_with(base_url="http://config:8888", timeout=30.0)
 
     def test_falls_back_to_global_config_api_key(self):
         configure(hindsight_api_url="http://config:8888", api_key="config-key")
         with patch("hindsight_agno.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, None, None)
-            mock_cls.assert_called_once_with(
-                base_url="http://config:8888", timeout=30.0, api_key="config-key"
-            )
+            mock_cls.assert_called_once_with(base_url="http://config:8888", timeout=30.0, api_key="config-key")
 
     def test_explicit_url_overrides_config(self):
         configure(hindsight_api_url="http://config:8888")
         with patch("hindsight_agno.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, "http://explicit:9999", None)
-            mock_cls.assert_called_once_with(
-                base_url="http://explicit:9999", timeout=30.0
-            )
+            mock_cls.assert_called_once_with(base_url="http://explicit:9999", timeout=30.0)
 
     def test_explicit_api_key_overrides_config(self):
         configure(hindsight_api_url="http://config:8888", api_key="config-key")
         with patch("hindsight_agno.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, None, "explicit-key")
-            mock_cls.assert_called_once_with(
-                base_url="http://config:8888", timeout=30.0, api_key="explicit-key"
-            )
+            mock_cls.assert_called_once_with(base_url="http://config:8888", timeout=30.0, api_key="explicit-key")
 
     def test_raises_without_url_or_config(self):
         with pytest.raises(HindsightError, match="No Hindsight API URL"):
@@ -237,18 +225,14 @@ class TestHindsightToolsInit:
             mock_cls.return_value = _mock_client()
             toolkit = HindsightTools(bank_id="test")
             assert "retain_memory" in toolkit.functions
-            mock_cls.assert_called_once_with(
-                base_url="http://localhost:8888", timeout=30.0
-            )
+            mock_cls.assert_called_once_with(base_url="http://localhost:8888", timeout=30.0)
 
     def test_explicit_url_overrides_config(self):
         configure(hindsight_api_url="http://config:8888")
         with patch("hindsight_agno.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             HindsightTools(bank_id="test", hindsight_api_url="http://explicit:9999")
-            mock_cls.assert_called_once_with(
-                base_url="http://explicit:9999", timeout=30.0
-            )
+            mock_cls.assert_called_once_with(base_url="http://explicit:9999", timeout=30.0)
 
     def test_toolkit_name(self):
         client = _mock_client()
@@ -558,15 +542,11 @@ class TestRetainTool:
         result = toolkit.retain_memory(ctx, "The user likes Python")
 
         assert result == "Memory stored successfully."
-        client.retain.assert_called_once_with(
-            bank_id="test-bank", content="The user likes Python"
-        )
+        client.retain.assert_called_once_with(bank_id="test-bank", content="The user likes Python")
 
     def test_retain_passes_tags(self):
         client = _mock_client()
-        toolkit = HindsightTools(
-            bank_id="test-bank", client=client, tags=["source:chat"]
-        )
+        toolkit = HindsightTools(bank_id="test-bank", client=client, tags=["source:chat"])
         ctx = _mock_run_context()
 
         toolkit.retain_memory(ctx, "some content")
@@ -643,9 +623,7 @@ class TestRetainTool:
 class TestRecallTool:
     def test_recall_returns_numbered_results(self):
         client = _mock_client()
-        client.recall.return_value = _mock_recall_response(
-            ["User likes Python", "User is in NYC"]
-        )
+        client.recall.return_value = _mock_recall_response(["User likes Python", "User is in NYC"])
         toolkit = HindsightTools(bank_id="test-bank", client=client)
         ctx = _mock_run_context()
 
@@ -701,9 +679,7 @@ class TestRecallTool:
     def test_recall_passes_budget_and_max_tokens(self):
         client = _mock_client()
         client.recall.return_value = _mock_recall_response(["fact"])
-        toolkit = HindsightTools(
-            bank_id="test", client=client, budget="high", max_tokens=2048
-        )
+        toolkit = HindsightTools(bank_id="test", client=client, budget="high", max_tokens=2048)
         ctx = _mock_run_context()
 
         toolkit.recall_memory(ctx, "query")
@@ -809,9 +785,7 @@ class TestReflectTool:
 
         result = toolkit.reflect_on_memory(ctx, "What do you know about the user?")
 
-        assert (
-            result == "The user is a Python developer who prefers functional patterns."
-        )
+        assert result == "The user is a Python developer who prefers functional patterns."
 
     def test_reflect_empty_returns_fallback(self):
         client = _mock_client()
@@ -864,9 +838,7 @@ class TestReflectTool:
 
         toolkit.reflect_on_memory(ctx, "What is the user's favorite color?")
 
-        assert (
-            client.reflect.call_args[1]["query"] == "What is the user's favorite color?"
-        )
+        assert client.reflect.call_args[1]["query"] == "What is the user's favorite color?"
 
     def test_reflect_passes_bank_id(self):
         client = _mock_client()
@@ -922,9 +894,7 @@ class TestMemoryInstructions:
 
     def test_returns_formatted_memories(self):
         client = _mock_client()
-        client.recall.return_value = _mock_recall_response(
-            ["Likes Python", "Lives in NYC", "Prefers dark mode"]
-        )
+        client.recall.return_value = _mock_recall_response(["Likes Python", "Lives in NYC", "Prefers dark mode"])
 
         result = memory_instructions(bank_id="test-bank", client=client)
 
@@ -943,9 +913,7 @@ class TestMemoryInstructions:
 
     def test_respects_max_results(self):
         client = _mock_client()
-        client.recall.return_value = _mock_recall_response(
-            ["fact1", "fact2", "fact3", "fact4", "fact5"]
-        )
+        client.recall.return_value = _mock_recall_response(["fact1", "fact2", "fact3", "fact4", "fact5"])
 
         result = memory_instructions(bank_id="test", client=client, max_results=2)
 
@@ -966,9 +934,7 @@ class TestMemoryInstructions:
         client = _mock_client()
         client.recall.return_value = _mock_recall_response(["fact"])
 
-        result = memory_instructions(
-            bank_id="test", client=client, prefix="Memory context:\n"
-        )
+        result = memory_instructions(bank_id="test", client=client, prefix="Memory context:\n")
 
         assert result.startswith("Memory context:")
 
@@ -1081,9 +1047,7 @@ class TestMemoryInstructions:
             result = memory_instructions(bank_id="test")
 
             assert "1. fact" in result
-            mock_cls.assert_called_once_with(
-                base_url="http://localhost:8888", timeout=30.0
-            )
+            mock_cls.assert_called_once_with(base_url="http://localhost:8888", timeout=30.0)
 
     def test_uses_sync_recall(self):
         """memory_instructions should use sync client.recall, not arecall."""
@@ -1107,9 +1071,7 @@ class TestExports:
         import hindsight_agno
 
         for name in hindsight_agno.__all__:
-            assert hasattr(hindsight_agno, name), (
-                f"{name} in __all__ but not importable"
-            )
+            assert hasattr(hindsight_agno, name), f"{name} in __all__ but not importable"
 
     def test_version(self):
         import hindsight_agno
@@ -1273,9 +1235,7 @@ class TestEdgeCases:
         result = toolkit.retain_memory(ctx, "The user likes coffee and books")
 
         assert result == "Memory stored successfully."
-        assert (
-            client.retain.call_args[1]["content"] == "The user likes coffee and books"
-        )
+        assert client.retain.call_args[1]["content"] == "The user likes coffee and books"
 
     def test_unicode_in_recall_results(self):
         client = _mock_client()
@@ -1300,9 +1260,7 @@ class TestEdgeCases:
 
     def test_newlines_in_recall_results(self):
         client = _mock_client()
-        client.recall.return_value = _mock_recall_response(
-            ["fact with\nnewline", "normal fact"]
-        )
+        client.recall.return_value = _mock_recall_response(["fact with\nnewline", "normal fact"])
         toolkit = HindsightTools(bank_id="test", client=client)
         ctx = _mock_run_context()
 
@@ -1810,9 +1768,7 @@ class TestMemoryInstructionsFormatting:
         client = _mock_client()
         client.recall.return_value = _mock_recall_response(["fact1", "fact2"])
 
-        result = memory_instructions(
-            bank_id="test", client=client, prefix="Relevant memories:"
-        )
+        result = memory_instructions(bank_id="test", client=client, prefix="Relevant memories:")
 
         assert result == "Relevant memories:\n1. fact1\n2. fact2"
 

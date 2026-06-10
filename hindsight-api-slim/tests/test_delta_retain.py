@@ -146,7 +146,10 @@ async def test_delta_retain_appended_content(memory, request_context):
 
         # Second version — original content + new content appended
         # This should preserve facts from the first chunk and add new ones
-        v2_content = v1_content + "\n\nBob joined Google as a product manager in 2024. He previously worked at Meta on AR/VR products."
+        v2_content = (
+            v1_content
+            + "\n\nBob joined Google as a product manager in 2024. He previously worked at Meta on AR/VR products."
+        )
 
         v2_units = await memory.retain_async(
             bank_id=bank_id,
@@ -387,9 +390,7 @@ async def test_delta_retain_links_preserved_for_unchanged_chunks(memory, request
                 document_id,
             )
 
-        assert v2_link_count == v1_link_count, (
-            f"Links should be preserved: v1={v1_link_count}, v2={v2_link_count}"
-        )
+        assert v2_link_count == v1_link_count, f"Links should be preserved: v1={v1_link_count}, v2={v2_link_count}"
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -456,11 +457,13 @@ async def test_delta_retain_tags_propagated_to_existing_units(memory, request_co
         # v1 with tag "team-a"
         await memory.retain_batch_async(
             bank_id=bank_id,
-            contents=[{
-                "content": content,
-                "document_id": document_id,
-                "tags": ["team-a"],
-            }],
+            contents=[
+                {
+                    "content": content,
+                    "document_id": document_id,
+                    "tags": ["team-a"],
+                }
+            ],
             request_context=request_context,
         )
 
@@ -476,11 +479,13 @@ async def test_delta_retain_tags_propagated_to_existing_units(memory, request_co
         # v2 with same content but different tags
         await memory.retain_batch_async(
             bank_id=bank_id,
-            contents=[{
-                "content": content,
-                "document_id": document_id,
-                "tags": ["team-b", "important"],
-            }],
+            contents=[
+                {
+                    "content": content,
+                    "document_id": document_id,
+                    "tags": ["team-b", "important"],
+                }
+            ],
             request_context=request_context,
         )
 
@@ -692,7 +697,9 @@ async def test_delta_retain_empty_to_content(memory, request_context):
 
         doc_v2 = await memory.get_document(document_id, bank_id, request_context=request_context)
         assert doc_v2 is not None
-        assert doc_v2["memory_unit_count"] > 0 or len(v2_units) > 0, "Should have facts after updating with real content"
+        assert doc_v2["memory_unit_count"] > 0 or len(v2_units) > 0, (
+            "Should have facts after updating with real content"
+        )
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -775,11 +782,13 @@ async def test_delta_retain_with_user_entities(memory, request_context):
         # v1 with user entities
         await memory.retain_batch_async(
             bank_id=bank_id,
-            contents=[{
-                "content": content,
-                "document_id": document_id,
-                "entities": [{"text": "Project Alpha", "type": "PROJECT"}],
-            }],
+            contents=[
+                {
+                    "content": content,
+                    "document_id": document_id,
+                    "entities": [{"text": "Project Alpha", "type": "PROJECT"}],
+                }
+            ],
             request_context=request_context,
         )
 
@@ -797,14 +806,16 @@ async def test_delta_retain_with_user_entities(memory, request_context):
         v2_content = content + "\n\nThe timeline is on track for Q2 delivery."
         await memory.retain_batch_async(
             bank_id=bank_id,
-            contents=[{
-                "content": v2_content,
-                "document_id": document_id,
-                "entities": [
-                    {"text": "Project Alpha", "type": "PROJECT"},
-                    {"text": "Q2 Deadline", "type": "MILESTONE"},
-                ],
-            }],
+            contents=[
+                {
+                    "content": v2_content,
+                    "document_id": document_id,
+                    "entities": [
+                        {"text": "Project Alpha", "type": "PROJECT"},
+                        {"text": "Q2 Deadline", "type": "MILESTONE"},
+                    ],
+                }
+            ],
             request_context=request_context,
         )
 
@@ -867,9 +878,7 @@ async def test_delta_retain_recall_with_chunks(memory, request_context):
         facts_with_chunks = [r for r in result.results if r.chunk_id]
         if facts_with_chunks and result.chunks:
             for fact in facts_with_chunks:
-                assert fact.chunk_id in result.chunks, (
-                    f"Chunk {fact.chunk_id} should be in returned chunks"
-                )
+                assert fact.chunk_id in result.chunks, f"Chunk {fact.chunk_id} should be in returned chunks"
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -1024,8 +1033,7 @@ async def test_processed_content_tokens_appended_reports_delta(memory, request_c
             return
         assert second > 0, "Partial-delta retain should report a positive token count"
         assert second < submitted_tokens, (
-            "Partial-delta retain should report fewer processed tokens "
-            "than the full submitted payload"
+            "Partial-delta retain should report fewer processed tokens than the full submitted payload"
         )
     finally:
         memory._operation_validator = None

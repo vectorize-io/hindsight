@@ -53,12 +53,13 @@ class TestServerModuleExtensionLoading:
 
         # Patch at source level BEFORE importing server
         # Note: We patch the entire hindsight_api module namespace
-        with patch("hindsight_api.MemoryEngine") as mock_engine, \
-             patch("hindsight_api.api.create_app") as mock_create_app, \
-             patch("hindsight_api.config.get_config") as mock_get_config, \
-             patch("hindsight_api.extensions.load_extension", side_effect=tracking_load_extension), \
-             patch("hindsight_api.extensions.DefaultExtensionContext"):
-
+        with (
+            patch("hindsight_api.MemoryEngine") as mock_engine,
+            patch("hindsight_api.api.create_app") as mock_create_app,
+            patch("hindsight_api.config.get_config") as mock_get_config,
+            patch("hindsight_api.extensions.load_extension", side_effect=tracking_load_extension),
+            patch("hindsight_api.extensions.DefaultExtensionContext"),
+        ):
             mock_config = MagicMock()
             mock_config.mcp_enabled = False
             mock_config.run_migrations_on_startup = False
@@ -71,12 +72,15 @@ class TestServerModuleExtensionLoading:
             import hindsight_api.server
 
         # Verify TENANT extension was loaded
-        assert "TENANT" in loaded_extensions, \
+        assert "TENANT" in loaded_extensions, (
             "server.py did not call load_extension('TENANT', ...) - extensions not loaded!"
-        assert loaded_extensions["TENANT"] is not None, \
+        )
+        assert loaded_extensions["TENANT"] is not None, (
             "load_extension('TENANT', ...) returned None despite env var being set"
-        assert isinstance(loaded_extensions["TENANT"], MockTenantExtension), \
+        )
+        assert isinstance(loaded_extensions["TENANT"], MockTenantExtension), (
             f"Expected MockTenantExtension, got {type(loaded_extensions['TENANT'])}"
+        )
 
     def test_server_loads_operation_validator_when_configured(self, monkeypatch):
         """
@@ -98,12 +102,13 @@ class TestServerModuleExtensionLoading:
             loaded_extensions[name] = result
             return result
 
-        with patch("hindsight_api.MemoryEngine") as mock_engine, \
-             patch("hindsight_api.api.create_app") as mock_create_app, \
-             patch("hindsight_api.config.get_config") as mock_get_config, \
-             patch("hindsight_api.extensions.load_extension", side_effect=tracking_load_extension), \
-             patch("hindsight_api.extensions.DefaultExtensionContext"):
-
+        with (
+            patch("hindsight_api.MemoryEngine") as mock_engine,
+            patch("hindsight_api.api.create_app") as mock_create_app,
+            patch("hindsight_api.config.get_config") as mock_get_config,
+            patch("hindsight_api.extensions.load_extension", side_effect=tracking_load_extension),
+            patch("hindsight_api.extensions.DefaultExtensionContext"),
+        ):
             mock_config = MagicMock()
             mock_config.mcp_enabled = False
             mock_config.run_migrations_on_startup = False
@@ -114,8 +119,9 @@ class TestServerModuleExtensionLoading:
 
             import hindsight_api.server
 
-        assert "OPERATION_VALIDATOR" in loaded_extensions, \
+        assert "OPERATION_VALIDATOR" in loaded_extensions, (
             "server.py did not call load_extension('OPERATION_VALIDATOR', ...)"
+        )
         assert loaded_extensions["OPERATION_VALIDATOR"] is not None
         assert isinstance(loaded_extensions["OPERATION_VALIDATOR"], MockOperationValidator)
 
@@ -139,11 +145,12 @@ class TestServerModuleExtensionLoading:
             memory_engine_calls.append({"args": args, "kwargs": kwargs})
             return MagicMock()
 
-        with patch("hindsight_api.MemoryEngine", side_effect=capture_memory_engine), \
-             patch("hindsight_api.api.create_app") as mock_create_app, \
-             patch("hindsight_api.config.get_config") as mock_get_config, \
-             patch("hindsight_api.extensions.DefaultExtensionContext"):
-
+        with (
+            patch("hindsight_api.MemoryEngine", side_effect=capture_memory_engine),
+            patch("hindsight_api.api.create_app") as mock_create_app,
+            patch("hindsight_api.config.get_config") as mock_get_config,
+            patch("hindsight_api.extensions.DefaultExtensionContext"),
+        ):
             mock_config = MagicMock()
             mock_config.mcp_enabled = False
             mock_config.run_migrations_on_startup = False
@@ -159,10 +166,10 @@ class TestServerModuleExtensionLoading:
         call_kwargs = memory_engine_calls[0]["kwargs"]
 
         # THE CRITICAL ASSERTION: tenant_extension must be passed and not None
-        assert "tenant_extension" in call_kwargs, \
-            "MemoryEngine was not called with tenant_extension parameter!"
-        assert call_kwargs["tenant_extension"] is not None, \
+        assert "tenant_extension" in call_kwargs, "MemoryEngine was not called with tenant_extension parameter!"
+        assert call_kwargs["tenant_extension"] is not None, (
             "tenant_extension was None - server.py did not pass loaded extension to MemoryEngine!"
+        )
 
     def test_server_sets_extension_context_on_tenant_extension(self, monkeypatch):
         """
@@ -189,11 +196,12 @@ class TestServerModuleExtensionLoading:
             context_set_calls.append(ctx)
             return ctx
 
-        with patch("hindsight_api.MemoryEngine", side_effect=capture_memory_engine), \
-             patch("hindsight_api.api.create_app") as mock_create_app, \
-             patch("hindsight_api.config.get_config") as mock_get_config, \
-             patch("hindsight_api.extensions.DefaultExtensionContext", side_effect=capture_context):
-
+        with (
+            patch("hindsight_api.MemoryEngine", side_effect=capture_memory_engine),
+            patch("hindsight_api.api.create_app") as mock_create_app,
+            patch("hindsight_api.config.get_config") as mock_get_config,
+            patch("hindsight_api.extensions.DefaultExtensionContext", side_effect=capture_context),
+        ):
             mock_config = MagicMock()
             mock_config.mcp_enabled = False
             mock_config.run_migrations_on_startup = False
@@ -206,8 +214,7 @@ class TestServerModuleExtensionLoading:
         # Verify context was created and set
         assert len(context_set_calls) == 1, "DefaultExtensionContext should be created"
         assert captured_tenant_ext[0] is not None, "Tenant extension should be captured"
-        assert captured_tenant_ext[0]._context_set, \
-            "set_context was not called on tenant extension"
+        assert captured_tenant_ext[0]._context_set, "set_context was not called on tenant extension"
 
     def test_server_works_without_extensions(self, monkeypatch):
         """
@@ -225,10 +232,11 @@ class TestServerModuleExtensionLoading:
             memory_engine_calls.append({"args": args, "kwargs": kwargs})
             return MagicMock()
 
-        with patch("hindsight_api.MemoryEngine", side_effect=capture_memory_engine), \
-             patch("hindsight_api.api.create_app") as mock_create_app, \
-             patch("hindsight_api.config.get_config") as mock_get_config:
-
+        with (
+            patch("hindsight_api.MemoryEngine", side_effect=capture_memory_engine),
+            patch("hindsight_api.api.create_app") as mock_create_app,
+            patch("hindsight_api.config.get_config") as mock_get_config,
+        ):
             mock_config = MagicMock()
             mock_config.mcp_enabled = False
             mock_config.run_migrations_on_startup = False

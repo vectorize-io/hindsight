@@ -2396,7 +2396,7 @@ class MemoryEngine(MemoryEngineInterface):
                             f"Configuration error: HINDSIGHT_API_RETAIN_BATCH_ENABLED=true "
                             f"but the retain LLM provider '{self._retain_llm_config.provider}' "
                             f"does not support the batch API. Either switch to a provider "
-                            f"that supports batch operations (e.g. 'openai', 'groq') or "
+                            f"that supports batch operations (e.g. 'openai', 'groq', 'gemini') or "
                             f"set HINDSIGHT_API_RETAIN_BATCH_ENABLED=false."
                         )
 
@@ -2517,11 +2517,9 @@ class MemoryEngine(MemoryEngineInterface):
                 await conn.execute('SET search_path TO "$user", public, bm25_catalog, tokenizer_catalog')
 
             # SET (not SET LOCAL) so per-backend ANN tuning persists for the
-            # connection lifetime. Each backend exposes its own GUC: pgvector
-            # uses hnsw.ef_search, vchord uses vchordrq.probes. The dispatcher
-            # returns the right one for the configured extension, tuned for
-            # the higher recall the per-fact_type semantic queries in
-            # retrieve_semantic_bm25_combined() need.
+            # connection lifetime. The dispatcher returns only safe, portable
+            # knobs for the configured extension; VectorChord probe tuning is
+            # index-shaped and should be stored on vchordrq indexes instead.
             for guc, value in ann_search_tuning_settings(configured_vector_extension(), kind="high_recall"):
                 try:
                     await conn.execute(f"SET {guc} = {value}")
@@ -3005,6 +3003,19 @@ class MemoryEngine(MemoryEngineInterface):
         for item in contents:
             if item.get("update_mode") == "append" and not item.get("document_id"):
                 raise ValueError("update_mode='append' requires a document_id")
+
+        # Append mode rebuilds the full document by reading back the previously
+        # stored original_text and prepending it. With store_document_text
+        # disabled there is no stored text to read, so the append would silently
+        # drop all prior content — reject it explicitly instead.
+        if not get_config().store_document_text:
+            for item in contents:
+                if item.get("update_mode") == "append":
+                    raise ValueError(
+                        "update_mode='append' is not supported when HINDSIGHT_API_STORE_DOCUMENT_TEXT "
+                        "is disabled: the prior document text is not stored and cannot be appended to. "
+                        "Use update_mode='replace' instead."
+                    )
 
         # Auto-chunk large batches by token count to avoid timeouts and memory issues
         # Calculate total token count
@@ -7729,6 +7740,11 @@ class MemoryEngine(MemoryEngineInterface):
             if recall_include_chunks is not None
             else config_dict.get("recall_include_chunks", DEFAULT_RECALL_INCLUDE_CHUNKS)
         )
+        # With document text storage disabled there is no raw chunk text, so
+        # fetching chunks would only attach empty strings to every recall
+        # result. Force it off (pairs with excluding the expand tool below).
+        if not get_config().store_document_text:
+            effective_recall_include_chunks = False
         effective_recall_max_tokens = (
             recall_max_tokens_override
             if recall_max_tokens_override is not None

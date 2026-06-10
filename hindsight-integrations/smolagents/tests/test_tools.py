@@ -77,53 +77,41 @@ class TestResolveClient:
         with patch("hindsight_smolagents.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, "http://localhost:8888", None)
-            mock_cls.assert_called_once_with(
-                base_url="http://localhost:8888", timeout=30.0
-            )
+            mock_cls.assert_called_once_with(base_url="http://localhost:8888", timeout=30.0)
 
     def test_creates_client_with_api_key(self):
         with patch("hindsight_smolagents.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, "http://localhost:8888", "my-key")
-            mock_cls.assert_called_once_with(
-                base_url="http://localhost:8888", timeout=30.0, api_key="my-key"
-            )
+            mock_cls.assert_called_once_with(base_url="http://localhost:8888", timeout=30.0, api_key="my-key")
 
     def test_falls_back_to_global_config_url(self):
         configure(hindsight_api_url="http://config:8888")
         with patch("hindsight_smolagents.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, None, None)
-            mock_cls.assert_called_once_with(
-                base_url="http://config:8888", timeout=30.0
-            )
+            mock_cls.assert_called_once_with(base_url="http://config:8888", timeout=30.0)
 
     def test_falls_back_to_global_config_api_key(self):
         configure(hindsight_api_url="http://config:8888", api_key="config-key")
         with patch("hindsight_smolagents.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, None, None)
-            mock_cls.assert_called_once_with(
-                base_url="http://config:8888", timeout=30.0, api_key="config-key"
-            )
+            mock_cls.assert_called_once_with(base_url="http://config:8888", timeout=30.0, api_key="config-key")
 
     def test_explicit_url_overrides_config(self):
         configure(hindsight_api_url="http://config:8888")
         with patch("hindsight_smolagents.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, "http://explicit:9999", None)
-            mock_cls.assert_called_once_with(
-                base_url="http://explicit:9999", timeout=30.0
-            )
+            mock_cls.assert_called_once_with(base_url="http://explicit:9999", timeout=30.0)
 
     def test_explicit_api_key_overrides_config(self):
         configure(hindsight_api_url="http://config:8888", api_key="config-key")
         with patch("hindsight_smolagents.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
             _resolve_client(None, None, "explicit-key")
-            mock_cls.assert_called_once_with(
-                base_url="http://config:8888", timeout=30.0, api_key="explicit-key"
-            )
+            mock_cls.assert_called_once_with(base_url="http://config:8888", timeout=30.0, api_key="explicit-key")
 
     def test_raises_without_url_or_config(self):
         with pytest.raises(HindsightError, match="No Hindsight API URL"):
@@ -184,9 +172,7 @@ class TestToolConstruction:
             mock_cls.return_value = _mock_client()
             tool = HindsightRetainTool(bank_id="test")
             assert tool.name == "hindsight_retain"
-            mock_cls.assert_called_once_with(
-                base_url="http://localhost:8888", timeout=30.0
-            )
+            mock_cls.assert_called_once_with(base_url="http://localhost:8888", timeout=30.0)
 
     def test_api_key_passed_to_client(self):
         with patch("hindsight_smolagents.tools.Hindsight") as mock_cls:
@@ -214,17 +200,13 @@ class TestRetainTool:
         tool = HindsightRetainTool(bank_id="my-bank", client=client)
         result = tool.forward("I like dark mode")
         assert result == "Memory stored successfully."
-        client.retain.assert_called_once_with(
-            bank_id="my-bank", content="I like dark mode"
-        )
+        client.retain.assert_called_once_with(bank_id="my-bank", content="I like dark mode")
 
     def test_retain_with_tags(self):
         client = _mock_client()
         tool = HindsightRetainTool(bank_id="my-bank", client=client, tags=["env:test"])
         tool.forward("tagged content")
-        client.retain.assert_called_once_with(
-            bank_id="my-bank", content="tagged content", tags=["env:test"]
-        )
+        client.retain.assert_called_once_with(bank_id="my-bank", content="tagged content", tags=["env:test"])
 
     def test_retain_config_tags(self):
         configure(hindsight_api_url="http://localhost:8888", tags=["config-tag"])
@@ -319,9 +301,7 @@ class TestRecallTool:
     def test_recall_passes_budget_and_max_tokens(self):
         client = _mock_client()
         client.recall.return_value = _mock_recall_response(["fact"])
-        tool = HindsightRecallTool(
-            bank_id="my-bank", client=client, budget="high", max_tokens=2048
-        )
+        tool = HindsightRecallTool(bank_id="my-bank", client=client, budget="high", max_tokens=2048)
         tool.forward("query")
         call_kwargs = client.recall.call_args[1]
         assert call_kwargs["budget"] == "high"
@@ -569,9 +549,7 @@ class TestMemoryInstructions:
 
     def test_respects_max_results(self):
         client = _mock_client()
-        client.recall.return_value = _mock_recall_response(
-            ["a", "b", "c", "d", "e", "f"]
-        )
+        client.recall.return_value = _mock_recall_response(["a", "b", "c", "d", "e", "f"])
         result = memory_instructions(bank_id="test", client=client, max_results=3)
         lines = result.strip().split("\n")
         # prefix line + blank line (from prefix trailing \n) + 3 results
@@ -587,9 +565,7 @@ class TestMemoryInstructions:
     def test_passes_query_and_budget(self):
         client = _mock_client()
         client.recall.return_value = _mock_recall_response([])
-        memory_instructions(
-            bank_id="test", client=client, query="custom query", budget="high"
-        )
+        memory_instructions(bank_id="test", client=client, query="custom query", budget="high")
         call_kwargs = client.recall.call_args[1]
         assert call_kwargs["query"] == "custom query"
         assert call_kwargs["budget"] == "high"
@@ -603,9 +579,7 @@ class TestMemoryInstructions:
     def test_passes_tags(self):
         client = _mock_client()
         client.recall.return_value = _mock_recall_response([])
-        memory_instructions(
-            bank_id="test", client=client, tags=["scope:global"], tags_match="all"
-        )
+        memory_instructions(bank_id="test", client=client, tags=["scope:global"], tags_match="all")
         call_kwargs = client.recall.call_args[1]
         assert call_kwargs["tags"] == ["scope:global"]
         assert call_kwargs["tags_match"] == "all"

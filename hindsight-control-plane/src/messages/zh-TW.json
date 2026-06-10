@@ -640,7 +640,8 @@
     "importConflictLabel": "當文件已存在時",
     "importConflictSkip": "略過 — 保留現有文件",
     "importConflictReplace": "取代 — 以匯入的覆寫",
-    "importConflictNewId": "兩者都保留 — 以新 id 匯入"
+    "importConflictNewId": "兩者都保留 — 以新 id 匯入",
+    "textNotStoredWarning": "此伺服器不會儲存原始文字，僅保留擷取的記憶。"
   },
   "entitiesView": {
     "viewRelations": "關係",
@@ -1367,7 +1368,9 @@
     "linkTypeSemantic": "語義",
     "linkTypeTemporal": "時間",
     "linkTypeEntity": "實體",
-    "linkTypeCausal": "因果"
+    "linkTypeCausal": "因果",
+    "exportSvgTitle": "下載為 SVG 以分享",
+    "exportSvgLabel": "分享"
   },
   "metadata": {
     "title": "Hindsight Cloud",
@@ -1444,7 +1447,8 @@
     "observationScopeAllCombinations": "所有組合",
     "observationScopesEmpty": "在上方新增標籤以預覽觀察範圍",
     "metadataHelpText": "每行一個 <code>key: value</code>",
-    "entitiesHelpText": "逗號分隔的提示，與自動擷取的實體合併"
+    "entitiesHelpText": "逗號分隔的提示，與自動擷取的實體合併",
+    "textNotStoredWarning": "此伺服器不會儲存文件原始文字，僅保留擷取的記憶。"
   },
   "dashboard": {
     "welcome": "歡迎使用 Hindsight",

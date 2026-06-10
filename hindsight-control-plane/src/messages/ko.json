@@ -640,7 +640,8 @@
     "importConflictLabel": "문서가 이미 있는 경우",
     "importConflictSkip": "건너뛰기 — 기존 문서 유지",
     "importConflictReplace": "교체 — 가져온 것으로 덮어쓰기",
-    "importConflictNewId": "둘 다 유지 — 새 id로 가져오기"
+    "importConflictNewId": "둘 다 유지 — 새 id로 가져오기",
+    "textNotStoredWarning": "이 서버에는 원본 텍스트가 저장되지 않습니다. 추출된 메모리만 보관됩니다."
   },
   "entitiesView": {
     "viewRelations": "관계",
@@ -1367,7 +1368,9 @@
     "linkTypeSemantic": "의미",
     "linkTypeTemporal": "시간",
     "linkTypeEntity": "엔티티",
-    "linkTypeCausal": "인과"
+    "linkTypeCausal": "인과",
+    "exportSvgTitle": "공유용 SVG 다운로드",
+    "exportSvgLabel": "공유"
   },
   "metadata": {
     "title": "Hindsight Cloud",
@@ -1444,7 +1447,8 @@
     "observationScopeAllCombinations": "모든 조합",
     "observationScopesEmpty": "관찰 범위를 미리 보려면 위에 태그를 추가하세요",
     "metadataHelpText": "한 줄에 하나의 <code>key: value</code>",
-    "entitiesHelpText": "자동 추출된 엔터티와 병합되는 쉼표로 구분된 힌트"
+    "entitiesHelpText": "자동 추출된 엔터티와 병합되는 쉼표로 구분된 힌트",
+    "textNotStoredWarning": "이 서버에는 문서 원본 텍스트가 저장되지 않습니다. 추출된 메모리만 보관됩니다."
   },
   "dashboard": {
     "welcome": "Hindsight에 오신 것을 환영합니다",

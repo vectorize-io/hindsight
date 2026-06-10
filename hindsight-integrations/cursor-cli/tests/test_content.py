@@ -38,10 +38,14 @@ class TestReadTranscript:
 
     def test_reads_flat_format(self, tmp_path):
         f = tmp_path / "transcript.jsonl"
-        f.write_text("\n".join([
-            json.dumps({"role": "user", "content": "hi"}),
-            json.dumps({"role": "assistant", "content": "hello"}),
-        ]))
+        f.write_text(
+            "\n".join(
+                [
+                    json.dumps({"role": "user", "content": "hi"}),
+                    json.dumps({"role": "assistant", "content": "hello"}),
+                ]
+            )
+        )
         msgs = read_transcript(str(f))
         assert len(msgs) == 2
         assert msgs[0] == {"role": "user", "content": "hi"}
@@ -49,16 +53,24 @@ class TestReadTranscript:
 
     def test_reads_cursor_sdk_envelope(self, tmp_path):
         f = tmp_path / "transcript.jsonl"
-        f.write_text("\n".join([
-            json.dumps({
-                "type": "user",
-                "message": {"role": "user", "content": [{"type": "text", "text": "hi"}]},
-            }),
-            json.dumps({
-                "type": "assistant",
-                "message": {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
-            }),
-        ]))
+        f.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "message": {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "message": {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
+                        }
+                    ),
+                ]
+            )
+        )
         msgs = read_transcript(str(f))
         assert len(msgs) == 2
         assert msgs[0] == {"role": "user", "content": "hi"}
@@ -66,23 +78,33 @@ class TestReadTranscript:
 
     def test_rich_reader_preserves_tool_calls(self, tmp_path):
         f = tmp_path / "transcript.jsonl"
-        f.write_text("\n".join([
-            json.dumps({
-                "type": "user",
-                "message": {"role": "user", "content": [{"type": "text", "text": "list files"}]},
-            }),
-            json.dumps({
-                "type": "assistant",
-                "message": {"role": "assistant", "content": [{"type": "text", "text": "running ls"}]},
-            }),
-            json.dumps({
-                "type": "tool_call",
-                "name": "shell",
-                "args": {"command": "ls"},
-                "status": "completed",
-                "result": "a.txt\nb.txt",
-            }),
-        ]))
+        f.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "message": {"role": "user", "content": [{"type": "text", "text": "list files"}]},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "message": {"role": "assistant", "content": [{"type": "text", "text": "running ls"}]},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "tool_call",
+                            "name": "shell",
+                            "args": {"command": "ls"},
+                            "status": "completed",
+                            "result": "a.txt\nb.txt",
+                        }
+                    ),
+                ]
+            )
+        )
         msgs = read_transcript(str(f), include_tool_calls=True)
         # 1 user message + 1 assistant message with structured content
         assert len(msgs) == 2
@@ -210,14 +232,19 @@ class TestPrepareRetentionTranscript:
     def test_rich_includes_tool_use(self):
         msgs = [
             {"role": "user", "content": [{"type": "text", "text": "list files"}]},
-            {"role": "assistant", "content": [
-                {"type": "text", "text": "running"},
-                {"type": "tool_use", "name": "shell", "input": {"command": "ls"}},
-                {"type": "tool_result", "content": "a.txt"},
-            ]},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "running"},
+                    {"type": "tool_use", "name": "shell", "input": {"command": "ls"}},
+                    {"type": "tool_result", "content": "a.txt"},
+                ],
+            },
         ]
         text, count = prepare_retention_transcript(
-            msgs, retain_full_window=True, include_tool_calls=True,
+            msgs,
+            retain_full_window=True,
+            include_tool_calls=True,
         )
         assert text is not None
         assert "tool_use" in text

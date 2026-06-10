@@ -109,8 +109,7 @@ User: Perfect, I'll make a reservation for Saturday at 7pm.
 
         # Output should not be more than 5x the input
         assert ratio < 5.0, (
-            f"Output/input ratio {ratio:.2f} is too high! "
-            f"Input: {input_length} chars, Output: {output_length} chars"
+            f"Output/input ratio {ratio:.2f} is too high! Input: {input_length} chars, Output: {output_length} chars"
         )
 
     @pytest.mark.asyncio
@@ -168,16 +167,12 @@ I edited about 20 photos from my recent trip to the mountains.
         # Output should not be more than 4x the input for longer texts
         # (ratio should decrease as input grows)
         assert ratio < 4.0, (
-            f"Output/input ratio {ratio:.2f} is too high! "
-            f"Input: {input_length} chars, Output: {output_length} chars"
+            f"Output/input ratio {ratio:.2f} is too high! Input: {input_length} chars, Output: {output_length} chars"
         )
 
         # Also check that individual facts aren't excessively long
         max_fact_length = max(len(f.fact) for f in facts) if facts else 0
-        assert max_fact_length < 1000, (
-            f"Individual fact too long: {max_fact_length} chars. "
-            f"Facts should be concise."
-        )
+        assert max_fact_length < 1000, f"Individual fact too long: {max_fact_length} chars. Facts should be concise."
 
     @pytest.mark.asyncio
     async def test_token_ratio_with_locomo_conversation(self):
@@ -190,11 +185,7 @@ I edited about 20 photos from my recent trip to the mountains.
         import os
 
         # Load locomo conversation
-        fixture_path = os.path.join(
-            os.path.dirname(__file__),
-            "fixtures",
-            "locomo_conversation_sample.json"
-        )
+        fixture_path = os.path.join(os.path.dirname(__file__), "fixtures", "locomo_conversation_sample.json")
         with open(fixture_path, "r") as f:
             data = json.load(f)
 
@@ -246,8 +237,7 @@ I edited about 20 photos from my recent trip to the mountains.
         max_expected_facts = num_turns * 2  # At most 2 facts per conversation turn
 
         assert len(facts) <= max_expected_facts, (
-            f"Too many facts: {len(facts)} for {num_turns} conversation turns. "
-            f"Expected at most {max_expected_facts}."
+            f"Too many facts: {len(facts)} for {num_turns} conversation turns. Expected at most {max_expected_facts}."
         )
 
     @pytest.mark.asyncio
@@ -279,7 +269,7 @@ I'm planning to visit Japan next year.
         )
 
         # Count approximate number of statements (sentences)
-        num_statements = len([s for s in text.split('.') if s.strip()])
+        num_statements = len([s for s in text.split(".") if s.strip()])
 
         print(f"\nNumber of facts test:")
         print(f"  Input statements: ~{num_statements}")

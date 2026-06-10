@@ -130,8 +130,7 @@ async def test_store_chunks_batch_second_call_with_identical_payload(memory):
             await _seed_bank_and_document(conn, bank_id, document_id)
 
             chunks = [
-                ChunkMetadata(chunk_text=f"chunk-{i}", fact_count=1, content_index=0, chunk_index=i)
-                for i in range(5)
+                ChunkMetadata(chunk_text=f"chunk-{i}", fact_count=1, content_index=0, chunk_index=i) for i in range(5)
             ]
 
             await chunk_storage.store_chunks_batch(conn, bank_id, document_id, chunks, ops=ops)

@@ -53,7 +53,9 @@ async def _make_bank(memory: MemoryEngine, request_context, suffix: str) -> str:
     return bank_id
 
 
-async def _insert_fact(conn, bank_id: str, *, fact_type: str = "experience", consolidated: bool = False, failed: bool = False) -> None:
+async def _insert_fact(
+    conn, bank_id: str, *, fact_type: str = "experience", consolidated: bool = False, failed: bool = False
+) -> None:
     await conn.execute(
         """
         INSERT INTO memory_units (id, bank_id, text, fact_type, created_at, consolidated_at, consolidation_failed_at)
@@ -141,9 +143,7 @@ async def test_schemas_with_expired_rows(memory: MemoryEngine):
         )
 
         # 7-day cutoff: the 10-day-old row makes 'public' expired.
-        expired_7 = await conn.fetch(
-            "SELECT * FROM public.schemas_with_expired_rows('audit_log', 'started_at', 7)"
-        )
+        expired_7 = await conn.fetch("SELECT * FROM public.schemas_with_expired_rows('audit_log', 'started_at', 7)")
         assert "public" in {r[0] for r in expired_7}
 
         # 100-year cutoff: nothing is that old.

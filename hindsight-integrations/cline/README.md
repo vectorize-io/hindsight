@@ -26,19 +26,26 @@ hindsight-api  # starts on http://localhost:8888
 
 ## Installation
 
-From your project directory:
+```bash
+pip install hindsight-cline
+```
+
+Then, from your project directory:
 
 ```bash
-python /path/to/hindsight-integrations/cline/install.py --api-url https://api.hindsight.vectorize.io --api-token YOUR_KEY
+hindsight-cline install --api-url https://api.hindsight.vectorize.io --api-token YOUR_KEY
 ```
 
 Install globally (applies to all projects):
 
 ```bash
-python install.py --global --api-url https://api.hindsight.vectorize.io --api-token YOUR_KEY
+hindsight-cline install --global --api-url https://api.hindsight.vectorize.io --api-token YOUR_KEY
 ```
 
+To remove it later: `hindsight-cline uninstall` (add `--global` if you installed globally).
+
 This copies four hook scripts (`TaskStart`, `UserPromptSubmit`, `TaskComplete`, `TaskCancel`) plus their `lib/` and `settings.json` into:
+
 - `.clinerules/hooks/` (project install — commit it to share with your team), or
 - `~/Documents/Cline/Rules/Hooks/` (global install).
 
@@ -60,23 +67,23 @@ Cline doesn't hand hooks a conversation transcript, so the integration accumulat
 
 Defaults live in the installed `settings.json`; put personal overrides in `~/.hindsight/cline.json` (stable across reinstalls). Common keys:
 
-| Setting | Default | Description |
-| --- | --- | --- |
-| `hindsightApiUrl` | (empty) | Hindsight server URL. Empty → use a local server on `apiPort`. |
-| `hindsightApiToken` | `null` | API key for Hindsight Cloud. |
-| `bankId` | `cline` | Memory bank for this integration. |
-| `autoRecall` | `true` | Inject memories before tasks/prompts. |
-| `autoRetain` | `true` | Retain the task transcript when it ends. |
-| `recallBudget` | `mid` | Recall depth: `low` / `mid` / `high`. |
-| `recallTypes` | `["world","experience"]` | Memory types to recall. |
-| `dynamicBankId` | `false` | Separate bank per project/session (see `dynamicBankGranularity`). |
-| `debug` | `false` | Log to stderr. |
+| Setting             | Default                  | Description                                                       |
+| ------------------- | ------------------------ | ----------------------------------------------------------------- |
+| `hindsightApiUrl`   | (empty)                  | Hindsight server URL. Empty → use a local server on `apiPort`.    |
+| `hindsightApiToken` | `null`                   | API key for Hindsight Cloud.                                      |
+| `bankId`            | `cline`                  | Memory bank for this integration.                                 |
+| `autoRecall`        | `true`                   | Inject memories before tasks/prompts.                             |
+| `autoRetain`        | `true`                   | Retain the task transcript when it ends.                          |
+| `recallBudget`      | `mid`                    | Recall depth: `low` / `mid` / `high`.                             |
+| `recallTypes`       | `["world","experience"]` | Memory types to recall.                                           |
+| `dynamicBankId`     | `false`                  | Separate bank per project/session (see `dynamicBankGranularity`). |
+| `debug`             | `false`                  | Log to stderr.                                                    |
 
 Every key can also be set via `HINDSIGHT_*` environment variables (e.g. `HINDSIGHT_BANK_ID`, `HINDSIGHT_AUTO_RECALL=false`).
 
 ## Verifying Setup
 
-1. Start Hindsight (`hindsight-api` or Hindsight Cloud) and run `install.py` with your URL/key.
+1. Start Hindsight (`hindsight-api` or Hindsight Cloud) and run `hindsight-cline install` with your URL/key.
 2. Enable hooks in Cline (Settings → Features → Hooks).
 3. Start a task — recalled memories appear in context as a `<hindsight_memories>` block.
 4. Complete a task, then check the `cline` bank (via the API or dashboard) — a memory should appear.
@@ -92,6 +99,6 @@ echo '{"hookName":"UserPromptSubmit","prompt":"how do we authenticate?","taskId"
 ## Development
 
 ```bash
-pip install pytest
-python -m pytest tests/ -v
+uv sync
+uv run pytest tests/ -v
 ```

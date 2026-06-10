@@ -640,7 +640,8 @@
     "importConflictLabel": "Se um documento já existir",
     "importConflictSkip": "Ignorar — manter o documento existente",
     "importConflictReplace": "Substituir — sobrescrever pelo importado",
-    "importConflictNewId": "Manter ambos — importar com novo id"
+    "importConflictNewId": "Manter ambos — importar com novo id",
+    "textNotStoredWarning": "O texto de origem não é armazenado neste servidor — apenas as memórias extraídas são mantidas."
   },
   "entitiesView": {
     "viewRelations": "Relações",
@@ -1367,7 +1368,9 @@
     "linkTypeSemantic": "semântico",
     "linkTypeTemporal": "temporal",
     "linkTypeEntity": "entidade",
-    "linkTypeCausal": "causal"
+    "linkTypeCausal": "causal",
+    "exportSvgTitle": "Baixar como SVG para compartilhar",
+    "exportSvgLabel": "Compartilhar"
   },
   "metadata": {
     "title": "Hindsight Cloud",
@@ -1444,7 +1447,8 @@
     "observationScopeAllCombinations": "Todas as combinações",
     "observationScopesEmpty": "Adicione tags acima para visualizar os escopos de observação",
     "metadataHelpText": "Um <code>key: value</code> por linha",
-    "entitiesHelpText": "Sugestões separadas por vírgula mescladas com entidades extraídas automaticamente"
+    "entitiesHelpText": "Sugestões separadas por vírgula mescladas com entidades extraídas automaticamente",
+    "textNotStoredWarning": "O texto bruto do documento não será armazenado neste servidor — apenas as memórias extraídas são mantidas."
   },
   "dashboard": {
     "welcome": "Bem-vindo ao Hindsight",

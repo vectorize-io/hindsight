@@ -30,9 +30,7 @@ class TestRecallNode:
     @pytest.mark.asyncio
     async def test_injects_memories_as_system_message(self):
         client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(
-            ["User likes Python", "User is in NYC"]
-        )
+        client.arecall.return_value = _mock_recall_response(["User likes Python", "User is in NYC"])
         node = create_recall_node(bank_id="test-bank", client=client)
 
         state = {"messages": [HumanMessage(content="What do you remember about me?")]}
@@ -69,9 +67,7 @@ class TestRecallNode:
     @pytest.mark.asyncio
     async def test_respects_max_results(self):
         client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(
-            ["fact1", "fact2", "fact3", "fact4", "fact5"]
-        )
+        client.arecall.return_value = _mock_recall_response(["fact1", "fact2", "fact3", "fact4", "fact5"])
         node = create_recall_node(bank_id="test-bank", client=client, max_results=2)
 
         state = {"messages": [HumanMessage(content="query")]}
@@ -139,12 +135,8 @@ class TestRecallNodeOutputKey:
     @pytest.mark.asyncio
     async def test_output_key_returns_memory_text(self):
         client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(
-            ["User likes Python", "User is in NYC"]
-        )
-        node = create_recall_node(
-            bank_id="test-bank", client=client, output_key="memory_context"
-        )
+        client.arecall.return_value = _mock_recall_response(["User likes Python", "User is in NYC"])
+        node = create_recall_node(bank_id="test-bank", client=client, output_key="memory_context")
 
         state = {"messages": [HumanMessage(content="What do you remember?")]}
         result = await node(state)
@@ -158,9 +150,7 @@ class TestRecallNodeOutputKey:
     async def test_output_key_returns_none_when_no_results(self):
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response([])
-        node = create_recall_node(
-            bank_id="test-bank", client=client, output_key="memory_context"
-        )
+        node = create_recall_node(bank_id="test-bank", client=client, output_key="memory_context")
 
         state = {"messages": [HumanMessage(content="hello")]}
         result = await node(state)
@@ -171,9 +161,7 @@ class TestRecallNodeOutputKey:
     async def test_output_key_raises_on_error(self):
         client = _mock_client()
         client.arecall.side_effect = RuntimeError("connection refused")
-        node = create_recall_node(
-            bank_id="test-bank", client=client, output_key="memory_context"
-        )
+        node = create_recall_node(bank_id="test-bank", client=client, output_key="memory_context")
 
         state = {"messages": [HumanMessage(content="hello")]}
         with pytest.raises(HindsightError, match="Recall node failed"):
@@ -203,9 +191,7 @@ class TestRetainNode:
     @pytest.mark.asyncio
     async def test_retains_both_when_configured(self):
         client = _mock_client()
-        node = create_retain_node(
-            bank_id="test-bank", client=client, retain_human=True, retain_ai=True
-        )
+        node = create_retain_node(bank_id="test-bank", client=client, retain_human=True, retain_ai=True)
 
         state = {
             "messages": [
@@ -222,9 +208,7 @@ class TestRetainNode:
     @pytest.mark.asyncio
     async def test_skips_when_no_messages_match(self):
         client = _mock_client()
-        node = create_retain_node(
-            bank_id="test-bank", client=client, retain_human=False, retain_ai=False
-        )
+        node = create_retain_node(bank_id="test-bank", client=client, retain_human=False, retain_ai=False)
 
         state = {"messages": [HumanMessage(content="hello")]}
         await node(state)
@@ -234,9 +218,7 @@ class TestRetainNode:
     @pytest.mark.asyncio
     async def test_passes_tags(self):
         client = _mock_client()
-        node = create_retain_node(
-            bank_id="test-bank", client=client, tags=["source:chat"]
-        )
+        node = create_retain_node(bank_id="test-bank", client=client, tags=["source:chat"])
 
         state = {"messages": [HumanMessage(content="hello")]}
         await node(state)

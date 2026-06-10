@@ -640,7 +640,8 @@
     "importConflictLabel": "If a document already exists",
     "importConflictSkip": "Skip — keep the existing document",
     "importConflictReplace": "Replace — overwrite with the imported one",
-    "importConflictNewId": "Keep both — import under a new id"
+    "importConflictNewId": "Keep both — import under a new id",
+    "textNotStoredWarning": "Source text isn't stored on this server — only the extracted memories are kept."
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -1367,7 +1368,9 @@
     "linkTypeSemantic": "semantic",
     "linkTypeTemporal": "temporal",
     "linkTypeEntity": "entity",
-    "linkTypeCausal": "causal"
+    "linkTypeCausal": "causal",
+    "exportSvgTitle": "Download as SVG to share",
+    "exportSvgLabel": "Share"
   },
   "metadata": {
     "title": "Hindsight Cloud",
@@ -1444,7 +1447,8 @@
     "observationScopeAllCombinations": "All combinations",
     "observationScopesEmpty": "Add tags above to preview observation scopes",
     "metadataHelpText": "One <code>key: value</code> per line",
-    "entitiesHelpText": "Comma-separated hints merged with auto-extracted entities"
+    "entitiesHelpText": "Comma-separated hints merged with auto-extracted entities",
+    "textNotStoredWarning": "Raw document text won't be stored on this server — only the extracted memories are kept."
   },
   "dashboard": {
     "welcome": "Welcome to Hindsight",
