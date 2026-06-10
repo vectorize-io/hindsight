@@ -31,6 +31,7 @@ hindsight_client_api/models/bank_config_response.py
 hindsight_client_api/models/bank_config_update.py
 hindsight_client_api/models/bank_list_item.py
 hindsight_client_api/models/bank_list_response.py
+hindsight_client_api/models/bank_llm_health_response.py
 hindsight_client_api/models/bank_profile_response.py
 hindsight_client_api/models/bank_stats_response.py
 hindsight_client_api/models/bank_template_config.py
@@ -76,6 +77,7 @@ hindsight_client_api/models/list_chunks_response.py
 hindsight_client_api/models/list_documents_response.py
 hindsight_client_api/models/list_memory_units_response.py
 hindsight_client_api/models/list_tags_response.py
+hindsight_client_api/models/llm_operation_health.py
 hindsight_client_api/models/llm_request_entry.py
 hindsight_client_api/models/llm_request_list_response.py
 hindsight_client_api/models/llm_request_stats_bucket.py

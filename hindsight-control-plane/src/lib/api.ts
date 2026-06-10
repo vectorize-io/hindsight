@@ -1447,6 +1447,22 @@ export class ControlPlaneClient {
   }
 
   /**
+   * Probe the LLMs this bank uses (retain/consolidation/reflect). Deliberate action
+   * (makes a real provider call) — do NOT poll this. Status only; never the API key.
+   */
+  async testBankLlm(bankId: string) {
+    return this.fetchApi<{
+      bank_id: string;
+      operations: {
+        operation: "retain" | "consolidation" | "reflect";
+        ok: boolean;
+        status: "connected" | "not_configured" | "auth_failed" | "unreachable" | "timeout";
+        latency_ms: number | null;
+      }[];
+    }>(bankApi(bankId, "/health/llm"), { method: "POST" });
+  }
+
+  /**
    * Update bank configuration overrides
    */
   async updateBankConfig(bankId: string, updates: Record<string, any>) {

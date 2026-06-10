@@ -25,6 +25,7 @@ from hindsight_client_api.models.bank_config_response import BankConfigResponse
 from hindsight_client_api.models.bank_config_update import BankConfigUpdate
 from hindsight_client_api.models.bank_list_item import BankListItem
 from hindsight_client_api.models.bank_list_response import BankListResponse
+from hindsight_client_api.models.bank_llm_health_response import BankLlmHealthResponse
 from hindsight_client_api.models.bank_profile_response import BankProfileResponse
 from hindsight_client_api.models.bank_stats_response import BankStatsResponse
 from hindsight_client_api.models.bank_template_config import BankTemplateConfig
@@ -75,6 +76,7 @@ from hindsight_client_api.models.list_chunks_response import ListChunksResponse
 from hindsight_client_api.models.list_documents_response import ListDocumentsResponse
 from hindsight_client_api.models.list_memory_units_response import ListMemoryUnitsResponse
 from hindsight_client_api.models.list_tags_response import ListTagsResponse
+from hindsight_client_api.models.llm_operation_health import LlmOperationHealth
 from hindsight_client_api.models.memories_timeseries_response import MemoriesTimeseriesResponse
 from hindsight_client_api.models.memory_item import MemoryItem
 from hindsight_client_api.models.memory_timeseries_bucket import MemoryTimeseriesBucket

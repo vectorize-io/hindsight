@@ -743,6 +743,65 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/health/llm": {
+      "post": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Test the bank's LLM connectivity",
+        "description": "Probe the LLMs this bank would use for retain / consolidation / reflect with one minimal call each (configs shared across operations are probed once), so you can discover 'not configured / unreachable' instead of a silent stall. Deliberate action (makes a real provider call); not for polling. Returns status only \u2014 never the provider, model, endpoint, API key, or raw error. Disable with HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH=false.",
+        "operationId": "test_bank_llm",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankLlmHealthResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/stats/memories-timeseries": {
       "get": {
         "tags": [
@@ -5998,6 +6057,52 @@
           ]
         }
       },
+      "BankLlmHealthResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id",
+            "description": "Bank identifier"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/LlmOperationHealth"
+            },
+            "type": "array",
+            "title": "Operations",
+            "description": "Connectivity status per operation (retain, consolidation, reflect)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "operations"
+        ],
+        "title": "BankLlmHealthResponse",
+        "description": "Per-bank LLM connectivity probe across retain/consolidation/reflect. Operations\nthat share a configuration are probed once. Discloses status only \u2014 never the\nprovider, model, endpoint, API key, or raw error.",
+        "example": {
+          "bank_id": "user123",
+          "operations": [
+            {
+              "latency_ms": 412.0,
+              "ok": true,
+              "operation": "retain",
+              "status": "connected"
+            },
+            {
+              "latency_ms": 412.0,
+              "ok": true,
+              "operation": "consolidation",
+              "status": "connected"
+            },
+            {
+              "ok": false,
+              "operation": "reflect",
+              "status": "not_configured"
+            }
+          ]
+        }
+      },
       "BankProfileResponse": {
         "properties": {
           "bank_id": {
@@ -8222,6 +8327,11 @@
             "title": "Bank Config Api",
             "description": "Whether per-bank configuration API is enabled"
           },
+          "bank_llm_health": {
+            "type": "boolean",
+            "title": "Bank Llm Health",
+            "description": "Whether the per-bank LLM connectivity probe is enabled"
+          },
           "file_upload_api": {
             "type": "boolean",
             "title": "File Upload Api",
@@ -8259,6 +8369,7 @@
           "mcp",
           "worker",
           "bank_config_api",
+          "bank_llm_health",
           "file_upload_api",
           "document_export_api",
           "document_import_api",
@@ -8975,6 +9086,57 @@
           "offset": 0,
           "total": 25
         }
+      },
+      "LlmOperationHealth": {
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "retain",
+              "consolidation",
+              "reflect"
+            ],
+            "title": "LlmHealthOperation",
+            "description": "Operation whose LLM was probed"
+          },
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "description": "True only when the probe connected successfully"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "connected",
+              "not_configured",
+              "auth_failed",
+              "unreachable",
+              "timeout"
+            ],
+            "title": "LlmHealthStatus",
+            "description": "'connected'; 'not_configured' (provider is 'none'); 'auth_failed' (rejected \u2014 usually a wrong/expired API key); 'unreachable' (call failed); 'timeout'"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms",
+            "description": "Round-trip latency of the probe call"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation",
+          "ok",
+          "status"
+        ],
+        "title": "LlmOperationHealth",
+        "description": "LLM connectivity status for a single operation. Status only \u2014 no provider/model/\nendpoint/error, so the probe never discloses the LLM configuration."
       },
       "MemoriesTimeseriesResponse": {
         "properties": {

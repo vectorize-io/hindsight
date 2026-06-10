@@ -42,7 +42,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Brain, Download, Trash2, Loader2, MoreVertical, Pencil, RotateCcw } from "lucide-react";
+import {
+  Brain,
+  Download,
+  Trash2,
+  Loader2,
+  MoreVertical,
+  Pencil,
+  RotateCcw,
+  Activity,
+} from "lucide-react";
+import { LlmHealthDialog } from "@/components/llm-health-dialog";
 
 type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
 type DataSubTab = "world" | "experience" | "observations" | "mental-models";
@@ -64,8 +74,10 @@ export default function BankPage() {
   const bankConfigEnabled = features?.bank_config_api ?? false;
   const auditLogEnabled = features?.audit_log ?? false;
   const llmTraceEnabled = features?.llm_trace ?? false;
+  const llmHealthEnabled = features?.bank_llm_health ?? false;
 
   // Bank actions state
+  const [showLlmHealthDialog, setShowLlmHealthDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showClearObservationsDialog, setShowClearObservationsDialog] = useState(false);
@@ -207,6 +219,12 @@ export default function BankPage() {
                         <Download className="w-4 h-4 mr-2" />
                         {t("exportTemplate")}
                       </DropdownMenuItem>
+                      {llmHealthEnabled && (
+                        <DropdownMenuItem onClick={() => setShowLlmHealthDialog(true)}>
+                          <Activity className="w-4 h-4 mr-2" />
+                          {t("health")}
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
                         onClick={handleTriggerConsolidation}
@@ -589,6 +607,15 @@ export default function BankPage() {
           </div>
         </main>
       </div>
+
+      {/* LLM connectivity check */}
+      {bankId && (
+        <LlmHealthDialog
+          bankId={bankId}
+          open={showLlmHealthDialog}
+          onOpenChange={setShowLlmHealthDialog}
+        />
+      )}
 
       {/* Delete Bank Confirmation Dialog */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>

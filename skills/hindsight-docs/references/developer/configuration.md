@@ -1773,6 +1773,7 @@ Configuration fields are categorized for security:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_ENABLE_BANK_CONFIG_API` | Enable per-bank config API | `true` |
+| `HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH` | Enable the per-bank LLM connectivity probe (`POST /v1/default/banks/{bank_id}/health/llm`). It makes a real provider call, so it is **off by default** — enable it to expose the endpoint. Returns status only — never the provider/model/endpoint. | `false` |
 | `HINDSIGHT_API_DEFAULT_BANK_TEMPLATE` | Bank template manifest (JSON) applied automatically to every newly-created bank. See below. | _(unset)_ |
 
 ##### `HINDSIGHT_API_DEFAULT_BANK_TEMPLATE`

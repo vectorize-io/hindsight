@@ -488,6 +488,48 @@ paths:
       summary: Get statistics for memory bank
       tags:
       - Banks
+  /v1/default/banks/{bank_id}/health/llm:
+    post:
+      description: "Probe the LLMs this bank would use for retain / consolidation\
+        \ / reflect with one minimal call each (configs shared across operations are\
+        \ probed once), so you can discover 'not configured / unreachable' instead\
+        \ of a silent stall. Deliberate action (makes a real provider call); not for\
+        \ polling. Returns status only — never the provider, model, endpoint, API\
+        \ key, or raw error. Disable with HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH=false."
+      operationId: test_bank_llm
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BankLlmHealthResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Test the bank's LLM connectivity
+      tags:
+      - Banks
   /v1/default/banks/{bank_id}/stats/memories-timeseries:
     get:
       description: "Memories ingested over a period, bucketed by time and broken down\
@@ -4109,6 +4151,40 @@ components:
       required:
       - banks
       title: BankListResponse
+    BankLlmHealthResponse:
+      description: |-
+        Per-bank LLM connectivity probe across retain/consolidation/reflect. Operations
+        that share a configuration are probed once. Discloses status only — never the
+        provider, model, endpoint, API key, or raw error.
+      example:
+        bank_id: user123
+        operations:
+        - latency_ms: 412.0
+          ok: true
+          operation: retain
+          status: connected
+        - latency_ms: 412.0
+          ok: true
+          operation: consolidation
+          status: connected
+        - ok: false
+          operation: reflect
+          status: not_configured
+      properties:
+        bank_id:
+          description: Bank identifier
+          title: Bank Id
+          type: string
+        operations:
+          description: "Connectivity status per operation (retain, consolidation,\
+            \ reflect)"
+          items:
+            $ref: '#/components/schemas/LlmOperationHealth'
+          type: array
+      required:
+      - bank_id
+      - operations
+      title: BankLlmHealthResponse
     BankProfileResponse:
       description: Response model for bank profile.
       example:
@@ -5406,6 +5482,10 @@ components:
           description: Whether per-bank configuration API is enabled
           title: Bank Config Api
           type: boolean
+        bank_llm_health:
+          description: Whether the per-bank LLM connectivity probe is enabled
+          title: Bank Llm Health
+          type: boolean
         file_upload_api:
           description: Whether file upload/conversion API is enabled
           title: File Upload Api
@@ -5434,6 +5514,7 @@ components:
       required:
       - audit_log
       - bank_config_api
+      - bank_llm_health
       - document_export_api
       - document_import_api
       - file_upload_api
@@ -5983,6 +6064,43 @@ components:
       - offset
       - total
       title: ListTagsResponse
+    LlmOperationHealth:
+      description: |-
+        LLM connectivity status for a single operation. Status only — no provider/model/
+        endpoint/error, so the probe never discloses the LLM configuration.
+      properties:
+        operation:
+          description: Operation whose LLM was probed
+          enum:
+          - retain
+          - consolidation
+          - reflect
+          title: LlmHealthOperation
+          type: string
+        ok:
+          description: True only when the probe connected successfully
+          title: Ok
+          type: boolean
+        status:
+          description: '''connected''; ''not_configured'' (provider is ''none'');
+            ''auth_failed'' (rejected — usually a wrong/expired API key); ''unreachable''
+            (call failed); ''timeout'''
+          enum:
+          - connected
+          - not_configured
+          - auth_failed
+          - unreachable
+          - timeout
+          title: LlmHealthStatus
+          type: string
+        latency_ms:
+          nullable: true
+          type: number
+      required:
+      - ok
+      - operation
+      - status
+      title: LlmOperationHealth
     MemoriesTimeseriesResponse:
       description: Time-series of memory ingestion bucketed by time and fact type.
       example:

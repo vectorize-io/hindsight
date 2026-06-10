@@ -289,6 +289,28 @@ export type BankListResponse = {
 };
 
 /**
+ * BankLlmHealthResponse
+ *
+ * Per-bank LLM connectivity probe across retain/consolidation/reflect. Operations
+ * that share a configuration are probed once. Discloses status only — never the
+ * provider, model, endpoint, API key, or raw error.
+ */
+export type BankLlmHealthResponse = {
+  /**
+   * Bank Id
+   *
+   * Bank identifier
+   */
+  bank_id: string;
+  /**
+   * Operations
+   *
+   * Connectivity status per operation (retain, consolidation, reflect)
+   */
+  operations: Array<LlmOperationHealth>;
+};
+
+/**
  * BankProfileResponse
  *
  * Response model for bank profile.
@@ -1659,6 +1681,12 @@ export type FeaturesInfo = {
    */
   bank_config_api: boolean;
   /**
+   * Bank Llm Health
+   *
+   * Whether the per-bank LLM connectivity probe is enabled
+   */
+  bank_llm_health: boolean;
+  /**
    * File Upload Api
    *
    * Whether file upload/conversion API is enabled
@@ -2075,6 +2103,39 @@ export type ListTagsResponse = {
    * Offset
    */
   offset: number;
+};
+
+/**
+ * LlmOperationHealth
+ *
+ * LLM connectivity status for a single operation. Status only — no provider/model/
+ * endpoint/error, so the probe never discloses the LLM configuration.
+ */
+export type LlmOperationHealth = {
+  /**
+   * LlmHealthOperation
+   *
+   * Operation whose LLM was probed
+   */
+  operation: "retain" | "consolidation" | "reflect";
+  /**
+   * Ok
+   *
+   * True only when the probe connected successfully
+   */
+  ok: boolean;
+  /**
+   * LlmHealthStatus
+   *
+   * 'connected'; 'not_configured' (provider is 'none'); 'auth_failed' (rejected — usually a wrong/expired API key); 'unreachable' (call failed); 'timeout'
+   */
+  status: "connected" | "not_configured" | "auth_failed" | "unreachable" | "timeout";
+  /**
+   * Latency Ms
+   *
+   * Round-trip latency of the probe call
+   */
+  latency_ms?: number | null;
 };
 
 /**
@@ -4140,6 +4201,42 @@ export type GetAgentStatsResponses = {
 };
 
 export type GetAgentStatsResponse = GetAgentStatsResponses[keyof GetAgentStatsResponses];
+
+export type TestBankLlmData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/health/llm";
+};
+
+export type TestBankLlmErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type TestBankLlmError = TestBankLlmErrors[keyof TestBankLlmErrors];
+
+export type TestBankLlmResponses = {
+  /**
+   * Successful Response
+   */
+  200: BankLlmHealthResponse;
+};
+
+export type TestBankLlmResponse = TestBankLlmResponses[keyof TestBankLlmResponses];
 
 export type GetMemoriesTimeseriesData = {
   body?: never;

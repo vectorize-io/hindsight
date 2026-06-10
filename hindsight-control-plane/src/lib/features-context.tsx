@@ -8,6 +8,7 @@ interface Features {
   mcp: boolean;
   worker: boolean;
   bank_config_api: boolean;
+  bank_llm_health: boolean;
   access_key_auth: boolean;
   document_export_api: boolean;
   document_import_api: boolean;
@@ -27,6 +28,7 @@ const defaultFeatures: Features = {
   mcp: false,
   worker: false,
   bank_config_api: false,
+  bank_llm_health: false,
   access_key_auth: false,
   document_export_api: false,
   document_import_api: false,
