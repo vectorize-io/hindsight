@@ -604,16 +604,44 @@ Just provide the direct answer with proper markdown formatting.
 CRITICAL: This is a NON-CONVERSATIONAL system. NEVER ask follow-up questions, offer to search again, suggest alternatives, or end with anything like "Would you like me to..." or "Let me know if...". The user cannot reply. Your answer must be complete and self-contained."""
 
 
-def build_final_system_prompt(mission: str | None = None, llm_output_language: str | None = None) -> str:
+# The final synthesis is a SEPARATE LLM call with its own system prompt — the
+# agent/reasoning system prompt (which carries directives and the language rule)
+# is NOT in scope here. So this default language rule, and the directives, must
+# be repeated for the answer-writing model. Without it, weaker models drift to
+# English even when the question/facts are in another language or a directive
+# demands a specific one (the cause of flaky multilingual reflect tests).
+_FINAL_LANGUAGE_RULE = (
+    "## LANGUAGE\n"
+    "- Respond in the SAME language as the user's question "
+    "(e.g. a question in Chinese gets a Chinese answer; Japanese → Japanese).\n"
+    "- If a directive above specifies a response language, follow the directive — "
+    "it takes precedence over this default."
+)
+
+
+def build_final_system_prompt(
+    mission: str | None = None,
+    llm_output_language: str | None = None,
+    directives: list[dict[str, Any]] | None = None,
+) -> str:
     """Build the final synthesis system prompt, using mission as role when set.
 
-    When ``llm_output_language`` is set, the response is forced into that
-    language regardless of the query/source language.
+    ``directives`` are re-injected here (they live in the agent/reasoning prompt,
+    but the final answer is a separate call) so output-constraining rules — most
+    visibly response language — are honoured by the model that actually writes
+    the answer. When ``llm_output_language`` is set it forces that language
+    regardless of the query/source/directive language (config override wins).
     """
     from hindsight_api.engine.prompt_utils import escape_for_prompt, output_language_directive
 
     role_section = escape_for_prompt(mission.strip()) if mission else _DEFAULT_FINAL_ROLE
-    return _FINAL_SYSTEM_PROMPT_BASE.format(role_section=role_section) + output_language_directive(llm_output_language)
+
+    parts = [build_directives_section(directives) if directives else ""]
+    parts.append(_FINAL_SYSTEM_PROMPT_BASE.format(role_section=role_section))
+    parts.append(_FINAL_LANGUAGE_RULE)
+    parts.append(build_directives_reminder(directives) if directives else "")
+
+    return "\n\n".join(p.strip() for p in parts if p.strip()) + output_language_directive(llm_output_language)
 
 
 # Backward-compatible constant for non-identity missions

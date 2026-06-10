@@ -505,7 +505,9 @@ async def run_reflect_agent(
                 messages=[
                     {
                         "role": "system",
-                        "content": build_final_system_prompt(bank_profile.get("mission"), llm_output_language),
+                        "content": build_final_system_prompt(
+                            bank_profile.get("mission"), llm_output_language, directives
+                        ),
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -565,7 +567,9 @@ async def run_reflect_agent(
                 messages=[
                     {
                         "role": "system",
-                        "content": build_final_system_prompt(bank_profile.get("mission"), llm_output_language),
+                        "content": build_final_system_prompt(
+                            bank_profile.get("mission"), llm_output_language, directives
+                        ),
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -684,7 +688,9 @@ async def run_reflect_agent(
                 messages=[
                     {
                         "role": "system",
-                        "content": build_final_system_prompt(bank_profile.get("mission"), llm_output_language),
+                        "content": build_final_system_prompt(
+                            bank_profile.get("mission"), llm_output_language, directives
+                        ),
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -808,7 +814,9 @@ async def run_reflect_agent(
                 messages=[
                     {
                         "role": "system",
-                        "content": build_final_system_prompt(bank_profile.get("mission"), llm_output_language),
+                        "content": build_final_system_prompt(
+                            bank_profile.get("mission"), llm_output_language, directives
+                        ),
                     },
                     {"role": "user", "content": prompt},
                 ],
