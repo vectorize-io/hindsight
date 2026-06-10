@@ -1368,7 +1368,9 @@
     "linkTypeSemantic": "semantic",
     "linkTypeTemporal": "temporal",
     "linkTypeEntity": "entity",
-    "linkTypeCausal": "causal"
+    "linkTypeCausal": "causal",
+    "exportSvgTitle": "Download as SVG to share",
+    "exportSvgLabel": "Share"
   },
   "metadata": {
     "title": "Hindsight Cloud",

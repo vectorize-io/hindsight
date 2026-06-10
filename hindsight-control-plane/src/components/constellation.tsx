@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useCallback, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { useTranslations } from "next-intl";
 import { prepare, layout, prepareWithSegments, layoutWithLines } from "@chenglou/pretext";
 import type { GraphData, GraphNode, GraphLink } from "./graph-2d";
@@ -125,6 +126,21 @@ function hashStr(s: string): number {
   return h;
 }
 
+/** Fetch a same-origin asset and return it as a base64 data URL (for inlining into the SVG). */
+function loadDataUrl(url: string): Promise<string> {
+  return fetch(url)
+    .then((r) => r.blob())
+    .then(
+      (blob) =>
+        new Promise<string>((resolve, reject) => {
+          const fr = new FileReader();
+          fr.onload = () => resolve(fr.result as string);
+          fr.onerror = reject;
+          fr.readAsDataURL(blob);
+        })
+    );
+}
+
 // Dark mode hook
 function useIsDarkMode() {
   const [isDark, setIsDark] = useState(false);
@@ -160,6 +176,23 @@ const LINK_TYPE_COLORS: Record<string, string> = {
 };
 
 const DEFAULT_NODE_COLOR = "#0074d9";
+
+function toolbarBtnStyle(isDark: boolean): CSSProperties {
+  return {
+    padding: "6px 10px",
+    borderRadius: 6,
+    border: `1px solid ${isDark ? "#27272a" : "#e4e4e7"}`,
+    background: isDark ? "#18181b" : "#ffffff",
+    color: isDark ? "#a1a1aa" : "#71717a",
+    fontSize: 12,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    opacity: 0.7,
+    transition: "opacity 0.15s",
+  };
+}
 
 // ============================================================================
 // Component
@@ -966,6 +999,184 @@ export function Constellation({
     return () => clearTimeout(timer);
   }, [isFullscreen]);
 
+  // Hindsight logo, fetched once and cached as a base64 data URL so the
+  // exported SVG can inline it and stay self-contained when shared.
+  const logoDataUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    loadDataUrl("/logo.png")
+      .then((url) => {
+        if (!cancelled) logoDataUrlRef.current = url;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ----- SVG export (shareable, branded poster of the whole graph) -----
+  // Independent of the live camera: fits every node into a fixed high-res
+  // poster on a dark "night sky" — soft bottom glow, plus-grid, glowing node
+  // bubbles and the Hindsight logo top-left. No labels/legends/footer, so the
+  // graph itself is the hero. Hover dimming is omitted; every node shines.
+  const buildSvgString = useCallback(
+    (logoDataUrl: string | null): string => {
+      const W = 1600;
+      const H = 1000;
+      const f = (v: number) => Math.round(v * 10) / 10;
+      const a = (v: number) => Math.round(v * 100) / 100;
+
+      const n = preparedNodes.length;
+
+      // --- Fit the whole graph: bounds of world coords → centered, scaled view ---
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const nd of preparedNodes) {
+        if (nd.wx < minX) minX = nd.wx;
+        if (nd.wx > maxX) maxX = nd.wx;
+        if (nd.wy < minY) minY = nd.wy;
+        if (nd.wy > maxY) maxY = nd.wy;
+      }
+      if (!Number.isFinite(minX)) {
+        minX = minY = -1;
+        maxX = maxY = 1;
+      }
+      const padX = 84;
+      const padTop = 128; // clears the logo
+      const padBottom = 80;
+      const availW = W - 2 * padX;
+      const availH = H - padTop - padBottom;
+      const spanX = Math.max(maxX - minX, 1);
+      const spanY = Math.max(maxY - minY, 1);
+      const zoom = Math.min(availW / spanX, availH / spanY);
+      const cwx = (minX + maxX) / 2;
+      const cwy = (minY + maxY) / 2;
+      const ox = W / 2;
+      const oy = padTop + availH / 2;
+      const sx = new Float32Array(n);
+      const sy = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        sx[i] = ox + (preparedNodes[i].wx - cwx) * zoom;
+        sy[i] = oy + (preparedNodes[i].wy - cwy) * zoom;
+      }
+      // Always a dark "night sky" poster (matches the share aesthetic).
+      const navy = "#070b16";
+      const gridStroke = "#8ea3c8";
+
+      const parts: string[] = [];
+      parts.push(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`
+      );
+
+      // --- Defs: bottom glow, plus-grid, edge vignette, node bloom ---
+      parts.push(
+        `<defs>` +
+          `<radialGradient id="hs-glow" cx="50%" cy="100%" r="62%">` +
+          `<stop offset="0" stop-color="#1d4ed8" stop-opacity="0.42"/>` +
+          `<stop offset="0.55" stop-color="#1e3a8a" stop-opacity="0.13"/>` +
+          `<stop offset="1" stop-color="#1e3a8a" stop-opacity="0"/>` +
+          `</radialGradient>` +
+          `<radialGradient id="hs-vignette" cx="50%" cy="46%" r="76%">` +
+          `<stop offset="0" stop-color="#000000" stop-opacity="0"/>` +
+          `<stop offset="0.82" stop-color="#000000" stop-opacity="0"/>` +
+          `<stop offset="1" stop-color="#000000" stop-opacity="0.24"/>` +
+          `</radialGradient>` +
+          `<pattern id="hs-grid" width="30" height="30" patternUnits="userSpaceOnUse">` +
+          `<path d="M15 12 V18 M12 15 H18" stroke="${gridStroke}" stroke-width="0.7" opacity="0.06"/>` +
+          `</pattern>` +
+          `</defs>`
+      );
+
+      // --- Background layers ---
+      parts.push(`<rect width="${W}" height="${H}" fill="${navy}"/>`);
+      parts.push(`<rect width="${W}" height="${H}" fill="url(#hs-grid)"/>`);
+      parts.push(`<rect width="${W}" height="${H}" fill="url(#hs-glow)"/>`);
+
+      // --- Links: exactly as the UI canvas draws them in the no-hover state
+      // (thin 0.4px colored quadratic curves at a faint, zoom-derived alpha) ---
+      const linkParts: string[] = [];
+      const maxLinks = 6000;
+      let drawn = 0;
+      for (const link of linksWithIndices) {
+        if (drawn >= maxLinks) break;
+        const axp = sx[link.a];
+        const ayp = sy[link.a];
+        const bxp = sx[link.b];
+        const byp = sy[link.b];
+        const midX = (axp + bxp) / 2 + (byp - ayp) * 0.08;
+        const midY = (ayp + byp) / 2 - (bxp - axp) * 0.08;
+        linkParts.push(
+          `<path d="M${f(axp)} ${f(ayp)} Q${f(midX)} ${f(midY)} ${f(bxp)} ${f(byp)}" stroke="${link.color}"/>`
+        );
+        drawn++;
+      }
+      const linkAlpha = 0.06 + Math.min(zoom * 0.04, 0.1);
+      parts.push(
+        `<g fill="none" stroke-width="0.4" opacity="${a(linkAlpha)}">${linkParts.join("")}</g>`
+      );
+
+      // --- Nodes: exactly as the UI canvas draws them (solid heat dot, opacity
+      // by link count, plus a translucent halo for hubs) — minus hover effects ---
+      const haloParts: string[] = [];
+      const nodeParts: string[] = [];
+      for (let i = 0; i < n; i++) {
+        const nd = preparedNodes[i];
+        const baseR = nodeSizeFn ? nodeSizeFn(nd.node) : 2.5 + Math.min(nd.linkCount * 0.15, 2.5);
+        const r = Math.max(1.5, baseR * Math.min(zoom, 2));
+        const alpha = 0.45 + Math.min(nd.linkCount * 0.03, 0.5);
+        if (nd.linkCount > 3) {
+          const halo = 0.06 + Math.min(nd.linkCount * 0.005, 0.08);
+          haloParts.push(
+            `<circle cx="${f(sx[i])}" cy="${f(sy[i])}" r="${f(r * 2)}" fill="${nd.heatColor}" opacity="${a(halo)}"/>`
+          );
+        }
+        nodeParts.push(
+          `<circle cx="${f(sx[i])}" cy="${f(sy[i])}" r="${f(r)}" fill="${nd.heatColor}" opacity="${a(alpha)}"/>`
+        );
+      }
+      parts.push(`<g>${haloParts.join("")}</g>`);
+      parts.push(`<g>${nodeParts.join("")}</g>`);
+
+      // --- Edge vignette to sink the corners, then the Hindsight logo ---
+      parts.push(`<rect width="${W}" height="${H}" fill="url(#hs-vignette)"/>`);
+      if (logoDataUrl) {
+        const logoW = 190;
+        const logoH = (logoW * 139) / 529; // preserve logo aspect ratio
+        parts.push(
+          `<image x="48" y="46" width="${logoW}" height="${f(logoH)}" href="${logoDataUrl}" preserveAspectRatio="xMinYMid meet"/>`
+        );
+      }
+
+      parts.push(`</svg>`);
+      return parts.join("");
+    },
+    [preparedNodes, linksWithIndices, nodeSizeFn]
+  );
+
+  const handleExportSvg = useCallback(async () => {
+    let logo = logoDataUrlRef.current;
+    if (!logo) {
+      try {
+        logo = await loadDataUrl("/logo.png");
+        logoDataUrlRef.current = logo;
+      } catch {
+        logo = null;
+      }
+    }
+    const svg = buildSvgString(logo);
+    const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "hindsight-constellation.svg";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [buildSvgString]);
+
   return (
     <div
       ref={wrapperRef}
@@ -982,36 +1193,29 @@ export function Constellation({
     >
       <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
 
-      {/* Fullscreen toggle */}
-      <button
-        onClick={toggleFullscreen}
+      {/* Toolbar */}
+      <div
         style={{
           position: "absolute",
           top: 8,
           right: 8,
           zIndex: 21,
-          padding: "6px 10px",
-          borderRadius: 6,
-          border: `1px solid ${isDark ? "#27272a" : "#e4e4e7"}`,
-          background: isDark ? "#18181b" : "#ffffff",
-          color: isDark ? "#a1a1aa" : "#71717a",
-          fontSize: 12,
-          cursor: "pointer",
           display: "flex",
-          alignItems: "center",
-          gap: 4,
-          opacity: 0.7,
-          transition: "opacity 0.15s",
+          gap: 6,
         }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.opacity = "1";
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.opacity = "0.7";
-        }}
-        title={isFullscreen ? t("exitFullscreenTitle") : t("enterFullscreenTitle")}
       >
-        {isFullscreen ? (
+        {/* Share as SVG */}
+        <button
+          onClick={handleExportSvg}
+          style={toolbarBtnStyle(isDark)}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.opacity = "1";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.opacity = "0.7";
+          }}
+          title={t("exportSvgTitle")}
+        >
           <svg
             width="14"
             height="14"
@@ -1022,30 +1226,61 @@ export function Constellation({
             strokeLinecap="round"
             strokeLinejoin="round"
           >
-            <polyline points="4 14 10 14 10 20" />
-            <polyline points="20 10 14 10 14 4" />
-            <line x1="14" y1="10" x2="21" y2="3" />
-            <line x1="3" y1="21" x2="10" y2="14" />
+            <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" />
+            <polyline points="8 8 12 4 16 8" />
+            <line x1="12" y1="4" x2="12" y2="15" />
           </svg>
-        ) : (
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polyline points="15 3 21 3 21 9" />
-            <polyline points="9 21 3 21 3 15" />
-            <line x1="21" y1="3" x2="14" y2="10" />
-            <line x1="3" y1="21" x2="10" y2="14" />
-          </svg>
-        )}
-        {isFullscreen ? t("exitFullscreenLabel") : t("enterFullscreenLabel")}
-      </button>
+          {t("exportSvgLabel")}
+        </button>
+
+        {/* Fullscreen toggle */}
+        <button
+          onClick={toggleFullscreen}
+          style={toolbarBtnStyle(isDark)}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.opacity = "1";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.opacity = "0.7";
+          }}
+          title={isFullscreen ? t("exitFullscreenTitle") : t("enterFullscreenTitle")}
+        >
+          {isFullscreen ? (
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polyline points="4 14 10 14 10 20" />
+              <polyline points="20 10 14 10 14 4" />
+              <line x1="14" y1="10" x2="21" y2="3" />
+              <line x1="3" y1="21" x2="10" y2="14" />
+            </svg>
+          ) : (
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polyline points="15 3 21 3 21 9" />
+              <polyline points="9 21 3 21 3 15" />
+              <line x1="21" y1="3" x2="14" y2="10" />
+              <line x1="3" y1="21" x2="10" y2="14" />
+            </svg>
+          )}
+          {isFullscreen ? t("exitFullscreenLabel") : t("enterFullscreenLabel")}
+        </button>
+      </div>
 
       {/* Tooltip */}
       <div

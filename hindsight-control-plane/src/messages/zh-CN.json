@@ -1368,7 +1368,9 @@
     "linkTypeSemantic": "语义",
     "linkTypeTemporal": "时间",
     "linkTypeEntity": "实体",
-    "linkTypeCausal": "因果"
+    "linkTypeCausal": "因果",
+    "exportSvgTitle": "下载为 SVG 以分享",
+    "exportSvgLabel": "分享"
   },
   "metadata": {
     "title": "Hindsight Cloud",

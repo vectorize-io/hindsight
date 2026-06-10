@@ -1368,7 +1368,9 @@
     "linkTypeSemantic": "セマンティック",
     "linkTypeTemporal": "時間",
     "linkTypeEntity": "エンティティ",
-    "linkTypeCausal": "因果"
+    "linkTypeCausal": "因果",
+    "exportSvgTitle": "共有用にSVGをダウンロード",
+    "exportSvgLabel": "共有"
   },
   "metadata": {
     "title": "Hindsight Cloud",

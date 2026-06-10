@@ -1368,7 +1368,9 @@
     "linkTypeSemantic": "의미",
     "linkTypeTemporal": "시간",
     "linkTypeEntity": "엔티티",
-    "linkTypeCausal": "인과"
+    "linkTypeCausal": "인과",
+    "exportSvgTitle": "공유용 SVG 다운로드",
+    "exportSvgLabel": "공유"
   },
   "metadata": {
     "title": "Hindsight Cloud",
