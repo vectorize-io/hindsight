@@ -45,6 +45,7 @@ Each integration lives in its own subdirectory with its own README, configuratio
 | Integration | What it does |
 | --- | --- |
 | [**n8n**](./n8n) | Community node — drop retain/recall/reflect into any n8n workflow. |
+| [**Zapier**](./zapier) | Zapier app — retain/recall/reflect actions plus instant memory-event triggers. |
 | [**Dify**](./dify) | Persistent memory for Dify apps. |
 | [**Flowise**](./flowise) | Memory nodes for Flowise flows. |
 | [**Vapi**](./vapi) | Persistent memory for Vapi voice agents. |

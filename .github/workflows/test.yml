@@ -48,6 +48,7 @@ jobs:
       integrations-opencode: ${{ steps.filter.outputs.integrations-opencode }}
       integrations-cursor: ${{ steps.filter.outputs.integrations-cursor }}
       integrations-n8n: ${{ steps.filter.outputs.integrations-n8n }}
+      integrations-zapier: ${{ steps.filter.outputs.integrations-zapier }}
       integrations-cloudflare-oauth-proxy: ${{ steps.filter.outputs.integrations-cloudflare-oauth-proxy }}
       integrations-superagent: ${{ steps.filter.outputs.integrations-superagent }}
       integrations-lockfiles: ${{ steps.filter.outputs.integrations-lockfiles }}
@@ -158,6 +159,8 @@ jobs:
             - 'hindsight-integrations/cursor/**'
           integrations-n8n:
             - 'hindsight-integrations/n8n/**'
+          integrations-zapier:
+            - 'hindsight-integrations/zapier/**'
           integrations-cloudflare-oauth-proxy:
             - 'hindsight-integrations/cloudflare-oauth-proxy/**'
           integrations-superagent:
@@ -726,6 +729,37 @@ jobs:
     - name: Build
       working-directory: ./hindsight-integrations/n8n
       run: npm run build
+
+  test-zapier-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-zapier == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/zapier
+      run: npm install --no-fund --no-audit
+
+    - name: Validate app definition
+      working-directory: ./hindsight-integrations/zapier
+      run: npm run validate
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/zapier
+      run: npm test
 
   test-hindsight-agent-sdk:
     needs: [detect-changes]
