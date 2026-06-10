@@ -419,6 +419,42 @@ You can also update configuration directly from the [Control Plane UI](/) — na
 
 ---
 
+## Testing LLM Connectivity
+
+Use `POST /v1/default/banks/{bank_id}/health/llm` to deliberately test the LLM clients that a bank would use for `retain`, `consolidation`, and `reflect`.
+
+The endpoint is disabled by default because it makes real provider calls. Set `HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH=true` to expose it, and call it only when you are diagnosing a bank's LLM configuration rather than polling it continuously.
+
+```bash
+curl -X POST -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/my-bank/health/llm"
+```
+
+The response contains one status per operation:
+
+```json
+{
+  "bank_id": "my-bank",
+  "operations": [
+    {"operation": "retain", "ok": true, "status": "connected", "latency_ms": 412.0},
+    {"operation": "consolidation", "ok": true, "status": "connected", "latency_ms": 412.0},
+    {"operation": "reflect", "ok": false, "status": "not_configured", "latency_ms": null}
+  ]
+}
+```
+
+Operations that share the same provider/model/base URL/API key configuration are probed once and then reported separately. The response reports status only; it never returns provider names, model names, endpoints, API keys, or raw provider errors.
+
+| Status | Meaning |
+|--------|---------|
+| `connected` | The probe reached the configured LLM successfully. |
+| `not_configured` | The operation resolves to the `none` provider. |
+| `auth_failed` | The provider rejected the request, usually because the API key is wrong or expired. |
+| `unreachable` | The probe call failed before a successful response. |
+| `timeout` | The probe exceeded the health-check timeout. |
+
+---
+
 ## Directives
 
 Directives are hard rules that the agent must follow during [reflect](./reflect) operations. Unlike disposition traits which influence *how* the agent reasons, directives are explicit instructions that are *always* enforced.
