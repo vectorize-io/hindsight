@@ -8,16 +8,21 @@ cannot: that Gemini's real batch output JSONL shape matches what
 ``_normalize_output_line`` produces and what ``fact_extraction`` consumes. If
 the shape is wrong, this returns zero facts.
 
-Skipped automatically unless a Gemini API key is present. To run:
+This is an explicit opt-in test. It is gated on a dedicated flag rather than
+just "a Gemini API key exists" because CI always has a Gemini key (Gemini is the
+LLM-as-judge / core-LLM provider) — keying off the API key alone would let this
+slow batch job run in the standard CI shard and blow the 300s pytest timeout. To
+run it:
 
+    export HINDSIGHT_API_GEMINI_BATCH_LIVE_TEST=1
     export GEMINI_API_KEY=...                          # or HINDSIGHT_API_GEMINI_API_KEY
     # optional: override the model
     export HINDSIGHT_API_GEMINI_TEST_MODEL=gemini-2.5-flash
     uv run pytest tests/test_gemini_batch_integration.py -v -s
 
-It is slow (typically minutes, but the SLA is up to 24h) and costs money, so it
-does not run in CI (no key there). No database is required — it calls the
-extraction function directly with ``pool=None``.
+It is slow (typically minutes, but Gemini's batch queue can take far longer; the
+SLA is up to 24h) and costs money, so it never runs in CI. No database is
+required — it calls the extraction function directly with ``pool=None``.
 """
 
 import logging
@@ -50,6 +55,12 @@ class GeminiTestEnv:
 
 @pytest.fixture
 def gemini_env() -> GeminiTestEnv:
+    # Opt-in flag, NOT just key presence: CI always has GEMINI_API_KEY (judge /
+    # core-LLM provider), so gating on the key alone runs this slow batch job in
+    # the standard CI shard and times out. Require an explicit flag CI never sets.
+    if os.getenv("HINDSIGHT_API_GEMINI_BATCH_LIVE_TEST", "").lower() not in ("1", "true", "yes"):
+        pytest.skip("Set HINDSIGHT_API_GEMINI_BATCH_LIVE_TEST=1 (and GEMINI_API_KEY) to run the live Gemini batch test")
+
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("HINDSIGHT_API_GEMINI_API_KEY")
     if not api_key:
         pytest.skip("Set GEMINI_API_KEY (or HINDSIGHT_API_GEMINI_API_KEY) to run the live Gemini batch test")
