@@ -17,7 +17,7 @@
   "retainEveryNTurns": 10,
   "retainOverlapTurns": 2,
   "retainToolCalls": false,
-  "retainTags": ["{session_id}"],
+  "retainTags": ["{session_id}", "surface:claude-code"],
   "retainMetadata": {},
   "retainContext": "claude-code",
   "hindsightApiToken": null,

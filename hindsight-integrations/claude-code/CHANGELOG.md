@@ -18,6 +18,15 @@
 
 ### Changed
 
+- Default `retainTags` now includes `surface:claude-code` alongside
+  `{session_id}`. When several integrations share one bank (the documented
+  one-bank-many-surfaces pattern), nothing previously distinguished at the tag
+  level which surface wrote a fact: `retainContext` carries the label but is
+  not filterable, while tags are the native recall filter. With the default
+  surface tag, `recall` can include or exclude a surface directly (e.g.
+  `tags=["surface:claude-code"]` or a `tag_groups` "not" filter). Users who
+  override `retainTags` in `~/.hindsight/claude-code.json` are unaffected;
+  existing facts are not retro-tagged.
 - Tags that resolve to an empty namespace content (e.g. `"user:"` when
   `HINDSIGHT_USER_ID` is unset) are now dropped from retain requests. Previously
   such tags were sent as-is. Tags without `:` are unaffected.
