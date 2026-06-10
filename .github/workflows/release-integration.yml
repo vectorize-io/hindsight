@@ -9,7 +9,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write  # for PyPI trusted publishing
+      id-token: write  # for PyPI trusted publishing + build-provenance attestations
+      attestations: write  # for actions/attest-build-provenance (Obsidian assets)
       # No `contents: write`: we never create releases in this repo. The Obsidian
       # plugin's distribution release is pushed to its dedicated repo using
       # OBSIDIAN_DIST_TOKEN (see the "Mirror Obsidian plugin" step below).
@@ -114,6 +115,18 @@ jobs:
       if: steps.type.outputs.type == 'typescript'
       working-directory: ./hindsight-integrations/${{ steps.info.outputs.integration }}
       run: npm run build
+
+    # Build-provenance attestations for the Obsidian release assets (community-store
+    # recommendation). Runs after the build so main.js exists. The assets are
+    # released in the dedicated repo while the build runs here, so users verify at
+    # owner scope: `gh attestation verify main.js --owner vectorize-io`.
+    - name: Attest Obsidian plugin build provenance
+      if: steps.type.outputs.type == 'typescript' && steps.info.outputs.integration == 'obsidian'
+      uses: actions/attest-build-provenance@v2
+      with:
+        subject-path: |
+          hindsight-integrations/obsidian/main.js
+          hindsight-integrations/obsidian/styles.css
 
     # ── Obsidian plugin — mirror to its dedicated repo + cut the BRAT release ──
     # We do NOT create a GitHub Release in this monorepo: per-integration

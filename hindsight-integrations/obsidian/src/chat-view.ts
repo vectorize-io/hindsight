@@ -93,8 +93,10 @@ export class ChatView extends ItemView {
   /** Resize the composer to fit its content, up to INPUT_MAX_HEIGHT (then it scrolls). */
   private autoGrowInput(): void {
     const el = this.input;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, INPUT_MAX_HEIGHT)}px`;
+    // Use Obsidian's setCssStyles (not el.style.x =) per the plugin guidelines.
+    // Reset to auto first so scrollHeight reflects the content's natural height.
+    el.setCssStyles({ height: "auto" });
+    el.setCssStyles({ height: `${Math.min(el.scrollHeight, INPUT_MAX_HEIGHT)}px` });
   }
 
   private buildHeader(root: HTMLElement): void {
