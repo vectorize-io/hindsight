@@ -79,3 +79,84 @@ def _find_report(workdir: Path, run_id: str) -> dict | None:
         return json.loads(Path(matches[-1]).read_text())
     except Exception:
         return None
+
+
+# Lines in test_output.txt that echo applied patches (the harness applies the GOLD test patch
+# and traces it). These must never reach the agent's memory — that would leak the answer.
+_PATCH_ECHO_MARKERS = ("Applied patch", "Checking patch", "git apply", "patching file")
+_DIFF_LINE_PREFIXES = ("+", "-", "diff --git", "index ", "@@", "--- ", "+++ ")
+
+
+def extract_eval_feedback(
+    *,
+    workdir: Path,
+    run_id: str,
+    model_name: str,
+    instance_id: str,
+    max_output_chars: int = 3500,
+) -> str:
+    """CI-style feedback from one instance's official evaluation: which required tests still
+    fail, which previously-passing tests the patch broke, and the failure output excerpts.
+
+    This is exactly what a developer gets from a CI run — and nothing more. The gold patch and
+    the gold *test* patch are excluded: only report.json statuses and the test-run output (with
+    patch-echo/diff lines stripped) are used. Returns "" if no evaluation artifacts exist.
+    """
+    inst_dir = workdir / "logs" / "run_evaluation" / run_id / model_name / instance_id
+    sections: list[str] = []
+    has_failures = False
+
+    report_path = inst_dir / "report.json"
+    if report_path.exists():
+        try:
+            rep = json.loads(report_path.read_text()).get(instance_id, {})
+        except Exception:
+            rep = {}
+        tests = rep.get("tests_status", {})
+        f2p = tests.get("FAIL_TO_PASS", {})
+        p2p = tests.get("PASS_TO_PASS", {})
+        if rep.get("patch_is_None") or not rep.get("patch_exists", True):
+            sections.append("The submitted patch was EMPTY — no change was applied.")
+        if f2p.get("failure"):
+            has_failures = True
+            sections.append(
+                "Tests written for the required fix that STILL FAIL with this patch:\n"
+                + "\n".join(f"  - {t}" for t in f2p["failure"])
+            )
+        if f2p.get("success"):
+            sections.append(
+                "Required tests that PASS with this patch:\n" + "\n".join(f"  - {t}" for t in f2p["success"])
+            )
+        if p2p.get("failure"):
+            has_failures = True
+            sections.append(
+                "REGRESSIONS — tests that passed before this patch and now FAIL:\n"
+                + "\n".join(f"  - {t}" for t in p2p["failure"])
+            )
+
+    # The raw output tail only earns its tokens when there's a failure to explain — for a
+    # fully-passing run it is just a wall of "... ok" lines.
+    test_output_path = inst_dir / "test_output.txt"
+    if has_failures and test_output_path.exists():
+        try:
+            excerpt = _failure_excerpt(test_output_path.read_text(errors="replace"), max_output_chars)
+        except Exception:
+            excerpt = ""
+        if excerpt:
+            sections.append(f"Test-run output (tail):\n{excerpt}")
+
+    return "\n\n".join(sections)
+
+
+def _failure_excerpt(text: str, max_chars: int) -> str:
+    """The tail of the test-run output with patch-echo/diff lines stripped.
+
+    Django (and most repos) print per-failure detail blocks and the FAILED summary at the end,
+    so the tail carries the assertion/exception evidence a developer would read first.
+    """
+    kept = [
+        line
+        for line in text.splitlines()
+        if not line.startswith(_DIFF_LINE_PREFIXES) and not any(m in line for m in _PATCH_ECHO_MARKERS)
+    ]
+    return "\n".join(kept)[-max_chars:]

@@ -52,19 +52,76 @@ class MeteredAgent(DefaultAgent):
         return "\n\n".join(parts)
 
 
-class MemoryAgent(MeteredAgent):
-    """MeteredAgent that recalls before the task and retains durable knowledge after it."""
+# Wrapper for per-step adaptive memory, refreshed in place in the system message.
+_STEP_MEMORY_HEADER = (
+    "\n\n<codebase_memory>\n"
+    "You have worked in this repository before. The notes below are debugging knowledge YOU "
+    "accumulated solving RELATED issues here — root-cause patterns, gotchas, where the relevant "
+    "logic lives, and how to verify it. They are refreshed to match what you are working on right "
+    "now. Treat them as knowledge you already have and use them actively.\n"
+    "{block}\n"
+    "</codebase_memory>"
+)
 
-    def __init__(self, *args, glue: MemoryGlue, instance_id: str, **kwargs):
+
+class MemoryAgent(MeteredAgent):
+    """MeteredAgent that recalls before the task and retains durable knowledge after it.
+
+    With ``step_reinject``, the memory is additionally refreshed every ``reinject_every`` model
+    calls: re-recalled against what the agent is *currently* looking at (the latest observation)
+    and rewritten in place into the system message, so it stays at the front of context and
+    tracks the agent's focus instead of being frozen at step 1.
+    """
+
+    def __init__(
+        self,
+        *args,
+        glue: MemoryGlue,
+        instance_id: str,
+        step_reinject: bool = False,
+        reinject_every: int = 1,
+        defer_retain: bool = False,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.glue = glue
         self.instance_id = instance_id
+        self.step_reinject = step_reinject
+        self.reinject_every = max(1, reinject_every)
+        # When True, run() does NOT retain — the orchestrator retains after scoring the task,
+        # so the summariser knows whether the attempt actually passed the tests.
+        self.defer_retain = defer_retain
+        self._task = ""
+        self._base_system: str | None = None  # pristine system content, captured on first query
 
     def run(self, task: str = "", **kwargs) -> dict:
-        # Fetch memory context BEFORE messages are built so it renders into the prompt.
-        # (recall or reflect, per the glue's context_mode.)
-        self.extra_template_vars["recalled_memories"] = self.glue.context_for_task(task)
+        self._task = task
+        # Static injection at task start (renders into the template block). For step_reinject,
+        # the template block is absent, so this seeds the very first call's memory via the
+        # query() refresh below instead.
+        self.extra_template_vars["recalled_memories"] = "" if self.step_reinject else self.glue.context_for_task(task)
         info = super().run(task, **kwargs)
-        # Retain AFTER the task using the completed trajectory.
-        self.glue.retain_after_task(self.instance_id, self.transcript_text())
+        if not self.defer_retain:
+            self.glue.retain_after_task(self.instance_id, self.transcript_text())
         return info
+
+    def _recent_observation(self) -> str:
+        """The most recent non-system message content — what the agent is currently looking at."""
+        for m in reversed(self.messages):
+            if m.get("role") in ("user", "tool"):
+                c = m.get("content", "")
+                return c if isinstance(c, str) else " ".join(b.get("text", "") for b in c if isinstance(b, dict))
+        return ""
+
+    def query(self) -> dict:
+        if self.step_reinject and self.messages and self.messages[0].get("role") == "system":
+            if self._base_system is None:
+                self._base_system = self.messages[0]["content"]
+            if self.n_calls % self.reinject_every == 0:
+                block = self.glue.context_for_step(self._task, self._recent_observation())
+                self.messages[0]["content"] = (
+                    self._base_system + _STEP_MEMORY_HEADER.format(block=block) if block else self._base_system
+                )
+                # Record last injected block so the recalled_chars metric is non-zero.
+                self.extra_template_vars["recalled_memories"] = block
+        return super().query()

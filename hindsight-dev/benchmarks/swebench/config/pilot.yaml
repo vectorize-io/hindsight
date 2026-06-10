@@ -18,9 +18,7 @@ dataset:
   split: test
   repo_prefix: "django__django-"
   repo_label: "django"
-  max_tasks: 12                 # consecutive (disk-limited to ~12 images on the Mac)
-  # Cluster related tasks so a solution to one transfers to the next — the key resolve-rate
-  # lever. django/db/models (the ORM) is the densest cluster: 77 related tasks in Verified.
+  max_tasks: 6                  # reproduction of the original N=6 (broad cluster, first 6 tasks)
   cluster_by_patch: true
   cluster_depth: 3
   cluster_key: "django/db/models"

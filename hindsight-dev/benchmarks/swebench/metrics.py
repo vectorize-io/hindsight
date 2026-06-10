@@ -24,6 +24,11 @@ class TaskRecord:
     wall_clock_s: float = 0.0
     exit_status: str = ""
     recalled_chars: int = 0  # size of the injected memory block (0 for control)
+    # Multi-attempt (CI-feedback retry) mode: tokens/steps/cost above are SUMMED across
+    # attempts — the true cost of reaching the outcome. resolved_at_attempt is None if never
+    # resolved; 1 means first try (the only possibility in single-attempt mode).
+    n_attempts: int = 1
+    resolved_at_attempt: int | None = None
 
     @property
     def total_tokens(self) -> int:
@@ -51,6 +56,9 @@ def summarize_arm(records: list[TaskRecord], memory_stats: dict | None = None) -
         "n_tasks": n,
         "resolved": len(resolved),
         "resolve_rate": round(len(resolved) / n, 4) if n else 0.0,
+        # resolve@1 vs resolve@final — identical unless multi-attempt mode was used.
+        "resolved_at_attempt_1": sum(1 for r in records if r.resolved_at_attempt == 1),
+        "total_attempts": sum(r.n_attempts for r in records),
         "total_input_tokens": sum(r.input_tokens for r in records),
         "total_output_tokens": sum(r.output_tokens for r in records),
         "total_tokens": sum(r.total_tokens for r in records),
