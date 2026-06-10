@@ -232,6 +232,7 @@ _PROVIDERS_WITHOUT_API_KEY = frozenset(
         "litellm",
         "litellmrouter",
         "bedrock",
+        "nous",
     }
 )
 
@@ -437,6 +438,21 @@ def create_llm_provider(
             extra_body=extra_body,
         )
 
+    elif provider_lower == "nous":
+        # Nous Portal is OpenAI-compatible on the wire; NousLLM adds rotating
+        # inference:invoke JWT auth read natively from ~/.hermes/auth.json
+        # (no static api_key, no hermes_cli dependency — same shape as Codex).
+        from hindsight_api.engine.providers.nous_llm import NousLLM
+
+        return NousLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
+        )
+
     elif provider_lower in (
         "openai",
         "groq",
@@ -569,6 +585,7 @@ class LLMProvider:
             "zai",
             "opencode-go",
             "fireworks",
+            "nous",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")
@@ -593,6 +610,8 @@ class LLMProvider:
                 self.base_url = "https://api.z.ai/api/coding/paas/v4"
             elif self.provider == "opencode-go":
                 self.base_url = "https://opencode.ai/zen/go/v1"
+            elif self.provider == "nous":
+                self.base_url = "https://inference-api.nousresearch.com/v1"
 
         # Prepare Vertex AI config (if applicable)
         vertexai_project_id = None
