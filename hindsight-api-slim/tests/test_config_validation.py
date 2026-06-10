@@ -518,7 +518,7 @@ def test_bedrock_service_tier_reserved(monkeypatch):
 
 
 def test_bedrock_service_tier_rejects_invalid_value(monkeypatch):
-    """"standard" is not a valid Bedrock service tier and must be rejected."""
+    """ "standard" is not a valid Bedrock service tier and must be rejected."""
     from hindsight_api.config import HindsightConfig
 
     monkeypatch.setenv("HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER", "standard")
@@ -531,4 +531,3 @@ def test_bedrock_service_tier_rejects_invalid_value(monkeypatch):
     assert "HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER" in error_message
     assert "standard" in error_message
     assert "'standard' is not a valid Bedrock service tier" in error_message
-
