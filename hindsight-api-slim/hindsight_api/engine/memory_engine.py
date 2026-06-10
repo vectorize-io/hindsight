@@ -633,6 +633,29 @@ def _resolve_refresh_tag_filtering(
     return RefreshTagFiltering(tags=model_tags, tags_match=tags_match, tag_groups=None)
 
 
+def _overlay_bank_config_disposition_mission(
+    disposition: dict[str, int], mission: str, config_dict: dict[str, Any]
+) -> tuple[dict[str, int], str]:
+    """Overlay resolved bank config on top of the legacy banks.disposition /
+    banks.mission column values.
+
+    ``reflect_mission`` and ``disposition_*`` in the resolved bank config take
+    precedence over the legacy DB columns. Shared by ``get_bank_profile`` and
+    ``list_banks`` so the single-bank and list paths return identical
+    disposition + mission for the same bank.
+    """
+    resolved_mission = config_dict.get("reflect_mission") or mission
+    cfg_skep = config_dict.get("disposition_skepticism")
+    cfg_lit = config_dict.get("disposition_literalism")
+    cfg_emp = config_dict.get("disposition_empathy")
+    resolved_disposition = {
+        "skepticism": cfg_skep if cfg_skep is not None else disposition["skepticism"],
+        "literalism": cfg_lit if cfg_lit is not None else disposition["literalism"],
+        "empathy": cfg_emp if cfg_emp is not None else disposition["empathy"],
+    }
+    return resolved_disposition, resolved_mission
+
+
 class MemoryEngine(MemoryEngineInterface):
     """
     Advanced memory system using temporal and semantic linking with PostgreSQL.
@@ -7338,19 +7361,9 @@ class MemoryEngine(MemoryEngineInterface):
 
         # reflect_mission and disposition in config take precedence over the legacy DB columns
         config_dict = await self._config_resolver.get_bank_config(bank_id, request_context)
-        mission = config_dict.get("reflect_mission") or profile["mission"]
-
-        # Overlay disposition from config if explicitly set; fall back to DB values
         db_disp = profile["disposition"]
         db_disp_dict = db_disp.model_dump() if hasattr(db_disp, "model_dump") else dict(db_disp)
-        cfg_skep = config_dict.get("disposition_skepticism")
-        cfg_lit = config_dict.get("disposition_literalism")
-        cfg_emp = config_dict.get("disposition_empathy")
-        disposition = {
-            "skepticism": cfg_skep if cfg_skep is not None else db_disp_dict["skepticism"],
-            "literalism": cfg_lit if cfg_lit is not None else db_disp_dict["literalism"],
-            "empathy": cfg_emp if cfg_emp is not None else db_disp_dict["empathy"],
-        }
+        disposition, mission = _overlay_bank_config_disposition_mission(db_disp_dict, profile["mission"], config_dict)
 
         return {
             "bank_id": bank_id,
@@ -7571,6 +7584,14 @@ class MemoryEngine(MemoryEngineInterface):
                 BankListContext(banks=banks, request_context=request_context)
             )
             banks = result.banks
+        # Overlay resolved bank config (reflect_mission + disposition_*) on top of the
+        # legacy banks.disposition / banks.mission columns, mirroring get_bank_profile so
+        # the list and get paths return identical disposition + mission for a bank.
+        for bank in banks:
+            config_dict = await self._config_resolver.get_bank_config(bank["bank_id"], request_context)
+            bank["disposition"], bank["mission"] = _overlay_bank_config_disposition_mission(
+                bank["disposition"], bank["mission"], config_dict
+            )
         return banks
 
     # ==================== Reflect Methods ====================
