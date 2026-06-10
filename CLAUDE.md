@@ -335,6 +335,16 @@ Fields must be categorized as either **hierarchical** (can be overridden per-ten
    - Add to appropriate section table with Variable, Description, Default
    - Mark if it's hierarchical (can be overridden per-bank)
 
+6. **Env template** (`.env.example`):
+   - Add the variable to the appropriate section, commented if optional, with a
+     short inline comment describing it (mirror the documentation entry).
+   - This file is the single source of truth for the env template:
+     `scripts/dev/setup.sh` copies it to `.env`, and `hindsight-embed` ships a
+     bundled copy (`hindsight-embed/hindsight_embed/env.example`) that seeds
+     embed/profile configs. After editing `.env.example`, re-copy it to the
+     embed package (`cp .env.example hindsight-embed/hindsight_embed/env.example`)
+     or the `test_bundled_template_matches_repo_root` sync test will fail.
+
 #### Hierarchical vs Static Guidelines
 
 **Hierarchical** (per-bank overridable):

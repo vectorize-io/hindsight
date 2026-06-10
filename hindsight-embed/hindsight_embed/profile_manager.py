@@ -262,10 +262,12 @@ class ProfileManager:
             else:
                 port = self._allocate_port(name)
 
-        # Write config file
+        # Write config file, seeded from the bundled .env.example template so
+        # the profile carries the full documented option set as comments.
+        from .env_template import render_config
+
         config_path = self._get_profiles_dir() / f"{name}.env"
-        config_lines = [f"{key}={value}" for key, value in config.items()]
-        config_path.write_text("\n".join(config_lines) + "\n")
+        config_path.write_text(render_config(config))
 
         # Update metadata (reuse metadata loaded earlier to avoid race conditions)
         now_iso = datetime.now(timezone.utc).isoformat()

@@ -543,8 +543,13 @@ def test_configure_from_env_omits_model_when_unset(temp_home, monkeypatch):
 
     contents = (config_dir / "embed").read_text()
     assert "HINDSIGHT_API_LLM_PROVIDER=gemini" in contents
-    assert "HINDSIGHT_API_LLM_MODEL" not in contents, (
-        "model line must be omitted when the user didn't set one, so the daemon picks the provider default"
+    # The config is seeded from .env.example, which carries a commented
+    # `# HINDSIGHT_API_LLM_MODEL=gpt-4o-mini` reference line. What must not
+    # appear is an *active* (uncommented) model line — that's what would get
+    # re-injected on daemon start and suppress the provider-keyed default.
+    active_lines = [ln.strip() for ln in contents.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    assert not any(ln.startswith("HINDSIGHT_API_LLM_MODEL=") for ln in active_lines), (
+        "active model line must be omitted when the user didn't set one, so the daemon picks the provider default"
     )
 
 
