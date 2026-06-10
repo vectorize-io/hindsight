@@ -80,6 +80,12 @@ _SKIP_TABLES = frozenset(
         "async_operations",  # in-flight ops; drain on the source before migrating
         "graph_maintenance_queue",  # transient work queue; regenerated on import
         "file_storage",  # raw uploads; documents.original_text is already carried
+        # Curation archive of retired facts — local operational state, not part of
+        # the live knowledge the export replays. Its rows mirror memory_units (stale
+        # embedding) and snapshot source-bank entity ids that the import re-resolves
+        # to fresh ids, so carrying them would only produce dangling associations.
+        # Revert anything worth keeping on the source before migrating.
+        "invalidated_memory_units",
     }
 )
 # Derived columns dropped from carried rows so the target regenerates them with

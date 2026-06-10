@@ -79,6 +79,9 @@ export function DataView({
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedGraphNode, setSelectedGraphNode] = useState<any>(null);
   const [modalMemoryId, setModalMemoryId] = useState<string | null>(null);
+  // Table view: toggle between live facts (graph-fed) and invalidated facts (archive).
+  const [showInvalidated, setShowInvalidated] = useState(false);
+  const [invalidatedRows, setInvalidatedRows] = useState<any[]>([]);
   const itemsPerPage = 100;
 
   // Fetch limit state - how many memories to load from the API
@@ -161,10 +164,33 @@ export function DataView({
     }
   };
 
-  // Table rows are already filtered server-side
+  // Invalidated facts live in a separate archive, not the graph — fetch them via list.
+  const loadInvalidated = useCallback(async () => {
+    if (!currentBank) return;
+    try {
+      const resp: any = await client.listMemories(currentBank, {
+        state: "invalidated",
+        type: factType,
+        limit: fetchLimit,
+      });
+      setInvalidatedRows(resp?.items ?? []);
+    } catch {
+      setInvalidatedRows([]);
+    }
+  }, [currentBank, factType, fetchLimit]);
+
+  useEffect(() => {
+    if (showInvalidated && viewMode === "table") {
+      loadInvalidated();
+    }
+  }, [showInvalidated, viewMode, loadInvalidated]);
+
+  // Table rows: live rows are graph-fed (filtered server-side); invalidated rows
+  // come from the archive via list.
   const filteredTableRows = useMemo(() => {
+    if (showInvalidated) return invalidatedRows;
     return data?.table_rows ?? [];
-  }, [data]);
+  }, [data, showInvalidated, invalidatedRows]);
 
   // Helper to get normalized link type
   const getLinkTypeCategory = (type: string | undefined): string => {
@@ -943,6 +969,41 @@ export function DataView({
 
           {!compactMode && viewMode === "table" && (
             <div>
+              {factType !== "observation" && (
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
+                    <button
+                      onClick={() => {
+                        setShowInvalidated(false);
+                        setCurrentPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                        !showInvalidated
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {t("filterActive")}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowInvalidated(true);
+                        setCurrentPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                        showInvalidated
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {t("filterInvalidated")}
+                    </button>
+                  </div>
+                  {showInvalidated && (
+                    <span className="text-xs text-muted-foreground">{t("invalidatedHint")}</span>
+                  )}
+                </div>
+              )}
               <div className="w-full">
                 <div className="pb-4">
                   {filteredTableRows.length > 0 ? (
@@ -1166,7 +1227,13 @@ export function DataView({
       )}
 
       {/* Memory Detail Modal */}
-      <MemoryDetailModal memoryId={modalMemoryId} onClose={() => setModalMemoryId(null)} />
+      <MemoryDetailModal
+        memoryId={modalMemoryId}
+        onClose={() => setModalMemoryId(null)}
+        onChanged={() => {
+          if (showInvalidated) loadInvalidated();
+        }}
+      />
     </div>
   );
 }

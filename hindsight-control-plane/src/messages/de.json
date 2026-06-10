@@ -1263,7 +1263,11 @@
     "viewHistory": "Verlauf anzeigen",
     "tracedByTitle": "Erstellt von",
     "tracedBySummary": "{calls} Aufrufe · {tokens} Tokens",
-    "consolidatedByTitle": "Konsolidiert von"
+    "consolidatedByTitle": "Konsolidiert von",
+    "editFieldEntities": "Entities",
+    "editEntityPlaceholder": "Add entity…",
+    "editEntityRemove": "Remove {entity}",
+    "editedBadge": "Edited"
   },
   "documentChunkModal": {
     "documentTitle": "Dokumentdetails",
@@ -1536,7 +1540,8 @@
         "notFound": "Erinnerung nicht gefunden",
         "retain": "Batch-Retain konnte nicht ausgeführt werden",
         "retainAsync": "Asynchrones Batch-Retain konnte nicht ausgeführt werden",
-        "history": "Beobachtungsverlauf konnte nicht abgerufen werden"
+        "history": "Beobachtungsverlauf konnte nicht abgerufen werden",
+        "update": "Erinnerung konnte nicht aktualisiert werden"
       },
       "documents": {
         "fetchList": "Dokumente konnten nicht abgerufen werden",

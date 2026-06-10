@@ -433,6 +433,8 @@ export class HindsightClient {
       type?: string;
       q?: string;
       consolidationState?: "failed" | "pending" | "done";
+      state?: "valid" | "invalidated";
+      documentId?: string;
       signal?: AbortSignal;
     }
   ): Promise<ListMemoryUnitsResponse> {
@@ -445,6 +447,8 @@ export class HindsightClient {
         type: options?.type,
         q: options?.q,
         consolidation_state: options?.consolidationState,
+        state: options?.state,
+        document_id: options?.documentId,
       },
       signal: options?.signal,
     });

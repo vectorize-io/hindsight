@@ -1263,7 +1263,11 @@
     "viewHistory": "檢視歷史",
     "tracedByTitle": "建立來源",
     "tracedBySummary": "{calls} 次呼叫 · {tokens} 個權杖",
-    "consolidatedByTitle": "整合來源"
+    "consolidatedByTitle": "整合來源",
+    "editFieldEntities": "Entities",
+    "editEntityPlaceholder": "Add entity…",
+    "editEntityRemove": "Remove {entity}",
+    "editedBadge": "Edited"
   },
   "documentChunkModal": {
     "documentTitle": "文件詳情",
@@ -1536,7 +1540,8 @@
         "notFound": "找不到記憶",
         "retain": "批次保留失敗",
         "retainAsync": "非同步批次保留失敗",
-        "history": "取得觀察歷史失敗"
+        "history": "取得觀察歷史失敗",
+        "update": "更新記憶失敗"
       },
       "documents": {
         "fetchList": "取得文件清單失敗",

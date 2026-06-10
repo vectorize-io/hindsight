@@ -1263,7 +1263,11 @@
     "viewHistory": "查看历史",
     "tracedByTitle": "创建来源",
     "tracedBySummary": "{calls} 次调用 · {tokens} 令牌",
-    "consolidatedByTitle": "整合来源"
+    "consolidatedByTitle": "整合来源",
+    "editFieldEntities": "Entities",
+    "editEntityPlaceholder": "Add entity…",
+    "editEntityRemove": "Remove {entity}",
+    "editedBadge": "Edited"
   },
   "documentChunkModal": {
     "documentTitle": "文档详情",
@@ -1536,7 +1540,8 @@
         "notFound": "未找到记忆",
         "retain": "批量保留失败",
         "retainAsync": "异步批量保留失败",
-        "history": "获取观察历史失败"
+        "history": "获取观察历史失败",
+        "update": "更新记忆失败"
       },
       "documents": {
         "fetchList": "获取文档列表失败",

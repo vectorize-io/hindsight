@@ -3536,6 +3536,67 @@ export type UpdateDocumentResponse = {
 };
 
 /**
+ * UpdateMemoryRequest
+ *
+ * Request model for curating a single memory unit (edit / invalidate / revert).
+ *
+ * Provide ``text`` to correct the fact, and/or ``state`` to invalidate
+ * ('invalidated') or revert ('valid') it. ``reason`` is optional free text
+ * recorded on the memory. At least one of ``text`` or ``state`` must be set.
+ * Only world/experience facts can be curated; observations are derived.
+ */
+export type UpdateMemoryRequest = {
+  /**
+   * Text
+   *
+   * New fact text. Re-embeds the memory, drops its derived observations and links, and triggers re-consolidation.
+   */
+  text?: string | null;
+  /**
+   * Context
+   *
+   * New context for the fact. '' clears it; omit to leave unchanged.
+   */
+  context?: string | null;
+  /**
+   * Occurred Start
+   *
+   * New occurred-range start (ISO 8601). '' clears it; omit to leave unchanged.
+   */
+  occurred_start?: string | null;
+  /**
+   * Occurred End
+   *
+   * New occurred-range end (ISO 8601). '' clears it; omit to leave unchanged.
+   */
+  occurred_end?: string | null;
+  /**
+   * Fact Type
+   *
+   * Reclassify the fact: 'world' or 'experience'. Omit to leave unchanged.
+   */
+  fact_type?: string | null;
+  /**
+   * Entities
+   *
+   * Replace the fact's entities. Names are resolved/find-or-created the same way retain does; '[]' detaches all entities. Omit to leave unchanged.
+   */
+  entities?: Array<string> | null;
+  /**
+   * State
+   *
+   * Curation state: 'invalidated' to soft-retire the memory (excluded from recall/consolidation, links and derived observations pruned, moved to the archive) or 'valid' to revert. Reversible.
+   */
+  state?: string | null;
+  /**
+   * Reason
+   *
+   * Optional free-text reason recorded when invalidating.
+   */
+  reason?: string | null;
+};
+
+/**
  * UpdateMentalModelRequest
  *
  * Request model for updating a mental model.
@@ -3957,6 +4018,14 @@ export type ListMemoriesData = {
      */
     consolidation_state?: string | null;
     /**
+     * State
+     */
+    state?: string | null;
+    /**
+     * Document Id
+     */
+    document_id?: string | null;
+    /**
      * Limit
      */
     limit?: number;
@@ -4018,6 +4087,44 @@ export type GetMemoryErrors = {
 export type GetMemoryError = GetMemoryErrors[keyof GetMemoryErrors];
 
 export type GetMemoryResponses = {
+  /**
+   * Successful Response
+   */
+  200: unknown;
+};
+
+export type UpdateMemoryData = {
+  body: UpdateMemoryRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Memory Id
+     */
+    memory_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/memories/{memory_id}";
+};
+
+export type UpdateMemoryErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type UpdateMemoryError = UpdateMemoryErrors[keyof UpdateMemoryErrors];
+
+export type UpdateMemoryResponses = {
   /**
    * Successful Response
    */

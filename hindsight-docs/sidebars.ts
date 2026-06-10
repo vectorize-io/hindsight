@@ -100,6 +100,12 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
+          id: 'developer/api/memories',
+          label: 'Memories',
+          customProps: { icon: 'lu-eraser' },
+        },
+        {
+          type: 'doc',
           id: 'developer/api/memory-banks',
           label: 'Memory Banks',
           customProps: { icon: 'lu-memory' },

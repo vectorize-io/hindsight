@@ -192,6 +192,22 @@ paths:
         style: form
       - explode: true
         in: query
+        name: state
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - explode: true
+        in: query
+        name: document_id
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - explode: true
+        in: query
         name: limit
         required: false
         schema:
@@ -276,6 +292,58 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: Get memory unit
+      tags:
+      - Memory
+    patch:
+      description: "Edit a memory's text and/or change its curation state (invalidate\
+        \ / revert). Invalidated memories are excluded from recall, consolidation,\
+        \ and graph maintenance but kept for audit (reversible). Only world/experience\
+        \ facts can be curated; observations are derived."
+      operationId: update_memory
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: memory_id
+        required: true
+        schema:
+          title: Memory Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMemoryRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Curate memory unit
       tags:
       - Memory
   /v1/default/banks/{bank_id}/memories/{memory_id}/history:
@@ -7577,6 +7645,45 @@ components:
           title: Success
           type: boolean
       title: UpdateDocumentResponse
+    UpdateMemoryRequest:
+      description: |-
+        Request model for curating a single memory unit (edit / invalidate / revert).
+
+        Provide ``text`` to correct the fact, and/or ``state`` to invalidate
+        ('invalidated') or revert ('valid') it. ``reason`` is optional free text
+        recorded on the memory. At least one of ``text`` or ``state`` must be set.
+        Only world/experience facts can be curated; observations are derived.
+      example:
+        reason: "superseded: server decommissioned 2026-06-01"
+        state: invalidated
+      properties:
+        text:
+          nullable: true
+          type: string
+        context:
+          nullable: true
+          type: string
+        occurred_start:
+          nullable: true
+          type: string
+        occurred_end:
+          nullable: true
+          type: string
+        fact_type:
+          nullable: true
+          type: string
+        entities:
+          items:
+            type: string
+          nullable: true
+          type: array
+        state:
+          nullable: true
+          type: string
+        reason:
+          nullable: true
+          type: string
+      title: UpdateMemoryRequest
     UpdateMentalModelRequest:
       description: Request model for updating a mental model.
       example:

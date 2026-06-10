@@ -42,6 +42,10 @@ reprocess_document = "UI-only endpoint for the control plane document detail dia
 # Clear mental model content is a new endpoint; CLI subcommand not yet implemented.
 clear_mental_model = "Not yet exposed in the CLI; use the HTTP API or SDK"
 
+# Memory curation (edit / invalidate / revert) is exposed via the HTTP API, SDKs,
+# and the control plane, not the end-user CLI. update_memory covers all three.
+update_memory = "Curation endpoint; exposed via the API, SDKs, and control plane, not the CLI"
+
 # UI-only endpoints powering the control-plane LLM Requests (per-bank tracing) tab.
 # The trace waterfall, token charts, and metadata viewers don't map to a useful
 # CLI command.

@@ -1390,6 +1390,83 @@ class UpdateDocumentResponse(BaseModel):
     success: bool = True
 
 
+class UpdateMemoryRequest(BaseModel):
+    """Request model for curating a single memory unit (edit / invalidate / revert).
+
+    Provide ``text`` to correct the fact, and/or ``state`` to invalidate
+    ('invalidated') or revert ('valid') it. ``reason`` is optional free text
+    recorded on the memory. At least one of ``text`` or ``state`` must be set.
+    Only world/experience facts can be curated; observations are derived.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "state": "invalidated",
+                "reason": "superseded: server decommissioned 2026-06-01",
+            }
+        }
+    )
+
+    text: str | None = Field(
+        default=None,
+        description="New fact text. Re-embeds the memory, drops its derived "
+        "observations and links, and triggers re-consolidation.",
+    )
+    context: str | None = Field(
+        default=None,
+        description="New context for the fact. '' clears it; omit to leave unchanged.",
+    )
+    occurred_start: str | None = Field(
+        default=None,
+        description="New occurred-range start (ISO 8601). '' clears it; omit to leave unchanged.",
+    )
+    occurred_end: str | None = Field(
+        default=None,
+        description="New occurred-range end (ISO 8601). '' clears it; omit to leave unchanged.",
+    )
+    fact_type: str | None = Field(
+        default=None,
+        description="Reclassify the fact: 'world' or 'experience'. Omit to leave unchanged.",
+    )
+    entities: list[str] | None = Field(
+        default=None,
+        description="Replace the fact's entities. Names are resolved/find-or-created "
+        "the same way retain does; '[]' detaches all entities. Omit to leave unchanged.",
+    )
+    state: str | None = Field(
+        default=None,
+        description="Curation state: 'invalidated' to soft-retire the memory "
+        "(excluded from recall/consolidation, links and derived observations "
+        "pruned, moved to the archive) or 'valid' to revert. Reversible.",
+    )
+    reason: str | None = Field(
+        default=None,
+        description="Optional free-text reason recorded when invalidating.",
+    )
+
+    @model_validator(mode="after")
+    def _require_an_edit(self) -> "UpdateMemoryRequest":
+        if all(
+            v is None
+            for v in (
+                self.text,
+                self.context,
+                self.occurred_start,
+                self.occurred_end,
+                self.fact_type,
+                self.entities,
+                self.state,
+            )
+        ):
+            raise ValueError("Provide at least one field to update.")
+        if self.state is not None and self.state not in ("valid", "invalidated"):
+            raise ValueError("state must be 'valid' or 'invalidated'.")
+        if self.fact_type is not None and self.fact_type not in ("world", "experience"):
+            raise ValueError("fact_type must be 'world' or 'experience'.")
+        return self
+
+
 class DeleteDocumentResponse(BaseModel):
     """Response model for delete document endpoint."""
 
@@ -3211,6 +3288,8 @@ def _register_routes(app: FastAPI):
         type: str | None = None,
         q: str | None = None,
         consolidation_state: str | None = None,
+        state: str | None = None,
+        document_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
         request_context: RequestContext = Depends(get_request_context),
@@ -3236,6 +3315,8 @@ def _register_routes(app: FastAPI):
                 fact_type=type,
                 search_query=q,
                 consolidation_state=consolidation_state,
+                state=state,
+                document_id=document_id,
                 limit=limit,
                 offset=offset,
                 request_context=request_context,
@@ -3287,6 +3368,53 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in /v1/default/banks/{bank_id}/memories/{memory_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.patch(
+        "/v1/default/banks/{bank_id}/memories/{memory_id}",
+        summary="Curate memory unit",
+        description="Edit a memory's text and/or change its curation state "
+        "(invalidate / revert). Invalidated memories are excluded from recall, "
+        "consolidation, and graph maintenance but kept for audit (reversible). "
+        "Only world/experience facts can be curated; observations are derived.",
+        operation_id="update_memory",
+        tags=["Memory"],
+    )
+    async def api_update_memory(
+        bank_id: str,
+        memory_id: str,
+        request: UpdateMemoryRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Curate a single memory unit (edit text / invalidate / revert)."""
+        try:
+            data = await app.state.memory.update_memory_unit(
+                bank_id=bank_id,
+                memory_id=memory_id,
+                text=request.text,
+                context=request.context,
+                occurred_start=request.occurred_start,
+                occurred_end=request.occurred_end,
+                new_fact_type=request.fact_type,
+                entities=request.entities,
+                state=request.state,
+                reason=request.reason,
+                request_context=request_context,
+            )
+            if data is None:
+                raise HTTPException(status_code=404, detail=f"Memory unit '{memory_id}' not found")
+            return data
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/memories/{memory_id}: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(

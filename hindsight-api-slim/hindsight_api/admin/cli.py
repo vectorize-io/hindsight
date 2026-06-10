@@ -49,6 +49,7 @@ BACKUP_TABLES = [
     "entities",
     "chunks",
     "memory_units",
+    "invalidated_memory_units",
     "unit_entities",
     "entity_cooccurrences",
     "memory_links",

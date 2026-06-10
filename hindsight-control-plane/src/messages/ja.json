@@ -1263,7 +1263,11 @@
     "viewHistory": "履歴を表示",
     "tracedByTitle": "作成元",
     "tracedBySummary": "{calls} 回の呼び出し · {tokens} トークン",
-    "consolidatedByTitle": "統合元"
+    "consolidatedByTitle": "統合元",
+    "editFieldEntities": "Entities",
+    "editEntityPlaceholder": "Add entity…",
+    "editEntityRemove": "Remove {entity}",
+    "editedBadge": "Edited"
   },
   "documentChunkModal": {
     "documentTitle": "ドキュメント詳細",
@@ -1536,7 +1540,8 @@
         "notFound": "メモリが見つかりません",
         "retain": "バッチRetainに失敗しました",
         "retainAsync": "非同期バッチRetainに失敗しました",
-        "history": "観察履歴の取得に失敗しました"
+        "history": "観察履歴の取得に失敗しました",
+        "update": "メモリの更新に失敗しました"
       },
       "documents": {
         "fetchList": "ドキュメントの取得に失敗しました",

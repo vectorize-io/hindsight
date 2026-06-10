@@ -1263,7 +1263,11 @@
     "viewHistory": "Ver histórico",
     "tracedByTitle": "Criado por",
     "tracedBySummary": "{calls} chamadas · {tokens} tokens",
-    "consolidatedByTitle": "Consolidado por"
+    "consolidatedByTitle": "Consolidado por",
+    "editFieldEntities": "Entities",
+    "editEntityPlaceholder": "Add entity…",
+    "editEntityRemove": "Remove {entity}",
+    "editedBadge": "Edited"
   },
   "documentChunkModal": {
     "documentTitle": "Detalhes do Documento",
@@ -1536,7 +1540,8 @@
         "notFound": "Memória não encontrada",
         "retain": "Falha ao executar Retain em lote",
         "retainAsync": "Falha ao executar Retain em lote assíncrono",
-        "history": "Falha ao buscar histórico de observações"
+        "history": "Falha ao buscar histórico de observações",
+        "update": "Falha ao atualizar a memória"
       },
       "documents": {
         "fetchList": "Falha ao buscar documentos",

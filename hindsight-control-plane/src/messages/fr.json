@@ -1263,7 +1263,11 @@
     "viewHistory": "Voir l'historique",
     "tracedByTitle": "Créé par",
     "tracedBySummary": "{calls} appels · {tokens} tokens",
-    "consolidatedByTitle": "Consolidé par"
+    "consolidatedByTitle": "Consolidé par",
+    "editFieldEntities": "Entities",
+    "editEntityPlaceholder": "Add entity…",
+    "editEntityRemove": "Remove {entity}",
+    "editedBadge": "Edited"
   },
   "documentChunkModal": {
     "documentTitle": "Détails du document",
@@ -1536,7 +1540,8 @@
         "notFound": "Souvenir introuvable",
         "retain": "Impossible d'exécuter Retain par lot",
         "retainAsync": "Impossible d'exécuter Retain par lot de manière asynchrone",
-        "history": "Impossible de récupérer l'historique des observations"
+        "history": "Impossible de récupérer l'historique des observations",
+        "update": "Échec de la mise à jour de la mémoire"
       },
       "documents": {
         "fetchList": "Impossible de récupérer les documents",

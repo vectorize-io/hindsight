@@ -214,6 +214,9 @@ import type {
   UpdateDocumentData,
   UpdateDocumentErrors,
   UpdateDocumentResponses,
+  UpdateMemoryData,
+  UpdateMemoryErrors,
+  UpdateMemoryResponses,
   UpdateMentalModelData,
   UpdateMentalModelErrors,
   UpdateMentalModelResponses,
@@ -315,6 +318,23 @@ export const getMemory = <ThrowOnError extends boolean = false>(
   (options.client ?? client).get<GetMemoryResponses, GetMemoryErrors, ThrowOnError>({
     url: "/v1/default/banks/{bank_id}/memories/{memory_id}",
     ...options,
+  });
+
+/**
+ * Curate memory unit
+ *
+ * Edit a memory's text and/or change its curation state (invalidate / revert). Invalidated memories are excluded from recall, consolidation, and graph maintenance but kept for audit (reversible). Only world/experience facts can be curated; observations are derived.
+ */
+export const updateMemory = <ThrowOnError extends boolean = false>(
+  options: Options<UpdateMemoryData, ThrowOnError>
+) =>
+  (options.client ?? client).patch<UpdateMemoryResponses, UpdateMemoryErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/memories/{memory_id}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   });
 
 /**

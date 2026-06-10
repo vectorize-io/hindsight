@@ -1263,7 +1263,11 @@
     "viewHistory": "기록 보기",
     "tracedByTitle": "생성 출처",
     "tracedBySummary": "{calls}회 호출 · {tokens} 토큰",
-    "consolidatedByTitle": "통합 출처"
+    "consolidatedByTitle": "통합 출처",
+    "editFieldEntities": "Entities",
+    "editEntityPlaceholder": "Add entity…",
+    "editEntityRemove": "Remove {entity}",
+    "editedBadge": "Edited"
   },
   "documentChunkModal": {
     "documentTitle": "문서 상세 정보",
@@ -1536,7 +1540,8 @@
         "notFound": "메모리를 찾을 수 없습니다",
         "retain": "배치 Retain을 실행하지 못했습니다",
         "retainAsync": "비동기 배치 Retain을 실행하지 못했습니다",
-        "history": "관찰 기록을 가져오지 못했습니다"
+        "history": "관찰 기록을 가져오지 못했습니다",
+        "update": "메모리를 업데이트하지 못했습니다"
       },
       "documents": {
         "fetchList": "문서를 가져오지 못했습니다",

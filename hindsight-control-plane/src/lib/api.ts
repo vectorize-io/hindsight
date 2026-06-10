@@ -734,6 +734,8 @@ export class ControlPlaneClient {
       type?: string;
       q?: string;
       consolidationState?: "failed" | "pending" | "done";
+      state?: "valid" | "invalidated";
+      documentId?: string;
       limit?: number;
       offset?: number;
     }
@@ -742,6 +744,8 @@ export class ControlPlaneClient {
     if (options?.type) params.set("type", options.type);
     if (options?.q) params.set("q", options.q);
     if (options?.consolidationState) params.set("consolidation_state", options.consolidationState);
+    if (options?.state) params.set("state", options.state);
+    if (options?.documentId) params.set("document_id", options.documentId);
     if (options?.limit !== undefined) params.set("limit", String(options.limit));
     if (options?.offset !== undefined) params.set("offset", String(options.offset));
     return this.fetchApi<{
@@ -760,11 +764,48 @@ export class ControlPlaneClient {
         tags: string[];
         consolidated_at: string | null;
         consolidation_failed_at: string | null;
+        state: "valid" | "invalidated";
+        invalidation_reason: string | null;
+        invalidated_at: string | null;
+        edited_at: string | null;
       }>;
       total: number;
       limit: number;
       offset: number;
     }>(`/api/list?${params.toString()}`);
+  }
+
+  /**
+   * Curate a memory unit: edit its text and/or change its state
+   * (invalidate / revert). Only world/experience facts can be curated.
+   */
+  async updateMemory(
+    memoryId: string,
+    bankId: string,
+    update: {
+      text?: string;
+      context?: string;
+      occurredStart?: string;
+      occurredEnd?: string;
+      factType?: "world" | "experience";
+      entities?: string[];
+      state?: "valid" | "invalidated";
+      reason?: string;
+    }
+  ) {
+    const body: Record<string, unknown> = { bank_id: bankId };
+    if (update.text !== undefined) body.text = update.text;
+    if (update.context !== undefined) body.context = update.context;
+    if (update.occurredStart !== undefined) body.occurred_start = update.occurredStart;
+    if (update.occurredEnd !== undefined) body.occurred_end = update.occurredEnd;
+    if (update.factType !== undefined) body.fact_type = update.factType;
+    if (update.entities !== undefined) body.entities = update.entities;
+    if (update.state !== undefined) body.state = update.state;
+    if (update.reason !== undefined) body.reason = update.reason;
+    return this.fetchApi(memoryApi(memoryId, bankId), {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
   }
 
   /**
@@ -792,6 +833,10 @@ export class ControlPlaneClient {
       chunk_id: string | null;
       tags: string[];
       observation_scopes: string | string[][] | null;
+      state: "valid" | "invalidated";
+      invalidation_reason: string | null;
+      invalidated_at: string | null;
+      edited_at: string | null;
       history?: {
         previous_text: string;
         previous_tags: string[];

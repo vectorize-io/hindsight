@@ -174,6 +174,7 @@ def mock_memory():
     # Memory browsing methods
     memory.list_memory_units = AsyncMock(return_value={"items": [{"id": "mem-1", "content": "Test"}], "total": 1})
     memory.get_memory_unit = AsyncMock(return_value={"id": "mem-1", "content": "Test memory"})
+    memory.update_memory_unit = AsyncMock(return_value={"id": "mem-1", "state": "valid"})
 
     # Document methods
     memory.list_documents = AsyncMock(return_value={"items": [{"id": "doc-1", "name": "Test Doc"}], "total": 1})
@@ -361,7 +362,9 @@ class TestMentalModelToolRegistration:
         assert "clear_memories" in tools
         assert "sync_retain" in tools
         assert "clear_mental_model" in tools
-        assert len(tools) == 30
+        assert "update_memory" in tools
+        assert "invalidate_memory" in tools
+        assert len(tools) == 32
 
 
 @pytest.fixture
@@ -1244,6 +1247,31 @@ class TestMemoryBrowsingTools:
         mcp = _make_mcp_server(mock_memory, {"get_memory"}, include_bank_id=False)
         result = await _tools(mcp)["get_memory"].fn(memory_id="bad")
         assert "not a valid UUID" in result["error"]
+
+    async def test_update_memory_edits_fields(self, mock_memory):
+        mcp = _make_mcp_server(mock_memory, {"update_memory"}, include_bank_id=True)
+        await _tools(mcp)["update_memory"].fn(
+            memory_id="mem-1", text="corrected", fact_type="experience", entities=["Alice"]
+        )
+        call_kwargs = mock_memory.update_memory_unit.call_args.kwargs
+        assert call_kwargs["text"] == "corrected"
+        assert call_kwargs["new_fact_type"] == "experience"
+        assert call_kwargs["entities"] == ["Alice"]
+        # update_memory does not change state — that's invalidate_memory's job.
+        assert "state" not in call_kwargs
+
+    async def test_invalidate_memory(self, mock_memory):
+        mock_memory.update_memory_unit.return_value = {"id": "mem-1", "state": "invalidated"}
+        mcp = _make_mcp_server(mock_memory, {"invalidate_memory"}, include_bank_id=True)
+        await _tools(mcp)["invalidate_memory"].fn(memory_id="mem-1", reason="stale")
+        call_kwargs = mock_memory.update_memory_unit.call_args.kwargs
+        assert call_kwargs["state"] == "invalidated"
+        assert call_kwargs["reason"] == "stale"
+
+    async def test_invalidate_memory_restore(self, mock_memory):
+        mcp = _make_mcp_server(mock_memory, {"invalidate_memory"}, include_bank_id=True)
+        await _tools(mcp)["invalidate_memory"].fn(memory_id="mem-1", restore=True)
+        assert mock_memory.update_memory_unit.call_args.kwargs["state"] == "valid"
 
     async def test_list_memories_single_bank(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"list_memories"}, include_bank_id=False)

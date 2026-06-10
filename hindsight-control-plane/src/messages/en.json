@@ -1263,7 +1263,11 @@
     "viewHistory": "View History",
     "tracedByTitle": "Created by",
     "tracedBySummary": "{calls} calls · {tokens} tokens",
-    "consolidatedByTitle": "Consolidated by"
+    "consolidatedByTitle": "Consolidated by",
+    "editFieldEntities": "Entities",
+    "editEntityPlaceholder": "Add entity…",
+    "editEntityRemove": "Remove {entity}",
+    "editedBadge": "Edited"
   },
   "documentChunkModal": {
     "documentTitle": "Document Details",
@@ -1536,7 +1540,8 @@
         "notFound": "Memory not found",
         "retain": "Failed to batch retain",
         "retainAsync": "Failed to batch retain async",
-        "history": "Failed to fetch observation history"
+        "history": "Failed to fetch observation history",
+        "update": "Failed to update memory"
       },
       "documents": {
         "fetchList": "Failed to fetch documents",
