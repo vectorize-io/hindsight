@@ -23,6 +23,7 @@ def setup_test_env():
         "HINDSIGHT_API_LLM_PROVIDER",
         "HINDSIGHT_API_LLM_MODEL",
         "HINDSIGHT_API_LLM_REASONING_EFFORT",
+        "HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER",
         "HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY",
         "HINDSIGHT_API_DATABASE_URL",
         "HINDSIGHT_API_MIGRATION_DATABASE_URL",
@@ -465,3 +466,68 @@ def test_recall_max_candidates_per_source_loaded_from_env(monkeypatch):
 
     config = HindsightConfig.from_env()
     assert config.recall_max_candidates_per_source == 150
+
+
+# ---------------------------------------------------------------------------
+# Bedrock service tier (HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER)
+# ---------------------------------------------------------------------------
+
+
+def test_bedrock_service_tier_defaults_to_none(monkeypatch):
+    """Bedrock service tier defaults to None (standard tier) when unset."""
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.delenv("HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER", raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.llm_bedrock_service_tier is None
+
+
+def test_bedrock_service_tier_flex(monkeypatch):
+    """Flex tier (50% cost savings) is accepted."""
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER", "flex")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.llm_bedrock_service_tier == "flex"
+
+
+def test_bedrock_service_tier_priority(monkeypatch):
+    """Priority tier (guaranteed throughput) is accepted."""
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER", "priority")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.llm_bedrock_service_tier == "priority"
+
+
+def test_bedrock_service_tier_reserved(monkeypatch):
+    """Reserved tier (provisioned capacity) is accepted."""
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER", "reserved")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.llm_bedrock_service_tier == "reserved"
+
+
+def test_bedrock_service_tier_rejects_invalid_value(monkeypatch):
+    """ "standard" is not a valid Bedrock service tier and must be rejected."""
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER", "standard")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    with pytest.raises(ValueError) as exc_info:
+        HindsightConfig.from_env()
+
+    error_message = str(exc_info.value)
+    assert "HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER" in error_message
+    assert "standard" in error_message
+    assert "'standard' is not a valid Bedrock service tier" in error_message
