@@ -16,25 +16,23 @@ use hindsight_client::types::{
 use serde::Deserialize;
 use serde_json;
 
-// Local types for serde_json::Value deserialization
+// Local types for serde_json::Value deserialization.
+//
+// Field names/shapes must mirror what `GET /memories/{memory_id}` actually
+// returns (see MemoryEngine.get_memory_unit): the fact type is exposed as
+// `type`, and `entities` is a flat list of canonical-name strings, not objects.
 #[derive(Debug, Deserialize)]
 struct MemoryUnitDetail {
     id: String,
     text: String,
-    #[serde(rename = "fact_type")]
+    #[serde(rename = "type")]
     type_: Option<String>,
     document_id: Option<String>,
     context: Option<String>,
     occurred_start: Option<String>,
     occurred_end: Option<String>,
-    entities: Option<Vec<EntityRef>>,
+    entities: Option<Vec<String>>,
     tags: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct EntityRef {
-    id: String,
-    name: String,
 }
 
 // Helper function to parse budget string to Budget enum
@@ -224,7 +222,7 @@ pub fn get(
                         println!();
                         println!("{}", ui::gradient_text("─── Entities ───"));
                         for entity in entities {
-                            println!("  • {} ({})", entity.name, entity.id);
+                            println!("  • {}", entity);
                         }
                     }
                 }
@@ -922,5 +920,65 @@ mod tests {
         assert!(matches!(parse_budget("invalid"), Budget::Mid));
         assert!(matches!(parse_budget(""), Budget::Mid));
         assert!(matches!(parse_budget("unknown"), Budget::Mid));
+    }
+
+    // Mirrors a real `GET /memories/{memory_id}` payload (see
+    // MemoryEngine.get_memory_unit): `type` for the fact type and `entities`
+    // as a flat list of canonical-name strings. This previously failed to parse
+    // ("Invalid API response format") because the struct expected `fact_type`
+    // and entity objects.
+    #[test]
+    fn test_memory_unit_detail_parses_api_response() {
+        let value = serde_json::json!({
+            "id": "11111111-1111-1111-1111-111111111111",
+            "text": "Alice met Bob in Paris.",
+            "context": "trip notes",
+            "date": "2023-05-01",
+            "type": "experience",
+            "mentioned_at": null,
+            "occurred_start": "2023-05-01T00:00:00",
+            "occurred_end": null,
+            "entities": ["Alice", "Bob", "Paris"],
+            "document_id": "doc-1",
+            "chunk_id": null,
+            "tags": ["travel"],
+            "observation_scopes": null
+        });
+
+        let result: MemoryUnitDetail =
+            serde_json::from_value(value).expect("should parse API response");
+
+        assert_eq!(result.id, "11111111-1111-1111-1111-111111111111");
+        assert_eq!(result.text, "Alice met Bob in Paris.");
+        assert_eq!(result.type_.as_deref(), Some("experience"));
+        assert_eq!(result.document_id.as_deref(), Some("doc-1"));
+        assert_eq!(
+            result.entities,
+            Some(vec![
+                "Alice".to_string(),
+                "Bob".to_string(),
+                "Paris".to_string()
+            ])
+        );
+        assert_eq!(result.tags, Some(vec!["travel".to_string()]));
+    }
+
+    // A world/experience fact has no entities/tags populated; the response still
+    // parses with those fields absent or empty.
+    #[test]
+    fn test_memory_unit_detail_parses_minimal_response() {
+        let value = serde_json::json!({
+            "id": "22222222-2222-2222-2222-222222222222",
+            "text": "The sky is blue.",
+            "type": "world",
+            "entities": [],
+            "tags": []
+        });
+
+        let result: MemoryUnitDetail =
+            serde_json::from_value(value).expect("should parse minimal response");
+
+        assert_eq!(result.type_.as_deref(), Some("world"));
+        assert_eq!(result.entities, Some(vec![]));
     }
 }
