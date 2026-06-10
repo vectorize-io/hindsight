@@ -52,6 +52,9 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "claude-agent-sdk": IntegrationMeta("hindsight-claude-agent-sdk", "Claude Agent SDK"),
     "llamaindex": IntegrationMeta("hindsight-llamaindex", "LlamaIndex"),
     "codex": IntegrationMeta("hindsight-codex", "Codex"),
+    "cline": IntegrationMeta("hindsight-cline", "Cline"),
+    "cursor-cli": IntegrationMeta("hindsight-cursor-cli", "Cursor CLI"),
+    "cursor": IntegrationMeta("hindsight-cursor", "Cursor"),
     "autogen": IntegrationMeta("hindsight-autogen", "AutoGen"),
     "paperclip": IntegrationMeta("@vectorize-io/hindsight-paperclip", "Paperclip"),
     "opencode": IntegrationMeta("@vectorize-io/opencode-hindsight", "OpenCode"),
@@ -67,6 +70,10 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "flowise": IntegrationMeta("@vectorize-io/flowise-nodes-hindsight", "Flowise"),
     "google-adk": IntegrationMeta("hindsight-google-adk", "Google ADK"),
     "superagent": IntegrationMeta("hindsight-superagent", "Superagent"),
+    "obsidian": IntegrationMeta("@vectorize-io/hindsight-obsidian", "Obsidian"),
+    "haystack": IntegrationMeta("hindsight-haystack", "Haystack"),
+    "roo-code": IntegrationMeta("hindsight-roo-code", "Roo Code"),
+    "omo": IntegrationMeta("hindsight-omo", "OMO"),
 }
 
 VALID_INTEGRATIONS = list(INTEGRATIONS.keys())

@@ -96,9 +96,7 @@ class TestE2ETools:
         tools = create_hindsight_tools(bank_id=bank_id, client=client)
         retain, recall = _tool(tools, "hindsight_retain"), _tool(tools, "hindsight_recall")
 
-        stored = _text(
-            await retain.handler({"content": "The team uses PostgreSQL 16 and deploys to us-east-1."})
-        )
+        stored = _text(await retain.handler({"content": "The team uses PostgreSQL 16 and deploys to us-east-1."}))
         assert stored == "Memory stored successfully."
 
         result = await _recall_until_nonempty(recall, "What technologies does the team use?")
@@ -128,8 +126,6 @@ class TestE2ETools:
     @pytest.mark.asyncio
     async def test_recall_empty_bank(self, live):
         client, bank_id = live
-        tools = create_hindsight_tools(
-            bank_id=bank_id, client=client, include_retain=False, include_reflect=False
-        )
+        tools = create_hindsight_tools(bank_id=bank_id, client=client, include_retain=False, include_reflect=False)
         result = _text(await _tool(tools, "hindsight_recall").handler({"query": "anything at all"}))
         assert result == _NO_MEMORIES

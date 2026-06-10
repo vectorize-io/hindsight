@@ -40,7 +40,11 @@ After searching for weeks, I finally found a cheaper apartment in Brooklyn.
         llm_config = LLMConfig.from_env()
 
         facts, _, _ = await extract_facts_from_text(
-            text=text, event_date=datetime(2024, 3, 15), context=context, llm_config=llm_config, agent_name="TestUser",
+            text=text,
+            event_date=datetime(2024, 3, 15),
+            context=context,
+            llm_config=llm_config,
+            agent_name="TestUser",
             config=_get_raw_config(),
         )
 
@@ -109,7 +113,11 @@ The renovation took three months and cost $15,000.
         llm_config = LLMConfig.from_env()
 
         facts, _, _ = await extract_facts_from_text(
-            text=text, event_date=datetime(2024, 6, 1), context=context, llm_config=llm_config, agent_name="TestUser",
+            text=text,
+            event_date=datetime(2024, 6, 1),
+            context=context,
+            llm_config=llm_config,
+            agent_name="TestUser",
             config=_get_raw_config(),
         )
 
@@ -140,7 +148,11 @@ Machine learning fascinated me so much that I changed my career to data science.
         llm_config = LLMConfig.from_env()
 
         facts, _, _ = await extract_facts_from_text(
-            text=text, event_date=datetime(2024, 1, 1), context=context, llm_config=llm_config, agent_name="TestUser",
+            text=text,
+            event_date=datetime(2024, 1, 1),
+            context=context,
+            llm_config=llm_config,
+            agent_name="TestUser",
             config=_get_raw_config(),
         )
 
@@ -168,7 +180,11 @@ The new role enabled me to lead a team of engineers.
         llm_config = LLMConfig.from_env()
 
         facts, _, _ = await extract_facts_from_text(
-            text=text, event_date=datetime(2024, 2, 15), context=context, llm_config=llm_config, agent_name="TestUser",
+            text=text,
+            event_date=datetime(2024, 2, 15),
+            context=context,
+            llm_config=llm_config,
+            agent_name="TestUser",
             config=_get_raw_config(),
         )
 
@@ -180,4 +196,3 @@ The new role enabled me to lead a team of engineers.
                         f"Invalid target_fact_index {rel.target_fact_index} in fact {i}. "
                         f"Must reference previous facts only (valid range: 0 to {i - 1})"
                     )
-

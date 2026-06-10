@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 class WebhookEventType(StrEnum):
     CONSOLIDATION_COMPLETED = "consolidation.completed"
     RETAIN_COMPLETED = "retain.completed"
+    MEMORY_DEFENSE_TRIGGERED = "memory_defense.triggered"
 
 
 class ConsolidationEventData(BaseModel):
@@ -23,13 +24,23 @@ class RetainEventData(BaseModel):
     tags: list[str] | None = None
 
 
+class MemoryDefenseEventData(BaseModel):
+    """Payload for a memory_defense.triggered event (one item, one non-allow decision)."""
+
+    action: str  # "redact" or "block"
+    detector: str | None = None  # e.g. "sensitive_data"
+    document_id: str | None = None
+    matched_types: list[str] | None = None  # redaction pattern labels that fired
+    message: str | None = None
+
+
 class WebhookEvent(BaseModel):
     event: WebhookEventType
     bank_id: str
     operation_id: str
-    status: str  # "completed" or "failed"
+    status: str  # "completed"/"failed" for retain/consolidation; the action ("redact"/"block") for memory_defense
     timestamp: datetime
-    data: ConsolidationEventData | RetainEventData
+    data: ConsolidationEventData | RetainEventData | MemoryDefenseEventData
 
 
 class WebhookHttpConfig(BaseModel):

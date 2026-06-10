@@ -229,6 +229,34 @@ See [Observations](./observations) for details on how consolidation works.
 
 ---
 
+## Memory Defense and Source Provenance
+
+### receipt_uri (optional)
+
+Type: `string`.
+
+Optional pointer into an external receipt or co-signature system. Stored as-is and surfaced in `security_events.receipt_uri` for any Memory Defense decision on this item.
+
+### 422 — Memory Defense violation
+
+When Memory Defense is enabled on the target bank and **every** item in the batch is blocked by policy, the request returns 422 with a violation list:
+
+```json
+{
+  "detail": {
+    "violations": [
+      { "index": 0, "detector": "prompt_injection", "severity": "high", "message": "..." }
+    ]
+  }
+}
+```
+
+Partial-block batches return 200 with the un-blocked items processed; blocked items are silently dropped from the result with their decisions recorded in `security_events`.
+
+See [Memory Defense](./memory-defense/index.md) for the full guide.
+
+---
+
 ## Next Steps
 
 - [**Observations**](./observations) — How knowledge is consolidated after retain

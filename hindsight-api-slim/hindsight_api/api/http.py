@@ -1352,7 +1352,8 @@ class DocumentResponse(BaseModel):
 
     id: str
     bank_id: str
-    original_text: str
+    # None when document text storage is disabled (HINDSIGHT_API_STORE_DOCUMENT_TEXT=false).
+    original_text: str | None
     content_hash: str | None
     created_at: str
     updated_at: str
@@ -1536,6 +1537,51 @@ class BankStatsResponse(BaseModel):
         description="Number of source memories (world/experience) whose consolidation permanently failed and can be retried via the consolidation recovery endpoint.",
     )
     total_observations: int = Field(default=0, description="Total number of observations")
+
+
+class LlmOperationHealth(BaseModel):
+    """LLM connectivity status for a single operation. Status only — no provider/model/
+    endpoint/error, so the probe never discloses the LLM configuration."""
+
+    operation: Literal["retain", "consolidation", "reflect"] = Field(
+        # Distinct title so the generated clients don't collide this inline enum with the
+        # async-operation "operation" enum (progenitor names Rust types from the title).
+        title="LlmHealthOperation",
+        description="Operation whose LLM was probed",
+    )
+    ok: bool = Field(description="True only when the probe connected successfully")
+    status: Literal["connected", "not_configured", "auth_failed", "unreachable", "timeout"] = Field(
+        # Distinct title — otherwise this inline enum's default title "Status" collides
+        # with the async-operation status enum and breaks the generated Rust client/CLI.
+        title="LlmHealthStatus",
+        description="'connected'; 'not_configured' (provider is 'none'); 'auth_failed' (rejected — "
+        "usually a wrong/expired API key); 'unreachable' (call failed); 'timeout'",
+    )
+    latency_ms: float | None = Field(default=None, description="Round-trip latency of the probe call")
+
+
+class BankLlmHealthResponse(BaseModel):
+    """Per-bank LLM connectivity probe across retain/consolidation/reflect. Operations
+    that share a configuration are probed once. Discloses status only — never the
+    provider, model, endpoint, API key, or raw error."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "bank_id": "user123",
+                "operations": [
+                    {"operation": "retain", "ok": True, "status": "connected", "latency_ms": 412.0},
+                    {"operation": "consolidation", "ok": True, "status": "connected", "latency_ms": 412.0},
+                    {"operation": "reflect", "ok": False, "status": "not_configured", "latency_ms": None},
+                ],
+            }
+        }
+    )
+
+    bank_id: str = Field(description="Bank identifier")
+    operations: list[LlmOperationHealth] = Field(
+        description="Connectivity status per operation (retain, consolidation, reflect)"
+    )
 
 
 class MemoryTimeseriesBucket(BaseModel):
@@ -2413,11 +2459,15 @@ class FeaturesInfo(BaseModel):
     mcp: bool = Field(description="Whether MCP (Model Context Protocol) server is enabled")
     worker: bool = Field(description="Whether the background worker is enabled")
     bank_config_api: bool = Field(description="Whether per-bank configuration API is enabled")
+    bank_llm_health: bool = Field(description="Whether the per-bank LLM connectivity probe is enabled")
     file_upload_api: bool = Field(description="Whether file upload/conversion API is enabled")
     document_export_api: bool = Field(description="Whether the document export endpoint is enabled")
     document_import_api: bool = Field(description="Whether the document import endpoint is enabled")
     audit_log: bool = Field(description="Whether audit logging is enabled")
     llm_trace: bool = Field(description="Whether per-bank LLM request tracing is enabled")
+    store_document_text: bool = Field(
+        description="Whether raw source text is persisted. When false, document/chunk source text is not stored."
+    )
 
 
 class VersionResponse(BaseModel):
@@ -3080,11 +3130,13 @@ def _register_routes(app: FastAPI):
                 mcp=config.mcp_enabled,
                 worker=config.worker_enabled,
                 bank_config_api=config.enable_bank_config_api,
+                bank_llm_health=config.enable_bank_llm_health,
                 file_upload_api=config.enable_file_upload_api,
                 document_export_api=config.enable_document_export_api,
                 document_import_api=config.enable_document_import_api,
                 audit_log=config.audit_log_enabled,
                 llm_trace=config.llm_trace_enabled,
+                store_document_text=config.store_document_text,
             ),
         )
 
@@ -3666,6 +3718,45 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in /v1/default/banks/{bank_id}/stats: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/health/llm",
+        response_model=BankLlmHealthResponse,
+        summary="Test the bank's LLM connectivity",
+        description="Probe the LLMs this bank would use for retain / consolidation / reflect with one minimal call "
+        "each (configs shared across operations are probed once), so you can discover 'not configured / unreachable' "
+        "instead of a silent stall. Deliberate action (makes a real provider call); not for polling. Returns status "
+        "only — never the provider, model, endpoint, API key, or raw error. Disable with "
+        "HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH=false.",
+        operation_id="test_bank_llm",
+        tags=["Banks"],
+    )
+    async def api_bank_llm_health(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
+        """Probe per-bank LLM connectivity."""
+        if not get_config().enable_bank_llm_health:
+            raise HTTPException(
+                status_code=404,
+                detail="Bank LLM health check is disabled. Set HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH=true to enable.",
+            )
+        try:
+            result = await app.state.memory.check_bank_llm(bank_id, request_context=request_context)
+            return BankLlmHealthResponse(
+                bank_id=result.bank_id,
+                operations=[
+                    LlmOperationHealth(operation=op.operation, ok=op.ok, status=op.status, latency_ms=op.latency_ms)
+                    for op in result.operations
+                ],
+            )
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in POST /v1/default/banks/{bank_id}/health/llm: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(
@@ -5627,6 +5718,15 @@ def _register_routes(app: FastAPI):
                     app.state.memory._operation_validator.validate_bank_write(ctx)
                 )
 
+            # Validate Memory Defense policy shape before persisting.
+            if "memory_defense" in request.updates and request.updates["memory_defense"] is not None:
+                from hindsight_api.extensions.memory_defense import parse_policy
+
+                try:
+                    parse_policy(request.updates["memory_defense"])
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=f"invalid memory_defense policy: {exc}")
+
             # Update config via config resolver (validates configurable fields and permissions)
             await app.state.memory._config_resolver.update_bank_config(bank_id, request.updates, request_context)
 
@@ -6155,7 +6255,21 @@ def _register_routes(app: FastAPI):
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
             raise
+        except ValueError as e:
+            # Invalid request parameters (e.g. duplicate document_ids, or
+            # update_mode='append' when document text storage is disabled) are
+            # client errors, not server faults.
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
+            from dataclasses import asdict
+
+            from hindsight_api.engine.retain.orchestrator import MemoryDefenseAllBlockedError
+
+            if isinstance(e, MemoryDefenseAllBlockedError):
+                raise HTTPException(
+                    status_code=422,
+                    detail={"violations": [asdict(v) for v in e.violations]},
+                )
             import traceback
 
             # Create a summary of the input for debugging

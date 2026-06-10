@@ -60,6 +60,7 @@
     "bankConfiguration": "记忆库配置",
     "bankConfigurationDescription": "管理记忆库设置、配置文件和后台操作。",
     "actions": "操作",
+    "health": "运行状况",
     "exportTemplate": "导出模板",
     "consolidating": "正在整合...",
     "runConsolidation": "运行整合",
@@ -154,7 +155,8 @@
     "llmRequestsNotEnabled": "LLM Requests 未启用",
     "llmRequestsDisabledMessage": "此服务器上的 LLM 请求追踪已禁用。请设置 <envVar></envVar> 以启用。",
     "deleteWillDeleteDetails": "这将删除 {memories, plural, other {# 条记忆}}、{documents, plural, other {# 个文档}} 和 {links, plural, other {# 个链接}}。",
-    "deleteWillDeleteObservations": "这将删除 {count, plural, other {# 个观察}}。"
+    "deleteWillDeleteObservations": "这将删除 {count, plural, other {# 个观察}}。",
+    "memoryDefense": "记忆防护"
   },
   "bankProfile": {
     "noBankSelected": "未选择记忆库",
@@ -238,6 +240,18 @@
     "entity": "实体",
     "noLinksYet": "暂无链接",
     "consolidation": "整合",
+    "testLlm": "测试 LLM 连接",
+    "testingLlm": "测试中…",
+    "llmConnected": "已连接",
+    "llmNotConfigured": "未配置 LLM",
+    "llmAuthFailed": "API 密钥无效",
+    "llmUnreachable": "无法访问",
+    "llmTimeout": "超时",
+    "llmTestHint": "检查此记忆库使用的 LLM（保留、整合、反思）。",
+    "llmHealthTitle": "LLM 连接",
+    "llmRetest": "重新测试",
+    "opRetain": "保留",
+    "opReflect": "反思",
     "done": "完成",
     "pending": "待处理",
     "failed": "失败",
@@ -398,7 +412,17 @@
     "extractorHintWhichPlaceholder": "提取器提示：何时选择此值",
     "addField": "字段",
     "addValueShort": "值",
-    "noValuesYet": "尚无值。"
+    "noValuesYet": "尚无值。",
+    "memoryDefenseTitle": "记忆防护",
+    "memoryDefenseDescription": "在保留过程中检查内容,并决定在密钥及其他安全问题进入记忆之前如何处理。",
+    "memoryDefenseFailedToSave": "保存记忆防护设置失败",
+    "memoryDefenseSavedToast": "记忆防护已保存",
+    "memoryDefenseActionLabel": "操作",
+    "memoryDefenseAction_allow": "允许",
+    "memoryDefenseAction_redact": "脱敏",
+    "memoryDefenseAction_block": "拦截",
+    "memoryDefenseSecretLeakTitle": "密钥泄露防护",
+    "memoryDefenseSecretLeakDescription": "扫描保留内容中的密钥。44 种模式,涵盖常见提供商密钥、AWS 和个人信息。"
   },
   "bankOperations": {
     "title": "后台操作",
@@ -640,7 +664,8 @@
     "importConflictLabel": "当文档已存在时",
     "importConflictSkip": "跳过 — 保留现有文档",
     "importConflictReplace": "替换 — 用导入的覆盖",
-    "importConflictNewId": "两者都保留 — 以新 id 导入"
+    "importConflictNewId": "两者都保留 — 以新 id 导入",
+    "textNotStoredWarning": "此服务器不存储原始文本，仅保留提取的记忆。"
   },
   "entitiesView": {
     "viewRelations": "关系",
@@ -1002,6 +1027,7 @@
     "actionDeleteDirective": "删除指令",
     "actionFileConvertRetain": "转换文件",
     "actionWebhookDelivery": "Webhook 投递",
+    "actionMemoryDefense": "记忆防护",
     "transportAll": "所有传输",
     "transportHttp": "HTTP",
     "transportMcp": "MCP",
@@ -1367,7 +1393,9 @@
     "linkTypeSemantic": "语义",
     "linkTypeTemporal": "时间",
     "linkTypeEntity": "实体",
-    "linkTypeCausal": "因果"
+    "linkTypeCausal": "因果",
+    "exportSvgTitle": "下载为 SVG 以分享",
+    "exportSvgLabel": "分享"
   },
   "metadata": {
     "title": "Hindsight Cloud",
@@ -1444,7 +1472,8 @@
     "observationScopeAllCombinations": "所有组合",
     "observationScopesEmpty": "在上方添加标签以预览观察范围",
     "metadataHelpText": "每行一个 <code>key: value</code>",
-    "entitiesHelpText": "逗号分隔的提示，与自动提取的实体合并"
+    "entitiesHelpText": "逗号分隔的提示，与自动提取的实体合并",
+    "textNotStoredWarning": "此服务器不会存储文档原始文本，仅保留提取的记忆。"
   },
   "dashboard": {
     "welcome": "欢迎使用 Hindsight",

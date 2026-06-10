@@ -287,7 +287,9 @@ class TestEmbeddingDimension:
         # Try to change dimension - should raise RuntimeError.
         # Retry on transient OID errors from concurrent xdist schema drops.
         _assert_raises_runtime_error_with_retry(
-            db_url, 768, schema,
+            db_url,
+            768,
+            schema,
             expected_messages=["Cannot change embedding dimension", "1 rows with embeddings"],
         )
 
@@ -332,7 +334,9 @@ class TestEmbeddingDimension:
         # Try to change dimension - should raise RuntimeError.
         # Retry on transient OID errors from concurrent xdist schema drops.
         _assert_raises_runtime_error_with_retry(
-            db_url, 768, schema,
+            db_url,
+            768,
+            schema,
             expected_messages=["Cannot change embedding dimension", "mental_models"],
         )
 

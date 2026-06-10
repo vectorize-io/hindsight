@@ -232,6 +232,7 @@ _PROVIDERS_WITHOUT_API_KEY = frozenset(
         "litellm",
         "litellmrouter",
         "bedrock",
+        "nous",
     }
 )
 
@@ -249,6 +250,7 @@ def create_llm_provider(
     reasoning_effort: str,
     groq_service_tier: str | None = None,
     openai_service_tier: str | None = None,
+    bedrock_service_tier: str | None = None,
     extra_body: dict[str, Any] | None = None,
     default_headers: dict[str, str] | None = None,
     vertexai_project_id: str | None = None,
@@ -269,6 +271,7 @@ def create_llm_provider(
         reasoning_effort: Reasoning effort level for supported providers.
         groq_service_tier: Groq service tier (for Groq provider) - "on_demand", "flex", or "auto".
         openai_service_tier: OpenAI service tier (for OpenAI provider) - None (default) or "flex" (50% cheaper).
+        bedrock_service_tier: Bedrock service tier (for Bedrock provider) - None (default), "flex", "priority", or "reserved".
         extra_body: Extra request-body params merged into the provider's native
             call. Threaded into OpenAI-compatible, Fireworks, Anthropic, Gemini/
             VertexAI and LiteLLM providers (each merges them in its own parameter
@@ -401,6 +404,7 @@ def create_llm_provider(
             model=bedrock_model,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            bedrock_service_tier=bedrock_service_tier,
         )
 
     elif provider_lower == "llamacpp":
@@ -426,6 +430,21 @@ def create_llm_provider(
         # native (non-OpenAI) batch API on top. The existing LiteLLM
         # ``fireworks_ai/...`` online path (provider="litellm") is untouched.
         return FireworksLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
+        )
+
+    elif provider_lower == "nous":
+        # Nous Portal is OpenAI-compatible on the wire; NousLLM adds rotating
+        # inference:invoke JWT auth read natively from ~/.hermes/auth.json
+        # (no static api_key, no hermes_cli dependency — same shape as Codex).
+        from hindsight_api.engine.providers.nous_llm import NousLLM
+
+        return NousLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -478,6 +497,7 @@ class LLMProvider:
         reasoning_effort: str = "low",
         groq_service_tier: str | None = None,
         openai_service_tier: str | None = None,
+        bedrock_service_tier: str | None = None,
         gemini_safety_settings: list | None = None,
         prompt_cache_enabled: bool = False,
         extra_body: dict[str, Any] | None = None,
@@ -495,6 +515,7 @@ class LLMProvider:
             reasoning_effort: Reasoning effort level for supported providers.
             groq_service_tier: Groq service tier ("on_demand", "flex", "auto") - from config.
             openai_service_tier: OpenAI service tier (None or "flex") - from config.
+            bedrock_service_tier: Bedrock service tier (None, "flex", "priority", "reserved") - from config.
             gemini_safety_settings: Safety settings for Gemini/VertexAI providers.
             extra_body: Extra request-body params merged into the provider's native call
                 (OpenAI-compatible, Fireworks, Anthropic, Gemini/VertexAI, LiteLLM).
@@ -517,6 +538,7 @@ class LLMProvider:
         # Service tiers from hierarchical config (not env vars)
         self.groq_service_tier = groq_service_tier
         self.openai_service_tier = openai_service_tier
+        self.bedrock_service_tier = bedrock_service_tier
         # Gemini safety settings (instance default; can be overridden per-request via context var)
         self.gemini_safety_settings = gemini_safety_settings
         # Gemini prompt caching: when True, retain extraction (and any future
@@ -563,6 +585,7 @@ class LLMProvider:
             "zai",
             "opencode-go",
             "fireworks",
+            "nous",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")
@@ -587,6 +610,8 @@ class LLMProvider:
                 self.base_url = "https://api.z.ai/api/coding/paas/v4"
             elif self.provider == "opencode-go":
                 self.base_url = "https://opencode.ai/zen/go/v1"
+            elif self.provider == "nous":
+                self.base_url = "https://inference-api.nousresearch.com/v1"
 
         # Prepare Vertex AI config (if applicable)
         vertexai_project_id = None
@@ -679,6 +704,7 @@ class LLMProvider:
             reasoning_effort=self.reasoning_effort,
             groq_service_tier=self.groq_service_tier,
             openai_service_tier=self.openai_service_tier,
+            bedrock_service_tier=self.bedrock_service_tier,
             extra_body=self.extra_body,
             default_headers=self.default_headers,
             vertexai_project_id=vertexai_project_id,
@@ -1120,6 +1146,7 @@ class LLMProvider:
             DEFAULT_LLM_REASONING_EFFORT,
             ENV_LLM_API_KEY,
             ENV_LLM_BASE_URL,
+            ENV_LLM_BEDROCK_SERVICE_TIER,
             ENV_LLM_DEFAULT_HEADERS,
             ENV_LLM_EXTRA_BODY,
             ENV_LLM_MODEL,
@@ -1151,6 +1178,7 @@ class LLMProvider:
             reasoning_effort=os.getenv(ENV_LLM_REASONING_EFFORT, DEFAULT_LLM_REASONING_EFFORT),
             extra_body=extra_body,
             default_headers=default_headers,
+            bedrock_service_tier=os.getenv(ENV_LLM_BEDROCK_SERVICE_TIER) or None,
         )
 
 

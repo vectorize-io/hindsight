@@ -60,6 +60,7 @@
     "bankConfiguration": "뱅크 구성",
     "bankConfigurationDescription": "뱅크 설정, 프로필 및 작업을 관리합니다.",
     "actions": "작업",
+    "health": "상태",
     "exportTemplate": "템플릿 내보내기",
     "consolidating": "통합 중...",
     "runConsolidation": "통합 실행",
@@ -154,7 +155,8 @@
     "llmRequestsNotEnabled": "LLM 요청이 활성화되지 않음",
     "llmRequestsDisabledMessage": "이 서버에서는 LLM 요청 추적이 비활성화되어 있습니다. 활성화하려면 <envVar></envVar>를 설정하세요.",
     "deleteWillDeleteDetails": "{memories, plural, other {# 메모리}}, {documents, plural, other {# 문서}}, {links, plural, other {# 링크}}가 삭제됩니다.",
-    "deleteWillDeleteObservations": "{count, plural, other {# 관찰}}이 삭제됩니다."
+    "deleteWillDeleteObservations": "{count, plural, other {# 관찰}}이 삭제됩니다.",
+    "memoryDefense": "메모리 방어"
   },
   "bankProfile": {
     "noBankSelected": "선택된 뱅크 없음",
@@ -238,6 +240,18 @@
     "entity": "엔티티",
     "noLinksYet": "아직 링크 없음",
     "consolidation": "통합",
+    "testLlm": "LLM 연결 테스트",
+    "testingLlm": "테스트 중…",
+    "llmConnected": "연결됨",
+    "llmNotConfigured": "LLM이 구성되지 않음",
+    "llmAuthFailed": "잘못된 API 키",
+    "llmUnreachable": "연결할 수 없음",
+    "llmTimeout": "시간 초과",
+    "llmTestHint": "이 메모리 뱅크가 사용하는 LLM(보관·통합·리플렉트)을 확인합니다.",
+    "llmHealthTitle": "LLM 연결 상태",
+    "llmRetest": "다시 테스트",
+    "opRetain": "보관",
+    "opReflect": "리플렉트",
     "done": "완료",
     "pending": "대기 중",
     "failed": "실패",
@@ -398,7 +412,17 @@
     "extractorHintWhichPlaceholder": "추출기 힌트: 언제 이 값을 선택할지",
     "addField": "필드",
     "addValueShort": "값",
-    "noValuesYet": "아직 값이 없습니다."
+    "noValuesYet": "아직 값이 없습니다.",
+    "memoryDefenseTitle": "메모리 방어",
+    "memoryDefenseDescription": "보존 중 콘텐츠를 검사하고 시크릿 및 기타 보안 우려 사항이 메모리에 도달하기 전에 어떻게 처리할지 결정합니다.",
+    "memoryDefenseFailedToSave": "메모리 방어 설정 저장에 실패했습니다",
+    "memoryDefenseSavedToast": "메모리 방어가 저장되었습니다",
+    "memoryDefenseActionLabel": "작업",
+    "memoryDefenseAction_allow": "허용",
+    "memoryDefenseAction_redact": "마스킹",
+    "memoryDefenseAction_block": "차단",
+    "memoryDefenseSecretLeakTitle": "시크릿 유출 방지",
+    "memoryDefenseSecretLeakDescription": "보존된 콘텐츠에서 시크릿을 검사합니다. 일반적인 공급자 키, AWS, 개인 정보를 포함하는 44개 패턴."
   },
   "bankOperations": {
     "title": "백그라운드 작업",
@@ -640,7 +664,8 @@
     "importConflictLabel": "문서가 이미 있는 경우",
     "importConflictSkip": "건너뛰기 — 기존 문서 유지",
     "importConflictReplace": "교체 — 가져온 것으로 덮어쓰기",
-    "importConflictNewId": "둘 다 유지 — 새 id로 가져오기"
+    "importConflictNewId": "둘 다 유지 — 새 id로 가져오기",
+    "textNotStoredWarning": "이 서버에는 원본 텍스트가 저장되지 않습니다. 추출된 메모리만 보관됩니다."
   },
   "entitiesView": {
     "viewRelations": "관계",
@@ -1002,6 +1027,7 @@
     "actionDeleteDirective": "지시문 삭제",
     "actionFileConvertRetain": "파일 변환",
     "actionWebhookDelivery": "Webhook 전송",
+    "actionMemoryDefense": "메모리 방어",
     "transportAll": "모든 전송",
     "transportHttp": "HTTP",
     "transportMcp": "MCP",
@@ -1367,7 +1393,9 @@
     "linkTypeSemantic": "의미",
     "linkTypeTemporal": "시간",
     "linkTypeEntity": "엔티티",
-    "linkTypeCausal": "인과"
+    "linkTypeCausal": "인과",
+    "exportSvgTitle": "공유용 SVG 다운로드",
+    "exportSvgLabel": "공유"
   },
   "metadata": {
     "title": "Hindsight Cloud",
@@ -1444,7 +1472,8 @@
     "observationScopeAllCombinations": "모든 조합",
     "observationScopesEmpty": "관찰 범위를 미리 보려면 위에 태그를 추가하세요",
     "metadataHelpText": "한 줄에 하나의 <code>key: value</code>",
-    "entitiesHelpText": "자동 추출된 엔터티와 병합되는 쉼표로 구분된 힌트"
+    "entitiesHelpText": "자동 추출된 엔터티와 병합되는 쉼표로 구분된 힌트",
+    "textNotStoredWarning": "이 서버에는 문서 원본 텍스트가 저장되지 않습니다. 추출된 메모리만 보관됩니다."
   },
   "dashboard": {
     "welcome": "Hindsight에 오신 것을 환영합니다",

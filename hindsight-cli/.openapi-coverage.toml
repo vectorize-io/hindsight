@@ -25,6 +25,10 @@
 # Zero-filled bucket arrays don't map to a useful CLI command.
 get_memories_timeseries = "UI-only endpoint for the control plane stats chart"
 
+# Per-bank LLM connectivity probe — a control-plane/diagnostics action (the "Health"
+# dialog). Makes a real provider call and is off by default; not an end-user CLI command.
+test_bank_llm = "Control-plane diagnostics action (Health dialog); not exposed in the CLI"
+
 # UI-only endpoint powering the control-plane entity constellation view.
 # Returns nodes/edges in cytoscape shape; not a useful CLI command.
 get_entity_graph = "UI-only endpoint for the control plane entity constellation"

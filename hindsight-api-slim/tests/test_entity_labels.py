@@ -80,11 +80,7 @@ def test_parse_entity_labels_dict_format():
 
 def test_parse_entity_labels_dict_format_defaults():
     """Dict format parses attributes correctly."""
-    raw = {
-        "attributes": [
-            {"key": "topic", "values": [{"value": "math", "description": "Mathematics"}]}
-        ]
-    }
+    raw = {"attributes": [{"key": "topic", "values": [{"value": "math", "description": "Mathematics"}]}]}
     result = parse_entity_labels(raw)
     assert result is not None
     assert len(result.attributes) == 1
@@ -178,9 +174,7 @@ def test_build_labels_model_free_values_optional():
     """type='text', optional=True → str | None field."""
     from hindsight_api.engine.retain.entity_labels import build_labels_model
 
-    labels_cfg = EntityLabelsConfig(
-        attributes=[LabelGroup(key="topic", type="text", optional=True, values=[])]
-    )
+    labels_cfg = EntityLabelsConfig(attributes=[LabelGroup(key="topic", type="text", optional=True, values=[])])
     Model = build_labels_model(labels_cfg)
     assert Model is not None
     schema = Model.model_json_schema()
@@ -194,9 +188,7 @@ def test_build_labels_model_free_values_always_optional():
     """type='text' with optional=False is still treated as str | None — always optional."""
     from hindsight_api.engine.retain.entity_labels import build_labels_model
 
-    labels_cfg = EntityLabelsConfig(
-        attributes=[LabelGroup(key="topic", type="text", optional=False, values=[])]
-    )
+    labels_cfg = EntityLabelsConfig(attributes=[LabelGroup(key="topic", type="text", optional=False, values=[])])
     Model = build_labels_model(labels_cfg)
     assert Model is not None
     schema = Model.model_json_schema()
@@ -210,9 +202,7 @@ def test_build_labels_model_free_values_multi_still_optional():
     """type='text' is always str | None — multi-values only applies to enum types."""
     from hindsight_api.engine.retain.entity_labels import build_labels_model
 
-    labels_cfg = EntityLabelsConfig(
-        attributes=[LabelGroup(key="tags", type="text", values=[])]
-    )
+    labels_cfg = EntityLabelsConfig(attributes=[LabelGroup(key="tags", type="text", values=[])])
     Model = build_labels_model(labels_cfg)
     assert Model is not None
     schema = Model.model_json_schema()
@@ -226,9 +216,7 @@ def test_build_labels_model_free_values_no_values_still_creates_field():
     """type='text' group with no values still creates a field (description holds examples)."""
     from hindsight_api.engine.retain.entity_labels import build_labels_model
 
-    labels_cfg = EntityLabelsConfig(
-        attributes=[LabelGroup(key="mood", type="text", values=[])]
-    )
+    labels_cfg = EntityLabelsConfig(attributes=[LabelGroup(key="mood", type="text", values=[])])
     Model = build_labels_model(labels_cfg)
     assert Model is not None
     assert "mood" in Model.model_json_schema()["properties"]
@@ -549,9 +537,7 @@ def test_label_entity_post_processing_invalid_value_ignored():
     from hindsight_api.engine.retain.entity_labels import build_labels_lookup, parse_entity_labels
     from hindsight_api.engine.retain.fact_extraction import Entity
 
-    labels_cfg = parse_entity_labels(
-        [{"key": "pedagogy", "values": [{"value": "scaffolding", "description": ""}]}]
-    )
+    labels_cfg = parse_entity_labels([{"key": "pedagogy", "values": [{"value": "scaffolding", "description": ""}]}])
     labels_lookup = build_labels_lookup(labels_cfg)
 
     labels_data = {"pedagogy": "unknown_value"}
@@ -665,9 +651,7 @@ def test_free_values_label_is_single_value():
     """type='text' groups are always single-value (str | None)."""
     from hindsight_api.engine.retain.entity_labels import build_labels_model, parse_entity_labels
 
-    labels_cfg = parse_entity_labels(
-        [{"key": "topic", "type": "text", "values": []}]
-    )
+    labels_cfg = parse_entity_labels([{"key": "topic", "type": "text", "values": []}])
     Model = build_labels_model(labels_cfg)
     assert Model is not None
     schema = Model.model_json_schema()
@@ -681,9 +665,7 @@ def test_free_values_label_not_in_lookup():
     """type='text' group values do NOT appear in the lookup set (no fixed vocabulary)."""
     from hindsight_api.engine.retain.entity_labels import build_labels_lookup, parse_entity_labels
 
-    labels_cfg = parse_entity_labels(
-        [{"key": "topic", "type": "text", "values": [{"value": "algebra"}]}]
-    )
+    labels_cfg = parse_entity_labels([{"key": "topic", "type": "text", "values": [{"value": "algebra"}]}])
     lookup = build_labels_lookup(labels_cfg)
     assert "topic:algebra" not in lookup  # example hints not added to lookup
     assert len(lookup) == 0
@@ -725,9 +707,7 @@ def test_optional_label_string_none_produces_no_entity():
 
     # LLM returned the string "None" instead of JSON null — must not be stored
     entity_texts = _run_label_post_processing(labels_cfg, {"engagement": "None"})
-    assert entity_texts == set(), (
-        f"String 'None' must not produce engagement:None entity, got: {entity_texts}"
-    )
+    assert entity_texts == set(), f"String 'None' must not produce engagement:None entity, got: {entity_texts}"
 
 
 def test_optional_label_null_does_not_affect_other_labels():
@@ -744,9 +724,7 @@ def test_optional_label_null_does_not_affect_other_labels():
     # engagement is null, but topic is set
     entity_texts = _run_label_post_processing(labels_cfg, {"engagement": None, "topic": "math"})
     assert "topic:math" in entity_texts, f"Expected topic:math entity, got: {entity_texts}"
-    assert not any("engagement" in t for t in entity_texts), (
-        f"engagement should not appear, got: {entity_texts}"
-    )
+    assert not any("engagement" in t for t in entity_texts), f"engagement should not appear, got: {entity_texts}"
 
 
 def test_free_form_entities_false_clears_entities():
@@ -982,9 +960,7 @@ async def test_retain_extracts_single_value_label(memory_real_llm, request_conte
             )
 
         entity_names = {r["canonical_name"].lower() for r in rows}
-        assert "engagement:active" in entity_names, (
-            f"Expected 'engagement:active' label entity. Got: {entity_names}"
-        )
+        assert "engagement:active" in entity_names, f"Expected 'engagement:active' label entity. Got: {entity_names}"
         # In labels-only mode, free-form entities like 'Maria' should be absent
         assert not any("maria" in n for n in entity_names), (
             f"Free-form entity 'Maria' should not appear in labels-only mode. Got: {entity_names}"
@@ -1054,9 +1030,7 @@ async def test_retain_extracts_multi_value_label(memory_real_llm, request_contex
         entity_names = {r["canonical_name"].lower() for r in rows}
         # At least one pedagogy label should be assigned
         pedagogy_labels = {n for n in entity_names if n.startswith("pedagogy:")}
-        assert len(pedagogy_labels) > 0, (
-            f"Expected at least one pedagogy:* label entity. Got: {entity_names}"
-        )
+        assert len(pedagogy_labels) > 0, f"Expected at least one pedagogy:* label entity. Got: {entity_names}"
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -1118,9 +1092,7 @@ async def test_retain_extracts_free_values_label(memory_real_llm, request_contex
         entity_names = {r["canonical_name"].lower() for r in rows}
         # A topic:* entity must exist — value is free-form so we only check the prefix
         topic_entities = {n for n in entity_names if n.startswith("topic:")}
-        assert len(topic_entities) > 0, (
-            f"Expected at least one topic:* free-value entity. Got: {entity_names}"
-        )
+        assert len(topic_entities) > 0, f"Expected at least one topic:* free-value entity. Got: {entity_names}"
         # The value must not be the literal string "none" or "null"
         assert not any(n in ("topic:none", "topic:null", "topic:n/a") for n in topic_entities), (
             f"topic entity should not be a null sentinel. Got: {topic_entities}"
@@ -1188,18 +1160,14 @@ async def test_retain_extracts_map_type_entities(memory_real_llm, request_contex
         entity_names = {r["canonical_name"].lower() for r in rows}
         # Should have person:name:* entity
         name_entities = {n for n in entity_names if n.startswith("person:name:")}
-        assert len(name_entities) > 0, (
-            f"Expected at least one person:name:* entity. Got: {entity_names}"
-        )
+        assert len(name_entities) > 0, f"Expected at least one person:name:* entity. Got: {entity_names}"
         # Name should contain "alice" somewhere
         assert any("alice" in n for n in name_entities), (
             f"Expected person:name entity containing 'alice'. Got: {name_entities}"
         )
         # Should have person:organization:* entity mentioning google
         org_entities = {n for n in entity_names if n.startswith("person:organization:")}
-        assert len(org_entities) > 0, (
-            f"Expected at least one person:organization:* entity. Got: {entity_names}"
-        )
+        assert len(org_entities) > 0, f"Expected at least one person:organization:* entity. Got: {entity_names}"
         assert any("google" in n for n in org_entities), (
             f"Expected person:organization entity containing 'google'. Got: {org_entities}"
         )
@@ -2036,9 +2004,7 @@ async def test_retain_multivalue_tag_entities_all_stored(memory_real_llm, reques
 
         # The core assertion from GH-1558: tags and entities should match
         # Tags show both but entities only show a subset → BUG
-        assert len(use_tags) >= 2, (
-            f"Expected at least 2 use:* tags. Got: {use_tags}"
-        )
+        assert len(use_tags) >= 2, f"Expected at least 2 use:* tags. Got: {use_tags}"
         assert len(use_entities) >= 2, (
             f"GH-1558 BUG: Expected at least 2 use:* entities in unit_entities, "
             f"but only got {len(use_entities)}: {use_entities}. "
@@ -2097,8 +2063,7 @@ async def test_retain_multivalue_tag_entities_second_retain(memory_real_llm, req
         await memory_real_llm.retain_async(
             bank_id=bank_id,
             content=(
-                "## Authentication Flow (use-001)\n\n"
-                "The authentication flow use-001 handles user login via OAuth2."
+                "## Authentication Flow (use-001)\n\nThe authentication flow use-001 handles user login via OAuth2."
             ),
             request_context=request_context,
         )
@@ -2145,9 +2110,7 @@ async def test_retain_multivalue_tag_entities_second_retain(memory_real_llm, req
         use_entities = {n for n in entity_names if n.startswith("use:")}
         use_tags = {t for t in all_tags if t.startswith("use:")}
 
-        assert len(use_tags) >= 2, (
-            f"Expected at least 2 use:* tags on second retain. Got: {use_tags}"
-        )
+        assert len(use_tags) >= 2, f"Expected at least 2 use:* tags on second retain. Got: {use_tags}"
         assert len(use_entities) >= 2, (
             f"GH-1558 BUG: On second retain, expected at least 2 use:* entities "
             f"but only got {len(use_entities)}: {use_entities}. "
@@ -2155,9 +2118,7 @@ async def test_retain_multivalue_tag_entities_second_retain(memory_real_llm, req
             f"Entity resolution may be merging similar names."
         )
         missing = use_tags - use_entities
-        assert len(missing) == 0, (
-            f"GH-1558 BUG: Tags present but entities missing after second retain: {missing}"
-        )
+        assert len(missing) == 0, f"GH-1558 BUG: Tags present but entities missing after second retain: {missing}"
     finally:
         await memory_real_llm.delete_bank(bank_id, request_context=request_context)
 
@@ -2243,9 +2204,7 @@ async def test_entity_resolution_does_not_merge_distinct_label_values(memory, re
             )
 
         # We should get 2 DISTINCT entity IDs, not the same ID twice
-        assert len(resolved_entity_ids) == 2, (
-            f"Expected 2 resolved entity IDs, got {len(resolved_entity_ids)}"
-        )
+        assert len(resolved_entity_ids) == 2, f"Expected 2 resolved entity IDs, got {len(resolved_entity_ids)}"
         unique_ids = set(resolved_entity_ids)
         assert len(unique_ids) == 2, (
             f"GH-1558 BUG: Entity resolution merged 'use:use-001' and 'use:use-002' "
@@ -2254,3 +2213,210 @@ async def test_entity_resolution_does_not_merge_distinct_label_values(memory, re
         )
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+# ─── User report: paired id/name map-entity extraction from [[...]] tags ───────
+#
+# Forum report (related to GH-1558): a user wants consistent extraction of a
+# structured `application` entity with BOTH an `id` and a `name` field for every
+# tagged element in their documents. They mark up source text with their own
+# `[[Matched Text (name, id)]]` notation, e.g.
+#     [[SystemA (SystemA, SYS001)]]   [[System-A (SystemA, SYS001)]]
+# and configure an entity label group like:
+#     application (tag)
+#       - id   (multi-values): SYS001, SYS002, SYS003, ...
+#       - name (multi-values): SystemA, SystemB, SystemC, ...
+#
+# Symptom: extraction is inconsistent. For a given tagged element they often get
+# only PART of the pair (e.g. application:name:SystemA but no application:id:SYS001),
+# and sometimes the element is missed entirely. It is noticeably worse when more
+# than one tagged element appears in the same chunk.
+#
+# These tests reproduce that scenario. The deterministic tests pin the mechanics
+# (map post-processing emits the full pair when the LLM returns both fields, and
+# faithfully drops half when it doesn't — there is no backfill, so the pairing
+# must come from the model). The hs_llm_core test exercises the real model
+# end-to-end and asserts that EVERY tagged element yields a COMPLETE {name, id}
+# pair — the assertion that surfaces the reported flakiness.
+
+
+# Known applications: canonical name → canonical id (the configured vocabulary).
+_KNOWN_APPLICATIONS = {
+    "SystemA": "SYS001",
+    "SystemB": "SYS002",
+    "SystemC": "SYS003",
+}
+
+
+def _build_application_label_config() -> dict:
+    """The user's reported entity_labels config: application map with id + name."""
+    return {
+        "entity_labels": [
+            {
+                "key": "application",
+                "type": "map",
+                "tag": True,
+                "description": "A known software system referenced in the text",
+                "fields": {
+                    "name": {
+                        "type": "multi-values",
+                        "description": "The human-readable application name",
+                        "values": [{"value": n} for n in _KNOWN_APPLICATIONS],
+                    },
+                    "id": {
+                        "type": "multi-values",
+                        "description": "The application identifier code",
+                        "values": [{"value": i} for i in _KNOWN_APPLICATIONS.values()],
+                    },
+                },
+            }
+        ],
+        "entities_allow_free_form": False,
+        "retain_extraction_mode": "verbose",
+    }
+
+
+def test_map_entity_emits_complete_id_name_pair():
+    """
+    Deterministic mechanics: when the LLM returns a map entity object with BOTH
+    fields populated, post-processing emits the full pair of label entities.
+
+    This isolates the post-processing step from LLM non-determinism — it proves
+    the pipeline is capable of producing the complete pair, so any missing half
+    seen end-to-end comes from the model's structured output, not from a bug here.
+    """
+    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+
+    cfg = parse_entity_labels(_build_application_label_config()["entity_labels"])
+    assert cfg is not None
+    group = cfg.attributes[0]
+
+    validated: list[Entity] = []
+    existing_lower: set[str] = set()
+    # Simulated LLM output for one tagged element: [[SystemA (SystemA, SYS001)]]
+    _extract_map_entities(
+        entity_obj={"name": ["SystemA"], "id": ["SYS001"]},
+        fields=group.fields,
+        prefix="application:",
+        validated_entities=validated,
+        existing_texts_lower=existing_lower,
+    )
+
+    texts = {e.text for e in validated}
+    assert texts == {"application:name:SystemA", "application:id:SYS001"}, (
+        f"Expected the complete id/name pair, got: {texts}"
+    )
+
+
+def test_map_entity_partial_object_drops_half_the_pair():
+    """
+    Deterministic: documents the failure shape the user sees. If the LLM returns
+    only one field of the map object, post-processing faithfully emits only that
+    half — there is no inference of the missing member. This shows the pairing
+    must be guaranteed upstream (by the model), and post-processing won't backfill.
+    """
+    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+
+    cfg = parse_entity_labels(_build_application_label_config()["entity_labels"])
+    group = cfg.attributes[0]
+
+    validated: list[Entity] = []
+    # LLM returned the name but omitted the id — the reported "part only" case.
+    _extract_map_entities(
+        entity_obj={"name": ["SystemA"]},
+        fields=group.fields,
+        prefix="application:",
+        validated_entities=validated,
+        existing_texts_lower=set(),
+    )
+
+    texts = {e.text for e in validated}
+    assert texts == {"application:name:SystemA"}, texts
+    assert "application:id:SYS001" not in texts
+
+
+@pytest.mark.asyncio
+@pytest.mark.hs_llm_core
+async def test_retain_application_tags_extract_complete_pairs(memory_real_llm, request_context):
+    """
+    User report reproducer (integration): retain a document whose source text is
+    marked up with `[[Matched Text (name, id)]]` tags referencing several known
+    applications, and assert that EVERY tagged element yields a COMPLETE
+    {application:name:*, application:id:*} pair.
+
+    The reported symptom is that some elements come back with only the name OR
+    only the id (and occasionally neither), especially with several tags in one
+    chunk. This test fails when any expected pair is incomplete, surfacing that
+    inconsistency.
+    """
+    from hindsight_api.engine.memory_engine import fq_table
+
+    bank_id = f"test-app-pairs-{uuid.uuid4().hex[:8]}"
+    # Three tagged elements in ONE chunk, with surface forms that differ from the
+    # canonical values (hyphenation, casing) so the model has to map each tag back
+    # onto the configured vocabulary — the "more than one item in the chunk"
+    # condition from the report.
+    elements = ["SystemA", "SystemB", "SystemC"]
+    expected_pairs = {
+        name: (
+            f"application:name:{name.lower()}",
+            f"application:id:{_KNOWN_APPLICATIONS[name].lower()}",
+        )
+        for name in elements
+    }
+    try:
+        await memory_real_llm.get_bank_profile(bank_id=bank_id, request_context=request_context)
+        await memory_real_llm._config_resolver.update_bank_config(
+            bank_id=bank_id,
+            updates=_build_application_label_config(),
+            context=request_context,
+        )
+
+        # Multiple tagged elements in a single document, mirroring the user's
+        # `[[Matched Text (name, id)]]` notation and varied surface forms.
+        unit_ids = await memory_real_llm.retain_async(
+            bank_id=bank_id,
+            content=(
+                "## Integration Architecture\n\n"
+                "The order pipeline routes events from [[SystemA (SystemA, SYS001)]] "
+                "into [[System-B (SystemB, SYS002)]] for enrichment. "
+                "Reconciliation is handled downstream by [[system c (SystemC, SYS003)]]. "
+                "Note that [[System-A (SystemA, SYS001)]] also emits audit records "
+                "consumed by [[SystemC (SystemC, SYS003)]]."
+            ),
+            request_context=request_context,
+        )
+
+        assert len(unit_ids) > 0, "Should have extracted at least one fact"
+
+        async with memory_real_llm._pool.acquire() as conn:
+            entity_rows = await conn.fetch(
+                f"""
+                SELECT e.canonical_name
+                FROM {fq_table("unit_entities")} ue
+                JOIN {fq_table("entities")} e ON e.id = ue.entity_id
+                WHERE ue.unit_id = ANY($1::uuid[])
+                """,
+                [u for u in unit_ids],
+            )
+        entity_names = {r["canonical_name"].lower() for r in entity_rows}
+        app_entities = {n for n in entity_names if n.startswith("application:")}
+
+        # Build a per-element completeness report so a failure is diagnostic.
+        report: list[str] = []
+        incomplete: list[str] = []
+        for element, (name_ent, id_ent) in expected_pairs.items():
+            has_name = name_ent in app_entities
+            has_id = id_ent in app_entities
+            if not (has_name and has_id):
+                incomplete.append(element)
+            report.append(f"  {element}: name={'OK' if has_name else 'MISSING'} id={'OK' if has_id else 'MISSING'}")
+
+        assert not incomplete, (
+            "User report reproduced: not every tagged element produced a complete "
+            f"id/name pair. Incomplete: {incomplete}\n"
+            "Per-element extraction:\n" + "\n".join(report) + "\n"
+            f"All application:* entities: {sorted(app_entities)}"
+        )
+    finally:
+        await memory_real_llm.delete_bank(bank_id, request_context=request_context)

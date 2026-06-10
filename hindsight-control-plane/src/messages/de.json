@@ -60,6 +60,7 @@
     "bankConfiguration": "Bankkonfiguration",
     "bankConfigurationDescription": "Verwalten Sie Bankeinstellungen, Profil und Operationen.",
     "actions": "Aktionen",
+    "health": "Status",
     "exportTemplate": "Vorlage exportieren",
     "consolidating": "Wird konsolidiert...",
     "runConsolidation": "Konsolidierung ausführen",
@@ -154,7 +155,8 @@
     "llmRequestsNotEnabled": "LLM Requests nicht aktiviert",
     "llmRequestsDisabledMessage": "Das Tracing von LLM-Anfragen ist auf diesem Server deaktiviert. Setzen Sie <envVar></envVar>, um es zu aktivieren.",
     "deleteWillDeleteDetails": "Dadurch werden {memories, plural, one {# Erinnerung} other {# Erinnerungen}}, {documents, plural, one {# Dokument} other {# Dokumente}} und {links, plural, one {# Verknüpfung} other {# Verknüpfungen}} gelöscht.",
-    "deleteWillDeleteObservations": "Dadurch werden {count, plural, one {# Beobachtung} other {# Beobachtungen}} gelöscht."
+    "deleteWillDeleteObservations": "Dadurch werden {count, plural, one {# Beobachtung} other {# Beobachtungen}} gelöscht.",
+    "memoryDefense": "Speicherschutz"
   },
   "bankProfile": {
     "noBankSelected": "Keine Bank ausgewählt",
@@ -238,6 +240,18 @@
     "entity": "Entität",
     "noLinksYet": "Noch keine Verknüpfungen",
     "consolidation": "Konsolidierung",
+    "testLlm": "LLM-Verbindung testen",
+    "testingLlm": "Wird getestet…",
+    "llmConnected": "Verbunden",
+    "llmNotConfigured": "Kein LLM konfiguriert",
+    "llmAuthFailed": "Ungültiger API-Schlüssel",
+    "llmUnreachable": "Nicht erreichbar",
+    "llmTimeout": "Zeitüberschreitung",
+    "llmTestHint": "Prüft die LLMs dieses Bank (Aufnahme, Konsolidierung, Reflexion).",
+    "llmHealthTitle": "LLM-Konnektivität",
+    "llmRetest": "Erneut testen",
+    "opRetain": "Aufnahme",
+    "opReflect": "Reflexion",
     "done": "Fertig",
     "pending": "Ausstehend",
     "failed": "Fehlgeschlagen",
@@ -398,7 +412,17 @@
     "extractorHintWhichPlaceholder": "Extraktor-Hinweis: wann diesen Wert wählen",
     "addField": "Feld",
     "addValueShort": "Wert",
-    "noValuesYet": "Noch keine Werte."
+    "noValuesYet": "Noch keine Werte.",
+    "memoryDefenseTitle": "Speicherschutz",
+    "memoryDefenseDescription": "Inhalte beim Speichern prüfen und entscheiden, was mit Geheimnissen und anderen Sicherheitsbedenken geschehen soll, bevor sie in den Speicher gelangen.",
+    "memoryDefenseFailedToSave": "Speicherschutz-Einstellungen konnten nicht gespeichert werden",
+    "memoryDefenseSavedToast": "Speicherschutz gespeichert",
+    "memoryDefenseActionLabel": "Aktion",
+    "memoryDefenseAction_allow": "Zulassen",
+    "memoryDefenseAction_redact": "Schwärzen",
+    "memoryDefenseAction_block": "Blockieren",
+    "memoryDefenseSecretLeakTitle": "Geheimnislecks verhindern",
+    "memoryDefenseSecretLeakDescription": "Gespeicherte Inhalte auf Geheimnisse prüfen. 44 Muster für gängige Anbieter-Schlüssel, AWS und persönliche Daten."
   },
   "bankOperations": {
     "title": "Hintergrundoperationen",
@@ -640,7 +664,8 @@
     "importConflictLabel": "Wenn ein Dokument bereits existiert",
     "importConflictSkip": "Überspringen — vorhandenes Dokument behalten",
     "importConflictReplace": "Ersetzen — durch das importierte überschreiben",
-    "importConflictNewId": "Beide behalten — unter neuer id importieren"
+    "importConflictNewId": "Beide behalten — unter neuer id importieren",
+    "textNotStoredWarning": "Der Quelltext wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten."
   },
   "entitiesView": {
     "viewRelations": "Beziehungen",
@@ -1002,6 +1027,7 @@
     "actionDeleteDirective": "Direktive löschen",
     "actionFileConvertRetain": "Datei konvertieren",
     "actionWebhookDelivery": "Webhook-Zustellung",
+    "actionMemoryDefense": "Speicherschutz",
     "transportAll": "Alle Transportmittel",
     "transportHttp": "HTTP",
     "transportMcp": "MCP",
@@ -1367,7 +1393,9 @@
     "linkTypeSemantic": "semantisch",
     "linkTypeTemporal": "zeitlich",
     "linkTypeEntity": "Entität",
-    "linkTypeCausal": "kausal"
+    "linkTypeCausal": "kausal",
+    "exportSvgTitle": "Als SVG zum Teilen herunterladen",
+    "exportSvgLabel": "Teilen"
   },
   "metadata": {
     "title": "Hindsight Cloud",
@@ -1444,7 +1472,8 @@
     "observationScopeAllCombinations": "Alle Kombinationen",
     "observationScopesEmpty": "Fügen Sie oben Tags hinzu, um Beobachtungsbereiche vorzuschauen",
     "metadataHelpText": "Ein <code>key: value</code> pro Zeile",
-    "entitiesHelpText": "Kommagetrennte Hinweise, die mit automatisch extrahierten Entitäten zusammengeführt werden"
+    "entitiesHelpText": "Kommagetrennte Hinweise, die mit automatisch extrahierten Entitäten zusammengeführt werden",
+    "textNotStoredWarning": "Der Rohtext des Dokuments wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten."
   },
   "dashboard": {
     "welcome": "Willkommen bei Hindsight",

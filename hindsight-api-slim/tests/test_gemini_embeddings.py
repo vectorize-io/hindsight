@@ -10,6 +10,7 @@ These tests cover:
 6. Factory function (create from env, validation errors)
 """
 
+import os
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -20,7 +21,11 @@ from hindsight_api.config import (
     ENV_EMBEDDINGS_PROVIDER,
     HindsightConfig,
 )
-from hindsight_api.engine.embeddings import GeminiEmbeddings, create_embeddings_from_env
+from hindsight_api.engine.embeddings import (
+    GeminiEmbeddings,
+    _gemini_model_aggregates_inputs,
+    create_embeddings_from_env,
+)
 
 
 def _make_mock_embedding(values: list[float]) -> MagicMock:
@@ -239,6 +244,40 @@ class TestGeminiEmbeddings:
         emb.encode(["hello"])
         assert mock_client.models.embed_content.call_args.kwargs["config"] is emb._embed_config
 
+    def test_encode_aggregating_model_embeds_one_per_call(self):
+        """Gemini Embedding 2+ aggregates multi-input requests, so each text must
+        be embedded in its own call to keep 1:1 input→vector alignment."""
+        emb = GeminiEmbeddings(model="gemini-embedding-2-preview", api_key="test-key", batch_size=100)
+        mock_client = MagicMock()
+        mock_client.models.embed_content = MagicMock(
+            side_effect=[
+                _make_mock_embed_result([[0.1]]),
+                _make_mock_embed_result([[0.2]]),
+                _make_mock_embed_result([[0.3]]),
+            ]
+        )
+        emb._client = mock_client
+        emb._dimension = 1
+
+        assert emb.encode(["a", "b", "c"]) == [[0.1], [0.2], [0.3]]
+        # One call per input despite batch_size=100.
+        assert mock_client.models.embed_content.call_count == 3
+        for call in mock_client.models.embed_content.call_args_list:
+            assert len(call.kwargs["contents"]) == 1
+
+    def test_encode_raises_on_misaligned_vector_count(self):
+        """A backend that aggregates inputs (returns fewer vectors than texts)
+        must raise rather than silently misalign vectors with inputs."""
+        emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key", batch_size=100)
+        mock_client = MagicMock()
+        # 3 inputs in one batch but only 1 vector returned (aggregation).
+        mock_client.models.embed_content = MagicMock(return_value=_make_mock_embed_result([[0.1]]))
+        emb._client = mock_client
+        emb._dimension = 1
+
+        with pytest.raises(RuntimeError, match="expected exact 1:1 alignment"):
+            emb.encode(["a", "b", "c"])
+
     def test_encode_empty_list(self):
         emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key")
         emb._client = MagicMock()
@@ -272,6 +311,20 @@ class TestGeminiEmbeddings:
     def test_custom_region(self):
         emb = GeminiEmbeddings(model="m", vertexai_project_id="proj", vertexai_region="europe-west1")
         assert emb.vertexai_region == "europe-west1"
+
+    @pytest.mark.parametrize(
+        "model,expected",
+        [
+            ("gemini-embedding-001", False),
+            ("gemini-embedding-2-preview", True),
+            ("gemini-embedding-2", True),
+            ("models/gemini-embedding-2-preview", True),
+            ("google/gemini-embedding-2", True),
+            ("text-embedding-004", False),
+        ],
+    )
+    def test_aggregating_model_detection(self, model, expected):
+        assert _gemini_model_aggregates_inputs(model) is expected
 
 
 class TestGeminiEmbeddingsFactory:
@@ -361,3 +414,66 @@ class TestGeminiEmbeddingsFactory:
         with patch("hindsight_api.config.get_config", return_value=config):
             emb = create_embeddings_from_env()
         assert emb.output_dimensionality == 256
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID"),
+    reason="Vertex AI integration tests require HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID",
+)
+async def test_gemini_embedding_2_vertexai_one_vector_per_input():
+    """Real Vertex AI check that the gemini-embedding-2 family stays 1:1.
+
+    These multimodal models aggregate a multi-input request into a single
+    embedding, so encode() must embed one input per call. Before the fix this
+    returned a single aggregated vector for the whole batch (the bug in #1139).
+    Runs in the CI jobs that provide GCP credentials; skips locally otherwise.
+    """
+    project_id = os.getenv("HINDSIGHT_API_EMBEDDINGS_VERTEXAI_PROJECT_ID") or os.getenv(
+        "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID"
+    )
+    region = (
+        os.getenv("HINDSIGHT_API_EMBEDDINGS_VERTEXAI_REGION")
+        or os.getenv("HINDSIGHT_API_LLM_VERTEXAI_REGION")
+        or "us-central1"
+    )
+    service_account_key = os.getenv("HINDSIGHT_API_EMBEDDINGS_VERTEXAI_SERVICE_ACCOUNT_KEY") or os.getenv(
+        "HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY"
+    )
+    # Overridable so the model can be bumped (e.g. to GA) without a code change.
+    model = os.getenv("HINDSIGHT_API_EMBEDDINGS_GEMINI_MODEL", "gemini-embedding-2-preview")
+
+    emb = GeminiEmbeddings(
+        model=model,
+        vertexai_project_id=project_id,
+        vertexai_region=region,
+        vertexai_service_account_key=service_account_key,
+        output_dimensionality=768,
+    )
+
+    texts = [
+        "The sky is blue.",
+        "I visited Paris in 2023.",
+        "Python is a programming language.",
+    ]
+
+    from google.genai.errors import APIError
+
+    try:
+        await emb.initialize()
+        vectors = emb.encode(texts)
+    except APIError as e:
+        # gemini-embedding-2 is a preview/allowlisted model not enabled in every
+        # Vertex project (e.g. CI returns 400 FAILED_PRECONDITION). Skip rather
+        # than fail when the project lacks access — a real aggregation regression
+        # surfaces below as a wrong vector count (RuntimeError/AssertionError),
+        # never as an APIError, so this skip cannot mask the behavior under test.
+        pytest.skip(f"gemini-embedding-2 not available in this Vertex project: {e}")
+
+    # The fix: one vector per input, not a single aggregated vector.
+    assert len(vectors) == len(texts)
+    assert all(len(v) == emb.dimension for v in vectors)
+    # Distinct inputs must produce distinct vectors (proves no aggregation).
+    assert vectors[0] != vectors[1]
+    assert vectors[1] != vectors[2]
+    assert vectors[0] != vectors[2]

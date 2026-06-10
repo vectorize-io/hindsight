@@ -6,11 +6,45 @@ maintenance-routines migration and loop over every schema holding the relevant
 table in a single round-trip. These tests drive them directly against pg0.
 """
 
+import importlib.util
 import uuid
+from pathlib import Path
 
 import pytest
 
 from hindsight_api.engine.memory_engine import MemoryEngine
+
+
+def _load_repair_migration():
+    """Import the repair migration by path (filename starts with a digit, so it
+    is not importable as a normal module name)."""
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "hindsight_api/alembic/versions/b2d4f6a8c1e3_repair_maintenance_routines_public.py"
+    )
+    spec = importlib.util.spec_from_file_location("_repair_maintenance_routines", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("target_schema", "expected"),
+    [
+        (None, True),  # base-schema run (no target_schema)
+        ("", True),  # falsy schema behaves like the base run
+        ("public", True),  # the case #2056 regressed: explicit public must install
+        ("tenant_xyz", False),  # per-tenant run skips to avoid concurrent CREATE
+    ],
+)
+def test_repair_gate_installs_on_public_and_base_runs(target_schema, expected):
+    """Regression for #2056: the maintenance routines live in ``public`` and must
+    be (re)created on both the base run and the explicit ``target_schema=public``
+    run — the runtime always migrates an explicit ``public`` schema, so gating on
+    ``not target_schema`` alone silently skipped function creation."""
+    migration = _load_repair_migration()
+    assert migration._should_install_public_routines(target_schema) is expected
 
 
 async def _make_bank(memory: MemoryEngine, request_context, suffix: str) -> str:
@@ -19,7 +53,9 @@ async def _make_bank(memory: MemoryEngine, request_context, suffix: str) -> str:
     return bank_id
 
 
-async def _insert_fact(conn, bank_id: str, *, fact_type: str = "experience", consolidated: bool = False, failed: bool = False) -> None:
+async def _insert_fact(
+    conn, bank_id: str, *, fact_type: str = "experience", consolidated: bool = False, failed: bool = False
+) -> None:
     await conn.execute(
         """
         INSERT INTO memory_units (id, bank_id, text, fact_type, created_at, consolidated_at, consolidation_failed_at)
@@ -107,9 +143,7 @@ async def test_schemas_with_expired_rows(memory: MemoryEngine):
         )
 
         # 7-day cutoff: the 10-day-old row makes 'public' expired.
-        expired_7 = await conn.fetch(
-            "SELECT * FROM public.schemas_with_expired_rows('audit_log', 'started_at', 7)"
-        )
+        expired_7 = await conn.fetch("SELECT * FROM public.schemas_with_expired_rows('audit_log', 'started_at', 7)")
         assert "public" in {r[0] for r in expired_7}
 
         # 100-year cutoff: nothing is that old.

@@ -1,6 +1,7 @@
 """
 Test that LLM calls record token metrics via the metrics collector.
 """
+
 import os
 from unittest.mock import MagicMock, patch
 import pytest
@@ -31,7 +32,9 @@ async def test_llm_metrics_recorded_for_groq():
     mock_collector = MagicMock(spec=MetricsCollector)
 
     # Patch the provider module where get_metrics_collector is actually called
-    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector", return_value=mock_collector):
+    with patch(
+        "hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector", return_value=mock_collector
+    ):
         llm = LLMProvider(
             provider="groq",
             api_key=api_key,
@@ -43,7 +46,7 @@ async def test_llm_metrics_recorded_for_groq():
         response = await llm.call(
             messages=[
                 {"role": "system", "content": "You are a helpful assistant. Always respond."},
-                {"role": "user", "content": "What is 2+2? Reply with just the number."}
+                {"role": "user", "content": "What is 2+2? Reply with just the number."},
             ],
             max_completion_tokens=50,
             scope="test_metrics",
@@ -92,7 +95,9 @@ async def test_llm_metrics_recorded_for_structured_output():
     mock_collector = MagicMock(spec=MetricsCollector)
 
     # Patch the provider module where get_metrics_collector is actually called
-    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector", return_value=mock_collector):
+    with patch(
+        "hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector", return_value=mock_collector
+    ):
         llm = LLMProvider(
             provider="groq",
             api_key=api_key,
@@ -180,7 +185,7 @@ async def test_return_usage_returns_tuple():
     result, usage = await llm.call(
         messages=[
             {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "What is 2+2? Reply with just the number."}
+            {"role": "user", "content": "What is 2+2? Reply with just the number."},
         ],
         max_completion_tokens=50,
         return_usage=True,

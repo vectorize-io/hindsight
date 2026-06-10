@@ -343,6 +343,31 @@ Floor and ceiling applied to the result of the adaptive function (after the rati
 
 See [Recall budget mapping](../configuration.md#recall-budget-mapping) for environment variable names and full defaults.
 
+### memory_defense {#memory_defense}
+
+Per-bank Memory Defense policy. Defaults to absent (Memory Defense disabled on this bank).
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch. |
+| `default_action` | `allow`\|`redact`\|`quarantine`\|`block` | `allow` | Fallback action when no rule matches. |
+| `protected_tag_namespaces` | `list[str]` | `[]` | Writes with tags in these namespaces (`ns:*`) are subject to the `protected_key` detector. |
+| `immutable_tag_namespaces` | `list[str]` | `[]` | Writes to these namespaces are blocked. |
+| `rules` | `list[Rule]` | `[]` | Detector-to-action mappings (see below). |
+| `detector_overrides` | `dict` | `{}` | Per-detector tuning (e.g. `size_anomaly.max_size`). |
+
+`Rule` shape:
+
+| Field | Required | Description |
+|---|---|---|
+| `on` | yes | Detector name (`prompt_injection`, `sensitive_data`, `protected_key`, `immutable_key`, `size_anomaly`) or `*` for any. |
+| `action` | yes | One of `allow`, `redact`, `quarantine`, `block`. |
+| `min_severity` | no | Minimum severity (`low`, `medium`, `high`, `critical`) for the rule to fire. Defaults to `low`. |
+
+Invalid policies are rejected on PATCH with HTTP 422.
+
+See the [Memory Defense guide](../memory-defense.md) for usage examples.
+
 ---
 
 ## Updating Configuration

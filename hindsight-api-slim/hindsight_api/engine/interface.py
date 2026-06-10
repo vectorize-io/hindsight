@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from hindsight_api.engine.memory_engine import Budget
+    from hindsight_api.engine.memory_engine import BankLlmHealthInfo, Budget
     from hindsight_api.engine.response_models import RecallResult, ReflectResult
     from hindsight_api.engine.search.tags import TagsMatch
     from hindsight_api.models import RequestContext
@@ -480,6 +480,20 @@ class MemoryEngineInterface(ABC):
         Returns:
             Dict with last_consolidated_at (ISO-8601 string or None),
             pending_consolidation (int), and failed_consolidation (int).
+        """
+        ...
+
+    @abstractmethod
+    async def check_bank_llm(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> "BankLlmHealthInfo":
+        """
+        Probe the LLM consolidation would use for this bank. Deliberate connectivity
+        test (one real minimal call); never returns the API key. See
+        MemoryEngine.check_bank_llm.
         """
         ...
 

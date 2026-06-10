@@ -250,9 +250,7 @@ class TestDeltaRefreshPlumbing:
         # First refresh: establishes last_refreshed_source_query.
         patch_reflect(memory, text="# Team\n\nFirst pass.")
         patch_llm_call(memory, returns="unused-first")
-        await memory.refresh_mental_model(
-            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
-        )
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
 
         # Now change the source_query — a genuine topic shift.
         await memory.update_mental_model(
@@ -289,15 +287,7 @@ class TestDeltaRefreshPlumbing:
         bank_id = f"test-delta-apply-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
-        existing = (
-            "# Team\n"
-            "\n"
-            "Alice is the lead.\n"
-            "\n"
-            "## Members\n"
-            "\n"
-            "- Alice — lead\n"
-        )
+        existing = "# Team\n\nAlice is the lead.\n\n## Members\n\n- Alice — lead\n"
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="Team Info",
@@ -311,9 +301,7 @@ class TestDeltaRefreshPlumbing:
         # render of the parsed existing content. This also seeds the tracking column.
         patch_reflect(memory, text="ignored — full mode candidate")
         patch_llm_call(memory, returns=[])  # zero ops
-        await memory.refresh_mental_model(
-            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
-        )
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
 
         # Second refresh: a new fact arrives; LLM returns one append_block op.
         candidate = "# Team\n\nAlice is the lead. Bob joined as junior engineer."
@@ -386,15 +374,7 @@ class TestDeltaRefreshPlumbing:
         bank_id = f"test-delta-noop-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
-        existing = (
-            "# Team\n"
-            "\n"
-            "Alice is the lead.\n"
-            "\n"
-            "## Members\n"
-            "\n"
-            "- Alice\n"
-        )
+        existing = "# Team\n\nAlice is the lead.\n\n## Members\n\n- Alice\n"
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="Team Info",
@@ -461,9 +441,7 @@ class TestDeltaRefreshPlumbing:
             return DeltaOperationList()
 
         monkeypatch.setattr(memory._reflect_llm_config, "call", ok_call)
-        await memory.refresh_mental_model(
-            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
-        )
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
 
         # Now the second refresh: LLM raises. Refresh must not crash; it should
         # store the candidate markdown.
@@ -512,15 +490,7 @@ class TestDeltaRefreshPlumbing:
         bank_id = f"test-empty-reflect-{uuid.uuid4().hex[:8]}"
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
-        existing = (
-            "# Team\n"
-            "\n"
-            "Alice is the lead.\n"
-            "\n"
-            "## Members\n"
-            "\n"
-            "- Alice\n"
-        )
+        existing = "# Team\n\nAlice is the lead.\n\n## Members\n\n- Alice\n"
         mm = await memory.create_mental_model(
             bank_id=bank_id,
             name="Team Info",
@@ -576,15 +546,9 @@ class TestDeltaRefreshPlumbing:
 # Real-Gemini evaluation tests
 # ---------------------------------------------------------------------------
 
-_GEMINI_API_KEY = (
-    os.getenv("HINDSIGHT_GEMINI_API_KEY")
-    or os.getenv("GEMINI_API_KEY")
-    or os.getenv("GOOGLE_API_KEY")
-)
+_GEMINI_API_KEY = os.getenv("HINDSIGHT_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 _OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-_RUN_LLM_EVAL = os.getenv("HINDSIGHT_RUN_GEMINI_EVALS") == "1" and (
-    bool(_GEMINI_API_KEY) or bool(_OPENAI_API_KEY)
-)
+_RUN_LLM_EVAL = os.getenv("HINDSIGHT_RUN_GEMINI_EVALS") == "1" and (bool(_GEMINI_API_KEY) or bool(_OPENAI_API_KEY))
 
 
 pytestmark_gemini = pytest.mark.skipif(

@@ -5,6 +5,7 @@ This ensures that when multiple facts are extracted from a long conversation,
 their relative order is preserved via time offsets, allowing retrieval to
 distinguish between things said earlier vs later.
 """
+
 import pytest
 from datetime import datetime, timezone
 from hindsight_api import MemoryEngine, RequestContext
@@ -20,11 +21,9 @@ async def test_fact_ordering_within_conversation(memory, request_context):
     await memory.get_bank_profile(bank_id, request_context=request_context)
 
     # Update disposition to match Marcus
-    await memory.update_bank_disposition(bank_id, {
-        "skepticism": 3,
-        "literalism": 3,
-        "empathy": 3
-    }, request_context=request_context)
+    await memory.update_bank_disposition(
+        bank_id, {"skepticism": 3, "literalism": 3, "empathy": 3}, request_context=request_context
+    )
 
     # A conversation where Marcus changes his position
     conversation = """
@@ -51,7 +50,7 @@ Marcus: Yeah, I realized I was being too optimistic about their defense.
     results = await memory.recall_async(
         bank_id=bank_id,
         query="Marcus prediction Rams",
-        fact_type=['experience', 'world'],
+        fact_type=["experience", "world"],
         budget=Budget.LOW,
         max_tokens=8192,
         request_context=request_context,
@@ -59,37 +58,41 @@ Marcus: Yeah, I realized I was being too optimistic about their defense.
 
     print(f"\n=== Retrieved {len(results.results)} facts ===")
     for i, result in enumerate(results.results):
-        print(f"{i+1}. [{result.mentioned_at}] {result.text[:100]}")
+        print(f"{i + 1}. [{result.mentioned_at}] {result.text[:100]}")
 
     # Get all facts (Marcus's predictions/statements)
     agent_facts = results.results
 
     print(f"\n=== Agent facts (Marcus's statements) ===")
     for i, fact in enumerate(agent_facts):
-        print(f"{i+1}. [{fact.mentioned_at}] {fact.text}")
+        print(f"{i + 1}. [{fact.mentioned_at}] {fact.text}")
 
     # Check that agent facts have different timestamps
     if len(agent_facts) >= 2:
         # Parse timestamps
-        timestamps = [datetime.fromisoformat(f.mentioned_at.replace('Z', '+00:00')) for f in agent_facts]
+        timestamps = [datetime.fromisoformat(f.mentioned_at.replace("Z", "+00:00")) for f in agent_facts]
 
         # Verify timestamps are different (have time offsets)
         unique_timestamps = set(timestamps)
-        assert len(unique_timestamps) == len(timestamps), \
+        assert len(unique_timestamps) == len(timestamps), (
             f"Expected unique timestamps for each fact, but got duplicates: {timestamps}"
+        )
 
         # Sort facts by timestamp for ordering check
         # Note: recall returns by relevance, not time order
-        sorted_facts = sorted(agent_facts, key=lambda f: datetime.fromisoformat(f.mentioned_at.replace('Z', '+00:00')))
-        sorted_timestamps = [datetime.fromisoformat(f.mentioned_at.replace('Z', '+00:00')) for f in sorted_facts]
+        sorted_facts = sorted(agent_facts, key=lambda f: datetime.fromisoformat(f.mentioned_at.replace("Z", "+00:00")))
+        sorted_timestamps = [datetime.fromisoformat(f.mentioned_at.replace("Z", "+00:00")) for f in sorted_facts]
 
         # Verify sorted timestamps are in ascending order
         for i in range(len(sorted_timestamps) - 1):
-            assert sorted_timestamps[i] < sorted_timestamps[i + 1], \
-                f"Facts should have sequential timestamps. Fact {i} ({sorted_timestamps[i]}) >= Fact {i+1} ({sorted_timestamps[i+1]})"
+            assert sorted_timestamps[i] < sorted_timestamps[i + 1], (
+                f"Facts should have sequential timestamps. Fact {i} ({sorted_timestamps[i]}) >= Fact {i + 1} ({sorted_timestamps[i + 1]})"
+            )
 
         # Verify facts have distinct timestamps (ordering is preserved)
-        time_diffs = [(sorted_timestamps[i+1] - sorted_timestamps[i]).total_seconds() for i in range(len(sorted_timestamps) - 1)]
+        time_diffs = [
+            (sorted_timestamps[i + 1] - sorted_timestamps[i]).total_seconds() for i in range(len(sorted_timestamps) - 1)
+        ]
         print(f"\n=== Time differences between facts: {time_diffs} seconds ===")
 
         # Each fact should have a positive time difference (uniqueness already checked above)
@@ -108,7 +111,7 @@ Marcus: Yeah, I realized I was being too optimistic about their defense.
     all_text = " ".join(agent_texts)
 
     # Look for evidence of the predictions being captured (may be merged or separate)
-    has_prediction_info = '27' in all_text or 'rams' in all_text or 'prediction' in all_text
+    has_prediction_info = "27" in all_text or "rams" in all_text or "prediction" in all_text
 
     assert has_prediction_info, "Facts should contain information about Marcus's predictions"
     print(f"\n✅ Facts capture prediction information")
@@ -121,7 +124,6 @@ Marcus: Yeah, I realized I was being too optimistic about their defense.
 
 @pytest.mark.asyncio
 async def test_multiple_documents_ordering(memory, request_context):
-
     bank_id = "test_multi_doc_agent"
 
     await memory.get_bank_profile(bank_id, request_context=request_context)  # Auto-creates with defaults
@@ -149,7 +151,7 @@ Alice: I reconsidered the team's experience level.
         bank_id=bank_id,
         contents=[
             {"content": conv1, "context": "project discussion 1", "event_date": time1},
-            {"content": conv2, "context": "project discussion 2", "event_date": time2}
+            {"content": conv2, "context": "project discussion 2", "event_date": time2},
         ],
         request_context=request_context,
     )
@@ -168,18 +170,21 @@ Alice: I reconsidered the team's experience level.
     agent_facts = results.results
 
     for i, fact in enumerate(agent_facts):
-        print(f"{i+1}. [{fact.mentioned_at}] {fact.text[:80]}")
+        print(f"{i + 1}. [{fact.mentioned_at}] {fact.text[:80]}")
 
     # Each conversation's facts should have different timestamps.
     # Filter out observations — they inherit their source fact's timestamp,
     # which can collapse the unique set. Also skip facts without timestamps.
-    source_facts = [f for f in agent_facts if f.mentioned_at is not None and getattr(f, "fact_type", "") != "observation"]
+    source_facts = [
+        f for f in agent_facts if f.mentioned_at is not None and getattr(f, "fact_type", "") != "observation"
+    ]
     if len(source_facts) >= 2:
-        timestamps = [datetime.fromisoformat(f.mentioned_at.replace('Z', '+00:00')) for f in source_facts]
+        timestamps = [datetime.fromisoformat(f.mentioned_at.replace("Z", "+00:00")) for f in source_facts]
         unique_timestamps = set(timestamps)
 
-        assert len(unique_timestamps) >= 2, \
+        assert len(unique_timestamps) >= 2, (
             f"Expected multiple unique timestamps across conversations, got: {len(unique_timestamps)}"
+        )
 
         print(f"\n✅ Facts from {len(source_facts)} statements have {len(unique_timestamps)} unique timestamps")
 

@@ -119,9 +119,7 @@ class TestE2ETools:
     @pytest.mark.asyncio
     async def test_recall_empty_bank(self, live):
         client, bank_id = live
-        tools = create_hindsight_tools(
-            bank_id=bank_id, client=client, include_retain=False, include_reflect=False
-        )
+        tools = create_hindsight_tools(bank_id=bank_id, client=client, include_retain=False, include_reflect=False)
         result = await _run(_tool(tools, "hindsight_recall"), {"query": "anything at all"})
         assert result == _NO_MEMORIES
 

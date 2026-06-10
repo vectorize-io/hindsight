@@ -87,9 +87,7 @@ async def test_unique_violation_marks_failed_without_retry(memory):
         try:
             await memory.execute_task(task_dict)
         except RetryTaskAt as exc:
-            pytest.fail(
-                f"IntegrityConstraintViolationError must not be retried, but execute_task raised {exc!r}"
-            )
+            pytest.fail(f"IntegrityConstraintViolationError must not be retried, but execute_task raised {exc!r}")
 
     # The operation must be marked 'failed' (not left pending / retrying).
     row = await pool.fetchrow(
@@ -97,9 +95,7 @@ async def test_unique_violation_marks_failed_without_retry(memory):
         operation_id,
     )
     assert row is not None, "Operation row disappeared"
-    assert row["status"] == "failed", (
-        f"Expected status='failed' after integrity violation, got {row['status']!r}"
-    )
+    assert row["status"] == "failed", f"Expected status='failed' after integrity violation, got {row['status']!r}"
     assert row["error_message"] is not None
     assert "pk_chunks" in row["error_message"]
 
@@ -123,7 +119,7 @@ async def test_foreign_key_violation_also_not_retried(memory):
     await _create_pending_operation(pool, bank_id, operation_id)
 
     fk_violation = asyncpg.exceptions.ForeignKeyViolationError(
-        "insert or update on table \"memory_units\" violates foreign key constraint \"fk_bank\""
+        'insert or update on table "memory_units" violates foreign key constraint "fk_bank"'
     )
 
     task_dict = {
@@ -137,9 +133,7 @@ async def test_foreign_key_violation_also_not_retried(memory):
         try:
             await memory.execute_task(task_dict)
         except RetryTaskAt as exc:
-            pytest.fail(
-                f"ForeignKeyViolationError must not be retried, but execute_task raised {exc!r}"
-            )
+            pytest.fail(f"ForeignKeyViolationError must not be retried, but execute_task raised {exc!r}")
 
     row = await pool.fetchrow(
         "SELECT status FROM async_operations WHERE operation_id = $1",

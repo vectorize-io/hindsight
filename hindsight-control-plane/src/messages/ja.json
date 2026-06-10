@@ -60,6 +60,7 @@
     "bankConfiguration": "バンク設定",
     "bankConfigurationDescription": "バンクの設定、プロフィール、操作を管理します。",
     "actions": "アクション",
+    "health": "状態",
     "exportTemplate": "テンプレートをエクスポート",
     "consolidating": "統合中...",
     "runConsolidation": "統合を実行",
@@ -154,7 +155,8 @@
     "llmRequestsNotEnabled": "LLMリクエストは有効になっていません",
     "llmRequestsDisabledMessage": "このサーバーではLLMリクエストのトレースが無効になっています。有効にするには <envVar></envVar> を設定してください。",
     "deleteWillDeleteDetails": "{memories, plural, other {# 件のメモリ}}、{documents, plural, other {# 件のドキュメント}}、および {links, plural, other {# 件のリンク}} が削除されます。",
-    "deleteWillDeleteObservations": "{count, plural, other {# 件の観測}} が削除されます。"
+    "deleteWillDeleteObservations": "{count, plural, other {# 件の観測}} が削除されます。",
+    "memoryDefense": "メモリ防御"
   },
   "bankProfile": {
     "noBankSelected": "バンクが選択されていません",
@@ -238,6 +240,18 @@
     "entity": "エンティティ",
     "noLinksYet": "リンクがまだありません",
     "consolidation": "統合",
+    "testLlm": "LLM接続をテスト",
+    "testingLlm": "テスト中…",
+    "llmConnected": "接続済み",
+    "llmNotConfigured": "LLM未設定",
+    "llmAuthFailed": "APIキーが無効",
+    "llmUnreachable": "到達不能",
+    "llmTimeout": "タイムアウト",
+    "llmTestHint": "このメモリバンクが使用するLLM（保持・統合・リフレクト）を確認します。",
+    "llmHealthTitle": "LLM接続性",
+    "llmRetest": "再テスト",
+    "opRetain": "保持",
+    "opReflect": "リフレクト",
     "done": "完了",
     "pending": "保留中",
     "failed": "失敗",
@@ -398,7 +412,17 @@
     "extractorHintWhichPlaceholder": "抽出ヒント: いつこの値を選ぶか",
     "addField": "フィールド",
     "addValueShort": "値",
-    "noValuesYet": "まだ値がありません。"
+    "noValuesYet": "まだ値がありません。",
+    "memoryDefenseTitle": "メモリ防御",
+    "memoryDefenseDescription": "保持時にコンテンツを検査し、シークレットやその他のセキュリティ上の懸念事項がメモリに到達する前にどう扱うかを決定します。",
+    "memoryDefenseFailedToSave": "メモリ防御の設定の保存に失敗しました",
+    "memoryDefenseSavedToast": "メモリ防御を保存しました",
+    "memoryDefenseActionLabel": "アクション",
+    "memoryDefenseAction_allow": "許可",
+    "memoryDefenseAction_redact": "マスク",
+    "memoryDefenseAction_block": "ブロック",
+    "memoryDefenseSecretLeakTitle": "シークレット漏洩防止",
+    "memoryDefenseSecretLeakDescription": "保持されたコンテンツのシークレットをスキャンします。一般的なプロバイダーキー、AWS、個人情報をカバーする44パターン。"
   },
   "bankOperations": {
     "title": "バックグラウンド操作",
@@ -640,7 +664,8 @@
     "importConflictLabel": "ドキュメントが既に存在する場合",
     "importConflictSkip": "スキップ — 既存のドキュメントを保持",
     "importConflictReplace": "置換 — インポート版で上書き",
-    "importConflictNewId": "両方保持 — 新しい id でインポート"
+    "importConflictNewId": "両方保持 — 新しい id でインポート",
+    "textNotStoredWarning": "このサーバーでは元のテキストは保存されません。抽出されたメモリのみが保持されます。"
   },
   "entitiesView": {
     "viewRelations": "関係",
@@ -1002,6 +1027,7 @@
     "actionDeleteDirective": "ディレクティブを削除",
     "actionFileConvertRetain": "ファイル変換",
     "actionWebhookDelivery": "Webhook配信",
+    "actionMemoryDefense": "メモリ防御",
     "transportAll": "すべてのトランスポート",
     "transportHttp": "HTTP",
     "transportMcp": "MCP",
@@ -1367,7 +1393,9 @@
     "linkTypeSemantic": "セマンティック",
     "linkTypeTemporal": "時間",
     "linkTypeEntity": "エンティティ",
-    "linkTypeCausal": "因果"
+    "linkTypeCausal": "因果",
+    "exportSvgTitle": "共有用にSVGをダウンロード",
+    "exportSvgLabel": "共有"
   },
   "metadata": {
     "title": "Hindsight Cloud",
@@ -1444,7 +1472,8 @@
     "observationScopeAllCombinations": "すべての組み合わせ",
     "observationScopesEmpty": "観察スコープをプレビューするには、上にタグを追加してください",
     "metadataHelpText": "1行に1つの <code>key: value</code>",
-    "entitiesHelpText": "自動抽出されたエンティティとマージされるカンマ区切りのヒント"
+    "entitiesHelpText": "自動抽出されたエンティティとマージされるカンマ区切りのヒント",
+    "textNotStoredWarning": "このサーバーでは文書の元テキストは保存されません。抽出されたメモリのみが保持されます。"
   },
   "dashboard": {
     "welcome": "Hindsightへようこそ",

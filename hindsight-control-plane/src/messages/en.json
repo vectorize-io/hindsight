@@ -60,6 +60,7 @@
     "bankConfiguration": "Bank Configuration",
     "bankConfigurationDescription": "Manage bank settings, profile, and operations.",
     "actions": "Actions",
+    "health": "Health",
     "exportTemplate": "Export Template",
     "consolidating": "Consolidating...",
     "runConsolidation": "Run Consolidation",
@@ -69,6 +70,7 @@
     "resetConfiguration": "Reset Configuration",
     "deleteBank": "Delete Bank",
     "general": "General",
+    "memoryDefense": "Memory Defense",
     "configuration": "Configuration",
     "webhooks": "Webhooks",
     "auditLogs": "Audit Logs",
@@ -238,6 +240,18 @@
     "entity": "Entity",
     "noLinksYet": "No links yet",
     "consolidation": "Consolidation",
+    "testLlm": "Test LLM connection",
+    "testingLlm": "Testing…",
+    "llmConnected": "Connected",
+    "llmNotConfigured": "No LLM configured",
+    "llmAuthFailed": "Invalid API key",
+    "llmUnreachable": "Unreachable",
+    "llmTimeout": "Timed out",
+    "llmTestHint": "Checks the LLMs this bank uses (retain, consolidation, reflect).",
+    "llmHealthTitle": "LLM connectivity",
+    "llmRetest": "Re-test",
+    "opRetain": "Retain",
+    "opReflect": "Reflect",
     "done": "Done",
     "pending": "Pending",
     "failed": "Failed",
@@ -398,7 +412,17 @@
     "extractorHintWhichPlaceholder": "extractor hint: when to pick this value",
     "addField": "field",
     "addValueShort": "value",
-    "noValuesYet": "No values yet."
+    "noValuesYet": "No values yet.",
+    "memoryDefenseTitle": "Memory Defense",
+    "memoryDefenseDescription": "Inspect content during retain and decide what to do with secrets and other security concerns before they reach memory.",
+    "memoryDefenseFailedToSave": "Failed to save Memory Defense settings",
+    "memoryDefenseSavedToast": "Memory Defense saved",
+    "memoryDefenseActionLabel": "Action",
+    "memoryDefenseAction_allow": "Allow",
+    "memoryDefenseAction_redact": "Redact",
+    "memoryDefenseAction_block": "Block",
+    "memoryDefenseSecretLeakTitle": "Secret leak prevention",
+    "memoryDefenseSecretLeakDescription": "Scan retained content for secrets. 44 patterns covering common provider keys, AWS, and PII."
   },
   "bankOperations": {
     "title": "Background Operations",
@@ -640,7 +664,8 @@
     "importConflictLabel": "If a document already exists",
     "importConflictSkip": "Skip — keep the existing document",
     "importConflictReplace": "Replace — overwrite with the imported one",
-    "importConflictNewId": "Keep both — import under a new id"
+    "importConflictNewId": "Keep both — import under a new id",
+    "textNotStoredWarning": "Source text isn't stored on this server — only the extracted memories are kept."
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -1002,6 +1027,7 @@
     "actionDeleteDirective": "Delete Directive",
     "actionFileConvertRetain": "Convert File",
     "actionWebhookDelivery": "Webhook Delivery",
+    "actionMemoryDefense": "Memory Defense",
     "transportAll": "All transports",
     "transportHttp": "HTTP",
     "transportMcp": "MCP",
@@ -1367,7 +1393,9 @@
     "linkTypeSemantic": "semantic",
     "linkTypeTemporal": "temporal",
     "linkTypeEntity": "entity",
-    "linkTypeCausal": "causal"
+    "linkTypeCausal": "causal",
+    "exportSvgTitle": "Download as SVG to share",
+    "exportSvgLabel": "Share"
   },
   "metadata": {
     "title": "Hindsight Cloud",
@@ -1444,7 +1472,8 @@
     "observationScopeAllCombinations": "All combinations",
     "observationScopesEmpty": "Add tags above to preview observation scopes",
     "metadataHelpText": "One <code>key: value</code> per line",
-    "entitiesHelpText": "Comma-separated hints merged with auto-extracted entities"
+    "entitiesHelpText": "Comma-separated hints merged with auto-extracted entities",
+    "textNotStoredWarning": "Raw document text won't be stored on this server — only the extracted memories are kept."
   },
   "dashboard": {
     "welcome": "Welcome to Hindsight",

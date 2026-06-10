@@ -15,6 +15,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from ...extensions.memory_defense import (
+    DefenseAction,
+    DefenseDecision,
+    MemoryDefenseExtension,
+    apply_redaction,
+    parse_policy,
+)
 from ...worker.stage import set_stage
 from ..db.base import DatabaseBackend
 from ..db_utils import acquire_with_retry
@@ -22,9 +29,118 @@ from ..memory_engine import count_tokens, fq_table
 from . import bank_utils
 
 
+@dataclass
+class BlockedViolation:
+    """One item blocked by the Memory Defense policy (surfaced in the 422 body)."""
+
+    index: int
+    detector: str | None
+    message: str
+
+
+class MemoryDefenseAllBlockedError(Exception):
+    """Raised when every item in a retain batch is blocked by the Memory Defense policy."""
+
+    def __init__(self, violations: list[BlockedViolation]) -> None:
+        self.violations = violations
+        super().__init__(f"all {len(violations)} items blocked by Memory Defense policy")
+
+
 def utcnow():
     """Get current UTC time."""
     return datetime.now(UTC)
+
+
+def _redact_document_body(body: str, config: Any) -> str:
+    """Apply Memory Defense redaction to a document body.
+
+    Per-item screening only scrubs the chunked content that goes through
+    `screen()`. When a sub-batch carries `document_body_override` (the full
+    original text of an oversized item — see `_split_contents_into_sub_batches`),
+    that override bypasses screening and would persist verbatim into
+    `documents.original_text`. Apply the same redactor here so the document
+    body is scrubbed regardless of which path produced it.
+    """
+    try:
+        policy = parse_policy(getattr(config, "memory_defense", None))
+    except Exception:
+        return body
+    if not policy.enabled:
+        return body
+    if not any(r.on == "sensitive_data" for r in policy.rules):
+        return body
+    return apply_redaction(body).content
+
+
+async def _fire_memory_defense_webhook(
+    webhook_manager: Any,
+    *,
+    conn: Any,
+    schema: str | None,
+    bank_id: str,
+    operation_id: str | None,
+    document_id: str | None,
+    decision: DefenseDecision,
+) -> None:
+    """Fire a memory_defense.triggered webhook for a non-allow decision.
+
+    No-op when no webhook manager is wired or none is subscribed. Delivery
+    failures are swallowed so screening never blocks a retain.
+    """
+    if webhook_manager is None:
+        return
+    try:
+        from ...webhooks import MemoryDefenseEventData, WebhookEvent, WebhookEventType
+
+        event = WebhookEvent(
+            event=WebhookEventType.MEMORY_DEFENSE_TRIGGERED,
+            bank_id=bank_id,
+            operation_id=operation_id or "",
+            status=decision.action.value,
+            timestamp=utcnow(),
+            data=MemoryDefenseEventData(
+                action=decision.action.value,
+                detector=decision.detector,
+                document_id=document_id,
+                matched_types=decision.matched_types or None,
+                message=decision.message or None,
+            ),
+        )
+        await webhook_manager.fire_event_with_conn(event, conn, schema=schema)
+    except Exception:
+        logger.warning("memory_defense webhook delivery failed", exc_info=True)
+
+
+def _audit_memory_defense(
+    audit_logger: Any,
+    *,
+    bank_id: str,
+    document_id: str | None,
+    decision: DefenseDecision,
+) -> None:
+    """Write a fire-and-forget ``memory_defense`` audit entry for a non-allow decision.
+
+    No-op when audit logging is disabled (the logger gates on its own config).
+    The action taken (redact/block) and what matched live in the entry metadata.
+    """
+    if audit_logger is None:
+        return
+    from ..audit import AuditEntry
+
+    entry = AuditEntry(
+        action="memory_defense",
+        transport="system",
+        bank_id=bank_id,
+        metadata={
+            "action": decision.action.value,
+            "detector": decision.detector,
+            "document_id": document_id,
+            "matched_types": decision.matched_types,
+            "message": decision.message,
+        },
+    )
+    entry.ended_at = entry.started_at  # point-in-time policy decision (duration 0)
+    audit_logger.log_fire_and_forget(entry)
 
 
 def _merge_processed_content_tokens(a: int | None, b: int | None) -> int | None:
@@ -425,6 +541,9 @@ async def retain_batch(
     document_body_override: str | None = None,
     chunk_index_offset: int = 0,
     progress_callback: "Callable[..., Awaitable[None]] | None" = None,
+    webhook_manager: Any = None,
+    memory_defense_extension: "MemoryDefenseExtension | None" = None,
+    audit_logger: Any = None,
 ) -> tuple[list[list[str]], TokenUsage, int | None]:
     """
     Process a batch of content through the retain pipeline.
@@ -515,6 +634,10 @@ async def retain_batch(
                     db_semaphore=db_semaphore,
                     document_body_override=document_body_override,
                     chunk_index_offset=chunk_index_offset,
+                    progress_callback=progress_callback,
+                    webhook_manager=webhook_manager,
+                    memory_defense_extension=memory_defense_extension,
+                    audit_logger=audit_logger,
                 )
                 for group_idx, orig_idx in enumerate(original_indices[doc_key]):
                     if group_idx < len(group_ids):
@@ -522,6 +645,80 @@ async def retain_batch(
                 total_usage = total_usage + group_usage
                 total_processed_tokens = _merge_processed_content_tokens(total_processed_tokens, group_processed)
             return result_unit_ids, total_usage, total_processed_tokens
+
+    # --- Memory Defense pre-extraction screening ---
+    # Delegate to the loaded extension. `config` is a resolved HindsightConfig
+    # object at this point (see _retain_batch_async_internal). On a non-allow
+    # decision we redact in place or drop the item, and fire a
+    # memory_defense.triggered webhook when one is configured.
+    _policy = parse_policy(getattr(config, "memory_defense", None))
+    _blocked_violations: list[BlockedViolation] = []
+
+    if memory_defense_extension is not None and _policy.enabled:
+        async with acquire_with_retry(pool) as _defense_conn:
+            for _idx, _content in enumerate(contents):
+                # Prefer the per-item document_id over the batch-level value so
+                # the decision and webhook carry the document the caller
+                # submitted, not whichever doc_id the batch happens to share.
+                _item_doc_id = contents_dicts[_idx].get("document_id") or document_id
+
+                _decision = await memory_defense_extension.screen(
+                    policy=_policy,
+                    bank_id=bank_id,
+                    document_id=_item_doc_id,
+                    content=_content.content,
+                    tags=_content.tags,
+                )
+
+                if _decision.action is DefenseAction.ALLOW:
+                    continue
+
+                if _decision.action is DefenseAction.REDACT:
+                    _redacted = _decision.redacted_content or _content.content
+                    _content.content = _redacted
+                    # Mirror the redaction into the raw dict so the document
+                    # body persisted further down the pipeline also stores the
+                    # redacted text, not the verbatim secret.
+                    contents_dicts[_idx]["content"] = _redacted
+                elif _decision.action is DefenseAction.BLOCK:
+                    _blocked_violations.append(
+                        BlockedViolation(
+                            index=_idx,
+                            detector=_decision.detector,
+                            message=_decision.message,
+                        )
+                    )
+
+                await _fire_memory_defense_webhook(
+                    webhook_manager,
+                    conn=_defense_conn,
+                    schema=schema,
+                    bank_id=bank_id,
+                    operation_id=operation_id,
+                    document_id=_item_doc_id,
+                    decision=_decision,
+                )
+                _audit_memory_defense(
+                    audit_logger,
+                    bank_id=bank_id,
+                    document_id=_item_doc_id,
+                    decision=_decision,
+                )
+
+    if _blocked_violations:
+        # All items blocked → raise so the HTTP layer can return 422.
+        if len(_blocked_violations) == len(contents):
+            raise MemoryDefenseAllBlockedError(_blocked_violations)
+
+        # Remove blocked items from the pipeline.
+        _skip_indices = {v.index for v in _blocked_violations}
+        if _skip_indices:
+            _surviving = [i for i in range(len(contents)) if i not in _skip_indices]
+            contents = [contents[i] for i in _surviving]
+            contents_dicts = [contents_dicts[i] for i in _surviving]
+            # If nothing survives, return empty results immediately.
+            if not contents:
+                return [[] for _ in contents_dicts], TokenUsage(), 0
 
     # Resolve effective document_id early so both delta and streaming paths
     # can find existing chunks from a prior attempt. On retry, a generated
@@ -895,7 +1092,9 @@ async def _streaming_retain_batch(
     # so documents.original_text stores the complete payload, not just this
     # slice (issue #1838).
     if document_body_override is not None:
-        combined_content = document_body_override
+        # The override is the unmodified original body — apply redaction so
+        # secrets in oversized inputs don't bypass screening.
+        combined_content = _redact_document_body(document_body_override, config)
     else:
         combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
     # Memory: contents_dicts content strings are now captured in combined_content.
@@ -1686,6 +1885,7 @@ async def _try_delta_retain(
             start_time,
             outbox_callback,
             document_body_override=document_body_override,
+            config=config,
         )
 
     # Build content items for only the changed/new chunks
@@ -1703,6 +1903,7 @@ async def _try_delta_retain(
             start_time,
             outbox_callback,
             document_body_override=document_body_override,
+            config=config,
         )
 
     # Freshness recheck BEFORE the (expensive) LLM extraction.
@@ -1754,6 +1955,7 @@ async def _try_delta_retain(
                 start_time,
                 outbox_callback,
                 document_body_override=document_body_override,
+                config=config,
             )
         log_buffer.append(
             f"[delta] Recheck: {len(recheck.changed) + len(recheck.new) + len(recheck.removed)} chunks still differ — "
@@ -1829,9 +2031,10 @@ async def _try_delta_retain(
                 step_start = time.time()
                 # When this sub-batch is one slice of an oversized item
                 # split across multiple sub-batches, store the full body
-                # (issue #1838) instead of just the slice.
+                # (issue #1838) instead of just the slice. Redact the
+                # override since it bypassed per-chunk screening.
                 if document_body_override is not None:
-                    combined_content = document_body_override
+                    combined_content = _redact_document_body(document_body_override, config)
                 else:
                     combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
                 retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)
@@ -1960,6 +2163,7 @@ async def _delta_metadata_only(
     outbox_callback,
     *,
     document_body_override: str | None = None,
+    config: Any = None,
 ):
     """Handle the case where no chunks changed — just update document metadata and tags."""
     async with acquire_with_retry(pool) as conn:
@@ -1972,8 +2176,9 @@ async def _delta_metadata_only(
             )
             # When this sub-batch is a slice of an oversized item, write the
             # full original body (issue #1838) instead of just the slice.
+            # Redact the override since it bypassed per-chunk screening.
             if document_body_override is not None:
-                combined_content = document_body_override
+                combined_content = _redact_document_body(document_body_override, config)
             else:
                 combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
             retain_params, merged_tags = _build_retain_params(contents_dicts, document_tags)

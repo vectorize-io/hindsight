@@ -86,9 +86,7 @@ async def _import(memory, bank_id, archive, request_context, on_conflict="skip")
     inline and is already completed when submit returns.
     """
     submission = await memory.import_documents_async(bank_id, archive, request_context, on_conflict)
-    status = await memory.get_operation_status(
-        bank_id, submission["operation_id"], request_context=request_context
-    )
+    status = await memory.get_operation_status(bank_id, submission["operation_id"], request_context=request_context)
     assert status["status"] == "completed", status
     return status["result_metadata"]
 
@@ -340,12 +338,8 @@ async def test_bank_roundtrip_carries_mental_model_history(memory, request_conte
             mental_model_id="mm-1",
             request_context=request_context,
         )
-        await memory.update_mental_model(
-            bank, mental_model_id="mm-1", content="v2", request_context=request_context
-        )
-        await memory.update_mental_model(
-            bank, mental_model_id="mm-1", content="v3", request_context=request_context
-        )
+        await memory.update_mental_model(bank, mental_model_id="mm-1", content="v2", request_context=request_context)
+        await memory.update_mental_model(bank, mental_model_id="mm-1", content="v3", request_context=request_context)
         # Two refreshes → two snapshots (previous content v1 then v2), newest-first.
         before = await memory.get_mental_model_history(bank, "mm-1", request_context=request_context)
         assert [h["previous_content"] for h in before] == ["v2", "v1"]
@@ -475,13 +469,11 @@ async def _bank_snapshot(memory, bank_id):
     backend = await memory._get_backend()
     async with acquire_with_retry(backend) as conn:
         docs = await conn.fetch(
-            f"SELECT id, COALESCE(length(original_text), 0) AS len FROM {fq_table('documents')} "
-            f"WHERE bank_id = $1",
+            f"SELECT id, COALESCE(length(original_text), 0) AS len FROM {fq_table('documents')} WHERE bank_id = $1",
             bank_id,
         )
         chunks = await conn.fetch(
-            f"SELECT document_id, chunk_index, length(chunk_text) AS len FROM {fq_table('chunks')} "
-            f"WHERE bank_id = $1",
+            f"SELECT document_id, chunk_index, length(chunk_text) AS len FROM {fq_table('chunks')} WHERE bank_id = $1",
             bank_id,
         )
         ftypes = await conn.fetch(
@@ -591,9 +583,7 @@ async def test_export_import_observations(memory, request_context):
         backend = await memory._get_backend()
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                await _create_observation_directly(
-                    conn, memory, src, source_ids, "Alice and Bob are colleagues."
-                )
+                await _create_observation_directly(conn, memory, src, source_ids, "Alice and Bob are colleagues.")
 
         # Export WITHOUT observations -> none in the archive (the bank may also
         # contain auto-consolidation observations; the flag is what gates them).
@@ -762,9 +752,7 @@ async def test_include_observations_requires_whole_bank_export(memory, request_c
         await _retain(memory, src, "Alice works at Google.", request_context, "doc-1")
         # Subset export (document_ids set) + observations must be rejected.
         with pytest.raises(ValueError, match="whole bank"):
-            await memory.export_documents_async(
-                src, request_context, ["doc-1"], include_observations=True
-            )
+            await memory.export_documents_async(src, request_context, ["doc-1"], include_observations=True)
         # Whole-bank export with observations is fine; subset without observations is fine.
         await memory.export_documents_async(src, request_context, include_observations=True)
         await memory.export_documents_async(src, request_context, ["doc-1"])

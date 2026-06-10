@@ -13,6 +13,7 @@ import { ThinkView } from "@/components/think-view";
 import { SearchDebugView } from "@/components/search-debug-view";
 import { BankProfileView } from "@/components/bank-profile-view";
 import { BankConfigView } from "@/components/bank-config-view";
+import { MemoryDefenseSection } from "@/components/memory-defense-section";
 import { BankStatsView } from "@/components/bank-stats-view";
 import { BankOperationsView } from "@/components/bank-operations-view";
 import { MentalModelsView } from "@/components/mental-models-view";
@@ -42,11 +43,27 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Brain, Download, Trash2, Loader2, MoreVertical, Pencil, RotateCcw } from "lucide-react";
+import {
+  Brain,
+  Download,
+  Trash2,
+  Loader2,
+  MoreVertical,
+  Pencil,
+  RotateCcw,
+  Activity,
+} from "lucide-react";
+import { LlmHealthDialog } from "@/components/llm-health-dialog";
 
 type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
 type DataSubTab = "world" | "experience" | "observations" | "mental-models";
-type BankConfigTab = "general" | "configuration" | "webhooks" | "audit-logs" | "llm-requests";
+type BankConfigTab =
+  | "general"
+  | "memory-defense"
+  | "configuration"
+  | "webhooks"
+  | "audit-logs"
+  | "llm-requests";
 
 export default function BankPage() {
   const params = useParams();
@@ -64,8 +81,10 @@ export default function BankPage() {
   const bankConfigEnabled = features?.bank_config_api ?? false;
   const auditLogEnabled = features?.audit_log ?? false;
   const llmTraceEnabled = features?.llm_trace ?? false;
+  const llmHealthEnabled = features?.bank_llm_health ?? false;
 
   // Bank actions state
+  const [showLlmHealthDialog, setShowLlmHealthDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showClearObservationsDialog, setShowClearObservationsDialog] = useState(false);
@@ -207,6 +226,12 @@ export default function BankPage() {
                         <Download className="w-4 h-4 mr-2" />
                         {t("exportTemplate")}
                       </DropdownMenuItem>
+                      {llmHealthEnabled && (
+                        <DropdownMenuItem onClick={() => setShowLlmHealthDialog(true)}>
+                          <Activity className="w-4 h-4 mr-2" />
+                          {t("health")}
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
                         onClick={handleTriggerConsolidation}
@@ -299,6 +324,21 @@ export default function BankPage() {
                     </button>
                     {bankConfigEnabled && (
                       <button
+                        onClick={() => handleBankConfigTabChange("memory-defense")}
+                        className={`px-6 py-3 font-semibold text-sm transition-all relative ${
+                          bankConfigTab === "memory-defense"
+                            ? "text-primary"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {t("memoryDefense")}
+                        {bankConfigTab === "memory-defense" && (
+                          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                        )}
+                      </button>
+                    )}
+                    {bankConfigEnabled && (
+                      <button
                         onClick={() => handleBankConfigTabChange("configuration")}
                         className={`px-6 py-3 font-semibold text-sm transition-all relative ${
                           bankConfigTab === "configuration"
@@ -376,6 +416,11 @@ export default function BankPage() {
                         <BankOperationsView />
                         <BankProfileView hideReflectFields />
                       </div>
+                    </div>
+                  )}
+                  {bankConfigTab === "memory-defense" && bankConfigEnabled && bankId && (
+                    <div className="space-y-6">
+                      <MemoryDefenseSection bankId={bankId} />
                     </div>
                   )}
                   {bankConfigTab === "configuration" && bankConfigEnabled && (
@@ -589,6 +634,15 @@ export default function BankPage() {
           </div>
         </main>
       </div>
+
+      {/* LLM connectivity check */}
+      {bankId && (
+        <LlmHealthDialog
+          bankId={bankId}
+          open={showLlmHealthDialog}
+          onOpenChange={setShowLlmHealthDialog}
+        />
+      )}
 
       {/* Delete Bank Confirmation Dialog */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>

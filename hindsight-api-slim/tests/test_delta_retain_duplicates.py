@@ -143,9 +143,7 @@ async def test_delta_detects_unchanged_after_first_retain(memory, request_contex
                 bank_id,
                 document_id,
             )
-        assert v2_count == v1_count, (
-            f"Memory unit count changed on same-content upsert: {v1_count} -> {v2_count}"
-        )
+        assert v2_count == v1_count, f"Memory unit count changed on same-content upsert: {v1_count} -> {v2_count}"
 
         # Third retain — verify stability
         v3_units = await memory.retain_async(
@@ -163,9 +161,7 @@ async def test_delta_detects_unchanged_after_first_retain(memory, request_contex
                 bank_id,
                 document_id,
             )
-        assert v3_count == v1_count, (
-            f"Memory unit count changed on third upsert: {v1_count} -> {v3_count}"
-        )
+        assert v3_count == v1_count, f"Memory unit count changed on third upsert: {v1_count} -> {v3_count}"
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -371,9 +367,7 @@ async def test_concurrent_upserts_no_duplicates(memory_no_llm, request_context):
         # splitter may cut mid-text, so later chunks might not start with the prefix.
         winning_person = f"Person_{winning_version}"
         wrong_version_units = [
-            (r["text"], r["chunk_id"], r["unit_id"])
-            for r in units
-            if winning_person not in r["text"]
+            (r["text"], r["chunk_id"], r["unit_id"]) for r in units if winning_person not in r["text"]
         ]
         assert not wrong_version_units, (
             f"Found {len(wrong_version_units)} memory units NOT from winning version "
@@ -397,8 +391,7 @@ async def test_concurrent_upserts_no_duplicates(memory_no_llm, request_context):
         )
 
         logger.info(
-            f"Concurrent test passed: version {winning_version} won with "
-            f"{len(unit_texts)} memory units, no duplicates"
+            f"Concurrent test passed: version {winning_version} won with {len(unit_texts)} memory units, no duplicates"
         )
 
     finally:

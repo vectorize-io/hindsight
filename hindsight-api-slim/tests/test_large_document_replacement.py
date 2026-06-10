@@ -48,9 +48,7 @@ def _make_replacement_body() -> str:
     than one sub-batch.
     """
     lines = [
-        f"[role: user] turn {i}: alpha bravo charlie delta echo "
-        f"foxtrot golf hotel india juliet"
-        for i in range(20)
+        f"[role: user] turn {i}: alpha bravo charlie delta echo foxtrot golf hotel india juliet" for i in range(20)
     ]
     return "\n".join(lines)
 
@@ -79,9 +77,7 @@ async def test_large_same_id_replacement_preserves_full_body(memory, request_con
             request_context=request_context,
         )
 
-        doc_initial = await memory.get_document(
-            document_id, bank_id, request_context=request_context
-        )
+        doc_initial = await memory.get_document(document_id, bank_id, request_context=request_context)
         assert doc_initial is not None
         assert doc_initial["original_text"] == initial_body
 
@@ -95,9 +91,7 @@ async def test_large_same_id_replacement_preserves_full_body(memory, request_con
             request_context=request_context,
         )
 
-        doc_replaced = await memory.get_document(
-            document_id, bank_id, request_context=request_context
-        )
+        doc_replaced = await memory.get_document(document_id, bank_id, request_context=request_context)
         assert doc_replaced is not None
 
         stored = doc_replaced["original_text"]
@@ -105,10 +99,7 @@ async def test_large_same_id_replacement_preserves_full_body(memory, request_con
             f"stored body length {len(stored)} != submitted length "
             f"{len(replacement_body)} — partial replacement persisted"
         )
-        assert stored == replacement_body, (
-            "stored original_text does not exactly match the submitted "
-            "replacement body"
-        )
+        assert stored == replacement_body, "stored original_text does not exactly match the submitted replacement body"
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -143,9 +134,7 @@ async def test_repeated_large_same_id_replacement_is_idempotent(memory, request_
                 request_context=request_context,
             )
 
-            doc = await memory.get_document(
-                document_id, bank_id, request_context=request_context
-            )
+            doc = await memory.get_document(document_id, bank_id, request_context=request_context)
             assert doc is not None, f"attempt {attempt}: document missing after retain"
             assert doc["original_text"] == replacement_body, (
                 f"attempt {attempt}: stored body diverged from submitted body "

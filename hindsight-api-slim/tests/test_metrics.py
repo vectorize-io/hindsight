@@ -1,4 +1,5 @@
 """Tests for metrics instrumentation."""
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -79,8 +80,10 @@ class TestMetricsCollector:
         """Create a MetricsCollector with a mock meter."""
         mock_config = MagicMock()
         mock_config.metrics_include_bank_id = False
-        with patch("hindsight_api.metrics.get_meter", return_value=mock_meter), \
-             patch("hindsight_api.config.get_config", return_value=mock_config):
+        with (
+            patch("hindsight_api.metrics.get_meter", return_value=mock_meter),
+            patch("hindsight_api.config.get_config", return_value=mock_config),
+        ):
             return MetricsCollector()
 
     def test_record_operation_records_duration(self, collector):
@@ -174,8 +177,10 @@ class TestMetricsCollector:
         """Test that bank_id is included in attributes when metrics_include_bank_id is enabled."""
         mock_config = MagicMock()
         mock_config.metrics_include_bank_id = True
-        with patch("hindsight_api.metrics.get_meter") as mock_get_meter, \
-             patch("hindsight_api.config.get_config", return_value=mock_config):
+        with (
+            patch("hindsight_api.metrics.get_meter") as mock_get_meter,
+            patch("hindsight_api.config.get_config", return_value=mock_config),
+        ):
             mock_get_meter.return_value = MagicMock()
             collector = MetricsCollector()
 
@@ -193,6 +198,7 @@ class TestGetMetricsCollector:
         """Test that get_metrics_collector returns NoOpMetricsCollector by default."""
         # Reset global state
         import hindsight_api.metrics as metrics_module
+
         original_collector = metrics_module._metrics_collector
 
         try:
@@ -208,6 +214,7 @@ class TestMetricsCollectorBase:
 
     def test_is_abstract(self):
         """Test that MetricsCollectorBase methods are abstract."""
+
         # Create a class that inherits but doesn't implement
         class IncompleteCollector(MetricsCollectorBase):
             pass
@@ -291,8 +298,10 @@ class TestLLMMetrics:
         """Create a MetricsCollector with a mock meter."""
         mock_config = MagicMock()
         mock_config.metrics_include_bank_id = False
-        with patch("hindsight_api.metrics.get_meter", return_value=mock_meter), \
-             patch("hindsight_api.config.get_config", return_value=mock_config):
+        with (
+            patch("hindsight_api.metrics.get_meter", return_value=mock_meter),
+            patch("hindsight_api.config.get_config", return_value=mock_config),
+        ):
             return MetricsCollector()
 
     def test_record_llm_call_records_duration(self, collector):

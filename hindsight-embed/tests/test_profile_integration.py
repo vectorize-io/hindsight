@@ -119,9 +119,7 @@ class TestProfileIntegration:
 
         # Show profile with env var
         env = {**os.environ, "HOME": str(temp_home), "HINDSIGHT_EMBED_PROFILE": "test-app"}
-        result = subprocess.run(
-            hindsight_embed_cmd + ["profile", "show"], capture_output=True, text=True, env=env
-        )
+        result = subprocess.run(hindsight_embed_cmd + ["profile", "show"], capture_output=True, text=True, env=env)
 
         assert result.returncode == 0
         output = strip_ansi(result.stdout)
@@ -255,9 +253,7 @@ class TestProfileIntegration:
         """Test that using non-existent profile fails."""
         # Try to use non-existent profile
         env = {**os.environ, "HOME": str(temp_home), "HINDSIGHT_EMBED_PROFILE": "nonexistent"}
-        result = subprocess.run(
-            hindsight_embed_cmd + ["profile", "show"], capture_output=True, text=True, env=env
-        )
+        result = subprocess.run(hindsight_embed_cmd + ["profile", "show"], capture_output=True, text=True, env=env)
 
         assert result.returncode == 1
         assert "Profile 'nonexistent' not found" in result.stderr
@@ -298,9 +294,7 @@ class TestProfileIntegration:
             "HINDSIGHT_EMBED_LLM_MODEL": "gpt-4o-mini",
         }
 
-        result = subprocess.run(
-            hindsight_embed_cmd + ["configure"], capture_output=True, text=True, env=env
-        )
+        result = subprocess.run(hindsight_embed_cmd + ["configure"], capture_output=True, text=True, env=env)
 
         # Should succeed
         assert result.returncode == 0

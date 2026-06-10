@@ -34,7 +34,13 @@ _SIM_050 = _vec(0.5, 0.8660254037844386)  # cosine 0.5
 
 def _row(sim: float, day: datetime) -> dict:
     """A minimal pool row for the pure selector test."""
-    return {"id": f"{sim}-{day.isoformat()}", "similarity": sim, "occurred_start": None, "mentioned_at": day, "occurred_end": None}
+    return {
+        "id": f"{sim}-{day.isoformat()}",
+        "similarity": sim,
+        "occurred_start": None,
+        "mentioned_at": day,
+        "occurred_end": None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +116,12 @@ async def test_temporal_recall_selects_by_similarity_not_recency(memory):
         # Newer, less-similar units.
         for i in range(8):
             await _insert_unit(
-                conn, bank_id, f"recent less-relevant {i}", "world", datetime(2025, 1, 20, tzinfo=UTC) + timedelta(hours=i), _SIM_050
+                conn,
+                bank_id,
+                f"recent less-relevant {i}",
+                "world",
+                datetime(2025, 1, 20, tzinfo=UTC) + timedelta(hours=i),
+                _SIM_050,
             )
         # Out-of-window, perfect similarity → must be excluded by the window.
         before = await _insert_unit(conn, bank_id, "before", "world", datetime(2024, 12, 1, tzinfo=UTC), _SIM_100)

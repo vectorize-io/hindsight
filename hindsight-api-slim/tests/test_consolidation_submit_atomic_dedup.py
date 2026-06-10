@@ -63,10 +63,7 @@ async def test_concurrent_submits_leave_one_pending(memory, request_context, no_
     await _ensure_bank(pool, bank_id)
     try:
         results = await asyncio.gather(
-            *(
-                memory.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
-                for _ in range(5)
-            )
+            *(memory.submit_async_consolidation(bank_id=bank_id, request_context=request_context) for _ in range(5))
         )
         assert await _count_pending(pool, bank_id) == 1
         op_ids = {r["operation_id"] for r in results}

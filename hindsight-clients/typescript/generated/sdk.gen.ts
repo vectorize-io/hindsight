@@ -193,6 +193,9 @@ import type {
   RetryOperationData,
   RetryOperationErrors,
   RetryOperationResponses,
+  TestBankLlmData,
+  TestBankLlmErrors,
+  TestBankLlmResponses,
   TriggerConsolidationData,
   TriggerConsolidationErrors,
   TriggerConsolidationResponses,
@@ -396,6 +399,19 @@ export const getAgentStats = <ThrowOnError extends boolean = false>(
 ) =>
   (options.client ?? client).get<GetAgentStatsResponses, GetAgentStatsErrors, ThrowOnError>({
     url: "/v1/default/banks/{bank_id}/stats",
+    ...options,
+  });
+
+/**
+ * Test the bank's LLM connectivity
+ *
+ * Probe the LLMs this bank would use for retain / consolidation / reflect with one minimal call each (configs shared across operations are probed once), so you can discover 'not configured / unreachable' instead of a silent stall. Deliberate action (makes a real provider call); not for polling. Returns status only — never the provider, model, endpoint, API key, or raw error. Disable with HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH=false.
+ */
+export const testBankLlm = <ThrowOnError extends boolean = false>(
+  options: Options<TestBankLlmData, ThrowOnError>
+) =>
+  (options.client ?? client).post<TestBankLlmResponses, TestBankLlmErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/health/llm",
     ...options,
   });
 

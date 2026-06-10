@@ -1,6 +1,7 @@
 """
 Tests for agent management API (profile, disposition).
 """
+
 import pytest
 import uuid
 from hindsight_api import MemoryEngine, RequestContext
@@ -17,9 +18,7 @@ class TestAgentProfile:
     """Tests for agent profile management."""
 
     @pytest.mark.asyncio
-    async def test_get_bank_profile_no_auto_create_returns_none(
-        self, memory: MemoryEngine, request_context
-    ):
+    async def test_get_bank_profile_no_auto_create_returns_none(self, memory: MemoryEngine, request_context):
         """When create_if_missing=False is passed, a missing bank returns None
         rather than being silently auto-created. This is what read-only
         endpoints (HTTP GET, polling, etc.) must use to avoid creating banks
@@ -27,28 +26,20 @@ class TestAgentProfile:
         bank_id = unique_agent_id("test_no_auto_create")
 
         # First call with create_if_missing=False on a non-existent bank
-        result = await memory.get_bank_profile(
-            bank_id, request_context=request_context, create_if_missing=False
-        )
+        result = await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
         assert result is None, "Expected None for missing bank with create_if_missing=False"
 
         # Verify the bank was NOT created as a side effect
-        result_again = await memory.get_bank_profile(
-            bank_id, request_context=request_context, create_if_missing=False
-        )
+        result_again = await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
         assert result_again is None, "Bank must not exist after read-only call"
 
         # And explicit auto-create still works
-        created = await memory.get_bank_profile(
-            bank_id, request_context=request_context, create_if_missing=True
-        )
+        created = await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=True)
         assert created is not None
         assert created["disposition"]["skepticism"] == 3
 
         # Now read-only call sees it
-        seen = await memory.get_bank_profile(
-            bank_id, request_context=request_context, create_if_missing=False
-        )
+        seen = await memory.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
         assert seen is not None
         assert seen["disposition"]["skepticism"] == 3
 
@@ -122,11 +113,7 @@ class TestAgentEndpoint:
         bank_id = unique_agent_id("test_put_create")
 
         request = CreateBankRequest(
-            disposition=DispositionTraits(
-                skepticism=4,
-                literalism=5,
-                empathy=2
-            ),
+            disposition=DispositionTraits(skepticism=4, literalism=5, empathy=2),
         )
 
         profile = await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -155,7 +142,7 @@ class TestAgentDispositionIntegration:
         disposition = {
             "skepticism": 5,  # Very skeptical
             "literalism": 4,  # High literalism
-            "empathy": 2,     # Low empathy
+            "empathy": 2,  # Low empathy
         }
         await memory.update_bank_disposition(bank_id, disposition, request_context=request_context)
 
@@ -163,7 +150,7 @@ class TestAgentDispositionIntegration:
             bank_id=bank_id,
             contents=[
                 {"content": "Traditional painting techniques have been used for centuries"},
-                {"content": "Modern digital art is changing the art world"}
+                {"content": "Modern digital art is changing the art world"},
             ],
             request_context=request_context,
         )

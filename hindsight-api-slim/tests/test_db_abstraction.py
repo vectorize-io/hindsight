@@ -193,8 +193,13 @@ class TestPostgreSQLDialect:
 
     def test_build_semantic_arm(self, d):
         arm = d.build_semantic_arm(
-            table="schema.memory_units", cols="id, text", fact_type="world",
-            embedding_param="$1", bank_id_param="$2", fetch_limit=100, min_similarity=0.58,
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            embedding_param="$1",
+            bank_id_param="$2",
+            fetch_limit=100,
+            min_similarity=0.58,
         )
         assert "1 - (embedding <=> $1::vector)" in arm
         assert ">= 0.58" in arm
@@ -204,8 +209,12 @@ class TestPostgreSQLDialect:
 
     def test_build_bm25_arm_native(self, d):
         arm = d.build_bm25_arm(
-            table="schema.memory_units", cols="id, text", fact_type="world",
-            bank_id_param="$2", limit_param="$3", text_param="$4",
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
         )
         assert "ts_rank_cd" in arm
         assert "to_tsquery" in arm
@@ -216,8 +225,12 @@ class TestPostgreSQLDialect:
 
     def test_build_bm25_arm_native_uses_configured_language(self, d):
         arm = d.build_bm25_arm(
-            table="schema.memory_units", cols="id, text", fact_type="world",
-            bank_id_param="$2", limit_param="$3", text_param="$4",
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
             bm25_language="french",
         )
         # Both the score and the WHERE filter must use the configured dictionary
@@ -226,8 +239,12 @@ class TestPostgreSQLDialect:
 
     def test_build_bm25_arm_vchord(self, d):
         arm = d.build_bm25_arm(
-            table="t", cols="id", fact_type="world",
-            bank_id_param="$2", limit_param="$3", text_param="$4",
+            table="t",
+            cols="id",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
             text_search_extension="vchord",
         )
         assert "to_bm25query" in arm
@@ -240,16 +257,26 @@ class TestPostgreSQLDialect:
         rows with a genuine query-term match, mirroring native tsvector's `@@`.
         """
         arm = d.build_bm25_arm(
-            table="t", cols="id", fact_type="world",
-            bank_id_param="$2", limit_param="$3", text_param="$4",
+            table="t",
+            cols="id",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
             text_search_extension="vchord",
         )
-        assert "-(search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize($4, 'llmlingua2'))) > 0" in arm
+        assert (
+            "-(search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize($4, 'llmlingua2'))) > 0" in arm
+        )
 
     def test_build_bm25_arm_vchord_honors_custom_min_score(self, d):
         arm = d.build_bm25_arm(
-            table="t", cols="id", fact_type="world",
-            bank_id_param="$2", limit_param="$3", text_param="$4",
+            table="t",
+            cols="id",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
             text_search_extension="vchord",
             bm25_min_score=2.5,
         )
@@ -257,8 +284,12 @@ class TestPostgreSQLDialect:
 
     def test_build_bm25_arm_pgroonga(self, d):
         arm = d.build_bm25_arm(
-            table="schema.memory_units", cols="id, text", fact_type="world",
-            bank_id_param="$2", limit_param="$3", text_param="$4",
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
             text_search_extension="pgroonga",
         )
         # pgroonga uses the &@~ operator + pgroonga_score for ranking. Escape
@@ -272,8 +303,12 @@ class TestPostgreSQLDialect:
     def test_build_bm25_arm_pgroonga_ignores_bm25_language(self, d):
         """pgroonga's tokenizer is fixed at index creation; bm25_language must not leak in."""
         arm = d.build_bm25_arm(
-            table="t", cols="id", fact_type="world",
-            bank_id_param="$2", limit_param="$3", text_param="$4",
+            table="t",
+            cols="id",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
             text_search_extension="pgroonga",
             bm25_language="french",
         )
@@ -281,8 +316,12 @@ class TestPostgreSQLDialect:
 
     def test_build_bm25_arm_pg_search(self, d):
         arm = d.build_bm25_arm(
-            table="schema.memory_units", cols="id, text", fact_type="world",
-            bank_id_param="$2", limit_param="$3", text_param="$4",
+            table="schema.memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param="$2",
+            limit_param="$3",
+            text_param="$4",
             text_search_extension="pg_search",
         )
         assert "paradedb.score(id)" in arm
@@ -360,8 +399,13 @@ class TestOracleDialect:
 
     def test_build_semantic_arm(self, d):
         arm = d.build_semantic_arm(
-            table="memory_units", cols="id, text", fact_type="world",
-            embedding_param=":1", bank_id_param=":2", fetch_limit=100, min_similarity=0.58,
+            table="memory_units",
+            cols="id, text",
+            fact_type="world",
+            embedding_param=":1",
+            bank_id_param=":2",
+            fetch_limit=100,
+            min_similarity=0.58,
         )
         assert "VECTOR_DISTANCE" in arm
         assert ">= 0.58" in arm
@@ -371,8 +415,12 @@ class TestOracleDialect:
 
     def test_build_bm25_arm(self, d):
         arm = d.build_bm25_arm(
-            table="memory_units", cols="id, text", fact_type="world",
-            bank_id_param=":2", limit_param=":3", text_param=":4",
+            table="memory_units",
+            cols="id, text",
+            fact_type="world",
+            bank_id_param=":2",
+            limit_param=":3",
+            text_param=":4",
             arm_index=0,
         )
         assert "CONTAINS" in arm
@@ -383,12 +431,22 @@ class TestOracleDialect:
     def test_build_bm25_arm_unique_labels(self, d):
         """Each arm_index produces a unique SCORE label to avoid conflicts in UNION ALL."""
         arm0 = d.build_bm25_arm(
-            table="t", cols="id", fact_type="world",
-            bank_id_param=":2", limit_param=":3", text_param=":4", arm_index=0,
+            table="t",
+            cols="id",
+            fact_type="world",
+            bank_id_param=":2",
+            limit_param=":3",
+            text_param=":4",
+            arm_index=0,
         )
         arm1 = d.build_bm25_arm(
-            table="t", cols="id", fact_type="experience",
-            bank_id_param=":2", limit_param=":3", text_param=":4", arm_index=1,
+            table="t",
+            cols="id",
+            fact_type="experience",
+            bank_id_param=":2",
+            limit_param=":3",
+            text_param=":4",
+            arm_index=1,
         )
         assert "SCORE(10)" in arm0
         assert "SCORE(11)" in arm1
@@ -474,9 +532,7 @@ class TestOracleQueryRewriter:
         """Verify JSONB ->> boolean comparison is rewritten to JSON_VALUE."""
         from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
 
-        query, _, _ = _rewrite_pg_to_oracle(
-            "WHERE (trigger->>'refresh_after_consolidation')::boolean = true"
-        )
+        query, _, _ = _rewrite_pg_to_oracle("WHERE (trigger->>'refresh_after_consolidation')::boolean = true")
         assert "JSON_VALUE" in query
         assert "'true'" in query
         assert "->>" not in query
@@ -493,9 +549,7 @@ class TestOracleQueryRewriter:
         """Verify ->> works with quoted column names."""
         from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
 
-        query, _, _ = _rewrite_pg_to_oracle(
-            "ORDER BY (result_metadata->>'sub_batch_index')::int"
-        )
+        query, _, _ = _rewrite_pg_to_oracle("ORDER BY (result_metadata->>'sub_batch_index')::int")
         assert "JSON_VALUE" in query
         assert "->>" not in query
 
@@ -681,9 +735,7 @@ class TestOracleOpsInsertFactsBatch:
     @pytest.mark.asyncio
     async def test_tags_json_decoded_to_list(self, ops, mock_conn):
         """Tags JSON strings must be decoded to Python lists, not passed as strings."""
-        await ops.insert_facts_batch(
-            conn=mock_conn, **{**self._make_batch(1), "tags_list": ['["tag1", "tag2"]']}
-        )
+        await ops.insert_facts_batch(conn=mock_conn, **{**self._make_batch(1), "tags_list": ['["tag1", "tag2"]']})
         _, rows_data = mock_conn.executemany.call_args.args
         assert rows_data[0][13] == ["tag1", "tag2"]
         assert isinstance(rows_data[0][13], list)
@@ -691,9 +743,7 @@ class TestOracleOpsInsertFactsBatch:
     @pytest.mark.asyncio
     async def test_empty_tags_becomes_empty_list(self, ops, mock_conn):
         """Empty/falsy tags string must become [], not crash or pass empty string."""
-        await ops.insert_facts_batch(
-            conn=mock_conn, **{**self._make_batch(1), "tags_list": [""]}
-        )
+        await ops.insert_facts_batch(conn=mock_conn, **{**self._make_batch(1), "tags_list": [""]})
         _, rows_data = mock_conn.executemany.call_args.args
         assert rows_data[0][13] == []
 

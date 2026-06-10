@@ -53,9 +53,7 @@ class TestRetainTool:
         tool = _make_tool(RetainTool)
         msgs = list(tool._invoke({"bank_id": "b1", "content": "hello world", "tags": "a, b"}))
 
-        mock_client.retain.assert_called_once_with(
-            bank_id="b1", content="hello world", tags=["a", "b"]
-        )
+        mock_client.retain.assert_called_once_with(bank_id="b1", content="hello world", tags=["a", "b"])
         assert len(msgs) == 2
         # First message is JSON
         assert msgs[0].message["success"] is True
@@ -155,9 +153,7 @@ class TestReflectTool:
         tool = _make_tool(ReflectTool)
         msgs = list(tool._invoke({"bank_id": "b1", "query": "what do we know about Ben?"}))
 
-        mock_client.reflect.assert_called_once_with(
-            bank_id="b1", query="what do we know about Ben?", budget="low"
-        )
+        mock_client.reflect.assert_called_once_with(bank_id="b1", query="what do we know about Ben?", budget="low")
         assert len(msgs) == 2
         assert msgs[0].message["text"] == "Ben tested Dify integration."
         assert "Ben tested Dify integration." in msgs[1].message

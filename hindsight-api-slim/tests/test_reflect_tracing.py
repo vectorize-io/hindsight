@@ -1,6 +1,7 @@
 """
 Test to verify reflect operation creates proper span hierarchy.
 """
+
 import pytest
 
 
@@ -11,11 +12,7 @@ async def test_reflect_creates_child_spans(memory, request_context):
     from hindsight_api.tracing import initialize_tracing, get_span_recorder, create_span_recorder
 
     # Initialize tracing with a mock endpoint
-    initialize_tracing(
-        service_name="test-hindsight",
-        endpoint="http://localhost:4318",
-        deployment_environment="test"
-    )
+    initialize_tracing(service_name="test-hindsight", endpoint="http://localhost:4318", deployment_environment="test")
 
     # Create span recorder
     recorder = create_span_recorder()
