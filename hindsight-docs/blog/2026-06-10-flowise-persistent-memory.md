@@ -210,4 +210,4 @@ It doesn't take prompt engineering to get this behavior; the tool descriptions a
 - **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup)
 - **Integration docs:** [Flowise + Hindsight](/sdks/integrations/flowise)
 - **Source:** [`vectorize-io/hindsight/hindsight-integrations/flowise`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/flowise)
-- **Hindsight API reference:** [hindsight.vectorize.io/developer](/developer)
+- **Hindsight API reference:** [API quickstart](/developer/api/quickstart)
