@@ -1127,6 +1127,7 @@ class LLMProvider:
             DEFAULT_LLM_REASONING_EFFORT,
             ENV_LLM_API_KEY,
             ENV_LLM_BASE_URL,
+            ENV_LLM_BEDROCK_SERVICE_TIER,
             ENV_LLM_DEFAULT_HEADERS,
             ENV_LLM_EXTRA_BODY,
             ENV_LLM_MODEL,
@@ -1158,6 +1159,7 @@ class LLMProvider:
             reasoning_effort=os.getenv(ENV_LLM_REASONING_EFFORT, DEFAULT_LLM_REASONING_EFFORT),
             extra_body=extra_body,
             default_headers=default_headers,
+            bedrock_service_tier=os.getenv(ENV_LLM_BEDROCK_SERVICE_TIER) or None,
         )
 
 
