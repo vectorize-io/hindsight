@@ -596,6 +596,7 @@ PROVIDER_DEFAULT_MODELS = {
     "volcano": "doubao-pro-32k",
     "openrouter": "qwen/qwen3.5-9b",
     "fireworks": "accounts/fireworks/models/llama-v3p1-8b-instruct",
+    "nous": "deepseek/deepseek-v4-flash",
 }
 DEFAULT_LLM_MODEL = "gpt-4o-mini"  # Fallback if provider not in table
 # Built-in llama.cpp defaults

@@ -163,7 +163,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `none` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `opencode-go`, `nous`, `fireworks`, `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `none` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
@@ -288,6 +288,13 @@ export HINDSIGHT_API_LLM_PROVIDER=opencode-go
 export HINDSIGHT_API_LLM_API_KEY=your-opencode-go-api-key
 export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
 # Default base_url: https://opencode.ai/zen/go/v1 (override with HINDSIGHT_API_LLM_BASE_URL if needed)
+
+# Nous Portal (OpenAI-compatible; no API key — uses your `hermes portal` login)
+export HINDSIGHT_API_LLM_PROVIDER=nous
+export HINDSIGHT_API_LLM_MODEL=deepseek/deepseek-v4-flash
+# No API key needed — reads a rotating JWT from ~/.hermes/auth.json (run `hermes portal` first).
+# Default base_url: https://inference-api.nousresearch.com/v1 (override with HINDSIGHT_API_LLM_BASE_URL if needed)
+# See the "Nous Portal Setup" section in the Models guide for the login flow.
 
 # AWS Bedrock (native support - no API key needed, uses AWS credentials)
 export HINDSIGHT_API_LLM_PROVIDER=bedrock

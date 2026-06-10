@@ -258,6 +258,11 @@ export HINDSIGHT_API_LLM_PROVIDER=opencode-go
 export HINDSIGHT_API_LLM_API_KEY=your-opencode-go-api-key
 export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
 
+# Nous Portal (OpenAI-compatible; no API key — uses your `hermes portal` login)
+export HINDSIGHT_API_LLM_PROVIDER=nous
+export HINDSIGHT_API_LLM_MODEL=deepseek/deepseek-v4-flash  # any Nous-hosted slug
+# No API key needed — reads a rotating JWT from ~/.hermes/auth.json (see "Nous Portal Setup" below)
+
 # Vertex AI (Google Cloud)
 export HINDSIGHT_API_LLM_PROVIDER=vertexai
 export HINDSIGHT_API_LLM_MODEL=gemini-3.1-flash-lite
@@ -317,6 +322,49 @@ You can use any model supported by OpenAI Codex CLI
 - Tokens refresh automatically when needed
 - Usage is billed to your ChatGPT subscription (not separate API costs)
 - For personal development use only (see ChatGPT Terms of Service)
+
+---
+
+### Nous Portal Setup (Hermes)
+
+Use your [Nous Portal](https://portal.nousresearch.com) subscription for Hindsight via the Hermes CLI login — no static API key required.
+
+**Prerequisites:**
+- A Nous Portal account
+- The [Hermes](https://hermes-agent.nousresearch.com) CLI installed
+
+**Setup Steps:**
+
+1. **Log in to Nous Portal:**
+   ```bash
+   hermes portal
+   ```
+   This opens a browser to authenticate with Nous Portal and saves OAuth credentials to `~/.hermes/auth.json`.
+
+2. **Verify authentication:**
+   ```bash
+   hermes portal status  # should show "Auth: ✓ logged in"
+   ```
+
+3. **Configure Hindsight:**
+   ```bash
+   export HINDSIGHT_API_LLM_PROVIDER=nous
+   # export HINDSIGHT_API_LLM_MODEL=deepseek/deepseek-v4-flash  # defaults to deepseek/deepseek-v4-flash
+   # No API key needed — reads from ~/.hermes/auth.json automatically
+   ```
+
+4. **Start Hindsight:**
+   ```bash
+   hindsight-api
+   ```
+
+You can use any model hosted on the Nous Portal inference API.
+
+**Important Notes:**
+- Credentials are read from `~/.hermes/auth.json` (the same store the Hermes agent uses) — no static API key in Hindsight's config.
+- The short-lived inference JWT is refreshed automatically, before expiry and reactively on a 401.
+- Refreshes coordinate with a running Hermes agent through the shared auth store, so the two never disrupt each other's session.
+- Default base URL: `https://inference-api.nousresearch.com/v1` (override with `HINDSIGHT_API_LLM_BASE_URL`).
 
 ---
 
