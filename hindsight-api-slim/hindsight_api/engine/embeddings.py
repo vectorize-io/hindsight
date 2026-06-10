@@ -57,29 +57,9 @@ from ..config import (
     ENV_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT,
     ENV_LLM_API_KEY,
 )
+from .bank_attribution import apply_bank_attribution
 
 logger = logging.getLogger(__name__)
-
-
-def _apply_bank_attribution(request: dict) -> None:
-    """Tag an embeddings request with ``user=<bank_id>`` for per-bank cost attribution.
-
-    Opt-in via ``HINDSIGHT_API_LLM_SEND_BANK_AS_USER`` (shared with the LLM path).
-    Downstream cost gateways key spend on the OpenAI ``user`` field. No-op when the
-    flag is off, no bank is in context, or the caller already set ``user``.
-    """
-    if "user" in request:
-        return
-    # Lazy imports: memory_engine imports this module at top level, so importing
-    # it here (rather than at module scope) avoids a circular import.
-    from ..config import get_config
-    from .memory_engine import get_current_bank_id
-
-    if not get_config().llm_send_bank_as_user:
-        return
-    bank_id = get_current_bank_id()
-    if bank_id:
-        request["user"] = bank_id
 
 
 ZeroEntropyInputType = Literal["document", "query"]
@@ -726,7 +706,7 @@ class OpenAIEmbeddings(Embeddings):
             }
             if self.dimensions is not None:
                 request["dimensions"] = self.dimensions
-            _apply_bank_attribution(request)
+            apply_bank_attribution(request)
 
             response = self._client.embeddings.create(**request)
 

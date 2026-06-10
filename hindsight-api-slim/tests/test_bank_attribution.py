@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import BaseModel
 
+from hindsight_api.engine.bank_attribution import apply_bank_attribution
 from hindsight_api.engine.embeddings import OpenAIEmbeddings
 from hindsight_api.engine.memory_engine import (
     _bind_bank_id,
@@ -187,12 +188,11 @@ async def test_user_not_injected_when_bank_unset():
 async def test_caller_set_user_is_not_overridden():
     """The helper never clobbers a `user` the caller already placed in call_params."""
     _set_flag(True)
-    llm = _llm()
     # Simulate a caller-provided user via the centralized helper directly.
     params = {"user": "explicit-user"}
     token = _current_bank_id.set("user-7")
     try:
-        llm._apply_bank_attribution(params)
+        apply_bank_attribution(params)
     finally:
         _current_bank_id.reset(token)
     assert params["user"] == "explicit-user"

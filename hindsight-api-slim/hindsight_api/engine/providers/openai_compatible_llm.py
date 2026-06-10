@@ -33,6 +33,7 @@ import httpx
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI, LengthFinishReasonError
 
 from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
+from hindsight_api.engine.bank_attribution import apply_bank_attribution
 from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
@@ -458,27 +459,6 @@ class OpenAICompatibleLLM(LLMInterface):
         # use the widely-supported max_tokens
         return "max_tokens"
 
-    def _apply_bank_attribution(self, call_params: dict[str, Any]) -> None:
-        """Tag the request with ``user=<bank_id>`` for per-bank cost attribution.
-
-        Opt-in via ``HINDSIGHT_API_LLM_SEND_BANK_AS_USER``. Downstream cost gateways
-        (OpenRouter usage accounting, LiteLLM, Helicone) key spend on the OpenAI
-        ``user`` field. No-op when the flag is off, no bank is in context, or the
-        caller already set ``user`` — we never override an explicit value.
-        """
-        if "user" in call_params:
-            return
-        # Lazy imports: memory_engine imports this provider's package, so a
-        # top-level import would be circular (mirrors get_config() usage below).
-        from hindsight_api.config import get_config
-        from hindsight_api.engine.memory_engine import get_current_bank_id
-
-        if not get_config().llm_send_bank_as_user:
-            return
-        bank_id = get_current_bank_id()
-        if bank_id:
-            call_params["user"] = bank_id
-
     async def call(
         self,
         messages: list[dict[str, str]],
@@ -616,7 +596,7 @@ class OpenAICompatibleLLM(LLMInterface):
                     call_params["messages"] = _ensure_json_word_in_user_message(call_params["messages"])
                     call_params["response_format"] = {"type": "json_object"}
 
-        self._apply_bank_attribution(call_params)
+        apply_bank_attribution(call_params)
 
         last_exception = None
 
@@ -968,7 +948,7 @@ class OpenAICompatibleLLM(LLMInterface):
         if extra_body:
             call_params["extra_body"] = extra_body
 
-        self._apply_bank_attribution(call_params)
+        apply_bank_attribution(call_params)
 
         last_exception = None
 
