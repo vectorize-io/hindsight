@@ -16,6 +16,9 @@ export interface HindsightSettings {
   prefixDocId: boolean;
   /** Log reflect requests/responses to the console (open devtools to view). */
   debugLogging: boolean;
+  /** Chat disclosure open/closed state — remembered across sessions (last value wins). */
+  notesExpanded: boolean;
+  reasoningExpanded: boolean;
 }
 
 export const DEFAULT_SETTINGS: HindsightSettings = {
@@ -31,6 +34,10 @@ export const DEFAULT_SETTINGS: HindsightSettings = {
   // to avoid cross-vault collisions (e.g. two vaults both having Notes/todo.md).
   prefixDocId: true,
   debugLogging: false,
+  // Notes default to collapsed (the panel was previously always-open and noisy);
+  // thereafter both disclosures remember the user's last open/closed choice.
+  notesExpanded: false,
+  reasoningExpanded: false,
 };
 
 function parseFolders(value: string): string[] {

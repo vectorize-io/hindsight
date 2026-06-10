@@ -161,6 +161,14 @@
   margin: 1px 0 4px;
 }
 
+.hindsight-chat__show-all {
+  display: block;
+  padding: 2px 0;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
 .hindsight-chat__actions {
   display: flex;
   gap: var(--size-4-2);
