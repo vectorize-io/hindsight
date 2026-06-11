@@ -5,7 +5,7 @@ vector distance (pgvector), full-text search (VectorChord BM25 / tsvector),
 and other non-portable patterns.
 """
 
-from .base import SQLDialect
+from .base import SQLDialect, validity_clause
 
 
 class PostgreSQLDialect(SQLDialect):
@@ -161,6 +161,7 @@ class PostgreSQLDialect(SQLDialect):
             f" FROM {table}"
             f" WHERE bank_id = {bank_id_param}"
             f"   AND fact_type = '{fact_type}'"
+            f"   {validity_clause()}"
             f"   AND embedding IS NOT NULL"
             f"   AND (1 - (embedding <=> {embedding_param}::vector)) >= {min_similarity}"
             f"   {tags_clause}"
@@ -240,6 +241,7 @@ class PostgreSQLDialect(SQLDialect):
             f" FROM {table}"
             f" WHERE bank_id = {bank_id_param}"
             f"   AND fact_type = '{fact_type}'"
+            f"   {validity_clause()}"
             f"   {bm25_where_filter}"
             f"   {tags_clause}"
             f"   {groups_clause}"

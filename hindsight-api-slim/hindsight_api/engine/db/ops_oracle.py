@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from ..sql.base import validity_clause
 from .base import DatabaseConnection
 from .ops import DataAccessOps, TagListingParts
 from .result import DictResultRow as ResultRow
@@ -453,7 +454,7 @@ class OracleOps(DataAccessOps):
                        es.score, 'entity' AS source
                 FROM entity_scores es
                 JOIN {mu_table} mu ON mu.id = es.unit_id
-                WHERE mu.fact_type = $2
+                WHERE mu.fact_type = $2 {validity_clause("mu")}
                 ORDER BY es.score DESC
                 FETCH FIRST $3 ROWS ONLY
             )"""
@@ -474,7 +475,7 @@ class OracleOps(DataAccessOps):
                     JOIN {mu_table} mu ON mu.id = ml.to_unit_id
                     WHERE ml.from_unit_id = ANY($1::uuid[])
                       AND ml.link_type = 'semantic'
-                      AND mu.fact_type = $2
+                      AND mu.fact_type = $2 {validity_clause("mu")}
                       AND mu.id != ALL($1::uuid[])
                     UNION ALL
                     SELECT mu.id, ml.weight
@@ -482,7 +483,7 @@ class OracleOps(DataAccessOps):
                     JOIN {mu_table} mu ON mu.id = ml.from_unit_id
                     WHERE ml.to_unit_id = ANY($1::uuid[])
                       AND ml.link_type = 'semantic'
-                      AND mu.fact_type = $2
+                      AND mu.fact_type = $2 {validity_clause("mu")}
                       AND mu.id != ALL($1::uuid[])
                 ) sem_raw
                 GROUP BY id
@@ -509,7 +510,7 @@ class OracleOps(DataAccessOps):
                 JOIN {mu_table} mu ON ml.to_unit_id = mu.id
                 WHERE ml.from_unit_id = ANY($1::uuid[])
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
-                  AND mu.fact_type = $2
+                  AND mu.fact_type = $2 {validity_clause("mu")}
             ),
             causal_expanded AS (
                 SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at,
@@ -575,7 +576,7 @@ class OracleOps(DataAccessOps):
                    AND os2.source_id IN (SELECT source_id FROM connected_sources)
                 ) AS score
             FROM {mu_table} mu
-            WHERE mu.fact_type = 'observation'
+            WHERE mu.fact_type = 'observation' {validity_clause("mu")}
               AND mu.id != ALL($1::uuid[])
               AND EXISTS (
                   SELECT 1 FROM {obs_sources_table} os3
@@ -600,13 +601,13 @@ class OracleOps(DataAccessOps):
                     SELECT mu.id, ml.weight
                     FROM {ml_table} ml JOIN {mu_table} mu ON mu.id = ml.to_unit_id
                     WHERE ml.from_unit_id = ANY($1::uuid[])
-                      AND ml.link_type = 'semantic' AND mu.fact_type = 'observation'
+                      AND ml.link_type = 'semantic' AND mu.fact_type = 'observation' {validity_clause("mu")}
                       AND mu.id != ALL($1::uuid[])
                     UNION ALL
                     SELECT mu.id, ml.weight
                     FROM {ml_table} ml JOIN {mu_table} mu ON mu.id = ml.from_unit_id
                     WHERE ml.to_unit_id = ANY($1::uuid[])
-                      AND ml.link_type = 'semantic' AND mu.fact_type = 'observation'
+                      AND ml.link_type = 'semantic' AND mu.fact_type = 'observation' {validity_clause("mu")}
                       AND mu.id != ALL($1::uuid[])
                 ) sem_raw
                 GROUP BY id
@@ -632,7 +633,7 @@ class OracleOps(DataAccessOps):
                 JOIN {mu_table} mu ON ml.to_unit_id = mu.id
                 WHERE ml.from_unit_id = ANY($1::uuid[])
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
-                  AND mu.fact_type = 'observation'
+                  AND mu.fact_type = 'observation' {validity_clause("mu")}
             ),
             causal_expanded AS (
                 SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at,

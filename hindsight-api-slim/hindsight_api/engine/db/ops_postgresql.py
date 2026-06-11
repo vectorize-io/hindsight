@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from ..sql.base import validity_clause
 from .base import DatabaseConnection
 from .ops import DataAccessOps, TagListingParts
 from .result import ResultRow
@@ -541,7 +542,7 @@ class PostgreSQLOps(DataAccessOps):
                     LIMIT {per_entity_limit}
                 ) t
                 JOIN {mu_table} mu ON mu.id = t.unit_id
-                WHERE mu.fact_type = $2
+                WHERE mu.fact_type = $2 {validity_clause("mu")}
                 GROUP BY mu.id
                 ORDER BY score DESC
                 LIMIT $3
@@ -572,7 +573,7 @@ class PostgreSQLOps(DataAccessOps):
                     JOIN {mu_table} mu ON mu.id = ml.to_unit_id
                     WHERE ml.from_unit_id = ANY($1::uuid[])
                       AND ml.link_type = 'semantic'
-                      AND mu.fact_type = $2
+                      AND mu.fact_type = $2 {validity_clause("mu")}
                       AND mu.id != ALL($1::uuid[])
                     UNION ALL
                     SELECT
@@ -584,7 +585,7 @@ class PostgreSQLOps(DataAccessOps):
                     JOIN {mu_table} mu ON mu.id = ml.from_unit_id
                     WHERE ml.to_unit_id = ANY($1::uuid[])
                       AND ml.link_type = 'semantic'
-                      AND mu.fact_type = $2
+                      AND mu.fact_type = $2 {validity_clause("mu")}
                       AND mu.id != ALL($1::uuid[])
                 ) sem_raw
                 GROUP BY id, text, context, event_date, occurred_start,
@@ -604,7 +605,7 @@ class PostgreSQLOps(DataAccessOps):
                 JOIN {mu_table} mu ON ml.to_unit_id = mu.id
                 WHERE ml.from_unit_id = ANY($1::uuid[])
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
-                  AND mu.fact_type = $2
+                  AND mu.fact_type = $2 {validity_clause("mu")}
                 ORDER BY mu.id, ml.weight DESC
                 LIMIT $3
             )"""
@@ -658,7 +659,7 @@ class PostgreSQLOps(DataAccessOps):
                 mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
                 (SELECT COUNT(DISTINCT s) FROM unnest(mu.source_memory_ids) s WHERE s = ANY(ca.source_ids))::float AS score
             FROM {mu_table} mu, connected_array ca
-            WHERE mu.fact_type = 'observation'
+            WHERE mu.fact_type = 'observation' {validity_clause("mu")}
               AND mu.id != ALL($1::uuid[])
               AND ca.source_ids IS NOT NULL
               AND mu.source_memory_ids && ca.source_ids
@@ -686,7 +687,7 @@ class PostgreSQLOps(DataAccessOps):
                            mu.chunk_id, mu.tags, mu.proof_count, ml.weight
                     FROM {ml_table} ml JOIN {mu_table} mu ON mu.id = ml.to_unit_id
                     WHERE ml.from_unit_id = ANY($1::uuid[])
-                      AND ml.link_type = 'semantic' AND mu.fact_type = 'observation'
+                      AND ml.link_type = 'semantic' AND mu.fact_type = 'observation' {validity_clause("mu")}
                       AND mu.id != ALL($1::uuid[])
                     UNION ALL
                     SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
@@ -694,7 +695,7 @@ class PostgreSQLOps(DataAccessOps):
                            mu.chunk_id, mu.tags, mu.proof_count, ml.weight
                     FROM {ml_table} ml JOIN {mu_table} mu ON mu.id = ml.from_unit_id
                     WHERE ml.to_unit_id = ANY($1::uuid[])
-                      AND ml.link_type = 'semantic' AND mu.fact_type = 'observation'
+                      AND ml.link_type = 'semantic' AND mu.fact_type = 'observation' {validity_clause("mu")}
                       AND mu.id != ALL($1::uuid[])
                 ) sem_raw
                 GROUP BY id, text, context, event_date, occurred_start, occurred_end,
@@ -709,7 +710,7 @@ class PostgreSQLOps(DataAccessOps):
                 FROM {ml_table} ml JOIN {mu_table} mu ON ml.to_unit_id = mu.id
                 WHERE ml.from_unit_id = ANY($1::uuid[])
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
-                  AND mu.fact_type = 'observation'
+                  AND mu.fact_type = 'observation' {validity_clause("mu")}
                 ORDER BY mu.id, ml.weight DESC LIMIT $2
             )
             SELECT * FROM semantic_expanded

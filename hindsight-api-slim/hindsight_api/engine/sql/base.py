@@ -7,6 +7,23 @@ Business logic calls these methods instead of embedding raw SQL fragments.
 from abc import ABC, abstractmethod
 
 
+def validity_clause(alias: str = "") -> str:
+    """WHERE fragment hiding temporally superseded facts from retrieval.
+
+    A superseded fact keeps its row in ``memory_units`` with ``valid_until``
+    set (unlike curation, which MOVES rows to ``invalidated_memory_units``)
+    so as-of queries can still reach it; default retrieval must not. The SQL
+    is identical on both dialects. Centralized so the retrieval arms (semantic,
+    BM25, temporal, graph seeds/expansion) cannot drift apart — the planned
+    ``as_of`` point-in-time variant will extend this single function.
+
+    Deliberately NOT injected into consolidation's source-fact reads: the
+    observation layer must see superseded facts to narrate belief evolution.
+    """
+    prefix = f"{alias}." if alias else ""
+    return f"AND {prefix}valid_until IS NULL"
+
+
 class SQLDialect(ABC):
     """SQL dialect interface for portable query construction.
 

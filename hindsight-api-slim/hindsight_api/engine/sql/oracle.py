@@ -5,7 +5,7 @@ vector distance (VECTOR_DISTANCE), full-text search (Oracle Text), and
 other non-portable patterns.
 """
 
-from .base import SQLDialect
+from .base import SQLDialect, validity_clause
 
 
 class OracleDialect(SQLDialect):
@@ -249,6 +249,7 @@ class OracleDialect(SQLDialect):
             f" FROM {table}"
             f" WHERE bank_id = {bank_id_param}"
             f"   AND fact_type = '{fact_type}'"
+            f"   {validity_clause()}"
             f"   AND embedding IS NOT NULL"
             f"   AND (1 - VECTOR_DISTANCE(embedding, {embedding_param}, COSINE)) >= {min_similarity}"
             f"   {tags_clause}"
@@ -287,6 +288,7 @@ class OracleDialect(SQLDialect):
             f" FROM {table}"
             f" WHERE bank_id = {bank_id_param}"
             f"   AND fact_type = '{fact_type}'"
+            f"   {validity_clause()}"
             # CONTAINS already gates to genuine matches; the configurable floor
             # (default 0) keeps the threshold semantics uniform across backends.
             f"   AND CONTAINS(text, {text_param}, {label}) > {bm25_min_score:g}"

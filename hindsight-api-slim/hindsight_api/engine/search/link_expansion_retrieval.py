@@ -34,6 +34,7 @@ from typing import Any
 from ...config import get_config
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
+from ..sql.base import validity_clause
 from .graph_retrieval import GraphRetriever
 from .tags import TagGroup, TagsMatch, filter_results_by_tag_groups, filter_results_by_tags
 from .types import GraphRetrievalTimings, RetrievalResult
@@ -87,7 +88,7 @@ async def _find_semantic_seeds(
         FROM {fq_table("memory_units")}
         WHERE bank_id = $2
           AND embedding IS NOT NULL
-          AND fact_type = $3
+          AND fact_type = $3 {validity_clause()}
           AND (1 - (embedding <=> $1::vector)) >= $4
           {tags_clause}
           {groups_clause}

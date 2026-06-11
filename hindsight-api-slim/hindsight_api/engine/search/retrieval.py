@@ -19,6 +19,7 @@ from ...config import get_config
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
 from ..sql import create_sql_dialect
+from ..sql.base import validity_clause
 from .graph_retrieval import GraphRetriever
 from .link_expansion_retrieval import LinkExpansionRetriever
 from .tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause_simple
@@ -476,7 +477,7 @@ async def retrieve_temporal_combined(
         SELECT {pool_cols}, 1 - (embedding <=> $1::vector) AS similarity
         FROM {table}
         WHERE bank_id = $2
-          AND fact_type = '{ft}'
+          AND fact_type = '{ft}' {validity_clause()}
           AND embedding IS NOT NULL
           AND (
               (occurred_start IS NOT NULL AND occurred_end IS NOT NULL
@@ -620,7 +621,7 @@ async def retrieve_temporal_combined(
                 ) l
                 JOIN {fq_table("memory_units")} mu ON mu.id = l.to_unit_id
                 WHERE mu.bank_id = $6
-                  AND mu.fact_type = $3
+                  AND mu.fact_type = $3 {validity_clause("mu")}
                   AND mu.embedding IS NOT NULL
                   AND (1 - (mu.embedding <=> $1::vector)) >= $4
                   {spreading_tags_clause}
