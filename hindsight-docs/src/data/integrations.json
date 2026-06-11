@@ -3,7 +3,7 @@
     {
       "id": "litellm",
       "name": "LiteLLM",
-      "description": "Add long-term memory to any LLM via LiteLLM proxy callbacks. Zero code changes — configure once and every model gets memory.",
+      "description": "Add long-term memory to any LLM via LiteLLM proxy callbacks. Zero code changes \u2014 configure once and every model gets memory.",
       "type": "official",
       "by": "hindsight",
       "category": "framework",
@@ -151,6 +151,16 @@
       "icon": "/img/icons/cursor.svg"
     },
     {
+      "id": "zed",
+      "name": "Zed",
+      "description": "Automatic long-term memory for the Zed editor's AI assistant via Hindsight. Recalls relevant project memory into every conversation and retains sessions \u2014 no manual steps.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/zed",
+      "icon": "/img/icons/zed.svg"
+    },
+    {
       "id": "cline",
       "name": "Cline",
       "description": "Automatic long-term memory for the Cline coding agent via lifecycle hooks (no MCP). Recalls relevant context before each task and retains what happened after.",
@@ -233,7 +243,7 @@
     {
       "id": "nemoclaw",
       "name": "NemoClaw",
-      "description": "Persistent memory for NemoClaw sandboxed agents. One-command setup — no code changes required.",
+      "description": "Persistent memory for NemoClaw sandboxed agents. One-command setup \u2014 no code changes required.",
       "type": "official",
       "by": "hindsight",
       "category": "framework",
@@ -243,7 +253,7 @@
     {
       "id": "paperclip",
       "name": "Paperclip",
-      "description": "Persistent memory for Paperclip AI agents. Install the plugin once and every agent gets automatic recall before runs and retain after — no code changes.",
+      "description": "Persistent memory for Paperclip AI agents. Install the plugin once and every agent gets automatic recall before runs and retain after \u2014 no code changes.",
       "type": "official",
       "by": "hindsight",
       "category": "framework",
@@ -253,7 +263,7 @@
     {
       "id": "right-agent",
       "name": "Right Agent",
-      "description": "Persistent memory for Right Agent — closed-box AI agents that run Claude Code inside OpenShell sandboxes. Hindsight is the native memory provider, selected during initialization.",
+      "description": "Persistent memory for Right Agent \u2014 closed-box AI agents that run Claude Code inside OpenShell sandboxes. Hindsight is the native memory provider, selected during initialization.",
       "type": "official",
       "by": "hindsight",
       "category": "framework",
@@ -393,7 +403,7 @@
     {
       "id": "omo",
       "name": "OMO (oh-my-openagent)",
-      "description": "Automatic long-term memory for OMO agent harness via Hindsight hooks. Recalls context before each prompt and retains session learnings — zero config for cloud users.",
+      "description": "Automatic long-term memory for OMO agent harness via Hindsight hooks. Recalls context before each prompt and retains session learnings \u2014 zero config for cloud users.",
       "type": "official",
       "by": "hindsight",
       "category": "tool",
@@ -413,7 +423,7 @@
     {
       "id": "obsidian",
       "name": "Obsidian",
-      "description": "Sync your Obsidian vault into Hindsight and chat with an agent grounded on your notes. Your vault stays the source of truth — every answer cites the note it came from.",
+      "description": "Sync your Obsidian vault into Hindsight and chat with an agent grounded on your notes. Your vault stays the source of truth \u2014 every answer cites the note it came from.",
       "type": "official",
       "by": "hindsight",
       "category": "tool",
@@ -423,7 +433,7 @@
     {
       "id": "hindclaw",
       "name": "HindClaw",
-      "description": "Production memory infrastructure for AI agents — server-side access control via Hindsight extensions, Terraform provider for users/groups/banks/permissions, and an OpenClaw plugin with auto-managed embed.",
+      "description": "Production memory infrastructure for AI agents \u2014 server-side access control via Hindsight extensions, Terraform provider for users/groups/banks/permissions, and an OpenClaw plugin with auto-managed embed.",
       "type": "community",
       "by": "mrkhachaturov",
       "category": "framework",
@@ -443,7 +453,7 @@
     {
       "id": "gemini-spark",
       "name": "Gemini Spark",
-      "description": "Persistent memory for Google's Gemini Spark assistant via MCP. Spark calls Hindsight's recall and retain tools through its built-in MCP client — works with Hindsight Cloud or self-hosted via an OAuth proxy.",
+      "description": "Persistent memory for Google's Gemini Spark assistant via MCP. Spark calls Hindsight's recall and retain tools through its built-in MCP client \u2014 works with Hindsight Cloud or self-hosted via an OAuth proxy.",
       "type": "official",
       "by": "hindsight",
       "category": "tool",
