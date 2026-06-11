@@ -581,7 +581,9 @@
     "scopeLabel": "Scope",
     "scopeAll": "All scopes",
     "scopeGlobal": "Global (no tags)",
-    "groupByScope": "Group by scope"
+    "groupByScope": "Group by scope",
+    "scopeSearch": "Search scopes…",
+    "scopeNoResults": "No scopes found"
   },
   "documentsView": {
     "loadingDocuments": "Loading documents...",

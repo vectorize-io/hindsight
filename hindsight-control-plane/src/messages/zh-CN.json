@@ -581,7 +581,9 @@
     "scopeLabel": "范围",
     "scopeAll": "所有范围",
     "scopeGlobal": "全局（无标签）",
-    "groupByScope": "按范围分组"
+    "groupByScope": "按范围分组",
+    "scopeSearch": "搜索范围…",
+    "scopeNoResults": "未找到范围"
   },
   "documentsView": {
     "loadingDocuments": "正在加载文档...",

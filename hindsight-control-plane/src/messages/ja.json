@@ -581,7 +581,9 @@
     "scopeLabel": "スコープ",
     "scopeAll": "すべてのスコープ",
     "scopeGlobal": "グローバル（タグなし）",
-    "groupByScope": "スコープでグループ化"
+    "groupByScope": "スコープでグループ化",
+    "scopeSearch": "スコープを検索…",
+    "scopeNoResults": "スコープが見つかりません"
   },
   "documentsView": {
     "loadingDocuments": "ドキュメントを読み込み中...",

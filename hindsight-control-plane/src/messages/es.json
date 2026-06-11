@@ -581,7 +581,9 @@
     "scopeLabel": "Ámbito",
     "scopeAll": "Todos los ámbitos",
     "scopeGlobal": "Global (sin etiquetas)",
-    "groupByScope": "Agrupar por ámbito"
+    "groupByScope": "Agrupar por ámbito",
+    "scopeSearch": "Buscar ámbitos…",
+    "scopeNoResults": "No se encontraron ámbitos"
   },
   "documentsView": {
     "loadingDocuments": "Cargando documentos...",

@@ -481,7 +481,6 @@ export function DataView({
       loadScopes();
     }, 4000);
     return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConsolidating, currentBank]);
 
   // Enforce 50 node limit to prevent UI instability, default to 20 or max whichever is smaller

@@ -581,7 +581,9 @@
     "scopeLabel": "Portée",
     "scopeAll": "Toutes les portées",
     "scopeGlobal": "Global (sans tags)",
-    "groupByScope": "Grouper par portée"
+    "groupByScope": "Grouper par portée",
+    "scopeSearch": "Rechercher des portées…",
+    "scopeNoResults": "Aucune portée trouvée"
   },
   "documentsView": {
     "loadingDocuments": "Chargement des documents...",

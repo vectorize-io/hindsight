@@ -581,7 +581,9 @@
     "scopeLabel": "Escopo",
     "scopeAll": "Todos os escopos",
     "scopeGlobal": "Global (sem tags)",
-    "groupByScope": "Agrupar por escopo"
+    "groupByScope": "Agrupar por escopo",
+    "scopeSearch": "Pesquisar escopos…",
+    "scopeNoResults": "Nenhum escopo encontrado"
   },
   "documentsView": {
     "loadingDocuments": "Carregando documentos...",
