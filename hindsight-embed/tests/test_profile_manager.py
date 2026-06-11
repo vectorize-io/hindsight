@@ -55,9 +55,9 @@ class TestProfileManager:
     def test_create_profile_success(self, profile_manager, temp_hindsight_dir):
         """Test creating a new profile."""
         config = {
-            "HINDSIGHT_EMBED_LLM_PROVIDER": "openai",
-            "HINDSIGHT_EMBED_LLM_API_KEY": "sk-test",
-            "HINDSIGHT_EMBED_LLM_MODEL": "gpt-4o-mini",
+            "HINDSIGHT_API_LLM_PROVIDER": "openai",
+            "HINDSIGHT_API_LLM_API_KEY": "sk-test",
+            "HINDSIGHT_API_LLM_MODEL": "gpt-4o-mini",
         }
 
         profile_manager.create_profile("test-profile", config)
@@ -68,9 +68,9 @@ class TestProfileManager:
 
         # Verify config contents
         config_content = config_path.read_text()
-        assert "HINDSIGHT_EMBED_LLM_PROVIDER=openai" in config_content
-        assert "HINDSIGHT_EMBED_LLM_API_KEY=sk-test" in config_content
-        assert "HINDSIGHT_EMBED_LLM_MODEL=gpt-4o-mini" in config_content
+        assert "HINDSIGHT_API_LLM_PROVIDER=openai" in config_content
+        assert "HINDSIGHT_API_LLM_API_KEY=sk-test" in config_content
+        assert "HINDSIGHT_API_LLM_MODEL=gpt-4o-mini" in config_content
 
         # Verify metadata was created
         metadata_path = temp_hindsight_dir / "profiles" / "metadata.json"

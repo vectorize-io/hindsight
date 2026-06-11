@@ -45,11 +45,11 @@ class TestProfileIntegration:
                 "--profile",
                 "test-app",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=openai",
+                "HINDSIGHT_API_LLM_PROVIDER=openai",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=sk-test",
+                "HINDSIGHT_API_LLM_API_KEY=sk-test",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_MODEL=gpt-4o-mini",
+                "HINDSIGHT_API_LLM_MODEL=gpt-4o-mini",
             ],
             capture_output=True,
             text=True,
@@ -64,8 +64,8 @@ class TestProfileIntegration:
         assert profile_path.exists()
 
         config_content = profile_path.read_text()
-        assert "HINDSIGHT_EMBED_LLM_PROVIDER=openai" in config_content
-        assert "HINDSIGHT_EMBED_LLM_API_KEY=sk-test" in config_content
+        assert "HINDSIGHT_API_LLM_PROVIDER=openai" in config_content
+        assert "HINDSIGHT_API_LLM_API_KEY=sk-test" in config_content
 
         # List profiles
         result = subprocess.run(
@@ -109,9 +109,9 @@ class TestProfileIntegration:
                 "--profile",
                 "test-app",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=openai",
+                "HINDSIGHT_API_LLM_PROVIDER=openai",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=sk-test",
+                "HINDSIGHT_API_LLM_API_KEY=sk-test",
             ],
             capture_output=True,
             env={**os.environ, "HOME": str(temp_home)},
@@ -136,9 +136,9 @@ class TestProfileIntegration:
                 "--profile",
                 "test-app",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=openai",
+                "HINDSIGHT_API_LLM_PROVIDER=openai",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=sk-test",
+                "HINDSIGHT_API_LLM_API_KEY=sk-test",
             ],
             capture_output=True,
             env={**os.environ, "HOME": str(temp_home)},
@@ -183,9 +183,9 @@ class TestProfileIntegration:
                 "--profile",
                 "test-app",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=openai",
+                "HINDSIGHT_API_LLM_PROVIDER=openai",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=sk-test",
+                "HINDSIGHT_API_LLM_API_KEY=sk-test",
             ],
             capture_output=True,
         )
@@ -214,9 +214,9 @@ class TestProfileIntegration:
                 "--profile",
                 "app1",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=openai",
+                "HINDSIGHT_API_LLM_PROVIDER=openai",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=sk-test",
+                "HINDSIGHT_API_LLM_API_KEY=sk-test",
             ],
             capture_output=True,
         )
@@ -229,9 +229,9 @@ class TestProfileIntegration:
                 "--profile",
                 "app2",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=openai",
+                "HINDSIGHT_API_LLM_PROVIDER=openai",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=sk-test",
+                "HINDSIGHT_API_LLM_API_KEY=sk-test",
             ],
             capture_output=True,
         )
@@ -264,9 +264,9 @@ class TestProfileIntegration:
         config_dir = temp_home / ".hindsight"
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "embed").write_text(
-            "HINDSIGHT_EMBED_LLM_PROVIDER=openai\n"
-            "HINDSIGHT_EMBED_LLM_API_KEY=sk-test\n"
-            "HINDSIGHT_EMBED_LLM_MODEL=gpt-4o-mini\n"
+            "HINDSIGHT_API_LLM_PROVIDER=openai\n"
+            "HINDSIGHT_API_LLM_API_KEY=sk-test\n"
+            "HINDSIGHT_API_LLM_MODEL=gpt-4o-mini\n"
         )
 
         # Show profile should work
@@ -289,9 +289,9 @@ class TestProfileIntegration:
         env = {
             **os.environ,
             "HOME": str(temp_home),
-            "HINDSIGHT_EMBED_LLM_PROVIDER": "openai",
-            "HINDSIGHT_EMBED_LLM_API_KEY": "sk-test",
-            "HINDSIGHT_EMBED_LLM_MODEL": "gpt-4o-mini",
+            "HINDSIGHT_API_LLM_PROVIDER": "openai",
+            "HINDSIGHT_API_LLM_API_KEY": "sk-test",
+            "HINDSIGHT_API_LLM_MODEL": "gpt-4o-mini",
         }
 
         result = subprocess.run(hindsight_embed_cmd + ["configure"], capture_output=True, text=True, env=env)
@@ -313,9 +313,9 @@ class TestProfileIntegration:
                 "--profile",
                 "test-app",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=openai",
+                "HINDSIGHT_API_LLM_PROVIDER=openai",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=sk-test",
+                "HINDSIGHT_API_LLM_API_KEY=sk-test",
             ],
             capture_output=True,
         )
@@ -349,9 +349,9 @@ class TestProfileIntegration:
                 "--profile",
                 "test-app",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=openai",
+                "HINDSIGHT_API_LLM_PROVIDER=openai",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=sk-test",
+                "HINDSIGHT_API_LLM_API_KEY=sk-test",
             ],
             capture_output=True,
         )
@@ -369,9 +369,9 @@ class TestProfileIntegration:
                 "--profile",
                 "test-app",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=groq",
+                "HINDSIGHT_API_LLM_PROVIDER=groq",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=gsk-test",
+                "HINDSIGHT_API_LLM_API_KEY=gsk-test",
             ],
             capture_output=True,
         )
