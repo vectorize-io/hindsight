@@ -14,8 +14,6 @@
     "autoprefixer",
     "tailwindcss-animate",
     "postcss-load-config",
-    "@types/react-dom",
-    "react-dom",
     "react-is",
     "@vectorize-io/hindsight-client",
     "prettier",

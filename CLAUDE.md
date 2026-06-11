@@ -216,12 +216,16 @@ migration file dispatches through `run_for_dialect`, which calls either
 ./scripts/hooks/lint.sh
 ```
 
-Unused imports (ruff `F401`) and unused variables (`F841`) are **blocking** — `lint.sh`
-auto-removes them and the `verify-generated-files` CI job fails on any leftover diff.
-For dead code the linter can't see — whole unused Python functions, orphaned React
-components, stale `package.json` deps — run the advisory scan (vulture + knip):
+Dead-code detection runs in CI (the `check-unused-code` job) at two levels:
+- **Blocking:** unused imports (ruff `F401`) and variables (`F841`) — `lint.sh` auto-removes
+  them and `verify-generated-files` fails on any leftover diff; and **knip** for orphaned
+  control-plane files / unused (or unlisted) `package.json` dependencies.
+- **Advisory:** whole unused Python functions (vulture) and unused control-plane *exports*
+  (the shadcn/ui surface is kept on purpose) — surfaced, not gated.
+
+Run both locally with:
 ```bash
-./scripts/hooks/check-unused.sh   # informational; mirrors the check-unused-code CI job
+./scripts/hooks/check-unused.sh
 ```
 
 **After completing any implementation work, run `/code-review`** to verify your changes against project standards (missing tests, dead code, type safety, etc.). Fix any "must fix" issues before considering the task done.

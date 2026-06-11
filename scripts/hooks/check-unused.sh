@@ -8,10 +8,12 @@
 # orphaned React components, or stale package.json deps — that is what this
 # script reports.
 #
-# It is intentionally ADVISORY (always exits 0): vulture's function/argument
+# This script is ADVISORY (always exits 0): vulture's function/argument
 # heuristics produce false positives against FastAPI / SQLAlchemy / Pydantic /
-# ABC patterns, so the output is a review aid, not a gate. See README note in
-# the CI job for the path to making knip blocking once the tree is clean.
+# ABC patterns, so its output is a review aid, not a gate. The CI job
+# (check-unused-code) additionally runs `knip --include files,dependencies` as a
+# separate BLOCKING step — orphaned files and dead package.json deps are
+# unambiguous and fail the build.
 #
 # Usage: ./scripts/hooks/check-unused.sh
 

@@ -4265,15 +4265,16 @@ jobs:
           fi
         done
 
-  # Advisory dead-code scan. Unused imports (F401) and unused variables (F841)
-  # are already BLOCKING via the ruff config + the verify-generated-files job.
-  # This job surfaces what ruff cannot see — whole unused Python functions
-  # (vulture) and orphaned files / exports / dependencies in the control plane
-  # (knip). It is intentionally non-blocking: vulture's function/argument
-  # heuristics false-positive on FastAPI/SQLAlchemy/Pydantic patterns, and the
-  # control-plane tree still carries known dead code (tracked in PR #2135).
-  # To make knip blocking once that lands, run `npx knip --include files,dependencies`
-  # and drop the `continue-on-error` below.
+  # Dead-code detection beyond what ruff's F401/F841 catch (those are already
+  # BLOCKING via the ruff config + the verify-generated-files job).
+  #
+  # - knip (control plane): BLOCKING on unused files / dependencies / unlisted
+  #   dependencies. These are unambiguous — an orphaned file or a dead
+  #   package.json entry — so they fail the build.
+  # - vulture (Python) + knip unused *exports*: ADVISORY only. vulture's
+  #   function/argument heuristics false-positive on FastAPI/SQLAlchemy/Pydantic
+  #   patterns, and the control plane intentionally keeps an unused shadcn/ui
+  #   component surface, so these are surfaced in the step summary, not gated.
   check-unused-code:
     needs: [detect-changes]
     if: >-
@@ -4283,7 +4284,6 @@ jobs:
       needs.detect-changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
     steps:
     - uses: actions/checkout@v6
       with:
@@ -4304,7 +4304,12 @@ jobs:
     - name: Install Control Plane dependencies
       run: npm install --workspace=hindsight-control-plane
 
-    - name: Run advisory dead-code scan
+    - name: knip — unused files / dependencies (blocking)
+      working-directory: hindsight-control-plane
+      run: npx --yes knip@5 --no-progress --include files,dependencies,unlisted
+
+    - name: Advisory scan — vulture + knip exports
+      continue-on-error: true
       run: |
         {
           echo '## Dead-code scan (advisory)'
