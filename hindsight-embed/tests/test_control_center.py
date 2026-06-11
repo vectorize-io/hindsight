@@ -261,8 +261,8 @@ class TestServer:
         assert r.status_code == 200 and r.headers["content-type"] == "image/png"
 
     def test_self_hosted_fonts_served(self, server):
-        css = httpx.get(f"{server}/fonts.css")
-        assert css.status_code == 200 and "text/css" in css.headers["content-type"]
+        # Fonts are self-hosted (bundled @font-face references /fonts/*) so the
+        # UI renders offline; the woff2 files are served from the static dir.
         woff = httpx.get(f"{server}/fonts/SpaceGrotesk-700.woff2")
         assert woff.status_code == 200 and woff.headers["content-type"] == "font/woff2"
 
