@@ -17,13 +17,29 @@ Safety middleware for [Hindsight](https://vectorize.io/hindsight) memory operati
 pip install hindsight-superagent
 ```
 
+### Prerequisites
+
+Guard and Redact run on every `retain` by default, so the example below calls Superagent (and the LLM behind your guard/redact models) before anything is stored. Set both keys as environment variables first:
+
+| Variable             | Purpose                                                                                                                                    |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SUPERAGENT_API_KEY` | Authenticates Superagent's guard/redact calls. [Get one at superagent.sh](https://www.superagent.sh).                                      |
+| `OPENAI_API_KEY`     | Backs the `guard_model` / `redact_model` (e.g. `openai/gpt-4.1-nano`). Any [supported LLM provider](https://docs.superagent.sh/sdk) works. |
+
+```bash
+export SUPERAGENT_API_KEY=sa-...
+export OPENAI_API_KEY=sk-...
+```
+
+You also need a reachable Hindsight endpoint for `hindsight_api_url`: a [self-hosted server](https://hindsight.vectorize.io/developer/installation) (`http://localhost:8888`), or your [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) URL together with its key (`HINDSIGHT_API_KEY`). The example uses a local server — point it at your Cloud URL to use Hindsight Cloud instead.
+
 ```python
 import asyncio
 from hindsight_superagent import SafeHindsight
 
 safe = SafeHindsight(
     bank_id="user-123",
-    hindsight_api_url="http://localhost:8888",
+    hindsight_api_url="http://localhost:8888",  # or your Hindsight Cloud URL
     guard_model="openai/gpt-4.1-nano",
     redact_model="openai/gpt-4.1-nano",
 )
@@ -35,6 +51,10 @@ async def main():
 
 asyncio.run(main())
 ```
+
+:::note Hosted guard models
+Superagent's hosted endpoints for its guard models are currently unreliable. The guard models are open-weight (`superagent/guard-0.6b`, `guard-1.7b`, `guard-4b`) and can be [self-hosted](https://docs.superagent.sh/sdk/models) via Ollama or vLLM.
+:::
 
 ## Features
 
