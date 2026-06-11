@@ -577,7 +577,13 @@
     "sourceFactsLabel": "来源事实",
     "errorLoadingData": "加载 {factType} 数据出错",
     "all": "全部",
-    "memoryComposition": "记忆构成"
+    "memoryComposition": "记忆构成",
+    "scopeLabel": "范围",
+    "scopeAll": "所有范围",
+    "scopeGlobal": "全局（无标签）",
+    "groupByScope": "按范围分组",
+    "scopeSearch": "搜索范围…",
+    "scopeNoResults": "未找到范围"
   },
   "documentsView": {
     "loadingDocuments": "正在加载文档...",
@@ -665,7 +671,8 @@
     "importConflictSkip": "跳过 — 保留现有文档",
     "importConflictReplace": "替换 — 用导入的覆盖",
     "importConflictNewId": "两者都保留 — 以新 id 导入",
-    "textNotStoredWarning": "此服务器不存储原始文本，仅保留提取的记忆。"
+    "textNotStoredWarning": "此服务器不存储原始文本，仅保留提取的记忆。",
+    "labelObservationScopes": "观测范围"
   },
   "entitiesView": {
     "viewRelations": "关系",
@@ -1267,7 +1274,12 @@
     "editFieldEntities": "Entities",
     "editEntityPlaceholder": "Add entity…",
     "editEntityRemove": "Remove {entity}",
-    "editedBadge": "Edited"
+    "editedBadge": "Edited",
+    "curationInvalidateTitle": "使记忆失效",
+    "curationInvalidateExplain": "这会将该记忆移至已失效归档。它将不再出现在 Recall 或 Reflect 中，但会保留以供审计，并可在以后恢复。",
+    "curationReasonPlaceholder": "原因（可选）",
+    "curationCancel": "取消",
+    "curationInvalidate": "失效"
   },
   "documentChunkModal": {
     "documentTitle": "文档详情",

@@ -2,7 +2,7 @@
 
 Provides a convenience factory that creates Haystack-compatible ``Tool``
 instances backed by Hindsight's retain/recall/reflect APIs, and a
-``HindsightToolset`` with optional auto-recall and auto-retain.
+``HindsightMemoryWrapper`` with optional auto-recall and auto-retain.
 """
 
 import asyncio
@@ -549,7 +549,7 @@ def create_hindsight_tools(
 
     Convenience factory that creates a backend and returns Haystack ``Tool``
     instances ready for use with any Haystack agent. For automatic recall
-    and retain behavior, use :class:`HindsightToolset` instead.
+    and retain behavior, use :class:`HindsightMemoryWrapper` instead.
 
     Args:
         bank_id: The Hindsight memory bank to operate on.
@@ -620,7 +620,7 @@ def create_hindsight_tools(
     )
 
 
-class HindsightToolset(Toolset):
+class HindsightMemoryWrapper(Toolset):
     """Haystack ``Toolset`` with optional auto-recall and auto-retain.
 
     Groups Hindsight memory tools into a single toolset and optionally adds
@@ -637,11 +637,11 @@ class HindsightToolset(Toolset):
 
     Example::
 
-        from hindsight_haystack import HindsightToolset
+        from hindsight_haystack import HindsightMemoryWrapper
         from haystack.components.agents import Agent
         from haystack.components.generators.chat import OpenAIChatGenerator
 
-        toolset = HindsightToolset(
+        toolset = HindsightMemoryWrapper(
             bank_id="user-123",
             client=client,
             mission="Track user preferences",
@@ -925,7 +925,7 @@ class HindsightToolset(Toolset):
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "HindsightToolset":
+    def from_dict(cls, data: dict[str, Any]) -> "HindsightMemoryWrapper":
         """Deserialize the toolset from a dictionary."""
         inner = data["data"]
         backend_kwargs = inner["backend_kwargs"]

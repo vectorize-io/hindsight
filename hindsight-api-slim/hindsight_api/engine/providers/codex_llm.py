@@ -24,7 +24,7 @@ from typing import Any
 
 import httpx
 
-from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
+from hindsight_api.engine.llm_interface import LLMInterface
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 
@@ -397,7 +397,6 @@ class CodexLLM(LLMInterface):
         }
 
         url = f"{self.base_url}/codex/responses"
-        last_exception = None
 
         # Manual attempt tracking instead of ``for attempt in range(...)`` so
         # that the reactive-refresh path can retry once without consuming a
@@ -428,7 +427,6 @@ class CodexLLM(LLMInterface):
                         if attempt < max_retries:
                             backoff = min(initial_backoff * (2**attempt), max_backoff)
                             await asyncio.sleep(backoff)
-                            last_exception = e
                             attempt += 1
                             continue
                         raise
@@ -490,7 +488,6 @@ class CodexLLM(LLMInterface):
                 return result
 
             except httpx.HTTPStatusError as e:
-                last_exception = e
                 status_code = e.response.status_code
 
                 # Auth error: try one OAuth refresh + retry before giving up.
@@ -549,7 +546,6 @@ class CodexLLM(LLMInterface):
                     raise
 
             except httpx.RequestError as e:
-                last_exception = e
                 if attempt < max_retries:
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                     logger.warning(f"Codex connection error (attempt {attempt + 1}/{max_retries + 1}): {e}")
@@ -563,10 +559,6 @@ class CodexLLM(LLMInterface):
             except Exception as e:
                 logger.error(f"Unexpected Codex error: {type(e).__name__}: {e}")
                 raise
-
-        if last_exception:
-            raise last_exception
-        raise RuntimeError("Codex call failed after all retries")
 
     async def _parse_sse_stream(self, response: httpx.Response) -> str:
         """

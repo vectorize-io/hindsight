@@ -17,7 +17,7 @@ import urllib.request
 
 from .client import USER_AGENT
 from .llm import detect_llm_config, get_llm_env_vars
-from .state import read_state, write_state
+from .state import write_state
 
 DAEMON_STATE_FILE = "daemon.json"
 PROFILE_NAME = "codex"

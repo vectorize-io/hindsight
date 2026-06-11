@@ -25,6 +25,7 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 from alembic.script.revision import ResolutionError
+from alembic.util.exc import CommandError
 from sqlalchemy import Connection, create_engine, text
 
 from ._pg_search import normalize_pg_search_tokenizer, pg_search_bm25_columns
@@ -131,7 +132,12 @@ def _run_migrations_internal(database_url: str, script_location: str, schema: st
     try:
         with _alembic_lock:
             command.upgrade(alembic_cfg, "heads")
-    except ResolutionError as e:
+    except (ResolutionError, CommandError) as e:
+        # command.upgrade() wraps ResolutionError in CommandError via
+        # ScriptDirectory._catch_revision_errors, so the wrapped form is what
+        # actually reaches us; re-raise CommandErrors with any other cause.
+        if isinstance(e, CommandError) and not isinstance(e.__cause__, ResolutionError):
+            raise
         # This happens during rolling deployments when a newer version of the code
         # has already run migrations, and this older replica doesn't have the new
         # migration files. The database is already at a newer revision than we know.

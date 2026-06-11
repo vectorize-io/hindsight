@@ -577,7 +577,13 @@
     "sourceFactsLabel": "fatos de origem",
     "errorLoadingData": "Erro ao carregar dados de {factType}",
     "all": "Todos",
-    "memoryComposition": "Composição da memória"
+    "memoryComposition": "Composição da memória",
+    "scopeLabel": "Escopo",
+    "scopeAll": "Todos os escopos",
+    "scopeGlobal": "Global (sem tags)",
+    "groupByScope": "Agrupar por escopo",
+    "scopeSearch": "Pesquisar escopos…",
+    "scopeNoResults": "Nenhum escopo encontrado"
   },
   "documentsView": {
     "loadingDocuments": "Carregando documentos...",
@@ -665,7 +671,8 @@
     "importConflictSkip": "Ignorar — manter o documento existente",
     "importConflictReplace": "Substituir — sobrescrever pelo importado",
     "importConflictNewId": "Manter ambos — importar com novo id",
-    "textNotStoredWarning": "O texto de origem não é armazenado neste servidor — apenas as memórias extraídas são mantidas."
+    "textNotStoredWarning": "O texto de origem não é armazenado neste servidor — apenas as memórias extraídas são mantidas.",
+    "labelObservationScopes": "Escopos de observação"
   },
   "entitiesView": {
     "viewRelations": "Relações",
@@ -1267,7 +1274,12 @@
     "editFieldEntities": "Entities",
     "editEntityPlaceholder": "Add entity…",
     "editEntityRemove": "Remove {entity}",
-    "editedBadge": "Edited"
+    "editedBadge": "Edited",
+    "curationInvalidateTitle": "Invalidar memória",
+    "curationInvalidateExplain": "Isto move a memória para o arquivo de itens invalidados. Ela não aparecerá mais em Recall ou Reflect, mas é mantida para auditoria e pode ser restaurada depois.",
+    "curationReasonPlaceholder": "Motivo (opcional)",
+    "curationCancel": "Cancelar",
+    "curationInvalidate": "Invalidar"
   },
   "documentChunkModal": {
     "documentTitle": "Detalhes do Documento",

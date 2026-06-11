@@ -11,7 +11,6 @@ import base64
 import io
 import json
 import logging
-import os
 import time
 from contextvars import ContextVar
 from typing import Any
@@ -20,7 +19,7 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 
-from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
+from hindsight_api.engine.llm_interface import LLMInterface
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
@@ -36,7 +35,6 @@ _safety_settings_ctx: ContextVar[list | None] = ContextVar("gemini_safety_settin
 
 # Vertex AI imports (optional)
 try:
-    import google.auth
     from google.oauth2 import service_account
 
     VERTEXAI_AVAILABLE = True

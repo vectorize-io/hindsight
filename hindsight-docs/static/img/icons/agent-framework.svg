@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Microsoft Agent Framework">
+  <path d="M32 4 56 18v28L32 60 8 46V18z" fill="#0a5bd3"/>
+  <path d="M32 14 47 22.5v17L32 48 17 39.5v-17z" fill="#3d8bfd"/>
+  <circle cx="32" cy="31" r="6.5" fill="#fff"/>
+  <circle cx="32" cy="31" r="2.6" fill="#0a5bd3"/>
+</svg>

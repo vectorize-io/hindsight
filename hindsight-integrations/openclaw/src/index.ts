@@ -12,7 +12,6 @@ import { RetainQueue } from "./retain-queue.js";
 import { compileSessionPatterns, matchesSessionPattern } from "./session-patterns.js";
 import { createHash } from "crypto";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
 import * as log from "./logger.js";
 import { configureLogger, setApiLogger, stopLogger } from "./logger.js";
 import { mkdirSync } from "fs";
@@ -457,10 +456,6 @@ if (typeof global !== "undefined") {
     getPluginConfig: () => currentPluginConfig,
   };
 }
-
-// Get directory of current module
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 // Default bank name (fallback when channel context not available)
 const DEFAULT_BANK_NAME = "openclaw";

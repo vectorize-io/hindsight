@@ -39,6 +39,7 @@ type BankTemplateConfig struct {
 	ConsolidationSourceFactsMaxTokens NullableInt32 `json:"consolidation_source_facts_max_tokens,omitempty"`
 	ConsolidationSourceFactsMaxTokensPerObservation NullableInt32 `json:"consolidation_source_facts_max_tokens_per_observation,omitempty"`
 	MaxObservationsPerScope NullableInt32 `json:"max_observations_per_scope,omitempty"`
+	ObservationScopeLimits []map[string]interface{} `json:"observation_scope_limits,omitempty"`
 	ReflectSourceFactsMaxTokens NullableInt32 `json:"reflect_source_facts_max_tokens,omitempty"`
 	LlmGeminiSafetySettings []interface{} `json:"llm_gemini_safety_settings,omitempty"`
 	RecallBudgetFunction NullableString `json:"recall_budget_function,omitempty"`
@@ -882,6 +883,39 @@ func (o *BankTemplateConfig) UnsetMaxObservationsPerScope() {
 	o.MaxObservationsPerScope.Unset()
 }
 
+// GetObservationScopeLimits returns the ObservationScopeLimits field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetObservationScopeLimits() []map[string]interface{} {
+	if o == nil {
+		var ret []map[string]interface{}
+		return ret
+	}
+	return o.ObservationScopeLimits
+}
+
+// GetObservationScopeLimitsOk returns a tuple with the ObservationScopeLimits field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetObservationScopeLimitsOk() ([]map[string]interface{}, bool) {
+	if o == nil || IsNil(o.ObservationScopeLimits) {
+		return nil, false
+	}
+	return o.ObservationScopeLimits, true
+}
+
+// HasObservationScopeLimits returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasObservationScopeLimits() bool {
+	if o != nil && !IsNil(o.ObservationScopeLimits) {
+		return true
+	}
+
+	return false
+}
+
+// SetObservationScopeLimits gets a reference to the given []map[string]interface{} and assigns it to the ObservationScopeLimits field.
+func (o *BankTemplateConfig) SetObservationScopeLimits(v []map[string]interface{}) {
+	o.ObservationScopeLimits = v
+}
+
 // GetReflectSourceFactsMaxTokens returns the ReflectSourceFactsMaxTokens field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *BankTemplateConfig) GetReflectSourceFactsMaxTokens() int32 {
 	if o == nil || IsNil(o.ReflectSourceFactsMaxTokens.Get()) {
@@ -1404,6 +1438,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.MaxObservationsPerScope.IsSet() {
 		toSerialize["max_observations_per_scope"] = o.MaxObservationsPerScope.Get()
+	}
+	if o.ObservationScopeLimits != nil {
+		toSerialize["observation_scope_limits"] = o.ObservationScopeLimits
 	}
 	if o.ReflectSourceFactsMaxTokens.IsSet() {
 		toSerialize["reflect_source_facts_max_tokens"] = o.ReflectSourceFactsMaxTokens.Get()

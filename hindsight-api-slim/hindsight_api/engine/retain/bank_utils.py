@@ -4,7 +4,6 @@ bank profile utilities for disposition and mission management.
 
 import json
 import logging
-import re
 import uuid
 from dataclasses import dataclass
 from typing import TypedDict

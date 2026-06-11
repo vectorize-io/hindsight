@@ -49,19 +49,18 @@ pipx install hindsight-embed
 hindsight-embed configure
 
 # Or non-interactive via environment variables
-export HINDSIGHT_EMBED_LLM_PROVIDER=openai
-export HINDSIGHT_EMBED_LLM_API_KEY=sk-xxxxxxxxxxxx
-export HINDSIGHT_EMBED_LLM_MODEL=gpt-4o-mini
+export HINDSIGHT_API_LLM_PROVIDER=openai
+export HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
+export HINDSIGHT_API_LLM_MODEL=gpt-4o-mini
 hindsight-embed configure
 ```
 
 Configuration is saved to `~/.hindsight/embed`:
 
 ```bash
-HINDSIGHT_EMBED_LLM_PROVIDER=openai
-HINDSIGHT_EMBED_LLM_MODEL=gpt-4o-mini
-HINDSIGHT_EMBED_BANK_ID=default
-HINDSIGHT_EMBED_LLM_API_KEY=sk-xxxxxxxxxxxx
+HINDSIGHT_API_LLM_PROVIDER=openai
+HINDSIGHT_API_LLM_MODEL=gpt-4o-mini
+HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
 
 # Daemon settings (macOS: force CPU to avoid MPS/XPC issues)
 HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU=1
@@ -87,29 +86,28 @@ The daemon starts automatically on first use!
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_EMBED_LLM_API_KEY` | **Required**. API key for LLM provider | - |
-| `HINDSIGHT_EMBED_LLM_PROVIDER` | LLM provider: `openai`, `anthropic`, `gemini`, `groq`, `minimax`, `ollama` | `openai` |
-| `HINDSIGHT_EMBED_LLM_MODEL` | Model name | `gpt-4o-mini` |
-| `HINDSIGHT_EMBED_BANK_ID` | Default memory bank ID | `default` |
+| `HINDSIGHT_API_LLM_API_KEY` | **Required**. API key for LLM provider | - |
+| `HINDSIGHT_API_LLM_PROVIDER` | LLM provider: `openai`, `anthropic`, `gemini`, `groq`, `minimax`, `ollama` | `openai` |
+| `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-4o-mini` |
 | `HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT` | Seconds before daemon auto-exits when idle (0 = never) | `0` |
 
 **Provider Examples:**
 
 ```bash
 # OpenAI
-export HINDSIGHT_EMBED_LLM_PROVIDER=openai
-export HINDSIGHT_EMBED_LLM_API_KEY=sk-xxxxxxxxxxxx
-export HINDSIGHT_EMBED_LLM_MODEL=gpt-4o
+export HINDSIGHT_API_LLM_PROVIDER=openai
+export HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
+export HINDSIGHT_API_LLM_MODEL=gpt-4o
 
 # Groq (fast inference)
-export HINDSIGHT_EMBED_LLM_PROVIDER=groq
-export HINDSIGHT_EMBED_LLM_API_KEY=gsk_xxxxxxxxxxxx
-export HINDSIGHT_EMBED_LLM_MODEL=llama-3.3-70b-versatile
+export HINDSIGHT_API_LLM_PROVIDER=groq
+export HINDSIGHT_API_LLM_API_KEY=gsk_xxxxxxxxxxxx
+export HINDSIGHT_API_LLM_MODEL=llama-3.3-70b-versatile
 
 # Anthropic
-export HINDSIGHT_EMBED_LLM_PROVIDER=anthropic
-export HINDSIGHT_EMBED_LLM_API_KEY=sk-ant-xxxxxxxxxxxx
-export HINDSIGHT_EMBED_LLM_MODEL=claude-sonnet-4-20250514
+export HINDSIGHT_API_LLM_PROVIDER=anthropic
+export HINDSIGHT_API_LLM_API_KEY=sk-ant-xxxxxxxxxxxx
+export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-20250514
 ```
 
 ## Daemon Management
@@ -208,7 +206,7 @@ hindsight-embed daemon logs -f
 ```
 
 Common issues:
-- **Missing API key**: Set `HINDSIGHT_EMBED_LLM_API_KEY`
+- **Missing API key**: Set `HINDSIGHT_API_LLM_API_KEY`
 - **Port conflict**: Another service using port 8888
 - **Permissions**: Check `~/.hindsight/` directory permissions
 

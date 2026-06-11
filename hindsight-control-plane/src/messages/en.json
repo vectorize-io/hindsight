@@ -577,7 +577,13 @@
     "sourceFactsLabel": "source facts",
     "errorLoadingData": "Error loading {factType} data",
     "all": "All",
-    "memoryComposition": "Memory composition"
+    "memoryComposition": "Memory composition",
+    "scopeLabel": "Scope",
+    "scopeAll": "All scopes",
+    "scopeGlobal": "Global (no tags)",
+    "groupByScope": "Group by scope",
+    "scopeSearch": "Search scopes…",
+    "scopeNoResults": "No scopes found"
   },
   "documentsView": {
     "loadingDocuments": "Loading documents...",
@@ -665,7 +671,8 @@
     "importConflictSkip": "Skip — keep the existing document",
     "importConflictReplace": "Replace — overwrite with the imported one",
     "importConflictNewId": "Keep both — import under a new id",
-    "textNotStoredWarning": "Source text isn't stored on this server — only the extracted memories are kept."
+    "textNotStoredWarning": "Source text isn't stored on this server — only the extracted memories are kept.",
+    "labelObservationScopes": "Observation scopes"
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -1267,7 +1274,12 @@
     "editFieldEntities": "Entities",
     "editEntityPlaceholder": "Add entity…",
     "editEntityRemove": "Remove {entity}",
-    "editedBadge": "Edited"
+    "editedBadge": "Edited",
+    "curationInvalidateTitle": "Invalidate memory",
+    "curationInvalidateExplain": "This moves the memory to the invalidated archive. It will no longer surface in recall or reflect, but is kept for audit and can be restored later.",
+    "curationReasonPlaceholder": "Reason (optional)",
+    "curationCancel": "Cancel",
+    "curationInvalidate": "Invalidate"
   },
   "documentChunkModal": {
     "documentTitle": "Document Details",

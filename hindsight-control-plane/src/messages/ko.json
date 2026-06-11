@@ -577,7 +577,13 @@
     "sourceFactsLabel": "소스 사실",
     "errorLoadingData": "{factType} 데이터 불러오기 오류",
     "all": "전체",
-    "memoryComposition": "메모리 구성"
+    "memoryComposition": "메모리 구성",
+    "scopeLabel": "범위",
+    "scopeAll": "모든 범위",
+    "scopeGlobal": "전역(태그 없음)",
+    "groupByScope": "범위별 그룹화",
+    "scopeSearch": "범위 검색…",
+    "scopeNoResults": "범위를 찾을 수 없음"
   },
   "documentsView": {
     "loadingDocuments": "문서 불러오는 중...",
@@ -665,7 +671,8 @@
     "importConflictSkip": "건너뛰기 — 기존 문서 유지",
     "importConflictReplace": "교체 — 가져온 것으로 덮어쓰기",
     "importConflictNewId": "둘 다 유지 — 새 id로 가져오기",
-    "textNotStoredWarning": "이 서버에는 원본 텍스트가 저장되지 않습니다. 추출된 메모리만 보관됩니다."
+    "textNotStoredWarning": "이 서버에는 원본 텍스트가 저장되지 않습니다. 추출된 메모리만 보관됩니다.",
+    "labelObservationScopes": "관찰 범위"
   },
   "entitiesView": {
     "viewRelations": "관계",
@@ -1267,7 +1274,12 @@
     "editFieldEntities": "Entities",
     "editEntityPlaceholder": "Add entity…",
     "editEntityRemove": "Remove {entity}",
-    "editedBadge": "Edited"
+    "editedBadge": "Edited",
+    "curationInvalidateTitle": "메모리 무효화",
+    "curationInvalidateExplain": "메모리를 무효화 보관소로 이동합니다. recall이나 reflect에 더 이상 표시되지 않지만 감사를 위해 보관되며 나중에 복원할 수 있습니다.",
+    "curationReasonPlaceholder": "사유 (선택)",
+    "curationCancel": "취소",
+    "curationInvalidate": "무효화"
   },
   "documentChunkModal": {
     "documentTitle": "문서 상세 정보",

@@ -94,7 +94,9 @@ hindsight_client_api/models/mental_model_trigger_output.py
 hindsight_client_api/models/mental_model_trigger_output_tag_groups_inner.py
 hindsight_client_api/models/model_not.py
 hindsight_client_api/models/not1.py
+hindsight_client_api/models/observation_scope.py
 hindsight_client_api/models/observation_scopes.py
+hindsight_client_api/models/observation_scopes_response.py
 hindsight_client_api/models/operation_progress.py
 hindsight_client_api/models/operation_response.py
 hindsight_client_api/models/operation_status_response.py

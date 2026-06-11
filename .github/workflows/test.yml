@@ -32,6 +32,7 @@ jobs:
       integration-tests: ${{ steps.filter.outputs.integration-tests }}
       integrations-openclaw: ${{ steps.filter.outputs.integrations-openclaw }}
       integrations-ai-sdk: ${{ steps.filter.outputs.integrations-ai-sdk }}
+      integrations-agent-framework: ${{ steps.filter.outputs.integrations-agent-framework }}
       integrations-chat: ${{ steps.filter.outputs.integrations-chat }}
       integrations-claude-code: ${{ steps.filter.outputs.integrations-claude-code }}
       integrations-cline: ${{ steps.filter.outputs.integrations-cline }}
@@ -125,6 +126,8 @@ jobs:
             - 'hindsight-integrations/openclaw/**'
           integrations-ai-sdk:
             - 'hindsight-integrations/ai-sdk/**'
+          integrations-agent-framework:
+            - 'hindsight-integrations/agent-framework/**'
           integrations-chat:
             - 'hindsight-integrations/chat/**'
           integrations-claude-code:
@@ -3189,6 +3192,49 @@ jobs:
       working-directory: ./hindsight-integrations/obsidian
       run: npm test
 
+  test-agent-framework-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-agent-framework == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build agent-framework integration
+      working-directory: ./hindsight-integrations/agent-framework
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/agent-framework
+      run: uv sync --frozen
+
+    - name: Lint
+      working-directory: ./hindsight-integrations/agent-framework
+      run: uv run ruff check .
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/agent-framework
+      # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
+      # (requires_real_llm) needs a live Hindsight server and runs separately.
+      run: uv run pytest tests -v -m "not requires_real_llm"
+
   test-crewai-integration:
     needs: [detect-changes]
     if: >-
@@ -3679,6 +3725,49 @@ jobs:
         echo "=== API Server Logs ==="
         cat /tmp/slim-api-server.log 2>/dev/null || true
 
+  verify-embed-control-center-bundle:
+    # The control center UI (Preact + Tailwind) is built with Vite and its static
+    # output is committed (served as-is by the embed's Python http.server, no Node
+    # at runtime). We can't byte-diff the committed bundle against a fresh build —
+    # Vite's content-hashed asset filenames aren't reproducible across the CI
+    # runner's OS/arch vs the committer's. So instead verify: (1) the committed
+    # bundle is a real, wired Vite build (index.html references JS/CSS that exist),
+    # and (2) the source still builds cleanly.
+    needs: [detect-changes]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.embed == 'true' ||
+      needs.detect-changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Setup Node
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+
+    # Check the committed bundle BEFORE building (the build overwrites static/).
+    - name: Verify the committed bundle is wired
+      working-directory: ./hindsight-embed/hindsight_embed/control_center
+      run: |
+        test -f static/index.html || { echo "::error::static/index.html missing — run 'npm run build' in control_center/ui and commit static/"; exit 1; }
+        js=$(grep -oE 'assets/[A-Za-z0-9_.-]+\.js' static/index.html | head -1)
+        css=$(grep -oE 'assets/[A-Za-z0-9_.-]+\.css' static/index.html | head -1)
+        { [ -n "$js" ] && [ -f "static/$js" ]; } || { echo "::error::index.html does not reference a committed JS bundle — rebuild the UI and commit static/"; exit 1; }
+        { [ -n "$css" ] && [ -f "static/$css" ]; } || { echo "::error::index.html does not reference a committed CSS bundle — rebuild the UI and commit static/"; exit 1; }
+        echo "committed bundle is wired ✓"
+
+    - name: Verify the source builds cleanly
+      working-directory: ./hindsight-embed/hindsight_embed/control_center/ui
+      run: |
+        npm ci
+        npm run build
+        echo "control center UI builds ✓"
+
   test-embed:
     needs: [detect-changes]
     if: >-
@@ -3894,7 +3983,8 @@ jobs:
         target="$RUNNER_TEMP/install-test"
         PYTHONPATH="$target" python -c "
         from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
-        cmd = DaemonEmbedManager()._find_api_command()
+        # api_version is only used for the uvx fallback; the binary branch ignores it.
+        cmd = DaemonEmbedManager()._find_api_command('0.0.0')
         print('Resolved command:', cmd)
         assert len(cmd) == 1 and cmd[0].endswith('hindsight-api.exe'), (
             f'Expected sibling hindsight-api.exe, got {cmd!r}. '
@@ -4476,6 +4566,7 @@ jobs:
       - test-dify-integration
       - test-flowise-integration
       - test-obsidian-integration
+      - test-agent-framework-integration
       - test-crewai-integration
       - test-langgraph-integration
       - test-superagent-integration
@@ -4488,6 +4579,7 @@ jobs:
       - test-pip-slim
       - test-embed
       - test-embed-windows
+      - verify-embed-control-center-bundle
       - test-hindsight-all
       - test-hindsight-agent-sdk
       - test-claude-agent-sdk-integration

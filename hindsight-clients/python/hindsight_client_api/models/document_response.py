@@ -19,6 +19,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.observation_scopes import ObservationScopes
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -37,7 +38,8 @@ class DocumentResponse(BaseModel):
     tags: Optional[List[StrictStr]] = Field(default=None, description="Tags associated with this document")
     document_metadata: Optional[Dict[str, Any]] = None
     retain_params: Optional[Dict[str, Any]] = None
-    __properties: ClassVar[List[str]] = ["id", "bank_id", "original_text", "content_hash", "created_at", "updated_at", "memory_unit_count", "nodes_by_fact_type", "tags", "document_metadata", "retain_params"]
+    observation_scopes: Optional[ObservationScopes] = None
+    __properties: ClassVar[List[str]] = ["id", "bank_id", "original_text", "content_hash", "created_at", "updated_at", "memory_unit_count", "nodes_by_fact_type", "tags", "document_metadata", "retain_params", "observation_scopes"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -78,6 +80,9 @@ class DocumentResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of observation_scopes
+        if self.observation_scopes:
+            _dict['observation_scopes'] = self.observation_scopes.to_dict()
         # set to None if original_text (nullable) is None
         # and model_fields_set contains the field
         if self.original_text is None and "original_text" in self.model_fields_set:
@@ -103,6 +108,11 @@ class DocumentResponse(BaseModel):
         if self.retain_params is None and "retain_params" in self.model_fields_set:
             _dict['retain_params'] = None
 
+        # set to None if observation_scopes (nullable) is None
+        # and model_fields_set contains the field
+        if self.observation_scopes is None and "observation_scopes" in self.model_fields_set:
+            _dict['observation_scopes'] = None
+
         return _dict
 
     @classmethod
@@ -125,7 +135,8 @@ class DocumentResponse(BaseModel):
             "nodes_by_fact_type": obj.get("nodes_by_fact_type"),
             "tags": obj.get("tags"),
             "document_metadata": obj.get("document_metadata"),
-            "retain_params": obj.get("retain_params")
+            "retain_params": obj.get("retain_params"),
+            "observation_scopes": ObservationScopes.from_dict(obj["observation_scopes"]) if obj.get("observation_scopes") is not None else None
         })
         return _obj
 

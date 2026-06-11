@@ -149,6 +149,9 @@ import type {
   ListMentalModelsData,
   ListMentalModelsErrors,
   ListMentalModelsResponses,
+  ListObservationScopesData,
+  ListObservationScopesErrors,
+  ListObservationScopesResponses,
   ListOperationsData,
   ListOperationsErrors,
   ListOperationsResponses,
@@ -284,7 +287,7 @@ export const metricsEndpointMetricsGet = <ThrowOnError extends boolean = false>(
 /**
  * Get memory graph data
  *
- * Retrieve graph data for visualization, optionally filtered by type (world/experience/opinion).
+ * Retrieve graph data for visualization, optionally filtered by type (world/experience/observation).
  */
 export const getGraph = <ThrowOnError extends boolean = false>(
   options: Options<GetGraphData, ThrowOnError>
@@ -375,12 +378,12 @@ export const recallMemories = <ThrowOnError extends boolean = false>(
 /**
  * Reflect and generate answer
  *
- * Reflect and formulate an answer using bank identity, world facts, and opinions.
+ * Reflect and formulate an answer using bank identity, world facts, observations, and mental models.
  *
  * This endpoint:
  * 1. Retrieves experience (conversations and events)
  * 2. Retrieves world facts relevant to the query
- * 3. Retrieves existing opinions (bank's perspectives)
+ * 3. Retrieves observations and mental models (bank's synthesized perspectives)
  * 4. Uses LLM to formulate a contextual answer
  * 5. Returns plain text answer and the facts used
  */
@@ -1073,6 +1076,20 @@ export const clearObservations = <ThrowOnError extends boolean = false>(
   >({ url: "/v1/default/banks/{bank_id}/observations", ...options });
 
 /**
+ * List observation scopes
+ *
+ * Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope.
+ */
+export const listObservationScopes = <ThrowOnError extends boolean = false>(
+  options: Options<ListObservationScopesData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    ListObservationScopesResponses,
+    ListObservationScopesErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/observations/scopes", ...options });
+
+/**
  * Recover failed consolidation
  *
  * Reset all memories that were permanently marked as failed during consolidation (after exhausting all LLM retries and adaptive batch splitting) so they are picked up again on the next consolidation run. Does not delete any observations.
@@ -1243,7 +1260,7 @@ export const listWebhookDeliveries = <ThrowOnError extends boolean = false>(
 /**
  * Clear memory bank memories
  *
- * Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
+ * Delete memory units for a memory bank. Optionally filter by type (world, experience, observation) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
  */
 export const clearBankMemories = <ThrowOnError extends boolean = false>(
   options: Options<ClearBankMemoriesData, ThrowOnError>

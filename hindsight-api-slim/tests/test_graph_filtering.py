@@ -269,3 +269,82 @@ async def test_graph_q_filter_empty_results(api_client, test_bank_id):
     assert response.status_code == 200
     data = response.json()
     assert data["table_rows"] == []
+
+
+async def _seed_scoped_observations(memory, bank_id, request_context):
+    """Seed observations under scopes [a], [b], [a,b] (x2) and the global scope."""
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    rows = [
+        (uuid.uuid4(), "obs scope a", ["a"]),
+        (uuid.uuid4(), "obs scope b", ["b"]),
+        (uuid.uuid4(), "obs scope ab one", ["a", "b"]),
+        (uuid.uuid4(), "obs scope ab two", ["b", "a"]),  # same scope as above, different order
+        (uuid.uuid4(), "obs global", []),
+    ]
+    async with memory._pool.acquire() as conn:
+        for obs_id, text, tags in rows:
+            await conn.execute(
+                """
+                INSERT INTO memory_units (id, bank_id, text, fact_type, tags, proof_count)
+                VALUES ($1, $2, $3, 'observation', $4::text[], 1)
+                """,
+                obs_id,
+                bank_id,
+                text,
+                tags,
+            )
+    return rows
+
+
+@pytest.mark.asyncio
+async def test_observation_scopes_enumeration(memory, api_client, test_bank_id, request_context):
+    """The scopes endpoint enumerates distinct tag sets (order-normalized) with counts."""
+    await _seed_scoped_observations(memory, test_bank_id, request_context)
+
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/observations/scopes")
+    assert response.status_code == 200
+    scopes = response.json()["scopes"]
+
+    # [a,b] and [b,a] collapse into one scope with count 2; global scope is [].
+    as_map = {tuple(s["tags"]): s["count"] for s in scopes}
+    assert as_map == {("a",): 1, ("b",): 1, ("a", "b"): 2, (): 1}
+    # Most populous scope is first.
+    assert scopes[0]["tags"] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_graph_exact_scope_filter(memory, api_client, test_bank_id, request_context):
+    """tags_match=exact filters observations to exactly one scope, not supersets."""
+    await _seed_scoped_observations(memory, test_bank_id, request_context)
+
+    # Exact scope [a] returns only the [a] observation, NOT the [a,b] ones.
+    response = await api_client.get(
+        f"/v1/default/banks/{test_bank_id}/graph",
+        params={"type": "observation", "tags": ["a"], "tags_match": "exact"},
+    )
+    assert response.status_code == 200
+    texts = {row["text"] for row in response.json()["table_rows"]}
+    assert texts == {"obs scope a"}
+
+    # Exact scope [a,b] returns both [a,b] observations regardless of stored order.
+    response = await api_client.get(
+        f"/v1/default/banks/{test_bank_id}/graph",
+        params={"type": "observation", "tags": ["a", "b"], "tags_match": "exact"},
+    )
+    assert response.status_code == 200
+    texts = {row["text"] for row in response.json()["table_rows"]}
+    assert texts == {"obs scope ab one", "obs scope ab two"}
+
+
+@pytest.mark.asyncio
+async def test_graph_exact_global_scope_filter(memory, api_client, test_bank_id, request_context):
+    """tags_match=exact with no tags is the global scope: untagged observations only."""
+    await _seed_scoped_observations(memory, test_bank_id, request_context)
+
+    response = await api_client.get(
+        f"/v1/default/banks/{test_bank_id}/graph",
+        params={"type": "observation", "tags_match": "exact"},
+    )
+    assert response.status_code == 200
+    texts = {row["text"] for row in response.json()["table_rows"]}
+    assert texts == {"obs global"}
