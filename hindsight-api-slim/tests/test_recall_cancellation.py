@@ -1,11 +1,13 @@
-"""Tests for cooperative recall cancellation on client disconnect (issue #2122).
+"""Tests for cooperative recall/reflect cancellation on client disconnect (#2122).
 
-Covers three layers:
+Layers covered:
 - the ``CancellationToken`` primitive,
-- ``RequestContext`` integration (the carrier the engine checks at stage
-  boundaries),
-- the HTTP ``_cancel_on_client_disconnect`` driver, including an ASGI-level
-  end-to-end that proves a disconnect aborts staged work and surfaces 499.
+- ``RequestContext`` integration (the carrier the engine checks at boundaries),
+- ``run_cancellable_on_disconnect`` (reads the scope token, maps cancel -> 499),
+- ``ClientDisconnectCancellationMiddleware``, including the critical regression
+  test that it still fires **behind a BaseHTTPMiddleware** — the exact condition
+  under which ``Request.is_disconnected()`` silently never fires and the original
+  #2127 implementation did nothing.
 """
 
 import asyncio
@@ -13,25 +15,17 @@ import asyncio
 import pytest
 from fastapi import FastAPI, HTTPException, Request
 
-from hindsight_api.api.http import (
-    _CLIENT_CLOSED_REQUEST_STATUS_CODE,
-    _cancel_on_client_disconnect,
-    run_cancellable_on_disconnect,
+from hindsight_api.api.disconnect import (
+    SCOPE_CANCELLATION_TOKEN,
+    ClientDisconnectCancellationMiddleware,
+    _should_monitor,
+    get_scope_cancellation_token,
 )
+from hindsight_api.api.http import _CLIENT_CLOSED_REQUEST_STATUS_CODE, run_cancellable_on_disconnect
 from hindsight_api.cancellation import CancellationToken, OperationCancelledError
 from hindsight_api.models import RequestContext
 
 _TEST_TIMEOUT_SECONDS = 3.0
-
-
-class _FakeRequest:
-    """Minimal Request stand-in whose disconnect state is driven by an Event."""
-
-    def __init__(self, disconnected: asyncio.Event) -> None:
-        self._disconnected = disconnected
-
-    async def is_disconnected(self) -> bool:
-        return self._disconnected.is_set()
 
 
 # --- CancellationToken primitive ------------------------------------------------
@@ -46,7 +40,6 @@ def test_token_starts_uncancelled():
 def test_token_raises_after_cancel():
     token = CancellationToken()
     token.cancel("client disconnected")
-
     assert token.cancelled is True
     assert token.reason == "client disconnected"
     with pytest.raises(OperationCancelledError) as exc:
@@ -86,158 +79,123 @@ def test_request_context_raises_when_token_fired():
     token = CancellationToken()
     token.cancel("client disconnected")
     ctx = RequestContext(cancellation=token)
-
     with pytest.raises(OperationCancelledError):
         ctx.raise_if_cancelled()
 
 
-# --- HTTP disconnect driver -----------------------------------------------------
+# --- _should_monitor path gating ------------------------------------------------
 
 
-async def test_driver_attaches_and_restores_token():
+def test_should_monitor_only_recall_and_reflect():
+    assert _should_monitor("/v1/default/banks/b/memories/recall") is True
+    assert _should_monitor("/v1/default/banks/b/reflect") is True
+    assert _should_monitor("/v1/default/banks/b/memories") is False
+    assert _should_monitor("/health") is False
+    assert _should_monitor("/v1/default/banks/b/memories/recall/extra") is False
+
+
+# --- run_cancellable_on_disconnect ----------------------------------------------
+
+
+class _ScopeRequest:
+    """Minimal Request stand-in exposing a .scope dict."""
+
+    def __init__(self, scope: dict) -> None:
+        self.scope = scope
+
+
+async def test_run_cancellable_returns_result_when_no_token():
     ctx = RequestContext()
-    disconnected = asyncio.Event()
-
-    async with _cancel_on_client_disconnect(_FakeRequest(disconnected), ctx, poll_interval=0) as token:
-        assert ctx.cancellation is token
-
-    # Restored to the previous (None) token once the scope exits.
-    assert ctx.cancellation is None
-
-
-async def test_driver_restores_previous_token_when_nested():
-    outer = CancellationToken()
-    ctx = RequestContext(cancellation=outer)
-    disconnected = asyncio.Event()
-
-    async with _cancel_on_client_disconnect(_FakeRequest(disconnected), ctx, poll_interval=0):
-        assert ctx.cancellation is not outer
-
-    assert ctx.cancellation is outer
-
-
-async def test_driver_cancels_staged_work_on_disconnect():
-    """A worker that checks the token between stages aborts once the client leaves."""
-    ctx = RequestContext()
-    disconnected = asyncio.Event()
-
-    async def staged_work() -> str:
-        # Stand-in for the recall pipeline: checkpoint, do a slice of work, repeat.
-        for _ in range(1000):
-            ctx.raise_if_cancelled()
-            await asyncio.sleep(0.005)
-        return "done"
-
-    async def run() -> None:
-        async with _cancel_on_client_disconnect(_FakeRequest(disconnected), ctx, poll_interval=0):
-            work = asyncio.create_task(staged_work())
-            await asyncio.sleep(0.02)
-            disconnected.set()
-            await work
-
-    with pytest.raises(OperationCancelledError) as exc:
-        await asyncio.wait_for(run(), timeout=_TEST_TIMEOUT_SECONDS)
-    assert exc.value.reason == "client disconnected"
-    assert ctx.cancellation is None
-
-
-async def test_driver_returns_work_result_when_client_stays():
-    ctx = RequestContext()
-    disconnected = asyncio.Event()  # never set
-
-    async def staged_work() -> str:
-        for _ in range(3):
-            ctx.raise_if_cancelled()
-            await asyncio.sleep(0)
-        return "done"
-
-    async with _cancel_on_client_disconnect(_FakeRequest(disconnected), ctx, poll_interval=0):
-        result = await staged_work()
-
-    assert result == "done"
-
-
-# --- Shared HTTP helper (used by both the recall and reflect handlers) ----------
-
-
-async def test_run_cancellable_returns_result_when_connected():
-    ctx = RequestContext()
-    disconnected = asyncio.Event()  # never set
+    req = _ScopeRequest({})  # middleware didn't attach a token
 
     async def work() -> str:
         ctx.raise_if_cancelled()
         return "ok"
 
-    result = await run_cancellable_on_disconnect(
-        _FakeRequest(disconnected), ctx, work(), operation="reflect", bank_id="b1", poll_interval=0
-    )
+    result = await run_cancellable_on_disconnect(req, ctx, work(), operation="recall", bank_id="b1")
     assert result == "ok"
-    assert ctx.cancellation is None  # restored
 
 
-async def test_run_cancellable_maps_disconnect_to_499():
+async def test_run_cancellable_wires_scope_token_and_maps_to_499():
+    token = CancellationToken()
     ctx = RequestContext()
-    disconnected = asyncio.Event()
+    req = _ScopeRequest({SCOPE_CANCELLATION_TOKEN: token})
 
-    async def staged_work() -> str:
-        for _ in range(1000):  # stand-in for the reflect agent loop / recall stages
+    async def work() -> str:
+        # token fires mid-flight; engine checkpoint raises
+        for _ in range(1000):
             ctx.raise_if_cancelled()
             await asyncio.sleep(0.005)
         return "done"
 
-    async def disconnect_soon() -> None:
+    async def fire_soon():
         await asyncio.sleep(0.02)
-        disconnected.set()
+        token.cancel("client disconnected")
 
-    asyncio.create_task(disconnect_soon())
+    asyncio.create_task(fire_soon())
     with pytest.raises(HTTPException) as exc:
         await asyncio.wait_for(
-            run_cancellable_on_disconnect(
-                _FakeRequest(disconnected), ctx, staged_work(), operation="reflect", bank_id="b1", poll_interval=0
-            ),
+            run_cancellable_on_disconnect(req, ctx, work(), operation="reflect", bank_id="b1"),
             timeout=_TEST_TIMEOUT_SECONDS,
         )
     assert exc.value.status_code == _CLIENT_CLOSED_REQUEST_STATUS_CODE
     assert exc.value.detail == "client disconnected"
-    assert ctx.cancellation is None
+    # the engine's carrier was wired to the scope token
+    assert ctx.cancellation is token
 
 
-# --- ASGI end-to-end: disconnect -> aborted work -> 499 -------------------------
+# --- Middleware ASGI integration (the regression that matters) ------------------
 
 
-async def test_asgi_disconnect_aborts_work_and_returns_499():
-    """Exercises the real shared helper through the ASGI stack (both endpoints'
-    path), proving disconnect -> aborted staged work -> 499."""
+def _build_app(*, with_base_http_middleware: bool) -> tuple[FastAPI, asyncio.Event]:
+    """Reflect-like app guarded by the disconnect middleware.
+
+    with_base_http_middleware reproduces the production setup where a
+    @app.middleware("http") (BaseHTTPMiddleware) sits between uvicorn and the
+    route and breaks Request.is_disconnected().
+    """
     app = FastAPI()
-    started = asyncio.Event()
     cancelled = asyncio.Event()
 
-    @app.post("/recall")
-    async def recall(http_request: Request):
+    @app.post("/v1/default/banks/{bank_id}/reflect")
+    async def reflect(bank_id: str, http_request: Request):
         ctx = RequestContext()
 
-        async def staged_work() -> dict:
-            started.set()
+        async def work():
             try:
-                while True:  # staged pipeline: checkpoint then a slice of work
+                while True:
                     ctx.raise_if_cancelled()
                     await asyncio.sleep(0.005)
             except OperationCancelledError:
                 cancelled.set()
                 raise
 
-        return await run_cancellable_on_disconnect(
-            http_request, ctx, staged_work(), operation="recall", bank_id="b1", poll_interval=0
-        )
+        return await run_cancellable_on_disconnect(http_request, ctx, work(), operation="reflect", bank_id=bank_id)
 
+    if with_base_http_middleware:
+
+        @app.middleware("http")
+        async def noop(request, call_next):
+            return await call_next(request)
+
+    # Installed last -> outermost -> owns the raw receive (as in create_app).
+    app.add_middleware(ClientDisconnectCancellationMiddleware)
+    return app, cancelled
+
+
+async def _drive_disconnect(app: FastAPI) -> list:
+    """Send a request, then http.disconnect once the handler is running."""
+    started = asyncio.Event()
     body_sent = False
 
     async def receive():
         nonlocal body_sent
         if not body_sent:
             body_sent = True
-            return {"type": "http.request", "body": b"", "more_body": False}
+            started.set()
+            return {"type": "http.request", "body": b"{}", "more_body": False}
         await started.wait()
+        await asyncio.sleep(0.05)
         return {"type": "http.disconnect"}
 
     messages = []
@@ -248,13 +206,80 @@ async def test_asgi_disconnect_aborts_work_and_returns_499():
     scope = {
         "type": "http",
         "method": "POST",
-        "path": "/recall",
+        "path": "/v1/default/banks/b1/reflect",
+        "raw_path": b"/v1/default/banks/b1/reflect",
         "query_string": b"",
-        "headers": [],
+        "headers": [(b"content-type", b"application/json")],
     }
-
     await asyncio.wait_for(app(scope, receive, send), timeout=_TEST_TIMEOUT_SECONDS)
+    return messages
 
+
+async def test_middleware_cancels_behind_base_http_middleware():
+    """THE regression test: disconnect cancellation must fire even with a
+    BaseHTTPMiddleware in the stack (where is_disconnected() is broken)."""
+    app, cancelled = _build_app(with_base_http_middleware=True)
+    messages = await _drive_disconnect(app)
+    assert cancelled.is_set(), "work was not cancelled behind BaseHTTPMiddleware"
+    start = next(m for m in messages if m["type"] == "http.response.start")
+    assert start["status"] == _CLIENT_CLOSED_REQUEST_STATUS_CODE
+
+
+async def test_middleware_cancels_without_base_http_middleware():
+    app, cancelled = _build_app(with_base_http_middleware=False)
+    messages = await _drive_disconnect(app)
     assert cancelled.is_set()
-    response_start = next(m for m in messages if m["type"] == "http.response.start")
-    assert response_start["status"] == _CLIENT_CLOSED_REQUEST_STATUS_CODE
+    start = next(m for m in messages if m["type"] == "http.response.start")
+    assert start["status"] == _CLIENT_CLOSED_REQUEST_STATUS_CODE
+
+
+async def test_middleware_passes_through_unmonitored_paths():
+    """Non-recall/reflect paths get no token and no receive proxying."""
+    seen_scope = {}
+
+    async def app(scope, receive, send):
+        seen_scope.update(scope)
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    mw = ClientDisconnectCancellationMiddleware(app)
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    sent = []
+
+    async def send(m):
+        sent.append(m)
+
+    await mw({"type": "http", "path": "/health"}, receive, send)
+    assert SCOPE_CANCELLATION_TOKEN not in seen_scope
+    assert any(m["type"] == "http.response.start" for m in sent)
+
+
+async def test_middleware_completes_normally_when_no_disconnect():
+    app, cancelled = _build_app(with_base_http_middleware=True)
+    # never disconnects; the route would loop forever, so give it a token and
+    # trip it via a normal completion path instead: hit an unmonitored no-op.
+    token_seen = {}
+
+    async def inner(scope, receive, send):
+        token_seen["t"] = get_scope_cancellation_token(scope)
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    mw = ClientDisconnectCancellationMiddleware(inner)
+
+    async def receive():
+        return {"type": "http.request", "body": b"{}", "more_body": False}
+
+    sent = []
+
+    async def send(m):
+        sent.append(m)
+
+    scope = {"type": "http", "path": "/v1/default/banks/b1/reflect"}
+    await asyncio.wait_for(mw(scope, receive, send), timeout=_TEST_TIMEOUT_SECONDS)
+    # monitored path => token attached, request completed 200
+    assert isinstance(token_seen["t"], CancellationToken)
+    assert any(m.get("status") == 200 for m in sent if m["type"] == "http.response.start")

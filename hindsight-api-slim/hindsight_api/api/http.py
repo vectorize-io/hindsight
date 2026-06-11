@@ -6,12 +6,11 @@ the FastAPI application with all API endpoints.
 """
 
 import asyncio
-import contextlib
 import json
 import logging
 import re
 import uuid
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import Awaitable
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Literal, TypeVar
@@ -19,7 +18,8 @@ from typing import Any, Literal, TypeVar
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
 
-from hindsight_api.cancellation import CancellationToken, OperationCancelledError
+from hindsight_api.api.disconnect import ClientDisconnectCancellationMiddleware, get_scope_cancellation_token
+from hindsight_api.cancellation import OperationCancelledError
 from hindsight_api.engine.audit import (
     AuditEntry,
     AuditLogger,
@@ -93,49 +93,8 @@ from hindsight_api.models import RequestContext
 
 logger = logging.getLogger(__name__)
 
-# Starlette surfaces client disconnects through an async receive check. A
-# one-second poll stops abandoned long-running recalls without busy-waiting.
-_CLIENT_DISCONNECT_POLL_INTERVAL_SECONDS = 1.0
 # 499 is the de facto reverse-proxy status for "client closed request".
 _CLIENT_CLOSED_REQUEST_STATUS_CODE = 499
-_CLIENT_DISCONNECTED_REASON = "client disconnected"
-
-
-@asynccontextmanager
-async def _cancel_on_client_disconnect(
-    http_request: Request,
-    request_context: RequestContext,
-    *,
-    poll_interval: float = _CLIENT_DISCONNECT_POLL_INTERVAL_SECONDS,
-) -> AsyncIterator[CancellationToken]:
-    """Attach a cancellation token that fires when the HTTP client disconnects.
-
-    The engine checks ``request_context`` at each pipeline stage boundary and
-    raises ``OperationCancelledError`` once this token fires, so an abandoned
-    request stops consuming CPU/DB resources instead of running to completion
-    (issue #2122). A background task polls ``request.is_disconnected()``; the
-    token is restored to its previous value on exit so nested scopes compose.
-    """
-    token = CancellationToken()
-    previous_token = request_context.cancellation
-    request_context.cancellation = token
-
-    async def _watch() -> None:
-        while True:
-            if await http_request.is_disconnected():
-                token.cancel(_CLIENT_DISCONNECTED_REASON)
-                return
-            await asyncio.sleep(poll_interval)
-
-    watcher = asyncio.create_task(_watch())
-    try:
-        yield token
-    finally:
-        watcher.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await watcher
-        request_context.cancellation = previous_token
-
 
 _T = TypeVar("_T")
 
@@ -147,22 +106,30 @@ async def run_cancellable_on_disconnect(
     *,
     operation: str,
     bank_id: str,
-    poll_interval: float = _CLIENT_DISCONNECT_POLL_INTERVAL_SECONDS,
 ) -> _T:
     """Run an engine coroutine, aborting it with 499 if the client disconnects.
 
-    Shared by the recall and reflect handlers: it attaches the disconnect-driven
-    cancellation token (which the engine checks at its stage/iteration
-    boundaries) and translates the resulting ``OperationCancelledError`` into the
-    de facto 499 status so abandoned work stops instead of running to completion
-    (issue #2122).
+    Shared by the recall and reflect handlers. The actual disconnect detection
+    lives in ``ClientDisconnectCancellationMiddleware`` (a pure-ASGI middleware
+    installed outside the ``BaseHTTPMiddleware`` layer), which attaches a
+    :class:`CancellationToken` to the ASGI scope and trips it on
+    ``http.disconnect``. Here we simply hand that token to the engine via
+    ``RequestContext`` — the engine checks it at stage/iteration boundaries — and
+    translate the resulting ``OperationCancelledError`` into 499 so abandoned
+    work stops instead of running to completion (issue #2122).
+
+    Note: ``Request.is_disconnected()`` is deliberately NOT used — it silently
+    never fires behind ``BaseHTTPMiddleware``, which is why the original #2127
+    implementation did not actually cancel anything in this app.
     """
-    async with _cancel_on_client_disconnect(http_request, request_context, poll_interval=poll_interval):
-        try:
-            return await coro
-        except OperationCancelledError as e:
-            logger.info(f"[{operation.upper()} CANCELLED] bank={bank_id} reason={e.reason}")
-            raise HTTPException(status_code=_CLIENT_CLOSED_REQUEST_STATUS_CODE, detail=e.reason) from e
+    token = get_scope_cancellation_token(http_request.scope)
+    if token is not None:
+        request_context.cancellation = token
+    try:
+        return await coro
+    except OperationCancelledError as e:
+        logger.info(f"[{operation.upper()} CANCELLED] bank={bank_id} reason={e.reason}")
+        raise HTTPException(status_code=_CLIENT_CLOSED_REQUEST_STATUS_CODE, detail=e.reason) from e
 
 
 class EntityIncludeOptions(BaseModel):
@@ -3144,6 +3111,13 @@ def create_app(
         if root_router:
             app.include_router(root_router)
             logging.info("HTTP extension root router mounted")
+
+    # Client-disconnect cancellation for recall/reflect. Added LAST so it sits
+    # OUTSIDE the @app.middleware("http") (BaseHTTPMiddleware) layers above —
+    # that placement is mandatory: BaseHTTPMiddleware breaks
+    # Request.is_disconnected(), so the only way to observe an abandoned request
+    # is to own the raw ASGI receive channel from outside it (issue #2122).
+    app.add_middleware(ClientDisconnectCancellationMiddleware)
 
     return app
 

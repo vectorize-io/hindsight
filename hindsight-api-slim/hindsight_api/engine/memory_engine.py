@@ -26,6 +26,7 @@ import asyncpg
 import httpx
 
 from .._vector_index import ann_search_tuning_settings, configured_vector_extension
+from ..cancellation import OperationCancelledError
 from ..config import (
     DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
     DEFAULT_RECALL_INCLUDE_CHUNKS,
@@ -3947,6 +3948,10 @@ class MemoryEngine(MemoryEngineInterface):
                             reranking=reranking,
                         )
                         break  # Success - exit retry loop
+                    except OperationCancelledError:
+                        # Client disconnected — propagate to the HTTP layer (499);
+                        # not a failure to retry or report via the post-op hook.
+                        raise
                     except Exception as e:
                         # Check if it's a connection error (PG or Oracle)
                         is_connection_error = (
@@ -4969,6 +4974,11 @@ class MemoryEngine(MemoryEngineInterface):
                 source_facts=source_facts_dict,
             )
 
+        except OperationCancelledError:
+            # Client disconnected mid-recall — propagate the cancellation so the
+            # HTTP layer can return 499. Must precede the broad handler below,
+            # which would otherwise bury it inside a RuntimeError (issue #2122).
+            raise
         except Exception as e:
             # Use repr(e) so exceptions with empty __str__ (e.g. raise SomeError())
             # still emit a discriminating class+args string into operations.error_message.
