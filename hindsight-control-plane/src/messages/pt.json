@@ -1270,7 +1270,12 @@
     "editFieldEntities": "Entities",
     "editEntityPlaceholder": "Add entity…",
     "editEntityRemove": "Remove {entity}",
-    "editedBadge": "Edited"
+    "editedBadge": "Edited",
+    "curationInvalidateTitle": "Invalidar memória",
+    "curationInvalidateExplain": "Isto move a memória para o arquivo de itens invalidados. Ela não aparecerá mais em Recall ou Reflect, mas é mantida para auditoria e pode ser restaurada depois.",
+    "curationReasonPlaceholder": "Motivo (opcional)",
+    "curationCancel": "Cancelar",
+    "curationInvalidate": "Invalidar"
   },
   "documentChunkModal": {
     "documentTitle": "Detalhes do Documento",

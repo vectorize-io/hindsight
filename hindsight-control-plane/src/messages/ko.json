@@ -1270,7 +1270,12 @@
     "editFieldEntities": "Entities",
     "editEntityPlaceholder": "Add entity…",
     "editEntityRemove": "Remove {entity}",
-    "editedBadge": "Edited"
+    "editedBadge": "Edited",
+    "curationInvalidateTitle": "메모리 무효화",
+    "curationInvalidateExplain": "메모리를 무효화 보관소로 이동합니다. recall이나 reflect에 더 이상 표시되지 않지만 감사를 위해 보관되며 나중에 복원할 수 있습니다.",
+    "curationReasonPlaceholder": "사유 (선택)",
+    "curationCancel": "취소",
+    "curationInvalidate": "무효화"
   },
   "documentChunkModal": {
     "documentTitle": "문서 상세 정보",

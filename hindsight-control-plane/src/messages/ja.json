@@ -1270,7 +1270,12 @@
     "editFieldEntities": "Entities",
     "editEntityPlaceholder": "Add entity…",
     "editEntityRemove": "Remove {entity}",
-    "editedBadge": "Edited"
+    "editedBadge": "Edited",
+    "curationInvalidateTitle": "メモリを無効化",
+    "curationInvalidateExplain": "メモリを無効化アーカイブに移動します。recall や reflect には表示されなくなりますが、監査用に保持され、後で復元できます。",
+    "curationReasonPlaceholder": "理由（任意）",
+    "curationCancel": "キャンセル",
+    "curationInvalidate": "無効化"
   },
   "documentChunkModal": {
     "documentTitle": "ドキュメント詳細",

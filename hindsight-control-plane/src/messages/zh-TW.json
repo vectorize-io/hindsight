@@ -1270,7 +1270,12 @@
     "editFieldEntities": "Entities",
     "editEntityPlaceholder": "Add entity…",
     "editEntityRemove": "Remove {entity}",
-    "editedBadge": "Edited"
+    "editedBadge": "Edited",
+    "curationInvalidateTitle": "使記憶失效",
+    "curationInvalidateExplain": "這會將該記憶移至已失效封存。它將不再出現在 Recall 或 Reflect 中，但會保留以供稽核，並可在日後復原。",
+    "curationReasonPlaceholder": "原因（可選）",
+    "curationCancel": "取消",
+    "curationInvalidate": "失效"
   },
   "documentChunkModal": {
     "documentTitle": "文件詳情",
