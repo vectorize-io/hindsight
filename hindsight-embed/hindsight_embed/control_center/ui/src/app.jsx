@@ -57,6 +57,7 @@ export function App() {
   const [envText, setEnvText] = useState("");
   const [envPath, setEnvPath] = useState("");
   const [envMsg, setEnvMsg] = useState({ text: "", kind: "" });
+  const [envEffective, setEnvEffective] = useState(true); // show only active KEY=value lines
   const [logText, setLogText] = useState("");
   const [logPath, setLogPath] = useState("");
   const [logLines, setLogLines] = useState(200);
@@ -282,6 +283,11 @@ export function App() {
 
   // ----- render --------------------------------------------------------
   const defaultVer = version.replace(/^v/, "") || "embed default";
+  // "Effective only" shows just active KEY=value lines (read-only); the full
+  // envText is preserved for editing/saving when the toggle is off.
+  const envDisplay = envEffective
+    ? envText.split("\n").filter((l) => l.trim() && !l.trim().startsWith("#")).join("\n")
+    : envText;
 
   if (noAuth) {
     return (
@@ -428,15 +434,19 @@ export function App() {
               {tab === "config" && (
                 <div class="panel">
                   <div class="note">
-                    Edits the profile's <code>{envPath}</code> verbatim — it contains your API key in plaintext. Active{" "}
+                    The profile's <code>{envPath}</code> — it contains your API key in plaintext. Active{" "}
                     <code>KEY=value</code> lines are highlighted; comments are dimmed. Save, then restart the daemon to apply.
                   </div>
+                  <label class="row" style="margin-bottom:12px; color:var(--color-muted); font-size:12px">
+                    <input type="checkbox" style="width:auto" checked={envEffective} onChange={(e) => setEnvEffective(e.target.checked)} /> Effective only (hide comments &amp; blank lines)
+                  </label>
                   <div class="env-editor">
-                    <pre class="env-hl" ref={envPre} aria-hidden="true" dangerouslySetInnerHTML={{ __html: envHighlight(envText) }} />
+                    <pre class="env-hl" ref={envPre} aria-hidden="true" dangerouslySetInnerHTML={{ __html: envHighlight(envDisplay) }} />
                     <textarea
                       ref={envArea}
                       spellcheck={false}
-                      value={envText}
+                      readOnly={envEffective}
+                      value={envDisplay}
                       onInput={(e) => setEnvText(e.target.value)}
                       onScroll={syncEnvScroll}
                     />
@@ -445,10 +455,13 @@ export function App() {
                     <button class="ghost" onClick={() => selectProfile(current)}>
                       Reload
                     </button>
-                    <button onClick={saveEnv} disabled={busy}>
-                      Save .env
-                    </button>
+                    {!envEffective && (
+                      <button onClick={saveEnv} disabled={busy}>
+                        Save .env
+                      </button>
+                    )}
                   </div>
+                  {envEffective && <div class="hint" style="margin-top:8px">Read-only view — uncheck “Effective only” to edit the raw file.</div>}
                   <div class={"msg " + envMsg.kind}>{envMsg.text}</div>
                 </div>
               )}
