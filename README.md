@@ -304,14 +304,14 @@ client.reflect(bank_id="my-bank", query="What should I know about Alice?")
 
 ## Supported Platforms
 
-| Platform | Docker | Bare Metal (pip) | Embedded DB (pg0) | Notes |
-|----------|--------|------------------|--------------------|-------|
-| **Linux** (x86_64, ARM64) | ✅ | ✅ | ✅ | Fully supported, recommended for production |
-| **macOS** (Apple Silicon / arm64) | ✅ | ✅ | ✅ | Fully supported |
-| **macOS** (Intel / x86_64) | ✅ | ⚠️ slim only | ✅ | Use `hindsight-all-slim` / `hindsight-api-slim`. The full bundle's local ML models (PyTorch, MLX) publish no Intel-Mac wheels, so `pip install hindsight-all` silently backtracks to a months-old release. Pair the slim bundle with a hosted embeddings/reranker provider or the in-process ONNX backend (`hindsight-api-slim[local-onnx]`). |
-| **Windows** (x86_64) | ✅ | ✅ | ✅ | Fully supported |
+| Platform | Docker | Bare Metal (pip) | Embedded DB (pg0) |
+|----------|--------|------------------|--------------------|
+| **Linux** (x86_64, ARM64) | ✅ | ✅ | ✅ |
+| **macOS** (Apple Silicon / arm64) | ✅ | ✅ | ✅ |
+| **macOS** (Intel / x86_64) | ✅ | ⚠️ | ✅ |
+| **Windows** (x86_64) | ✅ | ✅ | ✅ |
 
-See the [installation guide](https://docs.hindsight.vectorize.io/docs/developer/installation) for details.
+⚠️ Intel Macs: use `hindsight-all-slim` — see the [installation guide](https://docs.hindsight.vectorize.io/docs/developer/installation#supported-platforms) for details.
 
 ---
 
