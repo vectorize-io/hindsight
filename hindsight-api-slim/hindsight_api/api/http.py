@@ -6,13 +6,14 @@ the FastAPI application with all API endpoints.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Awaitable, Literal, TypeVar
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
@@ -89,6 +90,63 @@ from hindsight_api.metrics import create_metrics_collector, get_metrics_collecto
 from hindsight_api.models import RequestContext
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+# Starlette exposes disconnects through an async receive check. A one-second
+# poll is enough to stop abandoned long-running recalls without busy polling.
+_CLIENT_DISCONNECT_POLL_INTERVAL_SECONDS = 1.0
+# 499 is the de facto reverse-proxy status code for "client closed request".
+_CLIENT_CLOSED_REQUEST_STATUS_CODE = 499
+_CLIENT_DISCONNECTED_DETAIL = "Client disconnected"
+
+
+async def _wait_for_client_disconnect(
+    request: Request,
+    *,
+    poll_interval: float = _CLIENT_DISCONNECT_POLL_INTERVAL_SECONDS,
+) -> None:
+    """Return when the client disconnects from the current HTTP request."""
+    while True:
+        if await request.is_disconnected():
+            return
+        await asyncio.sleep(poll_interval)
+
+
+async def _run_until_client_disconnect(
+    request: Request,
+    awaitable: Awaitable[T],
+    *,
+    poll_interval: float = _CLIENT_DISCONNECT_POLL_INTERVAL_SECONDS,
+) -> T:
+    """Run an awaitable, cancelling it if the HTTP client disconnects first."""
+    work_task = asyncio.create_task(awaitable)
+    disconnect_task = asyncio.create_task(_wait_for_client_disconnect(request, poll_interval=poll_interval))
+
+    try:
+        done, _ = await asyncio.wait({work_task, disconnect_task}, return_when=asyncio.FIRST_COMPLETED)
+
+        if work_task in done:
+            disconnect_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await disconnect_task
+            return await work_task
+
+        work_task.cancel()
+        try:
+            await work_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.debug("Recall task raised after client disconnect", exc_info=True)
+
+        raise HTTPException(status_code=_CLIENT_CLOSED_REQUEST_STATUS_CODE, detail=_CLIENT_DISCONNECTED_DETAIL)
+    finally:
+        for task in (work_task, disconnect_task):
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
 
 class EntityIncludeOptions(BaseModel):
@@ -3465,6 +3523,7 @@ def _register_routes(app: FastAPI):
     async def api_recall(
         bank_id: str,
         request: RecallRequest,
+        http_request: Request,
         request_context: RequestContext = Depends(get_request_context),
         _precheck: None = Depends(precheck_for("recall")),
     ):
@@ -3520,25 +3579,28 @@ def _register_routes(app: FastAPI):
                 "recall", bank_id=bank_id, source="api", budget=request.budget.value, max_tokens=request.max_tokens
             ):
                 recall_start = time.time()
-                core_result = await app.state.memory.recall_async(
-                    bank_id=bank_id,
-                    query=request.query,
-                    budget=request.budget,
-                    max_tokens=request.max_tokens,
-                    enable_trace=request.trace,
-                    fact_type=fact_types,
-                    question_date=question_date,
-                    include_entities=include_entities,
-                    max_entity_tokens=max_entity_tokens,
-                    include_chunks=include_chunks,
-                    max_chunk_tokens=max_chunk_tokens,
-                    include_source_facts=include_source_facts,
-                    max_source_facts_tokens=max_source_facts_tokens,
-                    max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
-                    request_context=request_context,
-                    tags=request.tags,
-                    tags_match=request.tags_match,
-                    tag_groups=request.tag_groups,
+                core_result = await _run_until_client_disconnect(
+                    http_request,
+                    app.state.memory.recall_async(
+                        bank_id=bank_id,
+                        query=request.query,
+                        budget=request.budget,
+                        max_tokens=request.max_tokens,
+                        enable_trace=request.trace,
+                        fact_type=fact_types,
+                        question_date=question_date,
+                        include_entities=include_entities,
+                        max_entity_tokens=max_entity_tokens,
+                        include_chunks=include_chunks,
+                        max_chunk_tokens=max_chunk_tokens,
+                        include_source_facts=include_source_facts,
+                        max_source_facts_tokens=max_source_facts_tokens,
+                        max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
+                        request_context=request_context,
+                        tags=request.tags,
+                        tags_match=request.tags_match,
+                        tag_groups=request.tag_groups,
+                    ),
                 )
 
             # Convert core MemoryFact objects to API RecallResult objects (excluding internal metrics)
