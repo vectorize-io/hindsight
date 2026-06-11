@@ -719,7 +719,8 @@ class OpenAIEmbeddings(Embeddings):
 
 class CodexOAuthEmbeddings(OpenAIEmbeddings):
     """
-    OpenAI embeddings using the Codex/ChatGPT OAuth token from ``~/.codex/auth.json``.
+    OpenAI embeddings using the Codex/ChatGPT OAuth token from the Codex
+    ``auth.json`` (``$CODEX_HOME/auth.json``, or ``~/.codex/auth.json`` when unset).
 
     Codex OAuth is an LLM-provider auth path in Hindsight, but the same bearer token
     can also authenticate against the standard OpenAI embeddings endpoint. This keeps

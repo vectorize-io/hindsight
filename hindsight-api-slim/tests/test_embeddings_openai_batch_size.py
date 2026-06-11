@@ -124,6 +124,10 @@ def test_openai_codex_provider_uses_codex_oauth_token_and_configured_batch_size(
     )
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    # Codex auth resolves via CODEX_HOME first (falling back to ~/.codex), so a
+    # CODEX_HOME leaking in from the runner's environment would point auth.json
+    # away from the tmp_path fixture. Pin resolution to the patched HOME.
+    monkeypatch.delenv("CODEX_HOME", raising=False)
     os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
     os.environ["HINDSIGHT_API_EMBEDDINGS_PROVIDER"] = "openai-codex"
     os.environ["HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL"] = "text-embedding-3-small"
