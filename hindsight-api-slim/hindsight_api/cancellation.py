@@ -28,6 +28,15 @@ class OperationCancelledError(Exception):
     Carries the ``reason`` set by whoever cancelled (e.g. "client disconnected")
     so the HTTP layer can translate it into the appropriate status code instead
     of a generic 500.
+
+    NOTE: this is a plain ``Exception`` on purpose, NOT ``BaseException``. The
+    recall/reflect pipelines have broad ``except Exception`` handlers that would
+    otherwise swallow it — those handlers re-raise ``OperationCancelledError``
+    explicitly (see ``_search_with_retries``) so cancellation propagates to the
+    HTTP layer. A ``BaseException`` would dodge those handlers but also slip past
+    legitimate ``isinstance(result, Exception)`` checks (e.g. the reflect agent's
+    ``asyncio.gather(..., return_exceptions=True)`` tool-result handling), which
+    expect every non-tuple result to be an ``Exception``.
     """
 
     def __init__(self, reason: str = "operation cancelled") -> None:
