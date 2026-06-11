@@ -89,7 +89,7 @@ export function ObservationScopeFilter({ scopes, value, onChange }: ObservationS
           )}
         </div>
       </SelectTrigger>
-      <SelectContent className="max-w-[22rem]">
+      <SelectContent className="max-h-[min(60vh,var(--radix-select-content-available-height))] max-w-[22rem] overflow-y-auto">
         <SelectItem value={ALL_VALUE}>{t("scopeAll")}</SelectItem>
         {scopes.map((scope) => (
           <SelectItem key={scopeValue(scope.tags)} value={scopeValue(scope.tags)}>
