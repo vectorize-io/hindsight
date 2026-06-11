@@ -3205,7 +3205,7 @@ from unittest.mock import patch
 
 import pytest_asyncio
 
-from hindsight_api.engine.llm_wrapper import TokenUsage
+from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.task_backend import SyncTaskBackend
 
