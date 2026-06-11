@@ -12,12 +12,16 @@ def fake_home(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "USER_CONFIG_FILE", tmp_path / ".hindsight" / "zed.json")
     # Don't actually touch launchd/systemd or the network during init.
     monkeypatch.setattr(cli, "_install_daemon", lambda: None)
-    monkeypatch.setattr(cli, "load_config", lambda: type("C", (), {"hindsight_api_url": "x", "hindsight_api_token": None})())
+    monkeypatch.setattr(
+        cli, "load_config", lambda: type("C", (), {"hindsight_api_url": "x", "hindsight_api_token": None})()
+    )
     return tmp_path
 
 
 def test_init_writes_config(fake_home, monkeypatch, capsys):
-    monkeypatch.setattr("sys.argv", ["hindsight-zed", "init", "--api-token", "tok", "--api-url", "http://localhost:8888"])
+    monkeypatch.setattr(
+        "sys.argv", ["hindsight-zed", "init", "--api-token", "tok", "--api-url", "http://localhost:8888"]
+    )
     cli.main()
     written = json.loads(cli.USER_CONFIG_FILE.read_text())
     assert written["hindsightApiToken"] == "tok"

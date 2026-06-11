@@ -112,9 +112,7 @@ def _decompress(data: bytes, data_type: str) -> str:
         # Fallback so the package has no hard runtime dep: a zstd frame can be
         # decoded by zlib only if it is not actually zstd. We never expect this
         # path in practice, but raise a clear error rather than silently fail.
-        raise RuntimeError(
-            "thread is zstd-compressed but the 'zstandard' package is not installed"
-        )
+        raise RuntimeError("thread is zstd-compressed but the 'zstandard' package is not installed")
     raise ValueError(f"unknown thread data_type: {data_type!r}")
 
 
@@ -268,9 +266,11 @@ def read_threads(db_path: Path, since: Optional[str] = None) -> list[ZedThread]:
     try:
         cols = {row[1] for row in conn.execute("PRAGMA table_info(threads)")}
         has_folders = "folder_paths" in cols
-        select = "SELECT id, summary, updated_at, data_type, data" + (
-            ", folder_paths" if has_folders else ""
-        ) + " FROM threads"
+        select = (
+            "SELECT id, summary, updated_at, data_type, data"
+            + (", folder_paths" if has_folders else "")
+            + " FROM threads"
+        )
         params: tuple = ()
         if since is not None:
             select += " WHERE updated_at > ?"

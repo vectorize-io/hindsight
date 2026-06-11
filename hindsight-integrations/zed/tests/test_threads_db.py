@@ -60,8 +60,7 @@ def _insert(db: Path, *, id, summary, updated_at, doc, compress=True, folder_pat
         data, data_type = raw, "json"
     conn = sqlite3.connect(db)
     conn.execute(
-        "INSERT INTO threads (id, summary, updated_at, data_type, data, folder_paths) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO threads (id, summary, updated_at, data_type, data, folder_paths) VALUES (?, ?, ?, ?, ?, ?)",
         (id, summary, updated_at, data_type, data, json.dumps(folder_paths) if folder_paths else None),
     )
     conn.commit()
@@ -158,8 +157,9 @@ def test_malformed_json_returns_none():
 
 def test_read_threads_mixed_versions(tmp_path):
     db = _make_db(tmp_path)
-    _insert(db, id="a", summary="cur", updated_at="2026-06-10T10:00:00Z", doc=CURRENT_DOC,
-            folder_paths=["/Users/me/proj-a"])
+    _insert(
+        db, id="a", summary="cur", updated_at="2026-06-10T10:00:00Z", doc=CURRENT_DOC, folder_paths=["/Users/me/proj-a"]
+    )
     _insert(db, id="b", summary="leg", updated_at="2026-06-10T09:00:00Z", doc=LEGACY_020_DOC)
     _insert(db, id="c", summary="old", updated_at="2026-06-10T08:00:00Z", doc=OLDEST_DOC)
 
@@ -194,8 +194,7 @@ def test_read_threads_missing_db_returns_empty(tmp_path):
 
 def test_read_threads_unknown_version_skipped_at_db_level(tmp_path):
     db = _make_db(tmp_path)
-    _insert(db, id="future", summary="f", updated_at="2026-06-10T10:00:00Z",
-            doc={"version": "9.9.9", "messages": []})
+    _insert(db, id="future", summary="f", updated_at="2026-06-10T10:00:00Z", doc={"version": "9.9.9", "messages": []})
     _insert(db, id="ok", summary="g", updated_at="2026-06-10T11:00:00Z", doc=CURRENT_DOC)
     threads = read_threads(db)
     assert [t.id for t in threads] == ["ok"]

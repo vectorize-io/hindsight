@@ -86,8 +86,9 @@ def test_process_thread_skips_when_no_project(tmp_path):
     client = FakeClient()
     cfg = ZedConfig()
     state = DaemonState(path=tmp_path / "s.json")
-    thread = ZedThread(id="t", title="x", updated_at="2026-06-10T10:00:00Z",
-                       messages=[ThreadMessage("user", "hi")], folder_paths=[])
+    thread = ZedThread(
+        id="t", title="x", updated_at="2026-06-10T10:00:00Z", messages=[ThreadMessage("user", "hi")], folder_paths=[]
+    )
     process_thread(thread, client, cfg, state)
     assert not client.recall_calls and not client.retain_calls
 
@@ -162,6 +163,7 @@ def test_poll_once_end_to_end(tmp_path):
     client.recall_calls.clear()
     poll_once(db, client, cfg, state, since=high)
     assert not client.recall_calls
+
 
 # ── Auth/connection error escalation ──────────────────────────────────────────
 

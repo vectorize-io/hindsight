@@ -49,19 +49,20 @@ def _log_api_error(op: str, bank_id: str, exc: Exception, state: DaemonState) ->
                 "Hindsight rejected %s for bank %s (HTTP %s) — check your "
                 "HINDSIGHT_API_TOKEN (~/.hindsight/zed.json). Memory will not "
                 "work until this is fixed.",
-                op, bank_id, exc.status_code,
+                op,
+                bank_id,
+                exc.status_code,
             )
             state.warned.add(key)
         return
-    if isinstance(exc, _CONNECTION_ERRORS) or (
-        isinstance(exc, HindsightHTTPError) and exc.status_code >= 500
-    ):
+    if isinstance(exc, _CONNECTION_ERRORS) or (isinstance(exc, HindsightHTTPError) and exc.status_code >= 500):
         key = ("conn", bank_id)
         if key not in state.warned:
             logger.warning(
-                "Hindsight %s could not reach the server for bank %s: %s — "
-                "check the API URL and your network.",
-                op, bank_id, exc,
+                "Hindsight %s could not reach the server for bank %s: %s — check the API URL and your network.",
+                op,
+                bank_id,
+                exc,
             )
             state.warned.add(key)
         return
