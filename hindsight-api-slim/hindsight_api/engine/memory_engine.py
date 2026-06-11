@@ -445,7 +445,7 @@ def _split_contents_into_sub_batches(
 
     Any single item that already exceeds the budget is chunked via
     ``fact_extraction.chunk_text`` (paragraph/sentence aware, or
-    conversation-turn aware for JSON arrays) and each chunk becomes its
+    conversation-turn aware for JSON arrays and JSONL) and each chunk becomes its
     own single-item sub-batch. Without this, an oversized single item
     would pass through as a ``1/1`` sub-batch holding the entire
     payload — which contradicts the splitter's log and lets the

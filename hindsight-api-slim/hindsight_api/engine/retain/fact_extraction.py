@@ -406,22 +406,63 @@ class VerbatimFactExtractionResponse(BaseModel):
     facts: list[VerbatimExtractedFact] = Field(description="List of metadata entries (one per chunk)")
 
 
+# Separators for sentence-aware recursive text splitting, ordered most- to
+# least-preferred. The final "" lets the splitter break mid-word as a last
+# resort so a chunk can never exceed the size budget.
+_RECURSIVE_TEXT_SEPARATORS = [
+    "\n\n",  # Paragraph breaks
+    "\n",  # Line breaks
+    ". ",  # Sentence endings
+    "! ",  # Exclamations
+    "? ",  # Questions
+    "; ",  # Semicolons
+    ", ",  # Commas
+    " ",  # Words
+    "",  # Characters (last resort)
+]
+
+# A single structured unit (a JSONL line or a conversation turn) is kept whole
+# even when it overflows the budget — but only up to this multiple. Beyond it,
+# the unit is split as text rather than handed to the LLM wildly over budget
+# (the extractor has no second re-chunk pass; an oversized chunk just errors).
+_CHUNK_OVERFLOW_FACTOR = 1.5
+
+
+def _split_oversized_unit(text: str, max_chars: int) -> list[str]:
+    """Sentence-aware split of a single unit that overflowed the budget.
+
+    Used when one JSONL line / conversation turn is so large it can't be kept
+    whole within ``_CHUNK_OVERFLOW_FACTOR``. The resulting fragments are no
+    longer valid JSON, but the fact extractor treats every chunk as plain text.
+    """
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=max_chars,
+        chunk_overlap=0,
+        length_function=len,
+        is_separator_regex=False,
+        separators=_RECURSIVE_TEXT_SEPARATORS,
+    )
+    return splitter.split_text(text)
+
+
 def chunk_text(text: str, max_chars: int) -> list[str]:
     """
     Split text into chunks, preserving conversation structure when possible.
 
-    For JSON conversation arrays (user/assistant turns), splits at turn boundaries
-    while preserving speaker context. For plain text, uses sentence-aware splitting.
+    For JSON conversation arrays (user/assistant turns) and JSONL (newline-delimited
+    JSON objects), splits at turn/line boundaries so no object is split across chunks.
+    A single turn/line that overflows is kept whole up to ``_CHUNK_OVERFLOW_FACTOR``×
+    the budget, then split as text. For plain text, uses sentence-aware splitting.
 
     Args:
-        text: Input text to chunk (plain text or JSON conversation)
+        text: Input text to chunk (plain text, JSON conversation, or JSONL)
         max_chars: Maximum characters per chunk (default 120k ≈ 30k tokens)
 
     Returns:
         List of text chunks, roughly under max_chars
     """
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-
     # If text is small enough, return as-is
     if len(text) <= max_chars:
         return [text]
@@ -435,26 +476,13 @@ def chunk_text(text: str, max_chars: int) -> list[str]:
     except (json.JSONDecodeError, ValueError):
         pass
 
-    # Fall back to sentence-aware text splitting
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=max_chars,
-        chunk_overlap=0,
-        length_function=len,
-        is_separator_regex=False,
-        separators=[
-            "\n\n",  # Paragraph breaks
-            "\n",  # Line breaks
-            ". ",  # Sentence endings
-            "! ",  # Exclamations
-            "? ",  # Questions
-            "; ",  # Semicolons
-            ", ",  # Commas
-            " ",  # Words
-            "",  # Characters (last resort)
-        ],
-    )
+    # Try to parse as JSONL (newline-delimited JSON objects, e.g. session logs)
+    jsonl_chunks = _chunk_jsonl(text, max_chars)
+    if jsonl_chunks is not None:
+        return jsonl_chunks
 
-    return splitter.split_text(text)
+    # Fall back to sentence-aware text splitting
+    return _split_oversized_unit(text, max_chars)
 
 
 def _chunk_conversation(turns: list[dict], max_chars: int) -> list[str]:
@@ -469,30 +497,107 @@ def _chunk_conversation(turns: list[dict], max_chars: int) -> list[str]:
         List of JSON-serialized chunks, each containing complete turns
     """
 
+    overflow_limit = int(max_chars * _CHUNK_OVERFLOW_FACTOR)
+
     chunks = []
     current_chunk = []
     current_size = 2  # Account for "[]"
+
+    def _flush() -> None:
+        nonlocal current_chunk, current_size
+        if current_chunk:
+            chunks.append(json.dumps(current_chunk, ensure_ascii=False))
+            current_chunk = []
+            current_size = 2  # Reset to "[]"
 
     for turn in turns:
         # Estimate size of this turn when serialized (with comma separator)
         turn_json = json.dumps(turn, ensure_ascii=False)
         turn_size = len(turn_json) + 1  # +1 for comma
 
+        # A turn too large to keep whole even alone: flush, then split it as
+        # text so no chunk runs far over budget (the extractor won't re-chunk).
+        if turn_size > overflow_limit:
+            _flush()
+            chunks.extend(_split_oversized_unit(turn_json, max_chars))
+            continue
+
         # If adding this turn would exceed limit and we have turns, save current chunk
         if current_size + turn_size > max_chars and current_chunk:
-            chunks.append(json.dumps(current_chunk, ensure_ascii=False))
-            current_chunk = []
-            current_size = 2  # Reset to "[]"
+            _flush()
 
         # Add turn to current chunk
         current_chunk.append(turn)
         current_size += turn_size
 
     # Add final chunk if non-empty
-    if current_chunk:
-        chunks.append(json.dumps(current_chunk, ensure_ascii=False))
+    _flush()
 
     return chunks if chunks else [json.dumps(turns, ensure_ascii=False)]
+
+
+def _chunk_jsonl(text: str, max_chars: int) -> list[str] | None:
+    """Chunk newline-delimited JSON (JSONL) at line boundaries.
+
+    Detects JSONL — two or more non-empty lines, each a complete JSON object —
+    and packs whole lines into chunks so no line is split across chunks (multiple
+    short lines may share a chunk). A line that overflows is kept whole up to
+    ``_CHUNK_OVERFLOW_FACTOR``× the budget, then split as text. Returns ``None``
+    if the input is not JSONL, so the caller falls back to plain-text splitting.
+
+    Args:
+        text: Input text to inspect/chunk.
+        max_chars: Maximum characters per chunk.
+
+    Returns:
+        List of JSONL chunks (lines joined by newline), or ``None`` if not JSONL.
+    """
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return None
+
+    for line in lines:
+        try:
+            obj = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        if not isinstance(obj, dict):
+            return None
+
+    overflow_limit = int(max_chars * _CHUNK_OVERFLOW_FACTOR)
+
+    chunks: list[str] = []
+    current_chunk: list[str] = []
+    current_size = 0
+
+    def _flush() -> None:
+        nonlocal current_chunk, current_size
+        if current_chunk:
+            chunks.append("\n".join(current_chunk))
+            current_chunk = []
+            current_size = 0
+
+    for line in lines:
+        line_size = len(line) + 1  # +1 for the joining newline
+
+        # A line too large to keep whole even alone: flush, then split it as
+        # text so no chunk runs far over budget (the extractor won't re-chunk).
+        if line_size > overflow_limit:
+            _flush()
+            chunks.extend(_split_oversized_unit(line, max_chars))
+            continue
+
+        # If adding this line would exceed the limit and we have lines, flush.
+        # A line up to overflow_limit is kept whole (a small, bounded overflow).
+        if current_size + line_size > max_chars and current_chunk:
+            _flush()
+
+        current_chunk.append(line)
+        current_size += line_size
+
+    _flush()
+
+    return chunks
 
 
 # =============================================================================
