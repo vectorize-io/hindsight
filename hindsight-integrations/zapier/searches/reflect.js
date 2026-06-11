@@ -18,7 +18,9 @@ const perform = async (z, bundle) => {
     body: { query: bundle.inputData.query, budget: bundle.inputData.budget || "mid" },
   });
   const data = response.data || {};
-  return [{ id: "reflect", answer: data.answer, based_on: data.based_on }];
+  // The reflect response carries the synthesized answer in `text` (not `answer`);
+  // surface it to Zaps under the friendlier `answer` key.
+  return [{ id: "reflect", answer: data.text, based_on: data.based_on }];
 };
 
 module.exports = {

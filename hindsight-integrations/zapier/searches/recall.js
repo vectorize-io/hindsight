@@ -84,16 +84,18 @@ module.exports = {
     perform,
     sample: {
       id: "123e4567-e89b-12d3-a456-426614174000",
-      text: "Jon's favorite band is Tool",
-      fact_type: "world",
-      score: 0.92,
-      tags: ["user:jon"],
+      text: "Marcus is a marine biologist.",
+      type: "world",
+      context: "research background",
+      tags: ["person:marcus"],
     },
+    // Recall results are returned pre-ranked by the server; the response carries
+    // no numeric score, and the fact-type field is `type` (not `fact_type`).
     outputFields: [
       { key: "id", label: "ID" },
       { key: "text", label: "Text" },
-      { key: "fact_type", label: "Fact Type" },
-      { key: "score", label: "Score", type: "number" },
+      { key: "type", label: "Type" },
+      { key: "context", label: "Context" },
     ],
   },
 };
