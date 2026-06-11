@@ -1418,7 +1418,7 @@
     "selectedFilesLabel": "已选文件（{count}）",
     "extractionMethodLabel": "提取方法",
     "parserStandardLabel": "标准",
-    "parserStandardDescription": "免费 — 适用于大多数文档（不含图片）",
+    "parserStandardDescription": "免费 — 适用于文本型文档；图片 OCR 取决于服务器配置",
     "parserEnhancedLabel": "增强（Iris）",
     "parserEnhancedDescription": "额外收费 — 对复杂排版、扫描文档和图片效果更佳",
     "contextLabel": "上下文",

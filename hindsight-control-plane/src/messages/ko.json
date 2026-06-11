@@ -1418,7 +1418,7 @@
     "selectedFilesLabel": "선택된 파일 ({count})",
     "extractionMethodLabel": "추출 방법",
     "parserStandardLabel": "표준",
-    "parserStandardDescription": "무료 — 대부분의 문서에 적합 (이미지 제외)",
+    "parserStandardDescription": "무료 — 텍스트 기반 문서에 적합; 이미지 OCR은 서버 설정에 따라 달라집니다",
     "parserEnhancedLabel": "향상 (Iris)",
     "parserEnhancedDescription": "추가 요금 — 복잡한 레이아웃, 스캔된 문서 및 이미지에 더 높은 품질",
     "contextLabel": "컨텍스트",

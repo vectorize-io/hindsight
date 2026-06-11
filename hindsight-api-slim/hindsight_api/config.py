@@ -422,6 +422,11 @@ ENV_FILE_STORAGE_AZURE_ACCOUNT_NAME = "HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_
 ENV_FILE_STORAGE_AZURE_ACCOUNT_KEY = "HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_KEY"
 ENV_FILE_PARSER = "HINDSIGHT_API_FILE_PARSER"
 ENV_FILE_PARSER_ALLOWLIST = "HINDSIGHT_API_FILE_PARSER_ALLOWLIST"
+ENV_FILE_PARSER_MARKITDOWN_OCR_ENABLED = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_ENABLED"
+ENV_FILE_PARSER_MARKITDOWN_OCR_API_KEY = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_API_KEY"
+ENV_FILE_PARSER_MARKITDOWN_OCR_BASE_URL = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_BASE_URL"
+ENV_FILE_PARSER_MARKITDOWN_OCR_MODEL = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_MODEL"
+ENV_FILE_PARSER_MARKITDOWN_OCR_PROMPT = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_PROMPT"
 ENV_FILE_PARSER_IRIS_TOKEN = "HINDSIGHT_API_FILE_PARSER_IRIS_TOKEN"
 ENV_FILE_PARSER_IRIS_ORG_ID = "HINDSIGHT_API_FILE_PARSER_IRIS_ORG_ID"
 ENV_FILE_PARSER_LLAMA_PARSE_API_KEY = "HINDSIGHT_API_FILE_PARSER_LLAMA_PARSE_API_KEY"
@@ -839,6 +844,10 @@ DEFAULT_RETAIN_BATCH_POLL_INTERVAL_SECONDS = 60  # Batch API polling interval in
 DEFAULT_FILE_STORAGE_TYPE = "native"  # PostgreSQL BYTEA storage
 DEFAULT_FILE_PARSER = "markitdown"  # Default parser fallback chain (comma-separated, e.g. "iris,markitdown")
 DEFAULT_FILE_PARSER_ALLOWLIST = None  # Allowlist of parsers clients may request (None = all registered parsers)
+DEFAULT_FILE_PARSER_MARKITDOWN_OCR_ENABLED = False
+DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT = """You are a precise OCR and document transcription engine.
+
+Extract all visible text from the image or scanned document without translating it. Preserve the original language, wording, numbers, punctuation, and reading order. Reconstruct headings, lists, key-value fields, stamps, and tables as clean Markdown. If text is unclear, mark it as [unclear] instead of inventing content. Return only the extracted Markdown."""
 DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE_MB = 100  # Max total batch size in MB (all files combined)
 DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE = 10  # Max files per batch upload
 DEFAULT_ENABLE_FILE_UPLOAD_API = True  # Enable file upload endpoint
@@ -1597,6 +1606,11 @@ class HindsightConfig:
     embeddings_zeroentropy_encoding_format: str = DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT
     embeddings_zeroentropy_batch_size: int = DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE
     embeddings_zeroentropy_latency: str | None = DEFAULT_EMBEDDINGS_ZEROENTROPY_LATENCY
+    file_parser_markitdown_ocr_enabled: bool = DEFAULT_FILE_PARSER_MARKITDOWN_OCR_ENABLED
+    file_parser_markitdown_ocr_api_key: str | None = None
+    file_parser_markitdown_ocr_base_url: str | None = None
+    file_parser_markitdown_ocr_model: str | None = None
+    file_parser_markitdown_ocr_prompt: str = DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT
 
     # Class-level sets for configuration categorization
 
@@ -1637,6 +1651,8 @@ class HindsightConfig:
         "file_storage_gcs_service_account_key",
         "file_storage_azure_account_key",
         # File parser credentials
+        "file_parser_markitdown_ocr_api_key",
+        "file_parser_markitdown_ocr_base_url",
         "file_parser_iris_token",
         "file_parser_llama_parse_api_key",
     }
@@ -2334,6 +2350,22 @@ class HindsightConfig:
             file_parser_allowlist=_parse_str_list(os.getenv(ENV_FILE_PARSER_ALLOWLIST))
             if os.getenv(ENV_FILE_PARSER_ALLOWLIST)
             else None,
+            file_parser_markitdown_ocr_enabled=os.getenv(
+                ENV_FILE_PARSER_MARKITDOWN_OCR_ENABLED,
+                str(DEFAULT_FILE_PARSER_MARKITDOWN_OCR_ENABLED),
+            ).lower()
+            in ("1", "true", "yes", "on"),
+            file_parser_markitdown_ocr_api_key=os.getenv(ENV_FILE_PARSER_MARKITDOWN_OCR_API_KEY)
+            or os.getenv(ENV_LLM_API_KEY)
+            or None,
+            file_parser_markitdown_ocr_base_url=os.getenv(ENV_FILE_PARSER_MARKITDOWN_OCR_BASE_URL)
+            or os.getenv(ENV_LLM_BASE_URL)
+            or None,
+            file_parser_markitdown_ocr_model=os.getenv(ENV_FILE_PARSER_MARKITDOWN_OCR_MODEL) or llm_model,
+            file_parser_markitdown_ocr_prompt=os.getenv(
+                ENV_FILE_PARSER_MARKITDOWN_OCR_PROMPT,
+                DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT,
+            ),
             file_parser_iris_token=os.getenv(ENV_FILE_PARSER_IRIS_TOKEN) or None,
             file_parser_iris_org_id=os.getenv(ENV_FILE_PARSER_IRIS_ORG_ID) or None,
             file_parser_llama_parse_api_key=os.getenv(ENV_FILE_PARSER_LLAMA_PARSE_API_KEY) or None,
