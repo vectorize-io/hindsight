@@ -3645,6 +3645,44 @@ jobs:
         echo "=== API Server Logs ==="
         cat /tmp/slim-api-server.log 2>/dev/null || true
 
+  verify-embed-control-center-bundle:
+    # The control center UI (Preact + Tailwind) is built with Vite and its static
+    # output is committed (served as-is by the embed's Python http.server, no Node
+    # at runtime). Rebuild from source and fail if the committed static/ drifted —
+    # i.e. someone edited control_center/ui/ but forgot to `npm run build` + commit.
+    needs: [detect-changes]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.embed == 'true' ||
+      needs.detect-changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Setup Node
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+
+    - name: Build the control center UI
+      working-directory: ./hindsight-embed/hindsight_embed/control_center/ui
+      run: |
+        npm ci
+        npm run build
+
+    - name: Verify committed static/ matches a fresh build
+      working-directory: ./hindsight-embed/hindsight_embed/control_center
+      run: |
+        if ! git diff --quiet -- static; then
+          echo "::error::control_center/static is out of date. Run 'npm ci && npm run build' in control_center/ui and commit the static/ changes."
+          git --no-pager diff --stat -- static
+          exit 1
+        fi
+        echo "control_center/static matches a fresh build ✓"
+
   test-embed:
     needs: [detect-changes]
     if: >-
@@ -4454,6 +4492,7 @@ jobs:
       - test-pip-slim
       - test-embed
       - test-embed-windows
+      - verify-embed-control-center-bundle
       - test-hindsight-all
       - test-hindsight-agent-sdk
       - test-claude-agent-sdk-integration
