@@ -47,10 +47,11 @@ Live checks against a real instance. `zapier invoke` reads credentials from a lo
 `.env` (gitignored) — write it directly to skip the interactive `auth start`:
 
 ```bash
+# `zapier invoke` reads auth fields from .env with an `authData_` prefix.
 # Hindsight Cloud:
-printf 'apiKey=hsk_your_key\napiUrl=https://api.hindsight.vectorize.io\n' > .env
+printf "authData_apiKey=hsk_your_key\nauthData_apiUrl=https://api.hindsight.vectorize.io\n" > .env
 # …or self-hosted without auth:
-printf 'apiKey=\napiUrl=http://localhost:8888\n' > .env
+printf "authData_apiKey=\nauthData_apiUrl=http://localhost:8888\n" > .env
 
 npx zapier-platform invoke auth test
 npx zapier-platform invoke trigger bankList
