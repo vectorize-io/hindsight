@@ -11,6 +11,16 @@
       "icon": "/img/icons/litellm.png"
     },
     {
+      "id": "agent-framework",
+      "name": "Microsoft Agent Framework",
+      "description": "Persistent memory for Microsoft Agent Framework (the successor to Semantic Kernel) via a context provider that auto-recalls and auto-retains each turn.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/agent-framework",
+      "icon": "/img/icons/agent-framework.svg"
+    },
+    {
       "id": "crewai",
       "name": "CrewAI",
       "description": "Give CrewAI agents persistent, cross-session memory. Facts learned in one run are available in every future run.",
@@ -458,7 +468,7 @@
       "by": "hindsight",
       "category": "tool",
       "link": "/sdks/integrations/gemini-spark",
-      "icon": "/img/icons/mcp.png"
+      "icon": "/img/icons/gemini.svg"
     },
     {
       "id": "outsystems",

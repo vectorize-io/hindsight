@@ -577,7 +577,13 @@
     "sourceFactsLabel": "ソースファクト",
     "errorLoadingData": "{factType}データの読み込みエラー",
     "all": "すべて",
-    "memoryComposition": "メモリ構成"
+    "memoryComposition": "メモリ構成",
+    "scopeLabel": "スコープ",
+    "scopeAll": "すべてのスコープ",
+    "scopeGlobal": "グローバル（タグなし）",
+    "groupByScope": "スコープでグループ化",
+    "scopeSearch": "スコープを検索…",
+    "scopeNoResults": "スコープが見つかりません"
   },
   "documentsView": {
     "loadingDocuments": "ドキュメントを読み込み中...",
@@ -665,7 +671,8 @@
     "importConflictSkip": "スキップ — 既存のドキュメントを保持",
     "importConflictReplace": "置換 — インポート版で上書き",
     "importConflictNewId": "両方保持 — 新しい id でインポート",
-    "textNotStoredWarning": "このサーバーでは元のテキストは保存されません。抽出されたメモリのみが保持されます。"
+    "textNotStoredWarning": "このサーバーでは元のテキストは保存されません。抽出されたメモリのみが保持されます。",
+    "labelObservationScopes": "観測スコープ"
   },
   "entitiesView": {
     "viewRelations": "関係",
@@ -1267,7 +1274,12 @@
     "editFieldEntities": "Entities",
     "editEntityPlaceholder": "Add entity…",
     "editEntityRemove": "Remove {entity}",
-    "editedBadge": "Edited"
+    "editedBadge": "Edited",
+    "curationInvalidateTitle": "メモリを無効化",
+    "curationInvalidateExplain": "メモリを無効化アーカイブに移動します。recall や reflect には表示されなくなりますが、監査用に保持され、後で復元できます。",
+    "curationReasonPlaceholder": "理由（任意）",
+    "curationCancel": "キャンセル",
+    "curationInvalidate": "無効化"
   },
   "documentChunkModal": {
     "documentTitle": "ドキュメント詳細",

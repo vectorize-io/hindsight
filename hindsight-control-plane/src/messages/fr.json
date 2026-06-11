@@ -577,7 +577,13 @@
     "sourceFactsLabel": "faits sources",
     "errorLoadingData": "Erreur lors du chargement des données {factType}",
     "all": "Tous",
-    "memoryComposition": "Composition de la mémoire"
+    "memoryComposition": "Composition de la mémoire",
+    "scopeLabel": "Portée",
+    "scopeAll": "Toutes les portées",
+    "scopeGlobal": "Global (sans tags)",
+    "groupByScope": "Grouper par portée",
+    "scopeSearch": "Rechercher des portées…",
+    "scopeNoResults": "Aucune portée trouvée"
   },
   "documentsView": {
     "loadingDocuments": "Chargement des documents...",
@@ -665,7 +671,8 @@
     "importConflictSkip": "Ignorer — conserver le document existant",
     "importConflictReplace": "Remplacer — écraser par celui importé",
     "importConflictNewId": "Conserver les deux — importer sous un nouvel id",
-    "textNotStoredWarning": "Le texte source n'est pas conservé sur ce serveur — seules les mémoires extraites sont conservées."
+    "textNotStoredWarning": "Le texte source n'est pas conservé sur ce serveur — seules les mémoires extraites sont conservées.",
+    "labelObservationScopes": "Portées d'observation"
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -1267,7 +1274,12 @@
     "editFieldEntities": "Entities",
     "editEntityPlaceholder": "Add entity…",
     "editEntityRemove": "Remove {entity}",
-    "editedBadge": "Edited"
+    "editedBadge": "Edited",
+    "curationInvalidateTitle": "Invalider la mémoire",
+    "curationInvalidateExplain": "Cela déplace la mémoire vers l'archive des éléments invalidés. Elle n'apparaîtra plus dans Recall ni Reflect, mais est conservée à des fins d'audit et peut être restaurée ultérieurement.",
+    "curationReasonPlaceholder": "Raison (facultatif)",
+    "curationCancel": "Annuler",
+    "curationInvalidate": "Invalider"
   },
   "documentChunkModal": {
     "documentTitle": "Détails du document",

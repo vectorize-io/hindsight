@@ -33,6 +33,7 @@ type DocumentResponse struct {
 	Tags []string `json:"tags,omitempty"`
 	DocumentMetadata map[string]interface{} `json:"document_metadata,omitempty"`
 	RetainParams map[string]interface{} `json:"retain_params,omitempty"`
+	ObservationScopes NullableObservationScopes `json:"observation_scopes,omitempty"`
 }
 
 type _DocumentResponse DocumentResponse
@@ -364,6 +365,48 @@ func (o *DocumentResponse) SetRetainParams(v map[string]interface{}) {
 	o.RetainParams = v
 }
 
+// GetObservationScopes returns the ObservationScopes field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *DocumentResponse) GetObservationScopes() ObservationScopes {
+	if o == nil || IsNil(o.ObservationScopes.Get()) {
+		var ret ObservationScopes
+		return ret
+	}
+	return *o.ObservationScopes.Get()
+}
+
+// GetObservationScopesOk returns a tuple with the ObservationScopes field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *DocumentResponse) GetObservationScopesOk() (*ObservationScopes, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ObservationScopes.Get(), o.ObservationScopes.IsSet()
+}
+
+// HasObservationScopes returns a boolean if a field has been set.
+func (o *DocumentResponse) HasObservationScopes() bool {
+	if o != nil && o.ObservationScopes.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetObservationScopes gets a reference to the given NullableObservationScopes and assigns it to the ObservationScopes field.
+func (o *DocumentResponse) SetObservationScopes(v ObservationScopes) {
+	o.ObservationScopes.Set(&v)
+}
+// SetObservationScopesNil sets the value for ObservationScopes to be an explicit nil
+func (o *DocumentResponse) SetObservationScopesNil() {
+	o.ObservationScopes.Set(nil)
+}
+
+// UnsetObservationScopes ensures that no value is present for ObservationScopes, not even an explicit nil
+func (o *DocumentResponse) UnsetObservationScopes() {
+	o.ObservationScopes.Unset()
+}
+
 func (o DocumentResponse) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -392,6 +435,9 @@ func (o DocumentResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.RetainParams != nil {
 		toSerialize["retain_params"] = o.RetainParams
+	}
+	if o.ObservationScopes.IsSet() {
+		toSerialize["observation_scopes"] = o.ObservationScopes.Get()
 	}
 	return toSerialize, nil
 }

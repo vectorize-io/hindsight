@@ -5153,6 +5153,12 @@ class MemoryEngine(MemoryEngineInterface):
             # document_metadata is sourced from retain_params.metadata
             document_metadata = retain_params_parsed.get("metadata") if retain_params_parsed else None
 
+            # observation_scopes is captured into retain_params at retain time
+            # (see _build_retain_params); surface it as a top-level field so the
+            # UI can show which scoping was requested. Only present for documents
+            # retained after this was added.
+            observation_scopes = retain_params_parsed.get("observation_scopes") if retain_params_parsed else None
+
             return {
                 "id": doc["id"],
                 "bank_id": doc["bank_id"],
@@ -5169,6 +5175,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "tags": list(doc["tags"]) if doc["tags"] else [],
                 "document_metadata": document_metadata or None,
                 "retain_params": retain_params_parsed or None,
+                "observation_scopes": observation_scopes or None,
             }
 
     async def delete_document(
@@ -5717,6 +5724,46 @@ class MemoryEngine(MemoryEngineInterface):
                 )
 
                 return {"deleted_count": count or 0}
+
+    async def list_observation_scopes(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """List the distinct scopes across a bank's observations.
+
+        Every consolidated observation lives under a "scope": the exact set of
+        tags it was consolidated with. This enumerates each distinct scope (tag
+        order normalized so ``[a, b]`` and ``[b, a]`` collapse) together with the
+        number of observations in it. The empty list ``[]`` is the "global" scope
+        of untagged observations. Results are ordered most-populous first.
+
+        Returns:
+            Dict with ``scopes``: list of ``{"tags": list[str], "count": int}``.
+        """
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankReadContext
+
+            ctx = BankReadContext(bank_id=bank_id, operation="list_observation_scopes", request_context=request_context)
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            rows = await conn.fetch(
+                f"""
+                SELECT scope, COUNT(*) AS count
+                FROM (
+                    SELECT COALESCE(ARRAY(SELECT unnest(tags) ORDER BY 1), '{{}}'::text[]) AS scope
+                    FROM {fq_table("memory_units")}
+                    WHERE bank_id = $1 AND fact_type = 'observation'
+                ) s
+                GROUP BY scope
+                ORDER BY count DESC, scope
+                """,
+                bank_id,
+            )
+            return {"scopes": [{"tags": list(r["scope"]), "count": r["count"]} for r in rows]}
 
     async def retry_failed_consolidation(
         self,
@@ -6297,6 +6344,10 @@ class MemoryEngine(MemoryEngineInterface):
                     query_conditions.append(tag_clause.removeprefix("AND "))
                     param_count += 1
                     query_params.append(tags)
+            elif tags_match == "exact":
+                # Exact match with no tags is the "global" scope: rows that carry no
+                # tags at all. (Other match modes treat empty tags as "no filter".)
+                query_conditions.append("(tags IS NULL OR tags = '{}')")
 
             where_clause = "WHERE " + " AND ".join(query_conditions) if query_conditions else ""
 

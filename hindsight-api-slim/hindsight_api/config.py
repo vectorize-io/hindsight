@@ -453,6 +453,7 @@ ENV_CONSOLIDATION_RECALL_BUDGET = "HINDSIGHT_API_CONSOLIDATION_RECALL_BUDGET"
 ENV_CONSOLIDATION_MAX_ATTEMPTS = "HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS"
 ENV_OBSERVATIONS_MISSION = "HINDSIGHT_API_OBSERVATIONS_MISSION"
 ENV_MAX_OBSERVATIONS_PER_SCOPE = "HINDSIGHT_API_MAX_OBSERVATIONS_PER_SCOPE"
+ENV_OBSERVATION_SCOPE_LIMITS = "HINDSIGHT_API_OBSERVATION_SCOPE_LIMITS"
 ENV_ENABLE_OBSERVATION_HISTORY = "HINDSIGHT_API_ENABLE_OBSERVATION_HISTORY"
 ENV_OBSERVATION_HISTORY_MAX_ENTRIES = "HINDSIGHT_API_OBSERVATION_HISTORY_MAX_ENTRIES"
 ENV_ENABLE_MENTAL_MODEL_HISTORY = "HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY"
@@ -893,6 +894,9 @@ DEFAULT_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION = (
 )
 DEFAULT_OBSERVATIONS_MISSION = None  # Declarative spec of what observations are for this bank
 DEFAULT_MAX_OBSERVATIONS_PER_SCOPE = -1  # Max observations per tag scope (-1 = unlimited)
+# Per-scope overrides of the cap above: list of {"scope": [tag-globs], "limit": int}.
+# First rule whose pattern exact-covers a scope's tags wins; else the default above.
+DEFAULT_OBSERVATION_SCOPE_LIMITS: list | None = None
 
 # Database migrations
 DEFAULT_RUN_MIGRATIONS_ON_STARTUP = True
@@ -1484,6 +1488,10 @@ class HindsightConfig:
     consolidation_max_attempts: int
     observations_mission: str | None
     max_observations_per_scope: int
+    # Per-scope observation caps overriding max_observations_per_scope.
+    # Raw JSON shape: [{"scope": ["run_*", "shared"], "limit": 1}, ...]
+    # (validated/applied in engine.consolidation.consolidator._effective_scope_limit)
+    observation_scope_limits: list | None
 
     # Entity labels (controlled vocabulary of key:value classification labels extracted at retain time)
     # List of label group dicts: [{key, description, type, optional, values: [{value, description}]}]
@@ -1668,6 +1676,7 @@ class HindsightConfig:
         "consolidation_source_facts_max_tokens_per_observation",
         "observations_mission",
         "max_observations_per_scope",
+        "observation_scope_limits",
         # Reflect settings
         "reflect_mission",
         "reflect_source_facts_max_tokens",
@@ -2433,6 +2442,8 @@ class HindsightConfig:
             max_observations_per_scope=int(
                 os.getenv(ENV_MAX_OBSERVATIONS_PER_SCOPE, str(DEFAULT_MAX_OBSERVATIONS_PER_SCOPE))
             ),
+            observation_scope_limits=json.loads(os.getenv(ENV_OBSERVATION_SCOPE_LIMITS, "null"))
+            or DEFAULT_OBSERVATION_SCOPE_LIMITS,
             entity_labels=None,
             entities_allow_free_form=True,
             memory_defense=None,

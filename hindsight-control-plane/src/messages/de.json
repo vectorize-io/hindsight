@@ -577,7 +577,13 @@
     "sourceFactsLabel": "Quellfakten",
     "errorLoadingData": "Fehler beim Laden der {factType}-Daten",
     "all": "Alle",
-    "memoryComposition": "Speicherzusammensetzung"
+    "memoryComposition": "Speicherzusammensetzung",
+    "scopeLabel": "Bereich",
+    "scopeAll": "Alle Bereiche",
+    "scopeGlobal": "Global (keine Tags)",
+    "groupByScope": "Nach Bereich gruppieren",
+    "scopeSearch": "Bereiche suchen…",
+    "scopeNoResults": "Keine Bereiche gefunden"
   },
   "documentsView": {
     "loadingDocuments": "Dokumente werden geladen...",
@@ -665,7 +671,8 @@
     "importConflictSkip": "Überspringen — vorhandenes Dokument behalten",
     "importConflictReplace": "Ersetzen — durch das importierte überschreiben",
     "importConflictNewId": "Beide behalten — unter neuer id importieren",
-    "textNotStoredWarning": "Der Quelltext wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten."
+    "textNotStoredWarning": "Der Quelltext wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten.",
+    "labelObservationScopes": "Beobachtungsbereiche"
   },
   "entitiesView": {
     "viewRelations": "Beziehungen",
@@ -1267,7 +1274,12 @@
     "editFieldEntities": "Entities",
     "editEntityPlaceholder": "Add entity…",
     "editEntityRemove": "Remove {entity}",
-    "editedBadge": "Edited"
+    "editedBadge": "Edited",
+    "curationInvalidateTitle": "Erinnerung ungültig machen",
+    "curationInvalidateExplain": "Dadurch wird die Erinnerung in das Archiv für ungültige Einträge verschoben. Sie erscheint nicht mehr in Recall oder Reflect, bleibt aber zur Prüfung erhalten und kann später wiederhergestellt werden.",
+    "curationReasonPlaceholder": "Grund (optional)",
+    "curationCancel": "Abbrechen",
+    "curationInvalidate": "Ungültig machen"
   },
   "documentChunkModal": {
     "documentTitle": "Dokumentdetails",

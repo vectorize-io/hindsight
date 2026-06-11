@@ -577,7 +577,13 @@
     "sourceFactsLabel": "hechos fuente",
     "errorLoadingData": "Error al cargar datos de {factType}",
     "all": "Todos",
-    "memoryComposition": "Composición de memorias"
+    "memoryComposition": "Composición de memorias",
+    "scopeLabel": "Ámbito",
+    "scopeAll": "Todos los ámbitos",
+    "scopeGlobal": "Global (sin etiquetas)",
+    "groupByScope": "Agrupar por ámbito",
+    "scopeSearch": "Buscar ámbitos…",
+    "scopeNoResults": "No se encontraron ámbitos"
   },
   "documentsView": {
     "loadingDocuments": "Cargando documentos...",
@@ -665,7 +671,8 @@
     "importConflictSkip": "Omitir — conservar el documento existente",
     "importConflictReplace": "Reemplazar — sobrescribir con el importado",
     "importConflictNewId": "Conservar ambos — importar con un nuevo id",
-    "textNotStoredWarning": "El texto original no se almacena en este servidor: solo se conservan las memorias extraídas."
+    "textNotStoredWarning": "El texto original no se almacena en este servidor: solo se conservan las memorias extraídas.",
+    "labelObservationScopes": "Ámbitos de observación"
   },
   "entitiesView": {
     "viewRelations": "Relaciones",
@@ -1267,7 +1274,12 @@
     "editFieldEntities": "Entities",
     "editEntityPlaceholder": "Add entity…",
     "editEntityRemove": "Remove {entity}",
-    "editedBadge": "Edited"
+    "editedBadge": "Edited",
+    "curationInvalidateTitle": "Invalidar memoria",
+    "curationInvalidateExplain": "Esto mueve la memoria al archivo de elementos invalidados. Ya no aparecerá en Recall ni Reflect, pero se conserva para auditoría y puede restaurarse más tarde.",
+    "curationReasonPlaceholder": "Motivo (opcional)",
+    "curationCancel": "Cancelar",
+    "curationInvalidate": "Invalidar"
   },
   "documentChunkModal": {
     "documentTitle": "Detalles del documento",

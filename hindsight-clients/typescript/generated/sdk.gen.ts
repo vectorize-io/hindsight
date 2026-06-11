@@ -149,6 +149,9 @@ import type {
   ListMentalModelsData,
   ListMentalModelsErrors,
   ListMentalModelsResponses,
+  ListObservationScopesData,
+  ListObservationScopesErrors,
+  ListObservationScopesResponses,
   ListOperationsData,
   ListOperationsErrors,
   ListOperationsResponses,
@@ -1071,6 +1074,20 @@ export const clearObservations = <ThrowOnError extends boolean = false>(
     ClearObservationsErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/observations", ...options });
+
+/**
+ * List observation scopes
+ *
+ * Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope.
+ */
+export const listObservationScopes = <ThrowOnError extends boolean = false>(
+  options: Options<ListObservationScopesData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    ListObservationScopesResponses,
+    ListObservationScopesErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/observations/scopes", ...options });
 
 /**
  * Recover failed consolidation

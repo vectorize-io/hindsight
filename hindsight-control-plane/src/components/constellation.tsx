@@ -66,6 +66,18 @@ export interface ConstellationProps {
    * "co-occurrences") so the reader knows what the node size represents.
    */
   sizeLegendLabel?: string;
+  /**
+   * Optional clustering. When provided, nodes sharing a key are laid out around a
+   * common centroid (instead of the default id-hash ring) and wrapped in a
+   * translucent "blob", so each group reads as a distinct visual cluster. Used to
+   * group observations by scope (exact tag set). Return null to leave a node
+   * unclustered (it falls back to the ring layout).
+   */
+  clusterKeyFn?: (node: GraphNode) => string | null;
+  /** Fill/outline color for a cluster key (also tints the cluster's node dots). */
+  clusterColorFn?: (key: string) => string;
+  /** Short human label for a cluster key, drawn near the blob. */
+  clusterLabelFn?: (key: string) => string;
 }
 
 // ============================================================================
@@ -74,6 +86,41 @@ export interface ConstellationProps {
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  // Handle non-hex formats
+  if (!hex.startsWith("#")) return hex;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+// Monotone-chain convex hull. Returns the hull vertices (CCW) for a set of 2D
+// points; used to wrap a cluster's nodes in a translucent blob. Fewer than 3
+// points have no polygon — the caller draws a circle instead.
+function convexHull(points: Array<[number, number]>): Array<[number, number]> {
+  if (points.length < 3) return points.slice();
+  const pts = points.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o: number[], a: number[], b: number[]) =>
+    (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: Array<[number, number]> = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0)
+      lower.pop();
+    lower.push(p);
+  }
+  const upper: Array<[number, number]> = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0)
+      upper.pop();
+    upper.push(p);
+  }
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
 }
 
 /**
@@ -190,6 +237,9 @@ export function Constellation({
   heatLegendEndpoints,
   compactLabels,
   sizeLegendLabel,
+  clusterKeyFn,
+  clusterColorFn,
+  clusterLabelFn,
 }: ConstellationProps) {
   const t = useTranslations("constellation");
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -222,9 +272,14 @@ export function Constellation({
   });
 
   // ----- Prepare data with Pretext -----
-  const { preparedNodes, linksByNode, linksWithIndices } = useMemo(() => {
+  const { preparedNodes, linksByNode, linksWithIndices, clusters } = useMemo(() => {
     if (!data.nodes.length)
-      return { preparedNodes: [], linksByNode: new Map(), linksWithIndices: [] };
+      return {
+        preparedNodes: [],
+        linksByNode: new Map(),
+        linksWithIndices: [],
+        clusters: [] as Array<{ key: string; members: number[]; color: string; label: string }>,
+      };
 
     const nodeIndexMap = new Map<string, number>();
     data.nodes.forEach((n, i) => nodeIndexMap.set(n.id, i));
@@ -242,24 +297,69 @@ export function Constellation({
       if (lc > maxLinkCount) maxLinkCount = lc;
     }
 
+    // Clustering precompute: when clusterKeyFn is set, group nodes by key and
+    // lay each group out around its own centroid (placed on a wider ring) so
+    // groups read as separate clusters. Without it, nodes use the id-hash ring.
+    const count = data.nodes.length;
+    const clusterKeys = clusterKeyFn ? data.nodes.map((n) => clusterKeyFn(n)) : null;
+    const clusterMembers = new Map<string, number[]>();
+    if (clusterKeys) {
+      clusterKeys.forEach((k, i) => {
+        if (k == null) return;
+        const arr = clusterMembers.get(k);
+        if (arr) arr.push(i);
+        else clusterMembers.set(k, [i]);
+      });
+    }
+    const clusterOrder = [...clusterMembers.keys()];
+    const clusterCentroid = new Map<string, { cx: number; cy: number; r: number }>();
+    const clusterRingR = Math.sqrt(Math.max(count, 1)) * 60;
+    clusterOrder.forEach((k, ci) => {
+      const a = (ci / Math.max(clusterOrder.length, 1)) * Math.PI * 2;
+      const members = clusterMembers.get(k)!;
+      const blobR = 22 + Math.sqrt(members.length) * 18;
+      clusterCentroid.set(k, {
+        cx: Math.cos(a) * clusterRingR,
+        cy: Math.sin(a) * clusterRingR,
+        r: blobR,
+      });
+    });
+
     // Prepare nodes: assign world positions + pretext-prepare text
     const nodes: PreparedNode[] = data.nodes.map((node, i) => {
       const text = node.label || node.id.substring(0, 12);
-      const color = nodeColorFn?.(node) || node.color || DEFAULT_NODE_COLOR;
+      const ck = clusterKeys ? clusterKeys[i] : null;
+      const color =
+        (ck != null && clusterColorFn?.(ck)) ||
+        nodeColorFn?.(node) ||
+        node.color ||
+        DEFAULT_NODE_COLOR;
       const lc = linkCounts.get(node.id) || 0;
       // Use sqrt for a less aggressive curve — avoids everything being red
       const heat = nodeHeatFn
         ? heatColor(Math.max(0, Math.min(1, nodeHeatFn(node))))
         : heatColor(Math.sqrt(lc / maxLinkCount));
 
-      // Position: use hash of id for deterministic placement, spread in a ring
       const seed = hashStr(node.id);
-      const count = data.nodes.length;
-      const angle = (i / count) * Math.PI * 2 + ((seed % 100) / 100) * 0.5;
-      const baseRadius = Math.sqrt(count) * 30;
-      const radius = baseRadius * 0.3 + ((Math.abs(seed) % 1000) / 1000) * baseRadius * 0.7;
-      const wx = Math.cos(angle) * radius + ((seed % 200) - 100) * 0.5;
-      const wy = Math.sin(angle) * radius + (((seed >> 8) % 200) - 100) * 0.5;
+      let wx: number;
+      let wy: number;
+      const centroid = ck != null ? clusterCentroid.get(ck) : undefined;
+      if (centroid) {
+        // Scatter the node around its cluster centroid in a small disk.
+        const members = clusterMembers.get(ck!)!;
+        const j = members.indexOf(i);
+        const la = (j / Math.max(members.length, 1)) * Math.PI * 2 + ((seed % 100) / 100) * 0.6;
+        const lr = centroid.r * (0.25 + 0.75 * ((Math.abs(seed) % 1000) / 1000));
+        wx = centroid.cx + Math.cos(la) * lr;
+        wy = centroid.cy + Math.sin(la) * lr;
+      } else {
+        // Position: use hash of id for deterministic placement, spread in a ring
+        const angle = (i / count) * Math.PI * 2 + ((seed % 100) / 100) * 0.5;
+        const baseRadius = Math.sqrt(count) * 30;
+        const radius = baseRadius * 0.3 + ((Math.abs(seed) % 1000) / 1000) * baseRadius * 0.7;
+        wx = Math.cos(angle) * radius + ((seed % 200) - 100) * 0.5;
+        wy = Math.sin(angle) * radius + (((seed >> 8) % 200) - 100) * 0.5;
+      }
 
       return {
         node,
@@ -268,10 +368,20 @@ export function Constellation({
         prepared: prepareWithSegments(text, FONT_SMALL),
         preparedHeight: prepare(text, FONT_SMALL),
         color,
-        heatColor: heat,
+        // When clustering, the dot itself is tinted by the cluster (scope) color
+        // so the grouping reads at a glance; otherwise it keeps the heat gradient.
+        heatColor: centroid ? color : heat,
         linkCount: lc,
       };
     });
+
+    // Cluster descriptors for the blob overlay (color + label + member indices).
+    const clusters = clusterOrder.map((key) => ({
+      key,
+      members: clusterMembers.get(key)!,
+      color: clusterColorFn?.(key) || DEFAULT_NODE_COLOR,
+      label: clusterLabelFn?.(key) ?? key,
+    }));
 
     // Build link structures
     const linksIdx: Array<{
@@ -307,8 +417,9 @@ export function Constellation({
       preparedNodes: nodes,
       linksByNode: byNode,
       linksWithIndices: linksIdx,
+      clusters,
     };
-  }, [data, nodeColorFn, linkColorFn, nodeHeatFn]);
+  }, [data, nodeColorFn, linkColorFn, nodeHeatFn, clusterKeyFn, clusterColorFn, clusterLabelFn]);
 
   // ----- Animation loop -----
   const animate = useCallback(() => {
@@ -431,6 +542,73 @@ export function Constellation({
         linksDrawn++;
       }
       ctx.globalAlpha = 1;
+    }
+
+    // --- Draw scope cluster blobs (behind nodes) ---
+    // Wrap each cluster's nodes in a translucent, outward-padded convex hull so
+    // groups read as soft regions. Tiny clusters (<3 nodes) get a circle instead.
+    if (clusters.length > 0) {
+      ctx.save();
+      ctx.lineJoin = "round";
+      for (const cluster of clusters) {
+        const pts: Array<[number, number]> = [];
+        for (const idx of cluster.members) {
+          if (idx < screenX.length) pts.push([screenX[idx], screenY[idx]]);
+        }
+        if (pts.length === 0) continue;
+
+        // Cluster screen centroid (for outward padding + label placement).
+        let mx = 0;
+        let my = 0;
+        for (const [x, y] of pts) {
+          mx += x;
+          my += y;
+        }
+        mx /= pts.length;
+        my /= pts.length;
+
+        const pad = 26;
+        ctx.fillStyle = hexToRgba(cluster.color, isDark ? 0.1 : 0.08);
+        ctx.strokeStyle = hexToRgba(cluster.color, 0.35);
+        ctx.lineWidth = 1.25;
+        ctx.beginPath();
+        if (pts.length < 3) {
+          // Circle around the 1–2 points.
+          let rad = pad;
+          for (const [x, y] of pts) rad = Math.max(rad, Math.hypot(x - mx, y - my) + pad);
+          ctx.arc(mx, my, rad, 0, Math.PI * 2);
+        } else {
+          const hull = convexHull(pts);
+          for (let j = 0; j < hull.length; j++) {
+            // Push each vertex outward from the centroid for a rounded, padded blob.
+            const [hx, hy] = hull[j];
+            const dx = hx - mx;
+            const dy = hy - my;
+            const d = Math.hypot(dx, dy) || 1;
+            const ex = hx + (dx / d) * pad;
+            const ey = hy + (dy / d) * pad;
+            if (j === 0) ctx.moveTo(ex, ey);
+            else ctx.lineTo(ex, ey);
+          }
+          ctx.closePath();
+        }
+        ctx.fill();
+        ctx.stroke();
+
+        // Cluster label at the top of the blob.
+        if (cluster.label && zoom > 0.4) {
+          let topY = my;
+          for (const [, y] of pts) topY = Math.min(topY, y);
+          ctx.fillStyle = hexToRgba(cluster.color, isDark ? 0.95 : 0.85);
+          ctx.font = "600 11px ui-sans-serif, system-ui, sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "bottom";
+          ctx.fillText(cluster.label, mx, topY - pad - 4);
+        }
+      }
+      ctx.restore();
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
     }
 
     // --- Draw nodes ---
@@ -582,26 +760,29 @@ export function Constellation({
       legendX -= 14;
     }
 
-    // Heat gradient legend (top-left, below instructions)
-    ctx.textAlign = "left";
-    ctx.font = FONT_BOLD;
-    ctx.fillStyle = isDark ? "#a1a1aa" : "#52525b";
-    ctx.fillText((heatLegendLabel || t("legendLinks")).toUpperCase(), 12, 36);
-    const [heatLo, heatHi] = heatLegendEndpoints || [t("legendFew"), t("legendMany")];
-    // Size the bar so both endpoint labels fit without overlap (e.g. ISO dates
-    // are wider than "few"/"many"). Min 80px keeps the visual weight stable.
-    ctx.font = MONO;
-    const heatLoW = ctx.measureText(heatLo).width;
-    const heatHiW = ctx.measureText(heatHi).width;
-    const gradW = Math.max(80, heatLoW + heatHiW + 12);
-    for (let gx = 0; gx < gradW; gx++) {
-      ctx.fillStyle = heatColor(gx / gradW);
-      ctx.fillRect(12 + gx, 42, 1, 6);
+    // Heat gradient legend (top-left, below instructions). Suppressed while
+    // clustering, where node color encodes the cluster (scope), not the gradient.
+    if (clusters.length === 0) {
+      ctx.textAlign = "left";
+      ctx.font = FONT_BOLD;
+      ctx.fillStyle = isDark ? "#a1a1aa" : "#52525b";
+      ctx.fillText((heatLegendLabel || t("legendLinks")).toUpperCase(), 12, 36);
+      const [heatLo, heatHi] = heatLegendEndpoints || [t("legendFew"), t("legendMany")];
+      // Size the bar so both endpoint labels fit without overlap (e.g. ISO dates
+      // are wider than "few"/"many"). Min 80px keeps the visual weight stable.
+      ctx.font = MONO;
+      const heatLoW = ctx.measureText(heatLo).width;
+      const heatHiW = ctx.measureText(heatHi).width;
+      const gradW = Math.max(80, heatLoW + heatHiW + 12);
+      for (let gx = 0; gx < gradW; gx++) {
+        ctx.fillStyle = heatColor(gx / gradW);
+        ctx.fillRect(12 + gx, 42, 1, 6);
+      }
+      ctx.fillStyle = isDark ? "#a1a1aa" : "#71717a";
+      ctx.fillText(heatLo, 12, 60);
+      ctx.textAlign = "right";
+      ctx.fillText(heatHi, 12 + gradW, 60);
     }
-    ctx.fillStyle = isDark ? "#a1a1aa" : "#71717a";
-    ctx.fillText(heatLo, 12, 60);
-    ctx.textAlign = "right";
-    ctx.fillText(heatHi, 12 + gradW, 60);
 
     // Node-size legend — only shown when the caller maps size to a real dimension.
     // Layout: "few • • ● many" so the labels bracket the dots without overlap.
@@ -642,7 +823,7 @@ export function Constellation({
     ctx.restore();
 
     animRef.current = requestAnimationFrame(animate);
-  }, [isDark, preparedNodes, linksWithIndices, linksByNode, t]);
+  }, [isDark, preparedNodes, linksWithIndices, linksByNode, clusters, t]);
 
   // ----- Label drawing helper -----
   function drawLabel(

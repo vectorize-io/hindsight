@@ -1280,6 +1280,33 @@ class GraphDataResponse(BaseModel):
     limit: int
 
 
+class ObservationScope(BaseModel):
+    """A distinct observation scope: an exact tag set plus its observation count."""
+
+    tags: list[str] = Field(
+        description="The exact tag set defining this scope (normalized order). Empty list is the global/untagged scope."
+    )
+    count: int = Field(description="Number of observations that live under this scope")
+
+
+class ObservationScopesResponse(BaseModel):
+    """Response model for the observation scopes enumeration endpoint."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "scopes": [
+                    {"tags": ["user:alice"], "count": 12},
+                    {"tags": ["user:alice", "project:apollo"], "count": 4},
+                    {"tags": [], "count": 2},
+                ]
+            }
+        }
+    )
+
+    scopes: list[ObservationScope] = Field(description="Distinct observation scopes, most populous first")
+
+
 class ListMemoryUnitsResponse(BaseModel):
     """Response model for list memory units endpoint."""
 
@@ -1405,6 +1432,12 @@ class DocumentResponse(BaseModel):
     tags: list[str] = FieldWithDefault(list, description="Tags associated with this document")
     document_metadata: dict[str, Any] | None = Field(default=None, description="Document metadata")
     retain_params: dict[str, Any] | None = Field(default=None, description="Parameters used during retain")
+    observation_scopes: str | list[list[str]] | None = Field(
+        default=None,
+        description="The observation_scopes spec configured at retain time (e.g. 'all_combinations', "
+        "'per_tag', or explicit tag-set lists), captured into retain_params. None when none was set "
+        "(default 'combined' scoping) or for documents retained before this was captured.",
+    )
 
 
 class UpdateDocumentRequest(BaseModel):
@@ -2029,6 +2062,16 @@ class BankTemplateConfig(BaseModel):
     )
     max_observations_per_scope: int | None = Field(
         default=None, description="Max observations to retain per consolidation scope"
+    )
+    observation_scope_limits: list[dict[str, Any]] | None = Field(
+        default=None,
+        description=(
+            "Per-scope overrides of max_observations_per_scope: "
+            '[{"scope": ["run_*", "shared"], "limit": 1}]. Each scope is a list of '
+            "fnmatch tag-globs; a consolidation scope matches under exact cover "
+            "(every tag matched by a glob and every glob matched by a tag). The first "
+            "matching rule wins; unmatched scopes fall back to max_observations_per_scope."
+        ),
     )
     reflect_source_facts_max_tokens: int | None = Field(
         default=None, description="Max tokens of source facts per reflect call"
@@ -5769,6 +5812,35 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/observations: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/observations/scopes",
+        response_model=ObservationScopesResponse,
+        summary="List observation scopes",
+        description=(
+            "Enumerate the distinct scopes across a bank's observations. Each observation lives "
+            "under a scope: the exact set of tags it was consolidated with. Returns every distinct "
+            "scope (tag order normalized) with the number of observations in it; the empty tag list "
+            "is the global/untagged scope. Use a returned scope with the graph endpoint "
+            "(tags=<scope> & tags_match=exact) to filter observations to exactly that scope."
+        ),
+        operation_id="list_observation_scopes",
+        tags=["Memory"],
+    )
+    async def api_list_observation_scopes(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
+        """List the distinct observation scopes (exact tag sets) for a bank."""
+        try:
+            return await app.state.memory.list_observation_scopes(bank_id, request_context=request_context)
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/observations/scopes: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post(

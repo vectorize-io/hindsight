@@ -119,6 +119,23 @@ class TestTagsWhereClauseBuilder:
         result = build_tags_where_clause_simple(["user_a"], 5, match="all_strict")
         assert "@>" in result
 
+    # ---- Test "exact" mode (set equality, excludes untagged) ----
+
+    def test_tags_match_exact_uses_set_equality(self):
+        """When match='exact', should require superset AND subset (set equality)."""
+        result = build_tags_where_clause_simple(["user_a"], 5, match="exact")
+        assert "@>" in result  # contains-all
+        assert "<@" in result  # contained-by
+        # Both halves bind the same parameter
+        assert result.count("$5") == 2
+
+    def test_tags_match_exact_with_table_alias(self):
+        """Should include table alias on both halves of the exact clause."""
+        result = build_tags_where_clause_simple(["user_a", "user_b"], 3, table_alias="mu.", match="exact")
+        assert result.count("mu.tags") == 2
+        assert "@>" in result
+        assert "<@" in result
+
     # ---- Test table alias with all modes ----
 
     def test_tags_match_any_with_table_alias(self):
@@ -213,6 +230,30 @@ class TestFilterResultsByTags:
         # Only ["a", "b"] has both tags, but untagged would also be included
         tags_found = [r.tags for r in filtered]
         assert ["a", "b"] in tags_found
+
+    # ---- Test "exact" mode (set equality, excludes untagged) ----
+
+    def test_exact_mode_matches_only_equal_set(self):
+        """'exact' mode should match only results whose tag set equals the scope."""
+        results = [MockResult(["a"]), MockResult(["a", "b"]), MockResult(["b"]), MockResult(None)]
+        filtered = filter_results_by_tags(results, ["a"], match="exact")
+        # Only the exact scope ["a"] matches; ["a", "b"] is a different scope.
+        assert len(filtered) == 1
+        assert filtered[0].tags == ["a"]
+
+    def test_exact_mode_is_order_independent(self):
+        """'exact' mode should treat tag order as irrelevant (set equality)."""
+        results = [MockResult(["b", "a"]), MockResult(["a"]), MockResult(["a", "b", "c"])]
+        filtered = filter_results_by_tags(results, ["a", "b"], match="exact")
+        assert len(filtered) == 1
+        assert filtered[0].tags == ["b", "a"]
+
+    def test_exact_mode_excludes_untagged(self):
+        """'exact' mode with a non-empty scope should exclude untagged results."""
+        results = [MockResult(["a"]), MockResult(None), MockResult([])]
+        filtered = filter_results_by_tags(results, ["a"], match="exact")
+        assert len(filtered) == 1
+        assert filtered[0].tags == ["a"]
 
     def test_all_mode_includes_untagged(self):
         """'all' mode should include untagged results."""

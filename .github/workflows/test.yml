@@ -32,6 +32,7 @@ jobs:
       integration-tests: ${{ steps.filter.outputs.integration-tests }}
       integrations-openclaw: ${{ steps.filter.outputs.integrations-openclaw }}
       integrations-ai-sdk: ${{ steps.filter.outputs.integrations-ai-sdk }}
+      integrations-agent-framework: ${{ steps.filter.outputs.integrations-agent-framework }}
       integrations-chat: ${{ steps.filter.outputs.integrations-chat }}
       integrations-claude-code: ${{ steps.filter.outputs.integrations-claude-code }}
       integrations-cline: ${{ steps.filter.outputs.integrations-cline }}
@@ -125,6 +126,8 @@ jobs:
             - 'hindsight-integrations/openclaw/**'
           integrations-ai-sdk:
             - 'hindsight-integrations/ai-sdk/**'
+          integrations-agent-framework:
+            - 'hindsight-integrations/agent-framework/**'
           integrations-chat:
             - 'hindsight-integrations/chat/**'
           integrations-claude-code:
@@ -3189,6 +3192,49 @@ jobs:
       working-directory: ./hindsight-integrations/obsidian
       run: npm test
 
+  test-agent-framework-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-agent-framework == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build agent-framework integration
+      working-directory: ./hindsight-integrations/agent-framework
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/agent-framework
+      run: uv sync --frozen
+
+    - name: Lint
+      working-directory: ./hindsight-integrations/agent-framework
+      run: uv run ruff check .
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/agent-framework
+      # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
+      # (requires_real_llm) needs a live Hindsight server and runs separately.
+      run: uv run pytest tests -v -m "not requires_real_llm"
+
   test-crewai-integration:
     needs: [detect-changes]
     if: >-
@@ -4520,6 +4566,7 @@ jobs:
       - test-dify-integration
       - test-flowise-integration
       - test-obsidian-integration
+      - test-agent-framework-integration
       - test-crewai-integration
       - test-langgraph-integration
       - test-superagent-integration
