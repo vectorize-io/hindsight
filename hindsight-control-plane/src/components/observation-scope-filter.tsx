@@ -2,13 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { Layers } from "lucide-react";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 
 export interface ObservationScope {
   tags: string[];
@@ -58,6 +52,8 @@ export function ObservationScopeFilter({ scopes, value, onChange }: ObservationS
   const t = useTranslations("dataView");
 
   const selectValue = value === null ? ALL_VALUE : scopeValue(value);
+  const selectedCount =
+    value === null ? null : scopes.find((s) => scopeValue(s.tags) === selectValue)?.count;
 
   const handleChange = (next: string) => {
     if (next === ALL_VALUE) {
@@ -67,13 +63,33 @@ export function ObservationScopeFilter({ scopes, value, onChange }: ObservationS
     onChange(JSON.parse(next) as string[]);
   };
 
+  // The trigger renders a compact, single-line summary (not the wrapping pills
+  // used in the list) so a multi-tag or long-tag scope truncates with an
+  // ellipsis instead of spilling out of the fixed-height control. We render it
+  // ourselves rather than via SelectValue, which would otherwise clone the
+  // selected item's wrapping pill layout into the trigger and overflow it.
+  const renderTriggerLabel = () => {
+    if (value === null) {
+      return <span className="truncate text-muted-foreground">{t("scopeAll")}</span>;
+    }
+    if (value.length === 0) {
+      return <span className="truncate italic text-muted-foreground">{t("scopeGlobal")}</span>;
+    }
+    return <span className="truncate text-primary">{value.map((tag) => `#${tag}`).join(" ")}</span>;
+  };
+
   return (
     <Select value={selectValue} onValueChange={handleChange}>
       <SelectTrigger className="h-9 w-64" aria-label={t("scopeLabel")}>
-        <Layers className="h-4 w-4 text-muted-foreground shrink-0" />
-        <SelectValue placeholder={t("scopeLabel")} />
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+          <Layers className="h-4 w-4 shrink-0 text-muted-foreground" />
+          {renderTriggerLabel()}
+          {selectedCount != null && (
+            <span className="shrink-0 text-xs text-muted-foreground">({selectedCount})</span>
+          )}
+        </div>
       </SelectTrigger>
-      <SelectContent>
+      <SelectContent className="max-w-[22rem]">
         <SelectItem value={ALL_VALUE}>{t("scopeAll")}</SelectItem>
         {scopes.map((scope) => (
           <SelectItem key={scopeValue(scope.tags)} value={scopeValue(scope.tags)}>
