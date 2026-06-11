@@ -1377,6 +1377,7 @@ Observations are deduplicated, evidence-grounded knowledge consolidated from mul
 |----------|-------------|---------|
 | `HINDSIGHT_API_ENABLE_OBSERVATIONS` | Enable observation consolidation | `true` |
 | `HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION` | Automatically trigger consolidation after retain, delete, and update operations. When `false`, consolidation only runs when explicitly triggered via the [consolidate endpoint](api/operations.md#consolidation). Configurable per bank. | `true` |
+| `HINDSIGHT_API_ENTITY_ENTROPY_GATE` | Entropy gate for entity resolution: fuzzy name similarity is suppressed for low-information names (Shannon character entropy < 1.5, e.g. "Bob", "AI"), so they resolve by exact match or stay distinct instead of fuzzy-merging into similar names ("Rob"). Disable to restore the previous scoring. Configurable per bank. | `true` |
 | `HINDSIGHT_API_ENABLE_FACT_SUPERSESSION` | Automatic fact supersession: a background worker checks each newly retained world fact (with a real `occurred_start`) against existing facts; contradicted older facts get `valid_until` set — hidden from default recall, still visible to `as_of` point-in-time recalls. Rows are never deleted. Configurable per bank. | `false` |
 | `HINDSIGHT_API_FACT_SUPERSESSION_CANDIDATE_LIMIT` | Contradiction candidates examined per new fact (top-K from the worker's internal recall). Configurable per bank. | `5` |
 | `HINDSIGHT_API_FACT_SUPERSESSION_RECALL_BUDGET` | Budget tier (`low`/`mid`/`high`) for the supersession worker's candidate recall. Configurable per bank. | `low` |

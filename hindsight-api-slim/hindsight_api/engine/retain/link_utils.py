@@ -300,6 +300,7 @@ async def resolve_entities_only(
     llm_entities: list[list[dict]],
     log_buffer: list[str] = None,
     entity_labels: list | None = None,
+    entropy_gate: bool = True,
 ) -> tuple[list[str], list[tuple], dict[str, list[str]]]:
     """
     Phase 1 of entity processing: resolve entity names to canonical IDs.
@@ -342,6 +343,7 @@ async def resolve_entities_only(
         unit_event_date=None,
         conn=conn,
         entity_labels=entity_labels,
+        entropy_gate=entropy_gate,
     )
     _log(
         log_buffer,

@@ -438,6 +438,7 @@ ENV_ENABLE_DOCUMENT_IMPORT_API = "HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API"
 # Observations settings (consolidated knowledge from facts)
 ENV_ENABLE_OBSERVATIONS = "HINDSIGHT_API_ENABLE_OBSERVATIONS"
 ENV_ENABLE_AUTO_CONSOLIDATION = "HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION"
+ENV_ENTITY_ENTROPY_GATE = "HINDSIGHT_API_ENTITY_ENTROPY_GATE"
 ENV_ENABLE_FACT_SUPERSESSION = "HINDSIGHT_API_ENABLE_FACT_SUPERSESSION"
 ENV_FACT_SUPERSESSION_CANDIDATE_LIMIT = "HINDSIGHT_API_FACT_SUPERSESSION_CANDIDATE_LIMIT"
 ENV_FACT_SUPERSESSION_RECALL_BUDGET = "HINDSIGHT_API_FACT_SUPERSESSION_RECALL_BUDGET"
@@ -855,6 +856,7 @@ DEFAULT_ENABLE_DOCUMENT_IMPORT_API = True
 # Observations defaults (consolidated knowledge from facts)
 DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
 DEFAULT_ENABLE_AUTO_CONSOLIDATION = True  # Auto-consolidation after retain enabled by default
+DEFAULT_ENTITY_ENTROPY_GATE = True  # Suppress fuzzy name-merging for low-entropy names (Bob/Rob guard)
 DEFAULT_ENABLE_FACT_SUPERSESSION = False  # Automatic fact supersession (temporal ledger) — opt-in while graded in
 DEFAULT_FACT_SUPERSESSION_CANDIDATE_LIMIT = 5  # Contradiction candidates per new fact (top-K from internal recall)
 DEFAULT_FACT_SUPERSESSION_RECALL_BUDGET = "low"  # Budget tier for the worker's candidate recall
@@ -1473,6 +1475,8 @@ class HindsightConfig:
     # Observations settings (consolidated knowledge from facts)
     enable_observations: bool
     enable_auto_consolidation: bool
+    # Entity resolution precision (entropy gate for fuzzy name matching)
+    entity_entropy_gate: bool
     # Fact supersession (temporal ledger: contradicted facts get valid_until set)
     enable_fact_supersession: bool
     fact_supersession_candidate_limit: int
@@ -1671,6 +1675,8 @@ class HindsightConfig:
         # Consolidation settings
         "enable_observations",
         "enable_auto_consolidation",
+        # Entity resolution
+        "entity_entropy_gate",
         # Fact supersession (temporal ledger)
         "enable_fact_supersession",
         "fact_supersession_candidate_limit",
@@ -2377,6 +2383,8 @@ class HindsightConfig:
             enable_auto_consolidation=os.getenv(
                 ENV_ENABLE_AUTO_CONSOLIDATION, str(DEFAULT_ENABLE_AUTO_CONSOLIDATION)
             ).lower()
+            == "true",
+            entity_entropy_gate=os.getenv(ENV_ENTITY_ENTROPY_GATE, str(DEFAULT_ENTITY_ENTROPY_GATE)).lower()
             == "true",
             enable_fact_supersession=os.getenv(
                 ENV_ENABLE_FACT_SUPERSESSION, str(DEFAULT_ENABLE_FACT_SUPERSESSION)

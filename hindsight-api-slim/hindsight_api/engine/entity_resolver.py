@@ -8,6 +8,8 @@ to disambiguate entities across memory units.
 import asyncio
 import json
 import logging
+import math
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -86,6 +88,49 @@ class _CooccurrencePair:
     # time, so the cooccurrence cache reflects the underlying knowledge
     # timeline instead of collapsing to the import moment.
     event_date: datetime | None = None
+
+
+_NAME_ENTROPY_THRESHOLD = 1.5
+
+
+def _normalize_name_for_entropy(name: str) -> str:
+    """Lowercase and collapse whitespace (Graphiti dedup_helpers normalization)."""
+    return re.sub(r"\s+", " ", name.lower()).strip()
+
+
+def name_entropy(normalized_name: str) -> float:
+    """Shannon entropy over characters — a proxy for how informative a name is.
+
+    Ported from Graphiti dedup_helpers._name_entropy: strip spaces, count each
+    character, sum p * -log2(p). Short/repetitive names ("bob" ≈ 0.92,
+    "ai" = 1.0) score low; ordinary distinct-letter names score well above the
+    threshold ("alice" ≈ 2.32).
+    """
+    counts: dict[str, int] = {}
+    for char in normalized_name.replace(" ", ""):
+        counts[char] = counts.get(char, 0) + 1
+    total = sum(counts.values())
+    if total == 0:
+        return 0.0
+    entropy = 0.0
+    for count in counts.values():
+        probability = count / total
+        entropy -= probability * math.log2(probability)
+    return entropy
+
+
+def has_high_entropy(name: str) -> bool:
+    """Whether a name carries enough signal for fuzzy similarity to be trusted.
+
+    Deliberate deviation from the Graphiti original: its extra length rule
+    (< 6 chars AND single token → unreliable) would gate "alice" and break this
+    resolver's partial-name alias contract ("Alice" must still merge into
+    "Alice Chen" via name similarity + co-occurrence). Entropy alone separates
+    the two target cases — "bob"/"ai" gated, "alice" trusted — at the cost of
+    letting borderline three-distinct-letter names ("rob" ≈ 1.58) through; the
+    Bob/Rob false-merge is still prevented from the low-entropy side.
+    """
+    return name_entropy(_normalize_name_for_entropy(name)) >= _NAME_ENTROPY_THRESHOLD
 
 
 # Load spaCy model (singleton)
@@ -230,6 +275,7 @@ class EntityResolver:
         unit_event_date,
         conn=None,
         entity_labels: list | None = None,
+        entropy_gate: bool = True,
     ) -> list[str]:
         """
         Resolve multiple entities in batch (MUCH faster than sequential).
@@ -255,11 +301,11 @@ class EntityResolver:
         if conn is None:
             async with acquire_with_retry(self.pool) as conn:
                 return await self._resolve_entities_batch_impl(
-                    conn, bank_id, entities_data, context, unit_event_date, taxonomy_lookup, labels_cfg
+                    conn, bank_id, entities_data, context, unit_event_date, taxonomy_lookup, labels_cfg, entropy_gate
                 )
         else:
             return await self._resolve_entities_batch_impl(
-                conn, bank_id, entities_data, context, unit_event_date, taxonomy_lookup, labels_cfg
+                conn, bank_id, entities_data, context, unit_event_date, taxonomy_lookup, labels_cfg, entropy_gate
             )
 
     async def _resolve_entities_batch_impl(
@@ -271,6 +317,7 @@ class EntityResolver:
         unit_event_date,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
+        entropy_gate: bool = True,
     ) -> list[str]:
         if self.entity_lookup == "trigram":
             # Route to backend-specific fuzzy strategy.
@@ -278,7 +325,7 @@ class EntityResolver:
             backend_strategy = self._ops.get_entity_resolution_strategy()
             if backend_strategy == "oracle_fuzzy":
                 return await self._resolve_entities_batch_oracle_fuzzy(
-                    conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg
+                    conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg, entropy_gate
                 )
             # Auto-detect pg_trgm availability on first call and fall back to
             # "full" strategy if the extension is not installed.  See #626.
@@ -294,13 +341,13 @@ class EntityResolver:
                     )
                     self.entity_lookup = "full"
                     return await self._resolve_entities_batch_full(
-                        conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg
+                        conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg, entropy_gate
                     )
             return await self._resolve_entities_batch_trigram(
-                conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg
+                conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg, entropy_gate
             )
         return await self._resolve_entities_batch_full(
-            conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg
+            conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg, entropy_gate
         )
 
     async def _resolve_entities_batch_full(
@@ -311,6 +358,7 @@ class EntityResolver:
         unit_event_date,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
+        entropy_gate: bool = True,
     ) -> list[str]:
         """Original strategy: load all bank entities then match in Python."""
         # Query ALL candidates for this bank
@@ -385,6 +433,7 @@ class EntityResolver:
             cooccurrence_map,
             taxonomy_lookup,
             labels_cfg,
+            entropy_gate,
         )
 
     async def _resolve_entities_batch_trigram(
@@ -395,6 +444,7 @@ class EntityResolver:
         unit_event_date,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
+        entropy_gate: bool = True,
     ) -> list[str]:
         """
         Trigram strategy: fetch only similar candidates per entity name using pg_trgm.
@@ -489,6 +539,7 @@ class EntityResolver:
             cooccurrence_map,
             taxonomy_lookup,
             labels_cfg,
+            entropy_gate,
         )
 
     async def _resolve_entities_batch_oracle_fuzzy(
@@ -499,6 +550,7 @@ class EntityResolver:
         unit_event_date: datetime | None,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
+        entropy_gate: bool = True,
     ) -> list[str]:
         """
         Oracle strategy: fetch similar candidates using UTL_MATCH.JARO_WINKLER_SIMILARITY.
@@ -595,6 +647,7 @@ class EntityResolver:
             cooccurrence_map,
             taxonomy_lookup,
             labels_cfg,
+            entropy_gate,
         )
 
     async def _resolve_from_candidates(
@@ -607,6 +660,7 @@ class EntityResolver:
         cooccurrence_map: dict[str, set[str]],
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
+        entropy_gate: bool = True,
     ) -> list[str]:
         """Shared scoring + upsert logic used by both lookup strategies."""
 
@@ -657,12 +711,21 @@ class EntityResolver:
 
             nearby_entity_set = {e["text"].lower() for e in nearby_entities if e["text"] != entity_text}
 
+            # Entropy gate: fuzzy name similarity is meaningless on low-information
+            # names ("Bob" vs "Rob" scores 0.67, and shared co-occurrence pushes the
+            # blend past the 0.6 threshold — a false merge). Zeroing the name signal
+            # caps the blended score at 0.5 (< threshold), so low-entropy names only
+            # resolve via the exact-match path (the (bank_id, LOWER(name)) unique
+            # index + ON CONFLICT fallback) and never fuzzy-merge.
+            low_entropy_name = entropy_gate and not has_high_entropy(entity_text)
+
             for candidate_id, canonical_name, metadata, last_seen, mention_count in candidates:
                 score = 0.0
 
-                # 1. Name similarity (0-0.5)
+                # 1. Name similarity (0-0.5; suppressed for low-entropy names)
                 name_similarity = SequenceMatcher(None, entity_text.lower(), canonical_name.lower()).ratio()
-                score += name_similarity * 0.5
+                if not low_entropy_name:
+                    score += name_similarity * 0.5
 
                 # 2. Co-occurring entities (0-0.3)
                 if nearby_entity_set:

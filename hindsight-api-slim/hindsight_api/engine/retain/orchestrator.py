@@ -319,6 +319,7 @@ async def _pre_resolve_phase1(
             log_buffer,
             user_entities_per_content=user_entities_per_content,
             entity_labels=getattr(config, "entity_labels", None),
+            entropy_gate=getattr(config, "entity_entropy_gate", True),
         )
 
         # Semantic ANN search on the same connection (autocommit, no transaction).
