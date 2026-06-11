@@ -60,7 +60,6 @@ Configuration is saved to `~/.hindsight/embed`:
 ```bash
 HINDSIGHT_EMBED_LLM_PROVIDER=openai
 HINDSIGHT_EMBED_LLM_MODEL=gpt-4o-mini
-HINDSIGHT_EMBED_BANK_ID=default
 HINDSIGHT_EMBED_LLM_API_KEY=sk-xxxxxxxxxxxx
 
 # Daemon settings (macOS: force CPU to avoid MPS/XPC issues)
@@ -90,7 +89,6 @@ The daemon starts automatically on first use!
 | `HINDSIGHT_EMBED_LLM_API_KEY` | **Required**. API key for LLM provider | - |
 | `HINDSIGHT_EMBED_LLM_PROVIDER` | LLM provider: `openai`, `anthropic`, `gemini`, `groq`, `minimax`, `ollama` | `openai` |
 | `HINDSIGHT_EMBED_LLM_MODEL` | Model name | `gpt-4o-mini` |
-| `HINDSIGHT_EMBED_BANK_ID` | Default memory bank ID | `default` |
 | `HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT` | Seconds before daemon auto-exits when idle (0 = never) | `0` |
 
 **Provider Examples:**

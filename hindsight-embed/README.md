@@ -153,7 +153,6 @@ Run `hindsight-embed configure` for a guided setup that saves to `~/.hindsight/e
 | `HINDSIGHT_EMBED_LLM_API_KEY` | LLM API key (or use `OPENAI_API_KEY`) | Required |
 | `HINDSIGHT_EMBED_LLM_PROVIDER` | LLM provider (`openai`, `groq`, `google`, `ollama`) | `openai` |
 | `HINDSIGHT_EMBED_LLM_MODEL` | LLM model | `gpt-4o-mini` |
-| `HINDSIGHT_EMBED_BANK_ID` | Default memory bank ID (optional, used when not specified in CLI) | `default` |
 | `HINDSIGHT_EMBED_API_URL` | Use external API server instead of starting local daemon | None (starts local daemon) |
 | `HINDSIGHT_EMBED_API_TOKEN` | Authentication token for external API (sent as Bearer token) | None |
 | `HINDSIGHT_EMBED_API_DATABASE_URL` | Database URL for daemon | `pg0://hindsight-embed` |

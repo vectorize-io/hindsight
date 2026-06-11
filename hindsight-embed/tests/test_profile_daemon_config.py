@@ -179,7 +179,6 @@ def test_get_config_respects_profile(temp_home, monkeypatch):
         "HINDSIGHT_API_LLM_PROVIDER=openai\n"
         "HINDSIGHT_API_LLM_MODEL=gpt-4o-mini\n"
         "HINDSIGHT_API_LLM_API_KEY=sk-default-key\n"
-        "HINDSIGHT_EMBED_BANK_ID=default-bank\n"
     )
 
     # Create named profile
@@ -192,7 +191,6 @@ def test_get_config_respects_profile(temp_home, monkeypatch):
         "HINDSIGHT_API_LLM_PROVIDER=anthropic\n"
         "HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-20250514\n"
         "HINDSIGHT_API_LLM_API_KEY=sk-ant-production\n"
-        "HINDSIGHT_EMBED_BANK_ID=production-bank\n"
     )
 
     # Create metadata
@@ -215,7 +213,6 @@ def test_get_config_respects_profile(temp_home, monkeypatch):
     monkeypatch.delenv("HINDSIGHT_API_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("HINDSIGHT_API_LLM_MODEL", raising=False)
     monkeypatch.delenv("HINDSIGHT_API_LLM_API_KEY", raising=False)
-    monkeypatch.delenv("HINDSIGHT_EMBED_BANK_ID", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     # Test with named profile
@@ -226,7 +223,6 @@ def test_get_config_respects_profile(temp_home, monkeypatch):
     assert config["llm_provider"] == "anthropic", "Should use profile's provider"
     assert config["llm_model"] == "claude-sonnet-4-20250514", "Should use profile's model"
     assert config["llm_api_key"] == "sk-ant-production", "Should use profile's API key"
-    assert config["bank_id"] == "production-bank", "Should use profile's bank_id"
 
 
 def test_profile_env_propagates_arbitrary_hindsight_keys_to_daemon(temp_home, monkeypatch):

@@ -14,7 +14,6 @@ Environment variables:
     HINDSIGHT_API_LLM_API_KEY: Required. API key for LLM provider.
     HINDSIGHT_API_LLM_PROVIDER: Optional. LLM provider (default: "openai").
     HINDSIGHT_API_LLM_MODEL: Optional. LLM model (default: provider-specific, resolved by hindsight-api).
-    HINDSIGHT_EMBED_BANK_ID: Optional. Memory bank ID (default: "default").
     HINDSIGHT_EMBED_API_URL: Optional. Use external API server instead of starting local daemon.
     HINDSIGHT_EMBED_API_TOKEN: Optional. Authentication token for external API (sent as Bearer token).
     HINDSIGHT_EMBED_API_DATABASE_URL: Optional. Database URL for daemon (default: "pg0://hindsight-embed").
@@ -130,7 +129,6 @@ def get_config():
         "llm_api_key": os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY"),
         "llm_provider": os.environ.get("HINDSIGHT_API_LLM_PROVIDER", "openai"),
         "llm_model": os.environ.get("HINDSIGHT_API_LLM_MODEL"),
-        "bank_id": os.environ.get("HINDSIGHT_EMBED_BANK_ID", "default"),
     }
 
 
@@ -229,14 +227,12 @@ def _do_configure_from_env():
         return 1
 
     model = os.environ.get("HINDSIGHT_API_LLM_MODEL")
-    bank_id = os.environ.get("HINDSIGHT_EMBED_BANK_ID", "default")
 
     print()
     print("\033[1m\033[36m  Hindsight Embed - Non-interactive Configuration\033[0m")
     print()
     print(f"  \033[2mProvider:\033[0m {provider}")
     print(f"  \033[2mModel:\033[0m {model or '(provider default)'}")
-    print(f"  \033[2mBank ID:\033[0m {bank_id}")
 
     # Save configuration
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -244,7 +240,6 @@ def _do_configure_from_env():
     config_values = {"HINDSIGHT_API_LLM_PROVIDER": provider}
     if model:
         config_values["HINDSIGHT_API_LLM_MODEL"] = model
-    config_values["HINDSIGHT_EMBED_BANK_ID"] = bank_id
     if api_key:
         config_values["HINDSIGHT_API_LLM_API_KEY"] = api_key
 
@@ -411,17 +406,11 @@ def _do_configure_interactive(profile_name: str | None = None, port: int | None 
         return 1
     print()
 
-    # Bank ID
-    bank_id = _prompt_text("Memory bank ID", default="default")
-    if bank_id is None:
-        return 1
-
     # Save configuration
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     config_dict = {
         "HINDSIGHT_API_LLM_PROVIDER": provider,
-        "HINDSIGHT_EMBED_BANK_ID": bank_id,
     }
     if model:
         config_dict["HINDSIGHT_API_LLM_MODEL"] = model
@@ -458,7 +447,6 @@ def _do_configure_interactive(profile_name: str | None = None, port: int | None 
         "llm_api_key": api_key,
         "llm_provider": provider,
         "llm_model": model,
-        "bank_id": bank_id,
     }
     if daemon_client.ensure_daemon_running(new_config, daemon_profile):
         print("  \033[32m✓ Daemon started\033[0m")
