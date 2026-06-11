@@ -124,13 +124,34 @@ class TestService:
         )
         assert cfg.api_port == 9500 and cfg.ui_port == 25000 and cfg.ui_port_is_default is False
         raw = service._read_raw_env("work")
-        assert raw["HINDSIGHT_API_PORT"] == "9500" and raw["HINDSIGHT_EMBED_UI_PORT"] == "25000"
+        assert raw["HINDSIGHT_API_PORT"] == "9500" and raw["HINDSIGHT_EMBED_CP_PORT"] == "25000"
 
     def test_blank_ui_port_derives_from_api(self, temp_hindsight_dir):
         service.save_llm_config("work", "openai", "sk-key1234567890", "", "", api_port="9500", ui_port="25000")
         cfg = service.save_llm_config("work", "openai", service.API_KEY_UNCHANGED, "", "", api_port="9500", ui_port="")
         assert cfg.ui_port == 19500 and cfg.ui_port_is_default
-        assert "HINDSIGHT_EMBED_UI_PORT" not in service._read_raw_env("work")
+        assert "HINDSIGHT_EMBED_CP_PORT" not in service._read_raw_env("work")
+
+    def test_versions_default_to_none(self, temp_hindsight_dir):
+        service.save_llm_config("work", "openai", "sk-key1234567890", "", "")
+        cfg = service.get_profile_config("work")
+        assert cfg.api_version is None and cfg.cp_version is None
+
+    def test_save_pins_versions(self, temp_hindsight_dir):
+        service.save_llm_config("work", "openai", "sk-key1234567890", "", "")
+        cfg = service.save_llm_config(
+            "work", "openai", service.API_KEY_UNCHANGED, "", "", api_version="0.7.0", cp_version="0.8.1"
+        )
+        assert cfg.api_version == "0.7.0" and cfg.cp_version == "0.8.1"
+        raw = service._read_raw_env("work")
+        assert raw["HINDSIGHT_EMBED_API_VERSION"] == "0.7.0" and raw["HINDSIGHT_EMBED_CP_VERSION"] == "0.8.1"
+
+    def test_blank_version_removes_override(self, temp_hindsight_dir):
+        service.save_llm_config("work", "openai", "sk-key1234567890", "", "", api_version="0.7.0", cp_version="0.8.1")
+        cfg = service.save_llm_config("work", "openai", service.API_KEY_UNCHANGED, "", "", api_version="", cp_version="")
+        assert cfg.api_version is None and cfg.cp_version is None
+        raw = service._read_raw_env("work")
+        assert "HINDSIGHT_EMBED_API_VERSION" not in raw and "HINDSIGHT_EMBED_CP_VERSION" not in raw
 
     def test_health_reports_down_when_no_daemon(self, temp_hindsight_dir, monkeypatch):
         from hindsight_embed import daemon_client

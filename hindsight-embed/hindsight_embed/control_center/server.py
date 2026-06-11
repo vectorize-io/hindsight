@@ -154,6 +154,8 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
                 base_url=body.get("base_url"),
                 api_port=body.get("api_port"),
                 ui_port=body.get("ui_port"),
+                api_version=body.get("api_version"),
+                cp_version=body.get("cp_version"),
             )
             self._send_json(200, service.to_json(result))
             return

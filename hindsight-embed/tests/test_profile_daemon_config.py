@@ -616,7 +616,7 @@ def test_windows_daemon_launches_via_gui_interpreter(temp_home, tmp_path, monkey
         str(scripts_dir / "python.exe"),
     )
 
-    cmd = manager._find_api_command()
+    cmd = manager._find_api_command("0.0.0")
     assert cmd == [str(scripts_dir / "pythonw.exe"), "-m", "hindsight_api.main"]
 
 
@@ -642,7 +642,7 @@ def test_windows_daemon_falls_back_to_console_exe_without_pythonw(temp_home, tmp
         str(scripts_dir / "python.exe"),
     )
 
-    cmd = manager._find_api_command()
+    cmd = manager._find_api_command("0.0.0")
     assert cmd == [str(scripts_dir / "hindsight-api.exe")]
 
 
@@ -663,5 +663,5 @@ def test_posix_daemon_uses_console_entrypoint(temp_home, tmp_path, monkeypatch):
         lambda name: str(scripts_dir),
     )
 
-    cmd = manager._find_api_command()
+    cmd = manager._find_api_command("0.0.0")
     assert cmd == [str(console_bin)]

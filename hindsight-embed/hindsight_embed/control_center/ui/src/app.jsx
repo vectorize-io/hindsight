@@ -43,7 +43,7 @@ export function App() {
 
   // Quick-config form
   const [cfg, setCfg] = useState(null);
-  const [form, setForm] = useState({ provider: "", apiKey: "", model: "", baseUrl: "", apiPort: "", uiPort: "" });
+  const [form, setForm] = useState({ provider: "", apiKey: "", model: "", baseUrl: "", apiPort: "", uiPort: "", apiVersion: "", cpVersion: "" });
 
   // status / health
   const [daemonRunning, setDaemonRunning] = useState(false);
@@ -101,6 +101,8 @@ export function App() {
         baseUrl: cfgv.base_url || "",
         apiPort: String(cfgv.api_port),
         uiPort: cfgv.ui_port_is_default ? "" : String(cfgv.ui_port),
+        apiVersion: cfgv.api_version || "",
+        cpVersion: cfgv.cp_version || "",
       });
       setPaths(pathsv);
       setEnvText(env.content);
@@ -152,6 +154,8 @@ export function App() {
         base_url: form.baseUrl.trim(),
         api_port: form.apiPort.trim(),
         ui_port: form.uiPort.trim(),
+        api_version: form.apiVersion.trim(),
+        cp_version: form.cpVersion.trim(),
       });
       setMsg({ text: "Saved. Restart the daemon to apply.", kind: "ok" });
       await selectProfile(current);
@@ -275,6 +279,8 @@ export function App() {
   };
 
   // ----- render --------------------------------------------------------
+  const defaultVer = version.replace(/^v/, "") || "embed default";
+
   if (noAuth) {
     return (
       <Fragment>
@@ -400,6 +406,16 @@ export function App() {
                     <label>
                       UI port <span class="hint">(blank = API + 10000)</span>
                       <input type="number" placeholder={String(cfg.ui_port)} value={form.uiPort} onInput={(e) => setForm({ ...form, uiPort: e.target.value })} />
+                    </label>
+                  </div>
+                  <div class="ports">
+                    <label>
+                      API version <span class="hint">(blank = {defaultVer})</span>
+                      <input type="text" autocomplete="off" placeholder={defaultVer} value={form.apiVersion} onInput={(e) => setForm({ ...form, apiVersion: e.target.value })} />
+                    </label>
+                    <label>
+                      Control plane version <span class="hint">(blank = {defaultVer})</span>
+                      <input type="text" autocomplete="off" placeholder={defaultVer} value={form.cpVersion} onInput={(e) => setForm({ ...form, cpVersion: e.target.value })} />
                     </label>
                   </div>
                   <div class="row">

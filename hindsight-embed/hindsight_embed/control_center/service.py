@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 import httpx
 
 from .. import daemon_client
-from ..profile_manager import ENV_API_PORT, ENV_UI_PORT, ProfileManager
+from ..profile_manager import ENV_API_PORT, ENV_CP_PORT, ProfileManager
 
 # The "simple alias" keys that ProfileManager.load_profile_config injects for
 # backward compatibility. They must never be written back into a profile's
@@ -33,6 +33,9 @@ _ENV_PROVIDER = "HINDSIGHT_API_LLM_PROVIDER"
 _ENV_API_KEY = "HINDSIGHT_API_LLM_API_KEY"
 _ENV_MODEL = "HINDSIGHT_API_LLM_MODEL"
 _ENV_BASE_URL = "HINDSIGHT_API_LLM_BASE_URL"
+# Per-profile component versions (default = the embed's own version when unset).
+_ENV_API_VERSION = "HINDSIGHT_EMBED_API_VERSION"
+_ENV_CP_VERSION = "HINDSIGHT_EMBED_CP_VERSION"
 
 # Sentinel the UI sends back when the api-key field is left untouched, so we
 # keep the stored key instead of overwriting it with the masked placeholder.
@@ -67,6 +70,8 @@ class ProfileConfigView:
     api_port: int  # effective API/daemon port
     ui_port: int  # effective control-plane port
     ui_port_is_default: bool  # True when UI port is derived (API + offset), not pinned
+    api_version: str | None  # pinned hindsight-api version (None = use embed default)
+    cp_version: str | None  # pinned control-plane version (None = use embed default)
 
 
 @dataclass(frozen=True)
@@ -234,6 +239,7 @@ def get_profile_config(name: str) -> ProfileConfigView:
     config = pm.load_profile_config(name)
     api_key = config.get("llm_api_key")
     paths = pm.resolve_profile_paths(name)
+    raw = _read_raw_env(name)
     return ProfileConfigView(
         name=name,
         display_name=_display_name(name),
@@ -244,7 +250,9 @@ def get_profile_config(name: str) -> ProfileConfigView:
         has_api_key=bool(api_key),
         api_port=paths.port,
         ui_port=paths.ui_port,
-        ui_port_is_default=ENV_UI_PORT not in _read_raw_env(name),
+        ui_port_is_default=ENV_CP_PORT not in raw,
+        api_version=raw.get(_ENV_API_VERSION),
+        cp_version=raw.get(_ENV_CP_VERSION),
     )
 
 
@@ -256,6 +264,8 @@ def save_llm_config(
     base_url: str | None,
     api_port: str | None = None,
     ui_port: str | None = None,
+    api_version: str | None = None,
+    cp_version: str | None = None,
 ) -> ProfileConfigView:
     """Write the wizard's LLM settings into a profile's .env.
 
@@ -294,9 +304,19 @@ def save_llm_config(
     if api_port:
         env[ENV_API_PORT] = api_port
     if ui_port:
-        env[ENV_UI_PORT] = ui_port
+        env[ENV_CP_PORT] = ui_port
     else:
-        env.pop(ENV_UI_PORT, None)
+        env.pop(ENV_CP_PORT, None)
+
+    # Component versions: pin if set, else remove the override (use embed default).
+    if api_version:
+        env[_ENV_API_VERSION] = api_version
+    else:
+        env.pop(_ENV_API_VERSION, None)
+    if cp_version:
+        env[_ENV_CP_VERSION] = cp_version
+    else:
+        env.pop(_ENV_CP_VERSION, None)
 
     _write_raw_env(name, env)
     return get_profile_config(name)

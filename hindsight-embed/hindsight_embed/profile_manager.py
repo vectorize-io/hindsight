@@ -87,7 +87,7 @@ UI_PORT_OFFSET = 10000
 # from the control center. The API port is allocated-then-persisted; the UI port
 # is optional and defaults to API + UI_PORT_OFFSET when unset.
 ENV_API_PORT = "HINDSIGHT_API_PORT"
-ENV_UI_PORT = "HINDSIGHT_EMBED_UI_PORT"
+ENV_CP_PORT = "HINDSIGHT_EMBED_CP_PORT"
 
 
 @dataclass
@@ -437,7 +437,7 @@ class ProfileManager:
             try:
                 if key == ENV_API_PORT:
                     ov.api = int(value)
-                elif key == ENV_UI_PORT:
+                elif key == ENV_CP_PORT:
                     ov.ui = int(value)
             except ValueError:
                 continue

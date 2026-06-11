@@ -295,7 +295,7 @@ class TestProfileManager:
     def test_ui_port_override(self, profile_manager, temp_hindsight_dir):
         env_path = temp_hindsight_dir / "profiles" / "p.env"
         env_path.parent.mkdir(parents=True, exist_ok=True)
-        env_path.write_text("HINDSIGHT_API_PORT=9000\nHINDSIGHT_EMBED_UI_PORT=22000\n")
+        env_path.write_text("HINDSIGHT_API_PORT=9000\nHINDSIGHT_EMBED_CP_PORT=22000\n")
         assert profile_manager.resolve_profile_paths("p").ui_port == 22000
 
     def test_legacy_metadata_port_fallback(self, profile_manager, temp_hindsight_dir):
