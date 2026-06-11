@@ -261,9 +261,9 @@ function EnterpriseDiscoveryPanel() {
   // Empty string in en.json so no note renders for English-speaking users.
   const meetingNote = t("memoryDefenseEnterpriseMeetingNote");
   return (
-    <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/5 dark:bg-emerald-500/10 p-6 flex flex-col gap-4">
+    <div className="rounded-xl border border-emerald-600/15 bg-emerald-500/[0.04] dark:bg-emerald-400/[0.06] p-6 flex flex-col gap-4">
       <div className="flex items-start gap-3">
-        <div className="rounded-full bg-emerald-500/15 p-2 shrink-0">
+        <div className="rounded-full bg-emerald-500/10 p-2 shrink-0">
           <Sparkles className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
         </div>
         <div className="flex-1">

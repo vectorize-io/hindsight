@@ -50,9 +50,10 @@ def test_parse_policy_rejects_invalid_action() -> None:
         parse_policy({"enabled": True, "rules": [{"on": "sensitive_data", "action": "lol"}]})
 
 
-def test_parse_policy_rejects_unknown_detector() -> None:
+@pytest.mark.parametrize("on", [None, "", 123])
+def test_parse_policy_rejects_empty_or_non_string_on(on: object) -> None:
     with pytest.raises(ValueError, match="invalid on"):
-        parse_policy({"enabled": True, "rules": [{"on": "nope", "action": "block"}]})
+        parse_policy({"enabled": True, "rules": [{"on": on, "action": "block"}]})
 
 
 @pytest.mark.parametrize(
@@ -65,10 +66,13 @@ def test_parse_policy_rejects_unknown_detector() -> None:
         "detect_secrets",
         "base64_decode",
         "llm_screen",
+        # An unknown future name passes too: the parser doesn't gate ``on``
+        # against a fixed roster.
+        "some_future_cloud_detector",
     ],
 )
-def test_parse_policy_accepts_full_detector_union(detector: str) -> None:
-    """The parser accepts every known detector name so cloud-shape policies
+def test_parse_policy_accepts_any_detector_name(detector: str) -> None:
+    """The parser accepts any non-empty detector name so cloud-shape policies
     pass through the OSS PATCH layer unchanged. The OSS regex extension only
     actually screens ``sensitive_data``; the rest are silent no-ops here and
     are dispatched by downstream extensions (e.g. hindsight-cloud)."""
@@ -321,11 +325,27 @@ async def test_patch_rejects_invalid_action(api_client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_patch_rejects_unknown_detector(api_client) -> None:
+async def test_patch_accepts_cloud_only_detector(api_client) -> None:
+    # A cloud-only detector the OSS extension doesn't implement still persists
+    # through the PATCH layer (it's a silent no-op here, dispatched downstream).
     await api_client.put("/v1/default/banks/md-cfg-3", json={})
     r = await api_client.patch(
         "/v1/default/banks/md-cfg-3/config",
-        json={"updates": {"memory_defense": {"enabled": True, "rules": [{"on": "nope", "action": "redact"}]}}},
+        json={
+            "updates": {"memory_defense": {"enabled": True, "rules": [{"on": "prompt_injection", "action": "block"}]}}
+        },
+    )
+    assert r.status_code == 200, r.text
+    r2 = await api_client.get("/v1/default/banks/md-cfg-3/config")
+    assert r2.json()["config"]["memory_defense"]["rules"][0]["on"] == "prompt_injection"
+
+
+@pytest.mark.asyncio
+async def test_patch_rejects_empty_detector(api_client) -> None:
+    await api_client.put("/v1/default/banks/md-cfg-4", json={})
+    r = await api_client.patch(
+        "/v1/default/banks/md-cfg-4/config",
+        json={"updates": {"memory_defense": {"enabled": True, "rules": [{"on": "", "action": "redact"}]}}},
     )
     assert r.status_code == 422, r.text
     assert "on" in str(r.json()["detail"]).lower()
