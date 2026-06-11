@@ -10,6 +10,9 @@ time someone copies an old PG migration as a template.
 from __future__ import annotations
 
 import ast
+import functools
+import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -57,6 +60,136 @@ def _calls_run_for_dialect(fn: ast.FunctionDef) -> bool:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "run_for_dialect":
             return True
     return False
+
+
+def _execute_sql_strings(tree: ast.AST) -> list[str]:
+    """All string SQL passed to ``op.execute(...)``, including f-strings.
+
+    f-strings (``ast.JoinedStr``) are flattened by concatenating their constant
+    parts — schema-prefix placeholders like ``{schema}memory_units`` collapse to
+    ``memory_units``, which is exactly what the table-name regexes below need.
+    """
+    sqls: list[str] = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and node.args):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "execute"):
+            continue
+        arg = node.args[0]
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            sqls.append(arg.value)
+        elif isinstance(arg, ast.JoinedStr):
+            sqls.append(
+                "".join(v.value for v in arg.values if isinstance(v, ast.Constant) and isinstance(v.value, str))
+            )
+    return sqls
+
+
+# ``\bmemory_units\b`` does not match inside ``invalidated_memory_units``: the
+# preceding ``_`` is a word character, so there is no word boundary before the
+# ``m``. The schema prefix (``"tenant".memory_units``) does produce a boundary.
+_ALTER_MAIN_TABLE_RE = re.compile(r"ALTER\s+TABLE\s+\S*\bmemory_units\b", re.IGNORECASE)
+_ALTER_SHADOW_TABLE_RE = re.compile(r"ALTER\s+TABLE\s+\S*invalidated_memory_units\b", re.IGNORECASE)
+# Column adds only — ``ADD CONSTRAINT`` needs no shadow sync (the archive
+# deliberately carries no constraints). PG uses ``ADD COLUMN``; Oracle uses an
+# ``ADD ( col type, ... )`` block, whose first token is an identifier unless the
+# block holds only constraints.
+_ADD_COLUMN_RE = re.compile(r"ADD\s+COLUMN|ADD\s*\(\s*(?!CONSTRAINT\b)\w", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class _MigrationIds:
+    """Module-level ``revision`` / ``down_revision`` of one migration file.
+
+    ``down_revisions`` normalizes the three legal forms (None / str / tuple —
+    merge migrations declare multiple parents) into a tuple.
+    """
+
+    revision: str | None
+    down_revisions: tuple[str, ...]
+
+
+def _migration_ids(tree: ast.AST) -> _MigrationIds:
+    revision: str | None = None
+    down_revisions: tuple[str, ...] = ()
+    for node in ast.walk(tree):
+        targets: list[ast.expr] = []
+        value: ast.expr | None = None
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value
+        for target in targets:
+            if not isinstance(target, ast.Name):
+                continue
+            if target.id == "revision" and isinstance(value, ast.Constant) and isinstance(value.value, str):
+                revision = value.value
+            elif target.id == "down_revision":
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    down_revisions = (value.value,)
+                elif isinstance(value, ast.Tuple):
+                    down_revisions = tuple(
+                        e.value for e in value.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)
+                    )
+    return _MigrationIds(revision=revision, down_revisions=down_revisions)
+
+
+_SHADOW_TABLE_CREATED_IN = "c9a1b2d3e4f5"
+
+
+@functools.cache
+def _pre_shadow_revisions() -> frozenset[str]:
+    """Revisions at or before the migration that created the shadow table.
+
+    Computed by walking the ``down_revision`` graph backwards (BFS — merge
+    migrations have multiple parents) from the shadow table's creation
+    migration, so the exemption list never needs manual maintenance.
+    """
+    parents: dict[str, tuple[str, ...]] = {}
+    for path in _migration_files():
+        ids = _migration_ids(ast.parse(path.read_text(), filename=str(path)))
+        if ids.revision is not None:
+            parents[ids.revision] = ids.down_revisions
+    ancestors: set[str] = set()
+    stack = [_SHADOW_TABLE_CREATED_IN]
+    while stack:
+        cursor = stack.pop()
+        if cursor in ancestors:
+            continue
+        ancestors.add(cursor)
+        stack.extend(parents.get(cursor, ()))
+    return frozenset(ancestors)
+
+
+@pytest.mark.parametrize("path", _migration_files(), ids=lambda p: p.name)
+def test_memory_units_column_adds_also_alter_shadow_table(path: Path) -> None:
+    """Adding columns to ``memory_units`` must also alter ``invalidated_memory_units``.
+
+    The curation archive was created with ``LIKE memory_units`` — a point-in-time
+    snapshot that does not follow later ALTERs. The curation row-move builds its
+    column list from ``memory_units`` (``_memory_unit_columns``) and INSERTs into
+    the archive by name, so a column present on the main table but missing on the
+    archive makes invalidation fail outright. Migrations that predate the shadow
+    table are exempt (computed from the revision chain, not hardcoded).
+    """
+    tree = ast.parse(path.read_text(), filename=str(path))
+    revision = _migration_ids(tree).revision
+    if isinstance(revision, str) and revision in _pre_shadow_revisions():
+        pytest.skip("predates the shadow table")
+
+    sqls = _execute_sql_strings(tree)
+    adds_main_column = any(_ALTER_MAIN_TABLE_RE.search(s) and _ADD_COLUMN_RE.search(s) for s in sqls)
+    if not adds_main_column:
+        pytest.skip("does not add columns to memory_units")
+
+    alters_shadow = any(_ALTER_SHADOW_TABLE_RE.search(s) for s in sqls)
+    assert alters_shadow, (
+        f"{path.name}: adds columns to memory_units but never alters invalidated_memory_units. "
+        "The curation archive is a LIKE-snapshot that does not follow ALTERs; the row-move "
+        "INSERT will fail (or silently drop data) unless both tables change in lockstep. "
+        "Add the same columns to invalidated_memory_units in both dialect slots."
+    )
 
 
 def _is_manual_commit(node: ast.AST) -> bool:
