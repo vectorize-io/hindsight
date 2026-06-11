@@ -580,7 +580,8 @@
     "memoryComposition": "記憶構成",
     "scopeLabel": "範圍",
     "scopeAll": "所有範圍",
-    "scopeGlobal": "全域（冇標籤）"
+    "scopeGlobal": "全域（冇標籤）",
+    "groupByScope": "按範圍分組"
   },
   "documentsView": {
     "loadingDocuments": "載入文件中...",

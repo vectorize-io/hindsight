@@ -580,7 +580,8 @@
     "memoryComposition": "Composición de memorias",
     "scopeLabel": "Ámbito",
     "scopeAll": "Todos los ámbitos",
-    "scopeGlobal": "Global (sin etiquetas)"
+    "scopeGlobal": "Global (sin etiquetas)",
+    "groupByScope": "Agrupar por ámbito"
   },
   "documentsView": {
     "loadingDocuments": "Cargando documentos...",

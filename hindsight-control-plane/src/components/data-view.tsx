@@ -23,6 +23,7 @@ import {
   Network,
   List,
   Search,
+  Layers,
 } from "lucide-react";
 import {
   Table,
@@ -52,6 +53,27 @@ import { ScatterChart, Plus, FileText } from "lucide-react";
 
 type FactType = "world" | "experience" | "observation";
 type ViewMode = "graph" | "table" | "timeline" | "constellation";
+
+// Categorical palette for coloring observation scopes (exact tag sets) when
+// "Group by scope" clusters the constellation. Distinct, reasonably separable hues.
+const SCOPE_PALETTE = [
+  "#0074d9",
+  "#e11d48",
+  "#16a34a",
+  "#f59e0b",
+  "#8b5cf6",
+  "#06b6d4",
+  "#ec4899",
+  "#65a30d",
+  "#f97316",
+  "#6366f1",
+];
+
+// Stable key for a scope = its tag set, order-normalized (matches the backend's
+// normalized scope enumeration so colors are consistent regardless of tag order).
+function scopeKeyOf(tags: string[] | undefined): string {
+  return JSON.stringify([...(tags || [])].sort());
+}
 
 interface DataViewProps {
   factType: FactType;
@@ -101,6 +123,8 @@ export function DataView({
     occurred_end: t("recencyBasisOccurredEnd"),
   };
   const [recencyBasis, setRecencyBasis] = useState<RecencyBasis>("mentioned_at");
+  // Constellation: group observations into per-scope clusters (with colored blobs).
+  const [groupByScope, setGroupByScope] = useState(false);
 
   // Consolidation status for mental models
   const [consolidationStatus, setConsolidationStatus] = useState<{
@@ -139,10 +163,18 @@ export function DataView({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedGraphNode]);
 
-  const loadData = async (limit?: number, q?: string, tags?: string[], tagsMatch?: string) => {
+  // `silent` skips the loading spinner — used by the background consolidation
+  // poll so the view refreshes in place without flashing.
+  const loadData = async (
+    limit?: number,
+    q?: string,
+    tags?: string[],
+    tagsMatch?: string,
+    silent = false
+  ) => {
     if (!currentBank) return;
 
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
       const graphData: any = await client.getGraph({
         bank_id: currentBank,
@@ -167,7 +199,7 @@ export function DataView({
     } catch (error) {
       // Error toast is shown automatically by the API client interceptor
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -317,6 +349,39 @@ export function DataView({
     [recencyLookup]
   );
 
+  // Assign each distinct observation scope (exact tag set) a stable color from
+  // the palette, in order of first appearance, for the "Group by scope" clusters.
+  const scopeColorLookup = useMemo(() => {
+    if (factType !== "observation" || !data?.table_rows) return null;
+    const map = new Map<string, string>();
+    let i = 0;
+    for (const row of data.table_rows as Array<{ tags?: string[] }>) {
+      const key = scopeKeyOf(row.tags);
+      if (!map.has(key)) map.set(key, SCOPE_PALETTE[i++ % SCOPE_PALETTE.length]);
+    }
+    return map;
+  }, [factType, data]);
+
+  const scopeClusterKeyFn = useCallback(
+    (node: GraphNode) => scopeKeyOf(node.metadata?.tags as string[] | undefined),
+    []
+  );
+  const scopeClusterColorFn = useCallback(
+    (key: string) => scopeColorLookup?.get(key) || "#0074d9",
+    [scopeColorLookup]
+  );
+  const scopeClusterLabelFn = useCallback(
+    (key: string) => {
+      try {
+        const tags = JSON.parse(key) as string[];
+        return tags.length ? tags.map((tag) => `#${tag}`).join(" ") : t("scopeGlobal");
+      } catch {
+        return key;
+      }
+    },
+    [t]
+  );
+
   const observationNodeSizeFn = useCallback(
     (node: GraphNode) => {
       if (!observationSizeLookup) return 3;
@@ -400,6 +465,24 @@ export function DataView({
   useEffect(() => {
     loadScopes();
   }, [loadScopes]);
+
+  // While consolidation is in progress, poll so the observations + scopes (and
+  // the "In Sync" badge) refresh live instead of showing a stale, one-shot read
+  // (bank stats are also cached for up to 60s, so a single fetch can lag well
+  // behind reality). Silent reloads avoid flashing the spinner. The effect only
+  // restarts when consolidation starts/stops, not on every tick.
+  const isConsolidating =
+    factType === "observation" && (consolidationStatus?.pending_consolidation ?? 0) > 0;
+  useEffect(() => {
+    if (!isConsolidating || !currentBank) return;
+    const id = setInterval(() => {
+      const { tags, match } = resolveTagQuery();
+      loadData(undefined, searchQuery || undefined, tags, match, true);
+      loadScopes();
+    }, 4000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConsolidating, currentBank]);
 
   // Enforce 50 node limit to prevent UI instability, default to 20 or max whichever is smaller
   useEffect(() => {
@@ -910,14 +993,29 @@ export function DataView({
                   linkColorFn={linkColorFn}
                   nodeSizeFn={factType === "observation" ? observationNodeSizeFn : undefined}
                   sizeLegendLabel={factType === "observation" ? t("sourceFactsLabel") : undefined}
-                  nodeHeatFn={recencyLookup ? recencyHeatFn : undefined}
+                  clusterKeyFn={
+                    factType === "observation" && groupByScope ? scopeClusterKeyFn : undefined
+                  }
+                  clusterColorFn={
+                    factType === "observation" && groupByScope ? scopeClusterColorFn : undefined
+                  }
+                  clusterLabelFn={
+                    factType === "observation" && groupByScope ? scopeClusterLabelFn : undefined
+                  }
+                  // When grouping by scope, color encodes scope (not recency), so
+                  // suppress the recency heat to avoid a misleading legend.
+                  nodeHeatFn={
+                    !(factType === "observation" && groupByScope) && recencyLookup
+                      ? recencyHeatFn
+                      : undefined
+                  }
                   heatLegendLabel={
-                    recencyLookup
+                    !(factType === "observation" && groupByScope) && recencyLookup
                       ? t("recencyLabel", { basis: RECENCY_BASIS_LABEL[recencyBasis] })
                       : undefined
                   }
                   heatLegendEndpoints={
-                    recencyLookup
+                    !(factType === "observation" && groupByScope) && recencyLookup
                       ? [
                           new Date(recencyLookup.minT).toISOString().slice(0, 10),
                           new Date(recencyLookup.maxT).toISOString().slice(0, 10),
@@ -960,24 +1058,39 @@ export function DataView({
                           <p className="text-xs text-muted-foreground">
                             {t("constellationViewDescription")}
                           </p>
-                          <div className="space-y-2 pt-2">
-                            <h4 className="text-xs font-medium text-muted-foreground">
-                              {t("colorBy")}
-                            </h4>
-                            <Select
-                              value={recencyBasis}
-                              onValueChange={(v) => setRecencyBasis(v as RecencyBasis)}
-                            >
-                              <SelectTrigger className="h-8 w-full text-xs">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="mentioned_at">{t("mentioned")}</SelectItem>
-                                <SelectItem value="occurred_start">{t("occurredStart")}</SelectItem>
-                                <SelectItem value="occurred_end">{t("occurredEnd")}</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
+                          {factType === "observation" && (
+                            <div className="flex items-center justify-between gap-2 pt-2">
+                              <div className="flex items-center gap-1.5">
+                                <Layers className="w-3.5 h-3.5 text-muted-foreground" />
+                                <h4 className="text-xs font-medium text-muted-foreground">
+                                  {t("groupByScope")}
+                                </h4>
+                              </div>
+                              <Switch checked={groupByScope} onCheckedChange={setGroupByScope} />
+                            </div>
+                          )}
+                          {!(factType === "observation" && groupByScope) && (
+                            <div className="space-y-2 pt-2">
+                              <h4 className="text-xs font-medium text-muted-foreground">
+                                {t("colorBy")}
+                              </h4>
+                              <Select
+                                value={recencyBasis}
+                                onValueChange={(v) => setRecencyBasis(v as RecencyBasis)}
+                              >
+                                <SelectTrigger className="h-8 w-full text-xs">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="mentioned_at">{t("mentioned")}</SelectItem>
+                                  <SelectItem value="occurred_start">
+                                    {t("occurredStart")}
+                                  </SelectItem>
+                                  <SelectItem value="occurred_end">{t("occurredEnd")}</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
                           <div className="space-y-2 pt-2">
                             <h4 className="text-xs font-medium text-muted-foreground">
                               {t("linkTypes")}

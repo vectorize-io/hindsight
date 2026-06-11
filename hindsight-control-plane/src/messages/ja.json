@@ -580,7 +580,8 @@
     "memoryComposition": "メモリ構成",
     "scopeLabel": "スコープ",
     "scopeAll": "すべてのスコープ",
-    "scopeGlobal": "グローバル（タグなし）"
+    "scopeGlobal": "グローバル（タグなし）",
+    "groupByScope": "スコープでグループ化"
   },
   "documentsView": {
     "loadingDocuments": "ドキュメントを読み込み中...",

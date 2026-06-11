@@ -580,7 +580,8 @@
     "memoryComposition": "记忆构成",
     "scopeLabel": "范围",
     "scopeAll": "所有范围",
-    "scopeGlobal": "全局（无标签）"
+    "scopeGlobal": "全局（无标签）",
+    "groupByScope": "按范围分组"
   },
   "documentsView": {
     "loadingDocuments": "正在加载文档...",

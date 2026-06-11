@@ -580,7 +580,8 @@
     "memoryComposition": "Memory composition",
     "scopeLabel": "Scope",
     "scopeAll": "All scopes",
-    "scopeGlobal": "Global (no tags)"
+    "scopeGlobal": "Global (no tags)",
+    "groupByScope": "Group by scope"
   },
   "documentsView": {
     "loadingDocuments": "Loading documents...",

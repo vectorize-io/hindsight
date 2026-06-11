@@ -580,7 +580,8 @@
     "memoryComposition": "메모리 구성",
     "scopeLabel": "범위",
     "scopeAll": "모든 범위",
-    "scopeGlobal": "전역(태그 없음)"
+    "scopeGlobal": "전역(태그 없음)",
+    "groupByScope": "범위별 그룹화"
   },
   "documentsView": {
     "loadingDocuments": "문서 불러오는 중...",

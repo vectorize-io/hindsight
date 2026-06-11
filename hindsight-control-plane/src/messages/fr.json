@@ -580,7 +580,8 @@
     "memoryComposition": "Composition de la mémoire",
     "scopeLabel": "Portée",
     "scopeAll": "Toutes les portées",
-    "scopeGlobal": "Global (sans tags)"
+    "scopeGlobal": "Global (sans tags)",
+    "groupByScope": "Grouper par portée"
   },
   "documentsView": {
     "loadingDocuments": "Chargement des documents...",
