@@ -321,6 +321,16 @@
       "icon": "/img/icons/n8n.png"
     },
     {
+      "id": "zapier",
+      "name": "Zapier",
+      "description": "Long-term memory for your Zaps. Retain, Recall, and Reflect actions plus instant memory-event triggers connect Hindsight to 7,000+ apps.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/zapier",
+      "icon": "/img/icons/zapier.png"
+    },
+    {
       "id": "openai-agents",
       "name": "OpenAI Agents SDK",
       "description": "Give OpenAI Agents SDK agents persistent long-term memory with Hindsight FunctionTool instances for retain, recall, and reflect.",
