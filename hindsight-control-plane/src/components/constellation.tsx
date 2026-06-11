@@ -23,12 +23,6 @@ interface PreparedNode {
   linkCount: number;
 }
 
-interface ScreenNode {
-  idx: number;
-  sx: number;
-  sy: number;
-}
-
 // ============================================================================
 // Props
 // ============================================================================
@@ -80,19 +74,6 @@ export interface ConstellationProps {
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
-}
-
-function easeOutCubic(t: number): number {
-  return 1 - Math.pow(1 - t, 3);
-}
-
-function hexToRgba(hex: string, alpha: number): string {
-  // Handle non-hex formats
-  if (!hex.startsWith("#")) return hex;
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
 }
 
 /**
@@ -163,7 +144,6 @@ function useIsDarkMode() {
 // Constants
 // ============================================================================
 
-const FONT = '12px Inter, -apple-system, "Segoe UI", sans-serif';
 const FONT_SMALL = '11px Inter, -apple-system, "Segoe UI", sans-serif';
 const FONT_BOLD = '600 10px Inter, -apple-system, "Segoe UI", sans-serif';
 const MONO = '11px "SF Mono", "Fira Code", Consolas, monospace';

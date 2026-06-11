@@ -24,7 +24,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from .embed_manager import EmbedManager
-from .profile_manager import UI_PORT_OFFSET, ProfileManager, lock_file, resolve_active_profile, unlock_file
+from .profile_manager import UI_PORT_OFFSET, ProfileManager, lock_file, unlock_file
 
 logger = logging.getLogger(__name__)
 console = Console(stderr=True)
@@ -605,7 +605,7 @@ class DaemonEmbedManager(EmbedManager):
             console.print()
             return False
 
-        except FileNotFoundError as e:
+        except FileNotFoundError:
             error_msg = (
                 f"Command not found: {cmd[0]}\nFull command: {' '.join(cmd)}\n\n"
                 "Install hindsight-api with: pip install hindsight-api"

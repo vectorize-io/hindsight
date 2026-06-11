@@ -81,7 +81,7 @@
           "Memory"
         ],
         "summary": "Get memory graph data",
-        "description": "Retrieve graph data for visualization, optionally filtered by type (world/experience/opinion).",
+        "description": "Retrieve graph data for visualization, optionally filtered by type (world/experience/observation).",
         "operationId": "get_graph",
         "parameters": [
           {
@@ -677,7 +677,7 @@
           "Memory"
         ],
         "summary": "Reflect and generate answer",
-        "description": "Reflect and formulate an answer using bank identity, world facts, and opinions.\n\nThis endpoint:\n1. Retrieves experience (conversations and events)\n2. Retrieves world facts relevant to the query\n3. Retrieves existing opinions (bank's perspectives)\n4. Uses LLM to formulate a contextual answer\n5. Returns plain text answer and the facts used",
+        "description": "Reflect and formulate an answer using bank identity, world facts, observations, and mental models.\n\nThis endpoint:\n1. Retrieves experience (conversations and events)\n2. Retrieves world facts relevant to the query\n3. Retrieves observations and mental models (bank's synthesized perspectives)\n4. Uses LLM to formulate a contextual answer\n5. Returns plain text answer and the facts used",
         "operationId": "reflect",
         "parameters": [
           {
@@ -4955,7 +4955,7 @@
           "Memory"
         ],
         "summary": "Clear memory bank memories",
-        "description": "Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.",
+        "description": "Delete memory units for a memory bank. Optionally filter by type (world, experience, observation) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.",
         "operationId": "clear_bank_memories",
         "parameters": [
           {
@@ -4980,10 +4980,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Optional fact type filter (world, experience, opinion)",
+              "description": "Optional fact type filter (world, experience, observation)",
               "title": "Type"
             },
-            "description": "Optional fact type filter (world, experience, opinion)"
+            "description": "Optional fact type filter (world, experience, observation)"
           },
           {
             "name": "authorization",

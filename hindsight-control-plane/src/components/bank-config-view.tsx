@@ -1425,7 +1425,6 @@ function MapFieldsEditor({
   };
 
   const isRoot = depth === 0;
-  const indent = `${(depth + 1) * 12}px`;
 
   return (
     <div

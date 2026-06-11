@@ -2,8 +2,6 @@
 Helper functions for hybrid search (semantic + BM25 + graph).
 """
 
-from typing import Any
-
 from .types import MergedCandidate, RetrievalResult
 
 
@@ -156,39 +154,3 @@ def interleave_fusion(result_lists: list[list[RetrievalResult]]) -> list[MergedC
         )
         for pos, doc_id in enumerate(ordered_ids)
     ]
-
-
-def normalize_scores_on_deltas(results: list[dict[str, Any]], score_keys: list[str]) -> list[dict[str, Any]]:
-    """
-    Normalize scores based on deltas (min-max normalization within result set).
-
-    This ensures all scores are in [0, 1] range based on the spread in THIS result set.
-
-    Args:
-        results: List of result dicts
-        score_keys: Keys to normalize (e.g., ["recency", "frequency"])
-
-    Returns:
-        Results with normalized scores added as "{key}_normalized"
-    """
-    for key in score_keys:
-        values = [r.get(key, 0.0) for r in results if key in r]
-
-        if not values:
-            continue
-
-        min_val = min(values)
-        max_val = max(values)
-        delta = max_val - min_val
-
-        if delta > 0:
-            for r in results:
-                if key in r:
-                    r[f"{key}_normalized"] = (r[key] - min_val) / delta
-        else:
-            # All values are the same, set to 0.5
-            for r in results:
-                if key in r:
-                    r[f"{key}_normalized"] = 0.5
-
-    return results

@@ -17,7 +17,6 @@ Conventions in cookbook repo:
 """
 
 import json
-import os
 import re
 import shutil
 import subprocess

@@ -23,7 +23,6 @@ from ...extensions.memory_defense import (
     parse_policy,
 )
 from ...worker.stage import set_stage
-from ..db.base import DatabaseBackend
 from ..db_utils import acquire_with_retry
 from ..memory_engine import count_tokens, fq_table
 from . import bank_utils

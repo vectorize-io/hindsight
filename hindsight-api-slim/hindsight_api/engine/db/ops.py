@@ -19,7 +19,6 @@ and mirrors Django's ``DatabaseOperations`` architecture.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
-from uuid import UUID
 
 from .base import DatabaseConnection
 from .result import ResultRow

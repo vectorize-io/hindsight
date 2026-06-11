@@ -6603,7 +6603,7 @@ export type ClearBankMemoriesData = {
     /**
      * Type
      *
-     * Optional fact type filter (world, experience, opinion)
+     * Optional fact type filter (world, experience, observation)
      */
     type?: string | null;
   };

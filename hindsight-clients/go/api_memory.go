@@ -32,7 +32,7 @@ type ApiClearBankMemoriesRequest struct {
 	authorization *string
 }
 
-// Optional fact type filter (world, experience, opinion)
+// Optional fact type filter (world, experience, observation)
 func (r ApiClearBankMemoriesRequest) Type_(type_ string) ApiClearBankMemoriesRequest {
 	r.type_ = &type_
 	return r
@@ -50,7 +50,7 @@ func (r ApiClearBankMemoriesRequest) Execute() (*DeleteResponse, *http.Response,
 /*
 ClearBankMemories Clear memory bank memories
 
-Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
+Delete memory units for a memory bank. Optionally filter by type (world, experience, observation) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
@@ -343,7 +343,7 @@ func (r ApiGetGraphRequest) Execute() (*GraphDataResponse, *http.Response, error
 /*
 GetGraph Get memory graph data
 
-Retrieve graph data for visualization, optionally filtered by type (world/experience/opinion).
+Retrieve graph data for visualization, optionally filtered by type (world/experience/observation).
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
@@ -1257,12 +1257,12 @@ func (r ApiReflectRequest) Execute() (*ReflectResponse, *http.Response, error) {
 /*
 Reflect Reflect and generate answer
 
-Reflect and formulate an answer using bank identity, world facts, and opinions.
+Reflect and formulate an answer using bank identity, world facts, observations, and mental models.
 
 This endpoint:
 1. Retrieves experience (conversations and events)
 2. Retrieves world facts relevant to the query
-3. Retrieves existing opinions (bank's perspectives)
+3. Retrieves observations and mental models (bank's synthesized perspectives)
 4. Uses LLM to formulate a contextual answer
 5. Returns plain text answer and the facts used
 

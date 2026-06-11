@@ -14,7 +14,6 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
-from ...config import get_config
 from ..llm_wrapper import LLMConfig, OutputTooLongError, sanitize_llm_output
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
@@ -1881,8 +1880,7 @@ async def extract_facts_from_contents_batch_api(
 
     logger.info(f"Using Batch API for fact extraction ({len(contents)} contents)")
 
-    # Check config for extraction mode and causal link extraction (used throughout)
-    extraction_mode = config.retain_extraction_mode
+    # Check config for causal link extraction (used throughout)
     extract_causal_links = config.retain_extract_causal_links
 
     # Check if provider supports batch API

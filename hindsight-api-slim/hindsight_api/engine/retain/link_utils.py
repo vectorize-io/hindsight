@@ -800,8 +800,6 @@ async def create_causal_links_batch(
     try:
         import time as time_mod
 
-        create_start = time_mod.time()
-
         # Build links list
         links = []
         for fact_idx, causal_relations in enumerate(causal_relations_per_fact):

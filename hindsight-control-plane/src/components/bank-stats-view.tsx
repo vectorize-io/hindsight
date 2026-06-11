@@ -188,39 +188,6 @@ function ChartTooltip({ active, payload, label, valueLabel }: ChartTooltipProps)
   );
 }
 
-function HeroCard({
-  icon: Icon,
-  label,
-  value,
-  pulse,
-}: {
-  icon: typeof Database;
-  label: string;
-  value: number;
-  pulse?: boolean;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-md bg-muted">
-            <Icon
-              className={`w-4 h-4 ${pulse ? "animate-pulse text-amber-500" : "text-muted-foreground"}`}
-            />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs text-muted-foreground font-medium">{label}</p>
-            <CompactNumber
-              value={value}
-              className="text-2xl font-semibold text-foreground leading-tight tabular-nums block"
-            />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
     <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-[0.08em] mb-3">

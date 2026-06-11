@@ -13,9 +13,6 @@
 #   - Any other env vars you want to inject
 # existingSecret: "my-hindsight-secret"
 
-# Global settings
-replicaCount: 1
-
 # Image settings for api
 api:
   enabled: true

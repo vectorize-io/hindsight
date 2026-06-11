@@ -4,11 +4,6 @@ Uses unnest(), LATERAL, DISTINCT ON, and native array operations for
 efficient batch operations.
 """
 
-import json
-from datetime import UTC, datetime
-from typing import Any
-from uuid import UUID
-
 from .base import DatabaseConnection
 from .ops import DataAccessOps, TagListingParts
 from .result import ResultRow
@@ -620,7 +615,6 @@ class PostgreSQLOps(DataAccessOps):
         per_entity_limit: int,
     ) -> tuple[list[ResultRow], list[ResultRow], list[ResultRow]]:
         # v0.5.6 array ops: unnest, &&, COUNT(DISTINCT) on source_memory_ids.
-        from ..schema import fq_table
 
         entity_rows = await conn.fetch(
             f"""

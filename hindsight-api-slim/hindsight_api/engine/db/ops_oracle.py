@@ -8,8 +8,6 @@ columns can't appear in GROUP BY).
 import json
 import uuid as uuid_mod
 from datetime import UTC, datetime
-from typing import Any
-from uuid import UUID
 
 from .base import DatabaseConnection
 from .ops import DataAccessOps, TagListingParts

@@ -8,7 +8,7 @@ enabling support for multiple LLM backends (OpenAI, Anthropic, Gemini, Codex, et
 from abc import ABC, abstractmethod
 from typing import Any
 
-from .response_models import LLMToolCallResult, TokenUsage
+from .response_models import LLMToolCallResult
 
 
 class LLMInterface(ABC):

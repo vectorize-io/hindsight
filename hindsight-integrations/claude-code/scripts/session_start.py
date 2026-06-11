@@ -15,7 +15,6 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from lib.client import HindsightClient
 from lib.config import debug_log, load_config
 from lib.daemon import get_api_url, prestart_daemon_background
 
@@ -42,7 +41,6 @@ def main():
 
     try:
         api_url = get_api_url(config, debug_fn=_dbg, allow_daemon_start=False)
-        client = HindsightClient(api_url, config.get("hindsightApiToken"))
         debug_log(config, f"Hindsight server reachable at {api_url}")
     except (RuntimeError, ValueError) as e:
         # Server not running — kick off background pre-start so it's ready
