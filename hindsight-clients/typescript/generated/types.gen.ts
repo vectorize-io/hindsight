@@ -563,6 +563,14 @@ export type BankTemplateConfig = {
    */
   max_observations_per_scope?: number | null;
   /**
+   * Observation Scope Limits
+   *
+   * Per-scope overrides of max_observations_per_scope: [{"scope": ["run_*", "shared"], "limit": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope.
+   */
+  observation_scope_limits?: Array<{
+    [key: string]: unknown;
+  }> | null;
+  /**
    * Reflect Source Facts Max Tokens
    *
    * Max tokens of source facts per reflect call
@@ -1441,6 +1449,12 @@ export type DocumentResponse = {
   retain_params?: {
     [key: string]: unknown;
   } | null;
+  /**
+   * Observation Scopes
+   *
+   * The observation_scopes spec configured at retain time (e.g. 'all_combinations', 'per_tag', or explicit tag-set lists), captured into retain_params. None when none was set (default 'combined' scoping) or for documents retained before this was captured.
+   */
+  observation_scopes?: string | Array<Array<string>> | null;
 };
 
 /**
@@ -2384,7 +2398,7 @@ export type MentalModelTriggerInput = {
    *
    * Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Set to 'any' to include untagged memories alongside tagged ones during refresh.
    */
-  tags_match?: "any" | "all" | "any_strict" | "all_strict" | null;
+  tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact" | null;
   /**
    * Tag Groups
    *
@@ -2452,7 +2466,7 @@ export type MentalModelTriggerOutput = {
    *
    * Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Set to 'any' to include untagged memories alongside tagged ones during refresh.
    */
-  tags_match?: "any" | "all" | "any_strict" | "all_strict" | null;
+  tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact" | null;
   /**
    * Tag Groups
    *
@@ -2479,6 +2493,40 @@ export type MentalModelTriggerOutput = {
    * Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens).
    */
   recall_chunks_max_tokens?: number | null;
+};
+
+/**
+ * ObservationScope
+ *
+ * A distinct observation scope: an exact tag set plus its observation count.
+ */
+export type ObservationScope = {
+  /**
+   * Tags
+   *
+   * The exact tag set defining this scope (normalized order). Empty list is the global/untagged scope.
+   */
+  tags: Array<string>;
+  /**
+   * Count
+   *
+   * Number of observations that live under this scope
+   */
+  count: number;
+};
+
+/**
+ * ObservationScopesResponse
+ *
+ * Response model for the observation scopes enumeration endpoint.
+ */
+export type ObservationScopesResponse = {
+  /**
+   * Scopes
+   *
+   * Distinct observation scopes, most populous first
+   */
+  scopes: Array<ObservationScope>;
 };
 
 /**
@@ -2733,7 +2781,7 @@ export type RecallRequest = {
    *
    * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
    */
-  tags_match?: "any" | "all" | "any_strict" | "all_strict";
+  tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
   /**
    * Tag Groups
    *
@@ -3054,7 +3102,7 @@ export type ReflectRequest = {
    *
    * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
    */
-  tags_match?: "any" | "all" | "any_strict" | "all_strict";
+  tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
   /**
    * Tag Groups
    *
@@ -3342,7 +3390,7 @@ export type TagGroupLeaf = {
   /**
    * Match
    */
-  match?: "any" | "all" | "any_strict" | "all_strict";
+  match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
 };
 
 /**
@@ -6149,6 +6197,44 @@ export type ClearObservationsResponses = {
 export type ClearObservationsResponse =
   ClearObservationsResponses[keyof ClearObservationsResponses];
 
+export type ListObservationScopesData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/observations/scopes";
+};
+
+export type ListObservationScopesErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListObservationScopesError =
+  ListObservationScopesErrors[keyof ListObservationScopesErrors];
+
+export type ListObservationScopesResponses = {
+  /**
+   * Successful Response
+   */
+  200: ObservationScopesResponse;
+};
+
+export type ListObservationScopesResponse =
+  ListObservationScopesResponses[keyof ListObservationScopesResponses];
+
 export type RecoverConsolidationData = {
   body?: never;
   headers?: {
@@ -6603,7 +6689,7 @@ export type ClearBankMemoriesData = {
     /**
      * Type
      *
-     * Optional fact type filter (world, experience, opinion)
+     * Optional fact type filter (world, experience, observation)
      */
     type?: string | null;
   };

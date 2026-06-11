@@ -11,14 +11,10 @@ import time
 import uuid
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import Any
-
-import httpx
-from openai import APIConnectionError, APIStatusError, AsyncOpenAI, LengthFinishReasonError
+from typing import TYPE_CHECKING, Any
 
 # Vertex AI imports (conditional - for LLMProvider to pass credentials to GeminiLLM)
 try:
-    import google.auth
     from google.oauth2 import service_account
 
     VERTEXAI_AVAILABLE = True
@@ -27,16 +23,14 @@ except ImportError:
 
 from ..config import (
     DEFAULT_LLM_MAX_CONCURRENT,
-    DEFAULT_LLM_TIMEOUT,
     ENV_CONSOLIDATION_LLM_MAX_CONCURRENT,
-    ENV_LLM_GROQ_SERVICE_TIER,
     ENV_LLM_MAX_CONCURRENT,
-    ENV_LLM_TIMEOUT,
     ENV_REFLECT_LLM_MAX_CONCURRENT,
     ENV_RETAIN_LLM_MAX_CONCURRENT,
 )
-from ..metrics import get_metrics_collector
-from .response_models import TokenUsage
+
+if TYPE_CHECKING:
+    from .response_models import LLMToolCallResult
 
 # Seed applied to every Groq request for deterministic behavior.
 DEFAULT_LLM_SEED = 4242
@@ -287,7 +281,6 @@ def create_llm_provider(
     Returns:
         LLMInterface implementation for the specified provider.
     """
-    from .llm_interface import LLMInterface
     from .providers import (
         AnthropicLLM,
         ClaudeCodeLLM,

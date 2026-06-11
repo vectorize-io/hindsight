@@ -5,7 +5,6 @@ LlamaIndex-compatible tools backed by Hindsight's retain/recall/reflect APIs.
 """
 
 import logging
-import time
 import uuid
 from typing import Any, Optional
 

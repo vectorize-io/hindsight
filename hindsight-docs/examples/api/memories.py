@@ -38,6 +38,20 @@ async def main():
     print(f"{len(invalidated.items)} invalidated fact(s)")
     # [/docs:list-memories]
 
+    # An observation (derived) exposes how it evolved as sources arrived. Read
+    # it here, before the edit/invalidate/restore below: any update_memory call
+    # re-consolidates and recreates observations with new ids, so an id captured
+    # before those steps is stale afterward (get_observation_history would 404).
+    observation = next((u for u in memories.items if u["fact_type"] == "observation"), None)
+    if observation is not None:
+        # [docs:observation-history]
+        # Get the refresh history of a derived observation.
+        history = await client.memory.get_observation_history(
+            bank_id=BANK_ID, memory_id=observation["id"]
+        )
+        print(f"Observation history entries: {len(history)}")
+        # [/docs:observation-history]
+
     # Grab a raw fact (world/experience) to curate in the examples below.
     fact = next((u for u in memories.items if u["fact_type"] in ("world", "experience")), None)
     if fact is None:
@@ -102,17 +116,6 @@ async def main():
         update_memory_request=UpdateMemoryRequest(state="valid"),
     )
     # [/docs:restore-memory]
-
-    # An observation (derived) exposes how it evolved as sources arrived.
-    observation = next((u for u in memories.items if u["fact_type"] == "observation"), None)
-    if observation is not None:
-        # [docs:observation-history]
-        # Get the refresh history of a derived observation.
-        history = await client.memory.get_observation_history(
-            bank_id=BANK_ID, memory_id=observation["id"]
-        )
-        print(f"Observation history entries: {len(history)}")
-        # [/docs:observation-history]
 
     # =========================================================================
     # Cleanup (not shown in docs)

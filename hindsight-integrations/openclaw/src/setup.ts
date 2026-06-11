@@ -30,7 +30,6 @@ import {
   applyApiMode,
   applyCloudMode,
   applyEmbeddedMode,
-  defaultApiKeyEnvVar,
   ensurePluginConfig,
   isValidEnvVarName,
   loadConfig,
@@ -274,9 +273,6 @@ export async function runNonInteractive(
 // ---------------------------------------------------------------------------
 // Interactive (TUI) execution
 // ---------------------------------------------------------------------------
-
-const validateEnvVar = (value: string | undefined): string | undefined =>
-  isValidEnvVarName(value) ? undefined : "Must be an UPPER_SNAKE_CASE env var name";
 
 const validateRequired =
   (msg: string) =>

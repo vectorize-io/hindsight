@@ -577,7 +577,13 @@
     "sourceFactsLabel": "來源事實",
     "errorLoadingData": "載入 {factType} 資料時發生錯誤",
     "all": "全部",
-    "memoryComposition": "記憶構成"
+    "memoryComposition": "記憶構成",
+    "scopeLabel": "範圍",
+    "scopeAll": "所有範圍",
+    "scopeGlobal": "全域（冇標籤）",
+    "groupByScope": "按範圍分組",
+    "scopeSearch": "搜尋範圍…",
+    "scopeNoResults": "搵唔到範圍"
   },
   "documentsView": {
     "loadingDocuments": "載入文件中...",
@@ -665,7 +671,8 @@
     "importConflictSkip": "略過 — 保留現有文件",
     "importConflictReplace": "取代 — 以匯入嘅覆寫",
     "importConflictNewId": "兩者都保留 — 以新 id 匯入",
-    "textNotStoredWarning": "呢個伺服器唔會儲存原始文字，淨係保留擷取到嘅記憶。"
+    "textNotStoredWarning": "呢個伺服器唔會儲存原始文字，淨係保留擷取到嘅記憶。",
+    "labelObservationScopes": "觀測範圍"
   },
   "entitiesView": {
     "viewRelations": "關係",
@@ -1267,7 +1274,12 @@
     "editFieldEntities": "Entities",
     "editEntityPlaceholder": "Add entity…",
     "editEntityRemove": "Remove {entity}",
-    "editedBadge": "Edited"
+    "editedBadge": "Edited",
+    "curationInvalidateTitle": "使記憶失效",
+    "curationInvalidateExplain": "呢個動作會將記憶移去已失效封存。佢唔會再喺 Recall 或 Reflect 出現，但會保留以供稽核，可以遲啲復原。",
+    "curationReasonPlaceholder": "原因（可選）",
+    "curationCancel": "取消",
+    "curationInvalidate": "使失效"
   },
   "documentChunkModal": {
     "documentTitle": "文件詳情",

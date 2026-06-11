@@ -27,7 +27,16 @@ export async function GET(request: NextRequest) {
     if (q) params.append("q", q);
     const tags = searchParams.getAll("tags");
     for (const tag of tags) params.append("tags", tag);
-    if (tags.length > 0) params.append("tags_match", "all_strict");
+    // Forward an explicit match mode if the caller set one (e.g. "exact" for
+    // observation-scope filtering, which also drives the global/untagged scope
+    // when no tags are present). Otherwise default to all_strict when tags are
+    // present (tag isolation), matching prior behavior.
+    const tagsMatch = searchParams.get("tags_match");
+    if (tagsMatch) {
+      params.append("tags_match", tagsMatch);
+    } else if (tags.length > 0) {
+      params.append("tags_match", "all_strict");
+    }
     const documentId = searchParams.get("document_id");
     if (documentId) params.append("document_id", documentId);
     const chunkId = searchParams.get("chunk_id");

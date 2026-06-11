@@ -23,7 +23,6 @@ from ...extensions.memory_defense import (
     parse_policy,
 )
 from ...worker.stage import set_stage
-from ..db.base import DatabaseBackend
 from ..db_utils import acquire_with_retry
 from ..memory_engine import count_tokens, fq_table
 from . import bank_utils
@@ -274,6 +273,8 @@ def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None):
             )
         if first_item.get("metadata"):
             retain_params["metadata"] = first_item["metadata"]
+        if first_item.get("observation_scopes") is not None:
+            retain_params["observation_scopes"] = first_item["observation_scopes"]
 
     return retain_params, merged_tags
 

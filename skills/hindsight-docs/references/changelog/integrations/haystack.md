@@ -10,6 +10,10 @@ For the source code, see [`hindsight-integrations/haystack`](https://github.com/
 
 ← [Back to main changelog](../index.md)
 
+## [0.1.1](https://github.com/vectorize-io/hindsight/tree/integrations/haystack/v0.1.1)
+
+*This release contains internal maintenance and infrastructure changes only.*
+
 ## [0.1.0](https://github.com/vectorize-io/hindsight/tree/integrations/haystack/v0.1.0)
 
 **Features**

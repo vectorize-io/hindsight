@@ -55,9 +55,9 @@ class TestProfileManager:
     def test_create_profile_success(self, profile_manager, temp_hindsight_dir):
         """Test creating a new profile."""
         config = {
-            "HINDSIGHT_EMBED_LLM_PROVIDER": "openai",
-            "HINDSIGHT_EMBED_LLM_API_KEY": "sk-test",
-            "HINDSIGHT_EMBED_LLM_MODEL": "gpt-4o-mini",
+            "HINDSIGHT_API_LLM_PROVIDER": "openai",
+            "HINDSIGHT_API_LLM_API_KEY": "sk-test",
+            "HINDSIGHT_API_LLM_MODEL": "gpt-4o-mini",
         }
 
         profile_manager.create_profile("test-profile", config)
@@ -68,9 +68,9 @@ class TestProfileManager:
 
         # Verify config contents
         config_content = config_path.read_text()
-        assert "HINDSIGHT_EMBED_LLM_PROVIDER=openai" in config_content
-        assert "HINDSIGHT_EMBED_LLM_API_KEY=sk-test" in config_content
-        assert "HINDSIGHT_EMBED_LLM_MODEL=gpt-4o-mini" in config_content
+        assert "HINDSIGHT_API_LLM_PROVIDER=openai" in config_content
+        assert "HINDSIGHT_API_LLM_API_KEY=sk-test" in config_content
+        assert "HINDSIGHT_API_LLM_MODEL=gpt-4o-mini" in config_content
 
         # Verify metadata was created
         metadata_path = temp_hindsight_dir / "profiles" / "metadata.json"
@@ -78,7 +78,9 @@ class TestProfileManager:
 
         metadata = json.loads(metadata_path.read_text())
         assert "test-profile" in metadata["profiles"]
-        assert "port" in metadata["profiles"]["test-profile"]
+        # The port now lives in the profile's .env, not metadata.
+        assert "HINDSIGHT_API_PORT=" in config_content
+        assert "port" not in metadata["profiles"]["test-profile"]
         assert "created_at" in metadata["profiles"]["test-profile"]
 
     def test_create_profile_invalid_name(self, profile_manager):
@@ -270,6 +272,41 @@ class TestProfileManager:
 
         # Ports should be different
         assert paths1.port != paths2.port
+
+    def test_api_port_persisted_to_env(self, profile_manager, temp_hindsight_dir):
+        """The allocated API port is written into the profile's .env, not metadata."""
+        profile_manager.create_profile("p", {"KEY": "v"})
+        env = (temp_hindsight_dir / "profiles" / "p.env").read_text()
+        assert "HINDSIGHT_API_PORT=" in env
+
+    def test_env_api_port_override_wins(self, profile_manager, temp_hindsight_dir):
+        """A HINDSIGHT_API_PORT in the .env is the source of truth for the port."""
+        env_path = temp_hindsight_dir / "profiles" / "p.env"
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        env_path.write_text("HINDSIGHT_API_PORT=9999\n")
+        assert profile_manager.resolve_profile_paths("p").port == 9999
+
+    def test_ui_port_defaults_to_offset(self, profile_manager, temp_hindsight_dir):
+        env_path = temp_hindsight_dir / "profiles" / "p.env"
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        env_path.write_text("HINDSIGHT_API_PORT=9000\n")
+        assert profile_manager.resolve_profile_paths("p").ui_port == 19000
+
+    def test_ui_port_override(self, profile_manager, temp_hindsight_dir):
+        env_path = temp_hindsight_dir / "profiles" / "p.env"
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        env_path.write_text("HINDSIGHT_API_PORT=9000\nHINDSIGHT_EMBED_CP_PORT=22000\n")
+        assert profile_manager.resolve_profile_paths("p").ui_port == 22000
+
+    def test_legacy_metadata_port_fallback(self, profile_manager, temp_hindsight_dir):
+        """Profiles whose port still lives in metadata (no .env port) keep working."""
+        profiles_dir = temp_hindsight_dir / "profiles"
+        profiles_dir.mkdir(parents=True, exist_ok=True)
+        (profiles_dir / "legacy.env").write_text("HINDSIGHT_API_LLM_PROVIDER=openai\n")
+        (profiles_dir / "metadata.json").write_text(
+            json.dumps({"version": 1, "profiles": {"legacy": {"port": 9321, "created_at": "x"}}})
+        )
+        assert profile_manager.resolve_profile_paths("legacy").port == 9321
 
     def test_daemon_running_status(self, profile_manager):
         """Test that daemon running status is checked correctly."""

@@ -55,7 +55,7 @@ paths:
   /v1/default/banks/{bank_id}/graph:
     get:
       description: "Retrieve graph data for visualization, optionally filtered by\
-        \ type (world/experience/opinion)."
+        \ type (world/experience/observation)."
       operationId: get_graph
       parameters:
       - explode: false
@@ -442,12 +442,12 @@ paths:
   /v1/default/banks/{bank_id}/reflect:
     post:
       description: |-
-        Reflect and formulate an answer using bank identity, world facts, and opinions.
+        Reflect and formulate an answer using bank identity, world facts, observations, and mental models.
 
         This endpoint:
         1. Retrieves experience (conversations and events)
         2. Retrieves world facts relevant to the query
-        3. Retrieves existing opinions (bank's perspectives)
+        3. Retrieves observations and mental models (bank's synthesized perspectives)
         4. Uses LLM to formulate a contextual answer
         5. Returns plain text answer and the facts used
       operationId: reflect
@@ -2834,6 +2834,48 @@ paths:
       summary: Clear all observations
       tags:
       - Banks
+  /v1/default/banks/{bank_id}/observations/scopes:
+    get:
+      description: "Enumerate the distinct scopes across a bank's observations. Each\
+        \ observation lives under a scope: the exact set of tags it was consolidated\
+        \ with. Returns every distinct scope (tag order normalized) with the number\
+        \ of observations in it; the empty tag list is the global/untagged scope.\
+        \ Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact)\
+        \ to filter observations to exactly that scope."
+      operationId: list_observation_scopes
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservationScopesResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: List observation scopes
+      tags:
+      - Memory
   /v1/default/banks/{bank_id}/consolidation/recover:
     post:
       description: Reset all memories that were permanently marked as failed during
@@ -3331,9 +3373,9 @@ paths:
   /v1/default/banks/{bank_id}/memories:
     delete:
       description: "Delete memory units for a memory bank. Optionally filter by type\
-        \ (world, experience, opinion) to delete only specific types. This is a destructive\
-        \ operation that cannot be undone. The bank profile (disposition and background)\
-        \ will be preserved."
+        \ (world, experience, observation) to delete only specific types. This is\
+        \ a destructive operation that cannot be undone. The bank profile (disposition\
+        \ and background) will be preserved."
       operationId: clear_bank_memories
       parameters:
       - explode: false
@@ -3344,7 +3386,7 @@ paths:
           title: Bank Id
           type: string
         style: simple
-      - description: "Optional fact type filter (world, experience, opinion)"
+      - description: "Optional fact type filter (world, experience, observation)"
         explode: true
         in: query
         name: type
@@ -4467,6 +4509,11 @@ components:
         max_observations_per_scope:
           nullable: true
           type: integer
+        observation_scope_limits:
+          items:
+            additionalProperties: {}
+          nullable: true
+          type: array
         reflect_source_facts_max_tokens:
           nullable: true
           type: integer
@@ -5309,6 +5356,8 @@ components:
         retain_params:
           additionalProperties: {}
           nullable: true
+        observation_scopes:
+          $ref: '#/components/schemas/Observation_Scopes'
       required:
       - bank_id
       - content_hash
@@ -6519,6 +6568,7 @@ components:
           - all
           - any_strict
           - all_strict
+          - exact
           nullable: true
           type: string
         tag_groups:
@@ -6607,6 +6657,7 @@ components:
           - all
           - any_strict
           - all_strict
+          - exact
           nullable: true
           type: string
         tag_groups:
@@ -6624,6 +6675,46 @@ components:
           nullable: true
           type: integer
       title: MentalModelTrigger
+    ObservationScope:
+      description: "A distinct observation scope: an exact tag set plus its observation\
+        \ count."
+      properties:
+        tags:
+          description: The exact tag set defining this scope (normalized order). Empty
+            list is the global/untagged scope.
+          items:
+            type: string
+          type: array
+        count:
+          description: Number of observations that live under this scope
+          title: Count
+          type: integer
+      required:
+      - count
+      - tags
+      title: ObservationScope
+    ObservationScopesResponse:
+      description: Response model for the observation scopes enumeration endpoint.
+      example:
+        scopes:
+        - count: 12
+          tags:
+          - user:alice
+        - count: 4
+          tags:
+          - user:alice
+          - project:apollo
+        - count: 2
+          tags: []
+      properties:
+        scopes:
+          description: "Distinct observation scopes, most populous first"
+          items:
+            $ref: '#/components/schemas/ObservationScope'
+          type: array
+      required:
+      - scopes
+      title: ObservationScopesResponse
     OperationProgress:
       description: |-
         Last-known progress snapshot for a long-running async operation.
@@ -6859,6 +6950,7 @@ components:
           - all
           - any_strict
           - all_strict
+          - exact
           title: Tags Match
           type: string
         tag_groups:
@@ -7181,6 +7273,7 @@ components:
           - all
           - any_strict
           - all_strict
+          - exact
           title: Tags Match
           type: string
         tag_groups:
@@ -7482,6 +7575,7 @@ components:
           - all
           - any_strict
           - all_strict
+          - exact
           title: Match
           type: string
       required:
@@ -8040,6 +8134,20 @@ components:
       - id
       - url
       title: WebhookResponse
+    Observation_Scopes:
+      anyOf:
+      - type: string
+      - items:
+          items:
+            type: string
+          type: array
+        type: array
+      description: "The observation_scopes spec configured at retain time (e.g. 'all_combinations',\
+        \ 'per_tag', or explicit tag-set lists), captured into retain_params. None\
+        \ when none was set (default 'combined' scoping) or for documents retained\
+        \ before this was captured."
+      nullable: true
+      title: Observation Scopes
     Timestamp:
       anyOf:
       - format: date-time

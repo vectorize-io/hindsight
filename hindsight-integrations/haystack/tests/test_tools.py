@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from haystack.dataclasses import ChatMessage
 from hindsight_haystack import (
-    HindsightToolset,
+    HindsightMemoryWrapper,
     configure,
     create_hindsight_tools,
     reset_config,
@@ -788,19 +788,19 @@ class TestBankCreationRetry:
         assert client.acreate_bank.call_count == 1
 
 
-class TestHindsightToolset:
-    """Test the HindsightToolset class."""
+class TestHindsightMemoryWrapper:
+    """Test the HindsightMemoryWrapper class."""
 
     def test_creates_three_tools_by_default(self):
         client = _mock_client()
-        toolset = HindsightToolset(bank_id="test", client=client)
+        toolset = HindsightMemoryWrapper(bank_id="test", client=client)
         assert len(toolset) == 3
         names = {t.name for t in toolset}
         assert names == {"retain_memory", "recall_memory", "reflect_on_memory"}
 
     def test_include_flags(self):
         client = _mock_client()
-        toolset = HindsightToolset(
+        toolset = HindsightMemoryWrapper(
             bank_id="test",
             client=client,
             include_retain=True,
@@ -814,7 +814,7 @@ class TestHindsightToolset:
         client = _mock_client()
         client._base_url = "http://test:8888"
         client._api_key = "test-key"
-        toolset = HindsightToolset(
+        toolset = HindsightMemoryWrapper(
             bank_id="test",
             client=client,
             auto_recall=True,
@@ -829,19 +829,19 @@ class TestHindsightToolset:
 
         with patch("hindsight_haystack._client.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
-            restored = HindsightToolset.from_dict(d)
+            restored = HindsightMemoryWrapper.from_dict(d)
             assert len(restored) == 3
             assert restored._auto_recall is True
             assert restored._auto_retain is True
 
 
 class TestToolsetAutoRecall:
-    """Test auto-recall behavior in HindsightToolset.run()."""
+    """Test auto-recall behavior in HindsightMemoryWrapper.run()."""
 
     def test_auto_recall_enriches_system_prompt(self):
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response(["User likes Python", "User is in NYC"])
-        toolset = HindsightToolset(bank_id="test", client=client, auto_recall=True)
+        toolset = HindsightMemoryWrapper(bank_id="test", client=client, auto_recall=True)
 
         # Create a mock agent
         agent = MagicMock()
@@ -862,7 +862,7 @@ class TestToolsetAutoRecall:
     def test_auto_recall_uses_agent_system_prompt_when_none_provided(self):
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response(["some memory"])
-        toolset = HindsightToolset(bank_id="test", client=client, auto_recall=True)
+        toolset = HindsightMemoryWrapper(bank_id="test", client=client, auto_recall=True)
 
         agent = MagicMock()
         agent.system_prompt = "Agent default prompt."
@@ -878,7 +878,7 @@ class TestToolsetAutoRecall:
     def test_auto_recall_overrides_with_explicit_system_prompt(self):
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response(["memory"])
-        toolset = HindsightToolset(bank_id="test", client=client, auto_recall=True)
+        toolset = HindsightMemoryWrapper(bank_id="test", client=client, auto_recall=True)
 
         agent = MagicMock()
         agent.system_prompt = "Agent default."
@@ -899,7 +899,7 @@ class TestToolsetAutoRecall:
 
     def test_auto_recall_skips_when_no_user_message(self):
         client = _mock_client()
-        toolset = HindsightToolset(bank_id="test", client=client, auto_recall=True)
+        toolset = HindsightMemoryWrapper(bank_id="test", client=client, auto_recall=True)
 
         agent = MagicMock()
         agent.system_prompt = "base prompt"
@@ -914,7 +914,7 @@ class TestToolsetAutoRecall:
 
     def test_auto_recall_disabled_by_default(self):
         client = _mock_client()
-        toolset = HindsightToolset(bank_id="test", client=client)
+        toolset = HindsightMemoryWrapper(bank_id="test", client=client)
 
         agent = MagicMock()
         agent.system_prompt = "base"
@@ -930,7 +930,7 @@ class TestToolsetAutoRecall:
         client = _mock_client()
         # Return many results
         client.arecall.return_value = _mock_recall_response([f"Memory {i}" for i in range(20)])
-        toolset = HindsightToolset(
+        toolset = HindsightMemoryWrapper(
             bank_id="test",
             client=client,
             auto_recall=True,
@@ -954,7 +954,7 @@ class TestToolsetAutoRecall:
     def test_auto_recall_no_memories_passes_base_prompt(self):
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response([])
-        toolset = HindsightToolset(bank_id="test", client=client, auto_recall=True)
+        toolset = HindsightMemoryWrapper(bank_id="test", client=client, auto_recall=True)
 
         agent = MagicMock()
         agent.system_prompt = "base prompt"
@@ -969,12 +969,12 @@ class TestToolsetAutoRecall:
 
 
 class TestToolsetAutoRetain:
-    """Test auto-retain behavior in HindsightToolset.run()."""
+    """Test auto-retain behavior in HindsightMemoryWrapper.run()."""
 
     def test_auto_retain_stores_user_and_assistant_messages(self):
         client = _mock_client()
         client.aretain.return_value = _mock_retain_response()
-        toolset = HindsightToolset(bank_id="test", client=client, auto_retain=True)
+        toolset = HindsightMemoryWrapper(bank_id="test", client=client, auto_retain=True)
 
         agent = MagicMock()
         agent.system_prompt = None
@@ -995,7 +995,7 @@ class TestToolsetAutoRetain:
     def test_auto_retain_includes_role_metadata(self):
         client = _mock_client()
         client.aretain.return_value = _mock_retain_response()
-        toolset = HindsightToolset(bank_id="test", client=client, auto_retain=True)
+        toolset = HindsightMemoryWrapper(bank_id="test", client=client, auto_retain=True)
 
         agent = MagicMock()
         agent.system_prompt = None
@@ -1017,7 +1017,7 @@ class TestToolsetAutoRetain:
     def test_auto_retain_skips_system_messages(self):
         client = _mock_client()
         client.aretain.return_value = _mock_retain_response()
-        toolset = HindsightToolset(bank_id="test", client=client, auto_retain=True)
+        toolset = HindsightMemoryWrapper(bank_id="test", client=client, auto_retain=True)
 
         agent = MagicMock()
         agent.system_prompt = None
@@ -1040,7 +1040,7 @@ class TestToolsetAutoRetain:
 
     def test_auto_retain_disabled_by_default(self):
         client = _mock_client()
-        toolset = HindsightToolset(bank_id="test", client=client)
+        toolset = HindsightMemoryWrapper(bank_id="test", client=client)
 
         agent = MagicMock()
         agent.system_prompt = None
@@ -1055,7 +1055,7 @@ class TestToolsetAutoRetain:
     def test_auto_retain_handles_error_gracefully(self):
         client = _mock_client()
         client.aretain.side_effect = RuntimeError("connection refused")
-        toolset = HindsightToolset(bank_id="test", client=client, auto_retain=True)
+        toolset = HindsightMemoryWrapper(bank_id="test", client=client, auto_retain=True)
 
         agent = MagicMock()
         agent.system_prompt = None
@@ -1077,7 +1077,7 @@ class TestToolsetAutoRecallAndRetain:
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response(["remembered fact"])
         client.aretain.return_value = _mock_retain_response()
-        toolset = HindsightToolset(
+        toolset = HindsightMemoryWrapper(
             bank_id="test",
             client=client,
             auto_recall=True,

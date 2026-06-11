@@ -13,7 +13,8 @@ Hindsight runs on **Linux**, **macOS**, and **Windows**:
 | Platform | Docker | Bare Metal (pip) | Embedded DB (pg0) | Notes |
 |----------|--------|------------------|--------------------|-------|
 | **Linux** (x86_64, ARM64) | ✅ | ✅ | ✅ | Fully supported, recommended for production |
-| **macOS** (Apple Silicon, Intel) | ✅ | ✅ | ✅ | Fully supported |
+| **macOS** (Apple Silicon / arm64) | ✅ | ✅ | ✅ | Fully supported |
+| **macOS** (Intel / x86_64) | ✅ | ⚠️ slim only | ✅ | Use `hindsight-all-slim` / `hindsight-api-slim`. The full bundle's local ML models (PyTorch, MLX) publish no Intel-Mac wheels, so `pip install hindsight-all` silently backtracks to a months-old release. Pair the slim bundle with a hosted embeddings/reranker provider or the in-process ONNX backend (`hindsight-api-slim[local-onnx]`). |
 | **Windows** (x86_64) | ✅ | ✅ | ✅ | Fully supported — see [Windows setup](#windows) for external PostgreSQL option |
 
 All platforms support the embedded database (pg0) for development. On Windows, you can also use an external PostgreSQL installation — see the [Windows](#windows) section for a step-by-step guide.
@@ -364,9 +365,11 @@ The `HF_ENDPOINT` variable is used by Hugging Face tooling (`huggingface_hub`), 
 **Best for**: Using Hindsight programmatically from Python without running a separate server process.
 
 ```bash
-pip install hindsight-all        # Full — works out of the box
+pip install hindsight-all        # Full — works out of the box (Linux, Windows, Apple Silicon Macs)
 pip install hindsight-all-slim   # Slim — requires external services for embeddings, reranking, and the database
 ```
+
+On Intel (x86_64) Macs, install `hindsight-all-slim` — see [Supported Platforms](#supported-platforms).
 
 `hindsight-all` supports two modes of embedding:
 

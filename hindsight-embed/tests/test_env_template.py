@@ -22,13 +22,13 @@ def test_user_values_are_active():
         {
             "HINDSIGHT_API_LLM_PROVIDER": "anthropic",
             "HINDSIGHT_API_LLM_API_KEY": "sk-secret",
-            "HINDSIGHT_EMBED_BANK_ID": "default",
+            "HINDSIGHT_API_LLM_MODEL": "gpt-4o-mini",
         }
     )
     active = _active_keys(text)
     assert active["HINDSIGHT_API_LLM_PROVIDER"] == "anthropic"
     assert active["HINDSIGHT_API_LLM_API_KEY"] == "sk-secret"
-    assert active["HINDSIGHT_EMBED_BANK_ID"] == "default"
+    assert active["HINDSIGHT_API_LLM_MODEL"] == "gpt-4o-mini"
 
 
 def test_only_user_values_are_active():
@@ -40,7 +40,7 @@ def test_only_user_values_are_active():
     values = {
         "HINDSIGHT_API_LLM_PROVIDER": "anthropic",
         "HINDSIGHT_API_LLM_API_KEY": "sk-secret",
-        "HINDSIGHT_EMBED_BANK_ID": "default",
+        "HINDSIGHT_API_LLM_MODEL": "gpt-4o-mini",
     }
     assert _active_keys(render_config(values)) == values
 

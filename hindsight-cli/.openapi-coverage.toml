@@ -36,6 +36,10 @@ get_entity_graph = "UI-only endpoint for the control plane entity constellation"
 # Document chunks listing is a UI-only endpoint for the document detail dialog.
 list_document_chunks = "UI-only endpoint for the control plane document detail dialog"
 
+# Observation scope enumeration powers the control-plane scope filter/clusters;
+# not a useful end-user CLI command.
+list_observation_scopes = "UI-only endpoint for the control plane observation scope filter"
+
 # Reprocess triggers an async retain re-run; exposed in the control plane UI only.
 reprocess_document = "UI-only endpoint for the control plane document detail dialog"
 

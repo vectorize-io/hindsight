@@ -13,7 +13,7 @@ print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-VALID_INTEGRATIONS=("litellm" "pydantic-ai" "crewai" "agent-framework" "ag2" "ai-sdk" "chat" "openclaw" "langgraph" "llamaindex" "nemoclaw" "strands" "claude-code" "codex" "cline" "cursor-cli" "hermes" "autogen" "paperclip" "opencode" "cursor" "cloudflare-oauth-proxy" "openai-agents" "pipecat" "agentcore" "smolagents" "n8n" "dify" "gemini-spark" "vapi" "roo-code" "flowise" "google-adk" "haystack" "claude-agent-sdk" "superagent" "omo" "obsidian")
+VALID_INTEGRATIONS=("ag2" "agent-framework" "agentcore" "agno" "ai-sdk" "autogen" "chat" "claude-agent-sdk" "claude-code" "cline" "cloudflare-oauth-proxy" "codex" "crewai" "cursor" "cursor-cli" "dify" "flowise" "gemini-spark" "google-adk" "haystack" "langgraph" "litellm" "llamaindex" "n8n" "nemoclaw" "obsidian" "omo" "openai-agents" "openclaw" "opencode" "paperclip" "pipecat" "pydantic-ai" "roo-code" "smolagents" "strands" "superagent" "vapi")
 
 usage() {
     print_error "Usage: $0 <integration> <version>"

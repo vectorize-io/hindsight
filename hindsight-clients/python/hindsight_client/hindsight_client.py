@@ -44,7 +44,6 @@ from hindsight_client_api.models.bank_profile_response import BankProfileRespons
 from hindsight_client_api.models.file_retain_response import FileRetainResponse
 from hindsight_client_api.models.list_memory_units_response import ListMemoryUnitsResponse
 from hindsight_client_api.models.recall_response import RecallResponse
-from hindsight_client_api.models.recall_result import RecallResult
 from hindsight_client_api.models.reflect_response import ReflectResponse
 from hindsight_client_api.models.retain_response import RetainResponse
 

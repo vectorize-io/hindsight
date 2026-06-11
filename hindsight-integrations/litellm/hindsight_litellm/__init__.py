@@ -1519,7 +1519,6 @@ def hindsight_memory(
     # Save previous state
     was_enabled = is_enabled()
     previous_config = get_config()
-    previous_defaults = get_defaults()
 
     try:
         # Configure and enable

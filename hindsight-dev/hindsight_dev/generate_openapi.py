@@ -6,7 +6,6 @@ This script imports the FastAPI app and exports its OpenAPI schema to a JSON fil
 """
 
 import json
-import os
 import sys
 from pathlib import Path
 

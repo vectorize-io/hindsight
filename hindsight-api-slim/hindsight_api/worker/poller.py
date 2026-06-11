@@ -16,7 +16,7 @@ import time
 import traceback
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..engine.schema import fq_table_explicit as fq_table
@@ -824,7 +824,6 @@ class WorkerPoller:
             recovered = 0
             for row in rows:
                 operation_id = str(row["operation_id"])
-                task_payload = row["task_payload"]
                 result_metadata = row["result_metadata"]
 
                 # Parse metadata
@@ -837,12 +836,6 @@ class WorkerPoller:
                 logger.info(
                     f"Recovering batch operation: operation_id={operation_id}, batch_id={batch_id}, provider={batch_provider}"
                 )
-
-                # Parse task_payload
-                if isinstance(task_payload, str):
-                    task_dict = json.loads(task_payload)
-                else:
-                    task_dict = task_payload
 
                 # Mark operation as ready for re-processing
                 # Reset to pending with task_payload intact so worker picks it up again

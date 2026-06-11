@@ -174,8 +174,8 @@
       "id": "cursor-cli",
       "name": "Cursor CLI",
       "description": "Automatic long-term memory for Cursor CLI via Hindsight hooks. Recalls relevant context before each prompt and retains conversations after each turn.",
-      "type": "official",
-      "by": "hindsight",
+      "type": "community",
+      "by": "Korayem",
       "category": "tool",
       "link": "/sdks/integrations/cursor-cli",
       "icon": "/img/icons/cursor-cli.svg"
@@ -233,7 +233,7 @@
     {
       "id": "haystack",
       "name": "Haystack",
-      "description": "Persistent memory for Haystack agents. Provides retain/recall/reflect Tools plus a HindsightToolset with optional auto-recall and auto-retain.",
+      "description": "Persistent memory for Haystack agents. Provides retain/recall/reflect Tools plus a HindsightMemoryWrapper with optional auto-recall and auto-retain.",
       "type": "official",
       "by": "hindsight",
       "category": "framework",
