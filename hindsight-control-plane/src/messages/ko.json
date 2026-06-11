@@ -317,6 +317,8 @@
     "retainFailedToSave": "Retain 설정 저장에 실패했습니다",
     "chunkSizeLabel": "청크 크기",
     "chunkSizeDescription": "처리를 위한 텍스트 청크 크기 (문자 수)",
+    "structuredChunkSizeLabel": "구조화 청크 크기",
+    "structuredChunkSizeDescription": "하나의 JSONL 줄 또는 대화 턴을 통째로 유지할 최대 문자 수입니다. 비워 두면 청크 크기를 사용합니다.",
     "missionLabel": "미션",
     "retainMissionDescription": "추출 중에 이 뱅크가 주목해야 할 내용. 추출 규칙을 대체하지 않고 LLM을 유도합니다 — 모든 추출 모드와 함께 작동합니다.",
     "retainMissionPlaceholder": "예: 기술적 결정, API 설계 선택 및 아키텍처 트레이드오프를 항상 포함하세요. 회의 물류, 인사말 및 사교적 교환은 무시하세요.",

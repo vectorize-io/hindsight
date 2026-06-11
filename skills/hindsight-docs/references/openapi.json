@@ -6525,7 +6525,19 @@
               }
             ],
             "title": "Retain Chunk Size",
-            "description": "Max token size for each content chunk"
+            "description": "Target max characters for each content chunk"
+          },
+          "retain_structured_chunk_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Structured Chunk Size",
+            "description": "Max characters for a single JSONL line or conversation turn to keep whole; defaults to retain_chunk_size when unset"
           },
           "enable_observations": {
             "anyOf": [
@@ -7552,7 +7564,19 @@
               }
             ],
             "title": "Retain Chunk Size",
-            "description": "Maximum token size for each content chunk during retain."
+            "description": "Target maximum characters for each content chunk during retain."
+          },
+          "retain_structured_chunk_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Structured Chunk Size",
+            "description": "Maximum characters for a single JSONL line or conversation turn to keep whole during retain. Defaults to retain_chunk_size when unset."
           },
           "enable_observations": {
             "anyOf": [

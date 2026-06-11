@@ -317,6 +317,8 @@
     "retainFailedToSave": "未能儲存保留設定",
     "chunkSizeLabel": "片段大小",
     "chunkSizeDescription": "處理的文字片段大小（字元數）",
+    "structuredChunkSizeLabel": "結構化片段大小",
+    "structuredChunkSizeDescription": "單條 JSONL 行或對話輪次保持完整嘅最大字元數。留空就使用片段大小。",
     "missionLabel": "使命",
     "retainMissionDescription": "此記憶庫在擷取期間應關注的內容。在不取代擷取規則的情況下引導 LLM — 可與任何擷取模式搭配使用。",
     "retainMissionPlaceholder": "例如：始終包含技術決策、API 設計選擇和架構權衡。忽略會議事務、問候語和社交交流。",

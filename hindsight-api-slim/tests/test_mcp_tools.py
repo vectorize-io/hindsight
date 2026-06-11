@@ -1572,6 +1572,7 @@ class TestUpdateBankVariants:
                 "retain_extraction_mode": "custom",
                 "retain_custom_instructions": "Extract only action items",
                 "retain_chunk_size": 2000,
+                "retain_structured_chunk_size": 5000,
             }
         )
         config_call = mock_memory._config_resolver.update_bank_config.call_args
@@ -1585,6 +1586,7 @@ class TestUpdateBankVariants:
         assert updates["retain_extraction_mode"] == "custom"
         assert updates["retain_custom_instructions"] == "Extract only action items"
         assert updates["retain_chunk_size"] == 2000
+        assert updates["retain_structured_chunk_size"] == 5000
 
     async def test_update_bank_name_and_config_together(self, mock_memory):
         """name goes to engine, config_updates goes to config resolver."""
