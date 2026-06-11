@@ -16,6 +16,7 @@ from fastapi import FastAPI, HTTPException, Request
 from hindsight_api.api.http import (
     _CLIENT_CLOSED_REQUEST_STATUS_CODE,
     _cancel_on_client_disconnect,
+    run_cancellable_on_disconnect,
 )
 from hindsight_api.cancellation import CancellationToken, OperationCancelledError
 from hindsight_api.models import RequestContext
@@ -156,10 +157,57 @@ async def test_driver_returns_work_result_when_client_stays():
     assert result == "done"
 
 
+# --- Shared HTTP helper (used by both the recall and reflect handlers) ----------
+
+
+async def test_run_cancellable_returns_result_when_connected():
+    ctx = RequestContext()
+    disconnected = asyncio.Event()  # never set
+
+    async def work() -> str:
+        ctx.raise_if_cancelled()
+        return "ok"
+
+    result = await run_cancellable_on_disconnect(
+        _FakeRequest(disconnected), ctx, work(), operation="reflect", bank_id="b1", poll_interval=0
+    )
+    assert result == "ok"
+    assert ctx.cancellation is None  # restored
+
+
+async def test_run_cancellable_maps_disconnect_to_499():
+    ctx = RequestContext()
+    disconnected = asyncio.Event()
+
+    async def staged_work() -> str:
+        for _ in range(1000):  # stand-in for the reflect agent loop / recall stages
+            ctx.raise_if_cancelled()
+            await asyncio.sleep(0.005)
+        return "done"
+
+    async def disconnect_soon() -> None:
+        await asyncio.sleep(0.02)
+        disconnected.set()
+
+    asyncio.create_task(disconnect_soon())
+    with pytest.raises(HTTPException) as exc:
+        await asyncio.wait_for(
+            run_cancellable_on_disconnect(
+                _FakeRequest(disconnected), ctx, staged_work(), operation="reflect", bank_id="b1", poll_interval=0
+            ),
+            timeout=_TEST_TIMEOUT_SECONDS,
+        )
+    assert exc.value.status_code == _CLIENT_CLOSED_REQUEST_STATUS_CODE
+    assert exc.value.detail == "client disconnected"
+    assert ctx.cancellation is None
+
+
 # --- ASGI end-to-end: disconnect -> aborted work -> 499 -------------------------
 
 
 async def test_asgi_disconnect_aborts_work_and_returns_499():
+    """Exercises the real shared helper through the ASGI stack (both endpoints'
+    path), proving disconnect -> aborted staged work -> 499."""
     app = FastAPI()
     started = asyncio.Event()
     cancelled = asyncio.Event()
@@ -167,16 +215,20 @@ async def test_asgi_disconnect_aborts_work_and_returns_499():
     @app.post("/recall")
     async def recall(http_request: Request):
         ctx = RequestContext()
-        try:
-            async with _cancel_on_client_disconnect(http_request, ctx, poll_interval=0):
-                started.set()
+
+        async def staged_work() -> dict:
+            started.set()
+            try:
                 while True:  # staged pipeline: checkpoint then a slice of work
                     ctx.raise_if_cancelled()
                     await asyncio.sleep(0.005)
-        except OperationCancelledError as e:
-            cancelled.set()
-            raise HTTPException(status_code=_CLIENT_CLOSED_REQUEST_STATUS_CODE, detail=e.reason)
-        return {"ok": True}
+            except OperationCancelledError:
+                cancelled.set()
+                raise
+
+        return await run_cancellable_on_disconnect(
+            http_request, ctx, staged_work(), operation="recall", bank_id="b1", poll_interval=0
+        )
 
     body_sent = False
 

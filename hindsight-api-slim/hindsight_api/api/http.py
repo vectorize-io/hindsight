@@ -11,10 +11,10 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
@@ -135,6 +135,34 @@ async def _cancel_on_client_disconnect(
         with contextlib.suppress(asyncio.CancelledError):
             await watcher
         request_context.cancellation = previous_token
+
+
+_T = TypeVar("_T")
+
+
+async def run_cancellable_on_disconnect(
+    http_request: Request,
+    request_context: RequestContext,
+    coro: Awaitable[_T],
+    *,
+    operation: str,
+    bank_id: str,
+    poll_interval: float = _CLIENT_DISCONNECT_POLL_INTERVAL_SECONDS,
+) -> _T:
+    """Run an engine coroutine, aborting it with 499 if the client disconnects.
+
+    Shared by the recall and reflect handlers: it attaches the disconnect-driven
+    cancellation token (which the engine checks at its stage/iteration
+    boundaries) and translates the resulting ``OperationCancelledError`` into the
+    de facto 499 status so abandoned work stops instead of running to completion
+    (issue #2122).
+    """
+    async with _cancel_on_client_disconnect(http_request, request_context, poll_interval=poll_interval):
+        try:
+            return await coro
+        except OperationCancelledError as e:
+            logger.info(f"[{operation.upper()} CANCELLED] bank={bank_id} reason={e.reason}")
+            raise HTTPException(status_code=_CLIENT_CLOSED_REQUEST_STATUS_CODE, detail=e.reason) from e
 
 
 class EntityIncludeOptions(BaseModel):
@@ -3570,8 +3598,10 @@ def _register_routes(app: FastAPI):
                 # Cancel the recall if the client disconnects: the engine checks
                 # request_context at each stage boundary and aborts abandoned
                 # work rather than running it to completion (issue #2122).
-                async with _cancel_on_client_disconnect(http_request, request_context):
-                    core_result = await app.state.memory.recall_async(
+                core_result = await run_cancellable_on_disconnect(
+                    http_request,
+                    request_context,
+                    app.state.memory.recall_async(
                         bank_id=bank_id,
                         query=request.query,
                         budget=request.budget,
@@ -3590,7 +3620,10 @@ def _register_routes(app: FastAPI):
                         tags=request.tags,
                         tags_match=request.tags_match,
                         tag_groups=request.tag_groups,
-                    )
+                    ),
+                    operation="recall",
+                    bank_id=bank_id,
+                )
 
             # Convert core MemoryFact objects to API RecallResult objects (excluding internal metrics)
             def _fact_to_result(fact: "MemoryFact") -> RecallResult:
@@ -3666,11 +3699,6 @@ def _register_routes(app: FastAPI):
             return response
         except HTTPException:
             raise
-        except OperationCancelledError as e:
-            # Client went away mid-recall; the engine aborted at a stage boundary.
-            handler_duration = time.time() - handler_start
-            logger.info(f"[RECALL CANCELLED] bank={bank_id} handler_duration={handler_duration:.3f}s reason={e.reason}")
-            raise HTTPException(status_code=_CLIENT_CLOSED_REQUEST_STATUS_CODE, detail=e.reason)
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
@@ -3712,6 +3740,7 @@ def _register_routes(app: FastAPI):
     async def api_reflect(
         bank_id: str,
         request: ReflectRequest,
+        http_request: Request,
         request_context: RequestContext = Depends(get_request_context),
         _precheck: None = Depends(precheck_for("reflect")),
     ):
@@ -3725,20 +3754,30 @@ def _register_routes(app: FastAPI):
 
             # Use the memory system's reflect_async method (record metrics)
             with metrics.record_operation("reflect", bank_id=bank_id, source="api", budget=request.budget.value):
-                core_result = await app.state.memory.reflect_async(
+                # Cancel the reflect if the client disconnects: the agent loop
+                # checks request_context between iterations and the nested recall
+                # checks at its stage boundaries, so abandoned work stops instead
+                # of running to completion (issue #2122).
+                core_result = await run_cancellable_on_disconnect(
+                    http_request,
+                    request_context,
+                    app.state.memory.reflect_async(
+                        bank_id=bank_id,
+                        query=query,
+                        budget=request.budget,
+                        context=None,  # Deprecated, now concatenated with query
+                        max_tokens=request.max_tokens,
+                        response_schema=request.response_schema,
+                        request_context=request_context,
+                        tags=request.tags,
+                        tags_match=request.tags_match,
+                        tag_groups=request.tag_groups,
+                        fact_types=request.fact_types,
+                        exclude_mental_models=request.exclude_mental_models,
+                        exclude_mental_model_ids=request.exclude_mental_model_ids,
+                    ),
+                    operation="reflect",
                     bank_id=bank_id,
-                    query=query,
-                    budget=request.budget,
-                    context=None,  # Deprecated, now concatenated with query
-                    max_tokens=request.max_tokens,
-                    response_schema=request.response_schema,
-                    request_context=request_context,
-                    tags=request.tags,
-                    tags_match=request.tags_match,
-                    tag_groups=request.tag_groups,
-                    fact_types=request.fact_types,
-                    exclude_mental_models=request.exclude_mental_models,
-                    exclude_mental_model_ids=request.exclude_mental_model_ids,
                 )
 
             # Build based_on (memories + mental_models + directives) if facts are requested
