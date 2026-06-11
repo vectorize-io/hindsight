@@ -24,11 +24,13 @@ A few weeks ago we wrote that Hindsight is the [fastest-growing open-source AI m
 
 | Package | Registry | Downloads |
 |---|---|---:|
-| `hindsight-client` | PyPI | **~1,000,000** |
+| `hindsight-client` | PyPI | **1,016,771** |
 | `hindsight-api` | PyPI | ~175,000 |
 | `@vectorize-io/hindsight-client` | npm | ~90,000 |
 
-The client alone is now pulling **~140,000 downloads a week** and accelerating. Add the API package and the npm client and Hindsight is well past **1.2 million** total installs across registries.
+Add the API package and the npm client and Hindsight is well past **1.2 million** total installs across registries.
+
+Look closer at that client number and the curve speaks for itself: of those 1,016,771 lifetime downloads, **763,365 happened in just the last 30 days**. Three-quarters of every install Hindsight has ever had landed in the last month. The client is now running at roughly **178,000 downloads a week** — not "growing," accelerating.
 
 ## Why the client number matters most
 
