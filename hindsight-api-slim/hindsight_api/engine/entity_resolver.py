@@ -17,6 +17,7 @@ from difflib import SequenceMatcher
 from typing import Any, Final
 
 from .db_utils import acquire_with_retry
+from .entity_arbitration import GrayBandCandidate, GrayBandCase, arbitrate_gray_band
 from .memory_engine import fq_table
 from .retain.entity_labels import (
     build_labels_lookup as _build_labels_lookup_from_config,
@@ -90,6 +91,16 @@ class _CooccurrencePair:
     event_date: datetime | None = None
 
 
+@dataclass(frozen=True)
+class _DeferredGrayCase:
+    """A mention deferred to gray-band LLM arbitration (tier 3)."""
+
+    idx: int
+    name: str
+    event_date: datetime | None
+    case: GrayBandCase
+
+
 _NAME_ENTROPY_THRESHOLD = 1.5
 
 
@@ -147,6 +158,7 @@ class EntityResolver:
         pool: Any,
         entity_lookup: str = "full",
         entity_resolution_batch_size: int = 100,
+        arbitration_llm_config: Any | None = None,
     ):
         """
         Initialize entity resolver.
@@ -161,6 +173,9 @@ class EntityResolver:
         """
         self.pool = pool
         self.entity_lookup = entity_lookup
+        # Small-LLM config for gray-band arbitration; None disables tier 3 even
+        # when callers request it (the engine wires the retain LLM config here).
+        self._arbitration_llm_config = arbitration_llm_config
         if entity_resolution_batch_size < 1:
             raise ValueError("entity_resolution_batch_size must be >= 1")
         self.entity_resolution_batch_size = entity_resolution_batch_size
@@ -276,6 +291,7 @@ class EntityResolver:
         conn=None,
         entity_labels: list | None = None,
         entropy_gate: bool = True,
+        gray_band_lower: float | None = None,
     ) -> list[str]:
         """
         Resolve multiple entities in batch (MUCH faster than sequential).
@@ -301,11 +317,27 @@ class EntityResolver:
         if conn is None:
             async with acquire_with_retry(self.pool) as conn:
                 return await self._resolve_entities_batch_impl(
-                    conn, bank_id, entities_data, context, unit_event_date, taxonomy_lookup, labels_cfg, entropy_gate
+                    conn,
+                    bank_id,
+                    entities_data,
+                    context,
+                    unit_event_date,
+                    taxonomy_lookup,
+                    labels_cfg,
+                    entropy_gate,
+                    gray_band_lower,
                 )
         else:
             return await self._resolve_entities_batch_impl(
-                conn, bank_id, entities_data, context, unit_event_date, taxonomy_lookup, labels_cfg, entropy_gate
+                conn,
+                bank_id,
+                entities_data,
+                context,
+                unit_event_date,
+                taxonomy_lookup,
+                labels_cfg,
+                entropy_gate,
+                gray_band_lower,
             )
 
     async def _resolve_entities_batch_impl(
@@ -318,6 +350,7 @@ class EntityResolver:
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
         entropy_gate: bool = True,
+        gray_band_lower: float | None = None,
     ) -> list[str]:
         if self.entity_lookup == "trigram":
             # Route to backend-specific fuzzy strategy.
@@ -325,7 +358,14 @@ class EntityResolver:
             backend_strategy = self._ops.get_entity_resolution_strategy()
             if backend_strategy == "oracle_fuzzy":
                 return await self._resolve_entities_batch_oracle_fuzzy(
-                    conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg, entropy_gate
+                    conn,
+                    bank_id,
+                    entities_data,
+                    unit_event_date,
+                    taxonomy_lookup,
+                    labels_cfg,
+                    entropy_gate,
+                    gray_band_lower,
                 )
             # Auto-detect pg_trgm availability on first call and fall back to
             # "full" strategy if the extension is not installed.  See #626.
@@ -341,13 +381,27 @@ class EntityResolver:
                     )
                     self.entity_lookup = "full"
                     return await self._resolve_entities_batch_full(
-                        conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg, entropy_gate
+                        conn,
+                        bank_id,
+                        entities_data,
+                        unit_event_date,
+                        taxonomy_lookup,
+                        labels_cfg,
+                        entropy_gate,
+                        gray_band_lower,
                     )
             return await self._resolve_entities_batch_trigram(
-                conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg, entropy_gate
+                conn,
+                bank_id,
+                entities_data,
+                unit_event_date,
+                taxonomy_lookup,
+                labels_cfg,
+                entropy_gate,
+                gray_band_lower,
             )
         return await self._resolve_entities_batch_full(
-            conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg, entropy_gate
+            conn, bank_id, entities_data, unit_event_date, taxonomy_lookup, labels_cfg, entropy_gate, gray_band_lower
         )
 
     async def _resolve_entities_batch_full(
@@ -359,6 +413,7 @@ class EntityResolver:
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
         entropy_gate: bool = True,
+        gray_band_lower: float | None = None,
     ) -> list[str]:
         """Original strategy: load all bank entities then match in Python."""
         # Query ALL candidates for this bank
@@ -434,6 +489,7 @@ class EntityResolver:
             taxonomy_lookup,
             labels_cfg,
             entropy_gate,
+            gray_band_lower,
         )
 
     async def _resolve_entities_batch_trigram(
@@ -445,6 +501,7 @@ class EntityResolver:
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
         entropy_gate: bool = True,
+        gray_band_lower: float | None = None,
     ) -> list[str]:
         """
         Trigram strategy: fetch only similar candidates per entity name using pg_trgm.
@@ -540,6 +597,7 @@ class EntityResolver:
             taxonomy_lookup,
             labels_cfg,
             entropy_gate,
+            gray_band_lower,
         )
 
     async def _resolve_entities_batch_oracle_fuzzy(
@@ -551,6 +609,7 @@ class EntityResolver:
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
         entropy_gate: bool = True,
+        gray_band_lower: float | None = None,
     ) -> list[str]:
         """
         Oracle strategy: fetch similar candidates using UTL_MATCH.JARO_WINKLER_SIMILARITY.
@@ -648,6 +707,7 @@ class EntityResolver:
             taxonomy_lookup,
             labels_cfg,
             entropy_gate,
+            gray_band_lower,
         )
 
     async def _resolve_from_candidates(
@@ -661,6 +721,7 @@ class EntityResolver:
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
         entropy_gate: bool = True,
+        gray_band_lower: float | None = None,
     ) -> list[str]:
         """Shared scoring + upsert logic used by both lookup strategies."""
 
@@ -668,6 +729,8 @@ class EntityResolver:
         entity_ids = [None] * len(entities_data)
         entities_to_update: list[_EntityStat] = []
         entities_to_create: list[_EntityToCreate] = []
+        deferred_cases: list[_DeferredGrayCase] = []
+        arbitration_active = gray_band_lower is not None and self._arbitration_llm_config is not None
 
         for idx, entity_data in enumerate(entities_data):
             entity_text = entity_data["text"]
@@ -718,6 +781,7 @@ class EntityResolver:
             # resolve via the exact-match path (the (bank_id, LOWER(name)) unique
             # index + ON CONFLICT fallback) and never fuzzy-merge.
             low_entropy_name = entropy_gate and not has_high_entropy(entity_text)
+            scored_candidates: list[tuple[float, Any, str]] = []
 
             for candidate_id, canonical_name, metadata, last_seen, mention_count in candidates:
                 score = 0.0
@@ -746,6 +810,9 @@ class EntityResolver:
                         temporal_score = max(0, 1.0 - (days_diff / 7))
                         score += temporal_score * 0.2
 
+                if arbitration_active:
+                    scored_candidates.append((score, candidate_id, canonical_name))
+
                 if score > best_score:
                     best_score = score
                     best_candidate = candidate_id
@@ -756,10 +823,60 @@ class EntityResolver:
             if best_score > threshold:
                 entity_ids[idx] = best_candidate
                 entities_to_update.append(_EntityStat(entity_id=best_candidate, event_date=entity_event_date))
+            elif (
+                arbitration_active
+                # Redundant with arbitration_active, but stated explicitly so the
+                # type checker can narrow gray_band_lower to float here.
+                and gray_band_lower is not None
+                and candidates
+                and (best_score >= gray_band_lower or low_entropy_name)
+            ):
+                # Tier 3 deferral: a near-miss blend, or a low-entropy name whose
+                # name signal the gate suppressed — both deserve one LLM look at
+                # the context before defaulting to "create".
+                scored_candidates.sort(key=lambda t: t[0], reverse=True)
+                deferred_cases.append(
+                    _DeferredGrayCase(
+                        idx=idx,
+                        name=entity_data["text"],
+                        event_date=entity_event_date,
+                        case=GrayBandCase(
+                            mention=entity_text,
+                            nearby_names=tuple(sorted(nearby_entity_set)),
+                            candidates=tuple(
+                                GrayBandCandidate(
+                                    entity_id=str(cid),
+                                    canonical_name=cname,
+                                    cooccurring_names=tuple(sorted(cooccurrence_map.get(cid, set()))[:8]),
+                                )
+                                for _cscore, cid, cname in scored_candidates[:5]
+                            ),
+                        ),
+                    )
+                )
             else:
                 entities_to_create.append(
                     _EntityToCreate(idx=idx, name=entity_data["text"], event_date=entity_event_date)
                 )
+
+        # Tier 3: one arbitration call for the whole batch's gray-band cases.
+        # Failure falls back to the deterministic outcome (create) — arbitration
+        # is additive precision, never availability-critical.
+        if deferred_cases:
+            try:
+                chosen = await arbitrate_gray_band(self._arbitration_llm_config, [d.case for d in deferred_cases])
+            except Exception:
+                logger.warning("Gray-band entity arbitration failed; creating deferred entities", exc_info=True)
+                chosen = {}
+            for case_pos, deferred in enumerate(deferred_cases):
+                chosen_id = chosen.get(case_pos)
+                if chosen_id is not None:
+                    entity_ids[deferred.idx] = chosen_id
+                    entities_to_update.append(_EntityStat(entity_id=chosen_id, event_date=deferred.event_date))
+                else:
+                    entities_to_create.append(
+                        _EntityToCreate(idx=deferred.idx, name=deferred.name, event_date=deferred.event_date)
+                    )
 
         # Existing entities: IDs already known from the candidate SELECT above.
         # No in-transaction UPDATE — mention_count/last_seen are stats deferred to

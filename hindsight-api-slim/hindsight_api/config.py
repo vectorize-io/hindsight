@@ -439,6 +439,8 @@ ENV_ENABLE_DOCUMENT_IMPORT_API = "HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API"
 ENV_ENABLE_OBSERVATIONS = "HINDSIGHT_API_ENABLE_OBSERVATIONS"
 ENV_ENABLE_AUTO_CONSOLIDATION = "HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION"
 ENV_ENTITY_ENTROPY_GATE = "HINDSIGHT_API_ENTITY_ENTROPY_GATE"
+ENV_ENTITY_LLM_ARBITRATION = "HINDSIGHT_API_ENTITY_LLM_ARBITRATION"
+ENV_ENTITY_GRAY_BAND = "HINDSIGHT_API_ENTITY_GRAY_BAND"
 ENV_ENABLE_FACT_SUPERSESSION = "HINDSIGHT_API_ENABLE_FACT_SUPERSESSION"
 ENV_FACT_SUPERSESSION_CANDIDATE_LIMIT = "HINDSIGHT_API_FACT_SUPERSESSION_CANDIDATE_LIMIT"
 ENV_FACT_SUPERSESSION_RECALL_BUDGET = "HINDSIGHT_API_FACT_SUPERSESSION_RECALL_BUDGET"
@@ -857,6 +859,8 @@ DEFAULT_ENABLE_DOCUMENT_IMPORT_API = True
 DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
 DEFAULT_ENABLE_AUTO_CONSOLIDATION = True  # Auto-consolidation after retain enabled by default
 DEFAULT_ENTITY_ENTROPY_GATE = True  # Suppress fuzzy name-merging for low-entropy names (Bob/Rob guard)
+DEFAULT_ENTITY_LLM_ARBITRATION = False  # Gray-band LLM arbitration for ambiguous entity mentions (adds LLM cost)
+DEFAULT_ENTITY_GRAY_BAND = 0.45  # Lower bound of the score band deferred to arbitration (upper = 0.6 threshold)
 DEFAULT_ENABLE_FACT_SUPERSESSION = False  # Automatic fact supersession (temporal ledger) — opt-in while graded in
 DEFAULT_FACT_SUPERSESSION_CANDIDATE_LIMIT = 5  # Contradiction candidates per new fact (top-K from internal recall)
 DEFAULT_FACT_SUPERSESSION_RECALL_BUDGET = "low"  # Budget tier for the worker's candidate recall
@@ -1477,6 +1481,8 @@ class HindsightConfig:
     enable_auto_consolidation: bool
     # Entity resolution precision (entropy gate for fuzzy name matching)
     entity_entropy_gate: bool
+    entity_llm_arbitration: bool
+    entity_gray_band: float
     # Fact supersession (temporal ledger: contradicted facts get valid_until set)
     enable_fact_supersession: bool
     fact_supersession_candidate_limit: int
@@ -1677,6 +1683,8 @@ class HindsightConfig:
         "enable_auto_consolidation",
         # Entity resolution
         "entity_entropy_gate",
+        "entity_llm_arbitration",
+        "entity_gray_band",
         # Fact supersession (temporal ledger)
         "enable_fact_supersession",
         "fact_supersession_candidate_limit",
@@ -2384,8 +2392,10 @@ class HindsightConfig:
                 ENV_ENABLE_AUTO_CONSOLIDATION, str(DEFAULT_ENABLE_AUTO_CONSOLIDATION)
             ).lower()
             == "true",
-            entity_entropy_gate=os.getenv(ENV_ENTITY_ENTROPY_GATE, str(DEFAULT_ENTITY_ENTROPY_GATE)).lower()
+            entity_entropy_gate=os.getenv(ENV_ENTITY_ENTROPY_GATE, str(DEFAULT_ENTITY_ENTROPY_GATE)).lower() == "true",
+            entity_llm_arbitration=os.getenv(ENV_ENTITY_LLM_ARBITRATION, str(DEFAULT_ENTITY_LLM_ARBITRATION)).lower()
             == "true",
+            entity_gray_band=float(os.getenv(ENV_ENTITY_GRAY_BAND, str(DEFAULT_ENTITY_GRAY_BAND))),
             enable_fact_supersession=os.getenv(
                 ENV_ENABLE_FACT_SUPERSESSION, str(DEFAULT_ENABLE_FACT_SUPERSESSION)
             ).lower()

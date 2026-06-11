@@ -2746,6 +2746,9 @@ class MemoryEngine(MemoryEngineInterface):
             self._backend,
             entity_lookup=self._retain_entity_lookup,
             entity_resolution_batch_size=self._retain_entity_resolution_batch_size,
+            # Gray-band arbitration rides the retain LLM tier; per-bank opt-in
+            # (entity_llm_arbitration) decides whether it's ever invoked.
+            arbitration_llm_config=self._retain_llm_config,
         )
 
         # Initialize config resolver for hierarchical configuration

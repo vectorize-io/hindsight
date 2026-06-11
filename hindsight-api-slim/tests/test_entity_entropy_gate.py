@@ -80,9 +80,7 @@ async def _insert_cooccurrence(conn, id1, id2) -> None:
 async def _resolve_one(resolver, conn, bank_id: str, text: str, nearby: list[str], **kwargs) -> str:
     ids = await resolver.resolve_entities_batch(
         bank_id=bank_id,
-        entities_data=[
-            {"text": text, "nearby_entities": [{"text": n} for n in nearby], "event_date": EVENT_DATE}
-        ],
+        entities_data=[{"text": text, "nearby_entities": [{"text": n} for n in nearby], "event_date": EVENT_DATE}],
         context="",
         unit_event_date=EVENT_DATE,
         conn=conn,
