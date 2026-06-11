@@ -24,6 +24,7 @@ type BankTemplateConfig struct {
 	RetainExtractionMode NullableString `json:"retain_extraction_mode,omitempty"`
 	RetainCustomInstructions NullableString `json:"retain_custom_instructions,omitempty"`
 	RetainChunkSize NullableInt32 `json:"retain_chunk_size,omitempty"`
+	RetainStructuredChunkSize NullableInt32 `json:"retain_structured_chunk_size,omitempty"`
 	EnableObservations NullableBool `json:"enable_observations,omitempty"`
 	ObservationsMission NullableString `json:"observations_mission,omitempty"`
 	DispositionSkepticism NullableInt32 `json:"disposition_skepticism,omitempty"`
@@ -278,6 +279,48 @@ func (o *BankTemplateConfig) SetRetainChunkSizeNil() {
 // UnsetRetainChunkSize ensures that no value is present for RetainChunkSize, not even an explicit nil
 func (o *BankTemplateConfig) UnsetRetainChunkSize() {
 	o.RetainChunkSize.Unset()
+}
+
+// GetRetainStructuredChunkSize returns the RetainStructuredChunkSize field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetRetainStructuredChunkSize() int32 {
+	if o == nil || IsNil(o.RetainStructuredChunkSize.Get()) {
+		var ret int32
+		return ret
+	}
+	return *o.RetainStructuredChunkSize.Get()
+}
+
+// GetRetainStructuredChunkSizeOk returns a tuple with the RetainStructuredChunkSize field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetRetainStructuredChunkSizeOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.RetainStructuredChunkSize.Get(), o.RetainStructuredChunkSize.IsSet()
+}
+
+// HasRetainStructuredChunkSize returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasRetainStructuredChunkSize() bool {
+	if o != nil && o.RetainStructuredChunkSize.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRetainStructuredChunkSize gets a reference to the given NullableInt32 and assigns it to the RetainStructuredChunkSize field.
+func (o *BankTemplateConfig) SetRetainStructuredChunkSize(v int32) {
+	o.RetainStructuredChunkSize.Set(&v)
+}
+// SetRetainStructuredChunkSizeNil sets the value for RetainStructuredChunkSize to be an explicit nil
+func (o *BankTemplateConfig) SetRetainStructuredChunkSizeNil() {
+	o.RetainStructuredChunkSize.Set(nil)
+}
+
+// UnsetRetainStructuredChunkSize ensures that no value is present for RetainStructuredChunkSize, not even an explicit nil
+func (o *BankTemplateConfig) UnsetRetainStructuredChunkSize() {
+	o.RetainStructuredChunkSize.Unset()
 }
 
 // GetEnableObservations returns the EnableObservations field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -1393,6 +1436,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.RetainChunkSize.IsSet() {
 		toSerialize["retain_chunk_size"] = o.RetainChunkSize.Get()
+	}
+	if o.RetainStructuredChunkSize.IsSet() {
+		toSerialize["retain_structured_chunk_size"] = o.RetainStructuredChunkSize.Get()
 	}
 	if o.EnableObservations.IsSet() {
 		toSerialize["enable_observations"] = o.EnableObservations.Get()

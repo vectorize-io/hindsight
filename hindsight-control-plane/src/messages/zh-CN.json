@@ -315,6 +315,8 @@
     "retainFailedToSave": "无法保存保留设置",
     "chunkSizeLabel": "分块大小",
     "chunkSizeDescription": "处理的文本分块大小（字符数）",
+    "structuredChunkSizeLabel": "结构化分块大小",
+    "structuredChunkSizeDescription": "单条 JSONL 行或对话轮次保持完整的最大字符数。留空则使用分块大小。",
     "missionLabel": "使命",
     "retainMissionDescription": "此库在提取期间应关注的内容。在不替换提取规则的情况下引导 LLM — 与任何提取模式配合使用。",
     "retainMissionPlaceholder": "例如：始终包含技术决策、API 设计选择和架构权衡。忽略会议事务、问候语和社交交流。",

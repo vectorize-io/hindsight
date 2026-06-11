@@ -465,9 +465,15 @@ export type BankTemplateConfig = {
   /**
    * Retain Chunk Size
    *
-   * Max token size for each content chunk
+   * Target max characters for each content chunk
    */
   retain_chunk_size?: number | null;
+  /**
+   * Retain Structured Chunk Size
+   *
+   * Max characters for a single JSONL line or conversation turn to keep whole; defaults to retain_chunk_size when unset
+   */
+  retain_structured_chunk_size?: number | null;
   /**
    * Enable Observations
    *
@@ -1086,9 +1092,15 @@ export type CreateBankRequest = {
   /**
    * Retain Chunk Size
    *
-   * Maximum token size for each content chunk during retain.
+   * Target maximum characters for each content chunk during retain.
    */
   retain_chunk_size?: number | null;
+  /**
+   * Retain Structured Chunk Size
+   *
+   * Maximum characters for a single JSONL line or conversation turn to keep whole during retain. Defaults to retain_chunk_size when unset.
+   */
+  retain_structured_chunk_size?: number | null;
   /**
    * Enable Observations
    *

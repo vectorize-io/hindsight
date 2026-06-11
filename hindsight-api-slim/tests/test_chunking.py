@@ -12,10 +12,6 @@ import pytest
 
 from hindsight_api.engine.retain.fact_extraction import chunk_text
 
-# Mirror of fact_extraction._CHUNK_OVERFLOW_FACTOR — a unit is kept whole only
-# up to this multiple of the budget before being split as text.
-OVERFLOW_FACTOR = 1.5
-
 
 # ---------------------------------------------------------------------------
 # Plain text
@@ -137,22 +133,35 @@ def test_chunk_jsonl_splits_at_line_boundaries():
     assert seen == [json.loads(line) for line in lines], "Lines must be preserved in order"
 
 
-def test_chunk_jsonl_small_overflow_kept_whole():
-    """A JSONL line that overflows by less than 1.5x is kept whole, not split."""
-    big = json.dumps({"c": "y" * 20})  # 29 chars; budget 25, cap 37 -> kept whole
+def test_chunk_jsonl_default_structured_unit_limit_matches_budget():
+    """A JSONL line over the budget is split when no larger structured-chunk cap is set."""
+    big = json.dumps({"c": "y" * 20})  # 29 chars; budget 25 -> split
     small = json.dumps({"c": "ok"})
     text = "\n".join([big, small])
-    assert 25 < len(big) <= int(25 * OVERFLOW_FACTOR)
 
     chunks = chunk_text(text, max_chars=25)
 
-    # The line overflows the budget but stays a single intact chunk of its own.
+    assert chunks == [
+        '{"c":',
+        '"yyyyyyyyyyyyyyyyyyyy"}',
+        small,
+    ]
+
+
+def test_chunk_jsonl_custom_structured_unit_limit_keeps_overflow_whole():
+    """A JSONL line over the budget is kept whole when the explicit cap allows it."""
+    big = json.dumps({"c": "y" * 20})  # 29 chars
+    small = json.dumps({"c": "ok"})
+    text = "\n".join([big, small])
+
+    chunks = chunk_text(text, max_chars=25, structured_chunk_size=len(big))
+
     assert chunks == [big, small]
 
 
 def test_chunk_jsonl_huge_line_is_split():
-    """A JSONL line past the 1.5x overflow cap is split as text — exact fragments."""
-    huge = json.dumps({"c": "y" * 40})  # 50 chars; budget 20, cap 30 -> must split
+    """A JSONL line past the structured-chunk cap is split as text — exact fragments."""
+    huge = json.dumps({"c": "y" * 40})  # 49 chars; budget/cap 20 -> must split
     small = json.dumps({"c": "ok"})
     text = "\n".join([huge, small])
 
@@ -166,9 +175,9 @@ def test_chunk_jsonl_huge_line_is_split():
         'yy"}',
         '{"c": "ok"}',
     ]
-    # No fragment exceeds the overflow cap.
+    # No fragment exceeds the configured split budget.
     for chunk in chunks:
-        assert len(chunk) <= int(20 * OVERFLOW_FACTOR)
+        assert len(chunk) <= 20
 
 
 # ---------------------------------------------------------------------------
@@ -212,8 +221,22 @@ def test_chunk_conversation_splits_at_turn_boundaries():
     assert seen == turns
 
 
+def test_chunk_conversation_custom_structured_unit_limit_keeps_overflow_whole():
+    """A conversation turn over the budget is kept whole when the explicit cap allows it."""
+    turns = [{"c": "y" * 20}, {"c": "ok"}]
+    text = json.dumps(turns)
+    turn_size = len(json.dumps(turns[0]))
+
+    chunks = chunk_text(text, max_chars=25, structured_chunk_size=turn_size)
+
+    assert chunks == [
+        '[{"c": "yyyyyyyyyyyyyyyyyyyy"}]',
+        '[{"c": "ok"}]',
+    ]
+
+
 def test_chunk_conversation_huge_turn_is_split():
-    """A single turn past the 1.5x overflow cap is split as text — exact fragments."""
+    """A single turn past the structured-chunk cap is split as text — exact fragments."""
     turns = [{"c": "y" * 40}, {"c": "ok"}]
     text = json.dumps(turns)
 
@@ -228,7 +251,7 @@ def test_chunk_conversation_huge_turn_is_split():
         '[{"c": "ok"}]',
     ]
     for chunk in chunks:
-        assert len(chunk) <= int(20 * OVERFLOW_FACTOR)
+        assert len(chunk) <= 20
 
 
 # ---------------------------------------------------------------------------

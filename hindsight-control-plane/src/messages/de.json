@@ -315,6 +315,8 @@
     "retainFailedToSave": "Retain-Einstellungen konnten nicht gespeichert werden",
     "chunkSizeLabel": "Chunk-Größe",
     "chunkSizeDescription": "Größe der Textblöcke für die Verarbeitung (Zeichen)",
+    "structuredChunkSizeLabel": "Strukturierte Chunk-Größe",
+    "structuredChunkSizeDescription": "Maximale Zeichenanzahl für eine JSONL-Zeile oder Konversationsrunde, die vollständig beibehalten wird. Leer lassen, um die Chunk-Größe zu verwenden.",
     "missionLabel": "Mission",
     "retainMissionDescription": "Worauf diese Bank während der Extraktion achten soll. Steuert das LLM, ohne die Extraktionsregeln zu ersetzen — funktioniert zusammen mit jedem Extraktionsmodus.",
     "retainMissionPlaceholder": "z. B. Technische Entscheidungen, API-Designentscheidungen und architektonische Kompromisse immer einbeziehen. Meeting-Logistik, Begrüßungen und soziale Austausche ignorieren.",

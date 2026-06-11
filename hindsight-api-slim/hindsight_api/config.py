@@ -396,6 +396,7 @@ ENV_LLM_PROMPT_CACHE_ENABLED = "HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED"
 # Retain settings
 ENV_RETAIN_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"
 ENV_RETAIN_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_SIZE"
+ENV_RETAIN_STRUCTURED_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE"
 ENV_RETAIN_EXTRACT_CAUSAL_LINKS = "HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS"
 ENV_RETAIN_EXTRACTION_MODE = "HINDSIGHT_API_RETAIN_EXTRACTION_MODE"
 ENV_RETAIN_MISSION = "HINDSIGHT_API_RETAIN_MISSION"
@@ -1077,6 +1078,25 @@ def _parse_optional_positive_int(name: str, raw: str | None) -> int | None:
     return _parse_positive_int(name, raw, 1)
 
 
+def _validate_retain_chunking_int(name: str, value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer, got {value!r}")
+    if value < 1:
+        raise ValueError(f"{name} must be >= 1, got {value}")
+    return value
+
+
+def validate_retain_chunking_config(retain_chunk_size: Any, retain_structured_chunk_size: Any) -> None:
+    """Validate retain chunking size fields."""
+    _validate_retain_chunking_int("HINDSIGHT_API_RETAIN_CHUNK_SIZE", retain_chunk_size)
+    if retain_structured_chunk_size is None:
+        return
+    _validate_retain_chunking_int(
+        "HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE",
+        retain_structured_chunk_size,
+    )
+
+
 def _parse_optional_choice(name: str, raw: str | None, allowed: frozenset[str]) -> str | None:
     """Parse an optional string env var constrained to a small allowlist."""
     if raw is None or raw == "":
@@ -1430,6 +1450,7 @@ class HindsightConfig:
     # Retain settings
     retain_max_completion_tokens: int
     retain_chunk_size: int
+    retain_structured_chunk_size: int | None
     retain_extract_causal_links: bool
     retain_extraction_mode: str
     retain_mission: str | None
@@ -1657,6 +1678,7 @@ class HindsightConfig:
         "mcp_enabled_tools",
         # Retention settings (behavioral)
         "retain_chunk_size",
+        "retain_structured_chunk_size",
         "retain_extraction_mode",
         "retain_mission",
         "retain_custom_instructions",
@@ -1815,6 +1837,8 @@ class HindsightConfig:
                 "LLM provider set to 'none': forcing retain_extraction_mode='chunks', "
                 "disabling observations/consolidation. Reflect will return HTTP 400."
             )
+
+        validate_retain_chunking_config(self.retain_chunk_size, self.retain_structured_chunk_size)
 
         # RETAIN_MAX_COMPLETION_TOKENS must be greater than RETAIN_CHUNK_SIZE
         # to ensure the LLM has enough output capacity to extract facts from chunks
@@ -2303,6 +2327,10 @@ class HindsightConfig:
                 os.getenv(ENV_RETAIN_MAX_COMPLETION_TOKENS, str(DEFAULT_RETAIN_MAX_COMPLETION_TOKENS))
             ),
             retain_chunk_size=int(os.getenv(ENV_RETAIN_CHUNK_SIZE, str(DEFAULT_RETAIN_CHUNK_SIZE))),
+            retain_structured_chunk_size=_parse_optional_positive_int(
+                ENV_RETAIN_STRUCTURED_CHUNK_SIZE,
+                os.getenv(ENV_RETAIN_STRUCTURED_CHUNK_SIZE),
+            ),
             retain_extract_causal_links=os.getenv(
                 ENV_RETAIN_EXTRACT_CAUSAL_LINKS, str(DEFAULT_RETAIN_EXTRACT_CAUSAL_LINKS)
             ).lower()

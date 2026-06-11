@@ -315,6 +315,8 @@
     "retainFailedToSave": "Échec de l'enregistrement des paramètres Retain",
     "chunkSizeLabel": "Taille des segments",
     "chunkSizeDescription": "Taille des segments de texte pour le traitement (caractères)",
+    "structuredChunkSizeLabel": "Taille de segment structuré",
+    "structuredChunkSizeDescription": "Nombre maximal de caractères pour une ligne JSONL ou un tour de conversation conservé entier. Laissez vide pour utiliser la taille de segment.",
     "missionLabel": "Mission",
     "retainMissionDescription": "Ce à quoi cette banque doit prêter attention lors de l'extraction. Oriente le LLM sans remplacer les règles d'extraction — fonctionne en complément du mode d'extraction.",
     "retainMissionPlaceholder": "ex. : Toujours inclure les décisions techniques, les choix de conception API et les compromis architecturaux. Ignorer la logistique des réunions, les salutations et les échanges sociaux.",
