@@ -162,19 +162,6 @@ with HindsightServer(
 
 ---
 
-## Supported Platforms
-
-| Platform | Docker | Bare Metal (pip) | Embedded DB (pg0) | Notes |
-|----------|--------|------------------|--------------------|-------|
-| **Linux** (x86_64, ARM64) | ✅ | ✅ | ✅ | Fully supported, recommended for production |
-| **macOS** (Apple Silicon / arm64) | ✅ | ✅ | ✅ | Fully supported |
-| **macOS** (Intel / x86_64) | ✅ | ⚠️ slim only | ✅ | Use `hindsight-all-slim` / `hindsight-api-slim`. The full bundle's local ML models (PyTorch, MLX) publish no Intel-Mac wheels, so `pip install hindsight-all` silently backtracks to a months-old release. Pair the slim bundle with a hosted embeddings/reranker provider or the in-process ONNX backend (`hindsight-api-slim[local-onnx]`). |
-| **Windows** (x86_64) | ✅ | ✅ | ✅ | Fully supported |
-
-See the [installation guide](https://docs.hindsight.vectorize.io/docs/developer/installation) for details.
-
----
-
 ## Use Cases
 
 
@@ -313,6 +300,19 @@ client.reflect(bank_id="my-bank", query="What should I know about Alice?")
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=vectorize-io/hindsight&type=date&legend=top-left)](https://www.star-history.com/#vectorize-io/hindsight&type=date&legend=top-left)
+---
+
+## Supported Platforms
+
+| Platform | Docker | Bare Metal (pip) | Embedded DB (pg0) | Notes |
+|----------|--------|------------------|--------------------|-------|
+| **Linux** (x86_64, ARM64) | ✅ | ✅ | ✅ | Fully supported, recommended for production |
+| **macOS** (Apple Silicon / arm64) | ✅ | ✅ | ✅ | Fully supported |
+| **macOS** (Intel / x86_64) | ✅ | ⚠️ slim only | ✅ | Use `hindsight-all-slim` / `hindsight-api-slim`. The full bundle's local ML models (PyTorch, MLX) publish no Intel-Mac wheels, so `pip install hindsight-all` silently backtracks to a months-old release. Pair the slim bundle with a hosted embeddings/reranker provider or the in-process ONNX backend (`hindsight-api-slim[local-onnx]`). |
+| **Windows** (x86_64) | ✅ | ✅ | ✅ | Fully supported |
+
+See the [installation guide](https://docs.hindsight.vectorize.io/docs/developer/installation) for details.
+
 ---
 
 ## Contributing
