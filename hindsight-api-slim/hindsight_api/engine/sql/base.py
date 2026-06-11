@@ -7,21 +7,37 @@ Business logic calls these methods instead of embedding raw SQL fragments.
 from abc import ABC, abstractmethod
 
 
-def validity_clause(alias: str = "") -> str:
-    """WHERE fragment hiding temporally superseded facts from retrieval.
+def validity_clause(alias: str = "", *, as_of_param: str | None = None) -> str:
+    """WHERE fragment selecting facts by temporal validity.
 
-    A superseded fact keeps its row in ``memory_units`` with ``valid_until``
-    set (unlike curation, which MOVES rows to ``invalidated_memory_units``)
-    so as-of queries can still reach it; default retrieval must not. The SQL
-    is identical on both dialects. Centralized so the retrieval arms (semantic,
-    BM25, temporal, graph seeds/expansion) cannot drift apart — the planned
-    ``as_of`` point-in-time variant will extend this single function.
+    Default (``as_of_param=None``): hide superseded facts. A superseded fact
+    keeps its row in ``memory_units`` with ``valid_until`` set (unlike curation,
+    which MOVES rows to ``invalidated_memory_units``), so the filter is a plain
+    ``valid_until IS NULL``.
+
+    Point-in-time (``as_of_param`` = a bind placeholder like ``"$7"`` carrying
+    a timestamptz): select facts *valid at that instant* — superseded rows
+    reappear when they were still true at ``as_of``. This is the validity-time
+    axis ("what was true at T"), not the system-time axis ("what did we know
+    at T"). Facts without ``occurred_start`` are presumed valid at any instant:
+    they never participate in interval algebra (CHECK constraint requires
+    ``occurred_start`` for supersession), so excluding them would silently hide
+    every undated preference/state fact from as-of queries.
+
+    The SQL is identical on both dialects (the Oracle backend translates ``$N``
+    binds). Centralized so the retrieval arms (semantic, BM25, temporal, graph
+    seeds/expansion) cannot drift apart.
 
     Deliberately NOT injected into consolidation's source-fact reads: the
     observation layer must see superseded facts to narrate belief evolution.
     """
     prefix = f"{alias}." if alias else ""
-    return f"AND {prefix}valid_until IS NULL"
+    if as_of_param is None:
+        return f"AND {prefix}valid_until IS NULL"
+    return (
+        f"AND ({prefix}occurred_start IS NULL OR {prefix}occurred_start <= {as_of_param}) "
+        f"AND ({prefix}valid_until IS NULL OR {prefix}valid_until > {as_of_param})"
+    )
 
 
 class SQLDialect(ABC):
@@ -389,6 +405,7 @@ class SQLDialect(ABC):
         bank_id_param: str,
         fetch_limit: int,
         min_similarity: float,
+        validity_sql: str | None = None,
         tags_clause: str = "",
         groups_clause: str = "",
         extra_where: str = "",
@@ -409,6 +426,9 @@ class SQLDialect(ABC):
             tags_clause: Optional WHERE clause fragment for tag filtering.
             groups_clause: Optional WHERE clause fragment for tag group filtering.
             extra_where: Optional additional WHERE clause fragment (e.g. time range filter).
+            validity_sql: Temporal-validity WHERE fragment. None means the default
+                          validity_clause() (hide superseded rows); as-of callers pass
+                          the point-in-time variant.
         """
         ...
 
@@ -428,6 +448,7 @@ class SQLDialect(ABC):
         text_search_extension: str = "native",
         bm25_language: str = "english",
         bm25_min_score: float = 0.0,
+        validity_sql: str | None = None,
         extra_where: str = "",
     ) -> str:
         """Build a BM25/full-text search subquery arm.
@@ -456,6 +477,9 @@ class SQLDialect(ABC):
                             of pre-filtering to query-term matches. Backends that
                             already apply a boolean match gate ignore this.
             extra_where: Optional additional WHERE clause fragment (e.g. time range filter).
+            validity_sql: Temporal-validity WHERE fragment. None means the default
+                          validity_clause() (hide superseded rows); as-of callers pass
+                          the point-in-time variant.
         """
         ...
 

@@ -18,6 +18,7 @@ and mirrors Django's ``DatabaseOperations`` architecture.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime  # noqa: TC003 — used in abstract signatures
 from typing import Any
 from uuid import UUID
 
@@ -231,6 +232,7 @@ class DataAccessOps(ABC):
         mu_table: str,
         ue_table: str,
         per_entity_limit: int,
+        as_of_param: str | None = None,
     ) -> str:
         """Build entity expansion CTE for link expansion retrieval.
 
@@ -245,6 +247,7 @@ class DataAccessOps(ABC):
         self,
         ml_table: str,
         mu_table: str,
+        as_of_param: str | None = None,
     ) -> str:
         """Build semantic + causal expansion CTEs.
 
@@ -263,6 +266,7 @@ class DataAccessOps(ABC):
         seed_ids: list,
         budget: int,
         per_entity_limit: int,
+        as_of: "datetime | None" = None,
     ) -> tuple[list[ResultRow], list[ResultRow], list[ResultRow]]:
         """Observation-specific graph expansion.
 

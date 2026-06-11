@@ -235,6 +235,7 @@ class OracleDialect(SQLDialect):
         bank_id_param: str,
         fetch_limit: int,
         min_similarity: float,
+        validity_sql: str | None = None,
         tags_clause: str = "",
         groups_clause: str = "",
         extra_where: str = "",
@@ -249,7 +250,7 @@ class OracleDialect(SQLDialect):
             f" FROM {table}"
             f" WHERE bank_id = {bank_id_param}"
             f"   AND fact_type = '{fact_type}'"
-            f"   {validity_clause()}"
+            f"   {validity_clause() if validity_sql is None else validity_sql}"
             f"   AND embedding IS NOT NULL"
             f"   AND (1 - VECTOR_DISTANCE(embedding, {embedding_param}, COSINE)) >= {min_similarity}"
             f"   {tags_clause}"
@@ -274,6 +275,7 @@ class OracleDialect(SQLDialect):
         text_search_extension: str = "native",
         bm25_language: str = "english",
         bm25_min_score: float = 0.0,
+        validity_sql: str | None = None,
         extra_where: str = "",
     ) -> str:
         # Oracle Text: CONTAINS() / SCORE() with the CTXSYS.CONTEXT index.
@@ -288,7 +290,7 @@ class OracleDialect(SQLDialect):
             f" FROM {table}"
             f" WHERE bank_id = {bank_id_param}"
             f"   AND fact_type = '{fact_type}'"
-            f"   {validity_clause()}"
+            f"   {validity_clause() if validity_sql is None else validity_sql}"
             # CONTAINS already gates to genuine matches; the configurable floor
             # (default 0) keeps the threshold semantics uniform across backends.
             f"   AND CONTAINS(text, {text_param}, {label}) > {bm25_min_score:g}"

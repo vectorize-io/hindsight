@@ -35,11 +35,12 @@ class RecallRequest(BaseModel):
     max_tokens: Optional[StrictInt] = 4096
     trace: Optional[StrictBool] = False
     query_timestamp: Optional[StrictStr] = None
+    as_of: Optional[StrictStr] = None
     include: Optional[IncludeOptions] = Field(default=None, description="Options for including additional data (entities are included by default)")
     tags: Optional[List[StrictStr]] = None
     tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).")
     tag_groups: Optional[List[MentalModelTriggerInputTagGroupsInner]] = None
-    __properties: ClassVar[List[str]] = ["query", "types", "budget", "max_tokens", "trace", "query_timestamp", "include", "tags", "tags_match", "tag_groups"]
+    __properties: ClassVar[List[str]] = ["query", "types", "budget", "max_tokens", "trace", "query_timestamp", "as_of", "include", "tags", "tags_match", "tag_groups"]
 
     @field_validator('tags_match')
     def tags_match_validate_enum(cls, value):
@@ -110,6 +111,11 @@ class RecallRequest(BaseModel):
         if self.query_timestamp is None and "query_timestamp" in self.model_fields_set:
             _dict['query_timestamp'] = None
 
+        # set to None if as_of (nullable) is None
+        # and model_fields_set contains the field
+        if self.as_of is None and "as_of" in self.model_fields_set:
+            _dict['as_of'] = None
+
         # set to None if tags (nullable) is None
         # and model_fields_set contains the field
         if self.tags is None and "tags" in self.model_fields_set:
@@ -138,6 +144,7 @@ class RecallRequest(BaseModel):
             "max_tokens": obj.get("max_tokens") if obj.get("max_tokens") is not None else 4096,
             "trace": obj.get("trace") if obj.get("trace") is not None else False,
             "query_timestamp": obj.get("query_timestamp"),
+            "as_of": obj.get("as_of"),
             "include": IncludeOptions.from_dict(obj["include"]) if obj.get("include") is not None else None,
             "tags": obj.get("tags"),
             "tags_match": obj.get("tags_match") if obj.get("tags_match") is not None else 'any',

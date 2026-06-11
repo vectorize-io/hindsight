@@ -149,6 +149,7 @@ class PostgreSQLDialect(SQLDialect):
         bank_id_param: str,
         fetch_limit: int,
         min_similarity: float,
+        validity_sql: str | None = None,
         tags_clause: str = "",
         groups_clause: str = "",
         extra_where: str = "",
@@ -161,7 +162,7 @@ class PostgreSQLDialect(SQLDialect):
             f" FROM {table}"
             f" WHERE bank_id = {bank_id_param}"
             f"   AND fact_type = '{fact_type}'"
-            f"   {validity_clause()}"
+            f"   {validity_clause() if validity_sql is None else validity_sql}"
             f"   AND embedding IS NOT NULL"
             f"   AND (1 - (embedding <=> {embedding_param}::vector)) >= {min_similarity}"
             f"   {tags_clause}"
@@ -186,6 +187,7 @@ class PostgreSQLDialect(SQLDialect):
         text_search_extension: str = "native",
         bm25_language: str = "english",
         bm25_min_score: float = 0.0,
+        validity_sql: str | None = None,
         extra_where: str = "",
     ) -> str:
         if text_search_extension == "vchord":
@@ -241,7 +243,7 @@ class PostgreSQLDialect(SQLDialect):
             f" FROM {table}"
             f" WHERE bank_id = {bank_id_param}"
             f"   AND fact_type = '{fact_type}'"
-            f"   {validity_clause()}"
+            f"   {validity_clause() if validity_sql is None else validity_sql}"
             f"   {bm25_where_filter}"
             f"   {tags_clause}"
             f"   {groups_clause}"

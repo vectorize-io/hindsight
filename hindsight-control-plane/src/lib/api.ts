@@ -344,6 +344,7 @@ export class ControlPlaneClient {
       source_facts?: { max_tokens?: number } | null;
     };
     query_timestamp?: string;
+    as_of?: string;
     tags?: string[];
     tags_match?: "any" | "all" | "any_strict" | "all_strict";
   }) {

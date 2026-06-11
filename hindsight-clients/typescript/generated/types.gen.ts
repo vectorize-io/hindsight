@@ -2719,6 +2719,12 @@ export type RecallRequest = {
    */
   query_timestamp?: string | null;
   /**
+   * As Of
+   *
+   * ISO format date string. Point-in-time recall: return facts that were valid at this instant, including ones superseded since (their valid_until/superseded_by fields are populated). Omit for default behavior (superseded facts hidden).
+   */
+  as_of?: string | null;
+  /**
    * Options for including additional data (entities are included by default)
    */
   include?: IncludeOptions;
@@ -2826,6 +2832,14 @@ export type RecallResult = {
    * Document Id
    */
   document_id?: string | null;
+  /**
+   * Valid Until
+   */
+  valid_until?: string | null;
+  /**
+   * Superseded By
+   */
+  superseded_by?: string | null;
   /**
    * Metadata
    */

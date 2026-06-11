@@ -27,6 +27,7 @@ type RecallRequest struct {
 	MaxTokens *int32 `json:"max_tokens,omitempty"`
 	Trace *bool `json:"trace,omitempty"`
 	QueryTimestamp NullableString `json:"query_timestamp,omitempty"`
+	AsOf NullableString `json:"as_of,omitempty"`
 	// Options for including additional data (entities are included by default)
 	Include *IncludeOptions `json:"include,omitempty"`
 	Tags []string `json:"tags,omitempty"`
@@ -262,6 +263,48 @@ func (o *RecallRequest) UnsetQueryTimestamp() {
 	o.QueryTimestamp.Unset()
 }
 
+// GetAsOf returns the AsOf field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RecallRequest) GetAsOf() string {
+	if o == nil || IsNil(o.AsOf.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.AsOf.Get()
+}
+
+// GetAsOfOk returns a tuple with the AsOf field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RecallRequest) GetAsOfOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.AsOf.Get(), o.AsOf.IsSet()
+}
+
+// HasAsOf returns a boolean if a field has been set.
+func (o *RecallRequest) HasAsOf() bool {
+	if o != nil && o.AsOf.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetAsOf gets a reference to the given NullableString and assigns it to the AsOf field.
+func (o *RecallRequest) SetAsOf(v string) {
+	o.AsOf.Set(&v)
+}
+// SetAsOfNil sets the value for AsOf to be an explicit nil
+func (o *RecallRequest) SetAsOfNil() {
+	o.AsOf.Set(nil)
+}
+
+// UnsetAsOf ensures that no value is present for AsOf, not even an explicit nil
+func (o *RecallRequest) UnsetAsOf() {
+	o.AsOf.Unset()
+}
+
 // GetInclude returns the Include field value if set, zero value otherwise.
 func (o *RecallRequest) GetInclude() IncludeOptions {
 	if o == nil || IsNil(o.Include) {
@@ -417,6 +460,9 @@ func (o RecallRequest) ToMap() (map[string]interface{}, error) {
 	}
 	if o.QueryTimestamp.IsSet() {
 		toSerialize["query_timestamp"] = o.QueryTimestamp.Get()
+	}
+	if o.AsOf.IsSet() {
+		toSerialize["as_of"] = o.AsOf.Get()
 	}
 	if !IsNil(o.Include) {
 		toSerialize["include"] = o.Include

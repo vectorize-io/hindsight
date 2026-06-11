@@ -54,6 +54,7 @@ async def _find_semantic_seeds(
     tag_groups: list[TagGroup] | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
+    as_of: datetime | None = None,
 ) -> list[RetrievalResult]:
     """Find semantic seeds via embedding search."""
     from .tags import build_tag_groups_where_clause, build_tags_where_clause_simple
@@ -74,11 +75,20 @@ async def _find_semantic_seeds(
         created_range_clause += f" AND updated_at < ${_next_idx}"
         _next_idx += 1
 
+    # as-of validity (replaces the default superseded-row filter)
+    seeds_vclause = validity_clause()
+    as_of_params: list[Any] = []
+    if as_of is not None:
+        as_of_params.append(as_of)
+        seeds_vclause = validity_clause(as_of_param=f"${_next_idx}")
+        _next_idx += 1
+
     params = [query_embedding_str, bank_id, fact_type, threshold, limit]
     if tags:
         params.append(tags)
     params.extend(groups_params)
     params.extend(created_range_params)
+    params.extend(as_of_params)
 
     rows = await conn.fetch(
         f"""
@@ -88,7 +98,7 @@ async def _find_semantic_seeds(
         FROM {fq_table("memory_units")}
         WHERE bank_id = $2
           AND embedding IS NOT NULL
-          AND fact_type = $3 {validity_clause()}
+          AND fact_type = $3 {seeds_vclause}
           AND (1 - (embedding <=> $1::vector)) >= $4
           {tags_clause}
           {groups_clause}
@@ -136,6 +146,7 @@ class LinkExpansionRetriever(GraphRetriever):
         tag_groups: list[TagGroup] | None = None,
         created_after: "datetime | None" = None,
         created_before: "datetime | None" = None,
+        as_of: "datetime | None" = None,
     ) -> tuple[list[RetrievalResult], GraphRetrievalTimings | None]:
         """
         Retrieve facts by expanding links from seeds.
@@ -176,6 +187,7 @@ class LinkExpansionRetriever(GraphRetriever):
                     tag_groups=tag_groups,
                     created_after=created_after,
                     created_before=created_before,
+                    as_of=as_of,
                 )
                 timings.seeds_time = time.time() - seeds_start
                 logger.debug(
@@ -197,11 +209,11 @@ class LinkExpansionRetriever(GraphRetriever):
             ops = pool.ops
             if fact_type == "observation":
                 entity_rows, semantic_rows, causal_rows = await self._expand_observations(
-                    conn, seed_ids, budget, ops=ops
+                    conn, seed_ids, budget, ops=ops, as_of=as_of
                 )
             else:
                 entity_rows, semantic_rows, causal_rows = await self._expand_combined(
-                    conn, seed_ids, fact_type, budget, ops=ops
+                    conn, seed_ids, fact_type, budget, ops=ops, as_of=as_of
                 )
 
             timings.edge_load_time = time.time() - query_start
@@ -276,6 +288,7 @@ class LinkExpansionRetriever(GraphRetriever):
         budget: int,
         *,
         ops,
+        as_of: "datetime | None" = None,
     ) -> tuple[list, list, list]:
         """
         Single-roundtrip CTE query combining entity, semantic, and causal expansions.
@@ -298,8 +311,9 @@ class LinkExpansionRetriever(GraphRetriever):
 
         per_entity_limit = config.link_expansion_per_entity_limit
 
-        entity_cte = ops.build_entity_expansion_cte(mu, ue, per_entity_limit)
-        semantic_causal_cte = ops.build_semantic_causal_cte(ml, mu)
+        as_of_param = "$4" if as_of is not None else None
+        entity_cte = ops.build_entity_expansion_cte(mu, ue, per_entity_limit, as_of_param=as_of_param)
+        semantic_causal_cte = ops.build_semantic_causal_cte(ml, mu, as_of_param=as_of_param)
 
         full_query = f"""
             WITH {entity_cte},
@@ -312,6 +326,8 @@ class LinkExpansionRetriever(GraphRetriever):
             """
 
         params = [seed_ids, fact_type, budget]
+        if as_of is not None:
+            params.append(as_of)
 
         try:
             all_rows = await asyncio.wait_for(
@@ -344,6 +360,7 @@ class LinkExpansionRetriever(GraphRetriever):
         budget: int,
         *,
         ops,
+        as_of: "datetime | None" = None,
     ) -> tuple[list, list, list]:
         """
         Observation-specific expansion.
@@ -389,4 +406,5 @@ class LinkExpansionRetriever(GraphRetriever):
             seed_ids,
             budget,
             per_entity_limit,
+            as_of=as_of,
         )

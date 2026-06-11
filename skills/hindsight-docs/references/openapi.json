@@ -10359,6 +10359,18 @@
             "title": "Query Timestamp",
             "description": "ISO format date string (e.g., '2023-05-30T23:40:00'). Used as the query-time anchor for relative temporal expressions and recency scoring."
           },
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of",
+            "description": "ISO format date string. Point-in-time recall: return facts that were valid at this instant, including ones superseded since (their valid_until/superseded_by fields are populated). Omit for default behavior (superseded facts hidden)."
+          },
           "include": {
             "$ref": "#/components/schemas/IncludeOptions",
             "description": "Options for including additional data (entities are included by default)",
@@ -10651,6 +10663,28 @@
               }
             ],
             "title": "Document Id"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          },
+          "superseded_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By"
           },
           "metadata": {
             "anyOf": [

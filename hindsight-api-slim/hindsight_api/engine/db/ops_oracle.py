@@ -425,9 +425,11 @@ class OracleOps(DataAccessOps):
         mu_table: str,
         ue_table: str,
         per_entity_limit: int,
+        as_of_param: str | None = None,
     ) -> str:
         # Oracle: can't GROUP BY CLOB columns (text, context).
         # Restructure: count entities per unit_id in a subquery, then join to get full columns.
+        vsql = validity_clause("mu", as_of_param=as_of_param)
         return f"""
             seed_entities AS (
                 SELECT DISTINCT ue.entity_id
@@ -454,7 +456,7 @@ class OracleOps(DataAccessOps):
                        es.score, 'entity' AS source
                 FROM entity_scores es
                 JOIN {mu_table} mu ON mu.id = es.unit_id
-                WHERE mu.fact_type = $2 {validity_clause("mu")}
+                WHERE mu.fact_type = $2 {vsql}
                 ORDER BY es.score DESC
                 FETCH FIRST $3 ROWS ONLY
             )"""
@@ -463,9 +465,11 @@ class OracleOps(DataAccessOps):
         self,
         ml_table: str,
         mu_table: str,
+        as_of_param: str | None = None,
     ) -> str:
         # Non-PG: can't GROUP BY CLOB columns, no DISTINCT ON.
         # Restructure semantic: compute max weight per id, then join for full columns.
+        vsql = validity_clause("mu", as_of_param=as_of_param)
         return f"""
             sem_scores AS (
                 SELECT id, MAX(weight) AS score
@@ -475,7 +479,7 @@ class OracleOps(DataAccessOps):
                     JOIN {mu_table} mu ON mu.id = ml.to_unit_id
                     WHERE ml.from_unit_id = ANY($1::uuid[])
                       AND ml.link_type = 'semantic'
-                      AND mu.fact_type = $2 {validity_clause("mu")}
+                      AND mu.fact_type = $2 {vsql}
                       AND mu.id != ALL($1::uuid[])
                     UNION ALL
                     SELECT mu.id, ml.weight
@@ -483,7 +487,7 @@ class OracleOps(DataAccessOps):
                     JOIN {mu_table} mu ON mu.id = ml.from_unit_id
                     WHERE ml.to_unit_id = ANY($1::uuid[])
                       AND ml.link_type = 'semantic'
-                      AND mu.fact_type = $2 {validity_clause("mu")}
+                      AND mu.fact_type = $2 {vsql}
                       AND mu.id != ALL($1::uuid[])
                 ) sem_raw
                 GROUP BY id
@@ -510,7 +514,7 @@ class OracleOps(DataAccessOps):
                 JOIN {mu_table} mu ON ml.to_unit_id = mu.id
                 WHERE ml.from_unit_id = ANY($1::uuid[])
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
-                  AND mu.fact_type = $2 {validity_clause("mu")}
+                  AND mu.fact_type = $2 {vsql}
             ),
             causal_expanded AS (
                 SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at,
@@ -529,11 +533,15 @@ class OracleOps(DataAccessOps):
         seed_ids: list,
         budget: int,
         per_entity_limit: int,
+        as_of: datetime | None = None,
     ) -> tuple[list[ResultRow], list[ResultRow], list[ResultRow]]:
         import logging
 
         logger = logging.getLogger(__name__)
 
+        # as-of validity: $3 only exists when the caller passes a point-in-time.
+        vsql = validity_clause("mu", as_of_param="$3" if as_of is not None else None)
+        _expand_args = [seed_ids, budget] + ([as_of] if as_of is not None else [])
         # Entity expansion via observation_sources junction table.
         # Previously used JSON_TABLE to explode source_memory_ids CLOB. The junction
         # table approach uses standard SQL joins, identical to the PG backend.
@@ -576,7 +584,7 @@ class OracleOps(DataAccessOps):
                    AND os2.source_id IN (SELECT source_id FROM connected_sources)
                 ) AS score
             FROM {mu_table} mu
-            WHERE mu.fact_type = 'observation' {validity_clause("mu")}
+            WHERE mu.fact_type = 'observation' {vsql}
               AND mu.id != ALL($1::uuid[])
               AND EXISTS (
                   SELECT 1 FROM {obs_sources_table} os3
@@ -586,8 +594,7 @@ class OracleOps(DataAccessOps):
             ORDER BY score DESC
             FETCH FIRST $2 ROWS ONLY
             """,
-            seed_ids,
-            budget,
+            *_expand_args,
         )
         logger.debug(f"[LinkExpansion] observation graph (Oracle): found {len(entity_rows)} connected observations")
 
@@ -601,13 +608,13 @@ class OracleOps(DataAccessOps):
                     SELECT mu.id, ml.weight
                     FROM {ml_table} ml JOIN {mu_table} mu ON mu.id = ml.to_unit_id
                     WHERE ml.from_unit_id = ANY($1::uuid[])
-                      AND ml.link_type = 'semantic' AND mu.fact_type = 'observation' {validity_clause("mu")}
+                      AND ml.link_type = 'semantic' AND mu.fact_type = 'observation' {vsql}
                       AND mu.id != ALL($1::uuid[])
                     UNION ALL
                     SELECT mu.id, ml.weight
                     FROM {ml_table} ml JOIN {mu_table} mu ON mu.id = ml.from_unit_id
                     WHERE ml.to_unit_id = ANY($1::uuid[])
-                      AND ml.link_type = 'semantic' AND mu.fact_type = 'observation' {validity_clause("mu")}
+                      AND ml.link_type = 'semantic' AND mu.fact_type = 'observation' {vsql}
                       AND mu.id != ALL($1::uuid[])
                 ) sem_raw
                 GROUP BY id
@@ -633,7 +640,7 @@ class OracleOps(DataAccessOps):
                 JOIN {mu_table} mu ON ml.to_unit_id = mu.id
                 WHERE ml.from_unit_id = ANY($1::uuid[])
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
-                  AND mu.fact_type = 'observation' {validity_clause("mu")}
+                  AND mu.fact_type = 'observation' {vsql}
             ),
             causal_expanded AS (
                 SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at,
@@ -646,8 +653,7 @@ class OracleOps(DataAccessOps):
             UNION ALL
             SELECT * FROM causal_expanded
             """,
-            seed_ids,
-            budget,
+            *_expand_args,
         )
 
         semantic_rows = [r for r in sem_causal_rows if r["source"] == "semantic"]

@@ -3779,6 +3779,7 @@ class MemoryEngine(MemoryEngineInterface):
         tag_groups: list[TagGroup] | None = None,
         created_after: datetime | None = None,
         created_before: datetime | None = None,
+        as_of: datetime | None = None,
         _connection_budget: int | None = None,
         _quiet: bool = False,
         reranking: RecallReranking = "cross_encoder",
@@ -3939,6 +3940,7 @@ class MemoryEngine(MemoryEngineInterface):
                             tag_groups=tag_groups,
                             created_after=created_after,
                             created_before=created_before,
+                            as_of=as_of,
                             connection_budget=_connection_budget,
                             quiet=_quiet,
                             include_source_facts=include_source_facts,
@@ -4071,6 +4073,7 @@ class MemoryEngine(MemoryEngineInterface):
         tag_groups: list[TagGroup] | None = None,
         created_after: datetime | None = None,
         created_before: datetime | None = None,
+        as_of: datetime | None = None,
         connection_budget: int | None = None,
         quiet: bool = False,
         include_source_facts: bool = False,
@@ -4207,6 +4210,7 @@ class MemoryEngine(MemoryEngineInterface):
                         tag_groups=tag_groups,
                         created_after=created_after,
                         created_before=created_before,
+                        as_of=as_of,
                     )
                     parallel_duration = time.time() - parallel_start
             finally:
@@ -4884,6 +4888,21 @@ class MemoryEngine(MemoryEngineInterface):
                                 {"entity_id": str(row["entity_id"]), "canonical_name": row["canonical_name"]}
                             )
 
+            # Point-in-time recalls can legitimately return superseded rows;
+            # surface their ledger fields. Default recall skips the extra query:
+            # the validity filter guarantees both columns are NULL on every
+            # returned row, and the arms don't select them (keeping the arm
+            # column lists and CTE GROUP BYs untouched).
+            validity_by_id: dict[str, Any] = {}
+            if as_of is not None and top_results_dicts:
+                validity_ids = [uuid.UUID(str(d.get("id"))) for d in top_results_dicts]
+                async with acquire_with_retry(backend) as validity_conn:
+                    validity_rows = await validity_conn.fetch(
+                        f"SELECT id, valid_until, superseded_by FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[])",
+                        validity_ids,
+                    )
+                validity_by_id = {str(r["id"]): r for r in validity_rows}
+
             # Convert results to MemoryFact objects
             memory_facts = []
             for result_dict in top_results_dicts:
@@ -4908,6 +4927,16 @@ class MemoryEngine(MemoryEngineInterface):
                         chunk_id=result_dict.get("chunk_id"),
                         tags=result_dict.get("tags"),
                         source_fact_ids=source_fact_ids_by_obs.get(result_id) if include_source_facts else None,
+                        valid_until=(
+                            validity_by_id[result_id]["valid_until"].isoformat()
+                            if validity_by_id.get(result_id) and validity_by_id[result_id]["valid_until"]
+                            else None
+                        ),
+                        superseded_by=(
+                            str(validity_by_id[result_id]["superseded_by"])
+                            if validity_by_id.get(result_id) and validity_by_id[result_id]["superseded_by"]
+                            else None
+                        ),
                     )
                 )
 

@@ -30,6 +30,8 @@ type RecallResult struct {
 	OccurredEnd NullableString `json:"occurred_end,omitempty"`
 	MentionedAt NullableString `json:"mentioned_at,omitempty"`
 	DocumentId NullableString `json:"document_id,omitempty"`
+	ValidUntil NullableString `json:"valid_until,omitempty"`
+	SupersededBy NullableString `json:"superseded_by,omitempty"`
 	Metadata map[string]string `json:"metadata,omitempty"`
 	ChunkId NullableString `json:"chunk_id,omitempty"`
 	Tags []string `json:"tags,omitempty"`
@@ -390,6 +392,90 @@ func (o *RecallResult) UnsetDocumentId() {
 	o.DocumentId.Unset()
 }
 
+// GetValidUntil returns the ValidUntil field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RecallResult) GetValidUntil() string {
+	if o == nil || IsNil(o.ValidUntil.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.ValidUntil.Get()
+}
+
+// GetValidUntilOk returns a tuple with the ValidUntil field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RecallResult) GetValidUntilOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ValidUntil.Get(), o.ValidUntil.IsSet()
+}
+
+// HasValidUntil returns a boolean if a field has been set.
+func (o *RecallResult) HasValidUntil() bool {
+	if o != nil && o.ValidUntil.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetValidUntil gets a reference to the given NullableString and assigns it to the ValidUntil field.
+func (o *RecallResult) SetValidUntil(v string) {
+	o.ValidUntil.Set(&v)
+}
+// SetValidUntilNil sets the value for ValidUntil to be an explicit nil
+func (o *RecallResult) SetValidUntilNil() {
+	o.ValidUntil.Set(nil)
+}
+
+// UnsetValidUntil ensures that no value is present for ValidUntil, not even an explicit nil
+func (o *RecallResult) UnsetValidUntil() {
+	o.ValidUntil.Unset()
+}
+
+// GetSupersededBy returns the SupersededBy field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RecallResult) GetSupersededBy() string {
+	if o == nil || IsNil(o.SupersededBy.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.SupersededBy.Get()
+}
+
+// GetSupersededByOk returns a tuple with the SupersededBy field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RecallResult) GetSupersededByOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.SupersededBy.Get(), o.SupersededBy.IsSet()
+}
+
+// HasSupersededBy returns a boolean if a field has been set.
+func (o *RecallResult) HasSupersededBy() bool {
+	if o != nil && o.SupersededBy.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetSupersededBy gets a reference to the given NullableString and assigns it to the SupersededBy field.
+func (o *RecallResult) SetSupersededBy(v string) {
+	o.SupersededBy.Set(&v)
+}
+// SetSupersededByNil sets the value for SupersededBy to be an explicit nil
+func (o *RecallResult) SetSupersededByNil() {
+	o.SupersededBy.Set(nil)
+}
+
+// UnsetSupersededBy ensures that no value is present for SupersededBy, not even an explicit nil
+func (o *RecallResult) UnsetSupersededBy() {
+	o.SupersededBy.Unset()
+}
+
 // GetMetadata returns the Metadata field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *RecallResult) GetMetadata() map[string]string {
 	if o == nil {
@@ -563,6 +649,12 @@ func (o RecallResult) ToMap() (map[string]interface{}, error) {
 	}
 	if o.DocumentId.IsSet() {
 		toSerialize["document_id"] = o.DocumentId.Get()
+	}
+	if o.ValidUntil.IsSet() {
+		toSerialize["valid_until"] = o.ValidUntil.Get()
+	}
+	if o.SupersededBy.IsSet() {
+		toSerialize["superseded_by"] = o.SupersededBy.Get()
 	}
 	if o.Metadata != nil {
 		toSerialize["metadata"] = o.Metadata

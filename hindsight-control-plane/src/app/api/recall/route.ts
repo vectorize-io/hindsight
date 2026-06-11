@@ -15,6 +15,7 @@ export async function POST(request: NextRequest) {
       budget,
       include,
       query_timestamp,
+      as_of,
       tags,
       tags_match,
     } = body;
@@ -30,6 +31,7 @@ export async function POST(request: NextRequest) {
         budget: budget || "mid",
         include,
         query_timestamp,
+        as_of,
         tags,
         tags_match,
       },

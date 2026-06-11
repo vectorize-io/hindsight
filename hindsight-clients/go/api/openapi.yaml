@@ -6842,6 +6842,9 @@ components:
         query_timestamp:
           nullable: true
           type: string
+        as_of:
+          nullable: true
+          type: string
         include:
           $ref: '#/components/schemas/IncludeOptions'
         tags:
@@ -6970,6 +6973,12 @@ components:
           nullable: true
           type: string
         document_id:
+          nullable: true
+          type: string
+        valid_until:
+          nullable: true
+          type: string
+        superseded_by:
           nullable: true
           type: string
         metadata:

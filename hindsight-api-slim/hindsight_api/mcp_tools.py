@@ -795,6 +795,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             tags_match: str = "any",
             tag_groups: list[dict] | None = None,
             query_timestamp: str | None = None,
+            as_of: str | None = None,
             bank_id: str | None = None,
         ) -> str | dict:
             """
@@ -811,6 +812,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     Mutually exclusive with tags.
                 query_timestamp: Temporal context for the query (ISO format, e.g., '2024-01-15T10:30:00Z').
                     Anchors relative temporal expressions and recency scoring.
+                as_of: Point-in-time recall (ISO format). Returns facts valid at that instant,
+                    including since-superseded ones. Omit to hide superseded facts (default).
                 bank_id: Optional bank to search in (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -842,6 +845,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     recall_kwargs["tag_groups"] = _TAG_GROUP_LIST_ADAPTER.validate_python(tag_groups)
                 if query_timestamp is not None:
                     recall_kwargs["question_date"] = parse_timestamp(query_timestamp)
+                if as_of is not None:
+                    recall_kwargs["as_of"] = parse_timestamp(as_of)
 
                 recall_result = await memory.recall_async(**recall_kwargs)
 
@@ -867,6 +872,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             tags_match: str = "any",
             tag_groups: list[dict] | None = None,
             query_timestamp: str | None = None,
+            as_of: str | None = None,
         ) -> dict:
             """
             Args:
@@ -882,6 +888,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     Mutually exclusive with tags.
                 query_timestamp: Temporal context for the query (ISO format, e.g., '2024-01-15T10:30:00Z').
                     Anchors relative temporal expressions and recency scoring.
+                as_of: Point-in-time recall (ISO format). Returns facts valid at that instant,
+                    including since-superseded ones. Omit to hide superseded facts (default).
             """
             try:
                 target_bank = config.bank_id_resolver()
@@ -912,6 +920,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     recall_kwargs["tag_groups"] = _TAG_GROUP_LIST_ADAPTER.validate_python(tag_groups)
                 if query_timestamp is not None:
                     recall_kwargs["question_date"] = parse_timestamp(query_timestamp)
+                if as_of is not None:
+                    recall_kwargs["as_of"] = parse_timestamp(as_of)
 
                 recall_result = await memory.recall_async(**recall_kwargs)
 

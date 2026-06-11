@@ -102,6 +102,7 @@ async def retrieve_semantic_bm25_combined(
     tag_groups: list[TagGroup] | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
+    as_of: datetime | None = None,
 ) -> dict[str, tuple[list[RetrievalResult], list[RetrievalResult]]]:
     """
     Combined semantic + BM25 retrieval for multiple fact types in a single query.
@@ -190,6 +191,14 @@ async def retrieve_semantic_bm25_combined(
         created_range_clause += f" AND updated_at < ${_next_idx}"
         _next_idx += 1
 
+    # --- as-of validity (replaces the default superseded-row filter) ---
+    validity_sql: str | None = None
+    as_of_params: list[Any] = []
+    if as_of is not None:
+        as_of_params.append(as_of)
+        validity_sql = validity_clause(as_of_param=f"${_next_idx}")
+        _next_idx += 1
+
     # --- Semantic UNION ALL arms (one per fact_type) ---
     # Each arm has its own ORDER BY ... LIMIT, enabling the partial HNSW indexes
     # per fact_type instead of forcing a full sequential scan.
@@ -205,6 +214,7 @@ async def retrieve_semantic_bm25_combined(
             tags_clause=tags_clause,
             groups_clause=groups_clause,
             extra_where=created_range_clause,
+            validity_sql=validity_sql,
         )
         for ft in fact_types
     ]
@@ -229,6 +239,7 @@ async def retrieve_semantic_bm25_combined(
                     bm25_language=config.text_search_extension_native_language,
                     bm25_min_score=config.bm25_min_score,
                     extra_where=created_range_clause,
+                    validity_sql=validity_sql,
                 )
             )
 
@@ -242,6 +253,7 @@ async def retrieve_semantic_bm25_combined(
         params.append(tags)
     params.extend(groups_params)
     params.extend(created_range_params)
+    params.extend(as_of_params)
 
     try:
         rows = await conn.fetch(query, *params)
@@ -267,6 +279,10 @@ async def retrieve_semantic_bm25_combined(
             if created_before is not None:
                 fb_created_clause += f" AND updated_at < ${fb_next_idx}"
                 fb_next_idx += 1
+            fb_validity_sql: str | None = None
+            if as_of is not None:
+                fb_validity_sql = validity_clause(as_of_param=f"${fb_next_idx}")
+                fb_next_idx += 1
             fb_arms = [
                 dialect.build_semantic_arm(
                     table=table,
@@ -279,6 +295,7 @@ async def retrieve_semantic_bm25_combined(
                     tags_clause=fb_tags_clause,
                     groups_clause=fb_groups_clause,
                     extra_where=fb_created_clause,
+                    validity_sql=fb_validity_sql,
                 )
                 for ft in fact_types
             ]
@@ -288,6 +305,7 @@ async def retrieve_semantic_bm25_combined(
                 fb_params.append(tags)
             fb_params.extend(groups_params)
             fb_params.extend(created_range_params)
+            fb_params.extend(as_of_params)
             rows = await conn.fetch(fb_query, *fb_params)
         else:
             raise
@@ -384,6 +402,7 @@ async def retrieve_temporal_combined(
     tag_groups: list[TagGroup] | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
+    as_of: datetime | None = None,
 ) -> dict[str, list[RetrievalResult]]:
     """
     Temporal retrieval for multiple fact types in a single query.
@@ -434,11 +453,20 @@ async def retrieve_temporal_combined(
         created_range_clause += f" AND updated_at < ${_next_idx}"
         _next_idx += 1
 
+    # as-of validity for the entry pool (replaces the default superseded-row filter)
+    entry_vclause = validity_clause()
+    as_of_params: list[Any] = []
+    if as_of is not None:
+        as_of_params.append(as_of)
+        entry_vclause = validity_clause(as_of_param=f"${_next_idx}")
+        _next_idx += 1
+
     params: list = [query_emb_str, bank_id, start_date, end_date, semantic_threshold]
     if tags:
         params.append(tags)
     params.extend(groups_params)
     params.extend(created_range_params)
+    params.extend(as_of_params)
 
     # Entry-point selection: similarity-gated, window-filtered, then narrowed for coverage.
     #
@@ -477,7 +505,7 @@ async def retrieve_temporal_combined(
         SELECT {pool_cols}, 1 - (embedding <=> $1::vector) AS similarity
         FROM {table}
         WHERE bank_id = $2
-          AND fact_type = '{ft}' {validity_clause()}
+          AND fact_type = '{ft}' {entry_vclause}
           AND embedding IS NOT NULL
           AND (
               (occurred_start IS NOT NULL AND occurred_end IS NOT NULL
@@ -583,6 +611,12 @@ async def retrieve_temporal_combined(
             tag_groups, spreading_groups_param_start, table_alias="mu."
         )
 
+        # as-of validity for spreading (param index after tags/groups)
+        spreading_vclause = validity_clause("mu")
+        if as_of is not None:
+            _spread_as_of_idx = spreading_groups_param_start + len(spreading_groups_params)
+            spreading_vclause = validity_clause("mu", as_of_param=f"${_spread_as_of_idx}")
+
         # Multi-hop temporal spreading expands a batch of seed ids with
         # ``FROM unnest($2::uuid[])``, which has no Oracle equivalent. On backends
         # without unnest, skip the spread: the temporal entry points are still
@@ -599,6 +633,8 @@ async def retrieve_temporal_combined(
             if tags:
                 spreading_params.append(tags)
             spreading_params.extend(spreading_groups_params)
+            if as_of is not None:
+                spreading_params.append(as_of)
 
             # LATERAL join: for each source node, fetch top-K neighbors by weight using
             # the existing idx_memory_links_from_type_weight index with early-exit semantics.
@@ -621,7 +657,7 @@ async def retrieve_temporal_combined(
                 ) l
                 JOIN {fq_table("memory_units")} mu ON mu.id = l.to_unit_id
                 WHERE mu.bank_id = $6
-                  AND mu.fact_type = $3 {validity_clause("mu")}
+                  AND mu.fact_type = $3 {spreading_vclause}
                   AND mu.embedding IS NOT NULL
                   AND (1 - (mu.embedding <=> $1::vector)) >= $4
                   {spreading_tags_clause}
@@ -704,6 +740,7 @@ async def retrieve_all_fact_types_parallel(
     tag_groups: list[TagGroup] | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
+    as_of: datetime | None = None,
 ) -> MultiFactTypeRetrievalResult:
     """
     Optimized retrieval for multiple fact types using batched queries.
@@ -764,6 +801,7 @@ async def retrieve_all_fact_types_parallel(
             tag_groups=tag_groups,
             created_after=created_after,
             created_before=created_before,
+            as_of=as_of,
         )
         semantic_bm25_time = time.time() - semantic_bm25_start
 
@@ -785,6 +823,7 @@ async def retrieve_all_fact_types_parallel(
                 tag_groups=tag_groups,
                 created_after=created_after,
                 created_before=created_before,
+                as_of=as_of,
             )
             temporal_time = time.time() - temporal_start
 
@@ -810,6 +849,7 @@ async def retrieve_all_fact_types_parallel(
             tag_groups=tag_groups,
             created_after=created_after,
             created_before=created_before,
+            as_of=as_of,
         )
         return ft, results, time.time() - graph_start, graph_timing
 

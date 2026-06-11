@@ -519,7 +519,9 @@ class PostgreSQLOps(DataAccessOps):
         mu_table: str,
         ue_table: str,
         per_entity_limit: int,
+        as_of_param: str | None = None,
     ) -> str:
+        vsql = validity_clause("mu", as_of_param=as_of_param)
         return f"""
             seed_entities AS (
                 SELECT DISTINCT ue.entity_id
@@ -542,7 +544,7 @@ class PostgreSQLOps(DataAccessOps):
                     LIMIT {per_entity_limit}
                 ) t
                 JOIN {mu_table} mu ON mu.id = t.unit_id
-                WHERE mu.fact_type = $2 {validity_clause("mu")}
+                WHERE mu.fact_type = $2 {vsql}
                 GROUP BY mu.id
                 ORDER BY score DESC
                 LIMIT $3
@@ -552,9 +554,11 @@ class PostgreSQLOps(DataAccessOps):
         self,
         ml_table: str,
         mu_table: str,
+        as_of_param: str | None = None,
     ) -> str:
         # Exact v0.5.6 query shape: GROUP BY + MAX(weight) for semantic,
         # DISTINCT ON for causal.
+        vsql = validity_clause("mu", as_of_param=as_of_param)
         return f"""
             semantic_expanded AS (
                 SELECT
@@ -573,7 +577,7 @@ class PostgreSQLOps(DataAccessOps):
                     JOIN {mu_table} mu ON mu.id = ml.to_unit_id
                     WHERE ml.from_unit_id = ANY($1::uuid[])
                       AND ml.link_type = 'semantic'
-                      AND mu.fact_type = $2 {validity_clause("mu")}
+                      AND mu.fact_type = $2 {vsql}
                       AND mu.id != ALL($1::uuid[])
                     UNION ALL
                     SELECT
@@ -585,7 +589,7 @@ class PostgreSQLOps(DataAccessOps):
                     JOIN {mu_table} mu ON mu.id = ml.from_unit_id
                     WHERE ml.to_unit_id = ANY($1::uuid[])
                       AND ml.link_type = 'semantic'
-                      AND mu.fact_type = $2 {validity_clause("mu")}
+                      AND mu.fact_type = $2 {vsql}
                       AND mu.id != ALL($1::uuid[])
                 ) sem_raw
                 GROUP BY id, text, context, event_date, occurred_start,
@@ -605,7 +609,7 @@ class PostgreSQLOps(DataAccessOps):
                 JOIN {mu_table} mu ON ml.to_unit_id = mu.id
                 WHERE ml.from_unit_id = ANY($1::uuid[])
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
-                  AND mu.fact_type = $2 {validity_clause("mu")}
+                  AND mu.fact_type = $2 {vsql}
                 ORDER BY mu.id, ml.weight DESC
                 LIMIT $3
             )"""
@@ -619,7 +623,11 @@ class PostgreSQLOps(DataAccessOps):
         seed_ids: list,
         budget: int,
         per_entity_limit: int,
+        as_of: datetime | None = None,
     ) -> tuple[list[ResultRow], list[ResultRow], list[ResultRow]]:
+        # as-of validity: $3 only exists when the caller passes a point-in-time.
+        vsql = validity_clause("mu", as_of_param="$3" if as_of is not None else None)
+        _expand_args = [seed_ids, budget] + ([as_of] if as_of is not None else [])
         # v0.5.6 array ops: unnest, &&, COUNT(DISTINCT) on source_memory_ids.
         from ..schema import fq_table
 
@@ -659,15 +667,14 @@ class PostgreSQLOps(DataAccessOps):
                 mu.fact_type, mu.document_id, mu.chunk_id, mu.tags, mu.proof_count,
                 (SELECT COUNT(DISTINCT s) FROM unnest(mu.source_memory_ids) s WHERE s = ANY(ca.source_ids))::float AS score
             FROM {mu_table} mu, connected_array ca
-            WHERE mu.fact_type = 'observation' {validity_clause("mu")}
+            WHERE mu.fact_type = 'observation' {vsql}
               AND mu.id != ALL($1::uuid[])
               AND ca.source_ids IS NOT NULL
               AND mu.source_memory_ids && ca.source_ids
             ORDER BY score DESC
             LIMIT $2
             """,
-            seed_ids,
-            budget,
+            *_expand_args,
         )
 
         # Exact v0.5.6 query shape: GROUP BY + MAX(weight) for semantic,
@@ -687,7 +694,7 @@ class PostgreSQLOps(DataAccessOps):
                            mu.chunk_id, mu.tags, mu.proof_count, ml.weight
                     FROM {ml_table} ml JOIN {mu_table} mu ON mu.id = ml.to_unit_id
                     WHERE ml.from_unit_id = ANY($1::uuid[])
-                      AND ml.link_type = 'semantic' AND mu.fact_type = 'observation' {validity_clause("mu")}
+                      AND ml.link_type = 'semantic' AND mu.fact_type = 'observation' {vsql}
                       AND mu.id != ALL($1::uuid[])
                     UNION ALL
                     SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
@@ -695,7 +702,7 @@ class PostgreSQLOps(DataAccessOps):
                            mu.chunk_id, mu.tags, mu.proof_count, ml.weight
                     FROM {ml_table} ml JOIN {mu_table} mu ON mu.id = ml.from_unit_id
                     WHERE ml.to_unit_id = ANY($1::uuid[])
-                      AND ml.link_type = 'semantic' AND mu.fact_type = 'observation' {validity_clause("mu")}
+                      AND ml.link_type = 'semantic' AND mu.fact_type = 'observation' {vsql}
                       AND mu.id != ALL($1::uuid[])
                 ) sem_raw
                 GROUP BY id, text, context, event_date, occurred_start, occurred_end,
@@ -710,15 +717,14 @@ class PostgreSQLOps(DataAccessOps):
                 FROM {ml_table} ml JOIN {mu_table} mu ON ml.to_unit_id = mu.id
                 WHERE ml.from_unit_id = ANY($1::uuid[])
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
-                  AND mu.fact_type = 'observation' {validity_clause("mu")}
+                  AND mu.fact_type = 'observation' {vsql}
                 ORDER BY mu.id, ml.weight DESC LIMIT $2
             )
             SELECT * FROM semantic_expanded
             UNION ALL
             SELECT * FROM causal_expanded
             """,
-            seed_ids,
-            budget,
+            *_expand_args,
         )
 
         semantic_rows = [r for r in sem_causal_rows if r["source"] == "semantic"]

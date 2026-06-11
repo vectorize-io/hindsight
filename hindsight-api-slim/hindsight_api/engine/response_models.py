@@ -159,6 +159,12 @@ class MemoryFact(BaseModel):
     occurred_end: str | None = Field(None, description="ISO format date when the event ended occurring")
     mentioned_at: str | None = Field(None, description="ISO format date when the fact was mentioned/learned")
     document_id: str | None = Field(None, description="ID of the document this memory belongs to")
+    valid_until: str | None = Field(
+        None,
+        description="ISO date when this fact stopped being true (superseded). Only populated by "
+        "as_of recalls — default recall never returns superseded facts.",
+    )
+    superseded_by: str | None = Field(None, description="ID of the fact that superseded this one")
     metadata: dict[str, str] | None = Field(None, description="User-defined metadata")
 
     @field_validator("metadata", mode="before")

@@ -238,6 +238,14 @@ class RecallRequest(BaseModel):
             "relative temporal expressions and recency scoring."
         ),
     )
+    as_of: str | None = Field(
+        default=None,
+        description=(
+            "ISO format date string. Point-in-time recall: return facts that were valid at this instant, "
+            "including ones superseded since (their valid_until/superseded_by fields are populated). "
+            "Omit for default behavior (superseded facts hidden)."
+        ),
+    )
     include: IncludeOptions = FieldWithDefault(
         IncludeOptions,
         description="Options for including additional data (entities are included by default)",
@@ -305,6 +313,8 @@ class RecallResult(BaseModel):
     occurred_end: str | None = None  # ISO format date when the event ended
     mentioned_at: str | None = None  # ISO format date when the fact was mentioned
     document_id: str | None = None  # Document this memory belongs to
+    valid_until: str | None = None  # ISO date when superseded (as_of recalls only)
+    superseded_by: str | None = None  # ID of the superseding fact (as_of recalls only)
     metadata: dict[str, str] | None = None  # User-defined metadata
     chunk_id: str | None = None  # Chunk this fact was extracted from
     tags: list[str] | None = None  # Visibility scope tags
@@ -3574,6 +3584,17 @@ def _register_routes(app: FastAPI):
                         detail=f"Invalid query_timestamp format. Expected ISO format (e.g., '2023-05-30T23:40:00'): {str(e)}",
                     )
 
+            # Parse as_of if provided
+            as_of_dt = None
+            if request.as_of:
+                try:
+                    as_of_dt = datetime.fromisoformat(request.as_of.replace("Z", "+00:00"))
+                except ValueError as e:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid as_of format. Expected ISO format (e.g., '2024-03-01T00:00:00'): {str(e)}",
+                    )
+
             # Determine entity inclusion settings
             include_entities = request.include.entities is not None
             max_entity_tokens = request.include.entities.max_tokens if include_entities else 500
@@ -3620,6 +3641,7 @@ def _register_routes(app: FastAPI):
                         tags=request.tags,
                         tags_match=request.tags_match,
                         tag_groups=request.tag_groups,
+                        as_of=as_of_dt,
                     ),
                     operation="recall",
                     bank_id=bank_id,
@@ -3637,6 +3659,8 @@ def _register_routes(app: FastAPI):
                     occurred_end=fact.occurred_end,
                     mentioned_at=fact.mentioned_at,
                     document_id=fact.document_id,
+                    valid_until=fact.valid_until,
+                    superseded_by=fact.superseded_by,
                     metadata=fact.metadata,
                     chunk_id=fact.chunk_id,
                     tags=fact.tags,

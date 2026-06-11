@@ -31,6 +31,34 @@ def test_validity_clause_alias():
     assert validity_clause("mu") == "AND mu.valid_until IS NULL"
 
 
+def test_validity_clause_as_of_variant():
+    clause = validity_clause("mu", as_of_param="$7")
+    # Undated facts stay visible (no occurred_start -> presumed valid at any instant),
+    # superseded rows reappear when they were still true at the instant.
+    assert clause == (
+        "AND (mu.occurred_start IS NULL OR mu.occurred_start <= $7) AND (mu.valid_until IS NULL OR mu.valid_until > $7)"
+    )
+
+
+@pytest.mark.parametrize("dialect", [PostgreSQLDialect(), OracleDialect()], ids=["pg", "oracle"])
+def test_arm_builders_accept_validity_override(dialect):
+    override = validity_clause(as_of_param="$9")
+    semantic = dialect.build_semantic_arm(
+        table="memory_units",
+        cols="id, text",
+        fact_type="world",
+        embedding_param="$1",
+        bank_id_param="$2",
+        fetch_limit=100,
+        min_similarity=0.1,
+        validity_sql=override,
+    )
+    # The as-of predicate must REPLACE the default filter, not stack on it —
+    # stacking would keep hiding superseded rows that were valid at the instant.
+    assert override in semantic
+    assert CLAUSE not in semantic.replace(override, "")
+
+
 @pytest.mark.parametrize("dialect", [PostgreSQLDialect(), OracleDialect()], ids=["pg", "oracle"])
 def test_semantic_and_bm25_arms_filter_superseded(dialect):
     semantic = dialect.build_semantic_arm(
@@ -118,3 +146,71 @@ async def test_superseded_fact_hidden_from_recall(memory, pg0_db_url, request_co
 
 def _texts_mention_acme(texts: list[str]) -> bool:
     return any("acme" in t.lower() for t in texts)
+
+
+async def test_as_of_recall_returns_superseded_fact(memory, pg0_db_url, request_context):
+    """Point-in-time recall re-exposes superseded facts valid at that instant.
+
+    Timeline: fact occurs 2024-01-15, superseded effective 2024-06-01.
+      as_of 2024-01-01 -> hidden (did not exist yet)
+      as_of 2024-03-01 -> visible, with valid_until/superseded_by populated
+      as_of 2024-07-01 -> hidden (no longer true)
+      default          -> hidden
+    """
+    bank_id = f"test_asof_{datetime.now(UTC).timestamp()}"
+
+    await memory.retain_async(
+        bank_id=bank_id,
+        content="Alice works at Acme Corporation as a software engineer.",
+        event_date=datetime(2024, 1, 15, tzinfo=UTC),
+        request_context=request_context,
+    )
+    await memory.retain_async(
+        bank_id=bank_id,
+        content="Alice now works at Beta Industries as a staff engineer.",
+        event_date=datetime(2024, 6, 1, tzinfo=UTC),
+        request_context=request_context,
+    )
+
+    conn = await asyncpg.connect(pg0_db_url)
+    try:
+        superseder_id = await conn.fetchval(
+            "SELECT id FROM memory_units WHERE bank_id = $1 AND lower(text) LIKE '%beta%' LIMIT 1",
+            bank_id,
+        )
+        assert superseder_id is not None
+        await conn.execute(
+            """
+            UPDATE memory_units
+            SET occurred_start = $2, valid_until = $3, superseded_at = now(), superseded_by = $4
+            WHERE bank_id = $1 AND lower(text) LIKE '%acme%'
+            """,
+            bank_id,
+            datetime(2024, 1, 15, tzinfo=UTC),
+            datetime(2024, 6, 1, tzinfo=UTC),
+            superseder_id,
+        )
+    finally:
+        await conn.close()
+
+    async def _recall(as_of: datetime | None):
+        result = await memory.recall_async(
+            bank_id=bank_id,
+            query="Where does Alice work?",
+            budget=Budget.LOW,
+            max_tokens=500,
+            fact_type=["world"],
+            request_context=request_context,
+            as_of=as_of,
+        )
+        return result.results
+
+    assert not _texts_mention_acme([r.text for r in await _recall(None)])
+    assert not _texts_mention_acme([r.text for r in await _recall(datetime(2024, 1, 1, tzinfo=UTC))])
+    assert not _texts_mention_acme([r.text for r in await _recall(datetime(2024, 7, 1, tzinfo=UTC))])
+
+    mid_results = await _recall(datetime(2024, 3, 1, tzinfo=UTC))
+    acme = [r for r in mid_results if "acme" in r.text.lower()]
+    assert acme, "fact valid at as_of must be returned"
+    assert acme[0].valid_until is not None and acme[0].valid_until.startswith("2024-06-01")
+    assert acme[0].superseded_by == str(superseder_id)

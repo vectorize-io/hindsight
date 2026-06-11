@@ -35,11 +35,13 @@ class RecallResult(BaseModel):
     occurred_end: Optional[StrictStr] = None
     mentioned_at: Optional[StrictStr] = None
     document_id: Optional[StrictStr] = None
+    valid_until: Optional[StrictStr] = None
+    superseded_by: Optional[StrictStr] = None
     metadata: Optional[Dict[str, StrictStr]] = None
     chunk_id: Optional[StrictStr] = None
     tags: Optional[List[StrictStr]] = None
     source_fact_ids: Optional[List[StrictStr]] = None
-    __properties: ClassVar[List[str]] = ["id", "text", "type", "entities", "context", "occurred_start", "occurred_end", "mentioned_at", "document_id", "metadata", "chunk_id", "tags", "source_fact_ids"]
+    __properties: ClassVar[List[str]] = ["id", "text", "type", "entities", "context", "occurred_start", "occurred_end", "mentioned_at", "document_id", "valid_until", "superseded_by", "metadata", "chunk_id", "tags", "source_fact_ids"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -115,6 +117,16 @@ class RecallResult(BaseModel):
         if self.document_id is None and "document_id" in self.model_fields_set:
             _dict['document_id'] = None
 
+        # set to None if valid_until (nullable) is None
+        # and model_fields_set contains the field
+        if self.valid_until is None and "valid_until" in self.model_fields_set:
+            _dict['valid_until'] = None
+
+        # set to None if superseded_by (nullable) is None
+        # and model_fields_set contains the field
+        if self.superseded_by is None and "superseded_by" in self.model_fields_set:
+            _dict['superseded_by'] = None
+
         # set to None if metadata (nullable) is None
         # and model_fields_set contains the field
         if self.metadata is None and "metadata" in self.model_fields_set:
@@ -156,6 +168,8 @@ class RecallResult(BaseModel):
             "occurred_end": obj.get("occurred_end"),
             "mentioned_at": obj.get("mentioned_at"),
             "document_id": obj.get("document_id"),
+            "valid_until": obj.get("valid_until"),
+            "superseded_by": obj.get("superseded_by"),
             "metadata": obj.get("metadata"),
             "chunk_id": obj.get("chunk_id"),
             "tags": obj.get("tags"),
