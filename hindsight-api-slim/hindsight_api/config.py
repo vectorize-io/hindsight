@@ -396,6 +396,7 @@ ENV_LLM_PROMPT_CACHE_ENABLED = "HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED"
 # Retain settings
 ENV_RETAIN_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"
 ENV_RETAIN_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_SIZE"
+ENV_RETAIN_CHUNK_OVERFLOW_FACTOR = "HINDSIGHT_API_RETAIN_CHUNK_OVERFLOW_FACTOR"
 ENV_RETAIN_EXTRACT_CAUSAL_LINKS = "HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS"
 ENV_RETAIN_EXTRACTION_MODE = "HINDSIGHT_API_RETAIN_EXTRACTION_MODE"
 ENV_RETAIN_MISSION = "HINDSIGHT_API_RETAIN_MISSION"
@@ -818,6 +819,9 @@ DEFAULT_BANK_STATS_CACHE_MAX_ENTRIES = 1024  # LRU bound across (schema, bank) k
 # Retain settings
 DEFAULT_RETAIN_MAX_COMPLETION_TOKENS = 64000  # Max tokens for fact extraction LLM call
 DEFAULT_RETAIN_CHUNK_SIZE = 3000  # Max chars per chunk for fact extraction
+DEFAULT_RETAIN_CHUNK_OVERFLOW_FACTOR = (
+    1.5  # A whole JSONL line / conversation turn is kept intact up to this × chunk size
+)
 DEFAULT_RETAIN_EXTRACT_CAUSAL_LINKS = True  # Extract causal links between facts
 DEFAULT_RETAIN_EXTRACTION_MODE = "concise"  # Extraction mode: "concise", "verbose", or "custom"
 RETAIN_EXTRACTION_MODES = ("concise", "verbose", "custom", "verbatim", "chunks")  # Allowed extraction modes
@@ -1063,6 +1067,25 @@ def _parse_positive_int(name: str, raw: str | None, default: int) -> int:
         raise ValueError(f"{name} must be an integer, got {raw!r}") from e
     if parsed < 1:
         raise ValueError(f"{name} must be >= 1, got {parsed}")
+    return parsed
+
+
+def _parse_chunk_overflow_factor(raw: str | None) -> float:
+    """Parse the retain chunk overflow factor (a float >= 1.0).
+
+    The factor is how far a single JSONL line / conversation turn may exceed the
+    chunk-size budget while still being kept whole. A value below 1.0 would split
+    units that already fit the budget, so it fails fast. Falls back to
+    ``DEFAULT_RETAIN_CHUNK_OVERFLOW_FACTOR`` when unset/empty.
+    """
+    if raw is None or raw == "":
+        return DEFAULT_RETAIN_CHUNK_OVERFLOW_FACTOR
+    try:
+        parsed = float(raw)
+    except ValueError as e:
+        raise ValueError(f"{ENV_RETAIN_CHUNK_OVERFLOW_FACTOR} must be a number, got {raw!r}") from e
+    if parsed < 1.0:
+        raise ValueError(f"{ENV_RETAIN_CHUNK_OVERFLOW_FACTOR} must be >= 1.0, got {parsed}")
     return parsed
 
 
@@ -1426,6 +1449,7 @@ class HindsightConfig:
     # Retain settings
     retain_max_completion_tokens: int
     retain_chunk_size: int
+    retain_chunk_overflow_factor: float  # Keep a JSONL line / conversation turn whole up to this × chunk size
     retain_extract_causal_links: bool
     retain_extraction_mode: str
     retain_mission: str | None
@@ -1649,6 +1673,7 @@ class HindsightConfig:
         "mcp_enabled_tools",
         # Retention settings (behavioral)
         "retain_chunk_size",
+        "retain_chunk_overflow_factor",
         "retain_extraction_mode",
         "retain_mission",
         "retain_custom_instructions",
@@ -2294,6 +2319,7 @@ class HindsightConfig:
                 os.getenv(ENV_RETAIN_MAX_COMPLETION_TOKENS, str(DEFAULT_RETAIN_MAX_COMPLETION_TOKENS))
             ),
             retain_chunk_size=int(os.getenv(ENV_RETAIN_CHUNK_SIZE, str(DEFAULT_RETAIN_CHUNK_SIZE))),
+            retain_chunk_overflow_factor=_parse_chunk_overflow_factor(os.getenv(ENV_RETAIN_CHUNK_OVERFLOW_FACTOR)),
             retain_extract_causal_links=os.getenv(
                 ENV_RETAIN_EXTRACT_CAUSAL_LINKS, str(DEFAULT_RETAIN_EXTRACT_CAUSAL_LINKS)
             ).lower()

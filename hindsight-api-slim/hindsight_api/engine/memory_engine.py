@@ -413,6 +413,19 @@ def _is_oracledb_integrity_error(e: Exception) -> bool:
 
 
 @dataclass
+class RetainChunkParams:
+    """Bank-resolved parameters that govern how retain content is chunked.
+
+    Both fields must mirror what the orchestrator uses so that chunk-count
+    estimates (for per-document ``chunk_index`` offsets) match the chunk
+    boundaries the orchestrator actually produces.
+    """
+
+    chunk_size: int
+    overflow_factor: float
+
+
+@dataclass
 class _SubBatchSplit:
     """Result of packing retain contents into sub-batches.
 
@@ -3225,7 +3238,7 @@ class MemoryEngine(MemoryEngineInterface):
             # with, so the offsets match the chunk_index values it assigns.
             from .retain import fact_extraction, fact_storage
 
-            sub_chunk_size = await self._resolve_retain_chunk_size(bank_id, request_context, strategy)
+            chunk_params = await self._resolve_retain_chunk_params(bank_id, request_context, strategy)
             chunk_offsets: dict[str, int] = {}
 
             # In update_mode="append", retain_batch prepends the existing document
@@ -3248,7 +3261,7 @@ class MemoryEngine(MemoryEngineInterface):
                     existing_text = await fact_storage.get_document_content(conn, bank_id, append_doc_id)
                 if existing_text:
                     append_prepend_chunks[append_doc_id] = len(
-                        fact_extraction.chunk_text(existing_text, sub_chunk_size)
+                        fact_extraction.chunk_text(existing_text, chunk_params.chunk_size, chunk_params.overflow_factor)
                     )
 
             for i, (sub_batch, sub_origins) in enumerate(zip(sub_batches, origin_indices), 1):
@@ -3302,7 +3315,13 @@ class MemoryEngine(MemoryEngineInterface):
                 # document continues the sequence.
                 if sub_doc_id:
                     sub_chunk_count = sum(
-                        len(fact_extraction.chunk_text(item.get("content", "") or "", sub_chunk_size))
+                        len(
+                            fact_extraction.chunk_text(
+                                item.get("content", "") or "",
+                                chunk_params.chunk_size,
+                                chunk_params.overflow_factor,
+                            )
+                        )
                         for item in sub_batch
                     )
                     # retain_batch only prepends the existing body on the global
@@ -3413,19 +3432,20 @@ class MemoryEngine(MemoryEngineInterface):
         except Exception as e:
             logger.warning(f"Failed to submit graph maintenance task for bank {bank_id}: {e}")
 
-    async def _resolve_retain_chunk_size(
+    async def _resolve_retain_chunk_params(
         self,
         bank_id: str,
         request_context: "RequestContext",
         strategy: str | None,
-    ) -> int:
-        """Resolve the effective ``retain_chunk_size`` for a bank.
+    ) -> "RetainChunkParams":
+        """Resolve the effective chunking parameters for a bank.
 
         Mirrors the bank-config + strategy resolution that
         ``_retain_batch_async_internal`` applies before handing config to the
         orchestrator, so chunk-count estimates used for per-document
         chunk_index offsets match the chunk_index values the orchestrator
-        actually assigns.
+        actually assigns. Both the chunk size and the overflow factor must match,
+        since the overflow factor affects how oversized units are chunked.
         """
         from hindsight_api.config_resolver import apply_strategy
 
@@ -3433,7 +3453,10 @@ class MemoryEngine(MemoryEngineInterface):
         effective_strategy = strategy or resolved_config.retain_default_strategy
         if effective_strategy:
             resolved_config = apply_strategy(resolved_config, effective_strategy)
-        return getattr(resolved_config, "retain_chunk_size", 3000)
+        return RetainChunkParams(
+            chunk_size=getattr(resolved_config, "retain_chunk_size", 3000),
+            overflow_factor=getattr(resolved_config, "retain_chunk_overflow_factor", 1.5),
+        )
 
     async def _retain_batch_async_internal(
         self,

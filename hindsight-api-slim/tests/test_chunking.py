@@ -232,6 +232,42 @@ def test_chunk_conversation_huge_turn_is_split():
 
 
 # ---------------------------------------------------------------------------
+# Configurable overflow factor (issue #2136)
+# ---------------------------------------------------------------------------
+
+
+def test_overflow_factor_keeps_larger_jsonl_line_whole():
+    """A raised overflow_factor keeps a line whole that the default would split."""
+    # 49-char line, budget 20: default cap 30 splits it, but cap 3x = 60 keeps it.
+    big = json.dumps({"c": "y" * 40})  # 49 chars
+    small = json.dumps({"c": "ok"})
+    text = "\n".join([big, small])
+    assert len(big) == 49
+
+    default = chunk_text(text, max_chars=20)
+    raised = chunk_text(text, max_chars=20, overflow_factor=3.0)
+
+    # Default splits the big line into text fragments (more than 2 chunks).
+    assert len(default) > 2
+    # With the raised factor the big line is kept intact as its own chunk.
+    assert raised == [big, small]
+
+
+def test_overflow_factor_keeps_larger_conversation_turn_whole():
+    """A raised overflow_factor keeps a conversation turn whole, not split as text."""
+    turns = [{"c": "y" * 40}, {"c": "ok"}]
+    text = json.dumps(turns)
+
+    default = chunk_text(text, max_chars=20)
+    raised = chunk_text(text, max_chars=20, overflow_factor=4.0)
+
+    # Default splits the huge turn into text fragments.
+    assert len(default) > 2
+    # With the raised factor every chunk is a valid JSON array of whole turns.
+    assert [json.loads(c) for c in raised] == [[turns[0]], [turns[1]]]
+
+
+# ---------------------------------------------------------------------------
 # Detection guard
 # ---------------------------------------------------------------------------
 

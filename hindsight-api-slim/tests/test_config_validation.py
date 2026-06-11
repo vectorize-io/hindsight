@@ -20,6 +20,7 @@ def setup_test_env():
         "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS",
         "HINDSIGHT_API_CONSOLIDATION_MAX_COMPLETION_TOKENS",
         "HINDSIGHT_API_RETAIN_CHUNK_SIZE",
+        "HINDSIGHT_API_RETAIN_CHUNK_OVERFLOW_FACTOR",
         "HINDSIGHT_API_LLM_PROVIDER",
         "HINDSIGHT_API_LLM_MODEL",
         "HINDSIGHT_API_LLM_REASONING_EFFORT",
@@ -104,6 +105,39 @@ def test_valid_retain_config_succeeds():
     config = HindsightConfig.from_env()
     assert config.retain_max_completion_tokens == 64000
     assert config.retain_chunk_size == 3000
+
+
+def test_retain_chunk_overflow_factor_defaults_to_1_5():
+    """The chunk overflow factor defaults to 1.5 when unset."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+    os.environ.pop("HINDSIGHT_API_RETAIN_CHUNK_OVERFLOW_FACTOR", None)
+
+    config = HindsightConfig.from_env()
+    assert config.retain_chunk_overflow_factor == 1.5
+
+
+def test_retain_chunk_overflow_factor_reads_from_env():
+    """The chunk overflow factor is read from the environment."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+    os.environ["HINDSIGHT_API_RETAIN_CHUNK_OVERFLOW_FACTOR"] = "3"
+
+    config = HindsightConfig.from_env()
+    assert config.retain_chunk_overflow_factor == 3.0
+
+
+def test_retain_chunk_overflow_factor_below_one_fails():
+    """A factor below 1.0 would split units that already fit — fail fast."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+    os.environ["HINDSIGHT_API_RETAIN_CHUNK_OVERFLOW_FACTOR"] = "0.5"
+
+    with pytest.raises(ValueError, match="RETAIN_CHUNK_OVERFLOW_FACTOR"):
+        HindsightConfig.from_env()
 
 
 def test_semantic_min_similarity_reads_from_env():

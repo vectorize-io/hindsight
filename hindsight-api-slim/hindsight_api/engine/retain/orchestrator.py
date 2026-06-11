@@ -864,10 +864,11 @@ async def retain_batch(
     # retain code paths.
     chunk_batch_size = getattr(config, "retain_chunk_batch_size", 100)
     chunk_size = getattr(config, "retain_chunk_size", 3000)
+    overflow_factor = getattr(config, "retain_chunk_overflow_factor", 1.5)
     all_pre_chunks: list[str] = []
     chunk_to_content: list[int] = []  # maps chunk index -> index into contents
     for content_idx, content in enumerate(contents):
-        content_chunks = fact_extraction.chunk_text(content.content, chunk_size)
+        content_chunks = fact_extraction.chunk_text(content.content, chunk_size, overflow_factor)
         all_pre_chunks.extend(content_chunks)
         chunk_to_content.extend([content_idx] * len(content_chunks))
 
@@ -2249,7 +2250,8 @@ def _chunk_contents_for_delta(contents: list[RetainContent], config) -> dict[int
     global_chunk_idx = 0
     for content in contents:
         chunk_size = getattr(config, "retain_chunk_size", 3000)
-        chunks = fact_extraction.chunk_text(content.content, chunk_size)
+        overflow_factor = getattr(config, "retain_chunk_overflow_factor", 1.5)
+        chunks = fact_extraction.chunk_text(content.content, chunk_size, overflow_factor)
         for chunk_text in chunks:
             result[global_chunk_idx] = chunk_text
             global_chunk_idx += 1
