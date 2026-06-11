@@ -1,5 +1,5 @@
 ---
-title: "Hindsight Passes 1,000,000 Downloads — Three-Quarters in the Last 30 Days"
+title: "763,365 Downloads in 30 Days: Hindsight Crosses 1M"
 description: "The hindsight-client package just crossed a million downloads on PyPI — and 763,365 of them, about three-quarters of every install ever, landed in the last 30 days. A quick note on the milestone and what the install curve says."
 slug: "2026/06/11/one-million-downloads"
 date: 2026-06-11T12:00
