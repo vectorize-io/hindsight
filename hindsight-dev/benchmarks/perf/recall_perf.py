@@ -39,7 +39,6 @@ Usage (run from hindsight-api/):
 
 import argparse
 import asyncio
-import json
 import os
 import statistics
 import time

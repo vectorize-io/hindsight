@@ -4265,6 +4265,55 @@ jobs:
           fi
         done
 
+  # Advisory dead-code scan. Unused imports (F401) and unused variables (F841)
+  # are already BLOCKING via the ruff config + the verify-generated-files job.
+  # This job surfaces what ruff cannot see — whole unused Python functions
+  # (vulture) and orphaned files / exports / dependencies in the control plane
+  # (knip). It is intentionally non-blocking: vulture's function/argument
+  # heuristics false-positive on FastAPI/SQLAlchemy/Pydantic patterns, and the
+  # control-plane tree still carries known dead code (tracked in PR #2135).
+  # To make knip blocking once that lands, run `npx knip --include files,dependencies`
+  # and drop the `continue-on-error` below.
+  check-unused-code:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.control-plane == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
+
+    - name: Install Control Plane dependencies
+      run: npm install --workspace=hindsight-control-plane
+
+    - name: Run advisory dead-code scan
+      run: |
+        {
+          echo '## Dead-code scan (advisory)'
+          echo ''
+          echo '```'
+          ./scripts/hooks/check-unused.sh 2>&1 | sed 's/\x1b\[[0-9;]*m//g'
+          echo '```'
+        } | tee -a "$GITHUB_STEP_SUMMARY"
+
   verify-generated-files:
     runs-on: ubuntu-latest
     timeout-minutes: 30

@@ -7,14 +7,12 @@ Provides dataset, answer generator, and evaluator for the LoComo benchmark.
 import asyncio
 import json
 import os
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pydantic
 from hindsight_api.engine.llm_wrapper import LLMConfig
-from openai import AsyncOpenAI
 
 from benchmarks.common.benchmark_runner import (
     BenchmarkDataset,
@@ -414,7 +412,6 @@ async def run_benchmark(
         console.print(f"[green]Found {len(filtered_items)} conversations to re-evaluate[/green]")
 
         # Temporarily replace dataset's load method
-        original_load = dataset.load
 
         def filtered_load(path: Path, max_items: Optional[int] = None):
             return filtered_items[:max_items] if max_items else filtered_items
@@ -500,8 +497,6 @@ def generate_markdown_table(results: dict, use_reflect: bool = False):
     from rich.console import Console
 
     console = Console()
-
-    category_names = {"1": "Multi-hop", "2": "Single-hop", "3": "Temporal", "4": "Open-domain"}
 
     # Build markdown content
     lines = []

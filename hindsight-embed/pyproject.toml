@@ -47,8 +47,6 @@ select = [
 ignore = [
     "E501",   # line too long (handled by formatter)
     "E402",   # module import not at top of file
-    "F401",   # unused import (too noisy during development)
-    "F841",   # unused variable (too noisy during development)
 ]
 
 [tool.ruff.format]
