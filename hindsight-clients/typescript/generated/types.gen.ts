@@ -1224,7 +1224,7 @@ export type CreateWebhookRequest = {
   /**
    * Event Types
    *
-   * List of event types to deliver. Currently supported: 'consolidation.completed'
+   * List of event types to deliver. Supported: 'retain.completed', 'consolidation.completed', 'memory_defense.triggered'.
    */
   event_types?: Array<string>;
   /**

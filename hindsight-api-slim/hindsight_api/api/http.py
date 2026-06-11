@@ -2670,7 +2670,7 @@ class CreateWebhookRequest(BaseModel):
     secret: str | None = Field(default=None, description="HMAC-SHA256 signing secret (optional)")
     event_types: list[str] = Field(
         default=["consolidation.completed"],
-        description="List of event types to deliver. Currently supported: 'consolidation.completed'",
+        description="List of event types to deliver. Supported: 'retain.completed', 'consolidation.completed', 'memory_defense.triggered'.",
     )
     enabled: bool = Field(default=True, description="Whether this webhook is active")
     http_config: WebhookHttpConfig = Field(

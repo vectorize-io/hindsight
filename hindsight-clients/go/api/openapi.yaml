@@ -5103,7 +5103,8 @@ components:
         event_types:
           default:
           - consolidation.completed
-          description: "List of event types to deliver. Currently supported: 'consolidation.completed'"
+          description: "List of event types to deliver. Supported: 'retain.completed',\
+            \ 'consolidation.completed', 'memory_defense.triggered'."
           items:
             type: string
           type: array

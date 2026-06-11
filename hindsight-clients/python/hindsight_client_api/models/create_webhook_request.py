@@ -29,7 +29,7 @@ class CreateWebhookRequest(BaseModel):
     """ # noqa: E501
     url: StrictStr = Field(description="HTTP(S) endpoint URL to deliver events to")
     secret: Optional[StrictStr] = None
-    event_types: Optional[List[StrictStr]] = Field(default=None, description="List of event types to deliver. Currently supported: 'consolidation.completed'")
+    event_types: Optional[List[StrictStr]] = Field(default=None, description="List of event types to deliver. Supported: 'retain.completed', 'consolidation.completed', 'memory_defense.triggered'.")
     enabled: Optional[StrictBool] = Field(default=True, description="Whether this webhook is active")
     http_config: Optional[WebhookHttpConfig] = Field(default=None, description="HTTP delivery configuration (method, timeout, headers, params)")
     __properties: ClassVar[List[str]] = ["url", "secret", "event_types", "enabled", "http_config"]
