@@ -47,6 +47,7 @@ import { MemoryDetailModal } from "./memory-detail-modal";
 import { Graph2D, convertHindsightGraphData, GraphNode } from "./graph-2d";
 import { Constellation } from "./constellation";
 import { TagFilterInput } from "./tag-filter-input";
+import { ObservationScopeFilter, ObservationScope } from "./observation-scope-filter";
 import { ScatterChart, Plus, FileText } from "lucide-react";
 
 type FactType = "world" | "experience" | "observation";
@@ -76,6 +77,11 @@ export function DataView({
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [tagFilters, setTagFilters] = useState<string[]>([]);
+  // Observation scope filtering: the distinct scopes available, and the selected
+  // one. `null` = all scopes; `[]` = the global (untagged) scope; otherwise an
+  // exact tag set. Mutually exclusive with the free-form tag filter above.
+  const [scopes, setScopes] = useState<ObservationScope[]>([]);
+  const [selectedScope, setSelectedScope] = useState<string[] | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedGraphNode, setSelectedGraphNode] = useState<any>(null);
   const [modalMemoryId, setModalMemoryId] = useState<string | null>(null);
@@ -133,7 +139,7 @@ export function DataView({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedGraphNode]);
 
-  const loadData = async (limit?: number, q?: string, tags?: string[]) => {
+  const loadData = async (limit?: number, q?: string, tags?: string[], tagsMatch?: string) => {
     if (!currentBank) return;
 
     setLoading(true);
@@ -144,6 +150,7 @@ export function DataView({
         limit: limit ?? fetchLimit,
         q,
         tags,
+        tags_match: tagsMatch,
         document_id: documentId,
         chunk_id: chunkId,
       });
@@ -337,29 +344,62 @@ export function DataView({
   // Reset to first page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [tagFilters]);
+  }, [tagFilters, selectedScope]);
+
+  // Resolve the active tag filter into (tags, tags_match) for the graph query.
+  // A selected observation scope takes precedence and uses exact set-equality
+  // matching (so scope [a] excludes [a, b]); otherwise the free-form tag filter
+  // uses the default contains semantics. `null` scope means "no scope filter".
+  const resolveTagQuery = useCallback((): { tags?: string[]; match?: string } => {
+    if (selectedScope !== null) {
+      return { tags: selectedScope, match: "exact" };
+    }
+    return { tags: tagFilters.length > 0 ? tagFilters : undefined };
+  }, [selectedScope, tagFilters]);
 
   // Trigger text search on Enter key
   const executeSearch = () => {
     if (currentBank) {
       setCurrentPage(1);
-      loadData(undefined, searchQuery || undefined, tagFilters.length > 0 ? tagFilters : undefined);
+      const { tags, match } = resolveTagQuery();
+      loadData(undefined, searchQuery || undefined, tags, match);
     }
   };
 
-  // Trigger server-side reload immediately when tag filters change
+  // Trigger server-side reload immediately when the tag filter or scope changes
   useEffect(() => {
     if (currentBank) {
-      loadData(undefined, searchQuery || undefined, tagFilters.length > 0 ? tagFilters : undefined);
+      const { tags, match } = resolveTagQuery();
+      loadData(undefined, searchQuery || undefined, tags, match);
     }
-  }, [tagFilters]);
+  }, [tagFilters, selectedScope]);
 
-  // Auto-load data when component mounts or factType/currentBank changes
+  // Auto-load data when component mounts or factType/currentBank changes.
+  // Clearing the scope here resets it before the filter effect above re-runs.
   useEffect(() => {
+    setSelectedScope(null);
     if (currentBank) {
       loadData();
     }
   }, [factType, currentBank, documentId, chunkId]);
+
+  // Load the available observation scopes for the scope filter dropdown.
+  const loadScopes = useCallback(async () => {
+    if (!currentBank || factType !== "observation") {
+      setScopes([]);
+      return;
+    }
+    try {
+      const resp = await client.listObservationScopes(currentBank);
+      setScopes(resp.scopes ?? []);
+    } catch {
+      setScopes([]);
+    }
+  }, [currentBank, factType]);
+
+  useEffect(() => {
+    loadScopes();
+  }, [loadScopes]);
 
   // Enforce 50 node limit to prevent UI instability, default to 20 or max whichever is smaller
   useEffect(() => {
@@ -430,8 +470,28 @@ export function DataView({
                     className="pl-8 h-9"
                   />
                 </div>
-                {/* Tag input */}
-                <TagFilterInput value={tagFilters} onChange={setTagFilters} bankId={currentBank} />
+                {/* Tag input. Setting a tag filter clears any selected scope
+                    so the two filters never fight over the same query. */}
+                <TagFilterInput
+                  value={tagFilters}
+                  onChange={(next) => {
+                    if (next.length > 0) setSelectedScope(null);
+                    setTagFilters(next);
+                  }}
+                  bankId={currentBank}
+                />
+                {/* Observation scope filter. Selecting a scope clears the
+                    free-form tag filter (mutually exclusive). */}
+                {factType === "observation" && scopes.length > 0 && (
+                  <ObservationScopeFilter
+                    scopes={scopes}
+                    value={selectedScope}
+                    onChange={(scope) => {
+                      if (scope !== null) setTagFilters([]);
+                      setSelectedScope(scope);
+                    }}
+                  />
+                )}
               </div>
             </div>
           )}

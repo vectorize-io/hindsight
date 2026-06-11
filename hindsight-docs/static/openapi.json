@@ -4127,6 +4127,65 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/observations/scopes": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "List observation scopes",
+        "description": "Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope.",
+        "operationId": "list_observation_scopes",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservationScopesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/consolidation/recover": {
       "post": {
         "tags": [
@@ -9698,7 +9757,8 @@
                   "any",
                   "all",
                   "any_strict",
-                  "all_strict"
+                  "all_strict",
+                  "exact"
                 ]
               },
               {
@@ -9844,7 +9904,8 @@
                   "any",
                   "all",
                   "any_strict",
-                  "all_strict"
+                  "all_strict",
+                  "exact"
                 ]
               },
               {
@@ -9922,6 +9983,69 @@
         "type": "object",
         "title": "MentalModelTrigger",
         "description": "Trigger settings for a mental model."
+      },
+      "ObservationScope": {
+        "properties": {
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "The exact tag set defining this scope (normalized order). Empty list is the global/untagged scope."
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "Number of observations that live under this scope"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tags",
+          "count"
+        ],
+        "title": "ObservationScope",
+        "description": "A distinct observation scope: an exact tag set plus its observation count."
+      },
+      "ObservationScopesResponse": {
+        "properties": {
+          "scopes": {
+            "items": {
+              "$ref": "#/components/schemas/ObservationScope"
+            },
+            "type": "array",
+            "title": "Scopes",
+            "description": "Distinct observation scopes, most populous first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scopes"
+        ],
+        "title": "ObservationScopesResponse",
+        "description": "Response model for the observation scopes enumeration endpoint.",
+        "example": {
+          "scopes": [
+            {
+              "count": 12,
+              "tags": [
+                "user:alice"
+              ]
+            },
+            {
+              "count": 4,
+              "tags": [
+                "user:alice",
+                "project:apollo"
+              ]
+            },
+            {
+              "count": 2,
+              "tags": []
+            }
+          ]
+        }
       },
       "OperationProgress": {
         "properties": {
@@ -10385,7 +10509,8 @@
               "any",
               "all",
               "any_strict",
-              "all_strict"
+              "all_strict",
+              "exact"
             ],
             "title": "Tags Match",
             "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
@@ -11042,7 +11167,8 @@
               "any",
               "all",
               "any_strict",
-              "all_strict"
+              "all_strict",
+              "exact"
             ],
             "title": "Tags Match",
             "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
@@ -11622,7 +11748,8 @@
               "any",
               "all",
               "any_strict",
-              "all_strict"
+              "all_strict",
+              "exact"
             ],
             "title": "Match",
             "default": "any_strict"

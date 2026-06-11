@@ -577,7 +577,10 @@
     "sourceFactsLabel": "faits sources",
     "errorLoadingData": "Erreur lors du chargement des données {factType}",
     "all": "Tous",
-    "memoryComposition": "Composition de la mémoire"
+    "memoryComposition": "Composition de la mémoire",
+    "scopeLabel": "Portée",
+    "scopeAll": "Toutes les portées",
+    "scopeGlobal": "Global (sans tags)"
   },
   "documentsView": {
     "loadingDocuments": "Chargement des documents...",

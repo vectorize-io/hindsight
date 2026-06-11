@@ -577,7 +577,10 @@
     "sourceFactsLabel": "Quellfakten",
     "errorLoadingData": "Fehler beim Laden der {factType}-Daten",
     "all": "Alle",
-    "memoryComposition": "Speicherzusammensetzung"
+    "memoryComposition": "Speicherzusammensetzung",
+    "scopeLabel": "Bereich",
+    "scopeAll": "Alle Bereiche",
+    "scopeGlobal": "Global (keine Tags)"
   },
   "documentsView": {
     "loadingDocuments": "Dokumente werden geladen...",

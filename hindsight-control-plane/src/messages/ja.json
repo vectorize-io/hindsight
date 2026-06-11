@@ -577,7 +577,10 @@
     "sourceFactsLabel": "ソースファクト",
     "errorLoadingData": "{factType}データの読み込みエラー",
     "all": "すべて",
-    "memoryComposition": "メモリ構成"
+    "memoryComposition": "メモリ構成",
+    "scopeLabel": "スコープ",
+    "scopeAll": "すべてのスコープ",
+    "scopeGlobal": "グローバル（タグなし）"
   },
   "documentsView": {
     "loadingDocuments": "ドキュメントを読み込み中...",

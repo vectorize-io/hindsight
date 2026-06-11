@@ -47,8 +47,8 @@ class RecallRequest(BaseModel):
         if value is None:
             return value
 
-        if value not in set(['any', 'all', 'any_strict', 'all_strict']):
-            raise ValueError("must be one of enum values ('any', 'all', 'any_strict', 'all_strict')")
+        if value not in set(['any', 'all', 'any_strict', 'all_strict', 'exact']):
+            raise ValueError("must be one of enum values ('any', 'all', 'any_strict', 'all_strict', 'exact')")
         return value
 
     model_config = ConfigDict(

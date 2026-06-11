@@ -441,6 +441,7 @@ export class ControlPlaneClient {
     limit?: number;
     q?: string;
     tags?: string[];
+    tags_match?: string;
     document_id?: string;
     chunk_id?: string;
   }) {
@@ -452,6 +453,10 @@ export class ControlPlaneClient {
     if (params.tags && params.tags.length > 0) {
       params.tags.forEach((tag) => queryParams.append("tags", tag));
     }
+    // Forward the match mode explicitly (e.g. "exact" for observation-scope
+    // filtering). With tags_match=exact and no tags, the dataplane treats it as
+    // the global/untagged scope.
+    if (params.tags_match) queryParams.append("tags_match", params.tags_match);
     if (params.document_id) queryParams.append("document_id", params.document_id);
     if (params.chunk_id) queryParams.append("chunk_id", params.chunk_id);
     return this.fetchApi(`/api/graph?${queryParams}`);
@@ -1137,6 +1142,19 @@ export class ControlPlaneClient {
       created_at: string;
       updated_at: string;
     }>(bankApi(bankId, `/observations/${encodeURIComponent(observationId)}`));
+  }
+
+  /**
+   * List the distinct observation scopes for a bank.
+   *
+   * Each observation lives under a "scope": the exact set of tags it was
+   * consolidated with. Returns every distinct scope (tag order normalized) with
+   * the number of observations in it; the empty tag list is the global scope.
+   */
+  async listObservationScopes(bankId: string) {
+    return this.fetchApi<{
+      scopes: Array<{ tags: string[]; count: number }>;
+    }>(bankApi(bankId, `/observations/scopes`));
   }
 
   // ============= TAGS =============

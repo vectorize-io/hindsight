@@ -17,28 +17,18 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr, field_validator
-from typing import Any, ClassVar, Dict, List, Optional
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Any, ClassVar, Dict, List
+from hindsight_client_api.models.observation_scope import ObservationScope
 from typing import Optional, Set
 from typing_extensions import Self
 
-class TagGroupLeaf(BaseModel):
+class ObservationScopesResponse(BaseModel):
     """
-    A leaf tag filter: matches memories by tag list and match mode.
+    Response model for the observation scopes enumeration endpoint.
     """ # noqa: E501
-    tags: List[StrictStr]
-    match: Optional[StrictStr] = 'any_strict'
-    __properties: ClassVar[List[str]] = ["tags", "match"]
-
-    @field_validator('match')
-    def match_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['any', 'all', 'any_strict', 'all_strict', 'exact']):
-            raise ValueError("must be one of enum values ('any', 'all', 'any_strict', 'all_strict', 'exact')")
-        return value
+    scopes: List[ObservationScope] = Field(description="Distinct observation scopes, most populous first")
+    __properties: ClassVar[List[str]] = ["scopes"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -58,7 +48,7 @@ class TagGroupLeaf(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of TagGroupLeaf from a JSON string"""
+        """Create an instance of ObservationScopesResponse from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -79,11 +69,18 @@ class TagGroupLeaf(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each item in scopes (list)
+        _items = []
+        if self.scopes:
+            for _item_scopes in self.scopes:
+                if _item_scopes:
+                    _items.append(_item_scopes.to_dict())
+            _dict['scopes'] = _items
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of TagGroupLeaf from a dict"""
+        """Create an instance of ObservationScopesResponse from a dict"""
         if obj is None:
             return None
 
@@ -91,8 +88,7 @@ class TagGroupLeaf(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "tags": obj.get("tags"),
-            "match": obj.get("match") if obj.get("match") is not None else 'any_strict'
+            "scopes": [ObservationScope.from_dict(_item) for _item in obj["scopes"]] if obj.get("scopes") is not None else None
         })
         return _obj
 

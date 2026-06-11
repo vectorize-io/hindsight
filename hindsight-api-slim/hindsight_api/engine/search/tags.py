@@ -2,14 +2,18 @@
 Tags filtering utilities for retrieval.
 
 Provides SQL building functions for filtering memories by tags.
-Supports four matching modes via TagsMatch enum:
+Supports five matching modes via TagsMatch enum:
 - "any": OR matching, includes untagged memories (default, backward compatible)
 - "all": AND matching, includes untagged memories
 - "any_strict": OR matching, excludes untagged memories
 - "all_strict": AND matching, excludes untagged memories
+- "exact": set-equality matching, excludes untagged memories
 
 OR matching (any/any_strict): Memory matches if ANY of its tags overlap with request tags
 AND matching (all/all_strict): Memory matches if ALL request tags are present in its tags
+EXACT matching: Memory matches only if its tag set EQUALS the request tag set (order-
+    independent). Used for observation "scope" filtering, where each observation lives
+    under exactly one scope (its full tag set) and "scope [a]" must not match "[a, b]".
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-TagsMatch = Literal["any", "all", "any_strict", "all_strict"]
+TagsMatch = Literal["any", "all", "any_strict", "all_strict", "exact"]
 
 
 def _parse_tags_match(match: TagsMatch) -> tuple[str, bool]:
@@ -37,6 +41,10 @@ def _parse_tags_match(match: TagsMatch) -> tuple[str, bool]:
     elif match == "any_strict":
         return "&&", False
     elif match == "all_strict":
+        return "@>", False
+    elif match == "exact":
+        # Set equality is handled by the callers via `@> AND <@`; the operator
+        # here is unused. Untagged rows never equal a non-empty scope.
         return "@>", False
     else:
         # Default to "any" behavior
@@ -78,6 +86,13 @@ def build_tags_where_clause(
         return "", [], param_offset
 
     column = f"{table_alias}tags" if table_alias else "tags"
+
+    if match == "exact":
+        # Set equality (order-independent): superset AND subset. Untagged rows
+        # (empty array) never satisfy `@>` of a non-empty scope, so they're excluded.
+        clause = f"AND ({column} @> ${param_offset} AND {column} <@ ${param_offset})"
+        return clause, [tags], param_offset + 1
+
     operator, include_untagged = _parse_tags_match(match)
 
     if include_untagged:
@@ -115,6 +130,12 @@ def build_tags_where_clause_simple(
         return ""
 
     column = f"{table_alias}tags" if table_alias else "tags"
+
+    if match == "exact":
+        # Set equality (order-independent): superset AND subset. Untagged rows
+        # (empty array) never satisfy `@>` of a non-empty scope, so they're excluded.
+        return f"AND ({column} @> ${param_num} AND {column} <@ ${param_num})"
+
     operator, include_untagged = _parse_tags_match(match)
 
     if include_untagged:
@@ -164,7 +185,11 @@ def filter_results_by_tags(
             # else: skip untagged
         else:
             result_tags_set = set(result_tags)
-            if is_any_match:
+            if match == "exact":
+                # Set equality: tag set must match the scope exactly
+                if result_tags_set == tags_set:
+                    filtered.append(result)
+            elif is_any_match:
                 # Any overlap
                 if result_tags_set & tags_set:
                     filtered.append(result)
@@ -241,6 +266,9 @@ def _build_group_clause(
     """
     if isinstance(group, TagGroupLeaf):
         column = f"{table_alias}tags" if table_alias else "tags"
+        if group.match == "exact":
+            clause = f"({column} @> ${param_offset} AND {column} <@ ${param_offset})"
+            return clause, [group.tags], param_offset + 1
         operator, include_untagged = _parse_tags_match(group.match)
         if include_untagged:
             clause = f"({column} IS NULL OR {column} = '{{}}' OR {column} {operator} ${param_offset})"
@@ -349,6 +377,8 @@ def _match_group(result: object, group: TagGroup) -> bool:
             return include_untagged
         else:
             result_tags_set = set(result_tags)
+            if group.match == "exact":
+                return result_tags_set == tags_set
             if is_any_match:
                 return bool(result_tags_set & tags_set)
             else:

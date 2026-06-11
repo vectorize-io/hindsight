@@ -577,7 +577,10 @@
     "sourceFactsLabel": "来源事实",
     "errorLoadingData": "加载 {factType} 数据出错",
     "all": "全部",
-    "memoryComposition": "记忆构成"
+    "memoryComposition": "记忆构成",
+    "scopeLabel": "范围",
+    "scopeAll": "所有范围",
+    "scopeGlobal": "全局（无标签）"
   },
   "documentsView": {
     "loadingDocuments": "正在加载文档...",

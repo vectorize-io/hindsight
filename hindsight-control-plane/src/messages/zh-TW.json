@@ -577,7 +577,10 @@
     "sourceFactsLabel": "來源事實",
     "errorLoadingData": "載入 {factType} 資料時發生錯誤",
     "all": "全部",
-    "memoryComposition": "記憶構成"
+    "memoryComposition": "記憶構成",
+    "scopeLabel": "範圍",
+    "scopeAll": "所有範圍",
+    "scopeGlobal": "全域（無標籤）"
   },
   "documentsView": {
     "loadingDocuments": "正在載入文件…",

@@ -585,7 +585,8 @@
                 "any",
                 "all",
                 "any_strict",
-                "all_strict"
+                "all_strict",
+                "exact"
               ],
               "type": "string"
             },
@@ -715,7 +716,8 @@
             "any",
             "all",
             "any_strict",
-            "all_strict"
+            "all_strict",
+            "exact"
           ],
           "title": "Match",
           "type": "string"
