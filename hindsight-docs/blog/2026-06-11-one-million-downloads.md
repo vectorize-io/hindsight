@@ -20,7 +20,7 @@ The first version went up on December 12, 2025. So that's a million installs in 
 
 ## The numbers
 
-A few weeks ago we wrote that Hindsight is the [fastest-growing open-source AI memory project ever](/blog/2026/06/09/fastest-growing-oss-ai-memory), measured by star velocity. Downloads tell the same story from a different angle — these are people actually installing and running it, not just bookmarking the repo.
+Hindsight is the [fastest-growing open-source AI memory project ever](/blog/2026/06/09/fastest-growing-oss-ai-memory), measured by star velocity. Downloads tell the same story from a different angle — these are people actually installing and running it, not just bookmarking the repo.
 
 | Package | Registry | Downloads |
 |---|---|---:|
