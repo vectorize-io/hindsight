@@ -277,6 +277,23 @@
           "description": "Max observations to retain per consolidation scope",
           "title": "Max Observations Per Scope"
         },
+        "observation_scope_limits": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-scope overrides of max_observations_per_scope: [{\"scope\": [\"run_*\", \"shared\"], \"limit\": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope.",
+          "title": "Observation Scope Limits"
+        },
         "reflect_source_facts_max_tokens": {
           "anyOf": [
             {

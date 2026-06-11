@@ -4467,6 +4467,11 @@ components:
         max_observations_per_scope:
           nullable: true
           type: integer
+        observation_scope_limits:
+          items:
+            additionalProperties: {}
+          nullable: true
+          type: array
         reflect_source_facts_max_tokens:
           nullable: true
           type: integer

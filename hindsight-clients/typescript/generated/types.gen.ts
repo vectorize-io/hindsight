@@ -563,6 +563,14 @@ export type BankTemplateConfig = {
    */
   max_observations_per_scope?: number | null;
   /**
+   * Observation Scope Limits
+   *
+   * Per-scope overrides of max_observations_per_scope: [{"scope": ["run_*", "shared"], "limit": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope.
+   */
+  observation_scope_limits?: Array<{
+    [key: string]: unknown;
+  }> | null;
+  /**
    * Reflect Source Facts Max Tokens
    *
    * Max tokens of source facts per reflect call

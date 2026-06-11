@@ -24,6 +24,7 @@ from collections import defaultdict
 from contextlib import AsyncExitStack
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 from itertools import combinations
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -521,6 +522,86 @@ async def _count_observations_for_scope(
         bank_id,
         tags,
     )
+
+
+@dataclass(frozen=True)
+class _ScopeLimitRule:
+    """One ``observation_scope_limits`` rule: a scope pattern -> an observation cap.
+
+    ``globs`` is a tuple of fnmatch tag-globs describing one consolidation scope.
+    A concrete scope (the set of ``fact_tags`` for a consolidation pass) matches
+    under *exact cover*: every tag is matched by some glob AND every glob matches
+    some tag. So ``["shared"]`` matches the scope ``{shared}`` but not
+    ``{run_1, shared}``, and ``["run_*", "shared"]`` matches ``{run_1, shared}``
+    but not ``{shared}``.
+
+    ``limit`` is the cap applied to matching scopes (-1 = unlimited, 0 = no new
+    observations, >0 = hard cap), mirroring ``max_observations_per_scope``.
+    """
+
+    globs: tuple[str, ...]
+    limit: int
+
+
+def _parse_scope_limit_rules(raw: Any) -> list[_ScopeLimitRule]:
+    """Parse the raw ``observation_scope_limits`` config into ordered rules.
+
+    The config round-trips as JSON through env and the bank-config API, so this
+    is defensive: malformed entries are skipped rather than raising, and list
+    order is preserved (first match wins in :func:`_effective_scope_limit`).
+    """
+    if not isinstance(raw, list):
+        return []
+    rules: list[_ScopeLimitRule] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        scope = entry.get("scope")
+        limit = entry.get("limit")
+        if not isinstance(scope, list) or not scope:
+            continue
+        if not all(isinstance(g, str) and g for g in scope):
+            continue
+        # bool is an int subclass — reject True/False masquerading as a limit.
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            continue
+        rules.append(_ScopeLimitRule(globs=tuple(scope), limit=limit))
+    return rules
+
+
+def _scope_matches_globs(globs: tuple[str, ...], tags: list[str]) -> bool:
+    """Exact-cover match between a scope pattern and a concrete tag set.
+
+    True iff every tag is covered by at least one glob AND every glob covers at
+    least one tag (no uncovered tags, no vacuous globs). Untagged scopes never
+    match, so a scope limit never applies to untagged observations (consistent
+    with the ``and fact_tags`` guard at the call site). Matching is
+    case-sensitive (``fnmatchcase``) for deterministic cross-platform behaviour.
+    """
+    tagset = set(tags)
+    if not tagset:
+        return False
+    if not all(any(fnmatchcase(t, g) for g in globs) for t in tagset):
+        return False
+    if not all(any(fnmatchcase(t, g) for t in tagset) for g in globs):
+        return False
+    return True
+
+
+def _effective_scope_limit(config: Any, fact_tags: list[str]) -> int:
+    """Resolve the observation cap for one concrete consolidation scope.
+
+    The first rule in ``observation_scope_limits`` whose pattern exact-covers
+    ``fact_tags`` wins; otherwise falls back to the bank-wide
+    ``max_observations_per_scope``. Wildcards live only here, matched against the
+    already-resolved concrete tags — the SQL count stays exact and indexed.
+    """
+    if config is None:
+        return -1
+    for rule in _parse_scope_limit_rules(getattr(config, "observation_scope_limits", None)):
+        if _scope_matches_globs(rule.globs, fact_tags):
+            return rule.limit
+    return config.max_observations_per_scope
 
 
 def _build_response_model(max_creates: int | None = None) -> type[_ConsolidationBatchResponse]:
@@ -1403,8 +1484,10 @@ async def _process_memory_batch(
         # All memories in the batch share the same tag set (enforced by batching)
         fact_tags = memories[0].get("tags") or [] if memories else []
 
-    # 2b. Compute remaining observation slots for this scope (if limit configured)
-    max_obs = config.max_observations_per_scope if config is not None else -1
+    # 2b. Compute remaining observation slots for this scope (if limit configured).
+    # The cap is resolved per-scope: an observation_scope_limits rule may override
+    # the bank-wide max_observations_per_scope for scopes matching its tag pattern.
+    max_obs = _effective_scope_limit(config, fact_tags)
     remaining_observation_slots: int | None = None
     if max_obs > 0 and fact_tags:
         current_count = await _count_observations_for_scope(conn, bank_id, fact_tags)

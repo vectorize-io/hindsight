@@ -2030,6 +2030,16 @@ class BankTemplateConfig(BaseModel):
     max_observations_per_scope: int | None = Field(
         default=None, description="Max observations to retain per consolidation scope"
     )
+    observation_scope_limits: list[dict[str, Any]] | None = Field(
+        default=None,
+        description=(
+            "Per-scope overrides of max_observations_per_scope: "
+            '[{"scope": ["run_*", "shared"], "limit": 1}]. Each scope is a list of '
+            "fnmatch tag-globs; a consolidation scope matches under exact cover "
+            "(every tag matched by a glob and every glob matched by a tag). The first "
+            "matching rule wins; unmatched scopes fall back to max_observations_per_scope."
+        ),
+    )
     reflect_source_facts_max_tokens: int | None = Field(
         default=None, description="Max tokens of source facts per reflect call"
     )
