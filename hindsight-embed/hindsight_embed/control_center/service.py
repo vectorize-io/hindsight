@@ -271,9 +271,11 @@ def save_llm_config(
 
     Existing unrelated keys (idle timeout, custom vars) are preserved. Passing
     ``API_KEY_UNCHANGED`` (or None) for ``api_key`` keeps the stored key; passing
-    empty string clears it. Empty model/base_url remove the override so the
-    daemon resolves its default. ``api_port`` pins HINDSIGHT_API_PORT; an empty
-    ``ui_port`` removes the override so the UI port follows API + offset.
+    empty string clears it. An empty ``model`` removes the override. ``base_url``
+    is no longer in the wizard: None preserves an existing override, "" clears it.
+    ``api_port`` pins HINDSIGHT_API_PORT; an empty ``ui_port`` removes the override
+    so the control-plane port follows API + offset. Empty version fields remove
+    the per-profile version pin (use the embed default).
     """
     name = normalize_profile(name)
     if not provider:
