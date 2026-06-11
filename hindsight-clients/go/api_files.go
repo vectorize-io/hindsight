@@ -62,7 +62,7 @@ Upload files (PDF, DOCX, etc.), convert them to markdown, and retain as memories
 This endpoint handles file upload, conversion, and memory creation in a single operation.
 
 **Features:**
-- Supports PDF, DOCX, PPTX, XLSX, images (with OCR), audio (with transcription)
+- Supports PDF, DOCX, PPTX, XLSX, images (parser-dependent OCR), audio (with transcription)
 - Automatic file-to-markdown conversion using pluggable parsers
 - Files stored in object storage (PostgreSQL by default, S3 for production)
 - Each file becomes a separate document with optional metadata/tags

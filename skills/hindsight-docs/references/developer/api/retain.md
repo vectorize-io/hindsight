@@ -360,7 +360,7 @@ hindsight memory retain my-bank "Alice and Bob are friends" \
 
 Upload files directly — Hindsight converts them to text and extracts memories automatically. File processing always runs asynchronously and returns operation IDs for tracking.
 
-**Supported formats:** PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, images (JPG, PNG, GIF, etc. — OCR), audio (MP3, WAV, FLAC, etc. — transcription), HTML, and plain text formats (TXT, MD, CSV, JSON, YAML, etc.)
+**Supported formats:** PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, images (JPG, PNG, GIF, etc. — OCR support depends on the configured parser), audio (MP3, WAV, FLAC, etc. — transcription), HTML, and plain text formats (TXT, MD, CSV, JSON, YAML, etc.)
 
 ### Python
 

@@ -452,6 +452,53 @@ def test_llm_output_language_empty_string_is_unset(monkeypatch):
     assert config.llm_output_language is None
 
 
+def test_markitdown_ocr_defaults_disabled(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.file_parser_markitdown_ocr_enabled is False
+
+
+def test_markitdown_ocr_does_not_fall_back_to_main_llm_config(monkeypatch):
+    from hindsight_api.config import DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT, HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_ENABLED", "true")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_API_KEY", "main-key")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_BASE_URL", "https://main.example/v1")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_MODEL", "main-vision-model")
+
+    config = HindsightConfig.from_env()
+    assert config.file_parser_markitdown_ocr_enabled is True
+    assert config.file_parser_markitdown_ocr_api_key is None
+    assert config.file_parser_markitdown_ocr_base_url is None
+    assert config.file_parser_markitdown_ocr_model is None
+    assert config.file_parser_markitdown_ocr_prompt == DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT
+
+
+def test_markitdown_ocr_uses_explicit_config(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_ENABLED", "true")
+    monkeypatch.setenv("HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_API_KEY", "parser-key")
+    monkeypatch.setenv("HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_BASE_URL", "https://parser.example/v1")
+    monkeypatch.setenv("HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_MODEL", "parser-vision-model")
+    monkeypatch.setenv("HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_PROMPT", "Extract this document exactly.")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_API_KEY", "main-key")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_BASE_URL", "https://main.example/v1")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_MODEL", "main-vision-model")
+
+    config = HindsightConfig.from_env()
+    assert config.file_parser_markitdown_ocr_enabled is True
+    assert config.file_parser_markitdown_ocr_api_key == "parser-key"
+    assert config.file_parser_markitdown_ocr_base_url == "https://parser.example/v1"
+    assert config.file_parser_markitdown_ocr_model == "parser-vision-model"
+    assert config.file_parser_markitdown_ocr_prompt == "Extract this document exactly."
+
+
 def test_llm_reasoning_effort_defaults_to_low(monkeypatch):
     from hindsight_api.config import HindsightConfig
 

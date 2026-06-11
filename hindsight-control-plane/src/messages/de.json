@@ -1450,7 +1450,7 @@
     "selectedFilesLabel": "Ausgewählte Dateien ({count})",
     "extractionMethodLabel": "Extraktionsmethode",
     "parserStandardLabel": "Standard",
-    "parserStandardDescription": "Kostenlos — für die meisten Dokumente geeignet (nicht für Bilder)",
+    "parserStandardDescription": "Kostenlos — gut für textbasierte Dokumente; Bild-OCR hängt von der Serverkonfiguration ab",
     "parserEnhancedLabel": "Erweitert (Iris)",
     "parserEnhancedDescription": "Zusätzliche Gebühr — bessere Qualität für komplexe Layouts, gescannte Dokumente und Bilder",
     "contextLabel": "Kontext",

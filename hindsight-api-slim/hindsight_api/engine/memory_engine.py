@@ -2751,7 +2751,15 @@ class MemoryEngine(MemoryEngineInterface):
 
         self._parser_registry = FileParserRegistry()
         try:
-            self._parser_registry.register(MarkitdownParser())
+            self._parser_registry.register(
+                MarkitdownParser(
+                    ocr_enabled=config.file_parser_markitdown_ocr_enabled,
+                    ocr_api_key=config.file_parser_markitdown_ocr_api_key,
+                    ocr_base_url=config.file_parser_markitdown_ocr_base_url,
+                    ocr_model=config.file_parser_markitdown_ocr_model,
+                    ocr_prompt=config.file_parser_markitdown_ocr_prompt,
+                )
+            )
             logger.debug("Registered markitdown parser")
         except ImportError:
             logger.warning("markitdown not available - file parsing disabled")

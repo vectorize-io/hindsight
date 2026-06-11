@@ -1223,9 +1223,30 @@ Clients that request a parser not in the allowlist receive HTTP 400.
 
 #### Parser: markitdown (default)
 
-Local file-to-markdown conversion using [Microsoft's markitdown](https://github.com/microsoft/markitdown). No external service required.
+Local file-to-markdown conversion using [Microsoft's markitdown](https://github.com/microsoft/markitdown). No external service is required by default.
 
-**Supported formats:** PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, images (JPG, PNG — OCR), audio (MP3, WAV — transcription), HTML, TXT, MD, CSV.
+**Supported formats:** PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, images (JPG, PNG — requires optional OCR for text extraction), audio (MP3, WAV — transcription), HTML, TXT, MD, CSV.
+
+For image workloads, MarkItDown can optionally use an OpenAI-compatible OCR/vision endpoint. This is disabled by default. Without it, image uploads fail with an actionable configuration error instead of low-level parser output. When enabled, configure the MarkItDown OCR API key, base URL, and model explicitly; they do not inherit from `HINDSIGHT_API_LLM_*` because MarkItDown uses the OpenAI SDK directly. The selected endpoint must implement OpenAI Chat Completions and the selected model must support image input.
+
+This OCR path uses MarkItDown's image converter hook. It applies to image inputs such as JPG and PNG (and image handling inside converters that consume MarkItDown's `llm_client`), but it does not rasterize scanned PDF pages into images. Scanned PDFs with no text layer may still extract poorly through the default PDF converter. For scanned PDFs or complex document layouts, use an OCR-capable document parser such as `iris` or `llama_parse`, or configure a parser fallback chain like `llama_parse,markitdown`.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_ENABLED` | Enable MarkItDown image OCR through an OpenAI-compatible OCR/vision endpoint | `false` |
+| `HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_API_KEY` | API key for MarkItDown OCR; required when OCR is enabled | — |
+| `HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_BASE_URL` | OpenAI-compatible Chat Completions base URL for MarkItDown OCR; required when OCR is enabled | — |
+| `HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_MODEL` | OCR/vision model with image-input support; required when OCR is enabled | — |
+| `HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_PROMPT` | OCR prompt passed to MarkItDown's image converter | Built-in OCR prompt |
+
+```bash
+# Configure a dedicated OpenAI-compatible OCR/vision endpoint for MarkItDown OCR
+export HINDSIGHT_API_FILE_PARSER=markitdown
+export HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_ENABLED=true
+export HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_API_KEY=your-vision-api-key
+export HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_BASE_URL=https://vision.example/v1
+export HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_MODEL=ocr-or-vision-model
+```
 
 #### Parser: iris
 

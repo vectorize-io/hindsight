@@ -6738,7 +6738,7 @@ def _register_routes(app: FastAPI):
         description="Upload files (PDF, DOCX, etc.), convert them to markdown, and retain as memories.\n\n"
         "This endpoint handles file upload, conversion, and memory creation in a single operation.\n\n"
         "**Features:**\n"
-        "- Supports PDF, DOCX, PPTX, XLSX, images (with OCR), audio (with transcription)\n"
+        "- Supports PDF, DOCX, PPTX, XLSX, images (parser-dependent OCR), audio (with transcription)\n"
         "- Automatic file-to-markdown conversion using pluggable parsers\n"
         "- Files stored in object storage (PostgreSQL by default, S3 for production)\n"
         "- Each file becomes a separate document with optional metadata/tags\n"
