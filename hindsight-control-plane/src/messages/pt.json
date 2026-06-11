@@ -668,7 +668,8 @@
     "importConflictSkip": "Ignorar — manter o documento existente",
     "importConflictReplace": "Substituir — sobrescrever pelo importado",
     "importConflictNewId": "Manter ambos — importar com novo id",
-    "textNotStoredWarning": "O texto de origem não é armazenado neste servidor — apenas as memórias extraídas são mantidas."
+    "textNotStoredWarning": "O texto de origem não é armazenado neste servidor — apenas as memórias extraídas são mantidas.",
+    "labelObservationScopes": "Escopos de observação"
   },
   "entitiesView": {
     "viewRelations": "Relações",

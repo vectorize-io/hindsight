@@ -668,7 +668,8 @@
     "importConflictSkip": "Überspringen — vorhandenes Dokument behalten",
     "importConflictReplace": "Ersetzen — durch das importierte überschreiben",
     "importConflictNewId": "Beide behalten — unter neuer id importieren",
-    "textNotStoredWarning": "Der Quelltext wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten."
+    "textNotStoredWarning": "Der Quelltext wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten.",
+    "labelObservationScopes": "Beobachtungsbereiche"
   },
   "entitiesView": {
     "viewRelations": "Beziehungen",

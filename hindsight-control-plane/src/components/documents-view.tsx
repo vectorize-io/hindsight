@@ -257,6 +257,29 @@ function MetadataRow({ label, value }: { label: string; value: React.ReactNode }
   );
 }
 
+// Renders the observation_scopes spec a document was retained with: a mode
+// keyword ("per_tag" / "combined" / "all_combinations") shown as a mono badge,
+// or explicit tag-set lists shown as scope chips. Surfacing this lets you see
+// which scoping was requested (e.g. all_combinations on 2 tags → 3 scopes),
+// which otherwise only becomes visible once async consolidation finishes.
+function ObservationScopesValue({ spec }: { spec: string | string[][] }) {
+  if (typeof spec === "string") {
+    return <span className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded w-fit">{spec}</span>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {spec.map((scope, j) => (
+        <span
+          key={j}
+          className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 font-medium"
+        >
+          {scope.length === 0 ? "—" : scope.map((tag) => `#${tag}`).join(" ")}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 const COMPOSITION_COLORS = {
   world: "#8b5cf6",
   experience: "#ec4899",
@@ -1466,6 +1489,14 @@ export function DocumentsView() {
                               }
                             />
                           )}
+                        {selectedDocument.observation_scopes && (
+                          <MetadataRow
+                            label={t("labelObservationScopes")}
+                            value={
+                              <ObservationScopesValue spec={selectedDocument.observation_scopes} />
+                            }
+                          />
+                        )}
                       </InfoCard>
 
                       <InfoCard

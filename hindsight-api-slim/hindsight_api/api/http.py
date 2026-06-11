@@ -1432,6 +1432,12 @@ class DocumentResponse(BaseModel):
     tags: list[str] = FieldWithDefault(list, description="Tags associated with this document")
     document_metadata: dict[str, Any] | None = Field(default=None, description="Document metadata")
     retain_params: dict[str, Any] | None = Field(default=None, description="Parameters used during retain")
+    observation_scopes: str | list[list[str]] | None = Field(
+        default=None,
+        description="The observation_scopes spec configured at retain time (e.g. 'all_combinations', "
+        "'per_tag', or explicit tag-set lists), captured into retain_params. None when none was set "
+        "(default 'combined' scoping) or for documents retained before this was captured.",
+    )
 
 
 class UpdateDocumentRequest(BaseModel):

@@ -5153,6 +5153,12 @@ class MemoryEngine(MemoryEngineInterface):
             # document_metadata is sourced from retain_params.metadata
             document_metadata = retain_params_parsed.get("metadata") if retain_params_parsed else None
 
+            # observation_scopes is captured into retain_params at retain time
+            # (see _build_retain_params); surface it as a top-level field so the
+            # UI can show which scoping was requested. Only present for documents
+            # retained after this was added.
+            observation_scopes = retain_params_parsed.get("observation_scopes") if retain_params_parsed else None
+
             return {
                 "id": doc["id"],
                 "bank_id": doc["bank_id"],
@@ -5169,6 +5175,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "tags": list(doc["tags"]) if doc["tags"] else [],
                 "document_metadata": document_metadata or None,
                 "retain_params": retain_params_parsed or None,
+                "observation_scopes": observation_scopes or None,
             }
 
     async def delete_document(

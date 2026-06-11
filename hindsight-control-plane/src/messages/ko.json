@@ -668,7 +668,8 @@
     "importConflictSkip": "건너뛰기 — 기존 문서 유지",
     "importConflictReplace": "교체 — 가져온 것으로 덮어쓰기",
     "importConflictNewId": "둘 다 유지 — 새 id로 가져오기",
-    "textNotStoredWarning": "이 서버에는 원본 텍스트가 저장되지 않습니다. 추출된 메모리만 보관됩니다."
+    "textNotStoredWarning": "이 서버에는 원본 텍스트가 저장되지 않습니다. 추출된 메모리만 보관됩니다.",
+    "labelObservationScopes": "관찰 범위"
   },
   "entitiesView": {
     "viewRelations": "관계",

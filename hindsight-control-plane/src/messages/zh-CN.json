@@ -668,7 +668,8 @@
     "importConflictSkip": "跳过 — 保留现有文档",
     "importConflictReplace": "替换 — 用导入的覆盖",
     "importConflictNewId": "两者都保留 — 以新 id 导入",
-    "textNotStoredWarning": "此服务器不存储原始文本，仅保留提取的记忆。"
+    "textNotStoredWarning": "此服务器不存储原始文本，仅保留提取的记忆。",
+    "labelObservationScopes": "观测范围"
   },
   "entitiesView": {
     "viewRelations": "关系",

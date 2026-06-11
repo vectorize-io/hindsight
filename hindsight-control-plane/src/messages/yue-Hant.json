@@ -668,7 +668,8 @@
     "importConflictSkip": "略過 — 保留現有文件",
     "importConflictReplace": "取代 — 以匯入嘅覆寫",
     "importConflictNewId": "兩者都保留 — 以新 id 匯入",
-    "textNotStoredWarning": "呢個伺服器唔會儲存原始文字，淨係保留擷取到嘅記憶。"
+    "textNotStoredWarning": "呢個伺服器唔會儲存原始文字，淨係保留擷取到嘅記憶。",
+    "labelObservationScopes": "觀測範圍"
   },
   "entitiesView": {
     "viewRelations": "關係",

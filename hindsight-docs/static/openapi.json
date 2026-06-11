@@ -8067,6 +8067,27 @@
             ],
             "title": "Retain Params",
             "description": "Parameters used during retain"
+          },
+          "observation_scopes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observation Scopes",
+            "description": "The observation_scopes spec configured at retain time (e.g. 'all_combinations', 'per_tag', or explicit tag-set lists), captured into retain_params. None when none was set (default 'combined' scoping) or for documents retained before this was captured."
           }
         },
         "type": "object",

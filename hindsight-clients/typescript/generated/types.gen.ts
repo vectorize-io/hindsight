@@ -1441,6 +1441,12 @@ export type DocumentResponse = {
   retain_params?: {
     [key: string]: unknown;
   } | null;
+  /**
+   * Observation Scopes
+   *
+   * The observation_scopes spec configured at retain time (e.g. 'all_combinations', 'per_tag', or explicit tag-set lists), captured into retain_params. None when none was set (default 'combined' scoping) or for documents retained before this was captured.
+   */
+  observation_scopes?: string | Array<Array<string>> | null;
 };
 
 /**
