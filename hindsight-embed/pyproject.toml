@@ -18,6 +18,8 @@ hindsight-embed = "hindsight_embed.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["hindsight_embed"]
+# Ship the control center's static SPA assets (incl. self-hosted fonts).
+artifacts = ["hindsight_embed/control_center/static/**/*"]
 
 [dependency-groups]
 dev = [

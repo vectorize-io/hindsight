@@ -1,0 +1,626 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hindsight Embed Control Center</title>
+<link rel="icon" href="/favicon.png" />
+<!-- Fonts are self-hosted (served from /fonts) so the UI renders correctly offline. -->
+<link rel="stylesheet" href="/fonts.css" />
+<style>
+  /* Hindsight brand tokens (mirrors hindsight-docs dark theme) */
+  :root {
+    --bg: #09090b; --bg2: #0d0d10; --elev: #141417; --border: #1d1d21; --border2: #27272a;
+    --text: #e7e9ee; --muted: #9aa0ab; --faint: #6b7280;
+    --primary: #3396e8; --g1: #0074d9; --g2: #009296;
+    --gradient: linear-gradient(135deg, #0074d9 0%, #009296 100%);
+    --ok: #2dd4a7; --warn: #eab308; --err: #f0616d;
+    --mono: 'JetBrains Mono', 'SF Mono', Monaco, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); display: flex; flex-direction: column; overflow: hidden;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px;
+    -webkit-font-smoothing: antialiased; }
+  ::selection { background: rgba(0,116,217,.35); }
+  a { color: var(--primary); text-decoration: none; } a:hover { text-decoration: underline; }
+
+  /* Scrollbars — thin, subtle, brand gradient on hover */
+  * { scrollbar-width: thin; scrollbar-color: #2c2c34 transparent; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2c2c34; border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--gradient); border-color: transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  .grad { background: var(--gradient); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+
+  /* App bar */
+  .appbar { display: flex; align-items: center; gap: 13px; padding: 14px 24px; background: var(--bg);
+    border-bottom: 1px solid var(--border); position: relative; flex: none; }
+  .appbar::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--gradient); }
+  .appbar img { height: 26px; }
+  .appbar .title { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 15px;
+    background: var(--gradient); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  .appbar .ver { color: var(--faint); font-size: 12px; font-family: var(--mono); margin-left: auto; }
+
+  /* Shell: sidebar + content fill the viewport, each scrolls on its own */
+  .shell { flex: 1; display: flex; min-height: 0; }
+  .sidebar { width: 250px; flex: none; border-right: 1px solid var(--border); overflow-y: auto; background: var(--bg2); }
+  .sect { font-family: 'Space Grotesk', sans-serif; font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--faint); padding: 18px 20px 8px; }
+  .content { flex: 1; overflow-y: auto; }
+
+  ul.profiles { list-style: none; margin: 0; padding: 0 8px 16px; }
+  ul.profiles li { position: relative; padding: 9px 12px; border-radius: 7px; cursor: pointer; display: flex;
+    align-items: center; gap: 9px; color: var(--muted); font-size: 13.5px; }
+  ul.profiles li:hover { background: var(--elev); color: var(--text); }
+  ul.profiles li.sel { background: linear-gradient(90deg, rgba(0,116,217,.16), rgba(0,146,150,.04)); color: var(--text); }
+  ul.profiles li.sel::before { content: ''; position: absolute; left: 0; top: 4px; bottom: 4px; width: 3px;
+    border-radius: 3px; background: var(--gradient); }
+  ul.profiles li .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: #3a3a42; flex: none; }
+  .dot.on { background: var(--ok); } .dot.off { background: #2f2f37; }
+  .badge { font-size: 9.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--g2); flex: none;
+    border: 1px solid rgba(0,146,150,.5); border-radius: 5px; padding: 1px 5px; }
+
+  /* Content header */
+  .chead { padding: 24px 30px 0; }
+  .chead-row { display: flex; align-items: center; gap: 14px; }
+  #profile-title { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 22px;
+    background: var(--gradient); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  .status { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600;
+    letter-spacing: .02em; text-transform: uppercase; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--border2); color: var(--faint); }
+  .status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .55; }
+  .status.on { color: var(--ok); border-color: rgba(45,212,167,.4); background: rgba(45,212,167,.1); }
+  .status.on::before { opacity: 1; }
+  .spacer { margin-left: auto; }
+
+  /* Two service panels side by side: API (daemon) and Control plane */
+  .services { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 18px; max-width: 760px; }
+  .svc { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; background: var(--bg2); }
+  .svc-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .svc-name { display: inline-flex; align-items: center; gap: 8px; font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600; font-size: 13px; color: var(--text); }
+  .svc-url { display: block; font-family: var(--mono); font-size: 12px; color: var(--primary); word-break: break-all; margin-top: 11px; }
+  .svc-detail { color: var(--faint); font-size: 11px; font-family: var(--mono); min-height: 14px; margin-top: 5px; }
+  .svc-actions { display: flex; gap: 8px; margin-top: 12px; }
+  .hdot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; transition: background .2s; }
+  .hdot.ok { background: var(--ok); } .hdot.bad { background: var(--err); }
+
+  .tabs { display: flex; gap: 2px; padding: 20px 30px 0; border-bottom: 1px solid var(--border); }
+  .tab { position: relative; padding: 10px 14px; font-size: 13px; color: var(--muted); cursor: pointer; font-weight: 500; }
+  .tab:hover { color: var(--text); }
+  .tab.active { font-weight: 600;
+    background: var(--gradient); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  .tab.active::after { content: ''; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2px;
+    border-radius: 2px 2px 0 0; background: var(--gradient); }
+  .panel { padding: 26px 30px; max-width: 880px; }
+  .panel[data-panel="quick"] { max-width: 600px; }
+  .panel[hidden] { display: none; }
+
+  label { display: grid; gap: 7px; font-size: 12px; color: var(--muted); margin-bottom: 16px; font-weight: 500; }
+  input, select, textarea { background: var(--bg2); border: 1px solid var(--border2); color: var(--text);
+    border-radius: 8px; padding: 10px 12px; font-size: 13.5px; width: 100%; font-family: inherit; transition: border-color .15s, box-shadow .15s; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(51,150,232,.12); }
+  textarea { font-family: var(--mono); font-size: 12.5px; line-height: 1.65; resize: vertical; min-height: 340px; }
+  .hint { color: var(--faint); font-size: 11px; font-weight: 400; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .ports { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  input[type="number"] { -moz-appearance: textfield; }
+
+  /* .env editor: a highlight layer behind a transparent textarea, so active
+     KEY=value lines stand out and comments/blanks dim. */
+  .env-editor { position: relative; border: 1px solid var(--border2); border-radius: 8px; background: var(--bg2); }
+  .env-editor:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(51,150,232,.12); }
+  .env-editor .env-hl, .env-editor textarea {
+    margin: 0; padding: 12px 14px; border: 0; background: transparent; min-height: 360px;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.65; white-space: pre-wrap;
+    overflow-wrap: anywhere; word-break: break-word; }
+  .env-editor .env-hl { position: absolute; inset: 0; overflow: auto; pointer-events: none; color: var(--faint); }
+  .env-editor textarea { position: relative; width: 100%; display: block; resize: vertical;
+    color: transparent; caret-color: var(--text); outline: none; }
+  .env-editor textarea:focus { box-shadow: none; }
+  .env-hl .l-off { color: #545863; }       /* comments / blank lines — dimmed */
+  .env-hl .l-on { color: var(--text); }     /* active line — bright */
+  .env-hl .l-on .k { color: #66b3f0; }      /* the key */
+  .env-hl .l-on .eq { color: var(--faint); }
+
+  button { font-family: inherit; border-radius: 8px; padding: 9px 16px; font-size: 13px; font-weight: 600;
+    cursor: pointer; border: none; color: #fff; background: var(--gradient); transition: opacity .15s, border-color .15s, background .15s; }
+  button:hover { opacity: .92; }
+  button.ghost { background: transparent; border: 1px solid var(--border2); color: var(--text); }
+  button.ghost:hover { border-color: var(--primary); opacity: 1; }
+  button.ghost.danger { color: var(--err); border-color: rgba(240,97,109,.35); }
+  button.ghost.danger:hover { border-color: var(--err); background: rgba(240,97,109,.08); }
+  button.sm { padding: 6px 13px; font-size: 12.5px; }
+  button:disabled { opacity: .4; cursor: default; }
+  button.ghost:disabled:hover { border-color: var(--border2); }
+
+  .msg { font-size: 12px; min-height: 16px; margin-top: 12px; }
+  .msg.ok { color: var(--ok); } .msg.err { color: var(--err); } .msg.warn { color: var(--warn); }
+  .empty { padding: 80px 30px; color: var(--faint); font-size: 14px; }
+  .banner { margin: 24px 28px; padding: 16px 18px; border: 1px solid rgba(234,179,8,.35); background: rgba(234,179,8,.07);
+    border-radius: 10px; color: #e8cf8a; }
+  .note { font-size: 12px; color: var(--muted); margin-bottom: 14px; line-height: 1.6; }
+  code { background: var(--elev); padding: 2px 6px; border-radius: 5px; font-family: var(--mono); font-size: 12px; color: #cbd5e1; }
+
+  dl.files { margin: 0; display: grid; grid-template-columns: 152px 1fr; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  dl.files dt { color: var(--muted); font-size: 12px; padding: 11px 14px; background: var(--bg2); border-bottom: 1px solid var(--border); }
+  dl.files dd { margin: 0; font-family: var(--mono); font-size: 12px; word-break: break-all; color: #cbd5e1;
+    padding: 11px 14px; border-bottom: 1px solid var(--border); }
+  dl.files dt:last-of-type, dl.files dd:last-of-type { border-bottom: none; }
+  pre.logs { margin: 0; background: #060608; border: 1px solid var(--border); border-radius: 10px; padding: 14px;
+    font-family: var(--mono); font-size: 12px; line-height: 1.6; max-height: 62vh; overflow: auto; white-space: pre-wrap; color: #c3c9d4; }
+</style>
+</head>
+<body>
+<div class="appbar">
+  <img src="/logo.png" alt="Hindsight" />
+  <span class="title">Embed Control Center</span>
+  <span class="ver" id="version"></span>
+</div>
+
+<div id="noauth" class="banner" hidden>
+  No access token yet. Open the control center once from the CLI — after that this URL is remembered and
+  you can bookmark it:
+  <code>hindsight-embed control start</code>
+</div>
+
+<div class="shell" id="app" hidden>
+  <aside class="sidebar">
+    <div class="sect">Profiles</div>
+    <ul class="profiles" id="profile-list"></ul>
+  </aside>
+
+  <main class="content">
+    <div id="cfg-empty" class="empty">Select a profile from the left to view and edit it.</div>
+
+    <div id="cfg-body" hidden>
+      <div class="chead">
+        <div class="chead-row">
+          <span id="profile-title"></span>
+          <span class="spacer"></span>
+          <button class="ghost danger" id="btn-delete" hidden>Delete profile</button>
+        </div>
+        <div class="services">
+          <div class="svc">
+            <div class="svc-top">
+              <span class="svc-name"><span class="hdot" id="api-health" title="API health"></span>API</span>
+              <span class="status off" id="daemon-status"><span id="daemon-text">—</span></span>
+            </div>
+            <a class="svc-url" id="api-url" href="#" target="_blank" rel="noopener"></a>
+            <div class="svc-detail" id="api-detail"></div>
+            <div class="svc-actions">
+              <button class="ghost sm" id="btn-start">Start</button>
+              <button class="ghost sm" id="btn-restart">Restart</button>
+              <button class="ghost sm" id="btn-stop">Stop</button>
+            </div>
+          </div>
+          <div class="svc">
+            <div class="svc-top">
+              <span class="svc-name"><span class="hdot" id="ui-health" title="UI health"></span>Control plane</span>
+              <span class="status off" id="ui-status"><span id="ui-text">—</span></span>
+            </div>
+            <a class="svc-url" id="ui-url" href="#" target="_blank" rel="noopener"></a>
+            <div class="svc-detail" id="ui-detail"></div>
+            <div class="svc-actions">
+              <button class="ghost sm" id="btn-cp-start">Start</button>
+              <button class="ghost sm" id="btn-cp-restart">Restart</button>
+              <button class="ghost sm" id="btn-cp-stop">Stop</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <div class="tab active" data-tab="quick">Quick config</div>
+        <div class="tab" data-tab="config">Configuration</div>
+        <div class="tab" data-tab="files">Files</div>
+        <div class="tab" data-tab="logs">Logs</div>
+      </div>
+
+      <!-- Quick config -->
+      <div class="panel" data-panel="quick">
+        <label>Provider <select id="provider"></select></label>
+        <label>API key
+          <input id="api_key" type="password" autocomplete="off" />
+          <span class="hint" id="api_key_hint"></span>
+        </label>
+        <label>Model <span class="hint">(blank = provider default)</span>
+          <input id="model" type="text" autocomplete="off" placeholder="provider default" />
+        </label>
+        <label>Base URL <span class="hint">(blank = provider default)</span>
+          <input id="base_url" type="text" autocomplete="off" />
+        </label>
+        <div class="ports">
+          <label>API port
+            <input id="api_port" type="number" inputmode="numeric" autocomplete="off" />
+          </label>
+          <label>UI port <span class="hint">(blank = API + 10000)</span>
+            <input id="ui_port" type="number" inputmode="numeric" autocomplete="off" />
+          </label>
+        </div>
+        <div class="row">
+          <button id="btn-save">Save</button>
+        </div>
+        <div class="msg" id="cfg-msg"></div>
+      </div>
+
+      <!-- Configuration (raw .env) -->
+      <div class="panel" data-panel="config" hidden>
+        <div class="note">Edits the profile's <code id="env-path"></code> verbatim — it contains your API key in
+          plaintext. Active <code>KEY=value</code> lines are highlighted; comments are dimmed.
+          Save, then restart the daemon to apply.</div>
+        <div class="env-editor">
+          <pre class="env-hl" id="env-hl" aria-hidden="true"></pre>
+          <textarea id="env-text" spellcheck="false"></textarea>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="ghost" id="btn-env-reload">Reload</button>
+          <button id="btn-env-save">Save .env</button>
+        </div>
+        <div class="msg" id="env-msg"></div>
+      </div>
+
+      <!-- Files -->
+      <div class="panel" data-panel="files" hidden>
+        <div class="note">On-disk locations and URLs for this profile — its config file, daemon log, lock file,
+          local pg0 database directory, and the daemon / control-plane addresses.</div>
+        <dl class="files" id="files-list"></dl>
+      </div>
+
+      <!-- Logs -->
+      <div class="panel" data-panel="logs" hidden>
+        <div class="row" style="margin-bottom:12px">
+          <label class="row" style="margin:0; color:var(--muted); font-size:12px">
+            <input type="checkbox" id="log-auto" style="width:auto" checked /> auto-refresh
+          </label>
+          <select id="log-lines" style="width:auto">
+            <option value="100">100 lines</option>
+            <option value="200" selected>200 lines</option>
+            <option value="500">500 lines</option>
+          </select>
+          <button class="ghost" id="btn-log-refresh">Refresh</button>
+          <span class="hint" id="log-path"></span>
+        </div>
+        <pre class="logs" id="log-body">—</pre>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+(() => {
+  // Token: from the launch URL the first time, then remembered in localStorage
+  // (same-origin only, never sent cross-site) so the bare URL works afterward.
+  const TOKEN_KEY = "hs_control_token";
+  const params = new URLSearchParams(location.search);
+  // Strip any whitespace a copy-paste may have injected into the token
+  // (a wrapped terminal/clipboard can turn it into "...A%20%205I").
+  const urlToken = (params.get("token") || "").replace(/\s/g, "");
+  let TOKEN = urlToken || localStorage.getItem(TOKEN_KEY) || "";
+  // Deep-link targets: ?profile=<name> (use "default" for the default profile)
+  // and optional ?tab=quick|config|files|logs. Captured before we strip the token.
+  const profileParam = params.get("profile");
+  const tabParam = params.get("tab");
+  if (params.has("token")) {
+    localStorage.setItem(TOKEN_KEY, urlToken);
+    params.delete("token"); // keep ?profile in the bar; drop only the secret
+    history.replaceState(null, "", location.pathname + (params.toString() ? "?" + params : ""));
+  }
+
+  const $ = (id) => document.getElementById(id);
+  let providersCatalog = [];
+  let allProfiles = [];        // last fetched profile list
+  let current = null;          // selected profile internal name ("" = default)
+  let logTimer = null, healthTimer = null;
+  let daemonRunning = false, uiRunning = false, busy = false; // drive button enabled-state
+  const pname = () => encodeURIComponent(current || "default");
+
+  // Reflect the selected profile in the address bar so the URL is shareable
+  // (this is exactly what the desktop app deep-links to).
+  function syncUrl() {
+    const sp = new URLSearchParams(location.search);
+    sp.set("profile", current || "default");
+    history.replaceState(null, "", location.pathname + "?" + sp);
+  }
+
+  async function api(method, path, body) {
+    const resp = await fetch(path, {
+      method,
+      headers: { "Content-Type": "application/json", "X-Hindsight-Control-Token": TOKEN },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (resp.status === 401) { showNoAuth(); throw new Error("unauthorized"); }
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
+    return data;
+  }
+  function showNoAuth() {
+    localStorage.removeItem(TOKEN_KEY); // drop a stale token so a fresh launch link re-stores
+    $("noauth").hidden = false; $("app").hidden = true;
+  }
+  function msg(el, text, kind) { el.textContent = text || ""; el.className = "msg" + (kind ? " " + kind : ""); }
+
+  // --- profiles ---------------------------------------------------------
+  async function loadProfiles() {
+    const { profiles } = await api("GET", "/api/profiles");
+    allProfiles = profiles;
+    const list = $("profile-list");
+    list.innerHTML = "";
+    profiles.forEach((p) => {
+      const li = document.createElement("li");
+      if (p.name === current) li.classList.add("sel");
+      const dot = document.createElement("span");
+      dot.className = "dot " + (p.daemon_running ? "on" : "off");
+      const name = document.createElement("span");
+      name.className = "nm";
+      name.textContent = p.display_name;
+      li.append(dot, name);
+      if (p.is_active) { const b = document.createElement("span"); b.className = "badge"; b.textContent = "active"; li.append(b); }
+      li.onclick = () => selectProfile(p.name);
+      list.append(li);
+    });
+  }
+
+  async function selectProfile(name) {
+    current = name;
+    syncUrl();
+    await loadProfiles();
+    $("cfg-empty").hidden = true;
+    $("cfg-body").hidden = false;
+    $("btn-delete").hidden = !current; // the default profile can't be deleted
+    document.querySelector(".profiles li.sel")?.scrollIntoView({ block: "nearest" });
+    const cfg = await api("GET", `/api/profiles/${pname()}/config`);
+    $("profile-title").textContent = cfg.display_name;
+    fillProviders(cfg.provider);
+    $("model").value = cfg.model || "";
+    $("base_url").value = cfg.base_url || "";
+    $("api_port").value = cfg.api_port;
+    // UI port: show the override if pinned, else leave blank with the derived value as placeholder.
+    $("ui_port").value = cfg.ui_port_is_default ? "" : cfg.ui_port;
+    $("ui_port").placeholder = cfg.ui_port;
+    $("api_key").value = "";
+    $("api_key").dataset.hasKey = cfg.has_api_key ? "1" : "";
+    $("api_key_hint").textContent = cfg.has_api_key
+      ? `A key is stored (${cfg.api_key_masked}). Leave blank to keep it.`
+      : "No key stored yet.";
+    msg($("cfg-msg"), "");
+    await Promise.all([loadFiles(), loadEnv()]);
+    await refreshHealth(); // immediate, then poll on a timer
+    startHealthTimer();
+    showTab(activeTab());
+  }
+
+  function fillProviders(selected) {
+    const sel = $("provider"); sel.innerHTML = "";
+    providersCatalog.forEach((p) => {
+      const o = document.createElement("option");
+      o.value = p.id; o.textContent = p.label; if (p.id === selected) o.selected = true;
+      sel.append(o);
+    });
+  }
+  function keyPayload() {
+    const typed = $("api_key").value;
+    if (typed) return typed;
+    return $("api_key").dataset.hasKey ? "__unchanged__" : "";
+  }
+  async function save() {
+    msg($("cfg-msg"), "Saving…");
+    try {
+      await api("POST", `/api/profiles/${pname()}/config`, {
+        provider: $("provider").value, api_key: keyPayload(),
+        model: $("model").value.trim(), base_url: $("base_url").value.trim(),
+        api_port: $("api_port").value.trim(), ui_port: $("ui_port").value.trim(),
+      });
+      msg($("cfg-msg"), "Saved. Restart the daemon to apply.", "ok");
+      await Promise.all([selectProfile(current)]);
+    } catch (e) { msg($("cfg-msg"), e.message, "err"); }
+  }
+  // --- raw .env ---------------------------------------------------------
+  const escHtml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  function renderEnvHl() {
+    const html = $("env-text").value.split("\n").map((line) => {
+      const t = line.trim();
+      if (t === "") return "<span></span>";
+      if (t.startsWith("#")) return `<span class="l-off">${escHtml(line)}</span>`;
+      const eq = line.indexOf("=");
+      if (eq > 0)
+        return `<span class="l-on"><span class="k">${escHtml(line.slice(0, eq))}</span>` +
+          `<span class="eq">=</span>${escHtml(line.slice(eq + 1))}</span>`;
+      return `<span class="l-on">${escHtml(line)}</span>`;
+    }).join("\n");
+    $("env-hl").innerHTML = html;
+    syncEnvScroll();
+  }
+  function syncEnvScroll() { $("env-hl").scrollTop = $("env-text").scrollTop; $("env-hl").scrollLeft = $("env-text").scrollLeft; }
+
+  async function loadEnv() {
+    const e = await api("GET", `/api/profiles/${pname()}/env`);
+    $("env-text").value = e.content;
+    $("env-path").textContent = e.path;
+    renderEnvHl();
+    msg($("env-msg"), "");
+  }
+  async function saveEnv() {
+    msg($("env-msg"), "Saving…");
+    try {
+      await api("POST", `/api/profiles/${pname()}/env`, { content: $("env-text").value });
+      msg($("env-msg"), "Saved. Restart the daemon to apply.", "ok");
+      loadProfiles();
+    } catch (e) { msg($("env-msg"), e.message, "err"); }
+  }
+
+  // --- files ------------------------------------------------------------
+  async function loadFiles() {
+    const f = await api("GET", `/api/profiles/${pname()}/paths`);
+    // The API + control-plane URLs also surface in the header row.
+    $("api-url").textContent = f.daemon_url; $("api-url").href = f.daemon_url;
+    $("ui-url").textContent = f.ui_url; $("ui-url").href = f.ui_url;
+    const rows = [
+      ["Port", String(f.port)],
+      ["Config (.env)", f.config_path],
+      ["Daemon log", f.log_path],
+      ["Lock file", f.lock_path],
+      ["Database URL", f.database_url],
+      ["Database dir", f.database_path || "—"],
+      ["Daemon URL", f.daemon_url],
+      ["Control plane", f.ui_url],
+    ];
+    const dl = $("files-list"); dl.innerHTML = "";
+    rows.forEach(([k, v]) => {
+      const dt = document.createElement("dt"); dt.textContent = k;
+      const dd = document.createElement("dd"); dd.textContent = v;
+      dl.append(dt, dd);
+    });
+  }
+
+  // --- daemon + control plane ------------------------------------------
+  // Buttons reflect both the "busy" lock and current status: you can't Start a
+  // running daemon, or Stop/Restart a stopped one.
+  function refreshButtons() {
+    $("btn-save").disabled = busy;
+    $("btn-delete").disabled = busy;
+    $("btn-start").disabled = busy || daemonRunning;
+    $("btn-stop").disabled = busy || !daemonRunning;
+    $("btn-restart").disabled = busy || !daemonRunning;
+    $("btn-cp-start").disabled = busy || uiRunning;
+    $("btn-cp-stop").disabled = busy || !uiRunning;
+    $("btn-cp-restart").disabled = busy || !uiRunning;
+  }
+  function setBusy(b) { busy = b; refreshButtons(); }
+
+  async function refreshDaemon() { setDaemon(await api("GET", `/api/profiles/${pname()}/daemon`)); }
+  function setDaemon(s) {
+    daemonRunning = s.running;
+    $("daemon-status").className = "status " + (s.running ? "on" : "off");
+    $("daemon-text").textContent = s.running ? "Running" : "Stopped";
+    refreshButtons();
+  }
+  async function daemonAction(action) {
+    setBusy(true);
+    $("daemon-text").textContent = { start: "Starting…", stop: "Stopping…", restart: "Restarting…" }[action] || "Working…";
+    showTab("logs"); // jump to the daemon log so the user can watch it happen
+    try { setDaemon(await api("POST", `/api/profiles/${pname()}/daemon/${action}`)); }
+    catch (e) { msg($("cfg-msg"), e.message, "err"); await refreshDaemon(); }
+    finally { setBusy(false); loadProfiles(); loadLogs(); }
+  }
+
+  // Regular health poll for the selected profile (API daemon + control plane).
+  async function refreshHealth() {
+    if (busy) return; // don't fight an in-flight start/stop/restart
+    try {
+      const h = await api("GET", `/api/profiles/${pname()}/health`);
+      daemonRunning = h.api_ok; uiRunning = h.ui_ok;
+      $("daemon-status").className = "status " + (h.api_ok ? "on" : "off");
+      $("daemon-text").textContent = h.api_ok ? "Running" : "Stopped";
+      $("api-health").className = "hdot " + (h.api_ok ? "ok" : "bad");
+      $("ui-health").className = "hdot " + (h.ui_ok ? "ok" : "bad");
+      $("api-detail").textContent = h.api_ok ? h.api_detail : "unreachable";
+      $("ui-status").className = "status " + (h.ui_ok ? "on" : "off");
+      $("ui-text").textContent = h.ui_ok ? "Running" : "Stopped";
+      refreshButtons();
+    } catch (e) { /* transient — keep last known state */ }
+  }
+  function startHealthTimer() { stopHealthTimer(); healthTimer = setInterval(refreshHealth, 4000); }
+  function stopHealthTimer() { if (healthTimer) { clearInterval(healthTimer); healthTimer = null; } }
+
+  async function refreshUi() { setUi(await api("GET", `/api/profiles/${pname()}/ui`)); }
+  function setUi(u) {
+    uiRunning = u.running;
+    $("ui-status").className = "status " + (u.running ? "on" : "off");
+    $("ui-text").textContent = u.running ? "Running" : "Stopped";
+    refreshButtons();
+  }
+  async function cpAction(action) {
+    setBusy(true);
+    $("ui-text").textContent = { start: "Starting…", stop: "Stopping…", restart: "Restarting…" }[action] || "Working…";
+    try { setUi(await api("POST", `/api/profiles/${pname()}/ui/${action}`)); }
+    catch (e) { msg($("cfg-msg"), e.message, "err"); }
+    finally { setBusy(false); loadProfiles(); refreshHealth(); }
+  }
+
+  // --- logs -------------------------------------------------------------
+  async function loadLogs() {
+    try {
+      const r = await api("GET", `/api/profiles/${pname()}/logs?lines=${$("log-lines").value}`);
+      $("log-path").textContent = r.path;
+      $("log-body").textContent = r.exists ? (r.content || "(empty)") : "(no log file yet)";
+      const pre = $("log-body"); pre.scrollTop = pre.scrollHeight;
+    } catch (e) { $("log-body").textContent = e.message; }
+  }
+  function startLogTimer() {
+    stopLogTimer();
+    if ($("log-auto").checked) logTimer = setInterval(loadLogs, 2000);
+  }
+  function stopLogTimer() { if (logTimer) { clearInterval(logTimer); logTimer = null; } }
+
+  // --- tabs -------------------------------------------------------------
+  function activeTab() { return document.querySelector(".tab.active").dataset.tab; }
+  function showTab(tab) {
+    document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
+    document.querySelectorAll(".panel").forEach((p) => { p.hidden = p.dataset.panel !== tab; });
+    stopLogTimer();
+    if (tab === "logs") { loadLogs(); startLogTimer(); }
+  }
+
+  // --- delete profile ---------------------------------------------------
+  async function deleteProfile() {
+    if (!current) return; // default profile isn't deletable
+    if (!confirm(`Delete profile "${current}"? This stops its daemon and removes its config and logs. This cannot be undone.`)) return;
+    setBusy(true);
+    try {
+      const r = await api("POST", `/api/profiles/${pname()}/delete`);
+      if (!r.ok) { msg($("cfg-msg"), r.message, "err"); return; }
+      current = null;
+      stopHealthTimer();
+      stopLogTimer();
+      $("cfg-body").hidden = true;
+      $("cfg-empty").hidden = false;
+      history.replaceState(null, "", location.pathname); // drop ?profile
+      await loadProfiles();
+    } catch (e) { msg($("cfg-msg"), e.message, "err"); }
+    finally { setBusy(false); }
+  }
+
+  // --- boot -------------------------------------------------------------
+  async function boot() {
+    try {
+      const health = await fetch("/api/health").then((r) => r.json());
+      $("version").textContent = "v" + health.version;
+      providersCatalog = (await api("GET", "/api/providers")).providers;
+      $("app").hidden = false;
+      await loadProfiles();
+      // Deep-link: ?profile=<name> selects it on load (desktop points here).
+      if (profileParam !== null) {
+        const internal = profileParam === "default" ? "" : profileParam;
+        if (allProfiles.some((p) => p.name === internal)) {
+          await selectProfile(internal);
+          if (tabParam && document.querySelector(`.tab[data-tab="${tabParam}"]`)) showTab(tabParam);
+        }
+      }
+    } catch (e) { if (e.message !== "unauthorized") $("app").hidden = false; }
+  }
+
+  document.querySelectorAll(".tab").forEach((t) => { t.onclick = () => showTab(t.dataset.tab); });
+  $("btn-save").onclick = save;
+  $("btn-env-save").onclick = saveEnv;
+  $("btn-env-reload").onclick = loadEnv;
+  $("env-text").addEventListener("input", renderEnvHl);
+  $("env-text").addEventListener("scroll", syncEnvScroll);
+  $("btn-start").onclick = () => daemonAction("start");
+  $("btn-stop").onclick = () => daemonAction("stop");
+  $("btn-restart").onclick = () => daemonAction("restart");
+  $("btn-cp-start").onclick = () => cpAction("start");
+  $("btn-cp-restart").onclick = () => cpAction("restart");
+  $("btn-cp-stop").onclick = () => cpAction("stop");
+  $("btn-delete").onclick = deleteProfile;
+  $("btn-log-refresh").onclick = loadLogs;
+  $("log-auto").onchange = startLogTimer;
+  $("log-lines").onchange = loadLogs;
+  boot();
+})();
+</script>
+</body>
+</html>

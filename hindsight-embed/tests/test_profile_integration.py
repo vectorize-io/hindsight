@@ -236,13 +236,16 @@ class TestProfileIntegration:
             capture_output=True,
         )
 
-        # Read metadata
-        metadata_path = temp_home / ".hindsight" / "profiles" / "metadata.json"
-        assert metadata_path.exists()
+        # Ports now live in each profile's .env (HINDSIGHT_API_PORT)
+        def _env_port(name):
+            env = (temp_home / ".hindsight" / "profiles" / f"{name}.env").read_text()
+            for line in env.splitlines():
+                if line.startswith("HINDSIGHT_API_PORT="):
+                    return int(line.split("=", 1)[1])
+            raise AssertionError(f"no HINDSIGHT_API_PORT in {name}.env")
 
-        metadata = json.loads(metadata_path.read_text())
-        app1_port = metadata["profiles"]["app1"]["port"]
-        app2_port = metadata["profiles"]["app2"]["port"]
+        app1_port = _env_port("app1")
+        app2_port = _env_port("app2")
 
         # Ports should be different
         assert app1_port != app2_port
@@ -356,10 +359,16 @@ class TestProfileIntegration:
             capture_output=True,
         )
 
-        # Get port
-        metadata_path = temp_home / ".hindsight" / "profiles" / "metadata.json"
-        metadata1 = json.loads(metadata_path.read_text())
-        port1 = metadata1["profiles"]["test-app"]["port"]
+        # Port now lives in the profile's .env (HINDSIGHT_API_PORT)
+        env_path = temp_home / ".hindsight" / "profiles" / "test-app.env"
+
+        def _env_port():
+            for line in env_path.read_text().splitlines():
+                if line.startswith("HINDSIGHT_API_PORT="):
+                    return int(line.split("=", 1)[1])
+            raise AssertionError("no HINDSIGHT_API_PORT in test-app.env")
+
+        port1 = _env_port()
 
         # Update profile (recreate with different config)
         subprocess.run(
@@ -377,8 +386,7 @@ class TestProfileIntegration:
         )
 
         # Get port again
-        metadata2 = json.loads(metadata_path.read_text())
-        port2 = metadata2["profiles"]["test-app"]["port"]
+        port2 = _env_port()
 
         # Port should be the same
         assert port1 == port2

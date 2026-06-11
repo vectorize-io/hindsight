@@ -249,3 +249,46 @@ def test_find_api_command_windows_prefers_gui_interpreter(tmp_path, monkeypatch)
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sys.executable", str(scripts_dir / "python.exe"))
 
     assert manager._find_api_command() == [str(pythonw), "-m", "hindsight_api.main"]
+
+
+def test_stop_ui_kills_recorded_and_configured_ports(tmp_path, monkeypatch):
+    """After a UI-port change, stop_ui must kill BOTH the recorded (old, actually
+    running) port and the configured (new) port — otherwise the old UI orphans."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+    manager = DaemonEmbedManager()
+    paths = manager._profile_manager.resolve_profile_paths("")  # default profile
+    manager._record_ui_port(paths, 9000)  # UI was actually started on 9000
+    assert manager._ui_port_file(paths).exists()
+
+    killed = []
+    monkeypatch.setattr(manager, "_find_pid_on_port", lambda port: {9000: 111, 9001: 222}.get(port))
+    monkeypatch.setattr(DaemonEmbedManager, "_kill_process", staticmethod(lambda pid: killed.append(pid) or True))
+    monkeypatch.setattr(manager, "_is_port_in_use", lambda port: False)
+
+    # configured port is now 9001 (changed); recorded is still 9000
+    assert manager.stop_ui("", ui_port=9001) is True
+    assert sorted(killed) == [111, 222]  # both old and new killed
+    assert not manager._ui_port_file(paths).exists()
+
+
+def test_register_profile_preserves_existing_embed_keys(tmp_path, monkeypatch):
+    """_register_profile rewrites the .env on daemon start; it must merge the
+    existing non-API keys (UI port, idle timeout, ...) forward instead of
+    dropping them. Regression for the HINDSIGHT_EMBED_UI_PORT wipe."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+    manager = DaemonEmbedManager()
+    # Seed a profile .env that already carries an embed-only key.
+    manager._profile_manager.create_profile(
+        "p", {"HINDSIGHT_API_LLM_PROVIDER": "openai", "HINDSIGHT_EMBED_UI_PORT": "25000"}
+    )
+
+    # Daemon start passes only HINDSIGHT_API_* config to _register_profile.
+    manager._register_profile("p", 9100, {"HINDSIGHT_API_LLM_PROVIDER": "openai", "HINDSIGHT_API_LLM_API_KEY": "sk-x"})
+
+    env = (tmp_path / ".hindsight" / "profiles" / "p.env").read_text()
+    assert "HINDSIGHT_EMBED_UI_PORT=25000" in env  # preserved, not wiped
+    assert "HINDSIGHT_API_LLM_API_KEY=sk-x" in env

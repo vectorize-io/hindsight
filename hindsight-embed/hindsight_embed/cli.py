@@ -21,6 +21,7 @@ Environment variables:
     HINDSIGHT_EMBED_API_VERSION: Optional. hindsight-api version to use (default: matches embed version).
                                  Note: Only applies when starting daemon. To change version, stop daemon first.
     HINDSIGHT_EMBED_CLI_VERSION: Optional. hindsight CLI version to install (default: {embed_version}).
+    HINDSIGHT_EMBED_CONTROL_PORT: Optional. Port for the control center web app (default: 7878).
 """
 
 import argparse
@@ -682,16 +683,16 @@ def do_daemon(args, config: dict, logger):
 def do_ui(args, config: dict, logger):
     """Handle UI subcommands."""
     from . import daemon_client
-    from .profile_manager import UI_PORT_OFFSET, ProfileManager
+    from .profile_manager import ProfileManager
 
     profile = args.profile
     ui_port = getattr(args, "port", None)
     hostname = getattr(args, "hostname", "0.0.0.0")
 
-    # Resolve default UI port
+    # Resolve default UI port (from the profile's .env, else API + offset)
     pm = ProfileManager()
     paths = pm.resolve_profile_paths(profile or "")
-    default_ui_port = paths.port + UI_PORT_OFFSET
+    default_ui_port = paths.ui_port
 
     if args.ui_command == "start":
         from rich.console import Console
@@ -934,6 +935,124 @@ def _do_configure_profile_interactive(profile_name: str, port: int | None) -> in
 
     # Use the same interactive flow as default profile but save to named profile
     return _do_configure_interactive(profile_name, port)
+
+
+def do_control(args) -> int:
+    """Handle control-center subcommands (start/stop/status/logs).
+
+    The control center is a persistent, localhost-only web app that writes
+    profile config (the LLM wizard) and supervises the daemon. It runs as its
+    own detached process, so it survives daemon restarts.
+    """
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.text import Text
+
+    from .control_center import (
+        control_status,
+        resolve_control_port,
+        start_control_center,
+        stop_control_center,
+    )
+    from .control_center.lifecycle import log_file
+
+    console = Console()
+    port = getattr(args, "port", None) or resolve_control_port()
+    command = args.control_command
+
+    if command == "start":
+        result = start_control_center(port, open_browser=not getattr(args, "no_open", False))
+        if not result.ok:
+            console.print(
+                Panel(
+                    Text(result.message, style="red"), title="[bold red]✗ Control Center[/bold red]", border_style="red"
+                )
+            )
+            return 1
+        body = Text()
+        body.append(
+            "Control center already running\n\n" if result.already_running else "Control center started\n\n",
+            style="green bold",
+        )
+        body.append("  Open: ", style="dim")
+        body.append(f"{result.url}\n", style="cyan")
+        body.append("  Logs: ", style="dim")
+        body.append(str(log_file()), style="")
+        console.print(
+            Panel(
+                body,
+                title=f"[bold green]✓ Control Center[/bold green] [dim](:{port})[/dim]",
+                border_style="green",
+                padding=(1, 2),
+            )
+        )
+        return 0
+
+    if command == "stop":
+        if stop_control_center(port):
+            console.print(
+                Panel(
+                    Text("Control center stopped", style="green"),
+                    title="[bold green]✓ Control Center[/bold green]",
+                    border_style="green",
+                )
+            )
+            return 0
+        console.print(
+            Panel(
+                Text("Failed to stop control center", style="red"),
+                title="[bold red]✗ Error[/bold red]",
+                border_style="red",
+            )
+        )
+        return 1
+
+    if command == "status":
+        status = control_status(port)
+        if status.running:
+            body = Text()
+            body.append("Control center is running\n\n", style="green bold")
+            body.append("  URL: ", style="dim")
+            body.append(f"http://localhost:{status.port}\n", style="cyan")
+            console.print(
+                Panel(
+                    body,
+                    title=f"[bold green]✓ Control Center[/bold green] [dim](:{status.port})[/dim]",
+                    border_style="green",
+                    padding=(1, 2),
+                )
+            )
+            return 0
+        console.print(
+            Panel(
+                Text("Control center is not running", style="dim"),
+                title="[bold]Control Center[/bold]",
+                border_style="dim",
+            )
+        )
+        return 1
+
+    if command == "logs":
+        log_path = log_file()
+        if not log_path.exists():
+            print("No control center logs found", file=sys.stderr)
+            print(f"  Expected at: {log_path}")
+            return 1
+        if getattr(args, "follow", False):
+            import subprocess
+
+            try:
+                subprocess.run(["tail", "-f", str(log_path)])
+            except KeyboardInterrupt:
+                pass
+            return 0
+        with open(log_path) as f:
+            for line in f.readlines()[-getattr(args, "lines", 50) :]:
+                print(line, end="")
+        return 0
+
+    print("Usage: hindsight-embed control {start|stop|status|logs}", file=sys.stderr)
+    return 1
 
 
 def do_profile_command(args: list[str]) -> int:
@@ -1380,6 +1499,11 @@ def main():
                 action="append",
                 help="Environment variable (KEY=VALUE, can be repeated)",
             )
+            parser.add_argument(
+                "--web",
+                action="store_true",
+                help="Launch the browser-based control center wizard instead of the terminal prompts",
+            )
             args = parser.parse_args(remaining_args[1:])  # Skip 'configure' itself
 
             # If --profile was consumed by parent_parser, use global_profile
@@ -1387,6 +1511,11 @@ def main():
                 args.profile = global_profile
 
             logger = setup_logging(False)
+            if getattr(args, "web", False):
+                # Delegate to the control center: a persistent local web UI
+                # that writes config and supervises the daemon.
+                control_args = argparse.Namespace(control_command="start", port=None, no_open=False)
+                sys.exit(do_control(control_args))
             exit_code = do_configure(args)
             sys.exit(exit_code)
 
@@ -1439,6 +1568,28 @@ def main():
             config = get_config()
             exit_code = do_ui(args, config, logger)
             sys.exit(exit_code)
+
+        # Handle control-center subcommands
+        if command == "control":
+            parser = argparse.ArgumentParser(prog="hindsight-embed control")
+            subparsers = parser.add_subparsers(dest="control_command")
+            start_parser = subparsers.add_parser("start", help="Start the control center web app")
+            start_parser.add_argument("--port", type=int, help="Port for the control center (default: 7878)")
+            start_parser.add_argument("--no-open", action="store_true", help="Don't open the browser automatically")
+            stop_parser = subparsers.add_parser("stop", help="Stop the control center")
+            stop_parser.add_argument("--port", type=int, help="Port the control center is running on")
+            status_parser = subparsers.add_parser("status", help="Check control center status")
+            status_parser.add_argument("--port", type=int, help="Port to check")
+            logs_parser = subparsers.add_parser("logs", help="View control center logs")
+            logs_parser.add_argument("--follow", "-f", action="store_true")
+            logs_parser.add_argument("--lines", "-n", type=int, default=50)
+
+            args = parser.parse_args(remaining_args[1:])
+            if not args.control_command:
+                parser.print_help()
+                sys.exit(1)
+            setup_logging(False)
+            sys.exit(do_control(args))
 
         # Handle --help / -h
         if command in ("--help", "-h"):
@@ -1503,6 +1654,12 @@ UI (control plane):
     ui stop [--port PORT]                     Stop the web UI
     ui status [--port PORT]                   Check UI status
     ui logs [-f] [-n]                         View UI logs
+
+Control center (config wizard + daemon supervisor):
+    control start [--port PORT] [--no-open]   Start the local control center (default port: 7878)
+    control stop [--port PORT]                Stop the control center
+    control status [--port PORT]              Check control center status
+    control logs [-f] [-n]                    View control center logs
 
 CLI commands (forwarded to hindsight-cli):
     memory retain <bank> <content>   Store a memory
