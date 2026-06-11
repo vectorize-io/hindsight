@@ -60,6 +60,15 @@ class TestService:
         after = service.save_llm_config("", "openai", "", "m", "")
         assert not after.has_api_key
 
+    def test_base_url_preserved_when_not_sent(self, temp_hindsight_dir):
+        # base_url is no longer in the wizard; saving without it (None) must keep
+        # an existing override, while "" still clears it.
+        service.save_llm_config("w", "openai", "sk-key1234567890", "", "https://custom.example/v1")
+        service.save_llm_config("w", "openai", service.API_KEY_UNCHANGED, "", None)
+        assert service._read_raw_env("w")["HINDSIGHT_API_LLM_BASE_URL"] == "https://custom.example/v1"
+        service.save_llm_config("w", "openai", service.API_KEY_UNCHANGED, "", "")
+        assert "HINDSIGHT_API_LLM_BASE_URL" not in service._read_raw_env("w")
+
     def test_named_profile_write_creates_file(self, temp_hindsight_dir):
         service.save_llm_config("work", "groq", "gsk-key1234567890", "", "")
         cfg = service.get_profile_config("work")
@@ -95,8 +104,14 @@ class TestService:
         assert "127.0.0.1" not in paths.ui_url and "0.0.0.0" not in paths.ui_url
 
     def test_tail_log_missing_file(self, temp_hindsight_dir):
-        view = service.tail_daemon_log("", 10)
+        view = service.tail_log("", 10)
         assert view.exists is False and view.content == ""
+
+    def test_tail_log_source_picks_daemon_or_ui(self, temp_hindsight_dir):
+        daemon = service.tail_log("", 10, "daemon")
+        ui = service.tail_log("", 10, "ui")
+        assert daemon.path.endswith(".log") and not daemon.path.endswith(".ui.log")
+        assert ui.path.endswith(".ui.log")
 
     def test_delete_named_profile(self, temp_hindsight_dir):
         service.save_llm_config("scratch", "openai", "sk-key1234567890", "", "")
@@ -148,7 +163,9 @@ class TestService:
 
     def test_blank_version_removes_override(self, temp_hindsight_dir):
         service.save_llm_config("work", "openai", "sk-key1234567890", "", "", api_version="0.7.0", cp_version="0.8.1")
-        cfg = service.save_llm_config("work", "openai", service.API_KEY_UNCHANGED, "", "", api_version="", cp_version="")
+        cfg = service.save_llm_config(
+            "work", "openai", service.API_KEY_UNCHANGED, "", "", api_version="", cp_version=""
+        )
         assert cfg.api_version is None and cfg.cp_version is None
         raw = service._read_raw_env("work")
         assert "HINDSIGHT_EMBED_API_VERSION" not in raw and "HINDSIGHT_EMBED_CP_VERSION" not in raw

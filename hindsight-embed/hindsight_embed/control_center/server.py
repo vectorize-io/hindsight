@@ -136,7 +136,9 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
                 "daemon": lambda: service.daemon_status(name),
                 "ui": lambda: service.ui_status(name),
                 "health": lambda: service.health(name),
-                "logs": lambda: service.tail_daemon_log(name, self._int_query("lines", 200)),
+                "logs": lambda: service.tail_log(
+                    name, self._int_query("lines", 200), self._str_query("source", "daemon")
+                ),
             }
             getter = getters.get(resource)
             if getter is not None:
@@ -201,6 +203,11 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
             return int(values[0])
         except ValueError:
             return default
+
+    def _str_query(self, key: str, default: str) -> str:
+        """Read a string query-string parameter, falling back on absence."""
+        values = parse_qs(urlparse(self.path).query).get(key)
+        return values[0] if values else default
 
     def _serve_index(self) -> None:
         index = _STATIC_DIR / "index.html"

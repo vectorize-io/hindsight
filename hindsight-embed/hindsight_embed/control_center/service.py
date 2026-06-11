@@ -294,9 +294,11 @@ def save_llm_config(
     else:
         env.pop(_ENV_MODEL, None)
 
+    # base_url is no longer in the wizard; only touch it when explicitly passed
+    # (None preserves an existing override; "" clears it). Editable via raw .env.
     if base_url:
         env[_ENV_BASE_URL] = base_url
-    else:
+    elif base_url == "":
         env.pop(_ENV_BASE_URL, None)
 
     # Ports live in the .env. API port is pinned; an empty UI port means "derive
@@ -476,14 +478,19 @@ def get_profile_paths(name: str) -> ProfilePathsView:
     )
 
 
-def tail_daemon_log(name: str, lines: int = 200) -> LogTailView:
-    """Return the last ``lines`` lines of the profile's daemon log."""
+def tail_log(name: str, lines: int = 200, source: str = "daemon") -> LogTailView:
+    """Return the last ``lines`` lines of the profile's daemon or control-plane log.
+
+    ``source`` is "daemon" (the API daemon log) or "ui" (the control-plane log,
+    so you can see why the UI failed to start).
+    """
     name = normalize_profile(name)
-    path = ProfileManager().resolve_profile_paths(name).log
+    paths = ProfileManager().resolve_profile_paths(name)
+    path = paths.ui_log if source == "ui" else paths.log
     if not path.exists():
         return LogTailView(path=str(path), exists=False, content="")
-    # Small daemon logs — reading then slicing is simpler than seeking and is
-    # fine for the interactive tail in the UI.
+    # Small logs — reading then slicing is simpler than seeking and is fine for
+    # the interactive tail in the UI.
     tail = path.read_text(errors="replace").splitlines()[-max(lines, 1) :]
     return LogTailView(path=str(path), exists=True, content="\n".join(tail))
 

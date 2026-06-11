@@ -43,7 +43,7 @@ export function App() {
 
   // Quick-config form
   const [cfg, setCfg] = useState(null);
-  const [form, setForm] = useState({ provider: "", apiKey: "", model: "", baseUrl: "", apiPort: "", uiPort: "", apiVersion: "", cpVersion: "" });
+  const [form, setForm] = useState({ provider: "", apiKey: "", model: "", apiPort: "", uiPort: "", apiVersion: "", cpVersion: "" });
 
   // status / health
   const [daemonRunning, setDaemonRunning] = useState(false);
@@ -61,6 +61,7 @@ export function App() {
   const [logPath, setLogPath] = useState("");
   const [logLines, setLogLines] = useState(200);
   const [logAuto, setLogAuto] = useState(true);
+  const [logSource, setLogSource] = useState("daemon"); // "daemon" (API) or "ui" (control plane)
 
   const busyRef = useRef(false);
   busyRef.current = busy;
@@ -98,7 +99,6 @@ export function App() {
         provider: cfgv.provider || (providers[0] && providers[0].id) || "openai",
         apiKey: "",
         model: cfgv.model || "",
-        baseUrl: cfgv.base_url || "",
         apiPort: String(cfgv.api_port),
         uiPort: cfgv.ui_port_is_default ? "" : String(cfgv.ui_port),
         apiVersion: cfgv.api_version || "",
@@ -116,7 +116,7 @@ export function App() {
   async function loadLogs(name = current) {
     if (name === null) return;
     try {
-      const r = await api("GET", `/api/profiles/${pn(name)}/logs?lines=${logLines}`);
+      const r = await api("GET", `/api/profiles/${pn(name)}/logs?lines=${logLines}&source=${logSource}`);
       setLogPath(r.path);
       setLogText(r.exists ? r.content || "(empty)" : "(no log file yet)");
     } catch (e) {
@@ -151,7 +151,6 @@ export function App() {
         provider: form.provider,
         api_key: keyPayload(),
         model: form.model.trim(),
-        base_url: form.baseUrl.trim(),
         api_port: form.apiPort.trim(),
         ui_port: form.uiPort.trim(),
         api_version: form.apiVersion.trim(),
@@ -178,7 +177,8 @@ export function App() {
 
   async function daemonAction(action) {
     setBusy(true);
-    setTab("logs"); // jump to the log so the user can watch it
+    setLogSource("daemon");
+    setTab("logs"); // jump to the daemon log so the user can watch it
     setDaemonText({ start: "Starting…", stop: "Stopping…", restart: "Restarting…" }[action] || "Working…");
     try {
       const r = await api("POST", `/api/profiles/${pn(current)}/daemon/${action}`);
@@ -195,6 +195,8 @@ export function App() {
 
   async function cpAction(action) {
     setBusy(true);
+    setLogSource("ui");
+    setTab("logs"); // jump to the control-plane log so the user can see why it starts/fails
     setUiText({ start: "Starting…", stop: "Stopping…", restart: "Restarting…" }[action] || "Working…");
     try {
       const u = await api("POST", `/api/profiles/${pn(current)}/ui/${action}`);
@@ -268,7 +270,7 @@ export function App() {
     if (!logAuto) return;
     const id = setInterval(() => loadLogs(current), 2000);
     return () => clearInterval(id);
-  }, [current, tab, logAuto, logLines]);
+  }, [current, tab, logAuto, logLines, logSource]);
 
   // Keep the highlight layer scroll-synced with the textarea.
   const syncEnvScroll = () => {
@@ -394,10 +396,6 @@ export function App() {
                     Model <span class="hint">(blank = provider default)</span>
                     <input type="text" autocomplete="off" placeholder="provider default" value={form.model} onInput={(e) => setForm({ ...form, model: e.target.value })} />
                   </label>
-                  <label>
-                    Base URL <span class="hint">(blank = provider default)</span>
-                    <input type="text" autocomplete="off" value={form.baseUrl} onInput={(e) => setForm({ ...form, baseUrl: e.target.value })} />
-                  </label>
                   <div class="ports">
                     <label>
                       API port
@@ -484,6 +482,10 @@ export function App() {
               {tab === "logs" && (
                 <div class="panel">
                   <div class="row" style="margin-bottom:12px">
+                    <select style="width:auto" value={logSource} onChange={(e) => setLogSource(e.target.value)}>
+                      <option value="daemon">API (daemon)</option>
+                      <option value="ui">Control plane</option>
+                    </select>
                     <label class="row" style="margin:0; color:var(--color-muted); font-size:12px">
                       <input type="checkbox" style="width:auto" checked={logAuto} onChange={(e) => setLogAuto(e.target.checked)} /> auto-refresh
                     </label>
