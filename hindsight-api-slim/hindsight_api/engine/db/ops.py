@@ -257,6 +257,21 @@ class DataAccessOps(ABC):
         ...
 
     @abstractmethod
+    async def claim_supersession_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        limit: int,
+    ) -> list[str]:
+        """Claim (delete and return) up to ``limit`` supersession-queue rows for a bank.
+
+        Same claim semantics as ``claim_graph_maintenance_batch``: oldest first,
+        delete-on-claim; submit-time dedup keeps at most one job per bank running.
+        """
+        ...
+
+    @abstractmethod
     async def expand_observations(
         self,
         conn: DatabaseConnection,

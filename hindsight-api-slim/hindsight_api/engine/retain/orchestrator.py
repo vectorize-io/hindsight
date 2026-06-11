@@ -468,6 +468,16 @@ async def _insert_facts_and_links(
     # an IndexError (see issue #1037).
     result_unit_ids = _map_results_to_contents(contents, processed_facts, unit_ids if unit_ids else [])
 
+    # Queue freshly inserted world facts for contradiction checking (same
+    # transaction — a crash can't lose the check). The submit of the drain
+    # task happens post-commit in _submit_post_insert_maintenance.
+    if unit_ids and getattr(config, "enable_fact_supersession", False):
+        from .supersession import enqueue_supersession_checks
+
+        queued = await enqueue_supersession_checks(conn, bank_id, unit_ids, processed_facts)
+        if queued:
+            log_buffer.append(f"  Supersession queue: {queued} facts enqueued")
+
     if outbox_callback is not None:
         await outbox_callback(conn)
 

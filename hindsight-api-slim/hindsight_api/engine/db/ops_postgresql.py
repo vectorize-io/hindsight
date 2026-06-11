@@ -364,6 +364,29 @@ class PostgreSQLOps(DataAccessOps):
             unit_ids,
         )
 
+    async def claim_supersession_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        limit: int,
+    ) -> list[str]:
+        rows = await conn.fetch(
+            f"""
+            DELETE FROM {table}
+            WHERE id IN (
+                SELECT id FROM {table}
+                WHERE bank_id = $1
+                ORDER BY enqueued_at
+                LIMIT $2
+            )
+            RETURNING memory_id
+            """,
+            bank_id,
+            limit,
+        )
+        return [str(row["memory_id"]) for row in rows]
+
     async def claim_graph_maintenance_batch(
         self,
         conn: DatabaseConnection,

@@ -438,6 +438,9 @@ ENV_ENABLE_DOCUMENT_IMPORT_API = "HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API"
 # Observations settings (consolidated knowledge from facts)
 ENV_ENABLE_OBSERVATIONS = "HINDSIGHT_API_ENABLE_OBSERVATIONS"
 ENV_ENABLE_AUTO_CONSOLIDATION = "HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION"
+ENV_ENABLE_FACT_SUPERSESSION = "HINDSIGHT_API_ENABLE_FACT_SUPERSESSION"
+ENV_FACT_SUPERSESSION_CANDIDATE_LIMIT = "HINDSIGHT_API_FACT_SUPERSESSION_CANDIDATE_LIMIT"
+ENV_FACT_SUPERSESSION_RECALL_BUDGET = "HINDSIGHT_API_FACT_SUPERSESSION_RECALL_BUDGET"
 ENV_CONSOLIDATION_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE"
 ENV_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = "HINDSIGHT_API_CONSOLIDATION_MAX_MEMORIES_PER_ROUND"
 ENV_CONSOLIDATION_LLM_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE"
@@ -852,6 +855,9 @@ DEFAULT_ENABLE_DOCUMENT_IMPORT_API = True
 # Observations defaults (consolidated knowledge from facts)
 DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
 DEFAULT_ENABLE_AUTO_CONSOLIDATION = True  # Auto-consolidation after retain enabled by default
+DEFAULT_ENABLE_FACT_SUPERSESSION = False  # Automatic fact supersession (temporal ledger) — opt-in while graded in
+DEFAULT_FACT_SUPERSESSION_CANDIDATE_LIMIT = 5  # Contradiction candidates per new fact (top-K from internal recall)
+DEFAULT_FACT_SUPERSESSION_RECALL_BUDGET = "low"  # Budget tier for the worker's candidate recall
 DEFAULT_ENABLE_OBSERVATION_HISTORY = True  # Observation history tracking enabled by default
 DEFAULT_ENABLE_MENTAL_MODEL_HISTORY = True  # Mental model history tracking enabled by default
 # History (mental-model refresh snapshots and observation update snapshots) lives in
@@ -1467,6 +1473,10 @@ class HindsightConfig:
     # Observations settings (consolidated knowledge from facts)
     enable_observations: bool
     enable_auto_consolidation: bool
+    # Fact supersession (temporal ledger: contradicted facts get valid_until set)
+    enable_fact_supersession: bool
+    fact_supersession_candidate_limit: int
+    fact_supersession_recall_budget: str
     enable_observation_history: bool
     observation_history_max_entries: int
     enable_mental_model_history: bool
@@ -1661,6 +1671,10 @@ class HindsightConfig:
         # Consolidation settings
         "enable_observations",
         "enable_auto_consolidation",
+        # Fact supersession (temporal ledger)
+        "enable_fact_supersession",
+        "fact_supersession_candidate_limit",
+        "fact_supersession_recall_budget",
         "consolidation_llm_batch_size",
         "consolidation_llm_parallelism",
         "consolidation_max_memories_per_round",
@@ -2364,6 +2378,16 @@ class HindsightConfig:
                 ENV_ENABLE_AUTO_CONSOLIDATION, str(DEFAULT_ENABLE_AUTO_CONSOLIDATION)
             ).lower()
             == "true",
+            enable_fact_supersession=os.getenv(
+                ENV_ENABLE_FACT_SUPERSESSION, str(DEFAULT_ENABLE_FACT_SUPERSESSION)
+            ).lower()
+            == "true",
+            fact_supersession_candidate_limit=int(
+                os.getenv(ENV_FACT_SUPERSESSION_CANDIDATE_LIMIT, str(DEFAULT_FACT_SUPERSESSION_CANDIDATE_LIMIT))
+            ),
+            fact_supersession_recall_budget=os.getenv(
+                ENV_FACT_SUPERSESSION_RECALL_BUDGET, DEFAULT_FACT_SUPERSESSION_RECALL_BUDGET
+            ),
             enable_observation_history=os.getenv(
                 ENV_ENABLE_OBSERVATION_HISTORY, str(DEFAULT_ENABLE_OBSERVATION_HISTORY)
             ).lower()

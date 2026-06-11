@@ -268,6 +268,32 @@ class OracleOps(DataAccessOps):
             [(bank_id, uid) for uid in unit_ids],
         )
 
+    async def claim_supersession_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        limit: int,
+    ) -> list[str]:
+        # Two-step claim (same reason as claim_graph_maintenance_batch): Oracle's
+        # DELETE ... RETURNING doesn't accept a multi-row subquery.
+        rows = await conn.fetch(
+            f"""
+            SELECT id, memory_id FROM {table}
+            WHERE bank_id = $1
+            ORDER BY enqueued_at
+            FETCH FIRST $2 ROWS ONLY
+            """,
+            bank_id,
+            limit,
+        )
+        if rows:
+            await conn.executemany(
+                f"DELETE FROM {table} WHERE id = $1",
+                [(row["id"],) for row in rows],
+            )
+        return [str(row["memory_id"]) for row in rows]
+
     async def claim_graph_maintenance_batch(
         self,
         conn: DatabaseConnection,
