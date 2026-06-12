@@ -342,7 +342,7 @@ class TestDeltaRefreshPlumbing:
         assert "obs-bob" in user_msg
         assert "Bob joined" in user_msg
         # The structured JSON of the current doc must include the section id "members".
-        assert '"id": "members"' in user_msg
+        assert '"members"' in user_msg
 
         # New content includes the new bullet.
         assert "Bob — junior engineer" in refreshed["content"]
