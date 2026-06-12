@@ -197,8 +197,9 @@ describe("backfill helpers", () => {
   it("treats a symlinked bin path as direct execution", async () => {
     const { isDirectExecution } = await import("./backfill.js");
     const dir = mkdtempSync(join(tmpdir(), "hindsight-backfill-bin-"));
-    const modulePath = join(process.cwd(), "dist", "backfill.js");
+    const modulePath = join(dir, "backfill.js");
     const symlinkPath = join(dir, "hindsight-openclaw-backfill");
+    writeFileSync(modulePath, "#!/usr/bin/env node\n", "utf8");
     symlinkSync(modulePath, symlinkPath);
 
     const moduleUrl = pathToFileURL(modulePath).href;
