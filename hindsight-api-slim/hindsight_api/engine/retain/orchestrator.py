@@ -89,7 +89,32 @@ async def _fire_memory_defense_webhook(
     if webhook_manager is None:
         return
     try:
-        from ...webhooks import MemoryDefenseEventData, WebhookEvent, WebhookEventType
+        from ...webhooks import (
+            MemoryDefenseEventData,
+            MemoryDefenseHit,
+            WebhookEvent,
+            WebhookEventType,
+        )
+
+        # Translate per-match raw dicts on the decision into MemoryDefenseHit
+        # entries on the wire. The decision's hits list is already fingerprinted
+        # by apply_redaction (the raw value never lands in hits, by contract),
+        # so this is purely a shape conversion. None when no per-hit data is
+        # available so receivers can distinguish "no preview info" from
+        # "scanned, nothing matched" (the latter wouldn't be a webhook delivery
+        # in the first place).
+        decision_hits = getattr(decision, "hits", None) or []
+        hits: list[MemoryDefenseHit] | None = (
+            [
+                MemoryDefenseHit(
+                    detector=str(h.get("detector") or ""),
+                    preview=str(h.get("preview") or ""),
+                )
+                for h in decision_hits
+                if h.get("detector") and h.get("preview")
+            ]
+            or None
+        )
 
         event = WebhookEvent(
             event=WebhookEventType.MEMORY_DEFENSE_TRIGGERED,
@@ -103,6 +128,7 @@ async def _fire_memory_defense_webhook(
                 document_id=document_id,
                 matched_types=decision.matched_types or None,
                 message=decision.message or None,
+                hits=hits,
             ),
         )
         await webhook_manager.fire_event_with_conn(event, conn, schema=schema)
