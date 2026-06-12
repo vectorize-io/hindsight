@@ -99,6 +99,16 @@ class LoComoDataset(BenchmarkDataset):
         except ValueError:
             raise
 
+    def parse_session_date(self, date_string: str) -> datetime:
+        """Public alias for :meth:`_parse_date`.
+
+        Other benchmark modules (e.g. the as_of synthesizer) need to
+        convert LoCoMo session dates to datetimes without depending on a
+        private method. The implementation lives in ``_parse_date``;
+        this is a thin alias to make the cross-module contract explicit.
+        """
+        return self._parse_date(date_string)
+
 
 class QuestionAnswer(pydantic.BaseModel):
     """Answer format for LoComo questions."""
