@@ -21,6 +21,16 @@
       "icon": "/img/icons/agent-framework.svg"
     },
     {
+      "id": "composio",
+      "name": "Composio",
+      "description": "Hindsight memory as Composio custom tools. Retain, recall, and reflect drop into any Composio agent — memory is isolated per session user automatically.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/composio",
+      "icon": "/img/icons/composio.png"
+    },
+    {
       "id": "crewai",
       "name": "CrewAI",
       "description": "Give CrewAI agents persistent, cross-session memory. Facts learned in one run are available in every future run.",
