@@ -165,6 +165,10 @@ TOOL_SEARCH_WORLD_GRAPH = {
                     "type": "integer",
                     "description": "Maximum number of facts to return (default 10). Capped to the tool's token budget; excess is truncated.",
                 },
+                "max_tokens": {
+                    "type": "integer",
+                    "description": "Token budget for the rendered output block (default 1024, min 100). Used both to cap the fact-count request and to truncate long result sets.",
+                },
             },
             "required": ["reason", "query"],
         },

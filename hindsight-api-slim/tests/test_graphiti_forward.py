@@ -20,7 +20,10 @@ tests cover:
 from __future__ import annotations
 
 import json
+import os
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import httpx
@@ -312,8 +315,6 @@ class _FakeEngine:
 
 
 def _config(group_id: str = "g1", base_url: str = "http://graphiti.test"):
-    from types import SimpleNamespace
-
     return SimpleNamespace(
         graphiti_group_id=group_id,
         graphiti_base_url=base_url,
@@ -604,3 +605,74 @@ async def test_run_graphiti_forward_job_skips_when_bank_lost_federation():
     }
     # claim() was never called → rows are still in the outbox.
     assert ops.claimed_batches == 0
+
+
+# ---------------------------------------------------------------------------
+# Env-var fallback (cross-commit fix surfaced by C3 docs)
+# ---------------------------------------------------------------------------
+
+
+def test_build_client_prefers_hindsight_api_prefixed_env():
+    """HINDSIGHT_API_GRAPHITI_BASE_URL is the documented env name; it must
+    win over the bare alias when both are set (otherwise the user's
+    .env.example value would be ignored).
+    """
+    from hindsight_api.engine.retain import graphiti_forward as gf
+    from hindsight_api.engine.retain.graphiti_forward import _build_client
+
+    captured: dict[str, str | None] = {}
+
+    class _RecordingClient:
+        def __init__(self, base_url: str, api_key: str | None = None) -> None:
+            captured["base_url"] = base_url
+            captured["api_key"] = api_key
+
+    orig = gf.GraphitiClient
+    gf.GraphitiClient = _RecordingClient  # type: ignore[assignment]
+    try:
+        env = {
+            "HINDSIGHT_API_GRAPHITI_BASE_URL": "http://primary:1234",
+            "HINDSIGHT_API_GRAPHITI_API_KEY": "primary-key",
+            "GRAPHITI_BASE_URL": "http://legacy:5678",
+            "GRAPHITI_API_KEY": "legacy-key",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            _build_client(SimpleNamespace(graphiti_base_url=None, graphiti_api_key=None))
+        assert captured["base_url"] == "http://primary:1234"
+        assert captured["api_key"] == "primary-key"
+    finally:
+        gf.GraphitiClient = orig  # type: ignore[assignment]
+
+
+def test_build_client_falls_back_to_bare_env_alias():
+    """When the HINDSIGHT_API_-prefixed form is not set, the bare
+    GRAPHITI_BASE_URL is honored for backward compat.
+    """
+    from hindsight_api.engine.retain import graphiti_forward as gf
+    from hindsight_api.engine.retain.graphiti_forward import _build_client
+
+    captured: dict[str, str | None] = {}
+
+    class _RecordingClient:
+        def __init__(self, base_url: str, api_key: str | None = None) -> None:
+            captured["base_url"] = base_url
+            captured["api_key"] = api_key
+
+    orig = gf.GraphitiClient
+    gf.GraphitiClient = _RecordingClient  # type: ignore[assignment]
+    try:
+        with patch.dict(
+            os.environ,
+            {
+                "GRAPHITI_BASE_URL": "http://legacy:5678",
+                "GRAPHITI_API_KEY": "legacy-key",
+            },
+            clear=False,
+        ):
+            os.environ.pop("HINDSIGHT_API_GRAPHITI_BASE_URL", None)
+            os.environ.pop("HINDSIGHT_API_GRAPHITI_API_KEY", None)
+            _build_client(SimpleNamespace(graphiti_base_url=None, graphiti_api_key=None))
+        assert captured["base_url"] == "http://legacy:5678"
+        assert captured["api_key"] == "legacy-key"
+    finally:
+        gf.GraphitiClient = orig  # type: ignore[assignment]

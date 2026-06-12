@@ -31,7 +31,6 @@ from hindsight_api.engine.federation.graphiti_client import (
 )
 from hindsight_api.engine.reflect.tools import tool_search_world_graph
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -177,12 +176,9 @@ async def test_tool_renders_superseded_annotaion(monkeypatch):
     try:
         from hindsight_api.engine.federation.graphiti_client import GraphitiClient as _GC
 
-        seen: dict[str, Any] = {}
-
         async def fake_search(self, group_ids, query, max_facts):
-            seen["group_ids"] = group_ids
-            seen["query"] = query
-            seen["max_facts"] = max_facts
+            assert group_ids == ["agent-shared-001"]
+            assert query == "what does Alice do?"
             return [
                 FactResult(
                     uuid=UUID("11111111-1111-1111-1111-111111111111"),
@@ -551,3 +547,17 @@ def test_get_reflect_tools_includes_world_graph_when_enabled():
     done_tool = next(t for t in tools if t["function"]["name"] == "done")
     params = done_tool["function"]["parameters"]
     assert "world_fact_ids" in params["properties"]
+
+
+def test_search_world_graph_schema_declares_max_tokens():
+    """``max_tokens`` is what the dispatcher actually reads to cap
+    rendering — if it's missing from the schema the LLM has no way to
+    discover the budget knob, and a typo in the function-call args
+    wouldn't be caught by missing-param validation.
+    """
+    from hindsight_api.engine.reflect.tools_schema import TOOL_SEARCH_WORLD_GRAPH
+
+    properties = TOOL_SEARCH_WORLD_GRAPH["function"]["parameters"]["properties"]
+    assert "max_facts" in properties
+    assert "max_tokens" in properties
+    assert properties["max_tokens"]["type"] == "integer"

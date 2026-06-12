@@ -319,16 +319,26 @@ async def _trigger_backflow_actions(engine: "MemoryEngine", bank_id: str) -> Non
 def _build_client(bank_config) -> GraphitiClient:
     """Construct a client from the bank's resolved config + env defaults.
 
-    ``GRAPHITI_BASE_URL`` is the single source for the overlay URL; the
-    API key is per-bank where set, otherwise falls back to the env
-    ``GRAPHITI_API_KEY``. Timeouts/breaker thresholds come from
-    ``bank_config`` if present, else from env, else from the client
-    defaults (which match the C-track config table in deep-dive 2 §2.6).
+    ``HINDSIGHT_API_GRAPHITI_BASE_URL`` is the documented env name (matches
+    the entry in ``.env.example`` and the C3 reflect tool's lookup); the
+    bare ``GRAPHITI_BASE_URL`` is honored as a backward-compat alias for
+    operators who already had the unprefixed form set. The API key follows
+    the same pattern. Timeouts/breaker thresholds come from ``bank_config``
+    if present, else from env, else from the client defaults (which match
+    the C-track config table in deep-dive 2 §2.6).
     """
-    base_url = getattr(bank_config, "graphiti_base_url", None) or os.getenv("GRAPHITI_BASE_URL", "")
+    base_url = (
+        getattr(bank_config, "graphiti_base_url", None)
+        or os.getenv("HINDSIGHT_API_GRAPHITI_BASE_URL")
+        or os.getenv("GRAPHITI_BASE_URL", "")
+    )
     if not base_url:
-        raise GraphitiClientError("GRAPHITI_BASE_URL is not set; cannot forward")
-    api_key = getattr(bank_config, "graphiti_api_key", None) or os.getenv("GRAPHITI_API_KEY")
+        raise GraphitiClientError("HINDSIGHT_API_GRAPHITI_BASE_URL is not set; cannot forward")
+    api_key = (
+        getattr(bank_config, "graphiti_api_key", None)
+        or os.getenv("HINDSIGHT_API_GRAPHITI_API_KEY")
+        or os.getenv("GRAPHITI_API_KEY")
+    )
     return GraphitiClient(base_url=base_url, api_key=api_key)
 
 
