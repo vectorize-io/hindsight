@@ -1489,8 +1489,14 @@ async def _process_memory_batch(
     # the bank-wide max_observations_per_scope for scopes matching its tag pattern.
     max_obs = _effective_scope_limit(config, fact_tags)
     remaining_observation_slots: int | None = None
-    if max_obs > 0 and fact_tags:
-        current_count = await _count_observations_for_scope(conn, bank_id, fact_tags)
+    if max_obs >= 0 and fact_tags:
+        # max_obs == 0 means "no new observations": there are no slots regardless
+        # of the current count, so skip the count query for that case.
+        current_count = (
+            await _count_observations_for_scope(conn, bank_id, fact_tags)
+            if max_obs > 0
+            else 0
+        )
         remaining_observation_slots = max(max_obs - current_count, 0)
         if remaining_observation_slots == 0:
             logger.info(
@@ -2128,7 +2134,7 @@ async def _consolidate_batch_with_llm(
 
     # Build capacity note for the prompt when observation limit is configured
     observation_capacity_note: str | None = None
-    if remaining_observation_slots is not None and max_observations_per_scope > 0:
+    if remaining_observation_slots is not None and max_observations_per_scope >= 0:
         if remaining_observation_slots == 0:
             observation_capacity_note = (
                 f"OBSERVATION LIMIT REACHED ({max_observations_per_scope}/{max_observations_per_scope}). "
