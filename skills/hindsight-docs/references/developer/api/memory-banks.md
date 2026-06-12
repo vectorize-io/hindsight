@@ -366,7 +366,7 @@ Per-bank Memory Defense policy. Defaults to absent (Memory Defense disabled on t
 
 Invalid policies are rejected on PATCH with HTTP 422.
 
-See the [Memory Defense guide](../memory-defense.md) for usage examples.
+See the [Memory Defense guide](../memory-defense/index.md) for usage examples.
 
 ---
 
