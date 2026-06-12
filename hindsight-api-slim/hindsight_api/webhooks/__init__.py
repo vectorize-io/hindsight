@@ -4,6 +4,7 @@ from .manager import WebhookManager
 from .models import (
     ConsolidationEventData,
     MemoryDefenseEventData,
+    MemoryDefenseHit,
     RetainEventData,
     WebhookConfig,
     WebhookEvent,
@@ -17,5 +18,6 @@ __all__ = [
     "WebhookEventType",
     "ConsolidationEventData",
     "MemoryDefenseEventData",
+    "MemoryDefenseHit",
     "RetainEventData",
 ]
