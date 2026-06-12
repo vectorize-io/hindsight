@@ -25,6 +25,7 @@ from hindsight_client_api.api.document_transfer_api import DocumentTransferApi
 from hindsight_client_api.api.documents_api import DocumentsApi
 from hindsight_client_api.api.entities_api import EntitiesApi
 from hindsight_client_api.api.files_api import FilesApi
+from hindsight_client_api.api.graphiti_api import GraphitiApi
 from hindsight_client_api.api.llm_traces_api import LLMTracesApi
 from hindsight_client_api.api.memory_api import MemoryApi
 from hindsight_client_api.api.mental_models_api import MentalModelsApi
@@ -95,6 +96,8 @@ from hindsight_client_api.models.entity_state_response import EntityStateRespons
 from hindsight_client_api.models.features_info import FeaturesInfo
 from hindsight_client_api.models.file_retain_response import FileRetainResponse
 from hindsight_client_api.models.graph_data_response import GraphDataResponse
+from hindsight_client_api.models.graphiti_backflow_result import GraphitiBackflowResult
+from hindsight_client_api.models.graphiti_edge_invalidated_request import GraphitiEdgeInvalidatedRequest
 from hindsight_client_api.models.http_validation_error import HTTPValidationError
 from hindsight_client_api.models.include_options import IncludeOptions
 from hindsight_client_api.models.llm_request_entry import LLMRequestEntry

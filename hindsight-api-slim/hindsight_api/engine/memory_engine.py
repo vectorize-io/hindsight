@@ -363,6 +363,7 @@ from .response_models import (
     VALID_RECALL_FACT_TYPES,
     EntityObservation,
     EntityState,
+    GraphitiBackflowResult,
     LLMCallTrace,
     MemoryFact,
     ObservationRef,
@@ -5940,6 +5941,215 @@ class MemoryEngine(MemoryEngineInterface):
                 await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
 
         return {"deleted_count": deleted_count}
+
+    async def handle_graphiti_edge_invalidated(
+        self,
+        bank_id: str,
+        *,
+        edge_uuid: str,
+        source_uri: str,
+        invalid_at: datetime,
+        superseded_by_fact: str | None = None,
+        request_context: "RequestContext",
+    ) -> GraphitiBackflowResult:
+        """C4 channel-B backflow primitive. Reused by channel A's per-edge
+        hook (the forwarder) and by the HTTP endpoint
+        ``POST /v1/default/banks/{bank_id}/graphiti/edge-invalidated``.
+
+        Per deep-dive 4 §1.3:
+
+        * **Step 1**: parse ``source_uri`` (format
+          ``hindsight://bank/{bank_id}/memory/{memory_id}``) and verify the
+          memory exists in *this* bank. Cross-bank or deleted memory →
+          ``not_found=True`` (404). Malformed URI → ``not_found=True``
+          (logged, not raised).
+        * **Step 2** (default): clear observations derived from the memory
+          and reset its own ``consolidated_at`` so the next consolidation
+          re-derives them.
+        * **Step 3** (default): submit async consolidation iff step 2
+          actually cleared something *and* the bank has
+          ``enable_auto_consolidation`` on.
+        * **Step 4** (opt-in via ``graphiti_backflow_supersession=true``):
+          stamp the B1 supersession ledger (``valid_until = invalid_at``,
+          ``superseded_at = now()``, ``consolidated_at = NULL``). We
+          do NOT write ``superseded_by`` here — the B1 schema's
+          ``superseded_by`` column has a FK to ``memory_units(id)``,
+          so the Graphiti edge UUID cannot go there. The edge UUID
+          lives in the audit log metadata instead, so the supersession
+          verdict (``valid_until``) survives with the pointer cleared.
+          The DB CHECK constraint ``chk_mu_valid_until_after_start``
+          blocks the write silently when the memory has no
+          ``occurred_start`` — we just flip ``supersession_written``
+          to False in that case.
+
+        Idempotency: step 2's ``consolidated_at = NULL`` is a no-op the
+        second time (already NULL); step 4's ``valid_until IS NULL`` guard
+        means a retried call cannot stomp on a row already superseded.
+        Audit: every successful call drops a fire-and-forget
+        ``action="graphiti_backflow"`` entry via ``audit_logger``.
+
+        Args:
+            bank_id: Bank ID (authenticated via ``request_context``).
+            edge_uuid: The Graphiti edge UUID that was invalidated upstream.
+            source_uri: ``hindsight://bank/{bank_id}/memory/{memory_id}`` —
+                the marker the C1 forwarder writes into
+                ``EdgePayload.attributes.source_uri``.
+            invalid_at: When the upstream edge was invalidated. The
+                value written into the B1 ``valid_until`` column when
+                step 4 fires (subject to the CHECK constraint).
+            superseded_by_fact: Replacement fact text (audit only — not
+                persisted by this method, the C1 forwarder's supersede
+                row lives in the Graphiti service).
+            request_context: Standard auth/tenant context.
+        """
+        from .audit import AuditEntry
+
+        await self._authenticate_tenant(request_context)
+
+        result = GraphitiBackflowResult(edge_uuid=edge_uuid, memory_id=None, not_found=False)
+
+        # Step 1: parse source_uri. The prefix carries the bank_id we expect
+        # the memory to belong to — a cross-bank URI is a contract bug at
+        # the overlay, not a data issue, so we treat it as not_found rather
+        # than a 5xx.
+        prefix = f"hindsight://bank/{bank_id}/memory/"
+        if not source_uri or not source_uri.startswith(prefix):
+            logger.warning(
+                "graphiti_backflow: edge %s has source_uri=%r (expected prefix %r); treating as not_found",
+                edge_uuid,
+                source_uri,
+                prefix,
+            )
+            result.not_found = True
+            return result
+
+        try:
+            memory_uuid = uuid.UUID(source_uri[len(prefix) :])
+        except ValueError:
+            logger.warning(
+                "graphiti_backflow: edge %s has unparseable source_uri=%r; treating as not_found",
+                edge_uuid,
+                source_uri,
+            )
+            result.not_found = True
+            return result
+
+        result.memory_id = str(memory_uuid)
+        backend = await self._get_backend()
+
+        # Look up the memory first — it may have been deleted since the
+        # edge was written. The check is "is there a row at all in this
+        # bank" — not "is it alive" (the supersession gating happens
+        # later, in step 4). We also grab ``occurred_start`` in the same
+        # roundtrip so step 4 can pre-check the CHECK constraint without
+        # a second SELECT.
+        async with acquire_with_retry(backend) as conn:
+            mem_row = await conn.fetchrow(
+                f"SELECT occurred_start FROM {fq_table('memory_units')} WHERE id = $1 AND bank_id = $2",
+                memory_uuid,
+                bank_id,
+            )
+            if mem_row is None:
+                logger.info(
+                    "graphiti_backflow: edge %s points at memory %s which no longer exists in bank %s",
+                    edge_uuid,
+                    memory_uuid,
+                    bank_id,
+                )
+                result.not_found = True
+                return result
+            occurred_start = mem_row["occurred_start"]
+
+            # Step 2: clear derived observations + reset consolidated_at.
+            deleted = await self._delete_stale_observations_for_memories(conn, bank_id, [str(memory_uuid)])
+            result.observations_cleared = int(deleted or 0)
+            if deleted and deleted > 0:
+                await conn.execute(
+                    f"""
+                    UPDATE {fq_table("memory_units")}
+                    SET consolidated_at = NULL
+                    WHERE id = $1 AND bank_id = $2
+                      AND fact_type IN ('experience', 'world')
+                    """,
+                    memory_uuid,
+                    bank_id,
+                )
+
+            # Step 4: optional B1 supersession write. The CHECK constraint
+            # ``chk_mu_valid_until_after_start`` makes this a no-op for
+            # memories without ``occurred_start`` — we surface that as
+            # ``supersession_written=False`` rather than raising.
+            bank_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+            if bank_config.graphiti_backflow_supersession and result.observations_cleared > 0:
+                # Pre-check the CHECK constraint client-side using the
+                # ``occurred_start`` we already loaded in the opening
+                # SELECT — avoids a silent skip in the UPDATE's
+                # affected-row count without a second roundtrip.
+                if occurred_start is not None and invalid_at > occurred_start:
+                    updated = await conn.execute(
+                        f"""
+                        UPDATE {fq_table("memory_units")}
+                        SET valid_until = $1,
+                            superseded_at = now(),
+                            consolidated_at = NULL
+                        WHERE id = $2 AND bank_id = $3 AND valid_until IS NULL
+                        """,
+                        invalid_at,
+                        memory_uuid,
+                        bank_id,
+                    )
+                    if updated.endswith("1"):
+                        result.supersession_written = True
+                    else:
+                        # A concurrent or retried run got there first; the
+                        # ``valid_until IS NULL`` guard is doing its job.
+                        logger.info(
+                            "graphiti_backflow: memory %s already superseded; idempotent skip",
+                            memory_uuid,
+                        )
+                else:
+                    logger.info(
+                        "graphiti_backflow: memory %s has no occurred_start or invalid_at <= occurred_start; "
+                        "skipping B1 supersession write (CHECK constraint would block)",
+                        memory_uuid,
+                    )
+
+        # Step 3: submit consolidation iff we actually cleared observations
+        # *and* the bank has auto-consolidation on. The submit is
+        # best-effort: a failure here doesn't fail the call, the next
+        # natural consolidation cycle will pick up the cleared state.
+        if result.observations_cleared > 0 and bank_config.enable_auto_consolidation:
+            try:
+                await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+                result.consolidation_submitted = True
+            except Exception:
+                logger.exception(
+                    "graphiti_backflow: failed to submit consolidation for bank %s after clearing obs",
+                    bank_id,
+                )
+
+        # Audit: every successful call drops a fire-and-forget entry.
+        # Per deep-dive 4 §1.3, this guards against the "持 API key 的恶意
+        # 调用最多触发多余的重巩固" cost-attack vector.
+        self.audit_logger.log_fire_and_forget(
+            AuditEntry(
+                action="graphiti_backflow",
+                transport="system",
+                bank_id=bank_id,
+                metadata={
+                    "edge_uuid": edge_uuid,
+                    "memory_id": result.memory_id,
+                    "not_found": result.not_found,
+                    "observations_cleared": result.observations_cleared,
+                    "supersession_written": result.supersession_written,
+                    "consolidation_submitted": result.consolidation_submitted,
+                    "invalid_at": invalid_at.isoformat() if invalid_at else None,
+                    "superseded_by_fact": superseded_by_fact,
+                },
+            )
+        )
+
+        return result
 
     async def _reembed_memory_text(
         self,

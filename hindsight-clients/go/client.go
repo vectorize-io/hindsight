@@ -65,6 +65,8 @@ type APIClient struct {
 
 	FilesAPI *FilesAPIService
 
+	GraphitiAPI *GraphitiAPIService
+
 	LLMTracesAPI *LLMTracesAPIService
 
 	MemoryAPI *MemoryAPIService
@@ -102,6 +104,7 @@ func NewAPIClient(cfg *Configuration) *APIClient {
 	c.DocumentsAPI = (*DocumentsAPIService)(&c.common)
 	c.EntitiesAPI = (*EntitiesAPIService)(&c.common)
 	c.FilesAPI = (*FilesAPIService)(&c.common)
+	c.GraphitiAPI = (*GraphitiAPIService)(&c.common)
 	c.LLMTracesAPI = (*LLMTracesAPIService)(&c.common)
 	c.MemoryAPI = (*MemoryAPIService)(&c.common)
 	c.MentalModelsAPI = (*MentalModelsAPIService)(&c.common)

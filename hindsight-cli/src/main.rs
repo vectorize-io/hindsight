@@ -524,6 +524,13 @@ enum MemoryCommands {
         /// Reference timestamp for recall (ISO 8601, e.g. 2023-05-30T23:40:00)
         #[arg(long)]
         query_timestamp: Option<String>,
+
+        /// Point-in-time recall: return facts that were valid at this
+        /// instant, including ones superseded since (their valid_until
+        /// / superseded_by fields are populated). Omit for default
+        /// behavior (superseded facts hidden). ISO 8601 timestamp.
+        #[arg(long)]
+        as_of: Option<String>,
     },
 
     /// Generate answers using bank identity (reflect/reasoning)
@@ -1389,6 +1396,7 @@ fn run() -> Result<()> {
                 tags,
                 tags_match,
                 query_timestamp,
+                as_of,
             } => commands::memory::recall(
                 &client,
                 &bank_id,
@@ -1402,6 +1410,7 @@ fn run() -> Result<()> {
                 tags,
                 tags_match,
                 query_timestamp,
+                as_of,
                 verbose,
                 output_format,
             ),

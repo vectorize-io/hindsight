@@ -15,13 +15,19 @@ Per drained row:
    resolution step (C5 cold→hot mapping payoff, deep-dive 2 §2.5).
 
 3. **Channel A of C4** (deep-dive 4 §1.2-1.3): for each ``invalidated_edge``
-   in the response whose ``source_uri`` matches the current bank, mark the
-   local memory as needing re-consolidation. The default action is
-   re-consolidation only — never rewrites the private memory text (private
-   memory owner is always the bank, per main plan §6-5). B1 ledger stamping
-   is gated on the explicit ``graphiti_backflow_supersession=true`` flag and
-   is a follow-up; the B1 schema already enforces the CHECK constraint that
-   prevents landing rows without ``occurred_start``.
+   in the response whose ``source_uri`` matches the current bank, replay
+   the edge through ``MemoryEngine.handle_graphiti_edge_invalidated`` —
+   the *same* primitive the channel-B HTTP endpoint uses. The engine
+   method handles per-edge work: parse source_uri, clear observations
+   derived from the memory, optionally stamp the B1 supersession ledger
+   (gated on ``graphiti_backflow_supersession=true``), and submit a
+   gated consolidation job. Replay is best-effort — per-edge failures
+   log and continue; the affected memory's cleared state still picks up
+   on the next natural consolidation cycle. The default action is
+   re-consolidation only — never rewrites the private memory text
+   (private memory owner is always the bank, per main plan §6-5). The
+   B1 schema enforces the CHECK constraint that prevents landing rows
+   without ``occurred_start``.
 
 Errors:
 
@@ -39,6 +45,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable
 from uuid import UUID, uuid5
 
@@ -47,6 +54,7 @@ from ..federation.circuit_breaker import CircuitOpenError
 from ..federation.graphiti_client import (
     AddTripletResults,
     EdgePayload,
+    EdgeResult,
     GraphitiClient,
     GraphitiClientError,
     NodePayload,
@@ -74,10 +82,18 @@ _EDGE_UUID_NS = UUID("7c3d8f2a-1b5e-4a9c-8d2e-6f3a4b8c1d5e")
 # circuit breaker recover between batches.
 _DRAIN_BATCH_SIZE = 50
 
-# ``memory_id -> re-consolidation flag`` set used by channel A within a
-# single bank drain. The actual re-consolidation request fires once at the
-# end of the drain to avoid submitting one job per invalidated edge.
-_INVALIDATED_MEMO: dict[UUID, None] = {}
+# Per-bank invalidated-edge memo. Owned by ``run_graphiti_forward_job`` as a
+# local dict and threaded through the helpers (see _handle_invalidated_edges
+# and _trigger_backflow_actions). Module-scope state would be safe today
+# (per-bank filtering on ``source_uri`` keeps concurrent drains isolated) but
+# is one careless refactor away from leaking edges across banks — keeping it
+# local makes the isolation invariant structural rather than a comment.
+#
+# Stores the full ``EdgeResult`` (not just memory_id) so end-of-drain can
+# call the shared engine primitive ``handle_graphiti_edge_invalidated`` with
+# the original edge_uuid / source_uri / invalid_at — same call path as the
+# channel-B HTTP endpoint, so a forwarder-driven invalidation and an
+# overlay-driven invalidation produce identical writes + audit entries.
 
 
 @dataclass
@@ -201,12 +217,22 @@ async def _handle_invalidated_edges(
     engine: "MemoryEngine",
     bank_id: str,
     results: AddTripletResults,
+    memo: dict[UUID, EdgeResult],
 ) -> int:
-    """Channel A: parse ``source_uri`` from invalidated edges, mark local
-    memories for re-consolidation.
+    """Channel A: collect invalidated edges whose ``source_uri`` belongs to
+    *this* bank. End-of-drain hands each one to
+    ``MemoryEngine.handle_graphiti_edge_invalidated`` (the same primitive
+    the channel-B HTTP endpoint uses) so both write paths produce
+    identical DB writes + audit entries.
 
-    Per deep-dive 4 §1.3 the only action taken is *marking* — the actual
-    re-consolidation is submitted as a single job at the end of the drain.
+    Per deep-dive 4 §1.3, the per-memory work (parse URI, clear obs,
+    optional B1 supersession, audit) lives in the engine method — the
+    forwarder just *accumulates* during the drain.
+
+    ``memo`` is owned by the calling ``run_graphiti_forward_job`` and
+    lives for the duration of one bank drain; passing it in (instead of
+    relying on module state) keeps the per-bank isolation invariant
+    structural.
     """
     invalidated = results.invalidated_edges
     if not invalidated:
@@ -216,12 +242,23 @@ async def _handle_invalidated_edges(
     for edge in invalidated:
         if not edge.source_uri or not edge.source_uri.startswith(prefix):
             continue
+        # Validate the URI parses to a UUID before we accumulate. The
+        # engine method will re-validate, but failing fast here keeps
+        # the memo clean — an unparseable URI cannot produce a valid
+        # backflow call, so we drop it (logged) instead of letting the
+        # engine method log a not_found warning at end-of-drain.
         try:
-            memory_id = UUID(edge.source_uri[len(prefix) :])
+            UUID(edge.source_uri[len(prefix) :])
         except ValueError:
             logger.warning("graphiti_forward: unparseable source_uri %r", edge.source_uri)
             continue
-        _INVALIDATED_MEMO[memory_id] = None
+        # ``edge.invalid_at`` is guaranteed non-None here — the
+        # ``AddTripletResults.invalidated_edges`` property already
+        # filters by ``e.invalid_at is not None`` (per the
+        # ``EdgeResult`` docstring). The ``assert`` in
+        # ``_trigger_backflow_actions`` is the type-guard the static
+        # checker is happy with.
+        memo[edge.uuid] = edge
     return len(invalidated)
 
 
@@ -230,8 +267,14 @@ async def _process_one_row(
     client: GraphitiClient,
     bank_id: str,
     row: dict,
+    memo: dict[UUID, EdgeResult],
 ) -> tuple[int, int, int, int]:
-    """Forward a single outbox row. Returns (forwarded, relations, invalidated, write_backs)."""
+    """Forward a single outbox row. Returns (forwarded, relations, invalidated, write_backs).
+
+    ``memo`` is the per-bank invalidated-edge scratch dict owned by
+    ``run_graphiti_forward_job`` — passed in so the module doesn't rely
+    on hidden global state.
+    """
     memory_id = row["memory_id"] if isinstance(row["memory_id"], UUID) else UUID(row["memory_id"])
     group_id = row["group_id"]
     fact_text = row["fact_text"]
@@ -277,43 +320,122 @@ async def _process_one_row(
         results = await client.add_triplet(payload)
         forwarded += 1
         all_nodes.extend(results.nodes)
-        invalidated += await _handle_invalidated_edges(engine, bank_id, results)
+        invalidated += await _handle_invalidated_edges(engine, bank_id, results, memo)
 
     write_backs = await _write_back_entity_uuids(engine, bank_id, all_nodes)
     return forwarded, len(relations), invalidated, write_backs
 
 
-async def _trigger_backflow_actions(engine: "MemoryEngine", bank_id: str) -> None:
-    """End-of-drain housekeeping: submit re-consolidation for memories that
-    were invalidated upstream.
+async def _trigger_backflow_actions(
+    engine: "MemoryEngine",
+    bank_id: str,
+    memo: dict[UUID, EdgeResult],
+) -> None:
+    """End-of-drain housekeeping: replay each invalidated edge through the
+    shared ``MemoryEngine.handle_graphiti_edge_invalidated`` primitive.
 
-    The submit is best-effort: a failure here does not wedge the queue.
-    Channel A's only invariant is "the local memory's observations get
-    refreshed on the next consolidation cycle" — missing the trigger
-    simply means consolidation re-runs naturally the next time the bank's
-    source facts change, so a dropped job is recoverable.
+    Channel A and channel B (the HTTP endpoint) both call this same
+    method, so a forwarder-driven invalidation and an overlay-driven
+    invalidation produce identical DB writes + audit entries. The
+    primitive handles per-edge work (parse source_uri, clear
+    observations, optional B1 supersession, gated consolidation submit)
+    and writes its own fire-and-forget audit log — we just iterate.
+
+    Best-effort: a per-edge failure logs and continues. Channel A's
+    invariant is "the affected memory's observations get refreshed on
+    the next consolidation cycle" — missing one trigger simply means
+    that memory's cleared state picks up on the next natural
+    consolidation, so a dropped call is recoverable.
+
+    Idempotency: the engine method is idempotent (step 2's
+    ``consolidated_at = NULL`` no-ops when already NULL; step 4's
+    ``valid_until IS NULL`` guard prevents re-stomp). It is safe to
+    re-run the same edge in a later drain.
+
+    ``memo`` is the per-bank invalidated-edge scratch dict owned by the
+    calling ``run_graphiti_forward_job`` (passed in to keep the module's
+    state local — see the docstring at the top of this file).
     """
-    if not _INVALIDATED_MEMO:
+    if not memo:
         return
-    memory_ids = list(_INVALIDATED_MEMO.keys())
-    _INVALIDATED_MEMO.clear()
-    try:
-        from hindsight_api.models import RequestContext
+    # Snapshot + clear immediately so a per-edge failure (or an
+    # exception during iteration) cannot cause us to drop the whole
+    # batch on the next drain — they'll just accumulate again.
+    edges = list(memo.values())
+    memo.clear()
 
-        internal = RequestContext(internal=True)
-        # Re-consolidation is a no-op for the data itself (the local memory
-        # text is never rewritten); it just re-runs the observation refresh
-        # over the bank's world facts. We piggyback on the existing
-        # consolidation task rather than introducing a new task type —
-        # consolidation already gates on source-fact count and is idempotent.
-        await engine.submit_async_consolidation(bank_id=bank_id, request_context=internal)
-        logger.info(
-            "graphiti_forward: triggered re-consolidation for bank %s (invalidated upstream edges → %d local memories)",
-            bank_id,
-            len(memory_ids),
-        )
-    except Exception:
-        logger.exception("graphiti_forward: failed to submit backflow consolidation for bank %s", bank_id)
+    from hindsight_api.models import RequestContext
+
+    internal = RequestContext(internal=True)
+
+    replayed = 0
+    not_found = 0
+    errors = 0
+    for edge in edges:
+        assert edge.invalid_at is not None  # gated in _handle_invalidated_edges
+        try:
+            invalid_at_dt = _parse_iso_to_utc(edge.invalid_at)
+        except ValueError:
+            logger.warning(
+                "graphiti_forward: edge %s has unparseable invalid_at %r; skipping",
+                edge.uuid,
+                edge.invalid_at,
+            )
+            errors += 1
+            continue
+        try:
+            result = await engine.handle_graphiti_edge_invalidated(
+                bank_id=bank_id,
+                edge_uuid=str(edge.uuid),
+                source_uri=edge.source_uri or "",
+                invalid_at=invalid_at_dt,
+                request_context=internal,
+            )
+            replayed += 1
+            if result.not_found:
+                # The edge pointed at a memory the bank has since
+                # deleted. Per deep-dive 4 §1.3, that's a normal
+                # outcome (not an error), but we still want to count
+                # it so the worker log can show "N replayed, M gone".
+                not_found += 1
+        except Exception:
+            # Per-edge failures must not abort the rest of the batch —
+            # see deep-dive 4 §1.3 invariant: "at-least-once replay,
+            # best-effort delivery".
+            logger.exception(
+                "graphiti_forward: failed to replay invalidated edge %s for bank %s",
+                edge.uuid,
+                bank_id,
+            )
+            errors += 1
+
+    logger.info(
+        "graphiti_forward: replayed %d invalidated edges for bank %s (not_found=%d, errors=%d)",
+        replayed,
+        bank_id,
+        not_found,
+        errors,
+    )
+
+
+def _parse_iso_to_utc(value: str) -> datetime:
+    """Parse an ISO-8601 string (with or without trailing 'Z') to a UTC
+    ``datetime``. Mirrors the field_validator in
+    ``GraphitiEdgeInvalidatedRequest`` so the engine method sees a
+    timezone-aware ``datetime`` regardless of the upstream wire format.
+    """
+    s = value.replace("Z", "+00:00") if value.endswith("Z") else value
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        # The engine writes ``invalid_at`` straight into the DB's
+        # ``valid_until`` column via asyncpg, which expects a
+        # timezone-aware datetime. Naive timestamps from upstream are
+        # assumed UTC (Graphiti serializes everything in UTC; a
+        # non-UTC value here would be an upstream bug, not our problem).
+        from datetime import timezone
+
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _build_client(bank_config) -> GraphitiClient:
@@ -372,6 +494,10 @@ async def run_graphiti_forward_job(
 
     client = client_factory(bank_config) if client_factory is not None else _build_client(bank_config)
     result = ForwardJobResult()
+    # Per-bank invalidated-edge scratch. Owned by this call so the module
+    # has no hidden global state — see the docstring at the top of the
+    # file for the isolation invariant this preserves.
+    invalidated_memo: dict[UUID, EdgeResult] = {}
 
     try:
         while True:
@@ -392,7 +518,7 @@ async def run_graphiti_forward_job(
             for row in rows:
                 try:
                     forwarded, n_relations, invalidated, write_backs = await _process_one_row(
-                        memory_engine, client, bank_id, row
+                        memory_engine, client, bank_id, row, invalidated_memo
                     )
                     result.forwarded += forwarded
                     result.relations += n_relations
@@ -420,7 +546,7 @@ async def run_graphiti_forward_job(
                     )
                 result.rescheduled += len(failed_ids)
 
-        await _trigger_backflow_actions(memory_engine, bank_id)
+        await _trigger_backflow_actions(memory_engine, bank_id, invalidated_memo)
     finally:
         await client.aclose()
 

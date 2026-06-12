@@ -410,6 +410,8 @@ ENV_RETAIN_CHUNK_BATCH_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_BATCH_SIZE"
 ENV_GRAPHITI_GROUP_ID = "HINDSIGHT_API_GRAPHITI_GROUP_ID"
 ENV_GRAPHITI_BASE_URL = "HINDSIGHT_API_GRAPHITI_BASE_URL"
 ENV_GRAPHITI_API_KEY = "HINDSIGHT_API_GRAPHITI_API_KEY"
+ENV_GRAPHITI_BACKFLOW_ENABLED = "HINDSIGHT_API_GRAPHITI_BACKFLOW_ENABLED"
+ENV_GRAPHITI_BACKFLOW_SUPERSESSION = "HINDSIGHT_API_GRAPHITI_BACKFLOW_SUPERSESSION"
 
 # File storage configuration
 ENV_FILE_STORAGE_TYPE = "HINDSIGHT_API_FILE_STORAGE_TYPE"
@@ -841,6 +843,8 @@ DEFAULT_RETAIN_BATCH_TOKENS = 10_000  # ~40KB of text  # Max chars per sub-batch
 DEFAULT_GRAPHITI_GROUP_ID = ""  # Bank participates in Graphiti federation when non-empty (C-track gate)
 DEFAULT_GRAPHITI_BASE_URL = ""  # Base URL for the Graphiti world-graph service. Empty = C-track disabled.
 DEFAULT_GRAPHITI_API_KEY = ""  # Optional bearer token for the Graphiti service.
+DEFAULT_GRAPHITI_BACKFLOW_ENABLED = False  # C4 channel-B backflow (re-consolidation). Hierarchical per bank.
+DEFAULT_GRAPHITI_BACKFLOW_SUPERSESSION = False  # C4 step 4: B1 supersession ledger write. Hierarchical per bank.
 DEFAULT_RETAIN_ENTITY_LOOKUP = "trigram"  # "full" or "trigram"
 DEFAULT_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE = 100  # Unique entity names per pg_trgm candidate lookup query
 DEFAULT_RETAIN_BATCH_ENABLED = False  # Use LLM Batch API for fact extraction (only when async=True)
@@ -1635,6 +1639,15 @@ class HindsightConfig:
     # circuit-open shouldn't pause reflect's read path) — see tool_search_world_graph.
     graphiti_base_url: str = DEFAULT_GRAPHITI_BASE_URL
     graphiti_api_key: str = DEFAULT_GRAPHITI_API_KEY
+    # C4 channel-B backflow (deep-dive 4 §1.3-1.4). Hierarchical: per-bank
+    # overrides take effect via the bank config API. ``graphiti_backflow_enabled``
+    # gates the whole backflow pipeline (channel A's per-edge hook + the HTTP
+    # endpoint). ``graphiti_backflow_supersession`` is the *opt-in* step 4 —
+    # the B1 ledger write — and is independent so a bank can run the safe
+    # "re-consolidate only" path without the B1 supersession side-effect.
+    # Both default false to match the pre-wiring byte-identical contract.
+    graphiti_backflow_enabled: bool = False
+    graphiti_backflow_supersession: bool = False
 
     # Class-level sets for configuration categorization
 
@@ -1698,6 +1711,8 @@ class HindsightConfig:
         "retain_strategies",
         "retain_chunk_batch_size",
         "graphiti_group_id",
+        "graphiti_backflow_enabled",
+        "graphiti_backflow_supersession",
         # Entity labels (controlled vocabulary for entity classification)
         "entity_labels",
         "entities_allow_free_form",
@@ -2372,6 +2387,14 @@ class HindsightConfig:
             graphiti_group_id=os.getenv(ENV_GRAPHITI_GROUP_ID, DEFAULT_GRAPHITI_GROUP_ID) or DEFAULT_GRAPHITI_GROUP_ID,
             graphiti_base_url=os.getenv(ENV_GRAPHITI_BASE_URL, DEFAULT_GRAPHITI_BASE_URL) or DEFAULT_GRAPHITI_BASE_URL,
             graphiti_api_key=os.getenv(ENV_GRAPHITI_API_KEY, DEFAULT_GRAPHITI_API_KEY) or DEFAULT_GRAPHITI_API_KEY,
+            graphiti_backflow_enabled=os.getenv(
+                ENV_GRAPHITI_BACKFLOW_ENABLED, str(DEFAULT_GRAPHITI_BACKFLOW_ENABLED)
+            ).lower()
+            == "true",
+            graphiti_backflow_supersession=os.getenv(
+                ENV_GRAPHITI_BACKFLOW_SUPERSESSION, str(DEFAULT_GRAPHITI_BACKFLOW_SUPERSESSION)
+            ).lower()
+            == "true",
             # File storage
             file_storage_type=os.getenv(ENV_FILE_STORAGE_TYPE, DEFAULT_FILE_STORAGE_TYPE),
             file_storage_s3_bucket=os.getenv(ENV_FILE_STORAGE_S3_BUCKET) or None,

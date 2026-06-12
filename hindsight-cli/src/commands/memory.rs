@@ -277,6 +277,7 @@ pub fn recall(
     tags: Vec<String>,
     tags_match: Option<String>,
     query_timestamp: Option<String>,
+    as_of: Option<String>,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
@@ -314,6 +315,7 @@ pub fn recall(
         tags: if tags.is_empty() { None } else { Some(tags) },
         tags_match: parse_tags_match(&tags_match),
         tag_groups: None,
+        as_of,
     };
 
     let response = client.recall(agent_id, &request, verbose);

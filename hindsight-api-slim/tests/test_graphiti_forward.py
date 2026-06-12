@@ -35,7 +35,6 @@ from hindsight_api.engine.federation.graphiti_client import (
     GraphitiClientError,
 )
 from hindsight_api.engine.retain.graphiti_forward import (
-    _INVALIDATED_MEMO,
     _deterministic_edge_uuid,
     _deterministic_node_uuid,
     _handle_invalidated_edges,
@@ -137,70 +136,155 @@ def _results(*uris: str | None, invalid_at: str | None = "2026-01-01T00:00:00Z")
 
 
 async def test_handle_invalidated_edges_marks_local_memory():
-    """A source_uri matching the bank's prefix → memo populated."""
-    _INVALIDATED_MEMO.clear()
+    """A source_uri matching the bank's prefix → EdgeResult stored in the
+    memo keyed by edge_uuid, so end-of-drain can replay it through
+    ``handle_graphiti_edge_invalidated``."""
+    memo: dict[UUID, EdgeResult] = {}
     bank_id = "bank-A"
     memory_id = uuid4()
     uri = f"hindsight://bank/{bank_id}/memory/{memory_id}"
     results = _results(uri)
 
-    count = await _handle_invalidated_edges(_StubEngine(), bank_id, results)  # type: ignore[arg-type]
+    count = await _handle_invalidated_edges(_StubEngine(), bank_id, results, memo)  # type: ignore[arg-type]
 
     assert count == 1
-    assert memory_id in _INVALIDATED_MEMO
+    assert len(memo) == 1
+    stored = next(iter(memo.values()))
+    assert stored.source_uri == uri
+    assert stored.uuid in memo
+    assert stored.invalid_at == "2026-01-01T00:00:00Z"
 
 
 async def test_handle_invalidated_edges_ignores_other_banks():
     """Cross-bank source_uris are NOT memoized — owner bank is the only one
     that gets to re-consolidate its private memory (per main plan §6-5)."""
-    _INVALIDATED_MEMO.clear()
+    memo: dict[UUID, EdgeResult] = {}
     foreign = _results(f"hindsight://bank/some-other-bank/memory/{uuid4()}")
-    count = await _handle_invalidated_edges(_StubEngine(), "bank-A", foreign)  # type: ignore[arg-type]
+    count = await _handle_invalidated_edges(_StubEngine(), "bank-A", foreign, memo)  # type: ignore[arg-type]
     assert count == 1  # the loop counts every invalidated edge, not just kept ones
-    assert len(_INVALIDATED_MEMO) == 0  # but the memo is bank-local
+    assert len(memo) == 0  # but the memo is bank-local
 
 
 async def test_handle_invalidated_edges_unparseable_uri_logged_and_skipped():
     """Malformed URIs produce a warning, not a crash."""
-    _INVALIDATED_MEMO.clear()
+    memo: dict[UUID, EdgeResult] = {}
     results = _results("hindsight://bank/bank-A/memory/not-a-uuid")
-    count = await _handle_invalidated_edges(_StubEngine(), "bank-A", results)  # type: ignore[arg-type]
+    count = await _handle_invalidated_edges(_StubEngine(), "bank-A", results, memo)  # type: ignore[arg-type]
     assert count == 1
-    assert len(_INVALIDATED_MEMO) == 0
+    assert len(memo) == 0
 
 
-async def test_trigger_backflow_actions_submits_consolidation():
-    """End-of-drain: at least one invalidated memory → engine.submit_async_consolidation
-    is called once with the bank_id and an internal request context."""
-    _INVALIDATED_MEMO.clear()
-    _INVALIDATED_MEMO[uuid4()] = None
-    _INVALIDATED_MEMO[uuid4()] = None
+async def test_trigger_backflow_actions_replays_through_engine_method():
+    """End-of-drain: every memoized edge → engine.handle_graphiti_edge_invalidated
+    is called once with the edge's uuid / source_uri / invalid_at. The
+    engine method is the same primitive channel B uses, so the two paths
+    produce identical DB writes + audit entries."""
+    from hindsight_api.engine.federation.graphiti_client import EdgeResult
 
-    submitted: list[dict[str, Any]] = []
+    edge1 = EdgeResult(
+        uuid=uuid4(),
+        name="WORKS_AT",
+        fact="Alice works at Acme",
+        valid_at=None,
+        invalid_at="2026-06-01T00:00:00Z",
+        source_uri=f"hindsight://bank/bank-A/memory/{uuid4()}",
+        group_id="g1",
+    )
+    edge2 = EdgeResult(
+        uuid=uuid4(),
+        name="LIVES_IN",
+        fact="Bob lives in Berlin",
+        valid_at=None,
+        invalid_at="2026-06-01T00:00:00Z",
+        source_uri=f"hindsight://bank/bank-A/memory/{uuid4()}",
+        group_id="g1",
+    )
+    memo: dict[UUID, EdgeResult] = {edge1.uuid: edge1, edge2.uuid: edge2}
+
+    replays: list[dict[str, Any]] = []
+
+    async def handle(*, bank_id, edge_uuid, source_uri, invalid_at, request_context):
+        replays.append(
+            {
+                "bank_id": bank_id,
+                "edge_uuid": edge_uuid,
+                "source_uri": source_uri,
+                "invalid_at": invalid_at,
+                "internal": request_context.internal,
+            }
+        )
 
     class _Engine:
-        async def submit_async_consolidation(self, *, bank_id, request_context):
-            submitted.append({"bank_id": bank_id, "internal": request_context.internal})
+        async def handle_graphiti_edge_invalidated(self, **kw):
+            await handle(**kw)
 
-    await _trigger_backflow_actions(_Engine(), "bank-A")  # type: ignore[arg-type]
+    await _trigger_backflow_actions(_Engine(), "bank-A", memo)  # type: ignore[arg-type]
 
-    assert len(submitted) == 1
-    assert submitted[0]["bank_id"] == "bank-A"
-    assert submitted[0]["internal"] is True
+    assert len(replays) == 2
+    replayed_uuids = {r["edge_uuid"] for r in replays}
+    assert replayed_uuids == {str(edge1.uuid), str(edge2.uuid)}
+    for r in replays:
+        assert r["bank_id"] == "bank-A"
+        assert r["internal"] is True
+        assert r["invalid_at"] is not None  # parsed to datetime
     # Memo is cleared so a follow-up drain with no invalidated edges is a no-op.
-    assert len(_INVALIDATED_MEMO) == 0
+    assert len(memo) == 0
 
 
 async def test_trigger_backflow_actions_no_op_when_memo_empty():
-    """No invalidated edges → no submit. Keeps the cheap-path free of
-    pointless job submissions."""
-    _INVALIDATED_MEMO.clear()
+    """No invalidated edges → no replay. Keeps the cheap-path free of
+    pointless engine calls."""
+    memo: dict[UUID, EdgeResult] = {}
 
     class _Engine:
-        async def submit_async_consolidation(self, **_):
-            pytest.fail("should not submit when memo is empty")
+        async def handle_graphiti_edge_invalidated(self, **_):
+            pytest.fail("should not replay when memo is empty")
 
-    await _trigger_backflow_actions(_Engine(), "bank-A")  # type: ignore[arg-type]
+    await _trigger_backflow_actions(_Engine(), "bank-A", memo)  # type: ignore[arg-type]
+
+
+async def test_trigger_backflow_actions_continues_after_per_edge_failure():
+    """A per-edge failure (e.g. transient DB blip) must not abort the
+    rest of the batch — every other memoized edge still gets replayed.
+    Per deep-dive 4 §1.3: at-least-once replay, best-effort delivery."""
+    from hindsight_api.engine.federation.graphiti_client import EdgeResult
+
+    good1 = EdgeResult(
+        uuid=uuid4(),
+        name="WORKS_AT",
+        fact="Alice works at Acme",
+        valid_at=None,
+        invalid_at="2026-06-01T00:00:00Z",
+        source_uri=f"hindsight://bank/bank-A/memory/{uuid4()}",
+        group_id="g1",
+    )
+    good2 = EdgeResult(
+        uuid=uuid4(),
+        name="LIVES_IN",
+        fact="Bob lives in Berlin",
+        valid_at=None,
+        invalid_at="2026-06-01T00:00:00Z",
+        source_uri=f"hindsight://bank/bank-A/memory/{uuid4()}",
+        group_id="g1",
+    )
+    memo: dict[UUID, EdgeResult] = {good1.uuid: good1, good2.uuid: good2}
+
+    replays: list[str] = []
+
+    class _Engine:
+        async def handle_graphiti_edge_invalidated(self, *, edge_uuid, **_):
+            replays.append(edge_uuid)
+            if edge_uuid == str(good1.uuid):
+                raise RuntimeError("simulated transient blip")
+
+    await _trigger_backflow_actions(_Engine(), "bank-A", memo)  # type: ignore[arg-type]
+
+    # Both edges attempted, in some order; the second one still replayed
+    # despite the first one's failure. Sort both sides because UUID4
+    # values are random — the literal list order is not stable across
+    # runs, only the *set* of attempted edges is.
+    assert sorted(replays) == sorted([str(good1.uuid), str(good2.uuid)])
+    assert len(memo) == 0  # memo always cleared, even on partial failure
 
 
 # ---------------------------------------------------------------------------
@@ -301,10 +385,18 @@ class _FakeConfigResolver:
 
 
 class _FakeEngine:
-    def __init__(self, *, ops: _FakeOps, config, submit_consolidation=None):
+    def __init__(
+        self,
+        *,
+        ops: _FakeOps,
+        config,
+        submit_consolidation=None,
+        handle_backflow=None,
+    ):
         self._backend = _FakeBackend(ops)
         self._config_resolver = _FakeConfigResolver(config)
         self._submit_consolidation = submit_consolidation
+        self._handle_backflow = handle_backflow
 
     async def _get_backend(self):
         return self._backend
@@ -312,6 +404,35 @@ class _FakeEngine:
     async def submit_async_consolidation(self, *, bank_id, request_context):
         if self._submit_consolidation is not None:
             await self._submit_consolidation(bank_id=bank_id, request_context=request_context)
+
+    async def handle_graphiti_edge_invalidated(
+        self,
+        *,
+        bank_id: str,
+        edge_uuid: str,
+        source_uri: str,
+        invalid_at,  # datetime
+        superseded_by_fact: str | None = None,
+        request_context,
+    ):
+        # Default fake: just record the call. Tests that don't care about
+        # the backflow path can ignore the recorder; tests that do care
+        # pass ``handle_backflow=`` to inspect the args. We return a
+        # minimal ``GraphitiBackflowResult`` (not_found=False) so the
+        # production code's ``result.not_found`` check has a real
+        # attribute to read — mirrors the contract the real engine
+        # method guarantees.
+        if self._handle_backflow is not None:
+            await self._handle_backflow(
+                bank_id=bank_id,
+                edge_uuid=edge_uuid,
+                source_uri=source_uri,
+                invalid_at=invalid_at,
+                request_context=request_context,
+            )
+        from hindsight_api.engine.response_models import GraphitiBackflowResult
+
+        return GraphitiBackflowResult(edge_uuid=edge_uuid, memory_id=None, not_found=False)
 
 
 def _config(group_id: str = "g1", base_url: str = "http://graphiti.test"):
@@ -341,7 +462,6 @@ def _request_context():
 
 async def test_run_graphiti_forward_job_happy_path():
     """One row with one relation → one add_triplet call, no reschedule."""
-    _INVALIDATED_MEMO.clear()
     memory_id = uuid4()
     row = _row(
         memory_id=memory_id,
@@ -412,7 +532,6 @@ async def test_run_graphiti_forward_job_happy_path():
 
 async def test_run_graphiti_forward_job_transient_failure_reschedules():
     """Server returns 503 → row is rescheduled (not dropped)."""
-    _INVALIDATED_MEMO.clear()
     memory_id = uuid4()
     row = _row(
         memory_id=memory_id,
@@ -456,7 +575,6 @@ async def test_run_graphiti_forward_job_transient_failure_reschedules():
 async def test_run_graphiti_forward_job_permanent_failure_drops():
     """Server returns 400 → row is dropped (not rescheduled). The bank's
     queue must not be poisoned by a misconfigured graphiti backend."""
-    _INVALIDATED_MEMO.clear()
     row = _row(
         memory_id=uuid4(),
         group_id="g1",
@@ -493,10 +611,12 @@ async def test_run_graphiti_forward_job_permanent_failure_drops():
     assert ops.rescheduled == []
 
 
-async def test_run_graphiti_forward_job_channel_a_triggers_consolidation():
-    """An invalidated edge in the response → end-of-drain consolidation
-    submit, exactly once per drain."""
-    _INVALIDATED_MEMO.clear()
+async def test_run_graphiti_forward_job_channel_a_replays_through_engine_method():
+    """An invalidated edge in the response → end-of-drain replay through
+    ``engine.handle_graphiti_edge_invalidated``, exactly once per edge.
+    The engine method is the same primitive channel B uses, so a
+    forwarder-driven invalidation and an overlay-driven invalidation
+    produce identical writes + audit entries."""
     bank_id = "bank-A"
     memory_id = uuid4()
     row = _row(
@@ -514,12 +634,12 @@ async def test_run_graphiti_forward_job_channel_a_triggers_consolidation():
     )
     ops = _FakeOps([row])
 
-    submissions: list[dict] = []
+    backflow_calls: list[dict] = []
 
-    async def submit(*, bank_id, request_context):
-        submissions.append({"bank_id": bank_id, "internal": request_context.internal})
+    async def record(**kwargs):
+        backflow_calls.append(kwargs)
 
-    engine = _FakeEngine(ops=ops, config=_config(), submit_consolidation=submit)
+    engine = _FakeEngine(ops=ops, config=_config(), handle_backflow=record)
 
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -555,17 +675,21 @@ async def test_run_graphiti_forward_job_channel_a_triggers_consolidation():
 
     assert result["invalidated_edges"] == 1
     assert result["forwarded"] == 1
-    # Exactly one end-of-drain consolidation submit, internal context
-    assert len(submissions) == 1
-    assert submissions[0]["bank_id"] == bank_id
-    assert submissions[0]["internal"] is True
+    # Exactly one end-of-drain replay, with the edge's uuid / source_uri
+    # / invalid_at threaded through to the shared engine method. The
+    # context is internal (forwarder, not an overlay call).
+    assert len(backflow_calls) == 1
+    call = backflow_calls[0]
+    assert call["bank_id"] == bank_id
+    assert call["source_uri"] == f"hindsight://bank/{bank_id}/memory/{memory_id}"
+    assert call["invalid_at"] is not None  # parsed to a tz-aware datetime
+    assert call["request_context"].internal is True
 
 
 async def test_run_graphiti_forward_job_skips_when_bank_lost_federation():
     """Bank config no longer has graphiti_group_id → drain is a no-op and
     the outbox rows stay queued for a future submission (we never delete
     rows in this branch)."""
-    _INVALIDATED_MEMO.clear()
     row = _row(
         memory_id=uuid4(),
         group_id="g1",

@@ -1773,6 +1773,93 @@ export type GraphDataResponse = {
 };
 
 /**
+ * GraphitiBackflowResult
+ *
+ * Result of a single graphiti edge-invalidated backflow call (C4 channel B).
+ *
+ * All counts are zero-or-positive integers. ``memory_id`` is echoed back when
+ * the source_uri parsed to a real memory belonging to this bank; otherwise
+ * the call short-circuits with ``not_found=True`` and a 404 is returned
+ * (the spec says: the edge may point at a memory the bank has since
+ * deleted — that's a normal outcome, not an error).
+ */
+export type GraphitiBackflowResult = {
+  /**
+   * Edge Uuid
+   *
+   * The Graphiti edge UUID that was invalidated upstream
+   */
+  edge_uuid: string;
+  /**
+   * Memory Id
+   *
+   * Resolved local memory id from the source_uri. None when the source_uri was missing, malformed, or pointed at a memory in a different bank / one that has been deleted.
+   */
+  memory_id?: string | null;
+  /**
+   * Not Found
+   *
+   * True when the source_uri did not resolve to a live memory in this bank (404 path).
+   */
+  not_found?: boolean;
+  /**
+   * Observations Cleared
+   *
+   * Number of derived observations deleted (step 2 of the spec)
+   */
+  observations_cleared?: number;
+  /**
+   * Supersession Written
+   *
+   * True when step 4 wrote a B1 valid_until / superseded_at row. False when the flag is off, the memory lacks occurred_start (CHECK constraint blocks the write), or the row was already superseded by a prior call.
+   */
+  supersession_written?: boolean;
+  /**
+   * Consolidation Submitted
+   *
+   * True when step 3 submitted an async consolidation job. False when auto-consolidation is disabled or no observations were actually cleared.
+   */
+  consolidation_submitted?: boolean;
+};
+
+/**
+ * GraphitiEdgeInvalidatedRequest
+ *
+ * C4 channel-B backflow body.
+ *
+ * Posted by the Graphiti overlay (or any external service) when an
+ * upstream edge is invalidated. The engine resolves the source_uri back
+ * to a local memory, re-consolidates the affected observations, and
+ * optionally stamps a B1 supersession row.
+ */
+export type GraphitiEdgeInvalidatedRequest = {
+  /**
+   * Edge Uuid
+   *
+   * The Graphiti edge UUID that was invalidated upstream.
+   */
+  edge_uuid: string;
+  /**
+   * Source Uri
+   *
+   * Marker the C1 forwarder writes into EdgePayload.attributes.source_uri: 'hindsight://bank/{bank_id}/memory/{memory_id}'. Cross-bank or malformed URIs return 404 (not 5xx) per deep-dive 4 §1.3.
+   */
+  source_uri: string;
+  /**
+   * Invalid At
+   *
+   * When the upstream edge was invalidated. Used as the B1 valid_until value when graphiti_backflow_supersession is on (subject to the chk_mu_valid_until_after_start CHECK constraint).
+   */
+  invalid_at: string;
+  /**
+   * Superseded By Fact
+   *
+   * Replacement fact text (audit only; not persisted by this call).
+   */
+  superseded_by_fact?: string | null;
+};
+
+/**
  * HTTPValidationError
  */
 export type HttpValidationError = {
@@ -6242,6 +6329,44 @@ export type ClearMemoryObservationsResponses = {
 
 export type ClearMemoryObservationsResponse2 =
   ClearMemoryObservationsResponses[keyof ClearMemoryObservationsResponses];
+
+export type GraphitiEdgeInvalidatedData = {
+  body: GraphitiEdgeInvalidatedRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/graphiti/edge-invalidated";
+};
+
+export type GraphitiEdgeInvalidatedErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GraphitiEdgeInvalidatedError =
+  GraphitiEdgeInvalidatedErrors[keyof GraphitiEdgeInvalidatedErrors];
+
+export type GraphitiEdgeInvalidatedResponses = {
+  /**
+   * Successful Response
+   */
+  200: GraphitiBackflowResult;
+};
+
+export type GraphitiEdgeInvalidatedResponse =
+  GraphitiEdgeInvalidatedResponses[keyof GraphitiEdgeInvalidatedResponses];
 
 export type ResetBankConfigData = {
   body?: never;

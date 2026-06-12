@@ -72,6 +72,51 @@ class DirectiveRef(BaseModel):
     content: str = Field(description="Directive content")
 
 
+class GraphitiBackflowResult(BaseModel):
+    """Result of a single graphiti edge-invalidated backflow call (C4 channel B).
+
+    All counts are zero-or-positive integers. ``memory_id`` is echoed back when
+    the source_uri parsed to a real memory belonging to this bank; otherwise
+    the call short-circuits with ``not_found=True`` and a 404 is returned
+    (the spec says: the edge may point at a memory the bank has since
+    deleted — that's a normal outcome, not an error).
+    """
+
+    edge_uuid: str = Field(description="The Graphiti edge UUID that was invalidated upstream")
+    memory_id: str | None = Field(
+        default=None,
+        description=(
+            "Resolved local memory id from the source_uri. None when the "
+            "source_uri was missing, malformed, or pointed at a memory "
+            "in a different bank / one that has been deleted."
+        ),
+    )
+    not_found: bool = Field(
+        default=False,
+        description="True when the source_uri did not resolve to a live memory in this bank (404 path).",
+    )
+    observations_cleared: int = Field(
+        default=0, description="Number of derived observations deleted (step 2 of the spec)"
+    )
+    supersession_written: bool = Field(
+        default=False,
+        description=(
+            "True when step 4 wrote a B1 valid_until / superseded_at row. "
+            "False when the flag is off, the memory lacks occurred_start "
+            "(CHECK constraint blocks the write), or the row was already "
+            "superseded by a prior call."
+        ),
+    )
+    consolidation_submitted: bool = Field(
+        default=False,
+        description=(
+            "True when step 3 submitted an async consolidation job. False "
+            "when auto-consolidation is disabled or no observations were "
+            "actually cleared."
+        ),
+    )
+
+
 class TokenUsage(BaseModel):
     """
     Token usage metrics for LLM calls.

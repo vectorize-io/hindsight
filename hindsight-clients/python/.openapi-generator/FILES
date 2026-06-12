@@ -9,6 +9,7 @@ hindsight_client_api/api/document_transfer_api.py
 hindsight_client_api/api/documents_api.py
 hindsight_client_api/api/entities_api.py
 hindsight_client_api/api/files_api.py
+hindsight_client_api/api/graphiti_api.py
 hindsight_client_api/api/llm_traces_api.py
 hindsight_client_api/api/memory_api.py
 hindsight_client_api/api/mental_models_api.py
@@ -71,6 +72,8 @@ hindsight_client_api/models/entity_state_response.py
 hindsight_client_api/models/features_info.py
 hindsight_client_api/models/file_retain_response.py
 hindsight_client_api/models/graph_data_response.py
+hindsight_client_api/models/graphiti_backflow_result.py
+hindsight_client_api/models/graphiti_edge_invalidated_request.py
 hindsight_client_api/models/http_validation_error.py
 hindsight_client_api/models/include_options.py
 hindsight_client_api/models/list_chunks_response.py

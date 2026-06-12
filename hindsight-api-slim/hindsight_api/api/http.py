@@ -85,7 +85,12 @@ def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
 from hindsight_api.config import get_config
 from hindsight_api.engine.memory_engine import Budget, _current_schema, _get_tiktoken_encoding, fq_table
 from hindsight_api.engine.providers.none_llm import LLMNotAvailableError
-from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, MemoryFact, TokenUsage
+from hindsight_api.engine.response_models import (
+    VALID_RECALL_FACT_TYPES,
+    GraphitiBackflowResult,
+    MemoryFact,
+    TokenUsage,
+)
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.extensions import HttpExtension, OperationValidationError, load_extension
 from hindsight_api.metrics import create_metrics_collector, get_metrics_collector, initialize_metrics
@@ -1549,6 +1554,55 @@ class UpdateMemoryRequest(BaseModel):
         if self.fact_type is not None and self.fact_type not in ("world", "experience"):
             raise ValueError("fact_type must be 'world' or 'experience'.")
         return self
+
+
+class GraphitiEdgeInvalidatedRequest(BaseModel):
+    """C4 channel-B backflow body.
+
+    Posted by the Graphiti overlay (or any external service) when an
+    upstream edge is invalidated. The engine resolves the source_uri back
+    to a local memory, re-consolidates the affected observations, and
+    optionally stamps a B1 supersession row.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "edge_uuid": "8a4b1c2d-...-...",
+                "source_uri": "hindsight://bank/bank-A/memory/8a4b1c2d-...-...",
+                "invalid_at": "2026-06-12T10:00:00Z",
+                "superseded_by_fact": "Alice now works at NewCo",
+            }
+        }
+    )
+
+    edge_uuid: str = Field(
+        description="The Graphiti edge UUID that was invalidated upstream.",
+    )
+    source_uri: str = Field(
+        description=(
+            "Marker the C1 forwarder writes into EdgePayload.attributes.source_uri: "
+            "'hindsight://bank/{bank_id}/memory/{memory_id}'. Cross-bank or malformed "
+            "URIs return 404 (not 5xx) per deep-dive 4 §1.3."
+        ),
+    )
+    invalid_at: datetime = Field(
+        description=(
+            "When the upstream edge was invalidated. Used as the B1 valid_until "
+            "value when graphiti_backflow_supersession is on (subject to the "
+            "chk_mu_valid_until_after_start CHECK constraint). Must be a "
+            "timezone-aware datetime — Pydantic v2's default parser accepts "
+            "ISO 8601 with either 'Z' or '+HH:MM' offset and returns a "
+            "tz-aware value. Naive datetimes are rejected because asyncpg "
+            "raises on writing a naive value to a ``timestamp with time "
+            "zone`` column. The forwarder path applies the equivalent "
+            "normalization in ``_parse_iso_to_utc`` (graphiti_forward.py)."
+        ),
+    )
+    superseded_by_fact: str | None = Field(
+        default=None,
+        description="Replacement fact text (audit only; not persisted by this call).",
+    )
 
 
 class DeleteDocumentResponse(BaseModel):
@@ -5888,6 +5942,87 @@ def _register_routes(app: FastAPI):
             logger.error(
                 f"Error in DELETE /v1/default/banks/{bank_id}/memories/{memory_id}/observations: {error_detail}"
             )
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/graphiti/edge-invalidated",
+        response_model=GraphitiBackflowResult,
+        summary="C4 channel-B backflow: Graphiti edge invalidated upstream",
+        description=(
+            "Posted by the Graphiti overlay (or any external service) when an upstream edge is "
+            "invalidated. The engine resolves the source_uri back to a local memory, re-consolidates "
+            "the affected observations, and (when graphiti_backflow_supersession is on) stamps a B1 "
+            "supersession row. Returns 200 with the backflow result, or 404 when the source_uri is "
+            "cross-bank, malformed, or points at a memory the bank has since deleted. Gated on the "
+            "per-bank `graphiti_backflow_enabled` flag — returns 404 (not 503) when disabled so the "
+            "endpoint is invisible to the overlay while the feature is rolled forward."
+        ),
+        operation_id="graphiti_edge_invalidated",
+        tags=["Graphiti"],
+    )
+    @audited("graphiti_backflow", request_param="body")
+    async def api_graphiti_edge_invalidated(
+        bank_id: str,
+        body: GraphitiEdgeInvalidatedRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """C4 channel-B backflow endpoint.
+
+        Same primitive as the channel-A forwarder hook
+        (``graphiti_forward.handle_invalidation``) — they both call
+        ``MemoryEngine.handle_graphiti_edge_invalidated``. Per deep-dive 4
+        §1.3, cross-bank / malformed / missing-memory are *normal*
+        outcomes (the edge may outlive the memory), so they map to
+        ``not_found=True`` and HTTP 404 rather than 5xx.
+        """
+        # Gate at the handler: the engine method itself doesn't check
+        # graphiti_backflow_enabled (channel A wants to call the same
+        # method regardless — the flag is a wire-protocol concern, not a
+        # primitive concern). Returning 404 (not 503) keeps the endpoint
+        # invisible to the overlay while the flag is off.
+        bank_config = await app.state.memory._config_resolver.resolve_full_config(bank_id, request_context)
+        if not bank_config.graphiti_backflow_enabled:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Graphiti backflow is not enabled for this bank. Set "
+                    "HINDSIGHT_API_GRAPHITI_BACKFLOW_ENABLED=true (globally or per bank) "
+                    "to enable."
+                ),
+            )
+        try:
+            result = await app.state.memory.handle_graphiti_edge_invalidated(
+                bank_id=bank_id,
+                edge_uuid=body.edge_uuid,
+                source_uri=body.source_uri,
+                invalid_at=body.invalid_at,
+                superseded_by_fact=body.superseded_by_fact,
+                request_context=request_context,
+            )
+            if result.not_found:
+                # 404 is the spec'd response for cross-bank / malformed /
+                # deleted-memory outcomes. We do *not* return 200 with
+                # not_found=True here — the overlay needs the status to
+                # distinguish "the backflow did nothing" from "the backflow
+                # did something". Both are normal; the audit log captures
+                # the outcome either way.
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"source_uri did not resolve to a live memory in bank {bank_id} "
+                        f"(cross-bank, malformed, or memory deleted). edge_uuid={body.edge_uuid}."
+                    ),
+                )
+            return result
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in POST /v1/default/banks/{bank_id}/graphiti/edge-invalidated: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(

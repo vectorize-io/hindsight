@@ -114,6 +114,9 @@ import type {
   GetOperationStatusResponses,
   GetVersionData,
   GetVersionResponses,
+  GraphitiEdgeInvalidatedData,
+  GraphitiEdgeInvalidatedErrors,
+  GraphitiEdgeInvalidatedResponses,
   HealthEndpointHealthGetData,
   HealthEndpointHealthGetResponses,
   ImportBankTemplateData,
@@ -1099,6 +1102,27 @@ export const clearMemoryObservations = <ThrowOnError extends boolean = false>(
     ClearMemoryObservationsErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/memories/{memory_id}/observations", ...options });
+
+/**
+ * C4 channel-B backflow: Graphiti edge invalidated upstream
+ *
+ * Posted by the Graphiti overlay (or any external service) when an upstream edge is invalidated. The engine resolves the source_uri back to a local memory, re-consolidates the affected observations, and (when graphiti_backflow_supersession is on) stamps a B1 supersession row. Returns 200 with the backflow result, or 404 when the source_uri is cross-bank, malformed, or points at a memory the bank has since deleted. Gated on the per-bank `graphiti_backflow_enabled` flag — returns 404 (not 503) when disabled so the endpoint is invisible to the overlay while the feature is rolled forward.
+ */
+export const graphitiEdgeInvalidated = <ThrowOnError extends boolean = false>(
+  options: Options<GraphitiEdgeInvalidatedData, ThrowOnError>
+) =>
+  (options.client ?? client).post<
+    GraphitiEdgeInvalidatedResponses,
+    GraphitiEdgeInvalidatedErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/graphiti/edge-invalidated",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
 
 /**
  * Reset bank configuration

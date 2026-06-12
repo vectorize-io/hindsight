@@ -2922,6 +2922,57 @@ paths:
       summary: Clear observations for a memory
       tags:
       - Memory
+  /v1/default/banks/{bank_id}/graphiti/edge-invalidated:
+    post:
+      description: "Posted by the Graphiti overlay (or any external service) when\
+        \ an upstream edge is invalidated. The engine resolves the source_uri back\
+        \ to a local memory, re-consolidates the affected observations, and (when\
+        \ graphiti_backflow_supersession is on) stamps a B1 supersession row. Returns\
+        \ 200 with the backflow result, or 404 when the source_uri is cross-bank,\
+        \ malformed, or points at a memory the bank has since deleted. Gated on the\
+        \ per-bank `graphiti_backflow_enabled` flag — returns 404 (not 503) when disabled\
+        \ so the endpoint is invisible to the overlay while the feature is rolled\
+        \ forward."
+      operationId: graphiti_edge_invalidated
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GraphitiEdgeInvalidatedRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphitiBackflowResult'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: "C4 channel-B backflow: Graphiti edge invalidated upstream"
+      tags:
+      - Graphiti
   /v1/default/banks/{bank_id}/config:
     delete:
       description: Reset bank configuration to defaults by removing all bank-specific
@@ -5658,6 +5709,96 @@ components:
       - table_rows
       - total_units
       title: GraphDataResponse
+    GraphitiBackflowResult:
+      description: |-
+        Result of a single graphiti edge-invalidated backflow call (C4 channel B).
+
+        All counts are zero-or-positive integers. ``memory_id`` is echoed back when
+        the source_uri parsed to a real memory belonging to this bank; otherwise
+        the call short-circuits with ``not_found=True`` and a 404 is returned
+        (the spec says: the edge may point at a memory the bank has since
+        deleted — that's a normal outcome, not an error).
+      example:
+        observations_cleared: 0
+        supersession_written: false
+        memory_id: memory_id
+        consolidation_submitted: false
+        not_found: false
+        edge_uuid: edge_uuid
+      properties:
+        edge_uuid:
+          description: The Graphiti edge UUID that was invalidated upstream
+          title: Edge Uuid
+          type: string
+        memory_id:
+          nullable: true
+          type: string
+        not_found:
+          default: false
+          description: True when the source_uri did not resolve to a live memory in
+            this bank (404 path).
+          title: Not Found
+          type: boolean
+        observations_cleared:
+          default: 0
+          description: Number of derived observations deleted (step 2 of the spec)
+          title: Observations Cleared
+          type: integer
+        supersession_written:
+          default: false
+          description: "True when step 4 wrote a B1 valid_until / superseded_at row.\
+            \ False when the flag is off, the memory lacks occurred_start (CHECK constraint\
+            \ blocks the write), or the row was already superseded by a prior call."
+          title: Supersession Written
+          type: boolean
+        consolidation_submitted:
+          default: false
+          description: True when step 3 submitted an async consolidation job. False
+            when auto-consolidation is disabled or no observations were actually cleared.
+          title: Consolidation Submitted
+          type: boolean
+      required:
+      - edge_uuid
+      title: GraphitiBackflowResult
+    GraphitiEdgeInvalidatedRequest:
+      description: |-
+        C4 channel-B backflow body.
+
+        Posted by the Graphiti overlay (or any external service) when an
+        upstream edge is invalidated. The engine resolves the source_uri back
+        to a local memory, re-consolidates the affected observations, and
+        optionally stamps a B1 supersession row.
+      example:
+        edge_uuid: 8a4b1c2d-...-...
+        invalid_at: 2026-06-12T10:00:00Z
+        source_uri: hindsight://bank/bank-A/memory/8a4b1c2d-...-...
+        superseded_by_fact: Alice now works at NewCo
+      properties:
+        edge_uuid:
+          description: The Graphiti edge UUID that was invalidated upstream.
+          title: Edge Uuid
+          type: string
+        source_uri:
+          description: "Marker the C1 forwarder writes into EdgePayload.attributes.source_uri:\
+            \ 'hindsight://bank/{bank_id}/memory/{memory_id}'. Cross-bank or malformed\
+            \ URIs return 404 (not 5xx) per deep-dive 4 §1.3."
+          title: Source Uri
+          type: string
+        invalid_at:
+          description: When the upstream edge was invalidated. Used as the B1 valid_until
+            value when graphiti_backflow_supersession is on (subject to the chk_mu_valid_until_after_start
+            CHECK constraint).
+          format: date-time
+          title: Invalid At
+          type: string
+        superseded_by_fact:
+          nullable: true
+          type: string
+      required:
+      - edge_uuid
+      - invalid_at
+      - source_uri
+      title: GraphitiEdgeInvalidatedRequest
     HTTPValidationError:
       example:
         detail:

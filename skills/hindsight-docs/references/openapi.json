@@ -4254,6 +4254,75 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/graphiti/edge-invalidated": {
+      "post": {
+        "tags": [
+          "Graphiti"
+        ],
+        "summary": "C4 channel-B backflow: Graphiti edge invalidated upstream",
+        "description": "Posted by the Graphiti overlay (or any external service) when an upstream edge is invalidated. The engine resolves the source_uri back to a local memory, re-consolidates the affected observations, and (when graphiti_backflow_supersession is on) stamps a B1 supersession row. Returns 200 with the backflow result, or 404 when the source_uri is cross-bank, malformed, or points at a memory the bank has since deleted. Gated on the per-bank `graphiti_backflow_enabled` flag \u2014 returns 404 (not 503) when disabled so the endpoint is invisible to the overlay while the feature is rolled forward.",
+        "operationId": "graphiti_edge_invalidated",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphitiEdgeInvalidatedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphitiBackflowResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/config": {
       "get": {
         "tags": [
@@ -8588,6 +8657,103 @@
             }
           ],
           "total_units": 2
+        }
+      },
+      "GraphitiBackflowResult": {
+        "properties": {
+          "edge_uuid": {
+            "type": "string",
+            "title": "Edge Uuid",
+            "description": "The Graphiti edge UUID that was invalidated upstream"
+          },
+          "memory_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Id",
+            "description": "Resolved local memory id from the source_uri. None when the source_uri was missing, malformed, or pointed at a memory in a different bank / one that has been deleted."
+          },
+          "not_found": {
+            "type": "boolean",
+            "title": "Not Found",
+            "description": "True when the source_uri did not resolve to a live memory in this bank (404 path).",
+            "default": false
+          },
+          "observations_cleared": {
+            "type": "integer",
+            "title": "Observations Cleared",
+            "description": "Number of derived observations deleted (step 2 of the spec)",
+            "default": 0
+          },
+          "supersession_written": {
+            "type": "boolean",
+            "title": "Supersession Written",
+            "description": "True when step 4 wrote a B1 valid_until / superseded_at row. False when the flag is off, the memory lacks occurred_start (CHECK constraint blocks the write), or the row was already superseded by a prior call.",
+            "default": false
+          },
+          "consolidation_submitted": {
+            "type": "boolean",
+            "title": "Consolidation Submitted",
+            "description": "True when step 3 submitted an async consolidation job. False when auto-consolidation is disabled or no observations were actually cleared.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "edge_uuid"
+        ],
+        "title": "GraphitiBackflowResult",
+        "description": "Result of a single graphiti edge-invalidated backflow call (C4 channel B).\n\nAll counts are zero-or-positive integers. ``memory_id`` is echoed back when\nthe source_uri parsed to a real memory belonging to this bank; otherwise\nthe call short-circuits with ``not_found=True`` and a 404 is returned\n(the spec says: the edge may point at a memory the bank has since\ndeleted \u2014 that's a normal outcome, not an error)."
+      },
+      "GraphitiEdgeInvalidatedRequest": {
+        "properties": {
+          "edge_uuid": {
+            "type": "string",
+            "title": "Edge Uuid",
+            "description": "The Graphiti edge UUID that was invalidated upstream."
+          },
+          "source_uri": {
+            "type": "string",
+            "title": "Source Uri",
+            "description": "Marker the C1 forwarder writes into EdgePayload.attributes.source_uri: 'hindsight://bank/{bank_id}/memory/{memory_id}'. Cross-bank or malformed URIs return 404 (not 5xx) per deep-dive 4 \u00a71.3."
+          },
+          "invalid_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Invalid At",
+            "description": "When the upstream edge was invalidated. Used as the B1 valid_until value when graphiti_backflow_supersession is on (subject to the chk_mu_valid_until_after_start CHECK constraint)."
+          },
+          "superseded_by_fact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By Fact",
+            "description": "Replacement fact text (audit only; not persisted by this call)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "edge_uuid",
+          "source_uri",
+          "invalid_at"
+        ],
+        "title": "GraphitiEdgeInvalidatedRequest",
+        "description": "C4 channel-B backflow body.\n\nPosted by the Graphiti overlay (or any external service) when an\nupstream edge is invalidated. The engine resolves the source_uri back\nto a local memory, re-consolidates the affected observations, and\noptionally stamps a B1 supersession row.",
+        "example": {
+          "edge_uuid": "8a4b1c2d-...-...",
+          "invalid_at": "2026-06-12T10:00:00Z",
+          "source_uri": "hindsight://bank/bank-A/memory/8a4b1c2d-...-...",
+          "superseded_by_fact": "Alice now works at NewCo"
         }
       },
       "HTTPValidationError": {
