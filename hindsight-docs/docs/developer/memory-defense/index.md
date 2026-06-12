@@ -18,7 +18,7 @@ A policy only affects future retain calls on the bank where it is set. Existing 
 
 Memory Defense is configured per bank via the bank's `memory_defense` config field. You can set the policy at bank creation time or update it later via `PATCH /v1/{tenant}/banks/{bank_id}/config`.
 
-The open-source version implements the `sensitive_data` rule with two possible actions:
+The open-source version implements the `sensitive_data` detector with two possible actions:
 
 - **`redact`** — replace each matched secret with a `[REDACTED:type]` marker and store the scrubbed memory.
 - **`block`** — drop any item that contains a match. If every item in a retain request is blocked, the call returns `422`.
@@ -37,6 +37,8 @@ A minimal policy:
 ```
 
 Once that policy is on a bank, every retain to that bank is screened with the 44 redaction patterns documented below.
+
+The policy parser accepts any non-empty `rules[].on` detector name so cloud or downstream extensions can store their own policy vocabulary without breaking OSS PATCH validation. In the default OSS runtime, only `sensitive_data` is executed; other detector names are persisted but do not screen content unless another loaded extension handles them.
 
 :::note Existing memories are not retroactively scanned
 Enabling Memory Defense on a bank only affects future retain calls. Memories already in the bank are not re-scanned or modified when you add or change a policy. If you need to scrub a bank that already contains unredacted content, you have to re-ingest the affected memories or remove them manually.

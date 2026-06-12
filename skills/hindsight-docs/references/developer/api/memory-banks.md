@@ -351,7 +351,7 @@ Per-bank Memory Defense policy. Defaults to absent (Memory Defense disabled on t
 |---|---|---|---|
 | `enabled` | bool | `false` | Master switch. |
 | `default_action` | `allow`\|`redact`\|`quarantine`\|`block` | `allow` | Fallback action when no rule matches. |
-| `protected_tag_namespaces` | `list[str]` | `[]` | Writes with tags in these namespaces (`ns:*`) are subject to the `protected_key` detector. |
+| `protected_tag_namespaces` | `list[str]` | `[]` | Extension policy metadata for tags in these namespaces (`ns:*`). The OSS regex extension ignores this unless a downstream extension handles the corresponding detector. |
 | `immutable_tag_namespaces` | `list[str]` | `[]` | Writes to these namespaces are blocked. |
 | `rules` | `list[Rule]` | `[]` | Detector-to-action mappings (see below). |
 | `detector_overrides` | `dict` | `{}` | Per-detector tuning (e.g. `size_anomaly.max_size`). |
@@ -360,7 +360,7 @@ Per-bank Memory Defense policy. Defaults to absent (Memory Defense disabled on t
 
 | Field | Required | Description |
 |---|---|---|
-| `on` | yes | Detector name (`prompt_injection`, `sensitive_data`, `protected_key`, `immutable_key`, `size_anomaly`) or `*` for any. |
+| `on` | yes | Any non-empty detector name. The OSS extension implements `sensitive_data`; other names are accepted and persisted for cloud/downstream extensions (for example `prompt_injection`, `size_anomaly`, `protected_keys`, `detect_secrets`, `base64_decode`, `llm_screen`, or `*` if that extension treats it as a wildcard). |
 | `action` | yes | One of `allow`, `redact`, `quarantine`, `block`. |
 | `min_severity` | no | Minimum severity (`low`, `medium`, `high`, `critical`) for the rule to fire. Defaults to `low`. |
 
