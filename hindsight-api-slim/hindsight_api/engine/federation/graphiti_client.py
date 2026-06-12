@@ -25,6 +25,7 @@ the forwarder (or vice versa) — the same per-op semaphore pattern
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -98,6 +99,21 @@ class FactResult:
     invalid_at: str | None
     created_at: str | None
     expired_at: str | None
+
+
+@dataclass
+class InvalidatedEdgesResponse:
+    """Channel C poll response (deep-dive 5 §2.3).
+
+    ``truncated=True`` signals the Graphiti service hit the
+    ``max_edges`` ceiling and the caller should re-issue the same
+    request with the same ``since`` to drain the rest — keeping
+    ``since`` unchanged is the only way Graphiti can resume from
+    where it left off.
+    """
+
+    edges: list[EdgeResult]
+    truncated: bool
 
 
 class GraphitiClientError(Exception):
@@ -174,6 +190,46 @@ class GraphitiClient:
             return _parse_fact_results(data)
         except Exception as e:
             raise GraphitiClientError(f"search response parse error: {e}") from e
+
+    async def list_invalidated_edges(
+        self,
+        group_ids: list[str],
+        since: datetime | None = None,
+        max_edges: int = 100,
+    ) -> InvalidatedEdgesResponse:
+        """Channel C: pull edges whose ``invalid_at >= since`` from a group set.
+
+        Per deep-dive 5 §2.1-2.3: ``POST /invalidated-edges`` with a
+        JSON body carrying the same shape of parameters the upstream
+        ``SearchFilters(invalid_at=DateFilter)`` natively supports.
+        Reuses the same circuit breaker / semaphore / timeout as
+        ``add_triplet`` and ``search`` (per the C-track config table in
+        deep-dive 2 §2.6 — all three share the same outbound transport
+        profile).
+
+        ``since`` is serialized as ISO-8601 with trailing ``+00:00``
+        when tz-aware. Naive datetimes are assumed UTC (matches the
+        engine-side convention; see graphiti_forward._parse_iso_to_utc).
+        """
+        from datetime import timezone
+
+        if since is not None and since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        body = {
+            "group_ids": group_ids,
+            "since": since.isoformat() if since is not None else None,
+            "max_edges": max_edges,
+        }
+        try:
+            data = await self._breaker.call(lambda: self._post_json("/invalidated-edges", body))
+        except CircuitOpenError:
+            raise
+        except httpx.HTTPError as e:
+            raise GraphitiClientError(f"list_invalidated_edges HTTP error: {e}") from e
+        try:
+            return _parse_invalidated_edges_response(data)
+        except Exception as e:
+            raise GraphitiClientError(f"list_invalidated_edges response parse error: {e}") from e
 
     async def _post_json(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         async with self._semaphore:
@@ -257,3 +313,27 @@ def _parse_fact_results(data: Any) -> list[FactResult]:
             )
         )
     return out
+
+
+def _parse_invalidated_edges_response(data: dict[str, Any]) -> InvalidatedEdgesResponse:
+    """Parse the channel-C poll response (deep-dive 5 §2.3).
+
+    Reuses the same per-edge schema as ``_parse_add_triplet_results``
+    so the two endpoints can't drift on ``attributes`` / ``source_uri``
+    handling — a single EdgeResult dataclass flows through A, B, and C.
+    """
+    edges_raw = data.get("edges") or []
+    edges = [
+        EdgeResult(
+            uuid=UUID(e["uuid"]),
+            name=e.get("name", ""),
+            fact=e.get("fact", ""),
+            valid_at=e.get("valid_at"),
+            invalid_at=e.get("invalid_at"),
+            source_uri=(e.get("attributes") or {}).get("source_uri"),
+            group_id=e.get("group_id"),
+            attributes=e.get("attributes") or {},
+        )
+        for e in edges_raw
+    ]
+    return InvalidatedEdgesResponse(edges=edges, truncated=bool(data.get("truncated", False)))

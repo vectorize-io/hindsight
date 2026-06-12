@@ -64,6 +64,8 @@ BACKUP_TABLES = [
     "llm_requests",
     "graph_maintenance_queue",
     "supersession_queue",
+    "graphiti_outbox",
+    "graphiti_backflow_poller_state",
 ]
 
 MANIFEST_VERSION = "1"

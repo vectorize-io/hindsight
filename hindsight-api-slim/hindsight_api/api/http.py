@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import re
 import uuid
 from collections.abc import AsyncIterator, Awaitable
@@ -3007,6 +3008,45 @@ def create_app(
                 "Tasks (mental model refresh, consolidation) will run synchronously."
             )
 
+        # Start channel-C backflow poller (deep-dive 5 §3.2). Off by default;
+        # only enable for deployments that mix in native Graphiti
+        # add_episode writes that bypass /triplet. Channels A and B together
+        # already give 100% coverage for the C1-mediated path.
+        channel_c_poller_task: asyncio.Task | None = None
+        if config.graphiti_backflow_polling_enabled:
+            from ..config import (
+                DEFAULT_GRAPHITI_BACKFLOW_POLLING_INTERVAL_SECONDS,
+                ENV_GRAPHITI_BACKFLOW_POLLING_INTERVAL_SECONDS,
+            )
+            from ..engine.retain.graphiti_backflow_poller import run_graphiti_backflow_poller
+
+            try:
+                poll_interval_s = float(
+                    os.getenv(
+                        ENV_GRAPHITI_BACKFLOW_POLLING_INTERVAL_SECONDS,
+                        str(DEFAULT_GRAPHITI_BACKFLOW_POLLING_INTERVAL_SECONDS),
+                    )
+                )
+            except ValueError:
+                logging.warning(
+                    "Channel C poller: invalid %s, falling back to %s",
+                    ENV_GRAPHITI_BACKFLOW_POLLING_INTERVAL_SECONDS,
+                    DEFAULT_GRAPHITI_BACKFLOW_POLLING_INTERVAL_SECONDS,
+                )
+                poll_interval_s = float(DEFAULT_GRAPHITI_BACKFLOW_POLLING_INTERVAL_SECONDS)
+            if poll_interval_s <= 0:
+                logging.warning(
+                    "Channel C poller: non-positive interval %s, falling back to %s",
+                    poll_interval_s,
+                    DEFAULT_GRAPHITI_BACKFLOW_POLLING_INTERVAL_SECONDS,
+                )
+                poll_interval_s = float(DEFAULT_GRAPHITI_BACKFLOW_POLLING_INTERVAL_SECONDS)
+
+            channel_c_poller_task = asyncio.create_task(
+                run_graphiti_backflow_poller(memory, poll_interval_seconds=poll_interval_s)
+            )
+            logging.info("Channel C backflow poller started (interval=%.1fs)", poll_interval_s)
+
         # Call tenant extension startup hook (e.g. JWKS fetch for Supabase)
         tenant_extension = memory.tenant_extension
         if tenant_extension:
@@ -3030,6 +3070,18 @@ def create_app(
                 except asyncio.CancelledError:
                     pass
             logging.info("Worker poller stopped")
+
+        # Shutdown channel-C backflow poller if running. The worker's
+        # cooperative ``stop_event`` would be cleaner, but the lifespan
+        # cancel path mirrors the worker poller's above — same pattern,
+        # cancel the task, await it, swallow the CancelledError.
+        if channel_c_poller_task is not None:
+            channel_c_poller_task.cancel()
+            try:
+                await channel_c_poller_task
+            except asyncio.CancelledError:
+                pass
+            logging.info("Channel C backflow poller stopped")
 
         # Call tenant extension shutdown hook
         if tenant_extension:

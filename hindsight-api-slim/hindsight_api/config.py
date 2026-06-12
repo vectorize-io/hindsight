@@ -412,6 +412,8 @@ ENV_GRAPHITI_BASE_URL = "HINDSIGHT_API_GRAPHITI_BASE_URL"
 ENV_GRAPHITI_API_KEY = "HINDSIGHT_API_GRAPHITI_API_KEY"
 ENV_GRAPHITI_BACKFLOW_ENABLED = "HINDSIGHT_API_GRAPHITI_BACKFLOW_ENABLED"
 ENV_GRAPHITI_BACKFLOW_SUPERSESSION = "HINDSIGHT_API_GRAPHITI_BACKFLOW_SUPERSESSION"
+ENV_GRAPHITI_BACKFLOW_POLLING_ENABLED = "HINDSIGHT_API_GRAPHITI_BACKFLOW_POLLING_ENABLED"
+ENV_GRAPHITI_BACKFLOW_POLLING_INTERVAL_SECONDS = "HINDSIGHT_API_GRAPHITI_BACKFLOW_POLLING_INTERVAL_SECONDS"
 
 # File storage configuration
 ENV_FILE_STORAGE_TYPE = "HINDSIGHT_API_FILE_STORAGE_TYPE"
@@ -845,6 +847,8 @@ DEFAULT_GRAPHITI_BASE_URL = ""  # Base URL for the Graphiti world-graph service.
 DEFAULT_GRAPHITI_API_KEY = ""  # Optional bearer token for the Graphiti service.
 DEFAULT_GRAPHITI_BACKFLOW_ENABLED = False  # C4 channel-B backflow (re-consolidation). Hierarchical per bank.
 DEFAULT_GRAPHITI_BACKFLOW_SUPERSESSION = False  # C4 step 4: B1 supersession ledger write. Hierarchical per bank.
+DEFAULT_GRAPHITI_BACKFLOW_POLLING_ENABLED = False  # C4 channel-C polling fallback (deep-dive 5). Off by default.
+DEFAULT_GRAPHITI_BACKFLOW_POLLING_INTERVAL_SECONDS = 60  # Channel-C poll cadence. Static (server-level) — per the deep-dive 5 §3.7 decision not to expose per-bank overrides for this knob.
 DEFAULT_RETAIN_ENTITY_LOOKUP = "trigram"  # "full" or "trigram"
 DEFAULT_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE = 100  # Unique entity names per pg_trgm candidate lookup query
 DEFAULT_RETAIN_BATCH_ENABLED = False  # Use LLM Batch API for fact extraction (only when async=True)
@@ -1648,6 +1652,15 @@ class HindsightConfig:
     # Both default false to match the pre-wiring byte-identical contract.
     graphiti_backflow_enabled: bool = False
     graphiti_backflow_supersession: bool = False
+    # C4 channel-C polling fallback (deep-dive 5 §3.7). Off by default;
+    # only enable for deployments that mix in native Graphiti
+    # add_episode writes that bypass /triplet (channel A and B together
+    # already cover the C1-mediated path with 100% coverage). Polling
+    # interval is a separate static env var
+    # (``HINDSIGHT_API_GRAPHITI_BACKFLOW_POLLING_INTERVAL_SECONDS``) read
+    # at worker startup, not a per-bank config knob — see deep-dive 5
+    # §3.7.
+    graphiti_backflow_polling_enabled: bool = False
 
     # Class-level sets for configuration categorization
 
@@ -1713,6 +1726,7 @@ class HindsightConfig:
         "graphiti_group_id",
         "graphiti_backflow_enabled",
         "graphiti_backflow_supersession",
+        "graphiti_backflow_polling_enabled",
         # Entity labels (controlled vocabulary for entity classification)
         "entity_labels",
         "entities_allow_free_form",
@@ -2393,6 +2407,10 @@ class HindsightConfig:
             == "true",
             graphiti_backflow_supersession=os.getenv(
                 ENV_GRAPHITI_BACKFLOW_SUPERSESSION, str(DEFAULT_GRAPHITI_BACKFLOW_SUPERSESSION)
+            ).lower()
+            == "true",
+            graphiti_backflow_polling_enabled=os.getenv(
+                ENV_GRAPHITI_BACKFLOW_POLLING_ENABLED, str(DEFAULT_GRAPHITI_BACKFLOW_POLLING_ENABLED)
             ).lower()
             == "true",
             # File storage
