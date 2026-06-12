@@ -1330,6 +1330,41 @@ class ListTagsResponse(BaseModel):
     offset: int
 
 
+class ObservationScopeItem(BaseModel):
+    """A single observation scope, represented by the tag list that defines it.
+
+    An empty ``tags`` list corresponds to the "global" scope — observations
+    with no tags. Otherwise the scope is the set of tags used on the
+    observation's memory.
+    """
+
+    tags: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The list of tags that define this scope. An empty list represents "
+            "the global (no-tag) scope."
+        ),
+    )
+
+
+class ListObservationScopesResponse(BaseModel):
+    """Response model for the list observation scopes endpoint."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "scopes": [
+                    {"tags": []},
+                    {"tags": ["user:alice"]},
+                    {"tags": ["user:alice", "team:engineering"]},
+                ],
+            }
+        }
+    )
+
+    scopes: list[ObservationScopeItem]
+
+
 class DocumentResponse(BaseModel):
     """Response model for get document endpoint."""
 
@@ -5456,6 +5491,52 @@ def _register_routes(app: FastAPI):
     async def api_get_bank_template_schema():
         """Return the JSON Schema for the bank template manifest."""
         return BankTemplateManifest.model_json_schema()
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/observations/scopes",
+        response_model=ListObservationScopesResponse,
+        summary="List observation scopes",
+        description=(
+            "List the distinct observation scopes for a bank. A scope is the "
+            "effective tag set of an observation memory; the empty scope is "
+            "included for observations with no tags. Use this endpoint to "
+            "populate the scope filter in the observations view of the "
+            "Control Plane UI."
+        ),
+        operation_id="list_observation_scopes",
+        tags=["Banks"],
+    )
+    async def api_list_observation_scopes(
+        bank_id: str,
+        limit: int = Query(
+            default=500,
+            description="Maximum number of distinct scopes to return (default 500).",
+        ),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """List the distinct observation scopes for a bank.
+
+        Args:
+            bank_id: Memory Bank ID (from path).
+            limit: Maximum number of distinct scopes to return.
+        """
+        try:
+            data = await app.state.memory.list_observation_scopes(
+                bank_id=bank_id,
+                limit=limit,
+                request_context=request_context,
+            )
+            return data
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in /v1/default/banks/{bank_id}/observations/scopes: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
 
     @app.delete(
         "/v1/default/banks/{bank_id}/observations",

@@ -8316,6 +8316,78 @@ class MemoryEngine(MemoryEngineInterface):
             offset=offset,
         )
 
+    async def list_observation_scopes(
+        self,
+        bank_id: str,
+        *,
+        limit: int = 500,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """List the distinct observation scopes for a bank.
+
+        An observation scope is the effective tag set used when an observation
+        memory was created. The "global" scope (observations with no tags) is
+        represented as an empty ``tags`` list.
+
+        The scopes are derived from the ``tags`` column of observation memories
+        (``fact_type = 'observation'``). This is intentionally simpler than
+        re-deriving the scope spec from ``observation_scopes`` and resolving it
+        against the memory's tags — the effective scope for a memory is the
+        memory's own tag list, so a ``SELECT DISTINCT tags`` covers all three
+        supported scope modes (``per_tag``, ``all_combinations``, ``combined``).
+
+        Args:
+            bank_id: Bank identifier.
+            limit: Cap on the number of distinct scopes returned. Defaults to 500.
+            request_context: Request context for authentication.
+
+        Returns:
+            Dict with a ``scopes`` list of ``{"tags": [...]}`` items, sorted
+            first by tag count descending and then by tag list for stability.
+        """
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankReadContext
+
+            ctx = BankReadContext(
+                bank_id=bank_id,
+                operation="list_observation_scopes",
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            # Select distinct (tags, count) pairs from observation memories.
+            # ORDER BY count DESC, tags ASC for stable, useful ordering in the UI
+            # (most-used scopes first). tags is a varchar[] so we sort by its
+            # array-to-string representation for a deterministic order.
+            rows = await conn.fetch(
+                f"""
+                SELECT tags, COUNT(*) AS count
+                FROM {fq_table("memory_units")}
+                WHERE bank_id = $1
+                  AND fact_type = 'observation'
+                GROUP BY tags
+                ORDER BY count DESC, ARRAY_TO_STRING(tags, chr(1)) ASC
+                LIMIT $2
+                """,
+                bank_id,
+                limit,
+            )
+
+        scopes = []
+        for row in rows:
+            tags_value = row["tags"]
+            if isinstance(tags_value, str):
+                # asyncpg may serialise the array as a string in some configurations
+                import json
+
+                tags_value = json.loads(tags_value) if tags_value else []
+            scopes.append({"tags": list(tags_value or [])})
+
+        return {"scopes": scopes}
+
     async def _list_tags_from_table(
         self,
         *,
