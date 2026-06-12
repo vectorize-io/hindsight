@@ -361,6 +361,7 @@ from .response_models import (
 )
 from .response_models import RecallResult as RecallResultModel
 from .retain import bank_utils, embedding_utils
+from .retain.embedding_processing import build_mental_model_embedding_text, format_readable_date
 from .retain.types import RetainContentDict
 from .search.reranking import CrossEncoderReranker, apply_combined_scoring
 from .search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause
@@ -2951,14 +2952,7 @@ class MemoryEngine(MemoryEngineInterface):
         Returns:
             Readable date string
         """
-        # Format as "Month Year" for most cases
-        # Could be extended to include day for very specific dates if needed
-        month_name = dt.strftime("%B")  # Full month name (e.g., "June")
-        year = dt.strftime("%Y")  # Year (e.g., "2024")
-
-        # For now, use "Month Year" format
-        # Could check if day is significant (not 1st or 15th) and include it
-        return f"{month_name} {year}"
+        return format_readable_date(dt)
 
     def retain(
         self,
@@ -9729,7 +9723,7 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
 
         # Generate embedding for the content
-        embedding_text = f"{name} {content}"
+        embedding_text = build_mental_model_embedding_text(name, content)
         embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [embedding_text])
         # Convert embedding to string for asyncpg vector type
         embedding_str = str(embedding[0]) if embedding else None
@@ -10255,7 +10249,7 @@ class MemoryEngine(MemoryEngineInterface):
                             slim_reflect_response = {"based_on": based_on}
                     record_mm_history = True
                 # Also update embedding (convert to string for asyncpg vector type)
-                embedding_text = f"{name or ''} {content}"
+                embedding_text = build_mental_model_embedding_text(name, content)
                 embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [embedding_text])
                 if embedding:
                     updates.append(f"embedding = ${param_idx}")

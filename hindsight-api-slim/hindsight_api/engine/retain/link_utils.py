@@ -19,6 +19,13 @@ _NIL_ENTITY_UUID = "00000000-0000-0000-0000-000000000000"
 # more is wasted storage and write amplification.
 MAX_TEMPORAL_LINKS_PER_UNIT = 20
 
+# Semantic link policy. The helper default is used by non-streaming callers
+# and graph maintenance top-up. Streaming retain uses a lower cap because
+# recall reads at most 20 neighbors, and reembed follows that write path.
+SEMANTIC_LINK_DEFAULT_TOP_K = 50
+STREAMING_SEMANTIC_LINK_TOP_K = 20
+SEMANTIC_LINK_THRESHOLD = 0.7
+
 
 def _cap_links_per_unit(links: list[tuple], max_per_unit: int = MAX_TEMPORAL_LINKS_PER_UNIT) -> list[tuple]:
     """Keep only the top-N links per from_unit_id, ranked by weight descending.
@@ -511,8 +518,8 @@ async def compute_semantic_links_ann(
     unit_ids: list[str],
     embeddings: list[list[float]],
     fact_types: list[str] | None = None,
-    top_k: int = 50,
-    threshold: float = 0.7,
+    top_k: int = SEMANTIC_LINK_DEFAULT_TOP_K,
+    threshold: float = SEMANTIC_LINK_THRESHOLD,
     log_buffer: list[str] = None,
 ) -> list[tuple]:
     """
@@ -652,8 +659,8 @@ async def compute_semantic_links_ann(
 def compute_semantic_links_within_batch(
     unit_ids: list[str],
     embeddings: list[list[float]],
-    top_k: int = 50,
-    threshold: float = 0.7,
+    top_k: int = SEMANTIC_LINK_DEFAULT_TOP_K,
+    threshold: float = SEMANTIC_LINK_THRESHOLD,
 ) -> list[tuple]:
     """
     Compute semantic links between units within the same batch (no DB needed).
@@ -702,8 +709,8 @@ async def create_semantic_links_batch(
     bank_id: str,
     unit_ids: list[str],
     embeddings: list[list[float]],
-    top_k: int = 50,
-    threshold: float = 0.7,
+    top_k: int = SEMANTIC_LINK_DEFAULT_TOP_K,
+    threshold: float = SEMANTIC_LINK_THRESHOLD,
     log_buffer: list[str] = None,
     pre_computed_ann_links: list[tuple] | None = None,
     ops=None,

@@ -43,6 +43,7 @@ from ..models import RequestContext
 from .db.base import DatabaseConnection
 from .retain.link_utils import (
     MAX_TEMPORAL_LINKS_PER_UNIT,
+    SEMANTIC_LINK_DEFAULT_TOP_K,
     _bulk_insert_links,
     _normalize_datetime,
     compute_semantic_links_ann,
@@ -58,7 +59,7 @@ logger = logging.getLogger(__name__)
 # time. If you change one, change the other — otherwise victims would either
 # never reach the cap (probe returns less than the cap) or stay perpetually
 # under it (cap is higher than retain creates).
-MAX_SEMANTIC_LINKS_PER_UNIT = 50
+MAX_SEMANTIC_LINKS_PER_UNIT = SEMANTIC_LINK_DEFAULT_TOP_K
 
 # Worker fetches this many rows per relink-loop iteration. Bounds
 # per-iteration probe/insert latency so a 10k-row backlog doesn't hold a

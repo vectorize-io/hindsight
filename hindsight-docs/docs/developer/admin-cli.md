@@ -66,6 +66,108 @@ To disable automatic migrations on API startup, set `HINDSIGHT_API_RUN_MIGRATION
 
 ---
 
+### reembed
+
+Recompute stored embeddings offline after changing the embedding provider, model, dimensions, or vector extension. The command writes new vectors into shadow columns, rebuilds shadow vector indexes and semantic links, then cuts over in a transaction. Stop API traffic and workers before running it so no reads or writes race the migration.
+
+```bash
+hindsight-admin reembed [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--schema`, `-s` | Database schema to reembed. Can be supplied multiple times. Required unless `--all-schemas` is used. | Required |
+| `--all-schemas` | Discover and reembed all Hindsight schemas in the current PostgreSQL database. Mutually exclusive with `--schema`. | `false` |
+| `--batch-size` | Rows to send to the embedding provider per batch. Must be at least `1`. | `100` |
+| `--max-retries` | Embedding batch retry count. Must be at least `0`. | `3` |
+| `--index-max-parallel-maintenance-workers` | Temporarily override PostgreSQL `max_parallel_maintenance_workers` while building shadow vector indexes. If omitted, reembed leaves the PostgreSQL setting unchanged. Use `0` to force serial index builds on containers with small `/dev/shm`. | PostgreSQL default |
+| `--dry-run` | Report planned work without modifying the database. | `false` |
+| `--yes`, `-y` | Skip confirmation prompt. | `false` |
+
+**Examples:**
+
+For a single-tenant deployment, use the configured Hindsight database schema. This is `public` unless you set `HINDSIGHT_API_DATABASE_SCHEMA` to another schema name.
+
+```bash
+# Reembed the default single-tenant schema
+hindsight-admin reembed --schema public --yes
+
+# Reembed a custom single-tenant schema
+hindsight-admin reembed --schema hindsight --yes
+
+# Reembed one explicit tenant schema
+hindsight-admin reembed --schema tenant_acme --yes
+
+# Reembed multiple explicit schemas
+hindsight-admin reembed --schema public --schema tenant_acme --yes
+
+# Reembed all catalog-discovered Hindsight schemas
+hindsight-admin reembed --all-schemas --yes
+
+# Preview the work without changing the database
+hindsight-admin reembed --schema tenant_acme --dry-run
+
+# Avoid parallel index-build shared-memory pressure in constrained containers
+hindsight-admin reembed --schema public --index-max-parallel-maintenance-workers 0 --yes
+```
+
+:::warning Stop traffic first
+`reembed` is an offline operation. Stop the API/worker container or otherwise block retain, recall, reflect, consolidation, and backup/restore operations for the target schema before running it. For Docker Compose deployments, set the new embedding configuration on the service, stop it, run a one-off `hindsight-admin reembed ...` command in the same image/environment, then start the service again.
+:::
+
+`reembed` does not rerun LLM extraction. It rebuilds embedding input from stored rows using the same runtime text builders as new writes: retained facts use stored text plus retained date/entity context, consolidation observations keep bare observation text, and mental models use the current `name + " " + content` row representation.
+
+---
+
+### reembed-status
+
+Show recent embedding migration rows and any active shadow state for a schema.
+
+```bash
+hindsight-admin reembed-status [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--schema`, `-s` | Database schema to inspect. | Required |
+
+**Example:**
+
+```bash
+hindsight-admin reembed-status --schema tenant_acme
+```
+
+---
+
+### reembed-abandon
+
+Abandon a failed or unwanted reembed migration and remove shadow columns, shadow indexes, and staged semantic links. Use `--orphan-shadow-state` when a prior crash left shadow state without an active migration row.
+
+```bash
+hindsight-admin reembed-abandon [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--schema`, `-s` | Database schema whose active reembed should be abandoned. | Required |
+| `--orphan-shadow-state` | Remove orphan shadow state even without an active migration row | `false` |
+| `--yes`, `-y` | Skip confirmation prompt | `false` |
+
+**Examples:**
+
+```bash
+hindsight-admin reembed-abandon --schema tenant_acme --yes
+hindsight-admin reembed-abandon --schema tenant_acme --orphan-shadow-state --yes
+```
+
+---
+
 ### backup
 
 Create a backup of all Hindsight data to a zip file.
@@ -110,6 +212,10 @@ The backup includes:
 Backups are created within a database transaction with `REPEATABLE READ` isolation, ensuring a consistent snapshot across all tables.
 :::
 
+:::warning Reembed state
+Backup refuses to run while an active reembed migration, shadow column/index, or staged semantic link state exists in the target schema. Complete or abandon the reembed before backing up.
+:::
+
 ---
 
 ### restore
@@ -148,6 +254,10 @@ hindsight-admin restore /backups/tenant-acme.zip --schema tenant_acme --yes
 
 :::warning Data Loss
 Restore will **delete all existing data** in the target schema before importing the backup. Always verify you have a recent backup before performing a restore.
+:::
+
+:::warning Reembed state
+Restore refuses to run while an active reembed migration, shadow column/index, or staged semantic link state exists in the target schema. Complete or abandon the reembed before restoring.
 :::
 
 ---
