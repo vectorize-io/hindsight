@@ -235,7 +235,14 @@ async def main() -> None:
     results: list[TaskResult] = []
     for arm in arms:
         print(f"\n=== arm: {arm.name} ===")
-        results.extend(await _run_arm(arm, items, all_tasks, evaluator, answer_llm))
+        try:
+            results.extend(await _run_arm(arm, items, all_tasks, evaluator, answer_llm))
+        except Exception:
+            # One arm's failure must not discard the others' finished results.
+            import traceback
+
+            traceback.print_exc()
+            print(f"  [{arm.name}] ARM FAILED — continuing with remaining arms")
 
     if memory is not None:
         await memory.close()
