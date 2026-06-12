@@ -117,6 +117,12 @@ class ExtractedFact:
     where: str | None = None  # WHERE the fact occurred or is about
     causal_relations: list[CausalRelation] = field(default_factory=list)
 
+    # C2 wiring: entity-to-entity relations for Graphiti federation. Carried
+    # raw (post-validate_relations dicts) so the internal pipeline doesn't
+    # depend on the LLM-side Pydantic models. Read by the graphiti_outbox
+    # forwarder; None / [] for non-federated banks or facts with no relations.
+    relations: list[dict] | None = None
+
     # Context from the content item
     content_index: int = 0  # Which content this fact came from
     chunk_index: int = 0  # Which chunk this fact came from
@@ -159,6 +165,10 @@ class ProcessedFact:
 
     # Causal relations
     causal_relations: list[CausalRelation] = field(default_factory=list)
+
+    # C2 wiring: carried through from ExtractedFact. Read by the
+    # graphiti_outbox forwarder; None / [] for non-federated banks.
+    relations: list[dict] | None = None
 
     # Chunk reference
     chunk_id: str | None = None

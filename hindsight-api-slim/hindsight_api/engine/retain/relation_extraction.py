@@ -146,27 +146,66 @@ def validate_relations(fact: ExtractedFactUnified) -> list[ExtractedRelation]:
     * endpoints differ (no self-relations),
     * the predicate normalizes to SCREAMING_SNAKE_CASE.
 
-    Returns relations with their predicate normalized in place.
+    Returns ``ExtractedRelation`` instances with the predicate normalized in
+    place. For the dict-based internal pipeline (see ``_validate_relations_from_dict``),
+    the same validation runs and returns plain dicts so callers can attach
+    them to ``Fact``/``ExtractedFact`` carriers without re-importing the
+    LLM-side Pydantic models.
     """
-    if not fact.relations:
-        return []
+    valid_dicts = _validate_relations_from_dict(
+        {
+            "entities": [{"text": e.text} if hasattr(e, "text") else e for e in (fact.entities or [])],
+            "relations": [rel.model_dump() if hasattr(rel, "model_dump") else rel for rel in (fact.relations or [])],
+        }
+    )
+    return [ExtractedRelation.model_validate(d) for d in valid_dicts]
 
-    entity_count = len(fact.entities or [])
-    valid: list[ExtractedRelation] = []
-    for rel in fact.relations:
-        if not (0 <= rel.source_entity_index < entity_count) or not (0 <= rel.target_entity_index < entity_count):
+
+def _validate_relations_from_dict(fact: dict) -> list[dict]:
+    """Dict-in / dict-out variant for the internal pipeline path.
+
+    Avoids the import cycle (``fact_extraction`` already imports
+    ``relation_extraction``) by not pulling ``ExtractedFactUnified`` /
+    ``ExtractedRelation`` into the calling site. Predicate normalization and
+    bounds/self/predicate checks are identical to :func:`validate_relations`.
+    """
+    relations = fact.get("relations") or []
+    entities = fact.get("entities") or []
+    entity_count = len(entities)
+
+    valid: list[dict] = []
+    for rel in relations:
+        if not isinstance(rel, dict):
+            continue
+        src = rel.get("source_entity_index")
+        tgt = rel.get("target_entity_index")
+        predicate_raw = rel.get("predicate")
+        if not isinstance(src, int) or not isinstance(tgt, int):
+            logger.warning(f"Dropping relation with non-integer endpoints (src={src!r}, tgt={tgt!r})")
+            continue
+        if not (0 <= src < entity_count) or not (0 <= tgt < entity_count):
             logger.warning(
-                "Dropping relation with out-of-range entity index "
-                f"({rel.source_entity_index} -> {rel.target_entity_index}, "
-                f"entity_count={entity_count}, predicate={rel.predicate!r})"
+                f"Dropping relation with out-of-range entity index ({src} -> {tgt}, "
+                f"entity_count={entity_count}, predicate={predicate_raw!r})"
             )
             continue
-        if rel.source_entity_index == rel.target_entity_index:
-            logger.warning(f"Dropping self-relation (index {rel.source_entity_index}, predicate={rel.predicate!r})")
+        if src == tgt:
+            logger.warning(f"Dropping self-relation (index {src}, predicate={predicate_raw!r})")
             continue
-        predicate = normalize_predicate(rel.predicate)
+        if not isinstance(predicate_raw, str):
+            logger.warning(f"Dropping relation with non-string predicate {predicate_raw!r}")
+            continue
+        predicate = normalize_predicate(predicate_raw)
         if not _PREDICATE_RE.match(predicate):
-            logger.warning(f"Dropping relation with invalid predicate {rel.predicate!r}")
+            logger.warning(f"Dropping relation with invalid predicate {predicate_raw!r}")
             continue
-        valid.append(rel.model_copy(update={"predicate": predicate}))
+        valid.append(
+            {
+                "source_entity_index": src,
+                "target_entity_index": tgt,
+                "predicate": predicate,
+                "rel_valid_at": rel.get("rel_valid_at"),
+                "rel_invalid_at": rel.get("rel_invalid_at"),
+            }
+        )
     return valid

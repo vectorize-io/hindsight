@@ -407,6 +407,7 @@ ENV_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE = "HINDSIGHT_API_RETAIN_ENTITY_RESOLUTIO
 ENV_RETAIN_BATCH_ENABLED = "HINDSIGHT_API_RETAIN_BATCH_ENABLED"
 ENV_RETAIN_BATCH_POLL_INTERVAL_SECONDS = "HINDSIGHT_API_RETAIN_BATCH_POLL_INTERVAL_SECONDS"
 ENV_RETAIN_CHUNK_BATCH_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_BATCH_SIZE"
+ENV_GRAPHITI_GROUP_ID = "HINDSIGHT_API_GRAPHITI_GROUP_ID"
 
 # File storage configuration
 ENV_FILE_STORAGE_TYPE = "HINDSIGHT_API_FILE_STORAGE_TYPE"
@@ -835,6 +836,7 @@ DEFAULT_RETAIN_CHUNK_BATCH_SIZE = (
     100  # Max chunks per streaming batch. Each chunk produces ~17 facts, so 100 chunks = ~1700 facts/batch.
 )
 DEFAULT_RETAIN_BATCH_TOKENS = 10_000  # ~40KB of text  # Max chars per sub-batch for async retain auto-splitting
+DEFAULT_GRAPHITI_GROUP_ID = ""  # Bank participates in Graphiti federation when non-empty (C-track gate)
 DEFAULT_RETAIN_ENTITY_LOOKUP = "trigram"  # "full" or "trigram"
 DEFAULT_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE = 100  # Unique entity names per pg_trgm candidate lookup query
 DEFAULT_RETAIN_BATCH_ENABLED = False  # Use LLM Batch API for fact extraction (only when async=True)
@@ -1618,6 +1620,12 @@ class HindsightConfig:
     embeddings_zeroentropy_batch_size: int = DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE
     embeddings_zeroentropy_latency: str | None = DEFAULT_EMBEDDINGS_ZEROENTROPY_LATENCY
 
+    # C2 wiring: when set, the retain extraction path emits per-fact entity
+    # relations (validated via _validate_relations_from_dict) and the bank is
+    # eligible for Graphiti federation. Empty string = no federation, prompt
+    # and response schema stay byte-identical to the pre-wiring versions.
+    graphiti_group_id: str = ""
+
     # Class-level sets for configuration categorization
 
     # CREDENTIAL_FIELDS: Never exposed via API, never configurable per-tenant/bank
@@ -1675,6 +1683,7 @@ class HindsightConfig:
         "retain_default_strategy",
         "retain_strategies",
         "retain_chunk_batch_size",
+        "graphiti_group_id",
         # Entity labels (controlled vocabulary for entity classification)
         "entity_labels",
         "entities_allow_free_form",
@@ -2346,6 +2355,7 @@ class HindsightConfig:
                 os.getenv(ENV_RETAIN_BATCH_POLL_INTERVAL_SECONDS, str(DEFAULT_RETAIN_BATCH_POLL_INTERVAL_SECONDS))
             ),
             retain_chunk_batch_size=int(os.getenv(ENV_RETAIN_CHUNK_BATCH_SIZE, str(DEFAULT_RETAIN_CHUNK_BATCH_SIZE))),
+            graphiti_group_id=os.getenv(ENV_GRAPHITI_GROUP_ID, DEFAULT_GRAPHITI_GROUP_ID) or DEFAULT_GRAPHITI_GROUP_ID,
             # File storage
             file_storage_type=os.getenv(ENV_FILE_STORAGE_TYPE, DEFAULT_FILE_STORAGE_TYPE),
             file_storage_s3_bucket=os.getenv(ENV_FILE_STORAGE_S3_BUCKET) or None,

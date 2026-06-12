@@ -147,6 +147,13 @@ class Fact(BaseModel):
     entities: list[Entity] | None = None
     causal_relations: list["CausalRelation"] | None = None
 
+    # C2 wiring: entity-to-entity relations for Graphiti federation. Populated
+    # by the unified extraction path when the bank has a graphiti_group_id set;
+    # remains None otherwise. Carried as raw dicts (post-validate_relations
+    # output) so the internal pipeline doesn't need to import the LLM-side
+    # Pydantic models. Read by the graphiti_outbox forwarder.
+    relations: list[dict[str, Any]] | None = None
+
 
 class CausalRelation(BaseModel):
     """Causal relationship from this fact to a previous fact (stored format)."""
@@ -660,7 +667,7 @@ ENTITIES
 ══════════════════════════════════════════════════════════════════════════
 
 Include: people names, organizations, places, key objects, abstract concepts (career, friendship, etc.)
-Always include "user" when fact is about the user.{examples}"""
+Always include "user" when fact is about the user.{examples}{relations_section}"""
 
 # Concise mode guidelines
 _CONCISE_GUIDELINES = """══════════════════════════════════════════════════════════════════════════
@@ -722,6 +729,7 @@ CONCISE_FACT_EXTRACTION_PROMPT = _BASE_FACT_EXTRACTION_PROMPT.format(
     retain_mission_section="{retain_mission_section}",
     extraction_guidelines=_CONCISE_GUIDELINES,
     examples=_CONCISE_EXAMPLES,
+    relations_section="{relations_section}",
 )
 
 # Custom prompt uses same base but without examples
@@ -729,6 +737,7 @@ CUSTOM_FACT_EXTRACTION_PROMPT = _BASE_FACT_EXTRACTION_PROMPT.format(
     retain_mission_section="{retain_mission_section}",
     extraction_guidelines="{custom_instructions}",
     examples="",  # No examples for custom mode
+    relations_section="{relations_section}",
 )
 
 # Verbatim mode: preserve the original text exactly, but still extract metadata
@@ -746,10 +755,13 @@ RULES:
 - Extract location (where) and people (who).
 - fact_type: use "world" unless the content is clearly an interaction with the assistant."""
 
+# Verbatim mode never emits relations (no fact text to relate entities within),
+# so we pass an empty placeholder and the C2 wiring is bypassed.
 VERBATIM_FACT_EXTRACTION_PROMPT = _BASE_FACT_EXTRACTION_PROMPT.format(
     retain_mission_section="{retain_mission_section}",
     extraction_guidelines=_VERBATIM_GUIDELINES,
     examples="",
+    relations_section="",
 )
 
 
@@ -862,7 +874,7 @@ Extract ALL of the following from the fact:
 - Abstract concepts/themes (friendship, career growth, loss, celebration)
 
 ALWAYS include "user" when fact is about the user.
-Extract anything that could help link related facts together."""
+Extract anything that could help link related facts together.{relations_section}"""
 
 
 # Causal relationships section - appended when causal extraction is enabled
@@ -1003,22 +1015,36 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
 
     retain_mission_section = ""
 
+    # C2 wiring: when the bank participates in federation (graphiti_group_id
+    # set), the prompt gets the relations section. Default — no group_id —
+    # leaves the prompt byte-identical to the pre-wiring version. Verbatim mode
+    # bypasses the unified path (no fact text to relate entities within), the
+    # schema switch happens in the response_schema selection below.
+    from .relation_extraction import RELATIONS_PROMPT_SECTION
+
+    graphiti_group_id = getattr(config, "graphiti_group_id", "") or ""
+    use_unified = bool(graphiti_group_id) and extraction_mode != "verbatim"
+    relations_section = RELATIONS_PROMPT_SECTION if use_unified else ""
+
     # Select base prompt based on extraction mode
     if extraction_mode == "custom":
         if not config.retain_custom_instructions:
             base_prompt = CONCISE_FACT_EXTRACTION_PROMPT
             prompt = base_prompt.format(
                 retain_mission_section=retain_mission_section,
+                relations_section=relations_section,
             )
         else:
             base_prompt = CUSTOM_FACT_EXTRACTION_PROMPT
             prompt = base_prompt.format(
                 retain_mission_section=retain_mission_section,
                 custom_instructions=escape_for_prompt(config.retain_custom_instructions),
+                relations_section=relations_section,
             )
     elif extraction_mode == "verbose":
         prompt = VERBOSE_FACT_EXTRACTION_PROMPT.format(
             retain_mission_section=retain_mission_section,
+            relations_section=relations_section,
         )
     elif extraction_mode == "verbatim":
         prompt = VERBATIM_FACT_EXTRACTION_PROMPT.format(
@@ -1028,6 +1054,7 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
         base_prompt = CONCISE_FACT_EXTRACTION_PROMPT
         prompt = base_prompt.format(
             retain_mission_section=retain_mission_section,
+            relations_section=relations_section,
         )
 
     # Add causal relationships section if enabled
@@ -1037,8 +1064,27 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
         base_response_class = VerbatimFactExtractionResponse
     elif extract_causal_links:
         prompt = prompt + CAUSAL_RELATIONSHIPS_SECTION
-        base_fact_class = ExtractedFactVerbose if extraction_mode == "verbose" else ExtractedFact
-        base_response_class = FactExtractionResponseVerbose if extraction_mode == "verbose" else FactExtractionResponse
+        if use_unified:
+            # C2 wiring: replace ExtractedFact with the unified variant that
+            # also carries relations. ExtractedFactVerbose doesn't have a
+            # unified sibling yet, so verbose mode keeps the standard schema
+            # (still emits relations_section in the prompt — relations land in
+            # an `extra` field the LLM can't actually populate under the strict
+            # schema, so verbose+unified is a known follow-up).
+            from .relation_extraction import ExtractedFactUnified, FactExtractionResponseUnified
+
+            base_fact_class = ExtractedFactUnified
+            base_response_class = FactExtractionResponseUnified
+        else:
+            base_fact_class = ExtractedFactVerbose if extraction_mode == "verbose" else ExtractedFact
+            base_response_class = (
+                FactExtractionResponseVerbose if extraction_mode == "verbose" else FactExtractionResponse
+            )
+    elif use_unified:
+        from .relation_extraction import ExtractedFactUnified, FactExtractionResponseUnified
+
+        base_fact_class = ExtractedFactUnified
+        base_response_class = FactExtractionResponseUnified
     else:
         base_fact_class = ExtractedFactNoCausal
         base_response_class = FactExtractionResponseNoCausal
@@ -1526,6 +1572,24 @@ async def _extract_facts_from_chunk(
 
                     if validated_relations:
                         fact_data["causal_relations"] = validated_relations
+
+                # C2 wiring: when the bank has a graphiti_group_id, validate and
+                # attach the per-fact entity relations emitted by the unified
+                # response schema. _validate_relations_from_dict uses defensive
+                # parsing (out-of-range endpoints, self-loops, bad predicates
+                # all dropped with a warning — the fact itself never rejected).
+                # The validated dicts ride on Fact.relations and are copied onto
+                # ExtractedFact.relations by the caller for the outbox forwarder.
+                if bool(getattr(config, "graphiti_group_id", "")) and extraction_mode != "verbatim":
+                    from .relation_extraction import _validate_relations_from_dict
+
+                    raw_relations = llm_fact.get("relations")
+                    if raw_relations:
+                        relations_view = {
+                            "entities": [{"text": e.text} if hasattr(e, "text") else e for e in validated_entities],
+                            "relations": raw_relations if isinstance(raw_relations, list) else [],
+                        }
+                        fact_data["relations"] = _validate_relations_from_dict(relations_view)
 
                 # Set mentioned_at to the event_date (when the conversation/document occurred),
                 # or None when the caller opted into no timestamp.
@@ -2503,6 +2567,9 @@ async def extract_facts_from_contents(
                         causal_relations=_convert_causal_relations(
                             fact_from_llm.causal_relations or [], global_fact_idx
                         ),
+                        # C2 wiring: per-fact entity relations (validated dicts
+                        # from Fact.relations); None for non-federated banks.
+                        relations=getattr(fact_from_llm, "relations", None),
                         content_index=content_index,
                         chunk_index=chunk_global_idx,
                         context=content.context,
