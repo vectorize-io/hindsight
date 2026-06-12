@@ -1492,11 +1492,7 @@ async def _process_memory_batch(
     if max_obs >= 0 and fact_tags:
         # max_obs == 0 means "no new observations": there are no slots regardless
         # of the current count, so skip the count query for that case.
-        current_count = (
-            await _count_observations_for_scope(conn, bank_id, fact_tags)
-            if max_obs > 0
-            else 0
-        )
+        current_count = await _count_observations_for_scope(conn, bank_id, fact_tags) if max_obs > 0 else 0
         remaining_observation_slots = max(max_obs - current_count, 0)
         if remaining_observation_slots == 0:
             logger.info(

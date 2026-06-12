@@ -222,6 +222,23 @@ async def test_configured_provider_binds_bank_context(registered_recorder):
     assert current_trace_context() is None  # unwound after the call
 
 
+@pytest.mark.asyncio
+async def test_configured_provider_with_config_rebinds_bank_and_operation(registered_recorder):
+    """Consolidation re-binds per-bank config from an already-configured wrapper."""
+    llm = LLMProvider(provider="mock", api_key="", base_url="", model="mock")
+
+    class _Cfg:
+        llm_gemini_safety_settings = None
+
+    first = llm.with_config(_Cfg(), bank_id="bank-a", operation="consolidation")
+    rebound = first.with_config(_Cfg(), bank_id="bank-b", operation="consolidation_dedup")
+    await rebound.call(messages=[{"role": "user", "content": "x"}], scope="memory")
+
+    assert len(registered_recorder.records) == 1
+    assert registered_recorder.records[0].bank_id == "bank-b"
+    assert registered_recorder.records[0].operation == "consolidation_dedup"
+
+
 # ── HTTP read API (integration) ───────────────────────────────────────────────
 
 
