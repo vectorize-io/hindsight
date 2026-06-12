@@ -1,13 +1,22 @@
-"""D-experiment orchestrator: three arms × three task categories.
+"""D-experiment orchestrator: four arms × three task categories.
 
 Usage (from hindsight-dev/):
     uv run python -m benchmarks.dual_memory.run_dual_memory \\
-        --arms hindsight,graphiti,dual --conversations 3 --per-category 15
+        --arms hindsight,federation,graphiti,dual --conversations 3 --per-category 15
 
 Outputs per-(arm, category) accuracy plus the pre-registered decision rules
 from HINDSIGHT_GRAPHITI_EVAL_4WAY.md §3/§5:
-  * shared gain  = dual − hindsight on blind+spanning  (≥ +10pp → C track)
-  * private regression = hindsight − dual on private   (> 5pp → routing rework)
+  * shared gain  = dual − hindsight on blind+spanning   (≥ +10pp → C track)
+  * private regression = hindsight − dual on private    (> 5pp → routing rework)
+  * federation net gain = federation − hindsight on blind+spanning  (≥ +5pp)
+  * federation private parity = hindsight − federation on private   (> 2pp)
+
+The federation arm is the actual C-track deployment: same private banks
+as the hindsight arm, plus the C3 ``search_world_graph`` tool mounted
+as a private-empty fallback. The four-arm comparison isolates the
+*policy* effect (always-on world graph in dual vs private-empty
+fallback in federation) from the *raw world-graph quality* effect
+(dual's ``world_graph`` block vs graphiti arm's accuracy on blind).
 
 ``--mock`` runs the Hindsight arm with the mock LLM and skips answering and
 judging — a plumbing smoke test that needs no API key.
@@ -25,7 +34,7 @@ from pathlib import Path
 from benchmarks.common.benchmark_runner import LLMAnswerEvaluator, create_memory_engine
 from benchmarks.locomo.locomo_benchmark import LoComoDataset
 
-from .arms import DualArm, GraphitiArm, HindsightArm, MemoryArm
+from .arms import DualArm, FederationArm, GraphitiArm, HindsightArm, MemoryArm
 from .taskset import Task, build_tasks, cap_per_category, split_sessions
 
 _DATASET_PATH = Path(__file__).parent.parent / "locomo" / "datasets" / "locomo10.json"
@@ -144,6 +153,7 @@ def _pooled(report: ArmReport, categories: tuple[str, ...]) -> float | None:
 def _decision_rules(reports: dict[str, ArmReport]) -> list[str]:
     lines: list[str] = []
     hindsight, dual = reports.get("hindsight"), reports.get("dual")
+    federation = reports.get("federation")
     if hindsight and dual:
         shared_h = _pooled(hindsight, ("blind", "spanning"))
         shared_d = _pooled(dual, ("blind", "spanning"))
@@ -157,8 +167,26 @@ def _decision_rules(reports: dict[str, ArmReport]) -> list[str]:
             regression = (private_h - private_d) * 100
             verdict = "tool routing needs rework" if regression > 5 else "within tolerance"
             lines.append(f"private regression (hindsight − dual on private): {regression:+.1f}pp — {verdict}")
+    if hindsight and federation:
+        # C-track net gain: how much of dual's "shared gain" survives
+        # the on-by-default policy that gates the world-graph tool
+        # behind a private-empty condition.
+        shared_h = _pooled(hindsight, ("blind", "spanning"))
+        shared_f = _pooled(federation, ("blind", "spanning"))
+        if shared_h is not None and shared_f is not None:
+            gain = (shared_f - shared_h) * 100
+            verdict = "C-track NET gain confirmed" if gain >= 5 else "below the +5pp bar"
+            lines.append(f"federation net gain (federation − hindsight on blind+spanning): {gain:+.1f}pp — {verdict}")
+        private_h = _pooled(hindsight, ("private",))
+        private_f = _pooled(federation, ("private",))
+        if private_h is not None and private_f is not None:
+            regression = (private_h - private_f) * 100
+            verdict = "fallback is leaking into private" if regression > 2 else "fallback inert on private"
+            lines.append(
+                f"federation private parity (hindsight − federation on private): {regression:+.1f}pp — {verdict}"
+            )
     if not lines:
-        lines.append("decision rules need both 'hindsight' and 'dual' arms")
+        lines.append("decision rules need both 'hindsight' and ('dual' or 'federation') arms")
     return lines
 
 
@@ -188,7 +216,7 @@ def _markdown(reports: dict[str, ArmReport], rules: list[str], meta: dict) -> st
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--arms", default="hindsight,graphiti,dual")
+    parser.add_argument("--arms", default="hindsight,federation,graphiti,dual")
     parser.add_argument("--conversations", type=int, default=2)
     parser.add_argument("--per-category", type=int, default=10, help="task cap per category per conversation")
     parser.add_argument("--mock", action="store_true", help="mock-LLM plumbing smoke test (hindsight arm only)")
@@ -214,13 +242,18 @@ async def main() -> None:
         os.environ.setdefault("HINDSIGHT_API_LLM_MODEL", "mock")
         arm_names = ["hindsight"]
 
-    memory = await create_memory_engine() if {"hindsight", "dual"} & set(arm_names) else None
+    memory = await create_memory_engine() if {"hindsight", "federation", "dual"} & set(arm_names) else None
     hindsight_arm = HindsightArm(memory, run_id) if memory else None
     graphiti_arm = GraphitiArm(run_id) if {"graphiti", "dual"} & set(arm_names) else None
     arms: list[MemoryArm] = []
     for name in arm_names:
         if name == "hindsight":
             arms.append(hindsight_arm)
+        elif name == "federation":
+            # Federation arm reuses the hindsight arm's banks; the
+            # orchestrator gives it its own slot so the per-arm
+            # accuracy row in the report is independent.
+            arms.append(FederationArm(hindsight_arm, memory, run_id))
         elif name == "graphiti":
             arms.append(graphiti_arm)
         elif name == "dual":

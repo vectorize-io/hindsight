@@ -251,6 +251,116 @@ class DualArm(MemoryArm):
         return json.dumps({**private, **world}, ensure_ascii=False)
 
 
+class FederationArm(MemoryArm):
+    """Hindsight arm with the C-track world-graph tool mounted as a recall fallback.
+
+    The 4th arm of the D experiment. Same private banks as ``HindsightArm``
+    (so the only delta vs the Hindsight arm is the recall path), plus the
+    C3 ``search_world_graph`` tool consulted only when private recall
+    returns nothing. This is the actual Hindsight-C-track deployment shape;
+    the D experiment measures whether that fallback moves the needle vs
+    the no-fallback baseline (HindsightArm) and vs the no-tool context
+    dump (DualArm).
+
+    Fallback policy: any private result wins — the world graph is a
+    safety net, not a co-equal source. This matches the production C-track
+    default (search_world_graph is only useful when private recall is
+    empty; if private recall has hits, the agent should not re-route to
+    the shared graph). See deep-dive 3 §1.4 and the reflect tool's own
+    contract — the LLM is asked to cite world-graph facts only when the
+    tool was called, and the tool is only called by the reflect loop on
+    a private-empty path. This arm makes that policy mechanical so the
+    benchmark numbers are not contaminated by LLM routing variance.
+
+    Ingest contract: identical to ``HindsightArm`` (deliberately). Sharing
+    the same MemoryEngine instance and the same run_id means the
+    Federation arm reuses the hindsight arm's banks and so does not
+    re-ingest; the orchestrator calls ``_hindsight.ingest`` for it. The
+    two arms are kept distinct only because the question is whether
+    *recalling* through the world-graph fallback changes answers.
+    """
+
+    name = "federation"
+
+    def __init__(self, hindsight: HindsightArm, memory: "MemoryEngine", run_id: str):
+        self._hindsight = hindsight
+        self._memory = memory
+        self._run_id = run_id
+
+    def group_id(self, conv_id: str) -> str:
+        # Same convention as GraphitiArm: one world-graph group per
+        # conversation, shared by both agents. Federation and the
+        # standalone GraphitiArm ingest the same episodes into the same
+        # group, so the D experiment's ``graphiti`` and ``federation``
+        # arms read from an identical shared graph.
+        return f"dm-{self._run_id}-{conv_id}"
+
+    async def setup(self) -> None:
+        # Nothing to spin up — the C3 tool builds its own client per
+        # call (see tool_search_world_graph's own docstring on why
+        # caching is intentionally avoided). The MemoryEngine is
+        # already running.
+        return
+
+    async def ingest(self, item: dict[str, Any], split: SessionSplit) -> None:
+        # Delegated to the hindsight arm. Sharing the MemoryEngine
+        # instance + run_id means the per-agent banks already exist
+        # after the Hindsight arm's ingest call; re-running it is a
+        # no-op (the engine deduplicates) but the orchestrator only
+        # calls ingest once per arm. To keep the contract clean (the
+        # orchestrator should not have to know which arms share data),
+        # we just delegate.
+        await self._hindsight.ingest(item, split)
+
+    async def retrieve(self, task: Task) -> str:
+        from hindsight_api.engine.reflect.tools import tool_search_world_graph
+
+        private_payload = json.loads(await self._hindsight.retrieve(task))
+        private_hits = private_payload.get("private_memory") or []
+        if private_hits:
+            # Private recall has hits — the world graph is a no-op by
+            # policy. Returning the private-only envelope keeps the
+            # answer prompt and judge identical to the hindsight arm.
+            return json.dumps(private_payload, ensure_ascii=False)
+
+        # Private recall returned nothing. Consult the shared world
+        # graph via the C3 tool. The group_id is the same convention
+        # the GraphitiArm uses so this arm reads from the same shared
+        # graph a standalone Graphiti arm would have populated —
+        # though in the 4-arm harness, the graphiti arm runs first
+        # and populates the graph as a side effect of its own ingest.
+        # ``bank_id`` is threaded through because the tool uses it
+        # to resolve per-bank overrides (deep-dive 3 §1.4); for the
+        # benchmark, the per-bank config is not configured so the
+        # tool falls back to the global ``HINDSIGHT_API_GRAPHITI_*``
+        # env vars the same way a real reflect call would.
+        tool_result = await tool_search_world_graph(
+            memory_engine=self._memory,
+            bank_id=self._hindsight.bank_id(task.conv_id, task.asker),
+            group_id=self.group_id(task.conv_id),
+            query=task.question,
+            max_facts=_GRAPH_SEARCH_RESULTS,
+            max_tokens=_RECALL_MAX_TOKENS,
+        )
+        if "error" in tool_result:
+            # Tool unavailable / circuit-open / no group_id — fall
+            # through with an empty world_graph envelope so the
+            # downstream answer prompt and judge still see the
+            # expected shape. The error is logged at the source
+            # (tool_search_world_graph does its own warning logging).
+            world_facts: list[dict[str, Any]] = []
+        else:
+            world_facts = [
+                {
+                    "fact": f.get("fact", ""),
+                    "valid_at": f.get("valid_at"),
+                    "invalid_at": f.get("invalid_at"),
+                }
+                for f in tool_result.get("facts") or []
+            ]
+        return json.dumps({**private_payload, "world_graph": world_facts}, ensure_ascii=False)
+
+
 def _rename_drifted_keys(data: dict, model: "type[Any]") -> dict:
     """Rename keys like entity_name -> name to match the pydantic model.
 
