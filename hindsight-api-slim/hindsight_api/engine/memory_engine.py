@@ -15,6 +15,7 @@ import functools
 import inspect
 import json
 import logging
+import sys
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -2566,6 +2567,28 @@ class MemoryEngine(MemoryEngineInterface):
                 f"an unreachable provider. Increase {ENV_MODEL_INIT_TIMEOUT} if the "
                 f"first-time model download legitimately needs more time."
             ) from e
+
+        # Normalize torch's process-global default dtype back to float32 after the
+        # concurrent local model loads. transformers' dtype context manager (entered
+        # by SentenceTransformer / CrossEncoder / from_pretrained) does a
+        # NON-thread-safe save/restore of the global default dtype: when an fp16 and
+        # an fp32 model load in parallel above, an unlucky interleave can leave the
+        # default stuck at float16, after which every encode() emits NaN vectors that
+        # pgvector rejects ("NaN not allowed in vector") on MPS, or raises
+        # "c10::Half != float" on CPU — non-deterministically across restarts. By the
+        # time gather() returns, all load threads have joined, so resetting the
+        # default here is race-free, keeps the loads fully parallel, and converges on
+        # the float32 inference state a healthy boot already reaches. torch is only
+        # imported (in sys.modules) if a local provider actually loaded a model.
+        # See https://github.com/vectorize-io/hindsight/issues/2162.
+        torch_mod = sys.modules.get("torch")
+        if torch_mod is not None and torch_mod.get_default_dtype() != torch_mod.float32:
+            logger.warning(
+                "torch default dtype was left at %s after concurrent model init; "
+                "restoring float32 to avoid NaN embedding vectors (issue #2162).",
+                torch_mod.get_default_dtype(),
+            )
+            torch_mod.set_default_dtype(torch_mod.float32)
 
         # Run database migrations if enabled
         if self._run_migrations:
