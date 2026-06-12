@@ -549,10 +549,7 @@ async def test_retain_fires_webhook_on_redact(api_client, memory) -> None:
     # its credential inventory using the leading provider prefix + trailing
     # discriminator (e.g. `ghp_...AAAA`). Populated by OSS as of #2157.
     hits = data.get("hits") or []
-    assert any(
-        h.get("detector") == "github_token" and h.get("preview") == "ghp_...AAAA"
-        for h in hits
-    ), hits
+    assert any(h.get("detector") == "github_token" and h.get("preview") == "ghp_...AAAA" for h in hits), hits
     for h in hits:
         assert secret not in (h.get("preview") or ""), "raw secret leaked into preview"
 

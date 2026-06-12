@@ -104,17 +104,14 @@ async def _fire_memory_defense_webhook(
         # "scanned, nothing matched" (the latter wouldn't be a webhook delivery
         # in the first place).
         decision_hits = getattr(decision, "hits", None) or []
-        hits: list[MemoryDefenseHit] | None = (
-            [
-                MemoryDefenseHit(
-                    detector=str(h.get("detector") or ""),
-                    preview=str(h.get("preview") or ""),
-                )
-                for h in decision_hits
-                if h.get("detector") and h.get("preview")
-            ]
-            or None
-        )
+        hits: list[MemoryDefenseHit] | None = [
+            MemoryDefenseHit(
+                detector=str(h.get("detector") or ""),
+                preview=str(h.get("preview") or ""),
+            )
+            for h in decision_hits
+            if h.get("detector") and h.get("preview")
+        ] or None
 
         event = WebhookEvent(
             event=WebhookEventType.MEMORY_DEFENSE_TRIGGERED,
