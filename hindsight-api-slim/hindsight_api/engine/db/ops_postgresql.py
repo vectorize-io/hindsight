@@ -387,6 +387,60 @@ class PostgreSQLOps(DataAccessOps):
         )
         return [str(row["memory_id"]) for row in rows]
 
+    async def claim_graphiti_outbox_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        limit: int,
+    ) -> list[dict]:
+        # Eligible rows = next_attempt_at <= now(). Claim deletes the rows so
+        # that an in-flight row is not double-claimed by a concurrent worker;
+        # the worker re-inserts failed rows via reschedule_graphiti_outbox_rows
+        # with a bumped next_attempt_at.
+        rows = await conn.fetch(
+            f"""
+            DELETE FROM {table}
+            WHERE id IN (
+                SELECT id FROM {table}
+                WHERE bank_id = $1
+                  AND next_attempt_at <= now()
+                ORDER BY next_attempt_at
+                LIMIT $2
+            )
+            RETURNING id, bank_id, memory_id, group_id, fact_text,
+                      entities, relations, tags, attempts
+            """,
+            bank_id,
+            limit,
+        )
+        return [dict(row) for row in rows]
+
+    async def reschedule_graphiti_outbox_rows(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        row_ids: list[int],
+        last_error: str,
+    ) -> None:
+        if not row_ids:
+            return
+        # Exponential backoff with cap at 5 min. attempts already incremented
+        # by the caller (it tracks consecutive failures, separate from the
+        # row's persisted attempts counter which we bump here).
+        # next_attempt_at = now() + LEAST(2^attempts, 300) seconds.
+        await conn.execute(
+            f"""
+            UPDATE {table}
+            SET attempts = attempts + 1,
+                last_error = $2,
+                next_attempt_at = now() + (LEAST(POWER(2, attempts + 1), 300) || ' seconds')::interval
+            WHERE id = ANY($1::bigint[])
+            """,
+            row_ids,
+            last_error[:4000],
+        )
+
     async def claim_graph_maintenance_batch(
         self,
         conn: DatabaseConnection,

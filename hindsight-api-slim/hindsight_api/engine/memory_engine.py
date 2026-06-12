@@ -1606,6 +1606,36 @@ class MemoryEngine(MemoryEngineInterface):
             operation_id=task_dict.get("operation_id"),
         )
 
+    async def _handle_graphiti_forward(self, task_dict: dict[str, Any]):
+        """Handler for graphiti_forward tasks. Drains graphiti_outbox for the bank.
+
+        Channel A of C4 (re-consolidation triggered by ``invalidated_edges``
+        in the add_triplet response) is implemented inside
+        :func:`run_graphiti_forward_job` — the worker hands invalidated
+        ``source_uri`` values to the consolidation submit at end-of-drain
+        rather than processing them one-by-one (deep-dive 4 §1.3).
+        """
+        bank_id = task_dict.get("bank_id")
+        if not bank_id:
+            raise ValueError("bank_id is required for graphiti_forward task")
+
+        from hindsight_api.models import RequestContext
+
+        from .retain.graphiti_forward import run_graphiti_forward_job
+
+        internal_context = RequestContext(
+            internal=True,
+            tenant_id=task_dict.get("_tenant_id"),
+            api_key_id=task_dict.get("_api_key_id"),
+            retry_count=task_dict.get("_retry_count", 0),
+        )
+        return await run_graphiti_forward_job(
+            memory_engine=self,
+            bank_id=bank_id,
+            request_context=internal_context,
+            operation_id=task_dict.get("operation_id"),
+        )
+
     async def _handle_refresh_mental_model(self, task_dict: dict[str, Any]):
         """
         Handler for refresh_mental_model tasks.
@@ -1754,6 +1784,8 @@ class MemoryEngine(MemoryEngineInterface):
                     await self._handle_graph_maintenance(task_dict)
                 elif task_type == "fact_supersession":
                     await self._handle_fact_supersession(task_dict)
+                elif task_type == "graphiti_forward":
+                    await self._handle_graphiti_forward(task_dict)
                 elif task_type == "refresh_mental_model":
                     await self._handle_refresh_mental_model(task_dict)
                 elif task_type == "webhook_delivery":
@@ -3444,6 +3476,11 @@ class MemoryEngine(MemoryEngineInterface):
                 await self.submit_async_fact_supersession(bank_id=bank_id, request_context=request_context)
             except Exception as e:
                 logger.warning(f"Failed to submit fact supersession task for bank {bank_id}: {e}")
+        if getattr(config, "graphiti_group_id", ""):
+            try:
+                await self.submit_async_graphiti_forward(bank_id=bank_id, request_context=request_context)
+            except Exception as e:
+                logger.warning(f"Failed to submit graphiti forward task for bank {bank_id}: {e}")
 
     async def _resolve_retain_chunk_size(
         self,
@@ -12328,6 +12365,58 @@ class MemoryEngine(MemoryEngineInterface):
             bank_id=bank_id,
             operation_type="fact_supersession",
             task_type="fact_supersession",
+            task_payload=task_payload,
+            dedupe_by_bank=True,
+        )
+
+    async def submit_async_graphiti_forward(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Submit a ``graphiti_forward`` job to drain ``graphiti_outbox`` for a bank.
+
+        Same two gates as the other post-insert submissions: empty-queue
+        short-circuit (every retain calls this unconditionally when the
+        feature is on) and dedupe-by-bank for already-pending jobs. The
+        worker itself performs the empty-queue check via the
+        ``claim_graphiti_outbox_batch`` returning zero rows.
+
+        Channel A of C4 (re-consolidation on invalidated_edges) is handled
+        inside the same worker — deep-dive 4 §1.2-1.3 established that
+        channel A needs zero new infrastructure since the
+        ``add_triplet`` response already carries the invalidated edges.
+        """
+        await self._authenticate_tenant(request_context)
+
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            has_work = await conn.fetchval(
+                f"SELECT 1 FROM {fq_table('graphiti_outbox')} WHERE bank_id = $1 AND next_attempt_at <= now() LIMIT 1",
+                bank_id,
+            )
+        if not has_work:
+            return {"operation_id": None, "no_work": True}
+
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext
+
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation="submit_async_graphiti_forward", request_context=request_context
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+
+        task_payload: dict[str, Any] = {}
+        if request_context.tenant_id:
+            task_payload["_tenant_id"] = request_context.tenant_id
+        if request_context.api_key_id:
+            task_payload["_api_key_id"] = request_context.api_key_id
+
+        return await self._submit_async_operation(
+            bank_id=bank_id,
+            operation_type="graphiti_forward",
+            task_type="graphiti_forward",
             task_payload=task_payload,
             dedupe_by_bank=True,
         )

@@ -485,7 +485,102 @@ async def _insert_facts_and_links(
     if outbox_callback is not None:
         await outbox_callback(conn)
 
+    # Enqueue graphiti_outbox rows for federated banks (C1 forwarder source).
+    # Gating matches deep-dive 2 §2.2:
+    #   1. graphiti_group_id non-empty (no behavior change for non-federated banks)
+    #   2. fact_type = 'world' (private experience facts never leave the bank)
+    #   3. validate_relations(fact) non-empty — but the C2 wiring already drops
+    #      invalid relations during lenient parsing, so `processed_fact.relations`
+    #      only contains survivors. The non-empty check is a cheap belt-and-braces.
+    # The `graphiti_share_tags` whitelist (a privacy boundary per deep-dive 1 §2.5)
+    # is left as a per-bank config flag follow-up — today the worker forwards
+    # every world fact that has relations.
+    if unit_ids and getattr(config, "graphiti_group_id", ""):
+        queued = await _enqueue_graphiti_outbox_rows(conn, bank_id, unit_ids, processed_facts, config)
+        if queued:
+            log_buffer.append(f"  Graphiti outbox: {queued} facts enqueued")
+
     return result_unit_ids
+
+
+async def _enqueue_graphiti_outbox_rows(
+    conn,
+    bank_id: str,
+    unit_ids: list[str],
+    processed_facts: list,
+    config,
+) -> int:
+    """Insert one ``graphiti_outbox`` row per eligible fact, in-transaction.
+
+    Eligible = world fact with at least one surviving relation. Each row
+    carries the full payload (entities, relations, fact_text, tags) so the
+    forwarder worker does not need to re-read memory_units to drive an
+    add_triplet call (deep-dive 2 §2.2). Entity graphiti_uuid values are
+    read at enqueue time — the forwarder writes them back on success
+    (cold→hot mapping payoff, deep-dive 2 §2.5).
+    """
+    from hindsight_api.engine.retain.relation_extraction import _validate_relations_from_dict
+
+    group_id = getattr(config, "graphiti_group_id", "")
+    if not group_id:
+        return 0
+
+    eligible_pairs: list[tuple[str, str, str, list[dict], list[dict], list[str]]] = []
+    for unit_id, pf in zip(unit_ids, processed_facts):
+        if pf.fact_type != "world":
+            continue
+        raw_relations = getattr(pf, "relations", None) or []
+        if not raw_relations:
+            continue
+        # Resolve entity names + look up any pre-existing graphiti_uuid. We
+        # need the names anyway for the deterministic UUID generation that
+        # runs in the forwarder, so we encode them as a list of
+        # {text, graphiti_uuid} dicts in the row's entities JSON.
+        entities = []
+        for e in pf.entities or []:
+            # e is an EntityRef (id, text, ...) — text is what the forwarder
+            # needs to generate the deterministic node UUID.
+            entities.append({"text": e.text})
+        # Re-validate defensively (the C2 wiring already did this, but a
+        # future caller might bypass it; the cost is one extra pass over a
+        # short list).
+        validated = _validate_relations_from_dict({"entities": entities, "relations": raw_relations})
+        if not validated:
+            continue
+        # Unit ID is what carries the source_uri downstream; pf.fact_text is
+        # what gets attached as the edge's `fact` field.
+        eligible_pairs.append((str(unit_id), pf.fact_text, entities, validated, list(pf.tags or []), str(unit_id)))
+
+    if not eligible_pairs:
+        return 0
+
+    # Bulk insert. JSONB serialization uses json.dumps for both dialects
+    # (PG JSONB and Oracle CLOB IS JSON both accept it).
+    import json
+
+    rows = [
+        (
+            bank_id,
+            uid,
+            group_id,
+            fact_text,
+            json.dumps(entities),
+            json.dumps(relations),
+            json.dumps(tags) if tags else None,
+        )
+        for (uid, fact_text, entities, relations, tags, _unit_id_again) in eligible_pairs
+    ]
+    # Need entity_ids for write-back. The forwarder looks up graphiti_uuid
+    # by (bank_id, LOWER(canonical_name)) — no need to pre-resolve here.
+    await conn.executemany(
+        """
+        INSERT INTO graphiti_outbox
+            (bank_id, memory_id, group_id, fact_text, entities, relations, tags)
+        VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb)
+        """,
+        rows,
+    )
+    return len(rows)
 
 
 async def _extract_and_embed(

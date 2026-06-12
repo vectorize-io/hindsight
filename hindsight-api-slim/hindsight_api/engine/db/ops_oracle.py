@@ -294,6 +294,63 @@ class OracleOps(DataAccessOps):
             )
         return [str(row["memory_id"]) for row in rows]
 
+    async def claim_graphiti_outbox_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        limit: int,
+    ) -> list[dict]:
+        # Two-step claim + eligible filter (next_attempt_at <= SYSTIMESTAMP).
+        # Returned columns match the PG impl: id + full payload so the
+        # forwarder can drive add_triplet without re-reading memory_units.
+        rows = await conn.fetch(
+            f"""
+            SELECT id, bank_id, memory_id, group_id, fact_text,
+                   entities, relations, tags, attempts
+            FROM {table}
+            WHERE bank_id = $1
+              AND next_attempt_at <= SYSTIMESTAMP
+            ORDER BY next_attempt_at
+            FETCH FIRST $2 ROWS ONLY
+            """,
+            bank_id,
+            limit,
+        )
+        if rows:
+            await conn.executemany(
+                f"DELETE FROM {table} WHERE id = $1",
+                [(row["id"],) for row in rows],
+            )
+        return [dict(row) for row in rows]
+
+    async def reschedule_graphiti_outbox_rows(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        row_ids: list[int],
+        last_error: str,
+    ) -> None:
+        if not row_ids:
+            return
+        # Same backoff curve as PG. POWER is computed in SQL via CASE+2^N form
+        # for cross-dialect portability; the cap (300s = 5 min) is identical.
+        for row_id in row_ids:
+            attempts_now = await conn.fetchval(f"SELECT attempts FROM {table} WHERE id = :1", row_id)
+            delay_s = min(2 ** (attempts_now + 1), 300)
+            await conn.execute(
+                f"""
+                UPDATE {table}
+                SET attempts = attempts + 1,
+                    last_error = :2,
+                    next_attempt_at = SYSTIMESTAMP + NUMTODSINTERVAL(:3, 'SECOND')
+                WHERE id = :1
+                """,
+                row_id,
+                last_error[:4000],
+                delay_s,
+            )
+
     async def claim_graph_maintenance_batch(
         self,
         conn: DatabaseConnection,

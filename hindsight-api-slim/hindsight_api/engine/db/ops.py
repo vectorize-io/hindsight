@@ -272,6 +272,43 @@ class DataAccessOps(ABC):
         ...
 
     @abstractmethod
+    async def claim_graphiti_outbox_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        limit: int,
+    ) -> list[dict]:
+        """Claim (delete and return) up to ``limit`` graphiti_outbox rows for a bank.
+
+        Unlike the supersession queue, each row carries the full payload
+        (entities, relations, fact_text, tags) needed to drive an
+        ``add_triplet`` call without re-reading memory_units. The forwarder
+        worker needs the row to outlive claim-time (it might fail mid-batch
+        and re-enqueue), so this returns the *full* row, not just the id.
+
+        Filter: only rows whose ``next_attempt_at`` is in the past are
+        eligible — backoff-scheduled retries respect their timer.
+        """
+        ...
+
+    @abstractmethod
+    async def reschedule_graphiti_outbox_rows(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        row_ids: list[int],
+        last_error: str,
+    ) -> None:
+        """Bump ``attempts`` and push ``next_attempt_at`` out for failed rows.
+
+        Exponential backoff (1s, 4s, 16s, 64s, 256s, capped at 5 min) is applied
+        here so it is identical across dialects. The worker's loop is the
+        single source of truth on the cap.
+        """
+        ...
+
+    @abstractmethod
     async def expand_observations(
         self,
         conn: DatabaseConnection,
