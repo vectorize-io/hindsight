@@ -443,6 +443,7 @@ export function DataView({
   // scope reset never triggers a second fetch.
   const contextKeyRef = useRef<string | null>(null);
   const skipScopeResetReload = useRef(false);
+  const lastAutoLoadSig = useRef<string | null>(null);
   useEffect(() => {
     if (!currentBank) return;
     // The previous run already issued the reload with scope=null; this run is
@@ -462,6 +463,14 @@ export function DataView({
       setSelectedScope(null);
     }
     const { tags, match } = resolveTagQuery(scope);
+    // Collapse identical consecutive auto-loads into a single request. This makes
+    // the effect idempotent, so React's mount-effect double-invoke (dev
+    // StrictMode, and any redundant re-render) can't re-issue the same /api/graph
+    // query. Manual reloads (search, load-more, consolidation poll) call loadData
+    // directly and intentionally bypass this guard.
+    const sig = JSON.stringify([contextKey, tags ?? null, match ?? null]);
+    if (sig === lastAutoLoadSig.current) return;
+    lastAutoLoadSig.current = sig;
     loadData(undefined, searchQuery || undefined, tags, match);
   }, [factType, currentBank, documentId, chunkId, tagFilters, selectedScope]);
 
