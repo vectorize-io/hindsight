@@ -26,10 +26,13 @@ or stay the same per refresh, never get worse.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from hindsight_api.engine.llm_wrapper import parse_llm_json
 
 from .structured_doc import (
     Block,
@@ -150,6 +153,68 @@ class DeltaOperationList(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     operations: list[Operation] = Field(default_factory=list)
+
+
+def _extract_balanced_json_object(text: str) -> str | None:
+    """Return the first top-level ``{...}`` slice, ignoring trailing junk."""
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
+
+
+def parse_delta_operation_list(raw: Any) -> DeltaOperationList:
+    """Parse structured-delta LLM output into a validated operation list."""
+    if isinstance(raw, DeltaOperationList):
+        return raw
+    if isinstance(raw, dict):
+        return DeltaOperationList.model_validate(raw)
+
+    text = (raw or "").strip()
+    if not text:
+        return DeltaOperationList()
+
+    candidates: list[str] = [text]
+    extracted = _extract_balanced_json_object(text)
+    if extracted and extracted != text:
+        candidates.append(extracted)
+
+    last_error: Exception | None = None
+    for candidate in candidates:
+        try:
+            payload = parse_llm_json(candidate)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            continue
+        try:
+            return DeltaOperationList.model_validate(payload)
+        except Exception as exc:
+            last_error = exc
+
+    if last_error is not None:
+        raise last_error
+    return DeltaOperationList.model_validate_json(text)
 
 
 # Application ---------------------------------------------------------------

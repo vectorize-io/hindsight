@@ -26,7 +26,6 @@ def test_build_structured_delta_prompt_truncates_huge_document():
     assert "truncated to fit the model" in prompt
 
 
-
 def test_fit_structured_delta_keeps_small_prompt_unchanged():
     doc_out, cand_out, facts_out, truncated = _fit_structured_delta_prompt_parts(
         source_query="q",

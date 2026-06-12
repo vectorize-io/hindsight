@@ -221,6 +221,7 @@ async def test_configured_provider_binds_bank_context(registered_recorder):
     assert registered_recorder.records[0].operation == "reflect"
     assert current_trace_context() is None  # unwound after the call
 
+
 @pytest.mark.asyncio
 async def test_configured_provider_with_config_rebinds_bank_and_operation(registered_recorder):
     """Consolidation re-binds per-bank config from an already-configured wrapper."""

@@ -734,7 +734,13 @@ Examples
   ``{"operations": [{"op": "replace_block", "section_id": "overview",
   "index": 0, "block": {"type": "paragraph", "text": "Updated summary."}}]}``
 - Remove an obsolete block →
-  ``{"operations": [{"op": "remove_block", "section_id": "status", "index": 2}]}``"""
+  ``{"operations": [{"op": "remove_block", "section_id": "status", "index": 2}]}``
+
+JSON STRING RULES (critical)
+- Every ``text`` and ``items`` string must be valid JSON: escape ``"`` as ``\\"``,
+  backslashes as ``\\\\``, and newlines as ``\\n``. Do not use raw backticks inside
+  strings unless needed; prefer plain quotes for file paths.
+- Do not append extra ``]`` or ``}`` after the closing ``}`` of the root object."""
 
 _STRUCTURED_DELTA_DEFAULT_MAX_INPUT_TOKENS = 24_000
 
@@ -783,11 +789,7 @@ def _fit_structured_delta_prompt_parts(
     doc_json = _truncate_cl100k(current_document_json, doc_budget)
     candidate = _truncate_cl100k(candidate_markdown, cand_budget)
     facts_body = _truncate_cl100k(facts_block, facts_budget)
-    truncated = (
-        doc_json != current_document_json
-        or candidate != candidate_markdown
-        or facts_body != facts_block
-    )
+    truncated = doc_json != current_document_json or candidate != candidate_markdown or facts_body != facts_block
     return doc_json, candidate, facts_body, truncated
 
 
@@ -835,9 +837,7 @@ def build_structured_delta_prompt(
         "supporting facts into CURRENT DOCUMENT. Add, update, or remove content "
         "as needed. Preserve unchanged sections and blocks by not mentioning them."
     )
-    input_cap = (
-        max_input_tokens if max_input_tokens is not None else _STRUCTURED_DELTA_DEFAULT_MAX_INPUT_TOKENS
-    )
+    input_cap = max_input_tokens if max_input_tokens is not None else _STRUCTURED_DELTA_DEFAULT_MAX_INPUT_TOKENS
     doc_json, candidate, facts_body, input_truncated = _fit_structured_delta_prompt_parts(
         source_query=source_query,
         current_document_json=current_document_json,

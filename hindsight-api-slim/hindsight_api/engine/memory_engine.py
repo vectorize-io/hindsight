@@ -9993,8 +9993,8 @@ class MemoryEngine(MemoryEngineInterface):
             # drift is structurally impossible. Falls back to the full candidate
             # markdown if either the structuring or the LLM op call fails.
             from .reflect.delta_ops import (
-                DeltaOperationList,
                 apply_operations,
+                parse_delta_operation_list,
             )
             from .reflect.prompts import (
                 STRUCTURED_DELTA_SYSTEM_PROMPT,
@@ -10078,19 +10078,7 @@ class MemoryEngine(MemoryEngineInterface):
                             temperature=0.0,
                             scope="mental_model_delta_ops",
                         )
-                        op_list: DeltaOperationList
-                        if isinstance(raw, DeltaOperationList):
-                            op_list = raw
-                        elif isinstance(raw, dict):
-                            op_list = DeltaOperationList.model_validate(raw)
-                        else:
-                            text = (raw or "").strip()
-                            # Strip optional fenced code block.
-                            if text.startswith("```"):
-                                text = text.split("\n", 1)[1] if "\n" in text else ""
-                                if text.endswith("```"):
-                                    text = text[:-3].rstrip()
-                            op_list = DeltaOperationList.model_validate_json(text)
+                        op_list = parse_delta_operation_list(raw)
                         outcome = apply_operations(current_doc, op_list.operations)
                         final_structured = outcome.document
                         final_content = render_document(outcome.document)
