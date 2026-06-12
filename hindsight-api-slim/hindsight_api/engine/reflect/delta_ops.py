@@ -30,7 +30,7 @@ import json
 import logging
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 
@@ -147,6 +147,27 @@ Operation = Annotated[
     Field(discriminator="op"),
 ]
 
+_OPERATION_ADAPTER: TypeAdapter[Operation] = TypeAdapter(Operation)
+
+
+def _validate_operations_list(raw_ops: Any) -> tuple[list[Operation], list[dict[str, Any]]]:
+    """Validate each operation independently; drop invalid ops instead of failing the batch."""
+    if not isinstance(raw_ops, list):
+        raise TypeError(f"operations must be a list, got {type(raw_ops)!r}")
+    valid: list[Operation] = []
+    skipped: list[dict[str, Any]] = []
+    for i, item in enumerate(raw_ops):
+        try:
+            valid.append(_OPERATION_ADAPTER.validate_python(item))
+        except ValidationError as exc:
+            skipped.append({"index": i, "op": item, "error": exc.errors(include_url=False)})
+            logger.warning(
+                "[STRUCTURED_DELTA] skipping invalid operation at index %s: %s",
+                i,
+                exc.errors(include_url=False),
+            )
+    return valid, skipped
+
 
 class DeltaOperationList(BaseModel):
     """Container for the operations produced by an LLM delta call."""
@@ -189,7 +210,15 @@ def parse_delta_operation_list(raw: Any) -> DeltaOperationList:
     if isinstance(raw, DeltaOperationList):
         return raw
     if isinstance(raw, dict):
-        return DeltaOperationList.model_validate(raw)
+        ops_raw = raw.get("operations", [])
+        valid, skipped = _validate_operations_list(ops_raw)
+        if skipped:
+            logger.info(
+                "[STRUCTURED_DELTA] parsed %s op(s), skipped %s invalid op(s) from dict payload",
+                len(valid),
+                len(skipped),
+            )
+        return DeltaOperationList(operations=valid)
 
     text = (raw or "").strip()
     if not text:
@@ -207,14 +236,24 @@ def parse_delta_operation_list(raw: Any) -> DeltaOperationList:
         except json.JSONDecodeError as exc:
             last_error = exc
             continue
+        if not isinstance(payload, dict) or "operations" not in payload:
+            last_error = ValueError("delta payload must be an object with an operations array")
+            continue
         try:
-            return DeltaOperationList.model_validate(payload)
-        except Exception as exc:
+            valid, skipped = _validate_operations_list(payload["operations"])
+            if skipped:
+                logger.info(
+                    "[STRUCTURED_DELTA] parsed %s op(s), skipped %s invalid op(s)",
+                    len(valid),
+                    len(skipped),
+                )
+            return DeltaOperationList(operations=valid)
+        except TypeError as exc:
             last_error = exc
 
     if last_error is not None:
         raise last_error
-    return DeltaOperationList.model_validate_json(text)
+    return DeltaOperationList()
 
 
 # Application ---------------------------------------------------------------

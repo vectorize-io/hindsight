@@ -43,6 +43,23 @@ def test_parse_delta_operation_list_prose_prefix():
     assert len(op_list.operations) == 1
 
 
+def test_parse_delta_operation_list_skips_invalid_op_keeps_valid():
+    """One bad replace_block (missing index) must not discard the whole batch."""
+    raw = (
+        '{"operations": ['
+        '{"op": "append_block", "section_id": "s", '
+        '"block": {"type": "paragraph", "text": "ok"}}, '
+        '{"op": "replace_block", "section_id": "s", '
+        '"block": {"type": "paragraph", "text": "missing index"}}, '
+        '{"op": "append_block", "section_id": "s", '
+        '"block": {"type": "paragraph", "text": "also ok"}}'
+        "]}"
+    )
+    op_list = parse_delta_operation_list(raw)
+    assert len(op_list.operations) == 2
+    assert all(isinstance(o, AppendBlockOp) for o in op_list.operations)
+
+
 def test_parse_delta_operation_list_empty():
     assert parse_delta_operation_list("").operations == []
 

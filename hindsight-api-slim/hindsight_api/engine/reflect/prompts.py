@@ -740,6 +740,8 @@ JSON STRING RULES (critical)
 - Every ``text`` and ``items`` string must be valid JSON: escape ``"`` as ``\\"``,
   backslashes as ``\\\\``, and newlines as ``\\n``. Do not use raw backticks inside
   strings unless needed; prefer plain quotes for file paths.
+- ``replace_block``, ``insert_block``, and ``remove_block`` MUST include ``index`` (0-based block position in that section). Use ``replace_section_blocks`` only when replacing every block in a section.
+
 - Do not append extra ``]`` or ``}`` after the closing ``}`` of the root object."""
 
 _STRUCTURED_DELTA_DEFAULT_MAX_INPUT_TOKENS = 24_000
