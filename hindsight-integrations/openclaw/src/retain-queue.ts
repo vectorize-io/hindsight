@@ -22,6 +22,7 @@ import { randomBytes } from "crypto";
 export interface QueuedRetainPayload {
   content: string;
   documentId?: string;
+  context?: string;
   metadata?: Record<string, unknown>;
   tags?: string[];
   updateMode?: "replace" | "append";
@@ -32,6 +33,7 @@ export interface QueuedRetain {
   bankId: string;
   content: string;
   documentId: string;
+  context?: string;
   metadata: Record<string, unknown>;
   tags?: string[];
   updateMode?: "replace" | "append";
@@ -63,6 +65,7 @@ export class RetainQueue {
       bankId,
       content: request.content,
       documentId: request.documentId || "conversation",
+      context: request.context,
       metadata: metadata || request.metadata || {},
       tags: request.tags,
       updateMode: request.updateMode,

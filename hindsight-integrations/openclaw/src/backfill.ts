@@ -17,7 +17,7 @@ function loadPackageVersion(): string {
 }
 
 const USER_AGENT = `hindsight-openclaw/${loadPackageVersion()}`;
-import { detectExternalApi, detectLLMConfig } from "./index.js";
+import { DEFAULT_RETAIN_CONTEXT, detectExternalApi, detectLLMConfig } from "./index.js";
 import type { BankStats, PluginConfig } from "./types.js";
 import {
   buildBackfillPlan,
@@ -547,6 +547,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
         }
         await client.retain(entry.bankId, entry.transcript, {
           documentId: entry.documentId,
+          context: pluginConfig.retainContext || DEFAULT_RETAIN_CONTEXT,
           metadata,
           async: true,
         });

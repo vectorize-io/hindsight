@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { createRequire } from "module";
 import {
   stripMemoryTags,
   extractRecallQuery,
@@ -25,8 +26,20 @@ import {
   stripInlineTimestampPrefix,
   getPluginConfig,
   formatHookPerf,
+  DEFAULT_RETAIN_CONTEXT,
 } from "./index.js";
 import type { PluginConfig, MemoryResult, MoltbotPluginAPI } from "./types.js";
+
+const require = createRequire(import.meta.url);
+const openclawManifest = require("../openclaw.plugin.json") as {
+  configSchema?: {
+    properties?: {
+      retainContext?: {
+        default?: string;
+      };
+    };
+  };
+};
 
 // ---------------------------------------------------------------------------
 // stripMemoryTags
@@ -366,6 +379,7 @@ describe("buildRetainRequest", () => {
     expect(request).toEqual({
       content: "hello world",
       documentId: "openclaw:agent:main:main",
+      context: DEFAULT_RETAIN_CONTEXT,
       metadata: {
         retained_at: expect.any(String),
         message_count: "2",
@@ -383,6 +397,44 @@ describe("buildRetainRequest", () => {
       tags: ["source_system:openclaw", "agent:agentname"],
       updateMode: "append",
     });
+  });
+
+  it("includes the default retain context guidance", () => {
+    const request = buildRetainRequest("hello world", 1, {}, {}, 1700000000000, { turnIndex: 1 });
+
+    expect(request.context).toBe(DEFAULT_RETAIN_CONTEXT);
+  });
+
+  it("describes routing metadata and assistant/user roles in the default retain context", () => {
+    expect(DEFAULT_RETAIN_CONTEXT).toContain("routing identifiers");
+    expect(DEFAULT_RETAIN_CONTEXT).toContain("operational routing identifiers");
+    expect(DEFAULT_RETAIN_CONTEXT).toContain("AI assistant");
+  });
+
+  it("uses a configured retain context when provided", () => {
+    const request = buildRetainRequest(
+      "hello world",
+      1,
+      {},
+      { retainContext: "Custom extraction guidance." },
+      1700000000000,
+      { turnIndex: 1 }
+    );
+
+    expect(request.context).toBe("Custom extraction guidance.");
+  });
+
+  it("trims configured retain context before sending it", () => {
+    const request = buildRetainRequest(
+      "hello world",
+      1,
+      {},
+      { retainContext: "  Custom extraction guidance. \n" },
+      1700000000000,
+      { turnIndex: 1 }
+    );
+
+    expect(request.context).toBe("Custom extraction guidance.");
   });
 
   it("falls back to per-turn doc id when appendSupported is false (older API)", () => {
@@ -1497,5 +1549,37 @@ describe("getPluginConfig — mission semantics (#1270, #1353)", () => {
     const cfg = getPluginConfig(makeApi({ retainMission: "", observationsMission: "" }));
     expect(cfg.retainMission).toBeUndefined();
     expect(cfg.observationsMission).toBeUndefined();
+  });
+});
+
+describe("getPluginConfig — retainContext", () => {
+  it("defaults retainContext to the built-in OpenClaw transcript guidance", () => {
+    const cfg = getPluginConfig(makeApi({}));
+    expect(cfg.retainContext).toBe(DEFAULT_RETAIN_CONTEXT);
+  });
+
+  it("passes through an explicit non-empty retainContext", () => {
+    const cfg = getPluginConfig(makeApi({ retainContext: "Treat IDs as routing metadata." }));
+    expect(cfg.retainContext).toBe("Treat IDs as routing metadata.");
+  });
+
+  it("trims an explicit retainContext", () => {
+    const cfg = getPluginConfig(makeApi({ retainContext: " Treat IDs as routing metadata. \n" }));
+    expect(cfg.retainContext).toBe("Treat IDs as routing metadata.");
+  });
+
+  it("falls back to the default when retainContext is blank or non-string", () => {
+    expect(getPluginConfig(makeApi({ retainContext: "" })).retainContext).toBe(
+      DEFAULT_RETAIN_CONTEXT
+    );
+    expect(getPluginConfig(makeApi({ retainContext: 42 })).retainContext).toBe(
+      DEFAULT_RETAIN_CONTEXT
+    );
+  });
+
+  it("keeps the plugin manifest default in sync with the code default", () => {
+    expect(openclawManifest.configSchema?.properties?.retainContext?.default).toBe(
+      DEFAULT_RETAIN_CONTEXT
+    );
   });
 });
