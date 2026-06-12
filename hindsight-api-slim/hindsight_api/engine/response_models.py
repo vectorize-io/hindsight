@@ -197,7 +197,7 @@ class MemoryFact(BaseModel):
 
     id: str = Field(description="Unique identifier for the memory fact")
     text: str = Field(description="The actual text content of the memory")
-    fact_type: str = Field(description="Type of fact: 'world', 'experience', 'opinion', or 'observation'")
+    fact_type: str = Field(description="Type of fact: 'world', 'experience', or 'observation'")
     entities: list[str] | None = Field(None, description="Entity names mentioned in this fact")
     context: str | None = Field(None, description="Additional context for the memory")
     occurred_start: str | None = Field(None, description="ISO format date when the event started occurring")
@@ -309,8 +309,7 @@ class ReflectResult(BaseModel):
     Result from a reflect operation.
 
     Contains the formulated answer, the facts it was based on (organized by type),
-    any new opinions that were formed during the reflection process, and optionally
-    structured output if a response schema was provided.
+    and optionally structured output if a response schema was provided.
     """
 
     model_config = ConfigDict(
@@ -329,7 +328,7 @@ class ReflectResult(BaseModel):
                         }
                     ],
                     "experience": [],
-                    "opinion": [],
+                    "observation": [],
                     "mental_models": [],
                     "directives": [
                         {

@@ -1848,7 +1848,7 @@ export type GraphitiEdgeInvalidatedRequest = {
   /**
    * Invalid At
    *
-   * When the upstream edge was invalidated. Used as the B1 valid_until value when graphiti_backflow_supersession is on (subject to the chk_mu_valid_until_after_start CHECK constraint).
+   * When the upstream edge was invalidated. Used as the B1 valid_until value when graphiti_backflow_supersession is on (subject to the chk_mu_valid_until_after_start CHECK constraint). Must be a timezone-aware datetime — Pydantic v2's default parser accepts ISO 8601 with either 'Z' or '+HH:MM' offset and returns a tz-aware value. Naive datetimes are rejected because asyncpg raises on writing a naive value to a ``timestamp with time zone`` column. The forwarder path applies the equivalent normalization in ``_parse_iso_to_utc`` (graphiti_forward.py).
    */
   invalid_at: string;
   /**
@@ -6742,7 +6742,7 @@ export type ClearBankMemoriesData = {
     /**
      * Type
      *
-     * Optional fact type filter (world, experience, opinion)
+     * Optional fact type filter (world, experience, observation)
      */
     type?: string | null;
   };

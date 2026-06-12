@@ -54,7 +54,7 @@ class MemoryApi:
     async def clear_bank_memories(
         self,
         bank_id: StrictStr,
-        type: Annotated[Optional[StrictStr], Field(description="Optional fact type filter (world, experience, opinion)")] = None,
+        type: Annotated[Optional[StrictStr], Field(description="Optional fact type filter (world, experience, observation)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -71,11 +71,11 @@ class MemoryApi:
     ) -> DeleteResponse:
         """Clear memory bank memories
 
-        Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
+        Delete memory units for a memory bank. Optionally filter by type (world, experience, observation) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
 
         :param bank_id: (required)
         :type bank_id: str
-        :param type: Optional fact type filter (world, experience, opinion)
+        :param type: Optional fact type filter (world, experience, observation)
         :type type: str
         :param authorization:
         :type authorization: str
@@ -130,7 +130,7 @@ class MemoryApi:
     async def clear_bank_memories_with_http_info(
         self,
         bank_id: StrictStr,
-        type: Annotated[Optional[StrictStr], Field(description="Optional fact type filter (world, experience, opinion)")] = None,
+        type: Annotated[Optional[StrictStr], Field(description="Optional fact type filter (world, experience, observation)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -147,11 +147,11 @@ class MemoryApi:
     ) -> ApiResponse[DeleteResponse]:
         """Clear memory bank memories
 
-        Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
+        Delete memory units for a memory bank. Optionally filter by type (world, experience, observation) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
 
         :param bank_id: (required)
         :type bank_id: str
-        :param type: Optional fact type filter (world, experience, opinion)
+        :param type: Optional fact type filter (world, experience, observation)
         :type type: str
         :param authorization:
         :type authorization: str
@@ -206,7 +206,7 @@ class MemoryApi:
     async def clear_bank_memories_without_preload_content(
         self,
         bank_id: StrictStr,
-        type: Annotated[Optional[StrictStr], Field(description="Optional fact type filter (world, experience, opinion)")] = None,
+        type: Annotated[Optional[StrictStr], Field(description="Optional fact type filter (world, experience, observation)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -223,11 +223,11 @@ class MemoryApi:
     ) -> RESTResponseType:
         """Clear memory bank memories
 
-        Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
+        Delete memory units for a memory bank. Optionally filter by type (world, experience, observation) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
 
         :param bank_id: (required)
         :type bank_id: str
-        :param type: Optional fact type filter (world, experience, opinion)
+        :param type: Optional fact type filter (world, experience, observation)
         :type type: str
         :param authorization:
         :type authorization: str
@@ -665,7 +665,7 @@ class MemoryApi:
     ) -> GraphDataResponse:
         """Get memory graph data
 
-        Retrieve graph data for visualization, optionally filtered by type (world/experience/opinion).
+        Retrieve graph data for visualization, optionally filtered by type (world/experience/observation).
 
         :param bank_id: (required)
         :type bank_id: str
@@ -765,7 +765,7 @@ class MemoryApi:
     ) -> ApiResponse[GraphDataResponse]:
         """Get memory graph data
 
-        Retrieve graph data for visualization, optionally filtered by type (world/experience/opinion).
+        Retrieve graph data for visualization, optionally filtered by type (world/experience/observation).
 
         :param bank_id: (required)
         :type bank_id: str
@@ -865,7 +865,7 @@ class MemoryApi:
     ) -> RESTResponseType:
         """Get memory graph data
 
-        Retrieve graph data for visualization, optionally filtered by type (world/experience/opinion).
+        Retrieve graph data for visualization, optionally filtered by type (world/experience/observation).
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2692,7 +2692,7 @@ class MemoryApi:
     ) -> ReflectResponse:
         """Reflect and generate answer
 
-        Reflect and formulate an answer using bank identity, world facts, and opinions.  This endpoint: 1. Retrieves experience (conversations and events) 2. Retrieves world facts relevant to the query 3. Retrieves existing opinions (bank's perspectives) 4. Uses LLM to formulate a contextual answer 5. Returns plain text answer and the facts used
+        Reflect and formulate an answer using bank identity, world facts, and observations.  This endpoint: 1. Retrieves experience (conversations and events) 2. Retrieves world facts relevant to the query 3. Retrieves existing observations (consolidated knowledge) 4. Uses LLM to formulate a contextual answer 5. Returns plain text answer and the facts used
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2768,7 +2768,7 @@ class MemoryApi:
     ) -> ApiResponse[ReflectResponse]:
         """Reflect and generate answer
 
-        Reflect and formulate an answer using bank identity, world facts, and opinions.  This endpoint: 1. Retrieves experience (conversations and events) 2. Retrieves world facts relevant to the query 3. Retrieves existing opinions (bank's perspectives) 4. Uses LLM to formulate a contextual answer 5. Returns plain text answer and the facts used
+        Reflect and formulate an answer using bank identity, world facts, and observations.  This endpoint: 1. Retrieves experience (conversations and events) 2. Retrieves world facts relevant to the query 3. Retrieves existing observations (consolidated knowledge) 4. Uses LLM to formulate a contextual answer 5. Returns plain text answer and the facts used
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2844,7 +2844,7 @@ class MemoryApi:
     ) -> RESTResponseType:
         """Reflect and generate answer
 
-        Reflect and formulate an answer using bank identity, world facts, and opinions.  This endpoint: 1. Retrieves experience (conversations and events) 2. Retrieves world facts relevant to the query 3. Retrieves existing opinions (bank's perspectives) 4. Uses LLM to formulate a contextual answer 5. Returns plain text answer and the facts used
+        Reflect and formulate an answer using bank identity, world facts, and observations.  This endpoint: 1. Retrieves experience (conversations and events) 2. Retrieves world facts relevant to the query 3. Retrieves existing observations (consolidated knowledge) 4. Uses LLM to formulate a contextual answer 5. Returns plain text answer and the facts used
 
         :param bank_id: (required)
         :type bank_id: str

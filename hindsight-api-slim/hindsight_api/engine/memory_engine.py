@@ -3914,12 +3914,11 @@ class MemoryEngine(MemoryEngineInterface):
         if fact_type is None:
             fact_type = list(VALID_RECALL_FACT_TYPES)
 
-        # Filter out 'opinion' (removed fact type, silently ignore for backwards compat)
-        fact_type = [ft for ft in fact_type if ft != "opinion"]
-        if not fact_type:
-            return RecallResultModel(results=[], entities={}, chunks={})
-
-        # Validate fact types
+        # Validate fact types. ``opinion`` was removed in migration
+        # ``g2h3i4j5k6l7_remove_opinion_fact_type`` (CHECK constraint
+        # ``memory_units_fact_type_check`` now allows only ``world``,
+        # ``experience``, ``observation``); callers that still pass it
+        # get a loud ValueError rather than silent empty results.
         invalid_types = set(fact_type) - VALID_RECALL_FACT_TYPES
         if invalid_types:
             raise ValueError(
@@ -8845,7 +8844,6 @@ class MemoryEngine(MemoryEngineInterface):
             based_on: dict[str, list[MemoryFact] | list[dict[str, Any]]] = {
                 "world": [],
                 "experience": [],
-                "opinion": [],
                 "observation": [],
                 "mental-models": [],
                 "directives": [],

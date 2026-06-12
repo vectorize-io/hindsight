@@ -311,7 +311,7 @@ class RecallResult(BaseModel):
 
     id: str
     text: str
-    type: str | None = None  # fact type: world, experience, opinion, observation
+    type: str | None = None  # fact type: world, experience, observation
     entities: list[str] | None = None  # Entity names mentioned in this fact
     context: str | None = None
     occurred_start: str | None = None  # ISO format date when the event started
@@ -900,7 +900,7 @@ class ReflectFact(BaseModel):
     text: str = Field(
         description="Fact text. When type='observation', this contains markdown-formatted consolidated knowledge"
     )
-    type: str | None = None  # fact type: world, experience, opinion, observation
+    type: str | None = None  # fact type: world, experience, observation
     context: str | None = None
     occurred_start: str | None = None
     occurred_end: str | None = None
@@ -3373,7 +3373,7 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/graph",
         response_model=GraphDataResponse,
         summary="Get memory graph data",
-        description="Retrieve graph data for visualization, optionally filtered by type (world/experience/opinion).",
+        description="Retrieve graph data for visualization, optionally filtered by type (world/experience/observation).",
         operation_id="get_graph",
         tags=["Memory"],
     )
@@ -3440,7 +3440,7 @@ def _register_routes(app: FastAPI):
 
         Args:
             bank_id: Memory Bank ID (from path)
-            type: Filter by fact type (world, experience, opinion)
+            type: Filter by fact type (world, experience, observation)
             q: Search query for full-text search (searches text and context)
             consolidation_state: Filter by consolidation state for source memories
                 (world/experience). One of 'failed', 'pending', or 'done'.
@@ -3804,11 +3804,11 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/reflect",
         response_model=ReflectResponse,
         summary="Reflect and generate answer",
-        description="Reflect and formulate an answer using bank identity, world facts, and opinions.\n\n"
+        description="Reflect and formulate an answer using bank identity, world facts, and observations.\n\n"
         "This endpoint:\n"
         "1. Retrieves experience (conversations and events)\n"
         "2. Retrieves world facts relevant to the query\n"
-        "3. Retrieves existing opinions (bank's perspectives)\n"
+        "3. Retrieves existing observations (consolidated knowledge)\n"
         "4. Uses LLM to formulate a contextual answer\n"
         "5. Returns plain text answer and the facts used",
         operation_id="reflect",
@@ -6849,14 +6849,14 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/memories",
         response_model=DeleteResponse,
         summary="Clear memory bank memories",
-        description="Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.",
+        description="Delete memory units for a memory bank. Optionally filter by type (world, experience, observation) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.",
         operation_id="clear_bank_memories",
         tags=["Memory"],
     )
     @audited("clear_memories", request_param=None)
     async def api_clear_bank_memories(
         bank_id: str,
-        type: str | None = Query(None, description="Optional fact type filter (world, experience, opinion)"),
+        type: str | None = Query(None, description="Optional fact type filter (world, experience, observation)"),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """Clear memories for a memory bank, optionally filtered by type."""

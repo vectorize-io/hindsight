@@ -26,7 +26,7 @@ type GraphitiEdgeInvalidatedRequest struct {
 	EdgeUuid string `json:"edge_uuid"`
 	// Marker the C1 forwarder writes into EdgePayload.attributes.source_uri: 'hindsight://bank/{bank_id}/memory/{memory_id}'. Cross-bank or malformed URIs return 404 (not 5xx) per deep-dive 4 §1.3.
 	SourceUri string `json:"source_uri"`
-	// When the upstream edge was invalidated. Used as the B1 valid_until value when graphiti_backflow_supersession is on (subject to the chk_mu_valid_until_after_start CHECK constraint).
+	// When the upstream edge was invalidated. Used as the B1 valid_until value when graphiti_backflow_supersession is on (subject to the chk_mu_valid_until_after_start CHECK constraint). Must be a timezone-aware datetime — Pydantic v2's default parser accepts ISO 8601 with either 'Z' or '+HH:MM' offset and returns a tz-aware value. Naive datetimes are rejected because asyncpg raises on writing a naive value to a ``timestamp with time zone`` column. The forwarder path applies the equivalent normalization in ``_parse_iso_to_utc`` (graphiti_forward.py).
 	InvalidAt time.Time `json:"invalid_at"`
 	SupersededByFact NullableString `json:"superseded_by_fact,omitempty"`
 }

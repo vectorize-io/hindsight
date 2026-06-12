@@ -96,7 +96,7 @@ def create_recall_node(
         max_results: Maximum number of memories to inject.
         tags: Tags to filter recall results.
         tags_match: Tag matching mode.
-        recall_types: Fact types to filter (world, experience, opinion, observation).
+        recall_types: Fact types to filter (world, experience, observation).
         recall_include_entities: Include entity information in recall results.
         bank_id_from_config: Config key to read bank_id from at runtime.
             Looked up in ``config["configurable"][bank_id_from_config]``.

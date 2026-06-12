@@ -1491,7 +1491,7 @@ def hindsight_memory(
         max_memories: Maximum number of memories to inject (None = unlimited)
         max_memory_tokens: Maximum tokens for memory context
         budget: Budget for memory recall (low, mid, high)
-        fact_types: List of fact types to filter (world, experience, opinion, observation)
+        fact_types: List of fact types to filter (world, experience, observation)
         document_id: Document ID for grouping conversations (deprecated, use session_id)
         session_id: Session ID for grouping conversations (upsert behavior)
         excluded_models: List of model patterns to exclude

@@ -49,7 +49,7 @@ def apply_combined_scoring(
     so temporal_boost collapses to 1.0 for non-temporal queries.
 
     Proof count is treated as neutral (0.5) when not available (non-observation facts),
-    so proof_count_boost collapses to 1.0 for world/experience/opinion facts.
+    so proof_count_boost collapses to 1.0 for world/experience facts.
 
     Args:
         scored_results: Results from the cross-encoder reranker. Mutated in place.

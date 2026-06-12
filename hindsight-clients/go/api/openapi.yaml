@@ -55,7 +55,7 @@ paths:
   /v1/default/banks/{bank_id}/graph:
     get:
       description: "Retrieve graph data for visualization, optionally filtered by\
-        \ type (world/experience/opinion)."
+        \ type (world/experience/observation)."
       operationId: get_graph
       parameters:
       - explode: false
@@ -442,12 +442,12 @@ paths:
   /v1/default/banks/{bank_id}/reflect:
     post:
       description: |-
-        Reflect and formulate an answer using bank identity, world facts, and opinions.
+        Reflect and formulate an answer using bank identity, world facts, and observations.
 
         This endpoint:
         1. Retrieves experience (conversations and events)
         2. Retrieves world facts relevant to the query
-        3. Retrieves existing opinions (bank's perspectives)
+        3. Retrieves existing observations (consolidated knowledge)
         4. Uses LLM to formulate a contextual answer
         5. Returns plain text answer and the facts used
       operationId: reflect
@@ -3382,9 +3382,9 @@ paths:
   /v1/default/banks/{bank_id}/memories:
     delete:
       description: "Delete memory units for a memory bank. Optionally filter by type\
-        \ (world, experience, opinion) to delete only specific types. This is a destructive\
-        \ operation that cannot be undone. The bank profile (disposition and background)\
-        \ will be preserved."
+        \ (world, experience, observation) to delete only specific types. This is\
+        \ a destructive operation that cannot be undone. The bank profile (disposition\
+        \ and background) will be preserved."
       operationId: clear_bank_memories
       parameters:
       - explode: false
@@ -3395,7 +3395,7 @@ paths:
           title: Bank Id
           type: string
         style: simple
-      - description: "Optional fact type filter (world, experience, opinion)"
+      - description: "Optional fact type filter (world, experience, observation)"
         explode: true
         in: query
         name: type
@@ -5787,7 +5787,12 @@ components:
         invalid_at:
           description: When the upstream edge was invalidated. Used as the B1 valid_until
             value when graphiti_backflow_supersession is on (subject to the chk_mu_valid_until_after_start
-            CHECK constraint).
+            CHECK constraint). Must be a timezone-aware datetime — Pydantic v2's default
+            parser accepts ISO 8601 with either 'Z' or '+HH:MM' offset and returns
+            a tz-aware value. Naive datetimes are rejected because asyncpg raises
+            on writing a naive value to a ``timestamp with time zone`` column. The
+            forwarder path applies the equivalent normalization in ``_parse_iso_to_utc``
+            (graphiti_forward.py).
           format: date-time
           title: Invalid At
           type: string

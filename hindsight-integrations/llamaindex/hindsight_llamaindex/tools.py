@@ -38,7 +38,7 @@ class HindsightToolSpec(BaseToolSpec):
         retain_document_id: Default document_id for retain. If None,
             auto-generates ``{session_id}-{timestamp_ms}`` per call.
         retain_context: Source label for retain operations (default: "llamaindex").
-        recall_types: Fact types to filter (world, experience, opinion, observation).
+        recall_types: Fact types to filter (world, experience, observation).
         recall_include_entities: Include entity information in recall results.
         reflect_context: Additional context for reflect operations.
         reflect_max_tokens: Max tokens for reflect results (defaults to max_tokens).
@@ -387,7 +387,7 @@ def create_hindsight_tools(
         retain_document_id: Default document_id for retain. If None,
             auto-generates per call.
         retain_context: Source label for retain operations.
-        recall_types: Fact types to filter (world, experience, opinion, observation).
+        recall_types: Fact types to filter (world, experience, observation).
         recall_include_entities: Include entity information in recall results.
         reflect_context: Additional context for reflect operations.
         reflect_max_tokens: Max tokens for reflect results (defaults to max_tokens).

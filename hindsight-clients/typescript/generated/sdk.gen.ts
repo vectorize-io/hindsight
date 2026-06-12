@@ -287,7 +287,7 @@ export const metricsEndpointMetricsGet = <ThrowOnError extends boolean = false>(
 /**
  * Get memory graph data
  *
- * Retrieve graph data for visualization, optionally filtered by type (world/experience/opinion).
+ * Retrieve graph data for visualization, optionally filtered by type (world/experience/observation).
  */
 export const getGraph = <ThrowOnError extends boolean = false>(
   options: Options<GetGraphData, ThrowOnError>
@@ -378,12 +378,12 @@ export const recallMemories = <ThrowOnError extends boolean = false>(
 /**
  * Reflect and generate answer
  *
- * Reflect and formulate an answer using bank identity, world facts, and opinions.
+ * Reflect and formulate an answer using bank identity, world facts, and observations.
  *
  * This endpoint:
  * 1. Retrieves experience (conversations and events)
  * 2. Retrieves world facts relevant to the query
- * 3. Retrieves existing opinions (bank's perspectives)
+ * 3. Retrieves existing observations (consolidated knowledge)
  * 4. Uses LLM to formulate a contextual answer
  * 5. Returns plain text answer and the facts used
  */
@@ -1267,7 +1267,7 @@ export const listWebhookDeliveries = <ThrowOnError extends boolean = false>(
 /**
  * Clear memory bank memories
  *
- * Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
+ * Delete memory units for a memory bank. Optionally filter by type (world, experience, observation) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
  */
 export const clearBankMemories = <ThrowOnError extends boolean = false>(
   options: Options<ClearBankMemoriesData, ThrowOnError>
