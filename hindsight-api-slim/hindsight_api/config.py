@@ -408,6 +408,8 @@ ENV_RETAIN_BATCH_ENABLED = "HINDSIGHT_API_RETAIN_BATCH_ENABLED"
 ENV_RETAIN_BATCH_POLL_INTERVAL_SECONDS = "HINDSIGHT_API_RETAIN_BATCH_POLL_INTERVAL_SECONDS"
 ENV_RETAIN_CHUNK_BATCH_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_BATCH_SIZE"
 ENV_GRAPHITI_GROUP_ID = "HINDSIGHT_API_GRAPHITI_GROUP_ID"
+ENV_GRAPHITI_BASE_URL = "HINDSIGHT_API_GRAPHITI_BASE_URL"
+ENV_GRAPHITI_API_KEY = "HINDSIGHT_API_GRAPHITI_API_KEY"
 
 # File storage configuration
 ENV_FILE_STORAGE_TYPE = "HINDSIGHT_API_FILE_STORAGE_TYPE"
@@ -837,6 +839,8 @@ DEFAULT_RETAIN_CHUNK_BATCH_SIZE = (
 )
 DEFAULT_RETAIN_BATCH_TOKENS = 10_000  # ~40KB of text  # Max chars per sub-batch for async retain auto-splitting
 DEFAULT_GRAPHITI_GROUP_ID = ""  # Bank participates in Graphiti federation when non-empty (C-track gate)
+DEFAULT_GRAPHITI_BASE_URL = ""  # Base URL for the Graphiti world-graph service. Empty = C-track disabled.
+DEFAULT_GRAPHITI_API_KEY = ""  # Optional bearer token for the Graphiti service.
 DEFAULT_RETAIN_ENTITY_LOOKUP = "trigram"  # "full" or "trigram"
 DEFAULT_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE = 100  # Unique entity names per pg_trgm candidate lookup query
 DEFAULT_RETAIN_BATCH_ENABLED = False  # Use LLM Batch API for fact extraction (only when async=True)
@@ -1625,6 +1629,12 @@ class HindsightConfig:
     # eligible for Graphiti federation. Empty string = no federation, prompt
     # and response schema stay byte-identical to the pre-wiring versions.
     graphiti_group_id: str = ""
+    # C3 reflect-tool endpoint config. The forwarder reads bank_config.graphiti_base_url
+    # with env fallback; reflect's tool_search_world_graph reads this field on the
+    # global HindsightConfig. The two paths intentionally don't share state (a forwarder
+    # circuit-open shouldn't pause reflect's read path) — see tool_search_world_graph.
+    graphiti_base_url: str = DEFAULT_GRAPHITI_BASE_URL
+    graphiti_api_key: str = DEFAULT_GRAPHITI_API_KEY
 
     # Class-level sets for configuration categorization
 
@@ -1652,6 +1662,10 @@ class HindsightConfig:
         "embeddings_zeroentropy_base_url",
         "reranker_zeroentropy_base_url",
         "reranker_siliconflow_base_url",
+        # Graphiti federation endpoint (C-track) — base URL exposes infrastructure,
+        # API key is a bearer secret
+        "graphiti_base_url",
+        "graphiti_api_key",
         # Service Account Keys
         "llm_vertexai_service_account_key",
         "embeddings_vertexai_service_account_key",
@@ -2356,6 +2370,8 @@ class HindsightConfig:
             ),
             retain_chunk_batch_size=int(os.getenv(ENV_RETAIN_CHUNK_BATCH_SIZE, str(DEFAULT_RETAIN_CHUNK_BATCH_SIZE))),
             graphiti_group_id=os.getenv(ENV_GRAPHITI_GROUP_ID, DEFAULT_GRAPHITI_GROUP_ID) or DEFAULT_GRAPHITI_GROUP_ID,
+            graphiti_base_url=os.getenv(ENV_GRAPHITI_BASE_URL, DEFAULT_GRAPHITI_BASE_URL) or DEFAULT_GRAPHITI_BASE_URL,
+            graphiti_api_key=os.getenv(ENV_GRAPHITI_API_KEY, DEFAULT_GRAPHITI_API_KEY) or DEFAULT_GRAPHITI_API_KEY,
             # File storage
             file_storage_type=os.getenv(ENV_FILE_STORAGE_TYPE, DEFAULT_FILE_STORAGE_TYPE),
             file_storage_s3_bucket=os.getenv(ENV_FILE_STORAGE_S3_BUCKET) or None,

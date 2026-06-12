@@ -324,6 +324,14 @@ class ReflectResult(BaseModel):
         default_factory=list,
         description="Directive mental models that were applied during this reflection.",
     )
+    world_fact_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Cross-agent world-graph fact UUIDs (Graphiti edge UUIDs) that the "
+            "agent actually cited. Only populated when the bank is federated "
+            "and search_world_graph is enabled (C3)."
+        ),
+    )
 
 
 class EntityObservation(BaseModel):

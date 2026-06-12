@@ -8490,6 +8490,31 @@ class MemoryEngine(MemoryEngineInterface):
             async with backend.acquire() as conn:
                 return await tool_expand(conn, bank_id, memory_ids, depth)
 
+        # C3: cross-agent shared graph tool. Only registered when the bank is
+        # federated (graphiti_group_id set) AND a base URL is configured — the
+        # tool itself re-checks the base URL (defense in depth) so a missing
+        # URL degrades to a graceful "world graph unavailable" error rather
+        # than an exception.
+        world_graph_group_id: str = (
+            ((resolved_reflect_config.graphiti_group_id or "") if resolved_reflect_config is not None else "")
+            or getattr(get_config(), "graphiti_group_id", "")
+            or ""
+        )
+        world_graph_base_url: str = getattr(get_config(), "graphiti_base_url", "") or ""
+        include_world_graph = bool(world_graph_group_id) and bool(world_graph_base_url)
+
+        async def search_world_graph_fn(query: str, max_facts: int = 10, max_tokens: int = 1024) -> dict[str, Any]:
+            from .reflect.tools import tool_search_world_graph
+
+            return await tool_search_world_graph(
+                memory_engine=self,
+                bank_id=bank_id,
+                group_id=world_graph_group_id,
+                query=query,
+                max_facts=max_facts,
+                max_tokens=max_tokens,
+            )
+
         # Load directives from the dedicated directives table
         # Directives are hard rules that must be followed in all responses
         # Use isolation_mode=True to prevent tag-scoped directives from leaking into untagged operations
@@ -8548,6 +8573,8 @@ class MemoryEngine(MemoryEngineInterface):
                         has_mental_models=has_mental_models,
                         include_observations=include_observations,
                         include_recall=include_recall,
+                        include_world_graph=include_world_graph,
+                        search_world_graph_fn=search_world_graph_fn,
                         budget=effective_budget,
                         max_context_tokens=max_context_tokens,
                         llm_output_language=getattr(resolved_reflect_config, "llm_output_language", None),
@@ -8734,6 +8761,7 @@ class MemoryEngine(MemoryEngineInterface):
                 tool_trace=tool_trace_result,
                 llm_trace=llm_trace_result,
                 directives_applied=directives_applied_result,
+                world_fact_ids=(list(agent_result.used_world_fact_ids) if agent_result.used_world_fact_ids else []),
             )
 
             # Call post-operation hook if validator is configured

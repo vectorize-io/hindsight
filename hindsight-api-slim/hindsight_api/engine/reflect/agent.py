@@ -338,6 +338,8 @@ async def run_reflect_agent(
     has_mental_models: bool = False,
     include_observations: bool = True,
     include_recall: bool = True,
+    include_world_graph: bool = False,
+    search_world_graph_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]] | None = None,
     budget: str | None = None,
     max_context_tokens: int = 100_000,
     llm_output_language: str | None = None,
@@ -350,6 +352,7 @@ async def run_reflect_agent(
     1. search_mental_models - User-curated summaries (try first)
     2. search_observations - Consolidated knowledge with freshness
     3. recall - Raw facts as ground truth
+    4. search_world_graph - Cross-agent shared graph (C3, only when federated)
 
     Args:
         llm_config: LLM provider for agent calls
@@ -360,6 +363,12 @@ async def run_reflect_agent(
         search_observations_fn: Tool callback for searching observations (query, max_results) -> result
         recall_fn: Tool callback for recall (query, max_tokens) -> result
         expand_fn: Tool callback for expand (memory_ids, depth) -> result
+        include_world_graph: Whether the world-graph tool is registered.
+            When false the callback is never invoked, even if supplied.
+        search_world_graph_fn: Tool callback for the cross-agent world graph
+            (query, max_facts, max_tokens) -> result. The bank's group_id
+            is resolved inside the callback by the caller (the bank is
+            known at wire-up time, not at the agent layer).
         context: Optional additional context
         max_iterations: Maximum number of iterations before forcing response
         max_tokens: Maximum tokens for the final response
@@ -388,6 +397,7 @@ async def run_reflect_agent(
         include_observations=include_observations,
         include_recall=include_recall,
         include_expand=include_expand,
+        include_world_graph=include_world_graph,
     )
     # Build set of enabled tool names to guard against LLM hallucinating disabled tool calls
     enabled_tools: frozenset[str] = frozenset(t["function"]["name"] for t in tools if t.get("type") == "function")
@@ -443,6 +453,9 @@ async def run_reflect_agent(
     available_memory_ids: set[str] = set()
     available_mental_model_ids: set[str] = set()
     available_observation_ids: set[str] = set()
+    # C3: edge UUIDs returned by search_world_graph, for done() validation.
+    # Only populated when the tool is enabled and the call succeeded.
+    available_world_fact_ids: set[str] = set()
 
     def _get_llm_trace() -> list[LLMCall]:
         return [
@@ -919,6 +932,7 @@ async def run_reflect_agent(
                     directives_applied=directives_applied,
                     llm_config=llm_config,
                     response_schema=response_schema,
+                    available_world_fact_ids=available_world_fact_ids,
                 )
 
         # Execute other tools in parallel (exclude done tool in all its format variants)
@@ -971,6 +985,7 @@ async def run_reflect_agent(
                     recall_fn,
                     expand_fn,
                     enabled_tools=enabled_tools,
+                    search_world_graph_fn=search_world_graph_fn,
                 )
                 for tc in other_tools
             ]
@@ -1038,6 +1053,17 @@ async def run_reflect_agent(
                     for memory in output["memories"]:
                         if "id" in memory:
                             available_memory_ids.add(memory["id"])
+
+                if normalized_tool_name == "search_world_graph" and isinstance(output, dict) and "facts" in output:
+                    # The tool emits both "id" and "uuid" (id mirrors uuid, kept
+                    # for symmetry with search_mental_models/recall). Track
+                    # the uuid (which is the actual Graphiti edge UUID) for
+                    # done() validation — that's what world_fact_ids in the
+                    # done tool schema carries.
+                    for fact in output["facts"]:
+                        fid = fact.get("uuid") or fact.get("id")
+                        if fid:
+                            available_world_fact_ids.add(str(fid))
 
                 # Add tool result message
                 messages.append(
@@ -1128,6 +1154,7 @@ async def _process_done_tool(
     directives_applied: list[DirectiveInfo],
     llm_config: "LLMProvider | None" = None,
     response_schema: dict | None = None,
+    available_world_fact_ids: set[str] | None = None,
 ) -> ReflectAgentResult:
     """Process the done tool call and return the result."""
     args = done_call.arguments
@@ -1142,6 +1169,9 @@ async def _process_done_tool(
     used_memory_ids = [mid for mid in (args.get("memory_ids") or []) if mid in available_memory_ids]
     used_mental_model_ids = [mid for mid in (args.get("mental_model_ids") or []) if mid in available_mental_model_ids]
     used_observation_ids = [oid for oid in (args.get("observation_ids") or []) if oid in available_observation_ids]
+    used_world_fact_ids: list[str] = []
+    if available_world_fact_ids is not None:
+        used_world_fact_ids = [fid for fid in (args.get("world_fact_ids") or []) if fid in available_world_fact_ids]
 
     # Generate structured output if schema provided
     structured_output = None
@@ -1169,6 +1199,7 @@ async def _process_done_tool(
         used_memory_ids=used_memory_ids,
         used_mental_model_ids=used_mental_model_ids,
         used_observation_ids=used_observation_ids,
+        used_world_fact_ids=used_world_fact_ids,
         directives_applied=directives_applied,
     )
 
@@ -1180,6 +1211,7 @@ async def _execute_tool_with_timing(
     recall_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]],
     expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
     enabled_tools: frozenset[str] | None = None,
+    search_world_graph_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]] | None = None,
 ) -> tuple[dict[str, Any], int]:
     """Execute a tool call and return result with timing."""
     from hindsight_api.tracing import get_tracer
@@ -1214,6 +1246,7 @@ async def _execute_tool_with_timing(
                 recall_fn,
                 expand_fn,
                 enabled_tools=enabled_tools,
+                search_world_graph_fn=search_world_graph_fn,
             )
 
             # Set success attributes
@@ -1254,6 +1287,7 @@ async def _execute_tool(
     recall_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]],
     expand_fn: Callable[[list[str], str], Awaitable[dict[str, Any]]],
     enabled_tools: frozenset[str] | None = None,
+    search_world_graph_fn: Callable[[str, int, int], Awaitable[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Execute a single tool by name."""
     # Normalize tool name for various LLM output formats
@@ -1293,6 +1327,19 @@ async def _execute_tool(
             return {"error": "expand requires memory_ids"}
         depth = args.get("depth", "chunk")
         return await expand_fn(memory_ids, depth)
+
+    elif tool_name == "search_world_graph":
+        if search_world_graph_fn is None:
+            return {"error": "search_world_graph is not available (bank is not federated)"}
+        query = args.get("query")
+        if not query:
+            return {"error": "search_world_graph requires a query parameter"}
+        # max_facts default 10, min 1. max_tokens default 1024, min 100.
+        # Capping max_facts by max_tokens is the callback's job (so it can
+        # choose how to allocate the budget) — we only validate ranges.
+        max_facts = max(int(args.get("max_facts") or 10), 1)
+        max_tokens = max(int(args.get("max_tokens") or 1024), 100)
+        return await search_world_graph_fn(query, max_facts, max_tokens)
 
     else:
         return {"error": f"Unknown tool: {tool_name}"}

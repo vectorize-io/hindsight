@@ -6,6 +6,7 @@ The reflect agent uses a hierarchical retrieval strategy:
 1. search_mental_models - User-curated stored reflect responses (highest quality, if applicable)
 2. search_observations - Consolidated knowledge with freshness awareness
 3. recall - Raw facts (world/experience) as ground truth fallback
+4. search_world_graph - C3 cross-agent shared graph (only when bank is federated)
 """
 
 # Tool definitions in OpenAI format
@@ -134,6 +135,43 @@ TOOL_EXPAND = {
     },
 }
 
+TOOL_SEARCH_WORLD_GRAPH = {
+    "type": "function",
+    "function": {
+        "name": "search_world_graph",
+        "description": (
+            "Search the cross-agent shared world graph (Graphiti) for facts shared "
+            "across banks in this federation. Use as a fallback evidence source when "
+            "private memory (search_mental_models / search_observations / recall) "
+            "is silent or stale on a topic that other agents in the same group may "
+            "have observed. Each returned fact carries a bi-temporal ledger (valid_at / "
+            "invalid_at) — superseded facts are returned with a 'superseded' annotation, "
+            "not filtered, so disposition reasoning can weigh the timeline explicitly. "
+            "Graphiti outages and timeouts degrade gracefully: the tool returns an error "
+            "and the reflect loop continues with private memory only."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Brief explanation of why you're making this search (for debugging)",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query string. Graphiti runs a mixed retrieval (semantic + BM25 + graph traversal) on the federation's group_id.",
+                },
+                "max_facts": {
+                    "type": "integer",
+                    "description": "Maximum number of facts to return (default 10). Capped to the tool's token budget; excess is truncated.",
+                },
+            },
+            "required": ["reason", "query"],
+        },
+    },
+}
+
+
 TOOL_DONE_ANSWER = {
     "type": "function",
     "function": {
@@ -160,6 +198,11 @@ TOOL_DONE_ANSWER = {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Array of observation IDs that support your answer",
+                },
+                "world_fact_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Array of cross-agent world-graph fact UUIDs that support your answer. Only present when search_world_graph is available.",
                 },
             },
             "required": ["answer"],
@@ -216,6 +259,11 @@ def _build_done_tool_with_directives(directive_rules: list[str]) -> dict:
                         "items": {"type": "string"},
                         "description": "Array of observation IDs that support your answer",
                     },
+                    "world_fact_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Array of cross-agent world-graph fact UUIDs that support your answer. Only present when search_world_graph is available.",
+                    },
                     "directive_compliance": {
                         "type": "string",
                         "description": f"REQUIRED: Confirm your answer complies with ALL directives. List each directive and how your answer follows it:\n{rules_list}\n\nFormat: 'Directive 1: [how answer complies]. Directive 2: [how answer complies]...'",
@@ -233,6 +281,7 @@ def get_reflect_tools(
     include_observations: bool = True,
     include_recall: bool = True,
     include_expand: bool = True,
+    include_world_graph: bool = False,
 ) -> list[dict]:
     """
     Get the list of tools for the reflect agent.
@@ -241,6 +290,7 @@ def get_reflect_tools(
     1. search_mental_models - User-curated stored reflect responses (try first)
     2. search_observations - Consolidated knowledge with freshness
     3. recall - Raw facts as ground truth
+    4. search_world_graph - Cross-agent shared graph (C3, only when federated)
 
     Args:
         directive_rules: Optional list of directive rule strings. If provided,
@@ -251,6 +301,10 @@ def get_reflect_tools(
         include_expand: Whether to include the expand tool. Disabled when raw
             document/chunk text is not stored, since expand only reads back
             source text and would return empty results.
+        include_world_graph: Whether to include the search_world_graph tool
+            (C3). Only true when the bank is federated (graphiti_group_id set
+            AND GRAPHITI_BASE_URL configured) — call sites must apply both
+            gates, not just one.
 
     Returns:
         List of tool definitions in OpenAI format
@@ -266,6 +320,9 @@ def get_reflect_tools(
 
     if include_expand:
         tools.append(TOOL_EXPAND)
+
+    if include_world_graph:
+        tools.append(TOOL_SEARCH_WORLD_GRAPH)
 
     # Use directive-aware done tool if directives are present
     if directive_rules:

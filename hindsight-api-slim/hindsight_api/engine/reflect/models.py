@@ -104,6 +104,14 @@ class ReflectAgentResult(BaseModel):
     used_observation_ids: list[str] = Field(
         default_factory=list, description="Validated observation IDs actually used in answer"
     )
+    # C3: cross-agent shared graph edge UUIDs. Only populated when
+    # search_world_graph is enabled AND the LLM elected to cite at least
+    # one fact. Validated against the UUIDs actually returned by the tool
+    # so the LLM cannot hallucinate Graphiti citations.
+    used_world_fact_ids: list[str] = Field(
+        default_factory=list,
+        description="Validated world-graph fact UUIDs (from search_world_graph) used in answer",
+    )
     directives_applied: list[DirectiveInfo] = Field(
         default_factory=list, description="Directive mental models that affected this reflection"
     )

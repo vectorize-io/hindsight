@@ -446,3 +446,115 @@ async def tool_expand(
         results.append(item)
 
     return {"results": results, "count": len(results)}
+
+
+async def tool_search_world_graph(
+    memory_engine: "MemoryEngine",
+    bank_id: str,
+    group_id: str,
+    query: str,
+    max_facts: int = 10,
+    max_tokens: int = 1024,
+) -> dict[str, Any]:
+    """Search the cross-agent shared world graph (Graphiti) for facts.
+
+    C3 reflect tool. Calls ``GraphitiClient.search`` and renders the response
+    in a token-bounded markdown block. The output shape mirrors the other
+    reflect tools so the agent loop can treat it uniformly:
+
+        {
+          "query": str,
+          "facts": [ { uuid, name, fact, valid_at, invalid_at } ],
+          "rendered": "<one line per fact>",
+        }
+
+    Ledger edges (``invalid_at`` non-null) are *not* filtered — disposition
+    reasoning (especially high-skepticism banks) needs the timeline. The
+    render annotates them with ``superseded <date>`` (deep-dive 3 §2.3).
+
+    Errors degrade the tool to ``{"error": ...}`` so the reflect loop can
+    continue on private memory only — there is no fallback to "pretend the
+    shared graph said something".
+    """
+    from ..federation.graphiti_client import GraphitiClient, GraphitiClientError
+
+    # Validate inputs up-front — these mirror the schema's required[] contract.
+    if not group_id:
+        return {"error": "world graph unavailable: bank has no graphiti_group_id"}
+    if not query:
+        return {"error": "search_world_graph requires a query parameter"}
+
+    # Bound the requested fact count by the token budget so we never pull back
+    # more than we can render. ~50 tokens per fact line is a generous estimate
+    # (uuid + PREDICATE_NAME + short fact + optional date annotation).
+    token_budget = max(int(max_tokens), 100)
+    fact_cap = max(1, min(int(max_facts) if max_facts else 10, token_budget // 50))
+
+    # Build (or reuse) a client from the bank's resolved config. We do NOT
+    # cache a long-lived client per call — the forwarder maintains its own
+    # client (with circuit-breaker state); reflect gets a fresh client per
+    # call so a forwarder-induced circuit-open doesn't taint reflect
+    # attempts within the same tool budget. The cost is one extra
+    # httpx.AsyncClient allocation per call (cheap) and the benefit is
+    # clean isolation between the two paths.
+    from ...config import get_config
+
+    cfg = get_config()
+    base_url = cfg.graphiti_base_url
+    if not base_url:
+        return {"error": "world graph unavailable: HINDSIGHT_API_GRAPHITI_BASE_URL not set"}
+    api_key = cfg.graphiti_api_key or None
+
+    client = GraphitiClient(base_url=base_url, api_key=api_key)
+    try:
+        try:
+            facts = await client.search(
+                group_ids=[group_id],
+                query=query,
+                max_facts=fact_cap,
+            )
+        except GraphitiClientError as e:
+            return {"error": f"world graph unavailable: {e}"}
+
+        rendered_lines: list[str] = []
+        rendered_tokens = 0
+        items: list[dict[str, Any]] = []
+
+        for fact in facts:
+            # Compose the one-line ledger-annotated rendering.
+            valid_part = f"valid since {fact.valid_at[:10]}" if fact.valid_at else ""
+            superseded_part = f"superseded {fact.invalid_at[:10]}" if fact.invalid_at else ""
+            timeline = "; ".join(p for p in (valid_part, superseded_part) if p)
+            line = f"[{fact.uuid}] {fact.name}: {fact.fact}"
+            if timeline:
+                line += f" ({timeline})"
+
+            # Truncate tail to stay within the token budget.
+            from .tokenization import count_cl100k_tokens
+
+            line_tokens = count_cl100k_tokens(line)
+            if rendered_tokens + line_tokens > token_budget:
+                break
+            rendered_lines.append(line)
+            rendered_tokens += line_tokens
+
+            items.append(
+                {
+                    "id": str(fact.uuid),
+                    "uuid": str(fact.uuid),
+                    "name": fact.name,
+                    "fact": fact.fact,
+                    "valid_at": fact.valid_at,
+                    "invalid_at": fact.invalid_at,
+                }
+            )
+
+        return {
+            "query": query,
+            "facts": items,
+            "rendered": "\n".join(rendered_lines),
+            "rendered_tokens": rendered_tokens,
+            "truncated": len(items) < len(facts),
+        }
+    finally:
+        await client.aclose()
