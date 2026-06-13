@@ -1149,7 +1149,14 @@ class CreateBankRequest(BaseModel):
     )
     retain_chunk_size: int | None = Field(
         default=None,
-        description="Maximum token size for each content chunk during retain.",
+        description="Target maximum characters for each content chunk during retain.",
+    )
+    retain_structured_chunk_size: int | None = Field(
+        default=None,
+        description=(
+            "Maximum characters for a single JSONL line or conversation turn to keep whole during retain. "
+            "Defaults to retain_chunk_size when unset."
+        ),
     )
     enable_observations: bool | None = Field(
         default=None,
@@ -1189,6 +1196,7 @@ class CreateBankRequest(BaseModel):
             "retain_extraction_mode",
             "retain_custom_instructions",
             "retain_chunk_size",
+            "retain_structured_chunk_size",
             "enable_observations",
             "observations_mission",
         ):
@@ -2027,7 +2035,14 @@ class BankTemplateConfig(BaseModel):
     retain_custom_instructions: str | None = Field(
         default=None, description="Custom extraction prompt (when mode='custom')"
     )
-    retain_chunk_size: int | None = Field(default=None, description="Max token size for each content chunk")
+    retain_chunk_size: int | None = Field(default=None, description="Target max characters for each content chunk")
+    retain_structured_chunk_size: int | None = Field(
+        default=None,
+        description=(
+            "Max characters for a single JSONL line or conversation turn to keep whole; "
+            "defaults to retain_chunk_size when unset"
+        ),
+    )
     enable_observations: bool | None = Field(default=None, description="Toggle observation consolidation")
     observations_mission: str | None = Field(default=None, description="Controls what gets synthesised")
     disposition_skepticism: int | None = Field(default=None, ge=1, le=5, description="Skepticism trait (1-5)")

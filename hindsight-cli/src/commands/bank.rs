@@ -797,6 +797,8 @@ pub fn set_config(
     llm_base_url: Option<String>,
     retain_mission: Option<String>,
     retain_extraction_mode: Option<String>,
+    retain_chunk_size: Option<i64>,
+    retain_structured_chunk_size: Option<i64>,
     observations_mission: Option<String>,
     reflect_mission: Option<String>,
     disposition_skepticism: Option<i64>,
@@ -842,6 +844,18 @@ pub fn set_config(
             serde_json::Value::String(mode),
         );
     }
+    if let Some(size) = retain_chunk_size {
+        updates.insert(
+            "retain_chunk_size".to_string(),
+            serde_json::Value::Number(size.into()),
+        );
+    }
+    if let Some(size) = retain_structured_chunk_size {
+        updates.insert(
+            "retain_structured_chunk_size".to_string(),
+            serde_json::Value::Number(size.into()),
+        );
+    }
     if let Some(mission) = observations_mission {
         updates.insert(
             "observations_mission".to_string(),
@@ -874,7 +888,7 @@ pub fn set_config(
     }
 
     if updates.is_empty() {
-        return Err(anyhow!("No config updates provided. Use --llm-provider, --llm-model, --retain-mission, --observations-mission, or other flags".to_string()));
+        return Err(anyhow!("No config updates provided. Use --llm-provider, --llm-model, --retain-mission, --retain-chunk-size, --observations-mission, or other flags".to_string()));
     }
 
     let spinner = if output_format == OutputFormat::Pretty {

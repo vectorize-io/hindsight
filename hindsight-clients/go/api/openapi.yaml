@@ -4454,6 +4454,9 @@ components:
         retain_chunk_size:
           nullable: true
           type: integer
+        retain_structured_chunk_size:
+          nullable: true
+          type: integer
         enable_observations:
           nullable: true
           type: boolean
@@ -4970,6 +4973,9 @@ components:
           nullable: true
           type: string
         retain_chunk_size:
+          nullable: true
+          type: integer
+        retain_structured_chunk_size:
           nullable: true
           type: integer
         enable_observations:

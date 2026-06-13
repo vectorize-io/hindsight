@@ -424,6 +424,12 @@ class _SubBatchSplit:
     document_body_overrides: list[str | None] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class _RetainChunkingConfig:
+    chunk_size: int
+    structured_chunk_size: int | None
+
+
 def _split_contents_into_sub_batches(
     contents: list[RetainContentDict],
     tokens_per_batch: int,
@@ -3234,7 +3240,7 @@ class MemoryEngine(MemoryEngineInterface):
             # with, so the offsets match the chunk_index values it assigns.
             from .retain import fact_extraction, fact_storage
 
-            sub_chunk_size = await self._resolve_retain_chunk_size(bank_id, request_context, strategy)
+            chunking_config = await self._resolve_retain_chunking_config(bank_id, request_context, strategy)
             chunk_offsets: dict[str, int] = {}
 
             # In update_mode="append", retain_batch prepends the existing document
@@ -3257,7 +3263,11 @@ class MemoryEngine(MemoryEngineInterface):
                     existing_text = await fact_storage.get_document_content(conn, bank_id, append_doc_id)
                 if existing_text:
                     append_prepend_chunks[append_doc_id] = len(
-                        fact_extraction.chunk_text(existing_text, sub_chunk_size)
+                        fact_extraction.chunk_text(
+                            existing_text,
+                            chunking_config.chunk_size,
+                            structured_chunk_size=chunking_config.structured_chunk_size,
+                        )
                     )
 
             for i, (sub_batch, sub_origins) in enumerate(zip(sub_batches, origin_indices), 1):
@@ -3311,7 +3321,13 @@ class MemoryEngine(MemoryEngineInterface):
                 # document continues the sequence.
                 if sub_doc_id:
                     sub_chunk_count = sum(
-                        len(fact_extraction.chunk_text(item.get("content", "") or "", sub_chunk_size))
+                        len(
+                            fact_extraction.chunk_text(
+                                item.get("content", "") or "",
+                                chunking_config.chunk_size,
+                                structured_chunk_size=chunking_config.structured_chunk_size,
+                            )
+                        )
                         for item in sub_batch
                     )
                     # retain_batch only prepends the existing body on the global
@@ -3422,13 +3438,13 @@ class MemoryEngine(MemoryEngineInterface):
         except Exception as e:
             logger.warning(f"Failed to submit graph maintenance task for bank {bank_id}: {e}")
 
-    async def _resolve_retain_chunk_size(
+    async def _resolve_retain_chunking_config(
         self,
         bank_id: str,
         request_context: "RequestContext",
         strategy: str | None,
-    ) -> int:
-        """Resolve the effective ``retain_chunk_size`` for a bank.
+    ) -> _RetainChunkingConfig:
+        """Resolve the effective retain chunking settings for a bank.
 
         Mirrors the bank-config + strategy resolution that
         ``_retain_batch_async_internal`` applies before handing config to the
@@ -3442,7 +3458,10 @@ class MemoryEngine(MemoryEngineInterface):
         effective_strategy = strategy or resolved_config.retain_default_strategy
         if effective_strategy:
             resolved_config = apply_strategy(resolved_config, effective_strategy)
-        return getattr(resolved_config, "retain_chunk_size", 3000)
+        return _RetainChunkingConfig(
+            chunk_size=getattr(resolved_config, "retain_chunk_size", 3000),
+            structured_chunk_size=getattr(resolved_config, "retain_structured_chunk_size", None),
+        )
 
     async def _retain_batch_async_internal(
         self,

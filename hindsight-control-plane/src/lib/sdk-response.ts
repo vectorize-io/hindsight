@@ -50,6 +50,16 @@ export type SdkResult<T> = {
   response?: Response;
 };
 
+function extractErrorDetail(error: unknown): unknown {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    if (record.detail !== undefined) return record.detail;
+    if (record.details !== undefined) return record.details;
+  }
+  return error;
+}
+
 /**
  * Serialize the result of an SDK call into a NextResponse.
  *
@@ -84,6 +94,8 @@ export function respondWithSdk<T>(
 
   if (result.error !== undefined || result.data === undefined) {
     const upstreamStatus = result.response?.status ?? DEFAULT_UPSTREAM_STATUS;
+    const exposeDetails = upstreamStatus >= 400 && upstreamStatus < 500;
+    const details = exposeDetails ? extractErrorDetail(result.error ?? null) : null;
     const errorKey = errorOptions?.errorKey ?? failureErrorKeys[failureLabel];
     console.error(`${failureLabel}:`, {
       upstreamStatus,
@@ -92,16 +104,19 @@ export function respondWithSdk<T>(
     const payload = {
       error: failureLabel,
       ...(errorKey ? { errorKey } : {}),
+      details,
       upstream: {
         status: upstreamStatus,
-        detail: result.error ?? null,
+        detail: exposeDetails ? (result.error ?? null) : null,
       },
     };
 
-    return NextResponse.json(
-      errorKey ? localizeApiErrorPayload(errorOptions?.request, { ...payload, errorKey }) : payload,
-      { status: upstreamStatus }
-    );
+    const localizedPayload = errorKey
+      ? localizeApiErrorPayload(errorOptions?.request, { ...payload, errorKey })
+      : payload;
+    localizedPayload.details = details;
+
+    return NextResponse.json(localizedPayload, { status: upstreamStatus });
   }
 
   return NextResponse.json(result.data, { status: successStatus });

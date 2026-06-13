@@ -113,6 +113,7 @@ async def test_hierarchical_fields_categorization():
     assert "retain_mission" in configurable
     assert "retain_custom_instructions" in configurable
     assert "retain_chunk_size" in configurable
+    assert "retain_structured_chunk_size" in configurable
     assert "enable_observations" in configurable
     assert "consolidation_llm_batch_size" in configurable
     assert "consolidation_source_facts_max_tokens" in configurable
@@ -249,6 +250,187 @@ async def test_bank_config_null_consolidation_overrides_use_server_defaults():
     bank_overrides = await resolver._load_bank_config(bank_id)
     for field_name in fields:
         assert field_name not in bank_overrides
+
+
+@pytest.mark.asyncio
+async def test_retain_chunking_null_overrides_use_server_defaults():
+    """JSON null retain chunking overrides should behave like Server Default."""
+    bank_id = "test-null-retain-chunking-config-bank"
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+
+    await resolver.update_bank_config(
+        bank_id,
+        {
+            "retain_chunk_size": 5000,
+            "retain_structured_chunk_size": 7000,
+        },
+    )
+    config = await resolver.resolve_full_config(bank_id)
+    assert config.retain_chunk_size == 5000
+    assert config.retain_structured_chunk_size == 7000
+
+    await resolver.update_bank_config(
+        bank_id,
+        {
+            "retain_chunk_size": None,
+            "retain_structured_chunk_size": None,
+        },
+    )
+
+    resolved_config = await resolver.resolve_full_config(bank_id)
+    global_config = resolver._global_config
+    assert resolved_config.retain_chunk_size == global_config.retain_chunk_size
+    assert resolved_config.retain_structured_chunk_size == global_config.retain_structured_chunk_size
+
+
+@pytest.mark.asyncio
+async def test_retain_chunking_validation_uses_null_cleared_chunk_size():
+    """Chunking validation should apply JSON null tombstones before checking final values."""
+    bank_id = "test-null-retain-chunking-validation-bank"
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+
+    await resolver.update_bank_config(
+        bank_id,
+        {
+            "retain_chunk_size": 5000,
+            "retain_structured_chunk_size": 7000,
+        },
+    )
+
+    await resolver.update_bank_config(
+        bank_id,
+        {
+            "retain_chunk_size": None,
+            "retain_structured_chunk_size": 4000,
+        },
+    )
+
+    resolved_config = await resolver.resolve_full_config(bank_id)
+    assert resolved_config.retain_chunk_size == resolver._global_config.retain_chunk_size
+    assert resolved_config.retain_structured_chunk_size == 4000
+
+
+@pytest.mark.asyncio
+async def test_existing_retain_strategy_structured_chunking_survives_chunk_size_changes():
+    """Top-level chunk size updates can exceed existing structured chunk caps."""
+    from hindsight_api.config_resolver import apply_strategy
+
+    bank_id = "test-existing-retain-strategy-chunking-bank"
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+
+    await resolver.update_bank_config(
+        bank_id,
+        {
+            "retain_strategies": {
+                "jsonl": {
+                    "retain_structured_chunk_size": 4000,
+                },
+            },
+        },
+    )
+
+    await resolver.update_bank_config(bank_id, {"retain_chunk_size": 5000})
+
+    config = await resolver.resolve_full_config(bank_id)
+    strategy_config = apply_strategy(config, "jsonl")
+    assert strategy_config.retain_chunk_size == 5000
+    assert strategy_config.retain_structured_chunk_size == 4000
+
+
+@pytest.mark.asyncio
+async def test_retain_strategy_chunking_null_matches_apply_strategy_semantics():
+    """Strategy null values are direct overrides, not bank-config tombstones."""
+    from hindsight_api.config_resolver import apply_strategy
+
+    bank_id = "test-retain-strategy-null-chunking-bank"
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+
+    await resolver.update_bank_config(
+        bank_id,
+        {
+            "retain_structured_chunk_size": 5000,
+            "retain_strategies": {
+                "large-turns": {
+                    "retain_chunk_size": 8000,
+                    "retain_structured_chunk_size": None,
+                },
+            },
+        },
+    )
+
+    resolved_config = await resolver.resolve_full_config(bank_id)
+    strategy_config = apply_strategy(resolved_config, "large-turns")
+    assert strategy_config.retain_chunk_size == 8000
+    assert strategy_config.retain_structured_chunk_size is None
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"retain_chunk_size": "5000"},
+        {"retain_chunk_size": 5000.5},
+        {"retain_chunk_size": True},
+        {"retain_structured_chunk_size": "5000"},
+        {"retain_structured_chunk_size": 5000.5},
+        {"retain_structured_chunk_size": False},
+    ],
+)
+@pytest.mark.asyncio
+async def test_retain_chunking_raw_patch_values_must_be_integers(updates):
+    """Raw config PATCH values should fail as 400-style ValueError, not TypeError."""
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+
+    with pytest.raises(ValueError) as exc_info:
+        await resolver.update_bank_config("test-retain-chunking-malformed-patch-bank", updates)
+
+    assert "must be an integer" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_retain_strategy_chunk_size_null_rejected_with_value_error():
+    """Strategy retain_chunk_size cannot be null because apply_strategy would use it directly."""
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+
+    with pytest.raises(ValueError) as exc_info:
+        await resolver.update_bank_config(
+            "test-retain-strategy-null-chunk-size-bank",
+            {
+                "retain_strategies": {
+                    "bad": {
+                        "retain_chunk_size": None,
+                    },
+                },
+            },
+        )
+
+    error_message = str(exc_info.value)
+    assert "Invalid retain strategy 'bad'" in error_message
+    assert "HINDSIGHT_API_RETAIN_CHUNK_SIZE must be an integer" in error_message
+
+
+@pytest.mark.asyncio
+async def test_retain_strategy_structured_chunk_size_can_be_below_same_update_chunk_size():
+    """Strategy structured chunk size can be lower than the top-level chunk size."""
+    from hindsight_api.config_resolver import apply_strategy
+
+    resolver = ConfigResolver(backend=FakeBankConfigBackend())
+
+    await resolver.update_bank_config(
+        "test-retain-strategy-chunking-bank",
+        {
+            "retain_chunk_size": 5000,
+            "retain_strategies": {
+                "jsonl": {
+                    "retain_structured_chunk_size": 4000,
+                },
+            },
+        },
+    )
+
+    config = await resolver.resolve_full_config("test-retain-strategy-chunking-bank")
+    strategy_config = apply_strategy(config, "jsonl")
+    assert strategy_config.retain_chunk_size == 5000
+    assert strategy_config.retain_structured_chunk_size == 4000
 
 
 @pytest.mark.asyncio
@@ -535,7 +717,12 @@ async def test_config_get_bank_config_no_static_or_credential_fields_leak(memory
             )
 
         # Verify we have the expected configurable fields (small set)
-        expected_configurable = ["retain_chunk_size", "retain_extraction_mode", "enable_observations"]
+        expected_configurable = [
+            "retain_chunk_size",
+            "retain_structured_chunk_size",
+            "retain_extraction_mode",
+            "enable_observations",
+        ]
         for field in expected_configurable:
             assert field in config, f"Expected configurable field '{field}' missing from config"
 

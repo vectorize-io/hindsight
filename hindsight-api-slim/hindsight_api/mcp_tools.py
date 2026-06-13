@@ -3191,7 +3191,8 @@ def _register_update_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
                     - retain_mission: Steers what gets extracted during retain().
                     - retain_extraction_mode: 'concise' (default), 'verbose', or 'custom'.
                     - retain_custom_instructions: Custom extraction prompt (active when mode is 'custom').
-                    - retain_chunk_size: Maximum token size for each content chunk.
+                    - retain_chunk_size: Target maximum characters for each content chunk.
+                    - retain_structured_chunk_size: Maximum characters for a single JSONL line or conversation turn to keep whole.
                     - retain_chunk_batch_size: Number of chunks to process in parallel.
                     - enable_observations: Toggle observation consolidation after retain().
                     - observations_mission: Controls observation synthesis rules.
@@ -3250,7 +3251,8 @@ def _register_update_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
                     - retain_mission: Steers what gets extracted during retain().
                     - retain_extraction_mode: 'concise' (default), 'verbose', or 'custom'.
                     - retain_custom_instructions: Custom extraction prompt (active when mode is 'custom').
-                    - retain_chunk_size: Maximum token size for each content chunk.
+                    - retain_chunk_size: Target maximum characters for each content chunk.
+                    - retain_structured_chunk_size: Maximum characters for a single JSONL line or conversation turn to keep whole.
                     - retain_chunk_batch_size: Number of chunks to process in parallel.
                     - enable_observations: Toggle observation consolidation after retain().
                     - observations_mission: Controls observation synthesis rules.
