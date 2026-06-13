@@ -223,6 +223,10 @@ class RecallRequest(BaseModel):
         description="Compound tag filter using boolean groups. Groups in the list are AND-ed. "
         "Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.",
     )
+    include_scores: bool = Field(
+        default=False,
+        description="If true, include the relevance score for each result.",
+    )
 
     @field_validator("query")
     @classmethod
@@ -275,6 +279,7 @@ class RecallResult(BaseModel):
     metadata: dict[str, str] | None = None  # User-defined metadata
     chunk_id: str | None = None  # Chunk this fact was extracted from
     tags: list[str] | None = None  # Visibility scope tags
+    score: float | None = None  # Relevance score (only set when include_scores is enabled)
     source_fact_ids: list[str] | None = (
         None  # IDs of source facts (observation type only, when source_facts is enabled)
     )
@@ -3654,6 +3659,7 @@ def _register_routes(app: FastAPI):
                     metadata=fact.metadata,
                     chunk_id=fact.chunk_id,
                     tags=fact.tags,
+                    score=fact.score if request.include_scores else None,
                     source_fact_ids=fact.source_fact_ids,
                 )
 

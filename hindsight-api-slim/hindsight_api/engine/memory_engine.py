@@ -4915,6 +4915,7 @@ class MemoryEngine(MemoryEngineInterface):
                         metadata=result_dict.get("metadata"),
                         chunk_id=result_dict.get("chunk_id"),
                         tags=result_dict.get("tags"),
+                        score=result_dict.get("combined_score"),
                         source_fact_ids=source_fact_ids_by_obs.get(result_id) if include_source_facts else None,
                     )
                 )
