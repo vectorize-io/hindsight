@@ -117,6 +117,54 @@ class TestMetricsCollector:
         attributes = call_args[0][1]
         assert attributes["success"] == "false"
 
+    def test_record_operation_cancellation_excluded_from_metric(self, collector):
+        """A client-disconnect cancellation is neither a success nor a failure.
+
+        Recall/reflect run the engine call inside record_operation; when the
+        client disconnects the engine raises OperationCancelledError (issue
+        #2122). That abandoned request must not be recorded on
+        hindsight.operation.total at all -- inflating neither the failure nor
+        the success rate -- even though the exception still propagates.
+        """
+        from hindsight_api.cancellation import OperationCancelledError
+
+        with pytest.raises(OperationCancelledError):
+            with collector.record_operation("recall", bank_id="test_bank", source="api"):
+                raise OperationCancelledError("client disconnected")
+
+        collector.operation_total.add.assert_not_called()
+        collector.operation_duration.record.assert_not_called()
+
+    def test_record_operation_http_499_from_cancellation_excluded(self, collector):
+        """run_cancellable_on_disconnect re-raises the cancellation as
+        ``HTTPException(499) from exc``; the cause chain marks it as a
+        cancellation, so it is excluded from the metric too."""
+        from fastapi import HTTPException
+
+        from hindsight_api.cancellation import OperationCancelledError
+
+        with pytest.raises(HTTPException):
+            with collector.record_operation("reflect", bank_id="test_bank", source="api"):
+                try:
+                    raise OperationCancelledError("client disconnected")
+                except OperationCancelledError as cancel:
+                    raise HTTPException(status_code=499, detail="client disconnected") from cancel
+
+        collector.operation_total.add.assert_not_called()
+        collector.operation_duration.record.assert_not_called()
+
+    def test_record_operation_unrelated_499_still_recorded_as_failure(self, collector):
+        """A 499 that is NOT caused by a cancellation (no OperationCancelledError
+        in the cause chain) is a real failure and must still be recorded."""
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException):
+            with collector.record_operation("recall", bank_id="test_bank", source="api"):
+                raise HTTPException(status_code=499, detail="unrelated downstream error")
+
+        attributes = collector.operation_duration.record.call_args[0][1]
+        assert attributes["success"] == "false"
+
     def test_record_operation_with_budget(self, collector):
         """Test that budget is included in attributes when provided."""
         with collector.record_operation("recall", bank_id="test_bank", source="api", budget="mid"):

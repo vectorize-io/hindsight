@@ -39,6 +39,32 @@ def _get_tenant() -> str:
     return get_current_schema()
 
 
+def _is_client_cancellation(exc: BaseException) -> bool:
+    """Whether *exc* is a client-disconnect cancellation rather than a failure.
+
+    An abandoned recall/reflect raises OperationCancelledError (issue #2122);
+    the HTTP layer re-raises it as ``HTTPException(499) from exc`` (see
+    api/http.py run_cancellable_on_disconnect). The exception itself, or any
+    link in its ``__cause__`` chain, being an OperationCancelledError marks it
+    as a cancellation. Matching on the cause chain rather than a bare status
+    code avoids misclassifying an unrelated 499 as a cancellation. Per the
+    engine contract a cancellation is "not a failure to retry or report"
+    (cancellation.OperationCancelledError), so it must not be counted against
+    ``hindsight.operation.total``.
+    """
+    # Imported lazily to avoid import-time coupling (cf. _get_tenant above).
+    from hindsight_api.cancellation import OperationCancelledError
+
+    cause: BaseException | None = exc
+    seen: set[int] = set()  # guard against a cyclic __cause__ chain
+    while cause is not None and id(cause) not in seen:
+        if isinstance(cause, OperationCancelledError):
+            return True
+        seen.add(id(cause))
+        cause = cause.__cause__
+    return False
+
+
 # Custom bucket boundaries for operation duration (in seconds)
 # Fine granularity in 0-30s range where most operations complete
 DURATION_BUCKETS = (0.1, 0.25, 0.5, 0.75, 1.0, 2.0, 3.0, 5.0, 7.5, 10.0, 15.0, 20.0, 30.0, 60.0, 120.0)
@@ -373,20 +399,31 @@ class MetricsCollector(MetricsCollectorBase):
             attributes["max_tokens"] = str(max_tokens)
 
         success = True
+        cancelled = False
         try:
             yield
-        except Exception:
-            success = False
+        except Exception as exc:
+            # A client disconnect cancels the operation cooperatively (#2122),
+            # raised as OperationCancelledError and re-raised by the HTTP layer
+            # as HTTPException(499) from it. An abandoned request is neither a
+            # success nor a failure, so it is excluded from the metric entirely
+            # rather than inflating either the failure or the success rate on
+            # hindsight.operation.total.
+            if _is_client_cancellation(exc):
+                cancelled = True
+            else:
+                success = False
             raise
         finally:
-            duration = time.time() - start_time
-            attributes["success"] = str(success).lower()
+            if not cancelled:
+                duration = time.time() - start_time
+                attributes["success"] = str(success).lower()
 
-            # Record duration
-            self.operation_duration.record(duration, attributes)
+                # Record duration
+                self.operation_duration.record(duration, attributes)
 
-            # Record operation count
-            self.operation_total.add(1, attributes)
+                # Record operation count
+                self.operation_total.add(1, attributes)
 
     def record_llm_call(
         self,
