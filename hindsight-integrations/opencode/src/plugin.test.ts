@@ -158,4 +158,28 @@ describe("plugin default export", () => {
       expect(typeof value, `export "${name}" must be a function`).toBe("function");
     }
   });
+
+  it("does not expose other callable utilities from the plugin entry (legacy-loader invariant)", async () => {
+    // OpenCode's legacy plugin loader (getLegacyPlugins) iterates Object.values(mod)
+    // and calls every function export as a Plugin factory. It deduplicates by
+    // reference, so default and HindsightPlugin (same fn) are fine. But any
+    // other callable utility re-exported from the entry (e.g. loadConfig,
+    // deriveBankId) would be incorrectly invoked as a plugin — likely producing
+    // a hooks object with the wrong shape (a string, a config object, etc.) and
+    // silently breaking session behavior.
+    //
+    // The fix is to NOT re-export utilities from the entry; consumers that
+    // need them import from "@vectorize-io/opencode-hindsight/dist/config.js"
+    // or rely on the plugin itself using them internally.
+    const mod = await import("./index.js");
+    const functionValues = Object.values(mod).filter(
+      (v) => typeof v === "function"
+    );
+    // Exactly two function exports remain: the default export and the
+    // HindsightPlugin named export, both pointing at the same function.
+    expect(functionValues.length).toBe(2);
+    expect(functionValues[0]).toBe(functionValues[1]);
+    // And the only callable symbol in the entry is the plugin itself.
+    expect(new Set(functionValues).size).toBe(1);
+  });
 });
