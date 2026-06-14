@@ -4913,6 +4913,7 @@ class MemoryEngine(MemoryEngineInterface):
                         mentioned_at=result_dict.get("mentioned_at"),
                         document_id=result_dict.get("document_id"),
                         metadata=result_dict.get("metadata"),
+                        score=result_dict.get("cross_encoder_score_normalized"),
                         chunk_id=result_dict.get("chunk_id"),
                         tags=result_dict.get("tags"),
                         source_fact_ids=source_fact_ids_by_obs.get(result_id) if include_source_facts else None,

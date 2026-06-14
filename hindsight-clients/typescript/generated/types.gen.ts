@@ -2885,6 +2885,10 @@ export type RecallResult = {
    */
   chunk_id?: string | null;
   /**
+   * Score
+   */
+  score?: number | null;
+  /**
    * Tags
    */
   tags?: Array<string> | null;

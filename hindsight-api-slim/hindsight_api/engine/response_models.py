@@ -145,6 +145,7 @@ class MemoryFact(BaseModel):
                 "metadata": {"source": "slack"},
                 "chunk_id": "bank123_session_abc123_0",
                 "activation": 0.95,
+                "score": 0.95,
                 "tags": ["user_a", "session_123"],
             }
         }
@@ -160,6 +161,9 @@ class MemoryFact(BaseModel):
     mentioned_at: str | None = Field(None, description="ISO format date when the fact was mentioned/learned")
     document_id: str | None = Field(None, description="ID of the document this memory belongs to")
     metadata: dict[str, str] | None = Field(None, description="User-defined metadata")
+    score: float | None = Field(
+        None, description="Normalized relevance score for this recall result; higher means more relevant"
+    )
 
     @field_validator("metadata", mode="before")
     @classmethod

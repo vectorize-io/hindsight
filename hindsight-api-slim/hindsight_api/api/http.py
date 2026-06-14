@@ -258,6 +258,7 @@ class RecallResult(BaseModel):
                 "document_id": "session_abc123",
                 "metadata": {"source": "slack"},
                 "chunk_id": "456e7890-e12b-34d5-a678-901234567890",
+                "score": 0.95,
                 "tags": ["user_a", "user_b"],
             }
         },
@@ -274,6 +275,7 @@ class RecallResult(BaseModel):
     document_id: str | None = None  # Document this memory belongs to
     metadata: dict[str, str] | None = None  # User-defined metadata
     chunk_id: str | None = None  # Chunk this fact was extracted from
+    score: float | None = None  # Normalized relevance score; higher means more relevant
     tags: list[str] | None = None  # Visibility scope tags
     source_fact_ids: list[str] | None = (
         None  # IDs of source facts (observation type only, when source_facts is enabled)
@@ -3653,6 +3655,7 @@ def _register_routes(app: FastAPI):
                     document_id=fact.document_id,
                     metadata=fact.metadata,
                     chunk_id=fact.chunk_id,
+                    score=fact.score,
                     tags=fact.tags,
                     source_fact_ids=fact.source_fact_ids,
                 )
