@@ -88,7 +88,12 @@ from hindsight_api.engine.providers.none_llm import LLMNotAvailableError
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, MemoryFact, TokenUsage
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.extensions import HttpExtension, OperationValidationError, load_extension
-from hindsight_api.metrics import create_metrics_collector, get_metrics_collector, initialize_metrics
+from hindsight_api.metrics import (
+    create_metrics_collector,
+    get_metrics_collector,
+    initialize_metrics,
+    normalize_http_endpoint,
+)
 from hindsight_api.models import RequestContext
 
 logger = logging.getLogger(__name__)
@@ -3119,15 +3124,9 @@ def create_app(
     @app.middleware("http")
     async def http_metrics_middleware(request, call_next):
         """Record HTTP request metrics."""
-        # Normalize endpoint path to reduce cardinality
-        # Replace UUIDs and numeric IDs with placeholders
-        import re
-
-        path = request.url.path
-        # Replace UUIDs
-        path = re.sub(r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "/{id}", path)
-        # Replace numeric IDs
-        path = re.sub(r"/\d+(?=/|$)", "/{id}", path)
+        # Template id segments (bank ids, UUIDs, numeric ids) so the endpoint
+        # metric label stays bounded-cardinality.
+        path = normalize_http_endpoint(request.url.path)
 
         status_code = [500]  # Default to 500, will be updated
         metrics_collector = get_metrics_collector()
