@@ -1,0 +1,14 @@
+{
+  "hindsightApiUrl": "https://api.hindsight.vectorize.io",
+  "hindsightApiToken": null,
+  "bankPrefix": "zed",
+  "fixedBankId": null,
+  "autoRecall": true,
+  "recallBudget": "mid",
+  "recallMaxTokens": 1024,
+  "autoRetain": true,
+  "retainContext": "zed",
+  "retainIdleSeconds": 45.0,
+  "pollInterval": 5.0,
+  "debug": false
+}
