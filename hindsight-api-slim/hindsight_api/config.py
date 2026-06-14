@@ -442,6 +442,7 @@ ENV_CONSOLIDATION_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE"
 ENV_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = "HINDSIGHT_API_CONSOLIDATION_MAX_MEMORIES_PER_ROUND"
 ENV_CONSOLIDATION_LLM_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE"
 ENV_CONSOLIDATION_DEDUP_THRESHOLD = "HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD"
+ENV_CONSOLIDATION_DEDUP_TAG_MATCH = "HINDSIGHT_API_CONSOLIDATION_DEDUP_TAG_MATCH"
 ENV_CONSOLIDATION_LLM_PARALLELISM = "HINDSIGHT_API_CONSOLIDATION_LLM_PARALLELISM"
 ENV_CONSOLIDATION_MAX_TOKENS = "HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS"
 ENV_CONSOLIDATION_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_CONSOLIDATION_MAX_COMPLETION_TOKENS"
@@ -876,6 +877,7 @@ DEFAULT_CONSOLIDATION_LLM_BATCH_SIZE = 8  # Facts per LLM call (1 = no batching;
 # entities are respected). Enabled by default; set to 1.0 to disable. Postgres only — the merge
 # path uses Postgres-only SQL, so consolidation skips it on Oracle regardless of this value.
 DEFAULT_CONSOLIDATION_DEDUP_THRESHOLD = 0.97
+DEFAULT_CONSOLIDATION_DEDUP_TAG_MATCH = "all_strict"
 DEFAULT_CONSOLIDATION_LLM_PARALLELISM = (
     4  # Max tag groups consolidated concurrently per op. Locks on overlapping write
     # scopes degrade to sequential automatically; matches retain_max_concurrent.
@@ -1477,6 +1479,7 @@ class HindsightConfig:
     mental_model_history_max_entries: int
     consolidation_batch_size: int
     consolidation_dedup_threshold: float
+    consolidation_dedup_tag_match: Literal["any", "all", "any_strict", "all_strict"]
     consolidation_max_memories_per_round: int
     consolidation_llm_batch_size: int
     consolidation_llm_parallelism: int
@@ -1670,6 +1673,7 @@ class HindsightConfig:
         "enable_observations",
         "enable_auto_consolidation",
         "consolidation_llm_batch_size",
+        "consolidation_dedup_tag_match",
         "consolidation_llm_parallelism",
         "consolidation_max_memories_per_round",
         "consolidation_source_facts_max_tokens",
@@ -1795,6 +1799,13 @@ class HindsightConfig:
         if not 0.0 <= self.semantic_min_similarity <= 1.0:
             raise ValueError(
                 f"Invalid semantic_min_similarity: {self.semantic_min_similarity}. Must be between 0.0 and 1.0"
+            )
+
+        valid_tags_match = ("any", "all", "any_strict", "all_strict")
+        if self.consolidation_dedup_tag_match not in valid_tags_match:
+            raise ValueError(
+                f"Invalid {ENV_CONSOLIDATION_DEDUP_TAG_MATCH}: {self.consolidation_dedup_tag_match!r}. "
+                f"Must be one of: {', '.join(valid_tags_match)}"
             )
 
         # Validate bedrock_service_tier
@@ -2404,6 +2415,9 @@ class HindsightConfig:
             ),
             consolidation_dedup_threshold=float(
                 os.getenv(ENV_CONSOLIDATION_DEDUP_THRESHOLD, str(DEFAULT_CONSOLIDATION_DEDUP_THRESHOLD))
+            ),
+            consolidation_dedup_tag_match=os.getenv(
+                ENV_CONSOLIDATION_DEDUP_TAG_MATCH, DEFAULT_CONSOLIDATION_DEDUP_TAG_MATCH
             ),
             consolidation_llm_batch_size=int(
                 os.getenv(ENV_CONSOLIDATION_LLM_BATCH_SIZE, str(DEFAULT_CONSOLIDATION_LLM_BATCH_SIZE))
