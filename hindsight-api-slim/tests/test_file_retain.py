@@ -346,6 +346,105 @@ async def test_markitdown_converter():
     assert "test document" in result.lower() or "multiple lines" in result.lower()
 
 
+def test_markitdown_converter_does_not_enable_ocr_by_default(monkeypatch):
+    """Markitdown should keep its local/default behavior unless OCR is explicitly enabled."""
+    import markitdown
+
+    from hindsight_api.engine.parsers import MarkitdownParser
+
+    calls = []
+
+    class FakeMarkItDown:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(markitdown, "MarkItDown", FakeMarkItDown)
+
+    MarkitdownParser()
+
+    assert calls == [{}]
+
+
+@pytest.mark.asyncio
+async def test_markitdown_image_without_ocr_has_actionable_error(monkeypatch):
+    """Image uploads should explain that MarkItDown OCR is disabled instead of surfacing a low-level error."""
+    import markitdown
+
+    from hindsight_api.engine.parsers import MarkitdownParser
+
+    class FakeMarkItDown:
+        def __init__(self, **kwargs):
+            pass
+
+        def convert(self, path):
+            raise AssertionError("MarkItDown should not be called when image OCR is disabled")
+
+    monkeypatch.setattr(markitdown, "MarkItDown", FakeMarkItDown)
+
+    parser = MarkitdownParser()
+    with pytest.raises(RuntimeError, match="Image OCR is not enabled for the markitdown parser"):
+        await parser.convert(b"\x89PNG\r\n\x1a\n", "screenshot.png")
+
+
+def test_markitdown_converter_can_enable_ocr(monkeypatch):
+    """When enabled, Markitdown receives an OpenAI-compatible client, model, and OCR prompt."""
+    import markitdown
+    import openai
+
+    from hindsight_api.config import DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT
+    from hindsight_api.engine.parsers import MarkitdownParser
+
+    markitdown_calls = []
+    openai_calls = []
+
+    class FakeMarkItDown:
+        def __init__(self, **kwargs):
+            markitdown_calls.append(kwargs)
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            openai_calls.append(kwargs)
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(markitdown, "MarkItDown", FakeMarkItDown)
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
+
+    MarkitdownParser(
+        ocr_enabled=True,
+        ocr_api_key="parser-key",
+        ocr_base_url="https://vision.example/v1",
+        ocr_model="vision-model",
+        ocr_default_headers={"X-Trace": "enabled"},
+    )
+
+    assert openai_calls == [
+        {
+            "api_key": "parser-key",
+            "base_url": "https://vision.example/v1",
+            "default_headers": {"X-Trace": "enabled"},
+        }
+    ]
+    assert markitdown_calls[0]["llm_client"].__class__ is FakeOpenAI
+    assert markitdown_calls[0]["llm_model"] == "vision-model"
+    assert markitdown_calls[0]["llm_prompt"] == DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT
+
+
+def test_markitdown_converter_requires_model_when_ocr_enabled(monkeypatch):
+    """OCR should fail fast when enabled without a model."""
+    import markitdown
+
+    from hindsight_api.engine.parsers import MarkitdownParser
+
+    class FakeMarkItDown:
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(markitdown, "MarkItDown", FakeMarkItDown)
+
+    with pytest.raises(ValueError, match="no model"):
+        MarkitdownParser(ocr_enabled=True, ocr_api_key="parser-key")
+
+
 @pytest.mark.asyncio
 async def test_converter_registry():
     """Test file parser registry."""

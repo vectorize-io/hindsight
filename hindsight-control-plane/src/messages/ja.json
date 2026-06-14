@@ -1441,7 +1441,7 @@
     "selectedFilesLabel": "選択されたファイル（{count}件）",
     "extractionMethodLabel": "抽出方法",
     "parserStandardLabel": "標準",
-    "parserStandardDescription": "無料 — ほとんどのドキュメントに適しています（画像を除く）",
+    "parserStandardDescription": "無料 — テキストベースのドキュメント向け。画像 OCR はサーバー設定に依存します",
     "parserEnhancedLabel": "高度（Iris）",
     "parserEnhancedDescription": "追加料金 — 複雑なレイアウト、スキャンされたドキュメント、画像に対してより高品質",
     "contextLabel": "コンテキスト",
