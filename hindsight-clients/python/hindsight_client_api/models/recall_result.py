@@ -18,7 +18,7 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt, StrictStr
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional, Union
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -37,7 +37,7 @@ class RecallResult(BaseModel):
     document_id: Optional[StrictStr] = None
     metadata: Optional[Dict[str, StrictStr]] = None
     chunk_id: Optional[StrictStr] = None
-    score: Optional[StrictFloat | StrictInt] = None
+    score: Optional[Union[StrictFloat, StrictInt]] = None
     tags: Optional[List[StrictStr]] = None
     source_fact_ids: Optional[List[StrictStr]] = None
     __properties: ClassVar[List[str]] = ["id", "text", "type", "entities", "context", "occurred_start", "occurred_end", "mentioned_at", "document_id", "metadata", "chunk_id", "score", "tags", "source_fact_ids"]
@@ -169,4 +169,5 @@ class RecallResult(BaseModel):
             "source_fact_ids": obj.get("source_fact_ids")
         })
         return _obj
+
 
