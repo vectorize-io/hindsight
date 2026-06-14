@@ -170,7 +170,7 @@ async def _dedup_adjudicate(
         if not embs:
             return _DedupOutcome(best_id=None, merged_text="", should_merge=False)
         anchor_emb_str = str(embs[0])
-    tags_match = "all_strict" if tags else "any"
+    tags_match = getattr(config, "consolidation_dedup_tag_match", "all_strict") if tags else "any"
     grouped = await retrieve_semantic_bm25_combined(
         conn, anchor_emb_str, anchor_text, bank_id, ["observation"], _DEDUP_TOP_K, tags=tags, tags_match=tags_match
     )
