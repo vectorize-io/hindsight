@@ -83,6 +83,49 @@ def _strip_code_fences(content: str) -> str:
         return content
 
 
+# Reasoning/thinking tags emitted by extended-thinking models. Some providers
+# (e.g. MiniMax-M3) leak the chain-of-thought wrapped in these tags into the
+# response body instead of a separate reasoning_content field. Each entry is
+# (open_tag, close_tag); the open tag also matches when the close tag is missing
+# (truncated output) so a dangling block is removed to end-of-string.
+_REASONING_TAG_PAIRS: tuple[tuple[str, str], ...] = (
+    ("<think>", "</think>"),
+    ("<thinking>", "</thinking>"),
+    ("<thought>", "</thought>"),
+    ("<reasoning>", "</reasoning>"),
+    ("|startthink|", "|endthink|"),
+)
+
+
+def _strip_reasoning_tags(text: str) -> str:
+    """Strip extended-thinking/reasoning blocks from an LLM response.
+
+    Removes the full set of tag styles emitted by reasoning models:
+    ``<think>``, ``<thinking>``, ``<thought>``, ``<reasoning>`` and the
+    ``|startthink|...|endthink|`` markers. Both the structured (JSON) path and
+    the free-form path must call this — otherwise a non-structured response
+    (e.g. a mental-model markdown blob from MiniMax-M3) leaks the raw
+    ``<think>...</think>`` verbatim into stored memories.
+
+    Handles two cases:
+    1. Closed blocks: ``<think>...</think>`` removed wherever they appear.
+    2. Unclosed blocks: a dangling ``<think>`` with no closing tag (model output
+       truncated mid-thought) is removed from the open tag to end-of-string.
+
+    Returns the input unchanged (modulo surrounding whitespace) when no tags are
+    present.
+    """
+    if not text:
+        return text
+    for open_tag, close_tag in _REASONING_TAG_PAIRS:
+        open_re = re.escape(open_tag)
+        close_re = re.escape(close_tag)
+        # Closed blocks first, then any remaining unclosed (truncated) block.
+        text = re.sub(rf"{open_re}.*?{close_re}", "", text, flags=re.DOTALL)
+        text = re.sub(rf"{open_re}.*", "", text, flags=re.DOTALL)
+    return text.strip()
+
+
 def _response_get(response: Any, key: str, default: Any = None) -> Any:
     if isinstance(response, dict):
         return response.get(key, default)
@@ -617,15 +660,10 @@ class OpenAICompatibleLLM(LLMInterface):
                         scope=scope,
                     )
 
-                    # Strip reasoning model thinking tags
+                    # Strip reasoning model thinking tags (closed and unclosed).
                     # Supports: <think>, <thinking>, <thought>, <reasoning>, |startthink|/|endthink|
                     original_len = len(content)
-                    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
-                    content = re.sub(r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL)
-                    content = re.sub(r"<thought>.*?</thought>", "", content, flags=re.DOTALL)
-                    content = re.sub(r"<reasoning>.*?</reasoning>", "", content, flags=re.DOTALL)
-                    content = re.sub(r"\|startthink\|.*?\|endthink\|", "", content, flags=re.DOTALL)
-                    content = content.strip()
+                    content = _strip_reasoning_tags(content)
                     if len(content) < original_len:
                         logger.debug(f"Stripped {original_len - len(content)} chars of reasoning tokens")
 
@@ -673,6 +711,13 @@ class OpenAICompatibleLLM(LLMInterface):
                         model=self.model,
                         scope=scope,
                     )
+
+                    # Free-form (non-structured) output also leaks reasoning tags:
+                    # reasoning models like MiniMax-M3 wrap their chain-of-thought
+                    # in <think>...</think> in the response body. Without this strip
+                    # a mental-model markdown blob is stored verbatim with the raw
+                    # thinking tags. Mirrors the structured-output path above.
+                    result = _strip_reasoning_tags(result)
 
                 # Record token usage metrics
                 duration = time.time() - start_time
