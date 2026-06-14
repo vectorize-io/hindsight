@@ -82,6 +82,35 @@ hindsight-embed memory reflect default "What color scheme should I use?"
 
 The daemon starts automatically on first use!
 
+### 3. Open the Control Center (optional)
+
+Use the local control center when you want a browser-based configuration wizard and daemon supervisor:
+
+```bash
+# Launch the control center and open the browser
+hindsight-embed control start
+
+# Or use the browser wizard instead of terminal prompts during setup
+hindsight-embed configure --ui
+```
+
+The control center listens on localhost only (`http://localhost:7878` by default) and prints a tokenized URL. It stores the local access token at `~/.hindsight/control.token` and writes logs to `~/.hindsight/control.log`.
+
+```bash
+# Pick a different control-center port for this launch
+hindsight-embed control start --port 7879
+
+# Start without opening a browser automatically
+hindsight-embed control start --no-open
+
+# Check, inspect, or stop the control center
+hindsight-embed control status
+hindsight-embed control logs -f
+hindsight-embed control stop
+```
+
+The control center runs as a separate process from the memory daemon. Stopping or restarting the control center does not stop a running daemon.
+
 ## Environment Variables
 
 | Variable | Description | Default |
@@ -90,6 +119,7 @@ The daemon starts automatically on first use!
 | `HINDSIGHT_API_LLM_PROVIDER` | LLM provider: `openai`, `anthropic`, `gemini`, `groq`, `minimax`, `ollama` | `openai` |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-4o-mini` |
 | `HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT` | Seconds before daemon auto-exits when idle (0 = never) | `0` |
+| `HINDSIGHT_EMBED_CONTROL_PORT` | Default port for `hindsight-embed control start` | `7878` |
 
 **Provider Examples:**
 
@@ -138,6 +168,22 @@ hindsight-embed daemon logs -f
 
 # Stop daemon manually
 hindsight-embed daemon stop
+```
+
+### Control Center Commands
+
+```bash
+# Start or reuse the local browser control center
+hindsight-embed control start
+
+# Check whether it is running
+hindsight-embed control status
+
+# View control-center logs
+hindsight-embed control logs -f
+
+# Stop the control-center process
+hindsight-embed control stop
 ```
 
 ## Commands
