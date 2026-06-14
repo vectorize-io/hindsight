@@ -352,6 +352,7 @@ from .reflect import run_reflect_agent
 from .reflect.tools import tool_expand, tool_recall, tool_search_mental_models, tool_search_observations
 from .response_models import (
     VALID_RECALL_FACT_TYPES,
+    EntityObservation,
     EntityState,
     LLMCallTrace,
     MemoryFact,
@@ -9452,8 +9453,20 @@ class MemoryEngine(MemoryEngineInterface):
         entity_id: str,
         *,
         request_context: "RequestContext",
+        max_observations: int = 50,
     ) -> dict[str, Any] | None:
-        """Get entity details including metadata and observations."""
+        """Get entity details including metadata and observations.
+
+        Observations are linked to entities transitively through their source
+        memories — the consolidator does not write direct ``unit_entities``
+        rows for observation memory units (see ``_create_memory_links`` in
+        ``consolidation/consolidator.py``). To surface "which observations
+        mention this entity?" we invert the recall-side traversal in
+        ``_entity_rows_for_units_sql``: take the set of source memory units
+        the entity is attached to, then find observation memory_units whose
+        ``source_memory_ids`` overlaps that set. We also include the rare
+        case of an observation that carries a direct ``unit_entities`` row.
+        """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
             from hindsight_api.extensions import BankReadContext
@@ -9461,6 +9474,10 @@ class MemoryEngine(MemoryEngineInterface):
             ctx = BankReadContext(bank_id=bank_id, operation="get_entity", request_context=request_context)
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
+
+        entity_uuid = uuid.UUID(entity_id)
+        # Hard cap so a panel render can't accidentally pull thousands.
+        limit = max(1, min(int(max_observations), 200))
 
         async with acquire_with_retry(backend) as conn:
             entity_row = await conn.fetchrow(
@@ -9470,11 +9487,26 @@ class MemoryEngine(MemoryEngineInterface):
                 WHERE bank_id = $1 AND id = $2
                 """,
                 bank_id,
-                uuid.UUID(entity_id),
+                entity_uuid,
             )
 
-        if not entity_row:
-            return None
+            if not entity_row:
+                return None
+
+            observation_rows = await conn.fetch(
+                self._observations_for_entity_sql(),
+                bank_id,
+                entity_uuid,
+                limit,
+            )
+
+        observations = [
+            EntityObservation(
+                text=row["text"],
+                mentioned_at=row["mentioned_at"].isoformat() if row["mentioned_at"] else None,
+            )
+            for row in observation_rows
+        ]
 
         return {
             "id": str(entity_row["id"]),
@@ -9483,8 +9515,72 @@ class MemoryEngine(MemoryEngineInterface):
             "first_seen": entity_row["first_seen"].isoformat() if entity_row["first_seen"] else None,
             "last_seen": entity_row["last_seen"].isoformat() if entity_row["last_seen"] else None,
             "metadata": entity_row["metadata"] or {},
-            "observations": [],
+            "observations": observations,
         }
+
+    def _observations_for_entity_sql(self) -> str:
+        """SQL that returns ``(id, text, mentioned_at)`` for observations
+        linked to a given entity.
+
+        Inverts ``_entity_rows_for_units_sql``: dispatches on dialect (PG
+        uses the ``source_memory_ids`` array + GIN index; Oracle uses the
+        ``observation_sources`` junction table) and unions the direct
+        ``unit_entities`` path so observations that do carry a direct row
+        are not silently dropped.
+
+        Parameters:
+            $1 — bank_id
+            $2 — entity_id (uuid)
+            $3 — limit (int)
+        """
+        mu = fq_table("memory_units")
+        ue = fq_table("unit_entities")
+
+        # Direct path: observation has its own unit_entities row (rare).
+        direct = (
+            f"SELECT mu.id, mu.text, mu.mentioned_at "
+            f"FROM {mu} mu "
+            f"JOIN {ue} ue ON ue.unit_id = mu.id "
+            f"WHERE mu.bank_id = $1 AND mu.fact_type = 'observation' AND ue.entity_id = $2"
+        )
+
+        if self._backend.ops.uses_observation_sources_table:
+            os_t = fq_table("observation_sources")
+            inherited = (
+                f"SELECT mu.id, mu.text, mu.mentioned_at "
+                f"FROM {mu} mu "
+                f"JOIN {os_t} os ON os.observation_id = mu.id "
+                f"JOIN {ue} src_ue ON src_ue.unit_id = os.source_id "
+                f"WHERE mu.bank_id = $1 AND mu.fact_type = 'observation' "
+                f"AND src_ue.entity_id = $2"
+            )
+        else:
+            # PG: GIN-indexed array overlap against the set of source units
+            # the entity is attached to (see migration a2b3c4d5e6f8).
+            inherited = (
+                f"SELECT mu.id, mu.text, mu.mentioned_at "
+                f"FROM {mu} mu "
+                f"WHERE mu.bank_id = $1 AND mu.fact_type = 'observation' "
+                f"AND mu.source_memory_ids IS NOT NULL "
+                f"AND mu.source_memory_ids && "
+                f"  (SELECT COALESCE(array_agg(unit_id), ARRAY[]::uuid[]) "
+                f"   FROM {ue} WHERE entity_id = $2)"
+            )
+
+        # Oracle uses FETCH FIRST ... ROWS ONLY instead of LIMIT.
+        # uses_observation_sources_table doubles as the dialect flag here:
+        # it's only set on the Oracle ops backend.
+        limit_clause = (
+            "FETCH FIRST $3 ROWS ONLY"
+            if self._backend.ops.uses_observation_sources_table
+            else "LIMIT $3"
+        )
+        return (
+            f"SELECT id, text, mentioned_at "
+            f"FROM (({direct}) UNION ({inherited})) AS combined "
+            f"ORDER BY mentioned_at DESC NULLS LAST "
+            f"{limit_clause}"
+        )
 
     async def _delete_stale_observations_for_memories(
         self,
