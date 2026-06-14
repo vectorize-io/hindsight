@@ -7030,6 +7030,7 @@ components:
           source: slack
         occurred_end: 2024-01-15T10:30:00Z
         occurred_start: 2024-01-15T10:30:00Z
+        score: 0.95
         tags:
         - user_a
         - user_b
@@ -7072,6 +7073,9 @@ components:
         chunk_id:
           nullable: true
           type: string
+        score:
+          nullable: true
+          type: number
         tags:
           items:
             type: string

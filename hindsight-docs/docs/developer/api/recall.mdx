@@ -343,7 +343,7 @@ When set to `true`, the response includes a detailed debug trace covering the qu
 
 The main list of recalled facts, ordered by relevance. Relevance is computed by running four retrieval strategies in parallel — semantic similarity, BM25 keyword, graph traversal, and temporal — fusing their rankings with Reciprocal Rank Fusion (RRF), then re-scoring the merged candidates with a cross-encoder reranker against the original query.
 
-Results do not include a numeric score. Raw retrieval scores are not meaningful on an absolute scale — a score of 0.8 from one query tells you nothing useful compared to a score of 0.8 from another. What matters is the relative ordering, which is already reflected in the list order. Agents should consume memories in order and let `max_tokens` determine how many fit, rather than filtering by score.
+Each result includes a `score` field with the normalized query-memory relevance score from the reranker. Higher scores mean the result is more relevant to the current query. Scores are most useful for client-side filtering within one recall response; they should not be treated as a stable absolute scale across unrelated queries.
 
 Each item in `results` has the following fields:
 
@@ -390,6 +390,10 @@ The document ID this fact belongs to, as set during retain.
 #### chunk_id
 
 The ID of the source text chunk this fact was extracted from. Used to cross-reference with `chunks` in the response when `include.chunks` is enabled.
+
+#### score
+
+The normalized relevance score for this result. Higher values are more relevant to the recall query.
 
 #### source_fact_ids
 

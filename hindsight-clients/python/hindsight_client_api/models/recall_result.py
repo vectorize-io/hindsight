@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
@@ -37,9 +37,10 @@ class RecallResult(BaseModel):
     document_id: Optional[StrictStr] = None
     metadata: Optional[Dict[str, StrictStr]] = None
     chunk_id: Optional[StrictStr] = None
+    score: Optional[StrictFloat | StrictInt] = None
     tags: Optional[List[StrictStr]] = None
     source_fact_ids: Optional[List[StrictStr]] = None
-    __properties: ClassVar[List[str]] = ["id", "text", "type", "entities", "context", "occurred_start", "occurred_end", "mentioned_at", "document_id", "metadata", "chunk_id", "tags", "source_fact_ids"]
+    __properties: ClassVar[List[str]] = ["id", "text", "type", "entities", "context", "occurred_start", "occurred_end", "mentioned_at", "document_id", "metadata", "chunk_id", "score", "tags", "source_fact_ids"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -125,6 +126,11 @@ class RecallResult(BaseModel):
         if self.chunk_id is None and "chunk_id" in self.model_fields_set:
             _dict['chunk_id'] = None
 
+        # set to None if score (nullable) is None
+        # and model_fields_set contains the field
+        if self.score is None and "score" in self.model_fields_set:
+            _dict['score'] = None
+
         # set to None if tags (nullable) is None
         # and model_fields_set contains the field
         if self.tags is None and "tags" in self.model_fields_set:
@@ -158,9 +164,9 @@ class RecallResult(BaseModel):
             "document_id": obj.get("document_id"),
             "metadata": obj.get("metadata"),
             "chunk_id": obj.get("chunk_id"),
+            "score": obj.get("score"),
             "tags": obj.get("tags"),
             "source_fact_ids": obj.get("source_fact_ids")
         })
         return _obj
-
 

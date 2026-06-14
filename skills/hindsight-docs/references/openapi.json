@@ -10839,6 +10839,17 @@
             ],
             "title": "Chunk Id"
           },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
           "tags": {
             "anyOf": [
               {
@@ -10890,6 +10901,7 @@
           },
           "occurred_end": "2024-01-15T10:30:00Z",
           "occurred_start": "2024-01-15T10:30:00Z",
+          "score": 0.95,
           "tags": [
             "user_a",
             "user_b"

@@ -32,6 +32,7 @@ type RecallResult struct {
 	DocumentId NullableString `json:"document_id,omitempty"`
 	Metadata map[string]string `json:"metadata,omitempty"`
 	ChunkId NullableString `json:"chunk_id,omitempty"`
+	Score NullableFloat32 `json:"score,omitempty"`
 	Tags []string `json:"tags,omitempty"`
 	SourceFactIds []string `json:"source_fact_ids,omitempty"`
 }
@@ -465,6 +466,48 @@ func (o *RecallResult) UnsetChunkId() {
 	o.ChunkId.Unset()
 }
 
+// GetScore returns the Score field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RecallResult) GetScore() float32 {
+	if o == nil || IsNil(o.Score.Get()) {
+		var ret float32
+		return ret
+	}
+	return *o.Score.Get()
+}
+
+// GetScoreOk returns a tuple with the Score field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RecallResult) GetScoreOk() (*float32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.Score.Get(), o.Score.IsSet()
+}
+
+// HasScore returns a boolean if a field has been set.
+func (o *RecallResult) HasScore() bool {
+	if o != nil && o.Score.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetScore gets a reference to the given NullableFloat32 and assigns it to the Score field.
+func (o *RecallResult) SetScore(v float32) {
+	o.Score.Set(&v)
+}
+// SetScoreNil sets the value for Score to be an explicit nil
+func (o *RecallResult) SetScoreNil() {
+	o.Score.Set(nil)
+}
+
+// UnsetScore ensures that no value is present for Score, not even an explicit nil
+func (o *RecallResult) UnsetScore() {
+	o.Score.Unset()
+}
+
 // GetTags returns the Tags field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *RecallResult) GetTags() []string {
 	if o == nil {
@@ -570,6 +613,9 @@ func (o RecallResult) ToMap() (map[string]interface{}, error) {
 	if o.ChunkId.IsSet() {
 		toSerialize["chunk_id"] = o.ChunkId.Get()
 	}
+	if o.Score.IsSet() {
+		toSerialize["score"] = o.Score.Get()
+	}
 	if o.Tags != nil {
 		toSerialize["tags"] = o.Tags
 	}
@@ -652,5 +698,4 @@ func (v *NullableRecallResult) UnmarshalJSON(src []byte) error {
 	v.isSet = true
 	return json.Unmarshal(src, &v.value)
 }
-
 

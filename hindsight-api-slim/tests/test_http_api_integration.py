@@ -64,8 +64,7 @@ async def test_full_api_workflow(api_client, test_bank_id):
     # List banks (should be empty initially or have other test banks)
     response = await api_client.get("/v1/default/banks")
     assert response.status_code == 200
-    initial_banks_data = response.json()["banks"]
-    initial_banks = [a["bank_id"] for a in initial_banks_data]
+    assert isinstance(response.json()["banks"], list)
 
     # ================================================================
     # 2. Memory Storage (implicitly creates the bank)
@@ -119,10 +118,21 @@ async def test_full_api_workflow(api_client, test_bank_id):
     search_results = response.json()
     assert "results" in search_results
     assert len(search_results["results"]) > 0
+    assert all(isinstance(r.get("score"), int | float) for r in search_results["results"])
 
     # Verify we found Alice
     found_alice = any("Alice" in r["text"] for r in search_results["results"])
     assert found_alice, "Should find Alice in search results"
+
+    traced_response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories/recall",
+        json={"query": "Who works on machine learning?", "budget": "low", "trace": True},
+    )
+    assert traced_response.status_code == 200
+    traced_results = traced_response.json()
+    final_results_by_id = {r["id"]: r for r in traced_results["trace"]["final_results"]}
+    for result in traced_results["results"]:
+        assert result["score"] == pytest.approx(final_results_by_id[result["id"]]["cross_encoder_score_normalized"])
 
     # ================================================================
     # 4. Reflect (Reasoning)
