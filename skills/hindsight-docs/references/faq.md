@@ -85,6 +85,7 @@ Browse all supported integrations in the Integrations Hub.
 - Claude Code
 - AWS Bedrock
 - Fireworks AI
+- Nous Portal
 - OpenAI Compatible
 - LiteLLM (100+)
 

@@ -38,6 +38,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - Claude Code
 - AWS Bedrock
 - Fireworks AI
+- Nous Portal
 - OpenAI Compatible
 - LiteLLM (100+)
 
@@ -95,6 +96,7 @@ Beyond basic generation, some providers support optional features that lower cos
 | Claude Code (`claude-code`) | — | — |
 | AWS Bedrock (`bedrock`) | — | — |
 | Fireworks AI (`fireworks`) | ✅ | — |
+| Nous Portal (`nous`) | — | — |
 | LiteLLM (100+) (`litellm`) | — | — |
 
 - **Batch API** — submits bulk retain extraction through the provider's asynchronous batch endpoint, typically at ~50% lower cost. Used automatically when available; otherwise calls run synchronously.
@@ -154,6 +156,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `claude-code` | `claude-sonnet-4-5-20250929` |
 | `bedrock` | `us.amazon.nova-2-lite-v1:0` |
 | `fireworks` | `accounts/fireworks/models/llama-v3p1-8b-instruct` |
+| `nous` | `deepseek/deepseek-v4-flash` |
 | `litellm` | `gpt-4o-mini` |
 
 **Example:** Setting just the provider uses its default model:
