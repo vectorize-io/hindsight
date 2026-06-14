@@ -6,6 +6,7 @@ enabling support for multiple LLM backends (OpenAI, Anthropic, Gemini, Codex, et
 """
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any
 
 from .response_models import LLMToolCallResult
@@ -252,3 +253,11 @@ class OutputTooLongError(Exception):
     """
 
     pass
+
+
+class ProviderRateLimitResetError(Exception):
+    """Raised when an upstream provider says quota will reopen at a known time."""
+
+    def __init__(self, retry_at: datetime, message: str = "") -> None:
+        self.retry_at = retry_at
+        super().__init__(message)

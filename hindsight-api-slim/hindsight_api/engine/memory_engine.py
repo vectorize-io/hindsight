@@ -45,6 +45,7 @@ from .audit import AuditLogger, audit_context
 from .bank_stats_cache import BankStatsCache
 from .db import DatabaseBackend, create_database_backend
 from .db_budget import budgeted_operation
+from .llm_interface import ProviderRateLimitResetError
 from .llm_trace import (
     LLMRequestEntry,
     LLMRequestListResponse,
@@ -1745,6 +1746,9 @@ class MemoryEngine(MemoryEngineInterface):
 
                 audit_entry.response = {"status": "completed", "operation_id": operation_id}
 
+            except ProviderRateLimitResetError as e:
+                logger.warning(f"Task deferred until provider quota resets at {e.retry_at}: {e}")
+                raise DeferOperation(exec_date=e.retry_at, reason=str(e)) from e
             except RetryTaskAt:
                 # Task-owned retry: let the poller handle scheduling
                 raise

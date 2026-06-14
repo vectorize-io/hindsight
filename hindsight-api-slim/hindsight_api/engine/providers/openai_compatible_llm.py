@@ -26,6 +26,8 @@ import logging
 import os
 import re
 import time
+from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import parse_qs, urlparse, urlunparse
 
@@ -34,7 +36,7 @@ from openai import APIConnectionError, APIStatusError, AsyncOpenAI, LengthFinish
 
 from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
 from hindsight_api.engine.bank_attribution import apply_bank_attribution
-from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
+from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError, ProviderRateLimitResetError
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
@@ -232,6 +234,122 @@ def _summarize_status_error(e: APIStatusError, body_max: int = 400) -> str:
     if len(body_str) > body_max:
         body_str = body_str[:body_max] + "...TRUNCATED"
     return f"HTTP {e.status_code}: {body_str or '<no body>'}"
+
+
+_RATE_LIMIT_RESET_AT_RE = re.compile(
+    r"\breset at\s+"
+    r"(?P<reset_at>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\s*(?:Z|[+-]\d{2}:?\d{2}))?)",
+    re.IGNORECASE,
+)
+_RATE_LIMIT_WINDOW_RE = re.compile(
+    r"\b(?:for|in)\s+(?P<amount>\d+)\s*(?P<unit>second|minute|hour|day)s?\b",
+    re.IGNORECASE,
+)
+
+
+def _status_error_body_text(e: APIStatusError) -> str:
+    body: Any = getattr(e, "body", None)
+    if body is None:
+        try:
+            body = e.response.text
+        except Exception:
+            body = None
+    if isinstance(body, (dict, list)):
+        try:
+            return json.dumps(body, default=str, ensure_ascii=False)
+        except Exception:
+            return str(body)
+    return str(body or "").strip()
+
+
+def _parse_retry_after_header(value: str | None, now: datetime) -> datetime | None:
+    if not value:
+        return None
+    raw = value.strip()
+    try:
+        seconds = float(raw)
+    except ValueError:
+        seconds = -1.0
+    if seconds >= 0:
+        return now + timedelta(seconds=seconds)
+
+    try:
+        parsed = parsedate_to_datetime(raw)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _parse_reset_at_datetime(value: str) -> datetime | None:
+    raw = value.strip().replace(" ", "T")
+    if raw.endswith("Z"):
+        raw = f"{raw[:-1]}+00:00"
+    elif re.search(r"[+-]\d{4}$", raw):
+        raw = f"{raw[:-2]}:{raw[-2:]}"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        # Some providers (z.ai included) return a wall-clock reset timestamp
+        # without a zone. Interpret it in the host's local zone so logs, status
+        # pages, and the queued next_retry_at describe the same operator-facing
+        # clock instead of silently shifting by UTC offset.
+        parsed = parsed.astimezone()
+    return parsed.astimezone(UTC)
+
+
+def _rate_limit_retry_at(e: APIStatusError) -> datetime | None:
+    now = datetime.now(UTC)
+    response = getattr(e, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is not None:
+        retry_at = _parse_retry_after_header(headers.get("retry-after") or headers.get("Retry-After"), now)
+        if retry_at is not None and retry_at > now:
+            return retry_at
+
+    body_text = _status_error_body_text(e)
+    reset_match = _RATE_LIMIT_RESET_AT_RE.search(body_text)
+    if reset_match:
+        retry_at = _parse_reset_at_datetime(reset_match.group("reset_at"))
+        if retry_at is not None and retry_at > now:
+            return retry_at
+
+    window_match = _RATE_LIMIT_WINDOW_RE.search(body_text)
+    if not window_match:
+        return None
+    amount = int(window_match.group("amount"))
+    unit = window_match.group("unit").lower()
+    if unit == "second":
+        seconds = amount
+    elif unit == "minute":
+        seconds = amount * 60
+    elif unit == "hour":
+        seconds = amount * 3600
+    else:
+        seconds = amount * 86400
+    return now + timedelta(seconds=seconds)
+
+
+def _raise_provider_quota_defer(
+    e: APIStatusError, *, provider: str, model: str, scope: str, max_backoff: float
+) -> None:
+    if e.status_code != 429:
+        return
+    retry_at = _rate_limit_retry_at(e)
+    if retry_at is None:
+        return
+    if (retry_at - datetime.now(UTC)).total_seconds() <= max_backoff:
+        return
+    summary = _summarize_status_error(e)
+    raise ProviderRateLimitResetError(
+        retry_at=retry_at,
+        message=(
+            f"Provider quota exhausted ({provider}/{model}, scope={scope}); retry at {retry_at.isoformat()}: {summary}"
+        ),
+    ) from e
 
 
 class OpenAICompatibleLLM(LLMInterface):
@@ -761,6 +879,10 @@ class OpenAICompatibleLLM(LLMInterface):
                     logger.error(f"Auth error (HTTP {e.status_code}), not retrying: {str(e)}")
                     raise
 
+                _raise_provider_quota_defer(
+                    e, provider=self.provider, model=self.model, scope=scope, max_backoff=max_backoff
+                )
+
                 # Handle tool_use_failed error - model outputted in tool call format
                 if e.status_code == 400 and response_format is not None:
                     try:
@@ -814,7 +936,6 @@ class OpenAICompatibleLLM(LLMInterface):
                         f"scope={scope}): {_summarize_status_error(e)}"
                     )
                     raise
-
             except ProviderResponseError as e:
                 last_exception = e
                 if e.retryable and attempt < max_retries:
@@ -1047,6 +1168,10 @@ class OpenAICompatibleLLM(LLMInterface):
                         f"not retrying: {_summarize_status_error(e)}"
                     )
                     raise
+                _raise_provider_quota_defer(
+                    e, provider=self.provider, model=self.model, scope=scope, max_backoff=max_backoff
+                )
+
                 last_exception = e
                 if attempt < max_retries:
                     logger.warning(
@@ -1060,7 +1185,6 @@ class OpenAICompatibleLLM(LLMInterface):
                     f"({self.provider}/{self.model}, scope={scope}): {_summarize_status_error(e)}"
                 )
                 raise
-
             except Exception:
                 raise
 
