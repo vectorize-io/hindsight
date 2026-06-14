@@ -84,12 +84,13 @@ const HindsightPlugin: Plugin = async (input, options) => {
 // Named export for direct import
 export { HindsightPlugin };
 
-// Default export is the Plugin function itself — OpenCode's loader calls the
-// default export directly.
+// Default export is the Plugin function itself — OpenCode's legacy loader
+// iterates Object.values(mod) and calls every function export as a Plugin
+// factory. Keep the entry surface free of utility re-exports (loadConfig,
+// deriveBankId) so they are not invoked as plugins. The plugin itself imports
+// those utilities directly from their modules.
 export default HindsightPlugin;
 
 // Re-export types for consumers
 export type { HindsightConfig } from "./config.js";
 export type { PluginState } from "./hooks.js";
-export { loadConfig } from "./config.js";
-export { deriveBankId } from "./bank.js";
