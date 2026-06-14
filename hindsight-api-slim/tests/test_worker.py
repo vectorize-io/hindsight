@@ -833,6 +833,34 @@ class TestWorkerPoller:
         assert not isinstance(exc_info.value, RetryTaskAt)
 
     @pytest.mark.asyncio
+    async def test_memory_engine_provider_quota_reset_becomes_defer_operation(self, memory, monkeypatch):
+        """Provider quota windows should park worker tasks until the reset time."""
+        from datetime import UTC, datetime, timedelta
+
+        from hindsight_api.engine.llm_interface import ProviderRateLimitResetError
+        from hindsight_api.worker.exceptions import DeferOperation, RetryTaskAt
+
+        retry_at = (datetime.now(UTC) + timedelta(hours=5)).replace(microsecond=0)
+
+        async def quota_limited_retain(_task_dict: object) -> None:
+            raise ProviderRateLimitResetError(retry_at=retry_at, message="quota resets later")
+
+        monkeypatch.setattr(memory, "_handle_batch_retain", quota_limited_retain)
+
+        with pytest.raises(DeferOperation) as exc_info:
+            await memory.execute_task(
+                {
+                    "type": "batch_retain",
+                    "bank_id": "test-provider-quota-defer",
+                    "contents": [{"content": "x"}],
+                }
+            )
+
+        assert exc_info.value.exec_date == retry_at
+        assert exc_info.value.reason == "quota resets later"
+        assert not isinstance(exc_info.value, RetryTaskAt)
+
+    @pytest.mark.asyncio
     async def test_claim_batch_skips_consolidation_when_same_bank_processing(self, pool, backend, clean_operations):
         """Test that pending consolidation is skipped if same bank has one processing."""
         from hindsight_api.worker import WorkerPoller
