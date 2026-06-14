@@ -19,6 +19,7 @@ def setup_test_env():
     env_vars_to_save = [
         "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS",
         "HINDSIGHT_API_CONSOLIDATION_MAX_COMPLETION_TOKENS",
+        "HINDSIGHT_API_CONSOLIDATION_DEDUP_TAG_MATCH",
         "HINDSIGHT_API_RETAIN_CHUNK_SIZE",
         "HINDSIGHT_API_LLM_PROVIDER",
         "HINDSIGHT_API_LLM_MODEL",
@@ -146,6 +147,39 @@ def test_consolidation_max_completion_tokens_env_override():
 
     config = HindsightConfig.from_env()
     assert config.consolidation_max_completion_tokens == 8192
+
+
+def test_consolidation_dedup_tag_match_defaults_to_all_strict():
+    """Dedup probe keeps current tag isolation by default."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+    os.environ.pop("HINDSIGHT_API_CONSOLIDATION_DEDUP_TAG_MATCH", None)
+
+    config = HindsightConfig.from_env()
+    assert config.consolidation_dedup_tag_match == "all_strict"
+
+
+def test_consolidation_dedup_tag_match_env_override():
+    """Single-user banks can widen the dedup probe across session tags."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+    os.environ["HINDSIGHT_API_CONSOLIDATION_DEDUP_TAG_MATCH"] = "any"
+
+    config = HindsightConfig.from_env()
+    assert config.consolidation_dedup_tag_match == "any"
+
+
+def test_consolidation_dedup_tag_match_rejects_invalid_mode():
+    """Fail fast instead of silently falling back to an unexpected tag scope."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+    os.environ["HINDSIGHT_API_CONSOLIDATION_DEDUP_TAG_MATCH"] = "exact"
+
+    with pytest.raises(ValueError, match="HINDSIGHT_API_CONSOLIDATION_DEDUP_TAG_MATCH"):
+        HindsightConfig.from_env()
 
 
 def test_log_config_masks_database_urls(caplog):

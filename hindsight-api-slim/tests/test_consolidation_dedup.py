@@ -84,7 +84,10 @@ def _ctx(threshold: float = 0.97):
         conn=conn,
         memory_engine=types.SimpleNamespace(embeddings=object()),
         bank_id="bank1",
-        config=types.SimpleNamespace(consolidation_dedup_threshold=threshold),
+        config=types.SimpleNamespace(
+            consolidation_dedup_threshold=threshold,
+            consolidation_dedup_tag_match="all_strict",
+        ),
         dedup_llm_config=llm,
         create_text="YouTube content in Uzbek is very rich.",
         create_source_ids=[uuid.uuid4()],
@@ -152,6 +155,27 @@ async def test_dedup_picks_highest_above_threshold_skips_below() -> None:
     assert "near but distinct" not in sent
 
 
+async def test_dedup_probe_uses_configured_tag_match_mode() -> None:
+    kwargs, _, llm = _ctx()
+    kwargs["config"].consolidation_dedup_tag_match = "any"
+    llm.call.return_value = _DedupDecision(action="keep")
+    with _patch_embed(), _patch_probe([_obs("the real twin", 0.98)]) as probe:
+        await _dedup_reconcile_create(**kwargs)
+
+    assert probe.await_args.kwargs["tags"] == ["t1"]
+    assert probe.await_args.kwargs["tags_match"] == "any"
+
+
+async def test_dedup_probe_defaults_to_all_strict_tag_match() -> None:
+    kwargs, _, llm = _ctx()
+    llm.call.return_value = _DedupDecision(action="keep")
+    with _patch_embed(), _patch_probe([_obs("the real twin", 0.98)]) as probe:
+        await _dedup_reconcile_create(**kwargs)
+
+    assert probe.await_args.kwargs["tags"] == ["t1"]
+    assert probe.await_args.kwargs["tags_match"] == "all_strict"
+
+
 # ── UPDATE-path dedup (_dedup_reconcile_update) ───────────────────────────────
 #
 # An UPDATE rewrites+re-embeds an observation, which can drift it into a near-twin of a
@@ -169,7 +193,10 @@ def _update_ctx(threshold: float = 0.97):
         conn=conn,
         memory_engine=types.SimpleNamespace(embeddings=object()),
         bank_id="bank1",
-        config=types.SimpleNamespace(consolidation_dedup_threshold=threshold),
+        config=types.SimpleNamespace(
+            consolidation_dedup_threshold=threshold,
+            consolidation_dedup_tag_match="all_strict",
+        ),
         dedup_llm_config=llm,
         updated_id=_UPDATED_ID,
         updated_text="Uzbek content on YouTube is very rich and growing.",
