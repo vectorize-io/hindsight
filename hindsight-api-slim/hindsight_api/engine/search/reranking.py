@@ -105,11 +105,7 @@ def apply_combined_scoring(
         # facts or ongoing states that intentionally lack occurred_start) still gets
         # correct recency ordering instead of a flat neutral 0.5.
         sr.recency = 0.5
-        effective = (
-            sr.retrieval.occurred_start
-            or sr.retrieval.mentioned_at
-            or sr.retrieval.occurred_end
-        )
+        effective = sr.retrieval.occurred_start or sr.retrieval.mentioned_at or sr.retrieval.occurred_end
         if effective:
             occurred = effective
             if occurred.tzinfo is None:
