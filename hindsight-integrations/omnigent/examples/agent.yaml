@@ -1,0 +1,32 @@
+# Example Omnigent agent with Hindsight long-term memory.
+#
+# The `callable` paths resolve to hindsight_omnigent.tools.{retain,recall,reflect}.
+# Configure the Hindsight connection + bank either by importing a module that calls
+# hindsight_omnigent.configure(), or by setting HINDSIGHT_API_KEY / HINDSIGHT_BANK_ID
+# in the agent's environment.
+#
+# Run with:  omnigent run examples/agent.yaml
+name: memory_agent
+prompt: |
+  You are a helpful assistant with long-term memory.
+  - Call hindsight_recall before answering, to check what you already know about the user.
+  - Call hindsight_retain whenever the user shares a durable fact, preference, or decision.
+  - Call hindsight_reflect when asked to summarize or reason about what you know.
+executor:
+  harness: claude-sdk
+tools:
+  hindsight_retain:
+    type: function
+    description: Store information in long-term memory for later retrieval.
+    callable: hindsight_omnigent.tools.retain
+    parameters: {"type": "object", "properties": {"content": {"type": "string", "description": "The information to store in long-term memory."}}, "required": ["content"]}
+  hindsight_recall:
+    type: function
+    description: Search long-term memory for relevant information.
+    callable: hindsight_omnigent.tools.recall
+    parameters: {"type": "object", "properties": {"query": {"type": "string", "description": "The search query to find relevant memories."}}, "required": ["query"]}
+  hindsight_reflect:
+    type: function
+    description: Synthesize a reasoned answer from long-term memories.
+    callable: hindsight_omnigent.tools.reflect
+    parameters: {"type": "object", "properties": {"query": {"type": "string", "description": "The question to reflect on using stored memories."}}, "required": ["query"]}

@@ -1,6 +1,16 @@
 {
   "integrations": [
     {
+      "id": "omnigent",
+      "name": "Omnigent",
+      "description": "Persistent memory for Omnigent agents. Hindsight's retain, recall, and reflect drop into an agent YAML as type: function tools.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/omnigent",
+      "icon": "/img/icons/omnigent.png"
+    },
+    {
       "id": "litellm",
       "name": "LiteLLM",
       "description": "Add long-term memory to any LLM via LiteLLM proxy callbacks. Zero code changes — configure once and every model gets memory.",

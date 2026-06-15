@@ -65,6 +65,7 @@ jobs:
       integrations-google-adk: ${{ steps.filter.outputs.integrations-google-adk }}
       integrations-obsidian: ${{ steps.filter.outputs.integrations-obsidian }}
       integrations-omo: ${{ steps.filter.outputs.integrations-omo }}
+      integrations-omnigent: ${{ steps.filter.outputs.integrations-omnigent }}
       integrations-haystack: ${{ steps.filter.outputs.integrations-haystack }}
       tools-agent-sdk: ${{ steps.filter.outputs.tools-agent-sdk }}
       integrations-roo-code: ${{ steps.filter.outputs.integrations-roo-code }}
@@ -196,6 +197,8 @@ jobs:
             - 'hindsight-integrations/obsidian/**'
           integrations-omo:
             - 'hindsight-integrations/omo/**'
+          integrations-omnigent:
+            - 'hindsight-integrations/omnigent/**'
           tools-agent-sdk:
             - 'hindsight-tools/hindsight-agent-sdk/**'
           integrations-roo-code:
@@ -507,6 +510,52 @@ jobs:
     - name: Run tests
       working-directory: ./hindsight-integrations/omo
       run: python -m pytest tests/ -v
+
+  test-omnigent-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-omnigent == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build omnigent integration
+      working-directory: ./hindsight-integrations/omnigent
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/omnigent
+      run: uv sync --frozen
+
+    - name: Lint
+      working-directory: ./hindsight-integrations/omnigent
+      run: uv run ruff check .
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/omnigent
+      # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
+      # (requires_real_llm) needs a live Hindsight server and runs separately.
+      # The real-omnigent guard tests skip here (omnigent is a 3.12-only alpha,
+      # not a CI dep); the Omnigent invoke contract is covered by a faithful
+      # in-test replica plus those guard tests when omnigent is installed.
+      run: uv run pytest tests -v -m "not requires_real_llm"
 
   test-cline-integration:
     needs: [detect-changes]
@@ -4588,6 +4637,7 @@ jobs:
       - test-ai-sdk-integration-deno
       - test-opencode-integration
       - test-omo-integration
+      - test-omnigent-integration
       - test-cloudflare-oauth-proxy-integration
       - build-chat-integration
       - test-paperclip-integration
