@@ -545,13 +545,16 @@ class MemoryItem(BaseModel):
             return [v]
         return v
 
-    observation_scopes: Literal["per_tag", "combined", "all_combinations"] | list[list[str]] | None = Field(
+    observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = Field(
         default=None,
         title="ObservationScopes",
         description=(
             "How to scope observations during consolidation. "
             "'per_tag' runs one consolidation pass per individual tag, creating separate observations for each tag. "
             "'combined' (default) runs a single pass with all tags together. "
+            "'shared' runs a single pass over one global, untagged scope, so memories consolidate together "
+            "regardless of their tags — useful for deduplicating across volatile per-call provenance tags "
+            "(e.g. per-session ids) while keeping those tags on the source facts. "
             "A list of tag lists runs one pass per inner list, giving full control over which combinations to use."
         ),
     )

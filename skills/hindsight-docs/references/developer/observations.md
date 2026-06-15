@@ -54,6 +54,8 @@ When enabled, Hindsight reconciles them automatically. Whenever an observation i
 
 This is controlled by the [`HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD`](configuration.md#observations) setting: the cosine similarity at or above which two observations are reconciled. It is **enabled by default** (`0.97`); a lower value reconciles more aggressively, and `1.0` disables it. Reconciliation runs on PostgreSQL deployments only — it is skipped on Oracle regardless of the threshold.
 
+Reconciliation only compares observations **within the same tag scope**. If you tag retains with a unique per-call value (e.g. a `session-id`), each session lands in its own scope and never dedups against the others — producing one near-identical observation per session. To consolidate across those volatile tags, retain with [`observation_scopes: "shared"`](api/retain.md#shared), which scopes observations to one global, untagged belief while leaving the session tag on the source facts for recall filtering.
+
 ### Disabling Auto-Consolidation
 
 Set `HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION=false` (or configure per-bank via the [bank config API](api/memory-banks.md#observations-configuration)) to prevent consolidation from running automatically after retain, delete, and update operations. When disabled, consolidation only runs when you explicitly call the [consolidate endpoint](#trigger-consolidation).

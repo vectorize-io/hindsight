@@ -388,7 +388,7 @@ export class ControlPlaneClient {
       metadata?: Record<string, string>;
       entities?: Array<{ text: string; type?: string }>;
       tags?: string[];
-      observation_scopes?: "per_tag" | "combined" | "all_combinations" | string[][];
+      observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
       strategy?: string;
     }>;
     document_id?: string;
