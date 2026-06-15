@@ -5980,11 +5980,14 @@ class MemoryEngine(MemoryEngineInterface):
         """
         Reflect and formulate an answer using an agentic loop with tools.
 
-        The reflect agent iteratively uses tools to:
+        The reflect agent iteratively uses read-only tools to:
         1. lookup: Get mental models (synthesized knowledge)
         2. recall: Search facts (semantic + temporal retrieval)
-        3. learn: Create/update mental models with new insights
+        3. search observations: Retrieve prior observations
         4. expand: Get chunk/document context for memories
+
+        Reflect is read-only: it synthesizes an answer from the bank's stored
+        memories and persists nothing.
 
         The agent starts with empty context and must call tools to gather
         information. On the last iteration, tools are removed to force a
