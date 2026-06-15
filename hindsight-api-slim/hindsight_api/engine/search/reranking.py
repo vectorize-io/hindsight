@@ -99,9 +99,19 @@ def apply_combined_scoring(
 
     for sr in scored_results:
         # Recency: linear decay over 365 days → [0.1, 1.0]; neutral 0.5 if no date.
+        # Use the unit's effective time (occurred_start, then mentioned_at, then
+        # occurred_end) — the same COALESCE order as retrieval._coalesce_date — so a
+        # memory that carries only a mentioned_at / occurred_end (e.g. conversation
+        # facts or ongoing states that intentionally lack occurred_start) still gets
+        # correct recency ordering instead of a flat neutral 0.5.
         sr.recency = 0.5
-        if sr.retrieval.occurred_start:
-            occurred = sr.retrieval.occurred_start
+        effective = (
+            sr.retrieval.occurred_start
+            or sr.retrieval.mentioned_at
+            or sr.retrieval.occurred_end
+        )
+        if effective:
+            occurred = effective
             if occurred.tzinfo is None:
                 occurred = occurred.replace(tzinfo=UTC)
             days_ago = (now - occurred).total_seconds() / 86400
