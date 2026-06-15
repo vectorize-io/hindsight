@@ -366,6 +366,64 @@ class TestMentalModelToolRegistration:
         assert "invalidate_memory" in tools
         assert len(tools) == 32
 
+    def test_all_tools_have_nonempty_descriptions(self):
+        """Every registered tool must expose a non-empty description.
+
+        Amazon Bedrock's Converse API rejects any toolSpec whose description is
+        an empty string, so a tool with no description breaks every Bedrock
+        request that includes it. This regressed once because update_memory and
+        invalidate_memory used an f-string as their "docstring"
+        (f\"\"\"{_DOC}...\"\"\"), which is an expression rather than a string
+        literal — so __doc__ was None and FastMCP emitted an empty description.
+        """
+        from fastmcp import FastMCP
+
+        memory = MagicMock()
+        # Mock all engine methods that tools reference
+        memory.retain_batch_async = AsyncMock()
+        memory.submit_async_retain = AsyncMock(return_value={"operation_id": "op"})
+        memory.recall_async = AsyncMock(return_value=MagicMock(results=[]))
+        memory.reflect_async = AsyncMock()
+        memory.list_banks = AsyncMock(return_value=[])
+        memory.get_bank_profile = AsyncMock(return_value={})
+        memory.update_bank = AsyncMock()
+        memory.list_mental_models = AsyncMock(return_value=[])
+        memory.get_mental_model = AsyncMock()
+        memory.create_mental_model = AsyncMock()
+        memory.submit_async_refresh_mental_model = AsyncMock()
+        memory.update_mental_model = AsyncMock()
+        memory.delete_mental_model = AsyncMock()
+        memory.list_directives = AsyncMock(return_value=[])
+        memory.create_directive = AsyncMock()
+        memory.delete_directive = AsyncMock()
+        memory.list_memory_units = AsyncMock(return_value={})
+        memory.get_memory_unit = AsyncMock()
+        memory.list_documents = AsyncMock(return_value={})
+        memory.get_document = AsyncMock()
+        memory.delete_document = AsyncMock()
+        memory.list_operations = AsyncMock(return_value={})
+        memory.get_operation_status = AsyncMock()
+        memory.cancel_operation = AsyncMock()
+        memory.list_tags = AsyncMock(return_value={})
+        memory.get_bank_stats = AsyncMock(return_value={})
+        memory.delete_bank = AsyncMock(return_value={})
+
+        # Cover both registration paths: multi-bank (include_bank_id_param=True)
+        # and single-bank (False), since each registers a distinct function.
+        for include_bank_id_param in (True, False):
+            mcp = FastMCP("test")
+            config = MCPToolsConfig(
+                bank_id_resolver=lambda: "bank",
+                include_bank_id_param=include_bank_id_param,
+                tools=None,  # Default - all tools
+            )
+            register_mcp_tools(mcp, memory, config)
+            tools = _tools(mcp)
+            missing = [name for name, tool in tools.items() if not (getattr(tool, "description", None) or "").strip()]
+            assert not missing, (
+                f"tools with empty descriptions (include_bank_id_param={include_bank_id_param}): {missing}"
+            )
+
 
 @pytest.fixture
 def no_bank_mcp_server(mock_memory):
