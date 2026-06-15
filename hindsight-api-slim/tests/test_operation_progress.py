@@ -141,7 +141,11 @@ async def test_progress_surfaced_via_get_and_list(api_client, memory: MemoryEngi
 
 @pytest.mark.asyncio
 async def test_progress_absent_returns_null(api_client, memory: MemoryEngine):
-    """Operations that never reached a checkpoint expose progress=null (shape unchanged)."""
+    """Operations that never reached a checkpoint expose no progress value.
+
+    The field is omitted from the JSON when null (responses drop null fields), so
+    ``.get("progress")`` is None whether the key is absent or explicitly null.
+    """
     bank_id = f"op_progress_none_{uuid.uuid4().hex[:8]}"
     pool = memory._pool
     await _ensure_bank(pool, bank_id)
@@ -149,11 +153,11 @@ async def test_progress_absent_returns_null(api_client, memory: MemoryEngine):
 
     get_resp = await api_client.get(f"/v1/default/banks/{bank_id}/operations/{op_id}")
     assert get_resp.status_code == 200
-    assert get_resp.json()["progress"] is None
+    assert get_resp.json().get("progress") is None
 
     list_resp = await api_client.get(f"/v1/default/banks/{bank_id}/operations")
     op = next(o for o in list_resp.json()["operations"] if o["id"] == op_id)
-    assert op["progress"] is None
+    assert op.get("progress") is None
 
 
 @pytest.mark.asyncio
