@@ -604,6 +604,10 @@ def ensure_embedding_dimension(
 
         _migrate_table_embedding_dimension(conn, schema_name, "memory_units", required_dimension, vector_ext)
         _migrate_table_embedding_dimension(conn, schema_name, "mental_models", required_dimension, vector_ext)
+        # NOTE: invalidated_memory_units is deliberately omitted. The curation archive never
+        # stores embeddings (they're NULLed on invalidate and recomputed on revert), so its
+        # embedding column only ever holds NULL — its declared dimension is irrelevant and a
+        # model switch can't trip a dimension mismatch there (#2209).
 
 
 def ensure_vector_extension(
