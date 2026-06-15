@@ -88,6 +88,18 @@ class TestBuildContextItems:
         with pytest.raises(HindsightError, match="Recall failed"):
             build_context_items(continue_request(query="hi"), client=client)
 
+    def test_http_status_surfaced_in_error(self):
+        # hindsight_client raises an ApiException with a ``status`` attribute;
+        # the adapter should surface it so a bad token (401) is distinguishable.
+        client = make_client()
+        err = RuntimeError("unauthorized")
+        err.status = 401
+        client.recall.side_effect = err
+        configure(bank_id="proj-1")
+
+        with pytest.raises(HindsightError, match="HTTP 401"):
+            build_context_items(continue_request(query="hi"), client=client)
+
     def test_types_and_tags_passed_through_when_configured(self):
         client = make_client(["m"])
         configure(

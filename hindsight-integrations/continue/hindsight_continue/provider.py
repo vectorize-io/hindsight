@@ -116,7 +116,14 @@ def build_context_items(
     except HindsightError:
         raise
     except Exception as e:
-        logger.error("Recall failed: %s", e)
+        # hindsight_client raises an ApiException carrying the HTTP ``status`` on
+        # auth/connection failures; surface it so a 401/403 (bad token) is
+        # distinguishable from a benign "no results" in the adapter logs.
+        status = getattr(e, "status", None)
+        if status is not None:
+            logger.error("Recall failed for bank %s (HTTP %s): %s", bank_id, status, e)
+            raise HindsightError(f"Recall failed (HTTP {status}) — check HINDSIGHT_API_KEY / HINDSIGHT_API_URL") from e
+        logger.error("Recall failed for bank %s: %s", bank_id, e)
         raise HindsightError(f"Recall failed: {e}") from e
 
     results = getattr(response, "results", None) or []
