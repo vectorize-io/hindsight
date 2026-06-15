@@ -4,7 +4,6 @@ import json
 import os
 
 import pytest
-
 from lib.config import _cast_env, load_config
 
 
@@ -19,6 +18,9 @@ class TestCastEnv:
 
     def test_int_cast(self):
         assert _cast_env("42", int) == 42
+
+    def test_float_cast(self):
+        assert _cast_env("0.3", float) == 0.3
 
     def test_int_invalid_returns_none(self):
         assert _cast_env("notanint", int) is None
@@ -47,6 +49,7 @@ class TestLoadConfig:
         assert cfg["autoRecall"] is True
         assert cfg["autoRetain"] is True
         assert cfg["recallBudget"] == "mid"
+        assert cfg["recallScoreMin"] == 0.25
         assert cfg["retainEveryNTurns"] == 10
         assert cfg["agentName"] == "omo"
         assert cfg["retainContext"] == "omo"
@@ -76,6 +79,12 @@ class TestLoadConfig:
         monkeypatch.setenv("HINDSIGHT_API_URL", "http://localhost:8888")
         cfg = load_config()
         assert cfg["hindsightApiUrl"] == "http://localhost:8888"
+
+    def test_float_env_var_override(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PLUGIN_ROOT", str(tmp_path))
+        monkeypatch.setenv("HINDSIGHT_RECALL_SCORE_MIN", "0.6")
+        cfg = load_config()
+        assert cfg["recallScoreMin"] == 0.6
 
     def test_api_token_env_override(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PLUGIN_ROOT", str(tmp_path))

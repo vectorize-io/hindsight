@@ -51,6 +51,22 @@ def test_format_memories_empty():
     assert content.format_memories([]) == ""
 
 
+def test_filter_memories_by_score_keeps_threshold_and_above():
+    results = [
+        {"text": "weak", "score": 0.24},
+        {"text": "edge", "score": 0.25},
+        {"text": "strong", "score": 0.9},
+    ]
+    out = content.filter_memories_by_score(results, 0.25)
+    assert [r["text"] for r in out] == ["edge", "strong"]
+
+
+def test_filter_memories_by_score_treats_missing_score_as_zero():
+    results = [{"text": "missing"}, {"text": "zero", "score": 0.0}]
+    assert content.filter_memories_by_score(results, 0.25) == []
+    assert [r["text"] for r in content.filter_memories_by_score(results, 0.0)] == ["missing", "zero"]
+
+
 def test_compose_recall_query_single_turn_is_latest_only():
     msgs = [{"role": "user", "content": "old"}, {"role": "assistant", "content": "reply"}]
     assert content.compose_recall_query("latest", msgs, 1) == "latest"

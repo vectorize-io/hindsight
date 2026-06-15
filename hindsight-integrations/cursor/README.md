@@ -179,6 +179,7 @@ All settings live in `~/.hindsight/cursor.json`. Every setting can also be overr
 | `autoRecall` | `HINDSIGHT_AUTO_RECALL` | `true` | Enable/disable session-start recall |
 | `recallBudget` | `HINDSIGHT_RECALL_BUDGET` | `"mid"` | Search thoroughness: low, mid, high |
 | `recallMaxTokens` | `HINDSIGHT_RECALL_MAX_TOKENS` | `1024` | Max tokens in recalled memory block |
+| `recallScoreMin` | `HINDSIGHT_RECALL_SCORE_MIN` | `0.25` | Minimum recall score required for injected memories |
 | `recallTypes` | — | `["world", "experience"]` | Memory types to recall |
 | `recallMaxQueryChars` | `HINDSIGHT_RECALL_MAX_QUERY_CHARS` | `800` | Max characters in the recall query |
 | `recallPromptPreamble` | — | *(see settings.json)* | Text prepended to recalled memories |
@@ -229,4 +230,3 @@ python -m pytest tests/ -v
 ## License
 
 MIT
-

@@ -17,6 +17,7 @@ class TestLoadConfig:
         assert config["autoRecall"] is True
         assert config["autoRetain"] is True
         assert config["recallBudget"] == "mid"
+        assert config["recallScoreMin"] == 0.25
         assert config["retainContext"] == "cursor"
         assert config["agentName"] == "cursor"
 
@@ -31,6 +32,12 @@ class TestLoadConfig:
         monkeypatch.setenv("HINDSIGHT_RECALL_MAX_TOKENS", "2048")
         config = load_config()
         assert config["recallMaxTokens"] == 2048
+
+    def test_env_overrides_float(self, monkeypatch):
+        monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
+        monkeypatch.setenv("HINDSIGHT_RECALL_SCORE_MIN", "0.6")
+        config = load_config()
+        assert config["recallScoreMin"] == 0.6
 
     def test_env_overrides_string(self, monkeypatch):
         monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")

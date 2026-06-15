@@ -100,11 +100,12 @@ pub struct ApiClient {
     client: AsyncClient,
     http_client: reqwest::Client,
     base_url: String,
+    recall_score_min: f64,
     runtime: std::sync::Arc<tokio::runtime::Runtime>,
 }
 
 impl ApiClient {
-    pub fn new(base_url: String, api_key: Option<String>) -> Result<Self> {
+    pub fn new(base_url: String, api_key: Option<String>, recall_score_min: f64) -> Result<Self> {
         let runtime = std::sync::Arc::new(tokio::runtime::Runtime::new()?);
 
         // Create HTTP client with 2-minute timeout and optional auth header
@@ -128,6 +129,7 @@ impl ApiClient {
             client,
             http_client,
             base_url,
+            recall_score_min,
             runtime,
         })
     }
@@ -220,7 +222,11 @@ impl ApiClient {
                 Ok(r) => r,
                 Err(e) => return Err(humanize_client_error(e).await),
             };
-            Ok(response.into_inner())
+            let mut response = response.into_inner();
+            response
+                .results
+                .retain(|result| result.score.unwrap_or(0.0) >= self.recall_score_min);
+            Ok(response)
         })
     }
 

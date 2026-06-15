@@ -73,8 +73,8 @@ def make_recall_response(memories):
     return {"results": memories}
 
 
-def make_memory(text, mem_type="experience", mentioned_at="2024-01-15"):
-    return {"text": text, "type": mem_type, "mentioned_at": mentioned_at}
+def make_memory(text, mem_type="experience", mentioned_at="2024-01-15", score=0.9):
+    return {"text": text, "type": mem_type, "mentioned_at": mentioned_at, "score": score}
 
 
 class FakeHTTPResponse:

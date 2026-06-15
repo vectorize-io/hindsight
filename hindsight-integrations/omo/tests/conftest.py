@@ -63,8 +63,8 @@ def make_transcript_file(tmp_path, messages):
     return str(f)
 
 
-def make_memory(text, mem_type="experience", mentioned_at="2024-01-15"):
-    return {"text": text, "type": mem_type, "mentioned_at": mentioned_at}
+def make_memory(text, mem_type="experience", mentioned_at="2024-01-15", score=0.9):
+    return {"text": text, "type": mem_type, "mentioned_at": mentioned_at, "score": score}
 
 
 class FakeHTTPResponse:

@@ -20,6 +20,7 @@ from lib.client import HindsightClient
 from lib.config import debug_log, load_config
 from lib.content import (
     compose_recall_query,
+    filter_memories_by_score,
     format_current_time,
     format_memories,
     truncate_recall_query,
@@ -143,6 +144,8 @@ def main():
                 results = results + extra_results
         except Exception as e:
             debug_log(config, f"Recall from additional bank '{extra_bank_id}' failed: {e}")
+
+    results = filter_memories_by_score(results, config.get("recallScoreMin", 0.25))
 
     if not results:
         debug_log(config, "No memories found")

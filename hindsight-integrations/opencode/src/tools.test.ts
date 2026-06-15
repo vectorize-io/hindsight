@@ -102,7 +102,9 @@ describe("createTools", () => {
       const client = {
         retain: vi.fn(),
         recall: vi.fn().mockResolvedValue({
-          results: [{ text: "User likes Python", type: "world", mentioned_at: "2025-01-01" }],
+          results: [
+            { text: "User likes Python", type: "world", mentioned_at: "2025-01-01", score: 0.9 },
+          ],
         }),
         reflect: vi.fn(),
       } as any;
@@ -132,6 +134,25 @@ describe("createTools", () => {
 
       const result = await tools.hindsight_recall.execute({ query: "unknown" }, mockContext);
       expect(result).toBe("No relevant memories found.");
+    });
+
+    it("filters out recall results below recallScoreMin", async () => {
+      const client = {
+        retain: vi.fn(),
+        recall: vi.fn().mockResolvedValue({
+          results: [
+            { text: "weak memory", type: "world", score: 0.24 },
+            { text: "strong memory", type: "world", score: 0.7 },
+          ],
+        }),
+        reflect: vi.fn(),
+      } as any;
+      const tools = createTools(client, "test-bank", makeConfig({ recallScoreMin: 0.25 }));
+
+      const result = await tools.hindsight_recall.execute({ query: "test" }, mockContext);
+
+      expect(result).toContain("strong memory");
+      expect(result).not.toContain("weak memory");
     });
 
     it("uses config budget settings", async () => {

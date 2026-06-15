@@ -5,6 +5,7 @@ export function makeConfig(overrides: Partial<HindsightConfig> = {}): HindsightC
     autoRecall: true,
     recallBudget: "mid",
     recallMaxTokens: 1024,
+    recallScoreMin: 0.25,
     recallTypes: ["world", "experience"],
     recallContextTurns: 1,
     recallMaxQueryChars: 800,

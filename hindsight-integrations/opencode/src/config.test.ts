@@ -23,6 +23,7 @@ describe("loadConfig", () => {
     expect(config.autoRetain).toBe(true);
     expect(config.recallBudget).toBe("mid");
     expect(config.recallMaxTokens).toBe(1024);
+    expect(config.recallScoreMin).toBe(0.25);
     expect(config.retainContext).toBe("opencode");
     expect(config.agentName).toBe("opencode");
     expect(config.dynamicBankId).toBe(false);
@@ -39,6 +40,7 @@ describe("loadConfig", () => {
     process.env.HINDSIGHT_AUTO_RECALL = "false";
     process.env.HINDSIGHT_AUTO_RETAIN = "0";
     process.env.HINDSIGHT_RECALL_MAX_TOKENS = "2048";
+    process.env.HINDSIGHT_RECALL_SCORE_MIN = "0.6";
 
     const config = loadConfig();
     expect(config.hindsightApiUrl).toBe("https://example.com");
@@ -47,6 +49,7 @@ describe("loadConfig", () => {
     expect(config.autoRecall).toBe(false);
     expect(config.autoRetain).toBe(false);
     expect(config.recallMaxTokens).toBe(2048);
+    expect(config.recallScoreMin).toBe(0.6);
   });
 
   it("does not read debug from the environment (config-only)", () => {
@@ -101,6 +104,14 @@ describe("loadConfig", () => {
     // Invalid integer keeps default
     process.env.HINDSIGHT_RECALL_MAX_TOKENS = "not-a-number";
     expect(loadConfig().recallMaxTokens).toBe(1024);
+  });
+
+  it("float env var parsing", () => {
+    process.env.HINDSIGHT_RECALL_SCORE_MIN = "0.4";
+    expect(loadConfig().recallScoreMin).toBe(0.4);
+
+    process.env.HINDSIGHT_RECALL_SCORE_MIN = "not-a-number";
+    expect(loadConfig().recallScoreMin).toBe(0.25);
   });
 
   it("null plugin options are ignored", () => {

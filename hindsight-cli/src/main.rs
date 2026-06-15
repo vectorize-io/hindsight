@@ -135,7 +135,7 @@ enum Commands {
 
     /// Configure the CLI (API URL, API key, etc.)
     #[command(
-        after_help = "Configuration priority:\n  1. Environment variables (HINDSIGHT_API_URL, HINDSIGHT_API_KEY) - highest priority\n  2. Named profile (-p / HINDSIGHT_PROFILE, see 'hindsight profile')\n  3. Config file (~/.hindsight/config)\n  4. Default (http://localhost:8888)"
+        after_help = "Configuration priority:\n  1. Environment variables (HINDSIGHT_API_URL, HINDSIGHT_API_KEY, HINDSIGHT_RECALL_SCORE_MIN) - highest priority\n  2. Named profile (-p / HINDSIGHT_PROFILE, see 'hindsight profile')\n  3. Config file (~/.hindsight/config)\n  4. Default (http://localhost:8888)"
     )]
     Configure {
         /// API URL to connect to (interactive prompt if not provided)
@@ -144,6 +144,9 @@ enum Commands {
         /// API key for authentication (sent as Bearer token)
         #[arg(long)]
         api_key: Option<String>,
+        /// Minimum recall score required for CLI recall results (0.0 to 1.0)
+        #[arg(long)]
+        recall_score_min: Option<f64>,
     },
 
     /// Manage named connection profiles (~/.hindsight/cli-profiles/<name>.toml)
@@ -163,6 +166,9 @@ enum ProfileCommands {
         /// API key (optional; stored in profile file with 0600 permissions)
         #[arg(long)]
         api_key: Option<String>,
+        /// Minimum recall score required for CLI recall results (0.0 to 1.0)
+        #[arg(long)]
+        recall_score_min: Option<f64>,
     },
     /// List all known profiles
     List,
@@ -1155,8 +1161,13 @@ fn run() -> Result<()> {
     let profile = cli.profile.clone();
 
     // Handle configure command before loading full config (it doesn't need API client)
-    if let Commands::Configure { api_url, api_key } = cli.command {
-        return handle_configure(api_url, api_key, output_format);
+    if let Commands::Configure {
+        api_url,
+        api_key,
+        recall_score_min,
+    } = cli.command
+    {
+        return handle_configure(api_url, api_key, recall_score_min, output_format);
     }
 
     // Handle profile management commands — no API client required.
@@ -1180,9 +1191,10 @@ fn run() -> Result<()> {
     let api_key = config.api_key.clone();
 
     // Create API client
-    let client = ApiClient::new(api_url.clone(), api_key).unwrap_or_else(|e| {
-        errors::handle_api_error(e, &api_url);
-    });
+    let client =
+        ApiClient::new(api_url.clone(), api_key, config.recall_score_min).unwrap_or_else(|e| {
+            errors::handle_api_error(e, &api_url);
+        });
 
     // Execute command and handle errors
     let result: Result<()> = match cli.command {
@@ -1860,6 +1872,7 @@ fn run() -> Result<()> {
 fn handle_configure(
     api_url: Option<String>,
     api_key: Option<String>,
+    recall_score_min: Option<f64>,
     output_format: OutputFormat,
 ) -> Result<()> {
     // Load current config to show current state
@@ -1881,6 +1894,7 @@ fn handle_configure(
                 };
                 println!("  Current API Key: {}", masked);
             }
+            println!("  Current recall score min: {}", config.recall_score_min);
             println!("  Source: {}", config.source);
             println!();
         }
@@ -1909,12 +1923,15 @@ fn handle_configure(
     let new_api_key = api_key.or_else(|| current_config.as_ref().and_then(|c| c.api_key.clone()));
 
     // Save to config file
-    let config_path = Config::save_config(&new_api_url, new_api_key.as_deref())?;
+    let config_path = Config::save_config(&new_api_url, new_api_key.as_deref(), recall_score_min)?;
 
     if output_format == OutputFormat::Pretty {
         ui::print_success(&format!("Configuration saved to {}", config_path.display()));
         println!();
         println!("  API URL: {}", new_api_url);
+        if let Some(score_min) = recall_score_min {
+            println!("  Recall score min: {}", score_min);
+        }
         if let Some(ref key) = new_api_key {
             let masked = if key.len() > 8 {
                 format!("{}...{}", &key[..4], &key[key.len() - 4..])
@@ -1929,6 +1946,7 @@ fn handle_configure(
         let result = serde_json::json!({
             "api_url": new_api_url,
             "api_key_set": new_api_key.is_some(),
+            "recall_score_min": recall_score_min,
             "config_path": config_path.display().to_string(),
         });
         output::print_output(&result, output_format)?;
@@ -1998,12 +2016,16 @@ fn handle_profile(cmd: ProfileCommands, output_format: OutputFormat) -> Result<(
             name,
             api_url,
             api_key,
+            recall_score_min,
         } => {
-            let path = Config::save_profile(&name, &api_url, api_key.as_deref())?;
+            let path = Config::save_profile(&name, &api_url, api_key.as_deref(), recall_score_min)?;
             if output_format == OutputFormat::Pretty {
                 ui::print_success(&format!("Profile '{}' saved to {}", name, path.display()));
                 println!();
                 println!("  API URL: {}", api_url);
+                if let Some(score_min) = recall_score_min {
+                    println!("  Recall score min: {}", score_min);
+                }
                 if let Some(ref key) = api_key {
                     println!("  API Key: {}", mask_api_key(key));
                 }
@@ -2017,6 +2039,7 @@ fn handle_profile(cmd: ProfileCommands, output_format: OutputFormat) -> Result<(
                     "name": name,
                     "api_url": api_url,
                     "api_key_set": api_key.is_some(),
+                    "recall_score_min": recall_score_min,
                     "path": path.display().to_string(),
                 });
                 output::print_output(&result, output_format)?;
@@ -2042,7 +2065,7 @@ fn handle_profile(cmd: ProfileCommands, output_format: OutputFormat) -> Result<(
             Ok(())
         }
         ProfileCommands::Show { name } => {
-            let (api_url, api_key) = Config::load_profile(&name)?;
+            let (api_url, api_key, recall_score_min) = Config::load_profile(&name)?;
             let path = Config::profile_file_path(&name)
                 .map(|p| p.display().to_string())
                 .unwrap_or_default();
@@ -2051,6 +2074,7 @@ fn handle_profile(cmd: ProfileCommands, output_format: OutputFormat) -> Result<(
                 println!();
                 println!("  Path:    {}", path);
                 println!("  API URL: {}", api_url);
+                println!("  Recall score min: {}", recall_score_min.unwrap_or(0.25));
                 if let Some(ref key) = api_key {
                     println!("  API Key: {}", mask_api_key(key));
                 }
@@ -2060,6 +2084,7 @@ fn handle_profile(cmd: ProfileCommands, output_format: OutputFormat) -> Result<(
                     "path": path,
                     "api_url": api_url,
                     "api_key_set": api_key.is_some(),
+                    "recall_score_min": recall_score_min.unwrap_or(0.25),
                 });
                 output::print_output(&result, output_format)?;
             }

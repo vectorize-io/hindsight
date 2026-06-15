@@ -107,6 +107,7 @@ Settings are loaded in order (later wins):
 | `autoRetain` | `HINDSIGHT_AUTO_RETAIN` | `true` | Auto-retain after responses |
 | `retainEveryNTurns` | — | `10` | Retain frequency (turns) |
 | `recallBudget` | `HINDSIGHT_RECALL_BUDGET` | `mid` | Recall depth (`low`/`mid`/`high`) |
+| `recallScoreMin` | `HINDSIGHT_RECALL_SCORE_MIN` | `0.25` | Minimum recall score required for injected memories |
 | `dynamicBankId` | `HINDSIGHT_DYNAMIC_BANK_ID` | `false` | Per-project bank isolation |
 | `debug` | `HINDSIGHT_DEBUG` | `false` | Enable debug logging to stderr |
 

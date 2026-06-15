@@ -166,7 +166,9 @@ describe("autoRecall is independent of session.created ordering (#1758)", () => 
   it("injects recall on the first system.transform even if session.created never fired", async () => {
     const state = makeState();
     const client = makeClient();
-    client.recall.mockResolvedValue({ results: [{ text: "User is a developer", type: "world" }] });
+    client.recall.mockResolvedValue({
+      results: [{ text: "User is a developer", type: "world", score: 0.9 }],
+    });
     const hooks = createHooks(client, "bank", makeConfig(), state, makeOpencodeClient());
 
     // No session.created beforehand — this is the #1758 reproduction.
@@ -182,7 +184,9 @@ describe("autoRecall is independent of session.created ordering (#1758)", () => 
   it("injects recall even when system.transform fires BEFORE session.created", async () => {
     const state = makeState();
     const client = makeClient();
-    client.recall.mockResolvedValue({ results: [{ text: "User is a developer", type: "world" }] });
+    client.recall.mockResolvedValue({
+      results: [{ text: "User is a developer", type: "world", score: 0.9 }],
+    });
     const hooks = createHooks(client, "bank", makeConfig(), state, makeOpencodeClient());
 
     const out1: { system: string[] } = { system: [] };
@@ -203,7 +207,7 @@ describe("compacting hook", () => {
   it("retains before compaction and recalls context", async () => {
     const client = makeClient();
     client.recall.mockResolvedValue({
-      results: [{ text: "Important fact", type: "world" }],
+      results: [{ text: "Important fact", type: "world", score: 0.9 }],
     });
     const messages = [
       { info: { role: "user" }, parts: [{ type: "text", text: "Build the feature" }] },
@@ -311,7 +315,7 @@ describe("system transform hook", () => {
   it("injects memories on the first transform for a session", async () => {
     const client = makeClient();
     client.recall.mockResolvedValue({
-      results: [{ text: "User is a developer", type: "world" }],
+      results: [{ text: "User is a developer", type: "world", score: 0.9 }],
     });
     const state = makeState();
     const output = { system: [] as string[] };
@@ -325,12 +329,35 @@ describe("system transform hook", () => {
     expect(state.recalledSessions.has("sess-1")).toBe(true);
   });
 
+  it("filters low-score memories from automatic recall context", async () => {
+    const client = makeClient();
+    client.recall.mockResolvedValue({
+      results: [
+        { text: "weak memory", type: "world", score: 0.24 },
+        { text: "strong memory", type: "world", score: 0.7 },
+      ],
+    });
+    const output = { system: [] as string[] };
+    const hooks = createHooks(
+      client,
+      "bank",
+      makeConfig({ recallScoreMin: 0.25 }),
+      makeState(),
+      makeOpencodeClient()
+    );
+
+    await hooks["experimental.chat.system.transform"]({ sessionID: "sess-1", model: {} }, output);
+
+    expect(output.system[0]).toContain("strong memory");
+    expect(output.system[0]).not.toContain("weak memory");
+  });
+
   it("appends recall into the existing first system section, not a new one", async () => {
     // OpenCode emits each system[] entry as a separate system message and some
     // providers only honor the first; recall must fold into system[0].
     const client = makeClient();
     client.recall.mockResolvedValue({
-      results: [{ text: "User is a developer", type: "world" }],
+      results: [{ text: "User is a developer", type: "world", score: 0.9 }],
     });
     const state = makeState();
     const output = { system: ["You are a helpful coding assistant."] as string[] };
@@ -379,7 +406,7 @@ describe("system transform hook", () => {
     client.recall.mockRejectedValueOnce(new Error("Connection refused"));
     // Second call: succeeds
     client.recall.mockResolvedValueOnce({
-      results: [{ text: "Found it", type: "world" }],
+      results: [{ text: "Found it", type: "world", score: 0.9 }],
     });
     const state = makeState();
     const hooks = createHooks(client, "bank", makeConfig(), state, makeOpencodeClient());

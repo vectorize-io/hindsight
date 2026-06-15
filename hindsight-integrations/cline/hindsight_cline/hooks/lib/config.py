@@ -9,6 +9,7 @@ keys (see the integration README for the rationale).
 """
 
 import json
+import math
 import os
 import re
 import sys
@@ -26,6 +27,7 @@ class HindsightClineConfig:
     auto_recall: bool = True
     recall_budget: str = "mid"
     recall_max_tokens: int = 1024
+    recall_score_min: float = 0.25
     recall_timeout: int = 10
     recall_types: list[str] = field(default_factory=lambda: ["world", "experience"])
     recall_context_turns: int = 1
@@ -76,6 +78,7 @@ ENV_OVERRIDES: dict[str, tuple[str, type]] = {
     "HINDSIGHT_AUTO_RETAIN": ("auto_retain", bool),
     "HINDSIGHT_RECALL_BUDGET": ("recall_budget", str),
     "HINDSIGHT_RECALL_MAX_TOKENS": ("recall_max_tokens", int),
+    "HINDSIGHT_RECALL_SCORE_MIN": ("recall_score_min", float),
     "HINDSIGHT_RECALL_TIMEOUT": ("recall_timeout", int),
     "HINDSIGHT_RECALL_MAX_QUERY_CHARS": ("recall_max_query_chars", int),
     "HINDSIGHT_RECALL_CONTEXT_TURNS": ("recall_context_turns", int),
@@ -116,9 +119,21 @@ def _cast_env(value: str, typ: type) -> Any:
             return value.lower() in ("true", "1", "yes")
         if typ is int:
             return int(value)
+        if typ is float:
+            return float(value)
         return value
     except (ValueError, AttributeError):
         return None
+
+
+def _normalize_recall_score_min(config: HindsightClineConfig) -> None:
+    try:
+        value = float(config.recall_score_min)
+    except (TypeError, ValueError):
+        value = HindsightClineConfig.recall_score_min
+    if not math.isfinite(value) or value < 0.0 or value > 1.0:
+        value = HindsightClineConfig.recall_score_min
+    config.recall_score_min = value
 
 
 def _merge_settings_file(path: str, config: HindsightClineConfig) -> None:
@@ -162,6 +177,7 @@ def load_config() -> HindsightClineConfig:
             if cast_val is not None:
                 setattr(config, field_name, cast_val)
 
+    _normalize_recall_score_min(config)
     return config
 
 

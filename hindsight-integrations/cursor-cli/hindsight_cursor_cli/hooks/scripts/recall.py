@@ -33,6 +33,7 @@ from lib.client import HindsightClient
 from lib.config import debug_log, load_config
 from lib.content import (
     compose_recall_query,
+    filter_memories_by_score,
     format_current_time,
     format_memories,
     read_transcript,
@@ -127,7 +128,10 @@ def main():
         print(f"[Hindsight] Recall failed: {e}", file=sys.stderr)
         return
 
-    results = response.get("results", [])
+    results = filter_memories_by_score(
+        response.get("results", []),
+        config.get("recallScoreMin", 0.25),
+    )
     if not results:
         debug_log(config, "No memories found")
         return

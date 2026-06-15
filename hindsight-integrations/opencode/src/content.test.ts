@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  filterMemoriesByScore,
   stripMemoryTags,
   formatMemories,
   formatCurrentTime,
@@ -32,6 +33,21 @@ describe("stripMemoryTags", () => {
 });
 
 describe("formatMemories", () => {
+  it("filters recall results by score threshold", () => {
+    const results = [
+      { text: "weak", score: 0.24 },
+      { text: "edge", score: 0.25 },
+      { text: "strong", score: 0.9 },
+    ];
+    expect(filterMemoriesByScore(results, 0.25).map((r) => r.text)).toEqual(["edge", "strong"]);
+  });
+
+  it("treats missing scores as zero", () => {
+    const results = [{ text: "missing" }, { text: "zero", score: 0.0 }];
+    expect(filterMemoriesByScore(results, 0.25)).toEqual([]);
+    expect(filterMemoriesByScore(results, 0.0).map((r) => r.text)).toEqual(["missing", "zero"]);
+  });
+
   it("formats recall results with type and date", () => {
     const results = [
       { text: "User likes Python", type: "world", mentioned_at: "2025-01-01" },

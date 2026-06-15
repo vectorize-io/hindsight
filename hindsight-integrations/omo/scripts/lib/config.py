@@ -8,6 +8,7 @@ Set HINDSIGHT_API_URL to use a self-hosted instance instead.
 """
 
 import json
+import math
 import os
 import sys
 
@@ -16,6 +17,7 @@ DEFAULTS = {
     "autoRecall": True,
     "recallBudget": "mid",
     "recallMaxTokens": 1024,
+    "recallScoreMin": 0.25,
     "recallTypes": ["world", "experience"],
     "recallContextTurns": 1,
     "recallMaxQueryChars": 800,
@@ -65,6 +67,7 @@ ENV_OVERRIDES = {
     "HINDSIGHT_RETAIN_MODE": ("retainMode", str),
     "HINDSIGHT_RECALL_BUDGET": ("recallBudget", str),
     "HINDSIGHT_RECALL_MAX_TOKENS": ("recallMaxTokens", int),
+    "HINDSIGHT_RECALL_SCORE_MIN": ("recallScoreMin", float),
     "HINDSIGHT_RECALL_MAX_QUERY_CHARS": ("recallMaxQueryChars", int),
     "HINDSIGHT_RECALL_CONTEXT_TURNS": ("recallContextTurns", int),
     "HINDSIGHT_REQUEST_TIMEOUT_SECONDS": ("requestTimeoutSeconds", int),
@@ -81,9 +84,21 @@ def _cast_env(value: str, typ):
             return value.lower() in ("true", "1", "yes")
         if typ is int:
             return int(value)
+        if typ is float:
+            return float(value)
         return value
     except (ValueError, AttributeError):
         return None
+
+
+def _normalize_recall_score_min(config: dict) -> None:
+    try:
+        value = float(config.get("recallScoreMin", DEFAULTS["recallScoreMin"]))
+    except (TypeError, ValueError):
+        value = DEFAULTS["recallScoreMin"]
+    if not math.isfinite(value) or value < 0.0 or value > 1.0:
+        value = DEFAULTS["recallScoreMin"]
+    config["recallScoreMin"] = value
 
 
 def _load_settings_file(path: str, config: dict) -> None:
@@ -127,6 +142,7 @@ def load_config() -> dict:
             if cast_val is not None:
                 config[key] = cast_val
 
+    _normalize_recall_score_min(config)
     return config
 
 

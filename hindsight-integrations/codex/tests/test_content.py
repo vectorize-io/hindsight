@@ -8,6 +8,7 @@ import pytest
 
 from lib.content import (
     compose_recall_query,
+    filter_memories_by_score,
     format_memories,
     is_synthetic_codex_user_message,
     prepare_retention_transcript,
@@ -330,6 +331,20 @@ class TestTruncateRecallQuery:
 
 
 class TestFormatMemories:
+    def test_filter_memories_by_score_keeps_threshold_and_above(self):
+        mems = [
+            {"text": "weak", "score": 0.24},
+            {"text": "edge", "score": 0.25},
+            {"text": "strong", "score": 0.9},
+        ]
+        result = filter_memories_by_score(mems, 0.25)
+        assert [m["text"] for m in result] == ["edge", "strong"]
+
+    def test_filter_memories_by_score_treats_missing_score_as_zero(self):
+        mems = [{"text": "missing"}, {"text": "disabled", "score": 0.0}]
+        assert filter_memories_by_score(mems, 0.25) == []
+        assert [m["text"] for m in filter_memories_by_score(mems, 0.0)] == ["missing", "disabled"]
+
     def test_formats_single_memory(self):
         mems = [{"text": "Paris is the capital", "type": "world", "mentioned_at": "2024-01-01"}]
         result = format_memories(mems)

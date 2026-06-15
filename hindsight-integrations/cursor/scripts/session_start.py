@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib.bank import derive_bank_id, ensure_bank_mission
 from lib.client import HindsightClient
 from lib.config import debug_log, load_config
-from lib.content import format_current_time, format_memories
+from lib.content import filter_memories_by_score, format_current_time, format_memories
 from lib.daemon import get_api_url
 from lib.rules_file import (
     ensure_gitignored,
@@ -165,7 +165,10 @@ def main():
         _write_recall_status("error", reason=str(e)[:200], bank_id=bank_id)
         return
 
-    results = response.get("results", [])
+    results = filter_memories_by_score(
+        response.get("results", []),
+        config.get("recallScoreMin", 0.25),
+    )
     if not results:
         debug_log(config, "No memories found for session start")
         _write_recall_status("empty", bank_id=bank_id, query_length=len(query))

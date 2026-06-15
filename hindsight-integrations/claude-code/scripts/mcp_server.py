@@ -19,12 +19,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Launched via scripts/run_mcp.sh which execs the venv's interpreter, so
 # `mcp` and friends resolve from ${CLAUDE_PLUGIN_DATA}/venv/site-packages.
-from mcp.server.fastmcp import FastMCP
-
+from lib.bank import derive_bank_id
 from lib.client import HindsightClient
 from lib.config import debug_log, load_config
+from lib.content import filter_memories_by_score
 from lib.daemon import get_api_url
-from lib.bank import derive_bank_id
+from mcp.server.fastmcp import FastMCP
 
 # ── Server setup ────────────────────────────────────────
 
@@ -32,7 +32,10 @@ mcp = FastMCP("hindsight")
 
 # Resolve config at startup
 _config = load_config()
-_dbg = lambda *a: debug_log(_config, *a)
+
+
+def _dbg(*args):
+    debug_log(_config, *args)
 
 if not _config.get("enableKnowledgeTools"):
     # Knowledge tools are opt-out. When disabled we must NOT exit: the plugin
@@ -163,6 +166,7 @@ def agent_knowledge_delete_page(page_id: str) -> str:
 def agent_knowledge_recall(query: str, max_tokens: int = 1024) -> str:
     """Search across all retained conversations and documents for specific facts, numbers, or details not covered by your knowledge pages. max_tokens is the result token budget (server returns whatever fits)."""
     resp = _client.recall(bank_id=_default_bank_id, query=query, max_tokens=max_tokens, budget="mid", timeout=10)
+    resp["results"] = filter_memories_by_score(resp.get("results", []), _config.get("recallScoreMin", 0.25))
     return json.dumps(resp, indent=2)
 
 

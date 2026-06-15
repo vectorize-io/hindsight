@@ -50,8 +50,8 @@ def make_hook(hook_name="UserPromptSubmit", prompt="", task="", task_id="t1", wo
     )
 
 
-def make_memory(text, mem_type="experience", mentioned_at="2026-01-15"):
-    return {"text": text, "type": mem_type, "mentioned_at": mentioned_at}
+def make_memory(text, mem_type="experience", mentioned_at="2026-01-15", score=0.9):
+    return {"text": text, "type": mem_type, "mentioned_at": mentioned_at, "score": score}
 
 
 class _FakeHTTPResponse:

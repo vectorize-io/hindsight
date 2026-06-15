@@ -75,6 +75,7 @@ Defaults live in the installed `settings.json`; put personal overrides in `~/.hi
 | `autoRecall`        | `true`                   | Inject memories before tasks/prompts.                             |
 | `autoRetain`        | `true`                   | Retain the task transcript when it ends.                          |
 | `recallBudget`      | `mid`                    | Recall depth: `low` / `mid` / `high`.                             |
+| `recallScoreMin`    | `0.25`                   | Minimum recall score required for injected memories.               |
 | `recallTypes`       | `["world","experience"]` | Memory types to recall.                                           |
 | `dynamicBankId`     | `false`                  | Separate bank per project/session (see `dynamicBankGranularity`). |
 | `debug`             | `false`                  | Log to stderr.                                                    |

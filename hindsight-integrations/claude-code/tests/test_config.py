@@ -4,7 +4,6 @@ import json
 import os
 
 import pytest
-
 from lib.config import _cast_env, load_config
 
 
@@ -20,8 +19,14 @@ class TestCastEnv:
     def test_int_cast(self):
         assert _cast_env("42", int) == 42
 
+    def test_float_cast(self):
+        assert _cast_env("0.3", float) == 0.3
+
     def test_int_invalid_returns_none(self):
         assert _cast_env("notanint", int) is None
+
+    def test_float_invalid_returns_none(self):
+        assert _cast_env("notafloat", float) is None
 
     def test_str_passthrough(self):
         assert _cast_env("hello", str) == "hello"
@@ -43,6 +48,7 @@ class TestLoadConfig:
         assert cfg["autoRecall"] is True
         assert cfg["autoRetain"] is True
         assert cfg["recallBudget"] == "mid"
+        assert cfg["recallScoreMin"] == 0.25
         assert cfg["retainEveryNTurns"] == 10
 
     def test_settings_json_overrides_defaults(self, tmp_path, monkeypatch):
@@ -70,6 +76,12 @@ class TestLoadConfig:
         monkeypatch.setenv("HINDSIGHT_API_PORT", "9999")
         cfg = load_config()
         assert cfg["apiPort"] == 9999
+
+    def test_float_env_var_override(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        monkeypatch.setenv("HINDSIGHT_RECALL_SCORE_MIN", "0.6")
+        cfg = load_config()
+        assert cfg["recallScoreMin"] == 0.6
 
     def test_request_timeout_default_none(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))

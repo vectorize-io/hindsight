@@ -86,6 +86,7 @@ export ANTHROPIC_API_KEY=your-key
 | `retainEveryNTurns` | `10` | Retain every N turns (1 = every turn) |
 | `recallBudget` | `"mid"` | Recall depth: `"low"`, `"mid"`, `"high"` |
 | `recallMaxTokens` | `1024` | Max tokens for injected memories |
+| `recallScoreMin` | `0.25` | Minimum recall score required for injected memories |
 | `recallTimeout` | `10` | Timeout in seconds for recall API calls |
 | `dynamicBankId` | `false` | Separate bank per project/session |
 | `dynamicBankGranularity` | `["agent", "project"]` | Fields for dynamic bank ID |

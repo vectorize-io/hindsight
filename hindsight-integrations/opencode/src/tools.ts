@@ -9,7 +9,7 @@ import { tool } from "@opencode-ai/plugin/tool";
 import type { ToolDefinition } from "@opencode-ai/plugin/tool";
 import type { HindsightClient } from "@vectorize-io/hindsight-client";
 import type { HindsightConfig } from "./config.js";
-import { formatMemories, formatCurrentTime } from "./content.js";
+import { filterMemoriesByScore, formatMemories, formatCurrentTime } from "./content.js";
 import { ensureBankMission } from "./bank.js";
 import { Logger } from "./logger.js";
 
@@ -75,7 +75,7 @@ export function createTools(
         tagsMatch: config.recallTags.length ? config.recallTagsMatch : undefined,
       });
 
-      const results = response.results || [];
+      const results = filterMemoriesByScore(response.results || [], config.recallScoreMin);
       if (!results.length) return "No relevant memories found.";
 
       const formatted = formatMemories(results);

@@ -12,6 +12,7 @@ import type { HindsightClient } from "@vectorize-io/hindsight-client";
 import type { HindsightConfig } from "./config.js";
 import { Logger } from "./logger.js";
 import {
+  filterMemoriesByScore,
   formatMemories,
   formatCurrentTime,
   composeRecallQuery,
@@ -108,7 +109,7 @@ export function createHooks(
         tagsMatch: config.recallTags.length ? config.recallTagsMatch : undefined,
       });
 
-      const results = response.results || [];
+      const results = filterMemoriesByScore(response.results || [], config.recallScoreMin);
       if (!results.length) return { context: null, ok: true };
 
       const formatted = formatMemories(results);

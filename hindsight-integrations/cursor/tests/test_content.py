@@ -2,6 +2,7 @@
 
 import pytest
 from lib.content import (
+    filter_memories_by_score,
     format_memories,
     prepare_retention_transcript,
     slice_last_turns_by_user_boundary,
@@ -48,6 +49,15 @@ class TestSliceLastTurns:
 
 
 class TestFormatMemories:
+    def test_filter_memories_by_score_keeps_threshold_and_above(self):
+        results = [
+            {"text": "weak", "score": 0.24},
+            {"text": "edge", "score": 0.25},
+            {"text": "strong", "score": 0.9},
+        ]
+        out = filter_memories_by_score(results, 0.25)
+        assert [r["text"] for r in out] == ["edge", "strong"]
+
     def test_formats_with_type_and_date(self):
         results = [
             {"text": "User likes Python", "type": "world", "mentioned_at": "2026-01-01"},

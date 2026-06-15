@@ -20,6 +20,7 @@ export interface HindsightConfig {
   autoRecall: boolean;
   recallBudget: string;
   recallMaxTokens: number;
+  recallScoreMin: number;
   recallTypes: string[];
   recallContextTurns: number;
   recallMaxQueryChars: number;
@@ -58,6 +59,7 @@ const DEFAULTS: HindsightConfig = {
   autoRecall: true,
   recallBudget: "mid",
   recallMaxTokens: 1024,
+  recallScoreMin: 0.25,
   recallTypes: ["world", "experience"],
   recallContextTurns: 1,
   recallMaxQueryChars: 800,
@@ -95,30 +97,39 @@ const DEFAULTS: HindsightConfig = {
 };
 
 /** Env var → config key + type mapping */
-const ENV_OVERRIDES: Record<string, [keyof HindsightConfig, "string" | "bool" | "int"]> = {
-  HINDSIGHT_API_URL: ["hindsightApiUrl", "string"],
-  HINDSIGHT_API_TOKEN: ["hindsightApiToken", "string"],
-  HINDSIGHT_BANK_ID: ["bankId", "string"],
-  HINDSIGHT_AGENT_NAME: ["agentName", "string"],
-  HINDSIGHT_AUTO_RECALL: ["autoRecall", "bool"],
-  HINDSIGHT_AUTO_RETAIN: ["autoRetain", "bool"],
-  HINDSIGHT_RETAIN_MODE: ["retainMode", "string"],
-  HINDSIGHT_RECALL_BUDGET: ["recallBudget", "string"],
-  HINDSIGHT_RECALL_MAX_TOKENS: ["recallMaxTokens", "int"],
-  HINDSIGHT_RECALL_MAX_QUERY_CHARS: ["recallMaxQueryChars", "int"],
-  HINDSIGHT_RECALL_CONTEXT_TURNS: ["recallContextTurns", "int"],
-  HINDSIGHT_DYNAMIC_BANK_ID: ["dynamicBankId", "bool"],
-  HINDSIGHT_BANK_MISSION: ["bankMission", "string"],
-  // NOTE: `debug` is intentionally NOT an env override. It is a proper config
-  // option set via opencode.json plugin options or ~/.hindsight/opencode.json,
-  // because env vars are unreliable to set for OpenCode's plugin runtime
-  // (notably on Windows).
-};
+const ENV_OVERRIDES: Record<string, [keyof HindsightConfig, "string" | "bool" | "int" | "float"]> =
+  {
+    HINDSIGHT_API_URL: ["hindsightApiUrl", "string"],
+    HINDSIGHT_API_TOKEN: ["hindsightApiToken", "string"],
+    HINDSIGHT_BANK_ID: ["bankId", "string"],
+    HINDSIGHT_AGENT_NAME: ["agentName", "string"],
+    HINDSIGHT_AUTO_RECALL: ["autoRecall", "bool"],
+    HINDSIGHT_AUTO_RETAIN: ["autoRetain", "bool"],
+    HINDSIGHT_RETAIN_MODE: ["retainMode", "string"],
+    HINDSIGHT_RECALL_BUDGET: ["recallBudget", "string"],
+    HINDSIGHT_RECALL_MAX_TOKENS: ["recallMaxTokens", "int"],
+    HINDSIGHT_RECALL_SCORE_MIN: ["recallScoreMin", "float"],
+    HINDSIGHT_RECALL_MAX_QUERY_CHARS: ["recallMaxQueryChars", "int"],
+    HINDSIGHT_RECALL_CONTEXT_TURNS: ["recallContextTurns", "int"],
+    HINDSIGHT_DYNAMIC_BANK_ID: ["dynamicBankId", "bool"],
+    HINDSIGHT_BANK_MISSION: ["bankMission", "string"],
+    // NOTE: `debug` is intentionally NOT an env override. It is a proper config
+    // option set via opencode.json plugin options or ~/.hindsight/opencode.json,
+    // because env vars are unreliable to set for OpenCode's plugin runtime
+    // (notably on Windows).
+  };
 
-function castEnv(value: string, typ: "string" | "bool" | "int"): string | boolean | number | null {
+function castEnv(
+  value: string,
+  typ: "string" | "bool" | "int" | "float"
+): string | boolean | number | null {
   if (typ === "bool") return ["true", "1", "yes"].includes(value.toLowerCase());
   if (typ === "int") {
     const n = parseInt(value, 10);
+    return isNaN(n) ? null : n;
+  }
+  if (typ === "float") {
+    const n = parseFloat(value);
     return isNaN(n) ? null : n;
   }
   return value;
@@ -207,6 +218,15 @@ export function loadConfig(pluginOptions?: Record<string, unknown>): HindsightCo
         `valid: ${VALID_BUDGETS.join(", ")}. Falling back to "mid".`
     );
     result.recallBudget = "mid";
+  }
+
+  if (
+    typeof result.recallScoreMin !== "number" ||
+    !Number.isFinite(result.recallScoreMin) ||
+    result.recallScoreMin < 0 ||
+    result.recallScoreMin > 1
+  ) {
+    result.recallScoreMin = DEFAULTS.recallScoreMin;
   }
 
   return result;

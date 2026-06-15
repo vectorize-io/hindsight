@@ -48,6 +48,7 @@ def _recall_context(hook: HookInput, config: HindsightClineConfig, query: str) -
         timeout=config.recall_timeout,
     )
     results = resp.get("results", []) if isinstance(resp, dict) else []
+    results = content.filter_memories_by_score(results, config.recall_score_min)
     memories = content.format_memories(results)
     if not memories:
         return ""

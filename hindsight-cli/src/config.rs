@@ -5,6 +5,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 const DEFAULT_API_URL: &str = "http://localhost:8888";
+const DEFAULT_RECALL_SCORE_MIN: f64 = 0.25;
 const CONFIG_FILE_NAME: &str = "config";
 const CONFIG_DIR_NAME: &str = ".hindsight";
 const PROFILE_DIR_NAME: &str = "cli-profiles";
@@ -14,6 +15,7 @@ const PROFILE_ENV_VAR: &str = "HINDSIGHT_PROFILE";
 pub struct Config {
     pub api_url: String,
     pub api_key: Option<String>,
+    pub recall_score_min: f64,
     pub source: ConfigSource,
 }
 
@@ -50,10 +52,16 @@ impl Config {
     /// 4. Default (http://localhost:8888)
     pub fn load_with_profile(profile_name: Option<&str>) -> Result<Self> {
         let env_api_key = env::var("HINDSIGHT_API_KEY").ok();
+        let env_recall_score_min = Self::env_recall_score_min()?;
 
         // 1. Environment variable takes highest priority
         if let Ok(api_url) = env::var("HINDSIGHT_API_URL") {
-            return Self::validate_and_create(api_url, env_api_key, ConfigSource::Environment);
+            return Self::validate_and_create(
+                api_url,
+                env_api_key,
+                env_recall_score_min.unwrap_or(DEFAULT_RECALL_SCORE_MIN),
+                ConfigSource::Environment,
+            );
         }
 
         // 2. Named profile (explicit flag takes precedence over env var)
@@ -62,19 +70,38 @@ impl Config {
             .or_else(|| env::var(PROFILE_ENV_VAR).ok().filter(|s| !s.is_empty()));
 
         if let Some(name) = resolved_profile {
-            let (api_url, file_api_key) = Self::load_profile(&name)?;
+            let (api_url, file_api_key, file_recall_score_min) = Self::load_profile(&name)?;
             let api_key = env_api_key.or(file_api_key);
-            return Self::validate_and_create(api_url, api_key, ConfigSource::Profile(name));
+            return Self::validate_and_create(
+                api_url,
+                api_key,
+                env_recall_score_min
+                    .or(file_recall_score_min)
+                    .unwrap_or(DEFAULT_RECALL_SCORE_MIN),
+                ConfigSource::Profile(name),
+            );
         }
 
         // 3. Local config file
-        if let Some((api_url, file_api_key)) = Self::load_from_file()? {
+        if let Some((api_url, file_api_key, file_recall_score_min)) = Self::load_from_file()? {
             let api_key = env_api_key.or(file_api_key);
-            return Self::validate_and_create(api_url, api_key, ConfigSource::LocalFile);
+            return Self::validate_and_create(
+                api_url,
+                api_key,
+                env_recall_score_min
+                    .or(file_recall_score_min)
+                    .unwrap_or(DEFAULT_RECALL_SCORE_MIN),
+                ConfigSource::LocalFile,
+            );
         }
 
         // 4. Fall back to default
-        Self::validate_and_create(DEFAULT_API_URL.to_string(), env_api_key, ConfigSource::Default)
+        Self::validate_and_create(
+            DEFAULT_API_URL.to_string(),
+            env_api_key,
+            env_recall_score_min.unwrap_or(DEFAULT_RECALL_SCORE_MIN),
+            ConfigSource::Default,
+        )
     }
 
     /// Legacy method for backwards compatibility
@@ -82,14 +109,32 @@ impl Config {
         Self::load()
     }
 
-    fn validate_and_create(api_url: String, api_key: Option<String>, source: ConfigSource) -> Result<Self> {
+    fn validate_and_create(
+        api_url: String,
+        api_key: Option<String>,
+        recall_score_min: f64,
+        source: ConfigSource,
+    ) -> Result<Self> {
         if !api_url.starts_with("http://") && !api_url.starts_with("https://") {
             anyhow::bail!(
                 "Invalid API URL: {}. Must start with http:// or https://",
                 api_url
             );
         }
-        Ok(Config { api_url, api_key, source })
+        validate_recall_score_min(recall_score_min)?;
+        Ok(Config {
+            api_url,
+            api_key,
+            recall_score_min,
+            source,
+        })
+    }
+
+    fn env_recall_score_min() -> Result<Option<f64>> {
+        env::var("HINDSIGHT_RECALL_SCORE_MIN")
+            .ok()
+            .map(|value| parse_recall_score_min(&value, "HINDSIGHT_RECALL_SCORE_MIN"))
+            .transpose()
     }
 
     fn config_dir() -> Option<PathBuf> {
@@ -100,7 +145,7 @@ impl Config {
         Self::config_dir().map(|dir| dir.join(CONFIG_FILE_NAME))
     }
 
-    fn load_from_file() -> Result<Option<(String, Option<String>)>> {
+    fn load_from_file() -> Result<Option<(String, Option<String>, Option<f64>)>> {
         let config_path = match Self::config_file_path() {
             Some(path) => path,
             None => return Ok(None),
@@ -115,6 +160,7 @@ impl Config {
 
         let mut api_url: Option<String> = None;
         let mut api_key: Option<String> = None;
+        let mut recall_score_min: Option<f64> = None;
 
         // Simple TOML parsing for api_url and api_key
         for line in content.lines() {
@@ -133,33 +179,49 @@ impl Config {
                         api_key = Some(value.to_string());
                     }
                 }
+            } else if let Some(value) = parse_config_value(line, "recall_score_min") {
+                recall_score_min = Some(parse_recall_score_min(&value, "recall_score_min")?);
             }
         }
 
         match api_url {
-            Some(url) => Ok(Some((url, api_key))),
+            Some(url) => Ok(Some((url, api_key, recall_score_min))),
             None => Ok(None),
         }
     }
 
     pub fn save_api_url(api_url: &str) -> Result<PathBuf> {
-        Self::save_config(api_url, None)
+        Self::save_config(api_url, None, None)
     }
 
-    pub fn save_config(api_url: &str, api_key: Option<&str>) -> Result<PathBuf> {
+    pub fn save_config(
+        api_url: &str,
+        api_key: Option<&str>,
+        recall_score_min: Option<f64>,
+    ) -> Result<PathBuf> {
+        if let Some(value) = recall_score_min {
+            validate_recall_score_min(value)?;
+        }
         let config_dir = Self::config_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
 
         // Create config directory if it doesn't exist
         if !config_dir.exists() {
-            fs::create_dir_all(&config_dir)
-                .with_context(|| format!("Failed to create config directory: {}", config_dir.display()))?;
+            fs::create_dir_all(&config_dir).with_context(|| {
+                format!(
+                    "Failed to create config directory: {}",
+                    config_dir.display()
+                )
+            })?;
         }
 
         let config_path = config_dir.join(CONFIG_FILE_NAME);
         let mut content = format!("api_url = \"{}\"\n", api_url);
         if let Some(key) = api_key {
             content.push_str(&format!("api_key = \"{}\"\n", key));
+        }
+        if let Some(value) = recall_score_min {
+            content.push_str(&format!("recall_score_min = {}\n", value));
         }
 
         fs::write(&config_path, content)
@@ -184,7 +246,7 @@ impl Config {
 
     /// Load a named profile. Returns (api_url, api_key) or an error if the profile
     /// file is missing / malformed.
-    pub fn load_profile(name: &str) -> Result<(String, Option<String>)> {
+    pub fn load_profile(name: &str) -> Result<(String, Option<String>, Option<f64>)> {
         validate_profile_name(name)?;
         let dir = Self::profile_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
@@ -193,11 +255,16 @@ impl Config {
 
     /// Save a named profile to `~/.hindsight/cli-profiles/<name>.toml`.
     /// Sets file permissions to 0600 on Unix to protect the API key.
-    pub fn save_profile(name: &str, api_url: &str, api_key: Option<&str>) -> Result<PathBuf> {
+    pub fn save_profile(
+        name: &str,
+        api_url: &str,
+        api_key: Option<&str>,
+        recall_score_min: Option<f64>,
+    ) -> Result<PathBuf> {
         validate_profile_name(name)?;
         let dir = Self::profile_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
-        save_profile_to_dir(&dir, name, api_url, api_key)
+        save_profile_to_dir(&dir, name, api_url, api_key, recall_score_min)
     }
 
     /// List profile names (without `.toml` extension), sorted alphabetically.
@@ -224,7 +291,10 @@ impl Config {
     }
 }
 
-fn load_profile_from_dir(dir: &std::path::Path, name: &str) -> Result<(String, Option<String>)> {
+fn load_profile_from_dir(
+    dir: &std::path::Path,
+    name: &str,
+) -> Result<(String, Option<String>, Option<f64>)> {
     let path = dir.join(format!("{}.toml", name));
     if !path.exists() {
         anyhow::bail!(
@@ -240,12 +310,15 @@ fn load_profile_from_dir(dir: &std::path::Path, name: &str) -> Result<(String, O
 
     let mut api_url: Option<String> = None;
     let mut api_key: Option<String> = None;
+    let mut recall_score_min: Option<f64> = None;
 
     for line in content.lines() {
         if let Some(v) = parse_config_value(line, "api_url") {
             api_url = Some(v);
         } else if let Some(v) = parse_config_value(line, "api_key") {
             api_key = Some(v);
+        } else if let Some(v) = parse_config_value(line, "recall_score_min") {
+            recall_score_min = Some(parse_recall_score_min(&v, "recall_score_min")?);
         }
     }
 
@@ -257,7 +330,22 @@ fn load_profile_from_dir(dir: &std::path::Path, name: &str) -> Result<(String, O
         )
     })?;
 
-    Ok((api_url, api_key))
+    Ok((api_url, api_key, recall_score_min))
+}
+
+fn parse_recall_score_min(value: &str, label: &str) -> Result<f64> {
+    let parsed = value
+        .parse::<f64>()
+        .with_context(|| format!("Invalid {}: {}", label, value))?;
+    validate_recall_score_min(parsed)?;
+    Ok(parsed)
+}
+
+fn validate_recall_score_min(value: f64) -> Result<()> {
+    if !value.is_finite() || value < 0.0 || value > 1.0 {
+        anyhow::bail!("recall_score_min must be a finite number between 0.0 and 1.0");
+    }
+    Ok(())
 }
 
 fn save_profile_to_dir(
@@ -265,12 +353,16 @@ fn save_profile_to_dir(
     name: &str,
     api_url: &str,
     api_key: Option<&str>,
+    recall_score_min: Option<f64>,
 ) -> Result<PathBuf> {
     if !api_url.starts_with("http://") && !api_url.starts_with("https://") {
         anyhow::bail!(
             "Invalid API URL: {}. Must start with http:// or https://",
             api_url
         );
+    }
+    if let Some(value) = recall_score_min {
+        validate_recall_score_min(value)?;
     }
 
     if !dir.exists() {
@@ -283,6 +375,9 @@ fn save_profile_to_dir(
     if let Some(key) = api_key {
         content.push_str(&format!("api_key = \"{}\"\n", key));
     }
+    if let Some(value) = recall_score_min {
+        content.push_str(&format!("recall_score_min = {}\n", value));
+    }
 
     fs::write(&path, content)
         .with_context(|| format!("Failed to write profile file: {}", path.display()))?;
@@ -292,7 +387,10 @@ fn save_profile_to_dir(
         use std::os::unix::fs::PermissionsExt;
         let perms = fs::Permissions::from_mode(0o600);
         fs::set_permissions(&path, perms).with_context(|| {
-            format!("Failed to set permissions on profile file: {}", path.display())
+            format!(
+                "Failed to set permissions on profile file: {}",
+                path.display()
+            )
         })?;
     }
 
@@ -370,9 +468,16 @@ pub fn parse_config_value(line: &str, key: &str) -> Option<String> {
     if !line.starts_with(key) {
         return None;
     }
-    line.split('=').nth(1).map(|value| {
-        value.trim().trim_matches('"').trim_matches('\'').to_string()
-    }).filter(|v| !v.is_empty())
+    line.split('=')
+        .nth(1)
+        .map(|value| {
+            value
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_string()
+        })
+        .filter(|v| !v.is_empty())
 }
 
 #[cfg(test)]
@@ -382,7 +487,10 @@ mod tests {
     #[test]
     fn test_config_source_display() {
         assert_eq!(format!("{}", ConfigSource::LocalFile), "config file");
-        assert_eq!(format!("{}", ConfigSource::Environment), "environment variable");
+        assert_eq!(
+            format!("{}", ConfigSource::Environment),
+            "environment variable"
+        );
         assert_eq!(format!("{}", ConfigSource::Default), "default");
         assert_eq!(
             format!("{}", ConfigSource::Profile("prod".to_string())),
@@ -424,13 +532,20 @@ mod tests {
     #[test]
     fn test_save_and_load_profile_roundtrip() {
         let dir = tempdir();
-        let path = save_profile_to_dir(&dir, "prod", "https://api.example.com", Some("hsk_abc"))
-            .unwrap();
+        let path = save_profile_to_dir(
+            &dir,
+            "prod",
+            "https://api.example.com",
+            Some("hsk_abc"),
+            None,
+        )
+        .unwrap();
         assert!(path.exists());
 
-        let (url, key) = load_profile_from_dir(&dir, "prod").unwrap();
+        let (url, key, recall_score_min) = load_profile_from_dir(&dir, "prod").unwrap();
         assert_eq!(url, "https://api.example.com");
         assert_eq!(key.as_deref(), Some("hsk_abc"));
+        assert_eq!(recall_score_min, None);
 
         #[cfg(unix)]
         {
@@ -443,8 +558,17 @@ mod tests {
     #[test]
     fn test_save_profile_rejects_invalid_url() {
         let dir = tempdir();
-        let err = save_profile_to_dir(&dir, "foo", "localhost:8888", None).unwrap_err();
+        let err = save_profile_to_dir(&dir, "foo", "localhost:8888", None, None).unwrap_err();
         assert!(err.to_string().contains("Invalid API URL"));
+    }
+
+    #[test]
+    fn test_save_profile_persists_recall_score_min() {
+        let dir = tempdir();
+        save_profile_to_dir(&dir, "prod", "https://api.example.com", None, Some(0.6)).unwrap();
+
+        let (_, _, recall_score_min) = load_profile_from_dir(&dir, "prod").unwrap();
+        assert_eq!(recall_score_min, Some(0.6));
     }
 
     #[test]
@@ -460,16 +584,32 @@ mod tests {
         let dir = tempdir();
         let path = dir.join("broken.toml");
         std::fs::write(&path, "api_key = \"x\"\n").unwrap();
-        let err = load_profile_from_dir(&dir, "broken").unwrap_err().to_string();
+        let err = load_profile_from_dir(&dir, "broken")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("missing required 'api_url'"));
+    }
+
+    #[test]
+    fn test_load_profile_parses_recall_score_min() {
+        let dir = tempdir();
+        let path = dir.join("prod.toml");
+        std::fs::write(
+            &path,
+            "api_url = \"https://api.example.com\"\nrecall_score_min = 0.4\n",
+        )
+        .unwrap();
+
+        let (_, _, recall_score_min) = load_profile_from_dir(&dir, "prod").unwrap();
+        assert_eq!(recall_score_min, Some(0.4));
     }
 
     #[test]
     fn test_list_profiles_returns_sorted_names() {
         let dir = tempdir();
-        save_profile_to_dir(&dir, "prod", "https://prod.example.com", None).unwrap();
-        save_profile_to_dir(&dir, "dev", "https://dev.example.com", None).unwrap();
-        save_profile_to_dir(&dir, "staging", "https://staging.example.com", None).unwrap();
+        save_profile_to_dir(&dir, "prod", "https://prod.example.com", None, None).unwrap();
+        save_profile_to_dir(&dir, "dev", "https://dev.example.com", None, None).unwrap();
+        save_profile_to_dir(&dir, "staging", "https://staging.example.com", None, None).unwrap();
         // Non-toml files should be ignored.
         std::fs::write(dir.join("README"), "hi").unwrap();
 
@@ -489,11 +629,13 @@ mod tests {
         let config = Config::validate_and_create(
             "http://localhost:8888".to_string(),
             None,
+            DEFAULT_RECALL_SCORE_MIN,
             ConfigSource::Default,
         );
         assert!(config.is_ok());
         let config = config.unwrap();
         assert_eq!(config.api_url, "http://localhost:8888");
+        assert_eq!(config.recall_score_min, DEFAULT_RECALL_SCORE_MIN);
         assert_eq!(config.source, ConfigSource::Default);
     }
 
@@ -502,12 +644,14 @@ mod tests {
         let config = Config::validate_and_create(
             "https://api.example.com".to_string(),
             Some("secret-key".to_string()),
+            0.5,
             ConfigSource::Environment,
         );
         assert!(config.is_ok());
         let config = config.unwrap();
         assert_eq!(config.api_url, "https://api.example.com");
         assert_eq!(config.api_key, Some("secret-key".to_string()));
+        assert_eq!(config.recall_score_min, 0.5);
         assert_eq!(config.source, ConfigSource::Environment);
     }
 
@@ -516,6 +660,7 @@ mod tests {
         let config = Config::validate_and_create(
             "localhost:8888".to_string(),
             None,
+            DEFAULT_RECALL_SCORE_MIN,
             ConfigSource::Default,
         );
         assert!(config.is_err());
@@ -529,9 +674,34 @@ mod tests {
         let config = Config::validate_and_create(
             "ftp://example.com".to_string(),
             None,
+            DEFAULT_RECALL_SCORE_MIN,
             ConfigSource::Default,
         );
         assert!(config.is_err());
+    }
+
+    #[test]
+    fn test_parse_recall_score_min_rejects_invalid_values() {
+        assert!(parse_recall_score_min("-0.1", "recall_score_min").is_err());
+        assert!(parse_recall_score_min("1.1", "recall_score_min").is_err());
+        assert!(parse_recall_score_min("nan", "recall_score_min").is_err());
+        assert!(parse_recall_score_min("not-a-number", "recall_score_min").is_err());
+    }
+
+    #[test]
+    fn test_parse_recall_score_min_accepts_bounds() {
+        assert_eq!(
+            parse_recall_score_min("0", "recall_score_min").unwrap(),
+            0.0
+        );
+        assert_eq!(
+            parse_recall_score_min("1", "recall_score_min").unwrap(),
+            1.0
+        );
+        assert_eq!(
+            parse_recall_score_min("0.25", "recall_score_min").unwrap(),
+            0.25
+        );
     }
 
     #[test]
@@ -585,22 +755,13 @@ mod tests {
 
     #[test]
     fn test_parse_config_value_wrong_key() {
-        assert_eq!(
-            parse_config_value("api_key = secret", "api_url"),
-            None
-        );
+        assert_eq!(parse_config_value("api_key = secret", "api_url"), None);
     }
 
     #[test]
     fn test_parse_config_value_empty() {
-        assert_eq!(
-            parse_config_value("api_url = ", "api_url"),
-            None
-        );
-        assert_eq!(
-            parse_config_value("api_url = \"\"", "api_url"),
-            None
-        );
+        assert_eq!(parse_config_value("api_url = ", "api_url"), None);
+        assert_eq!(parse_config_value("api_url = \"\"", "api_url"), None);
     }
 
     #[test]
@@ -608,6 +769,7 @@ mod tests {
         let config = Config {
             api_url: "http://test:8080".to_string(),
             api_key: None,
+            recall_score_min: DEFAULT_RECALL_SCORE_MIN,
             source: ConfigSource::Default,
         };
         assert_eq!(config.api_url(), "http://test:8080");

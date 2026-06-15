@@ -79,7 +79,8 @@ Pass options directly in `opencode.json`:
         "bankId": "my-project",
         "autoRecall": true,
         "autoRetain": true,
-        "recallBudget": "mid"
+        "recallBudget": "mid",
+        "recallScoreMin": 0.25
       }
     ]
   ]
@@ -95,6 +96,7 @@ Create `~/.hindsight/opencode.json` for persistent configuration:
   "hindsightApiUrl": "http://localhost:8888",
   "hindsightApiToken": "your-api-key",
   "recallBudget": "mid",
+  "recallScoreMin": 0.25,
   "retainEveryNTurns": 3,
   "debug": false
 }
@@ -113,6 +115,7 @@ Create `~/.hindsight/opencode.json` for persistent configuration:
 | `HINDSIGHT_RETAIN_MODE`       | `full-session` or `last-turn`       | `full-session`                        |
 | `HINDSIGHT_RECALL_BUDGET`     | Recall budget: `low`, `mid`, `high` | `mid`                                 |
 | `HINDSIGHT_RECALL_MAX_TOKENS` | Max tokens for recall results       | `1024`                                |
+| `HINDSIGHT_RECALL_SCORE_MIN`  | Minimum recall score to keep        | `0.25`                                |
 | `HINDSIGHT_DYNAMIC_BANK_ID`   | Enable dynamic bank ID derivation   | `false`                               |
 | `HINDSIGHT_BANK_MISSION`      | Bank mission/context                | (none)                                |
 

@@ -1,12 +1,16 @@
-use anyhow::{Context, Result};
 use crate::api::ApiClient;
 use crate::config::Config;
 use crate::output::OutputFormat;
+use anyhow::{Context, Result};
 
 /// Get API client from config
 pub fn get_client(config: &Config) -> Result<ApiClient> {
-    ApiClient::new(config.api_url.clone(), config.api_key.clone())
-        .context("Failed to create API client")
+    ApiClient::new(
+        config.api_url.clone(),
+        config.api_key.clone(),
+        config.recall_score_min,
+    )
+    .context("Failed to create API client")
 }
 
 /// Get output format, preferring CLI arg over default
