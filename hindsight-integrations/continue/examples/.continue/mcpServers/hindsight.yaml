@@ -1,0 +1,13 @@
+name: Hindsight
+version: 0.0.1
+schema: v1
+mcpServers:
+  - name: Hindsight
+    command: npx
+    args:
+      - -y
+      - "@vectorize-io/hindsight-mcp"
+    env:
+      HINDSIGHT_API_KEY: ${{ secrets.HINDSIGHT_API_KEY }}
+      HINDSIGHT_API_URL: https://api.hindsight.vectorize.io
+      HINDSIGHT_BANK_ID: my-project
