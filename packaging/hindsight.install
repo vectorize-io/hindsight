@@ -1,0 +1,46 @@
+post_install() {
+  # Create hindsight system user if it doesn't exist
+  if ! id -u hindsight &>/dev/null; then
+    useradd -r -d /var/lib/hindsight -s /usr/bin/nologin -c "Hindsight Service Account" hindsight
+  fi
+
+  # Ensure data directory exists with correct ownership
+  install -d -o hindsight -g hindsight -m 0750 /var/lib/hindsight
+
+  # Fix shebangs in venv entry point scripts — hatchling bakes the build-time Python path
+  # into the shebang, which is wrong at install time. Replace with the installed venv Python.
+  local venv_python="/opt/hindsight/venv/bin/python"
+  local venv_bin="/opt/hindsight/venv/bin"
+  for script in "$venv_bin"/hindsight-* "$venv_bin"/hindsight-local-mcp; do
+    if [ -f "$script" ]; then
+      sed -i "1s|^#!/.*python|#!$venv_python|" "$script"
+    fi
+  done
+
+  # Reload systemd to pick up new unit files (non-fatal in containers/boot environments)
+  systemctl daemon-reload 2>/dev/null || true
+}
+
+post_upgrade() {
+  # Ensure user still exists after upgrades
+  if ! id -u hindsight &>/dev/null; then
+    useradd -r -d /var/lib/hindsight -s /usr/bin/nologin -c "Hindsight Service Account" hindsight
+  fi
+  install -d -o hindsight -g hindsight -m 0750 /var/lib/hindsight
+
+  # Re-fix shebangs on upgrade (package may have new entry points)
+  local venv_python="/opt/hindsight/venv/bin/python"
+  local venv_bin="/opt/hindsight/venv/bin"
+  for script in "$venv_bin"/hindsight-* "$venv_bin"/hindsight-local-mcp; do
+    if [ -f "$script" ]; then
+      sed -i "1s|^#!/.*python|#!$venv_python|" "$script"
+    fi
+  done
+
+  systemctl daemon-reload 2>/dev/null || true
+}
+
+pre_remove() {
+  # Stop services before removing files
+  systemctl --no-reload disable --now hindsight-api.service hindsight-control-plane.service 2>/dev/null || true
+}

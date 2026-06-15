@@ -1,0 +1,102 @@
+# Maintainer: Raudbjorn <raudbjorn@github>
+# PKGBUILD for hindsight — Agent memory that works like human memory
+
+pkgname=hindsight
+pkgver=0.8.2
+pkgrel=1
+pkgdesc="Agent memory that works like human memory — API server, CLI, and web UI"
+arch=("x86_64")
+url="https://github.com/Raudbjorn/hindsight"
+license=("ISC")
+depends=(
+  "python>=3.11"
+  "python-pip"
+  "nodejs>=20"
+  "npm"
+  "postgresql"
+  "uv"
+)
+makedepends=(
+  "python-build"
+  "python-installer"
+)
+optdepends=(
+  "postgresql: External database (optional; uses embedded pg0 by default)"
+)
+provides=(
+  "hindsight-api-slim=${pkgver}"
+  "hindsight-embed=${pkgver}"
+  "hindsight-control-plane=${pkgver}"
+)
+conflicts=(
+  "hindsight-api-slim"
+  "hindsight-embed"
+  "hindsight-control-plane"
+)
+install="hindsight.install"
+
+source=("git+https://github.com/Raudbjorn/hindsight.git#tag=v${pkgver}")
+sha256sums=("SKIP")
+
+pkgver() {
+  cd "$srcdir/hindsight"
+  git describe --tags --match 'v*' | sed 's/^v//'
+}
+
+build() {
+  cd "$srcdir/hindsight"
+
+  # The control plane depends on @vectorize-io/hindsight-client as a workspace
+  # path dependency. Build the entire monorepo so the workspace link resolves.
+  npm ci
+  npm run build --workspaces
+}
+
+package() {
+  cd "$srcdir/hindsight"
+  local pkgsrc="$srcdir/hindsight"
+  local pkgdst="$pkgdir"
+
+  # Create Python venv and bootstrap uv into it
+  python -m venv "$pkgdst/opt/hindsight/venv"
+  "$pkgdst/opt/hindsight/venv/bin/pip" install --quiet uv
+  local venv_python="$pkgdst/opt/hindsight/venv/bin/python"
+
+  # Install local packages using uv — uv handles building hatchling packages
+  # from source and installs the resulting wheel.
+  # The [all] extra includes:
+  #   embedded-db  (pg0-embedded for local PostgreSQL)
+  #   local-ml     (sentence-transformers, torch for local embeddings/reranking)
+  #   local-onnx   (onnxruntime for ONNX embeddings)
+  #   local-llm    (llama-cpp-python for local LLM inference)
+  "$pkgdst/opt/hindsight/venv/bin/uv" pip install \
+    --python "$venv_python" \
+    "$pkgsrc/hindsight-api-slim[all]"
+
+  "$pkgdst/opt/hindsight/venv/bin/uv" pip install \
+    --python "$venv_python" \
+    "$pkgsrc/hindsight-embed"
+
+  # Install Node.js control plane standalone build
+  install -d "$pkgdst/opt/hindsight/control-plane"
+  cp -r hindsight-control-plane/standalone "$pkgdst/opt/hindsight/control-plane/"
+
+  # Create data directory (owned by hindsight:hindsight — set by post_install)
+  install -d -m 0750 "$pkgdst/var/lib/hindsight"
+
+  # Create config directory and install env template
+  install -d -m 0755 "$pkgdst/etc/hindsight"
+  install -m 0640 "$startdir/env.env.systemd" "$pkgdst/etc/hindsight/env"
+
+  # Install systemd service units
+  install -d -m 0755 "$pkgdst/usr/lib/systemd/system/"
+  install -m 0644 "$startdir/systemd/hindsight-api.service" "$pkgdst/usr/lib/systemd/system/"
+  install -m 0644 "$startdir/systemd/hindsight-control-plane.service" "$pkgdst/usr/lib/systemd/system/"
+
+  # Create symlinks for CLI entry points
+  install -d -m 0755 "$pkgdst/usr/bin/"
+  ln -sf /opt/hindsight/venv/bin/hindsight-api "$pkgdst/usr/bin/hindsight-api"
+  ln -sf /opt/hindsight/venv/bin/hindsight-worker "$pkgdst/usr/bin/hindsight-worker"
+  ln -sf /opt/hindsight/venv/bin/hindsight-admin "$pkgdst/usr/bin/hindsight-admin"
+  ln -sf /opt/hindsight/venv/bin/hindsight-embed "$pkgdst/usr/bin/hindsight-embed"
+}
