@@ -4,12 +4,12 @@ import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from hindsight_composio import (
     RecallInput,
     ReflectInput,
     RetainInput,
     configure,
+    memory_instructions,
     register_hindsight_tools,
     reset_config,
 )
@@ -422,3 +422,64 @@ class TestRealComposioRegistration:
         )
         retain = tools[0]
         assert retain.input_params is RetainInput
+
+
+# ---------------------------------------------------------------------------
+# memory_instructions
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryInstructions:
+    def setup_method(self):
+        reset_config()
+
+    def teardown_method(self):
+        reset_config()
+
+    def test_formats_results_with_prefix(self):
+        client = _mock_client()
+        client.recall.return_value = _mock_recall_response(["likes tea", "lives in NYC"])
+        out = memory_instructions(bank_id="b", client=client)
+        assert out == "Relevant memories:\n\n1. likes tea\n2. lives in NYC"
+
+    def test_custom_prefix(self):
+        client = _mock_client()
+        client.recall.return_value = _mock_recall_response(["fact"])
+        out = memory_instructions(bank_id="b", client=client, prefix="Known:\n")
+        assert out.startswith("Known:\n")
+
+    def test_caps_at_max_results(self):
+        client = _mock_client()
+        client.recall.return_value = _mock_recall_response(["a", "b", "c", "d"])
+        out = memory_instructions(bank_id="b", client=client, max_results=2)
+        assert "1. a" in out and "2. b" in out
+        assert "c" not in out and "d" not in out
+
+    def test_returns_empty_when_no_results(self):
+        client = _mock_client()
+        client.recall.return_value = _mock_recall_response([])
+        assert memory_instructions(bank_id="b", client=client) == ""
+
+    def test_returns_empty_on_recall_failure(self):
+        client = _mock_client()
+        client.recall.side_effect = RuntimeError("boom")
+        assert memory_instructions(bank_id="b", client=client) == ""
+
+    def test_passes_tags_through_to_recall(self):
+        client = _mock_client()
+        client.recall.return_value = _mock_recall_response(["x"])
+        memory_instructions(bank_id="b", client=client, tags=["t1"], tags_match="all")
+        kwargs = client.recall.call_args[1]
+        assert kwargs["tags"] == ["t1"]
+        assert kwargs["tags_match"] == "all"
+
+    def test_omits_tags_when_none(self):
+        client = _mock_client()
+        client.recall.return_value = _mock_recall_response(["x"])
+        memory_instructions(bank_id="b", client=client)
+        kwargs = client.recall.call_args[1]
+        assert "tags" not in kwargs
+
+    def test_raises_without_client_or_config(self):
+        with pytest.raises(HindsightError):
+            memory_instructions(bank_id="b")
