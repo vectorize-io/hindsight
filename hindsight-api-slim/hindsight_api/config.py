@@ -479,6 +479,7 @@ ENV_LAZY_RERANKER = "HINDSIGHT_API_LAZY_RERANKER"
 
 # Database migrations
 ENV_RUN_MIGRATIONS_ON_STARTUP = "HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP"
+ENV_MIGRATION_CONCURRENCY = "HINDSIGHT_API_MIGRATION_CONCURRENCY"
 
 # Database connection pool
 ENV_DB_POOL_MIN_SIZE = "HINDSIGHT_API_DB_POOL_MIN_SIZE"
@@ -900,6 +901,10 @@ DEFAULT_OBSERVATION_SCOPE_LIMITS: list | None = None
 
 # Database migrations
 DEFAULT_RUN_MIGRATIONS_ON_STARTUP = True
+# Number of tenant schemas to migrate concurrently. Each schema runs in its own
+# process (Alembic's command.upgrade() is not thread-safe); within a schema the
+# work is always sequential. 1 = fully sequential (the safe default).
+DEFAULT_MIGRATION_CONCURRENCY = 1
 
 # Database connection pool
 DEFAULT_DB_POOL_MIN_SIZE = 5
@@ -1538,6 +1543,7 @@ class HindsightConfig:
 
     # Database migrations
     run_migrations_on_startup: bool
+    migration_concurrency: int
 
     # Database connection pool
     db_pool_min_size: int
@@ -2449,6 +2455,7 @@ class HindsightConfig:
             memory_defense=None,
             # Database migrations
             run_migrations_on_startup=os.getenv(ENV_RUN_MIGRATIONS_ON_STARTUP, "true").lower() == "true",
+            migration_concurrency=int(os.getenv(ENV_MIGRATION_CONCURRENCY, str(DEFAULT_MIGRATION_CONCURRENCY))),
             # Database connection pool
             db_pool_min_size=int(os.getenv(ENV_DB_POOL_MIN_SIZE, str(DEFAULT_DB_POOL_MIN_SIZE))),
             db_pool_max_size=int(os.getenv(ENV_DB_POOL_MAX_SIZE, str(DEFAULT_DB_POOL_MAX_SIZE))),

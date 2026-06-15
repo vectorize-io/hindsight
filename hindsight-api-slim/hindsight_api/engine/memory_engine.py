@@ -2605,50 +2605,39 @@ class MemoryEngine(MemoryEngineInterface):
             tenants = await self._tenant_extension.list_tenants()
             if tenants:
                 logger.info(f"Running migrations on {len(tenants)} schema(s)...")
-                for tenant in tenants:
-                    schema = tenant.schema
-                    if schema:
-                        schema = self._backend.normalize_schema(schema)
-                        self._backend.run_migrations(self.db_url, schema=schema)
+                if self._database_backend_type == "postgresql":
+                    # PG: fan out across schemas (up to migration_concurrency, each
+                    # in its own process) and fold the PG-specific post-migration
+                    # extension/dimension sync into the same per-schema unit. Run
+                    # off the event loop so the process pool's blocking joins don't
+                    # stall it.
+                    from ..migrations import run_migrations_for_schemas
+
+                    schemas = [tenant.schema for tenant in tenants if tenant.schema]
+                    await asyncio.to_thread(
+                        run_migrations_for_schemas,
+                        self.db_url,
+                        schemas,
+                        concurrency=config.migration_concurrency,
+                        migration_database_url=config.migration_database_url,
+                        embedding_dimension=self.embeddings.dimension,
+                        vector_extension=config.vector_extension,
+                        text_search_extension=config.text_search_extension,
+                        pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
+                        ensure_extensions=self._backend.supports_bm25,
+                    )
+                else:
+                    # Oracle and other backends: Alembic's non-thread-safe globals
+                    # and the absence of per-schema extension steps make parallelism
+                    # unnecessary; run sequentially via the backend's own runner.
+                    # normalize_schema() maps PG's "public" default to None (the
+                    # connecting user's schema) on Oracle.
+                    for tenant in tenants:
+                        if tenant.schema:
+                            self._backend.run_migrations(
+                                self.db_url, schema=self._backend.normalize_schema(tenant.schema)
+                            )
                 logger.info("Schema migrations completed")
-
-            # PG-specific post-migration steps: ensure vector/text search extensions
-            # and embedding dimensions match configuration. These are no-ops for
-            # non-PG backends since they use different indexing strategies.
-            if self._backend.supports_bm25:
-                from ..migrations import (
-                    ensure_embedding_dimension,
-                    ensure_text_search_extension,
-                    ensure_vector_extension,
-                )
-
-                if tenants:
-                    for tenant in tenants:
-                        schema = tenant.schema
-                        if schema:
-                            ensure_embedding_dimension(
-                                self.db_url,
-                                self.embeddings.dimension,
-                                schema=schema,
-                                vector_extension=config.vector_extension,
-                            )
-
-                    for tenant in tenants:
-                        schema = tenant.schema
-                        if schema:
-                            ensure_vector_extension(
-                                self.db_url, vector_extension=config.vector_extension, schema=schema
-                            )
-
-                    for tenant in tenants:
-                        schema = tenant.schema
-                        if schema:
-                            ensure_text_search_extension(
-                                self.db_url,
-                                text_search_extension=config.text_search_extension,
-                                pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
-                                schema=schema,
-                            )
 
         logger.info(f"Connecting to database at {mask_network_location(self.db_url)}")
 

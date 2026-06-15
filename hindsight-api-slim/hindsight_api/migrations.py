@@ -1129,3 +1129,129 @@ def ensure_text_search_extension(
 
         conn.commit()
         logger.info(f"Successfully migrated text search to {text_search_extension}")
+
+
+def _migrate_one_schema_pg(
+    database_url: str,
+    schema: str,
+    *,
+    migration_database_url: str | None,
+    embedding_dimension: int | None,
+    vector_extension: str,
+    text_search_extension: str,
+    pg_search_tokenizer: str | None,
+    ensure_extensions: bool,
+) -> str:
+    """Run migrations + post-migration extension setup for a SINGLE PG schema.
+
+    Module-level (not a closure) so it is picklable and can run inside a
+    ``ProcessPoolExecutor`` worker. The steps run strictly in order — this is
+    the per-tenant sequential unit; parallelism happens only *across* schemas.
+    Returns the schema name on success; raises on the first failing step so the
+    caller can attribute the failure back to this schema.
+    """
+    run_migrations(database_url, schema=schema, migration_database_url=migration_database_url)
+    if embedding_dimension is not None:
+        ensure_embedding_dimension(
+            database_url,
+            embedding_dimension,
+            schema=schema,
+            vector_extension=vector_extension,
+        )
+    if ensure_extensions:
+        ensure_vector_extension(database_url, vector_extension=vector_extension, schema=schema)
+        ensure_text_search_extension(
+            database_url,
+            text_search_extension=text_search_extension,
+            schema=schema,
+            pg_search_tokenizer=pg_search_tokenizer,
+        )
+    return schema
+
+
+def _make_migration_executor(max_workers: int):
+    """Build the executor that runs per-schema migrations in parallel.
+
+    Each schema must run in its OWN process — Alembic's ``command.upgrade()``
+    uses non-thread-safe module globals (serialized in-process by
+    ``_alembic_lock``), so a thread pool would not actually run two upgrades at
+    once. ``spawn`` gives every worker a clean interpreter on all platforms,
+    avoiding the fork-of-a-multithreaded-process deadlock hazard (the API server
+    holds threads/pools when migrations run on startup).
+
+    Factored out so tests can substitute an in-process executor.
+    """
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+
+    return ProcessPoolExecutor(max_workers=max_workers, mp_context=multiprocessing.get_context("spawn"))
+
+
+def run_migrations_for_schemas(
+    database_url: str,
+    schemas: list[str],
+    *,
+    concurrency: int = 1,
+    migration_database_url: str | None = None,
+    embedding_dimension: int | None = None,
+    vector_extension: str = "pgvector",
+    text_search_extension: str = "native",
+    pg_search_tokenizer: str | None = None,
+    ensure_extensions: bool = True,
+) -> None:
+    """Run PostgreSQL migrations for many schemas, up to ``concurrency`` at once.
+
+    Within a schema the work is always sequential (migrate → embedding dim →
+    vector ext → text-search ext). Across schemas, when ``concurrency > 1`` each
+    schema is migrated in its OWN process: Alembic's ``command.upgrade()`` relies
+    on non-thread-safe module-level globals (serialized in-process by
+    ``_alembic_lock``), so threads would gain nothing — separate interpreters
+    each get a clean Alembic context. Per-schema advisory locks
+    (``_get_schema_lock_id``) keep concurrent processes from colliding on the
+    same schema across replicas.
+
+    ``database_url`` must already be resolved (e.g. an embedded ``pg0`` instance
+    started in the parent) — workers receive it verbatim and only connect.
+
+    Failures are collected per schema and re-raised together so one bad tenant
+    does not hide the status of the others.
+    """
+    if not schemas:
+        return
+
+    worker_kwargs = dict(
+        migration_database_url=migration_database_url,
+        embedding_dimension=embedding_dimension,
+        vector_extension=vector_extension,
+        text_search_extension=text_search_extension,
+        pg_search_tokenizer=pg_search_tokenizer,
+        ensure_extensions=ensure_extensions,
+    )
+
+    effective = max(1, min(concurrency, len(schemas)))
+    if effective == 1:
+        # Inline, in-process — no subprocess overhead for the common single
+        # tenant / sequential case (and keeps embedded pg0 dev simple).
+        for schema in schemas:
+            _migrate_one_schema_pg(database_url, schema, **worker_kwargs)
+        return
+
+    logger.info("Migrating %d schema(s) with concurrency=%d", len(schemas), effective)
+    errors: dict[str, BaseException] = {}
+    with _make_migration_executor(effective) as executor:
+        futures = {
+            executor.submit(_migrate_one_schema_pg, database_url, schema, **worker_kwargs): schema for schema in schemas
+        }
+        for future in futures:
+            schema = futures[future]
+            try:
+                future.result()
+            except Exception as exc:  # noqa: BLE001 — aggregate per-schema, re-raise below
+                errors[schema] = exc
+                logger.error("Migration failed for schema '%s': %s", schema, exc)
+
+    if errors:
+        failed = ", ".join(sorted(errors))
+        raise RuntimeError(
+            f"Database migrations failed for {len(errors)} of {len(schemas)} schema(s): {failed}"
+        ) from next(iter(errors.values()))
