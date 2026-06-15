@@ -396,6 +396,75 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/memories/dry-run-extract": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Dry-run fact extraction (preview, no persistence)",
+        "description": "Preview what the retain step would extract from text WITHOUT changing the bank \u2014 no entity resolution, links, embeddings, or persistence. Returns the candidate facts and the LLM token usage. Every prompt-affecting setting (retain mission, extraction mode, chunk size, \u2026) is overridable in the body to A/B a candidate config against the bank's current one. This is a read-only tool: nothing is stored.",
+        "operationId": "dry_run_extract_memories",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DryRunExtractRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRunExtractionResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/memories/{memory_id}": {
       "get": {
         "tags": [
@@ -8164,6 +8233,160 @@
           "updated_at": "2024-01-15T10:30:00Z"
         }
       },
+      "DryRunExtractRequest": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "Text to extract facts from (e.g. a document or a single chunk)."
+          },
+          "context": {
+            "type": "string",
+            "title": "Context",
+            "description": "Optional context about the content.",
+            "default": ""
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestamp",
+            "description": "Reference timestamp for resolving relative times (ISO 8601)."
+          },
+          "agent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Name",
+            "description": "Narrator override (memory owner) primed in the prompt."
+          },
+          "retain_mission": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Mission"
+          },
+          "retain_extraction_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Extraction Mode"
+          },
+          "retain_custom_instructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Custom Instructions"
+          },
+          "retain_extract_causal_links": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Extract Causal Links"
+          },
+          "retain_chunk_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Chunk Size"
+          },
+          "entity_labels": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Labels"
+          },
+          "entities_allow_free_form": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entities Allow Free Form"
+          },
+          "llm_output_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Output Language"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "DryRunExtractRequest",
+        "description": "Request to run fact extraction ONLY (no resolution/links/embeddings/persistence).\n\nEvery field below the content/context/date is a prompt-affecting override applied just for this\ncall \u2014 used to preview what a candidate retain mission (or any extraction setting) would extract,\nwithout changing the bank. Unset (null) fields fall back to the bank's resolved config."
+      },
+      "DryRunExtractionResult": {
+        "properties": {
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ExtractedFact"
+            },
+            "type": "array",
+            "title": "Facts",
+            "description": "Candidate facts the retain step would extract."
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TokenUsage",
+            "description": "Aggregated token usage across the extraction LLM calls."
+          }
+        },
+        "type": "object",
+        "title": "DryRunExtractionResult",
+        "description": "Result of dry-run fact extraction: candidate facts plus aggregated LLM token usage."
+      },
       "EntityDetailResponse": {
         "properties": {
           "id": {
@@ -8524,6 +8747,59 @@
         ],
         "title": "EntityStateResponse",
         "description": "Current mental model of an entity."
+      },
+      "ExtractedFact": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "The extracted fact text."
+          },
+          "fact_type": {
+            "type": "string",
+            "title": "Fact Type",
+            "description": "Perspective classification: 'world' or 'experience'."
+          },
+          "occurred_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred Start",
+            "description": "ISO timestamp the fact's event started, if dated."
+          },
+          "occurred_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred End",
+            "description": "ISO timestamp the fact's event ended, if dated."
+          },
+          "entities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Entities",
+            "description": "Raw (unresolved) entity names mentioned in the fact."
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "fact_type"
+        ],
+        "title": "ExtractedFact",
+        "description": "A single candidate fact produced by dry-run extraction (no resolution/links/persistence).\n\nA deliberate subset of the persisted memory-unit shape \u2014 only the fields a fresh extraction\nyields. Storage/consolidation/curation fields (id, document_id, chunk_id, proof_count, state, \u2026)\nare omitted because nothing is stored. Entities are raw, unresolved names."
       },
       "FactsIncludeOptions": {
         "properties": {},

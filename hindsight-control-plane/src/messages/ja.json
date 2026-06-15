@@ -59,6 +59,13 @@
     "viewOnGitHub": "GitHubで表示"
   },
   "bank": {
+    "dryRunExtraction": "ドライラン抽出",
+    "dryRunExtractionDescription": "このバンクの現在の設定（リテインミッション、抽出モード、チャンクサイズ）がテキストから何を抽出するかをプレビューします。取り込みは行わず、何も保存されません。",
+    "dryRunExtractionTextLabel": "テキスト",
+    "dryRunExtractionPlaceholder": "事実を抽出するドキュメントまたはチャンクを貼り付けてください…",
+    "dryRunExtractionResponseLabel": "レスポンス",
+    "dryRunExtractionEmptyState": "抽出を実行すると JSON レスポンスが表示されます。",
+    "dryRunExtractionRun": "抽出（ドライラン）",
     "bankConfiguration": "バンク設定",
     "bankConfigurationDescription": "バンクの設定、プロフィール、操作を管理します。",
     "actions": "アクション",

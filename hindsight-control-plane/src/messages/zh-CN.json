@@ -59,6 +59,13 @@
     "viewOnGitHub": "在 GitHub 查看"
   },
   "bank": {
+    "dryRunExtraction": "试运行提取",
+    "dryRunExtractionDescription": "预览此记忆库的当前配置（保留任务、提取模式、分块大小）会从文本中提取出什么——不会写入，不存储任何内容。",
+    "dryRunExtractionTextLabel": "文本",
+    "dryRunExtractionPlaceholder": "粘贴文档或文本块以提取事实……",
+    "dryRunExtractionResponseLabel": "响应",
+    "dryRunExtractionEmptyState": "运行提取以查看 JSON 响应。",
+    "dryRunExtractionRun": "提取（试运行）",
     "bankConfiguration": "记忆库配置",
     "bankConfigurationDescription": "管理记忆库设置、配置文件和后台操作。",
     "actions": "操作",

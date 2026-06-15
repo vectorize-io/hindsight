@@ -59,6 +59,13 @@
     "viewOnGitHub": "GitHub에서 보기"
   },
   "bank": {
+    "dryRunExtraction": "드라이런 추출",
+    "dryRunExtractionDescription": "이 뱅크의 현재 구성(보존 미션, 추출 모드, 청크 크기)이 텍스트에서 무엇을 추출하는지 미리 봅니다. 수집하지 않으며 아무것도 저장되지 않습니다.",
+    "dryRunExtractionTextLabel": "텍스트",
+    "dryRunExtractionPlaceholder": "사실을 추출할 문서나 청크를 붙여넣으세요…",
+    "dryRunExtractionResponseLabel": "응답",
+    "dryRunExtractionEmptyState": "추출을 실행하면 JSON 응답이 표시됩니다.",
+    "dryRunExtractionRun": "추출(드라이런)",
     "bankConfiguration": "뱅크 구성",
     "bankConfigurationDescription": "뱅크 설정, 프로필 및 작업을 관리합니다.",
     "actions": "작업",

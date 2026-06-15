@@ -352,6 +352,7 @@ from .reflect import run_reflect_agent
 from .reflect.tools import tool_expand, tool_recall, tool_search_mental_models, tool_search_observations
 from .response_models import (
     VALID_RECALL_FACT_TYPES,
+    DryRunExtractionResult,
     EntityState,
     LLMCallTrace,
     MemoryFact,
@@ -6712,6 +6713,84 @@ class MemoryEngine(MemoryEngineInterface):
             )
 
         return {"nodes": nodes, "edges": edges, "table_rows": table_rows, "total_units": total_count, "limit": limit}
+
+    # Prompt-affecting settings overridable per dry-run extraction call.
+    _EXTRACTION_OVERRIDE_FIELDS = frozenset(
+        {
+            "retain_mission",
+            "retain_extraction_mode",
+            "retain_custom_instructions",
+            "retain_extract_causal_links",
+            "retain_chunk_size",
+            "entity_labels",
+            "entities_allow_free_form",
+            "llm_output_language",
+        }
+    )
+
+    async def extract_dry_run(
+        self,
+        bank_id: str,
+        content: str,
+        *,
+        context: str = "",
+        event_date: "datetime | None" = None,
+        overrides: dict | None = None,
+        agent_name: str | None = None,
+        request_context: "RequestContext",
+    ) -> "DryRunExtractionResult":
+        """Run fact extraction ONLY — no entity resolution, links, embeddings, or persistence.
+
+        Returns candidate facts (a subset of the ``list_memory_units`` item shape) plus the LLM token
+        usage, so callers can diff a mission's extraction output against stored memories without
+        mutating the bank. Every prompt-affecting setting is overridable per call via ``overrides``
+        (e.g. to test a candidate retain mission); ``agent_name`` overrides the narrator.
+        Side-effect-free and idempotent.
+        """
+        from .response_models import ExtractedFact
+        from .retain import bank_utils, fact_extraction
+
+        # Resolve the tenant schema before touching any bank-scoped data (config, bank profile).
+        await self._authenticate_tenant(request_context)
+        resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+        if self._llm_config.provider == "none":
+            resolved_config.retain_extraction_mode = "chunks"
+
+        for key, value in (overrides or {}).items():
+            if key not in self._EXTRACTION_OVERRIDE_FIELDS:
+                raise ValueError(
+                    f"Unsupported extraction override '{key}'. Allowed: {sorted(self._EXTRACTION_OVERRIDE_FIELDS)}"
+                )
+            setattr(resolved_config, key, value)
+
+        backend = await self._get_backend()
+        # Narrator primes the "Narrator:" line in the prompt — resolve it the same way retain does.
+        if agent_name is None:
+            profile = await bank_utils.get_bank_profile(backend, bank_id)
+            profile_name = profile["name"] if profile else bank_id
+            agent_name = None if profile_name == bank_id else profile_name
+
+        retain_llm = self._retain_llm_config.with_config(resolved_config, bank_id=bank_id, operation="retain")
+        facts, _chunks, usage = await fact_extraction.extract_facts_from_text(
+            text=content,
+            event_date=event_date,
+            llm_config=retain_llm,
+            agent_name=agent_name or "",
+            config=resolved_config,
+            context=context,
+        )
+
+        extracted = [
+            ExtractedFact(
+                text=fact.fact,
+                fact_type=fact.fact_type,
+                occurred_start=fact.occurred_start,
+                occurred_end=fact.occurred_end,
+                entities=[e.text for e in (fact.entities or []) if getattr(e, "text", None)],
+            )
+            for fact in facts
+        ]
+        return DryRunExtractionResult(facts=extracted, usage=usage)
 
     async def list_memory_units(
         self,

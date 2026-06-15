@@ -59,6 +59,13 @@
     "viewOnGitHub": "在 GitHub 檢視"
   },
   "bank": {
+    "dryRunExtraction": "試行擷取",
+    "dryRunExtractionDescription": "預覽呢個記憶庫目前嘅設定（保留任務、擷取模式、分塊大小）會由文字度擷取到啲乜——唔會寫入，亦都唔會儲存任何嘢。",
+    "dryRunExtractionTextLabel": "文字",
+    "dryRunExtractionPlaceholder": "貼上文件或者文字區塊嚟擷取事實……",
+    "dryRunExtractionResponseLabel": "回應",
+    "dryRunExtractionEmptyState": "執行擷取就會見到 JSON 回應。",
+    "dryRunExtractionRun": "擷取（試行）",
     "bankConfiguration": "記憶庫設定",
     "bankConfigurationDescription": "管理記憶庫設定、設定檔和背景作業。",
     "actions": "操作",

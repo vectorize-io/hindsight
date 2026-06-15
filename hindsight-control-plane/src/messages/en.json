@@ -59,6 +59,13 @@
     "viewOnGitHub": "View on GitHub"
   },
   "bank": {
+    "dryRunExtraction": "Dry-run extraction",
+    "dryRunExtractionDescription": "Preview what this bank's current configuration (retain mission, extraction mode, chunk size) extracts from text — no ingestion, nothing stored.",
+    "dryRunExtractionTextLabel": "Text",
+    "dryRunExtractionPlaceholder": "Paste a document or chunk to extract facts from…",
+    "dryRunExtractionResponseLabel": "Response",
+    "dryRunExtractionEmptyState": "Run extraction to see the JSON response.",
+    "dryRunExtractionRun": "Extract (dry-run)",
     "bankConfiguration": "Bank Configuration",
     "bankConfigurationDescription": "Manage bank settings, profile, and operations.",
     "actions": "Actions",

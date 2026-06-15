@@ -150,7 +150,12 @@ def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
 from hindsight_api.config import get_config
 from hindsight_api.engine.memory_engine import Budget, _current_schema, _get_tiktoken_encoding
 from hindsight_api.engine.providers.none_llm import LLMNotAvailableError
-from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, MemoryFact, TokenUsage
+from hindsight_api.engine.response_models import (
+    VALID_RECALL_FACT_TYPES,
+    DryRunExtractionResult,
+    MemoryFact,
+    TokenUsage,
+)
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.extensions import HttpExtension, OperationValidationError, load_extension
 from hindsight_api.metrics import create_metrics_collector, get_metrics_collector, initialize_metrics
@@ -1410,6 +1415,32 @@ class ListMemoryUnitsResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class DryRunExtractRequest(BaseModel):
+    """Request to run fact extraction ONLY (no resolution/links/embeddings/persistence).
+
+    Every field below the content/context/date is a prompt-affecting override applied just for this
+    call — used to preview what a candidate retain mission (or any extraction setting) would extract,
+    without changing the bank. Unset (null) fields fall back to the bank's resolved config.
+    """
+
+    content: str = Field(description="Text to extract facts from (e.g. a document or a single chunk).")
+    context: str = Field(default="", description="Optional context about the content.")
+    # Named `timestamp` to match the retain item payload (retain maps timestamp -> event_date internally).
+    timestamp: datetime | None = Field(
+        default=None, description="Reference timestamp for resolving relative times (ISO 8601)."
+    )
+    agent_name: str | None = Field(default=None, description="Narrator override (memory owner) primed in the prompt.")
+    # --- prompt-affecting config overrides (null = use the bank's value) ---
+    retain_mission: str | None = None
+    retain_extraction_mode: str | None = None
+    retain_custom_instructions: str | None = None
+    retain_extract_causal_links: bool | None = None
+    retain_chunk_size: int | None = None
+    entity_labels: list | None = None
+    entities_allow_free_form: bool | None = None
+    llm_output_language: str | None = None
 
 
 class ListDocumentsResponse(BaseModel):
@@ -3508,6 +3539,64 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in /v1/default/banks/{bank_id}/memories/list: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/memories/dry-run-extract",
+        response_model=DryRunExtractionResult,
+        summary="Dry-run fact extraction (preview, no persistence)",
+        description=(
+            "Preview what the retain step would extract from text WITHOUT changing the bank — no "
+            "entity resolution, links, embeddings, or persistence. Returns the candidate facts and "
+            "the LLM token usage. Every prompt-affecting setting (retain mission, extraction mode, "
+            "chunk size, …) is overridable in the body to A/B a candidate config against the bank's "
+            "current one. This is a read-only tool: nothing is stored."
+        ),
+        operation_id="dry_run_extract_memories",
+        tags=["Memory"],
+    )
+    async def api_dry_run_extract(
+        bank_id: str,
+        body: DryRunExtractRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        if not get_config().enable_dry_run_extract:
+            raise HTTPException(
+                status_code=404,
+                detail="Dry-run extraction is disabled. Set HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT=true to re-enable.",
+            )
+        try:
+            override_fields = (
+                "retain_mission",
+                "retain_extraction_mode",
+                "retain_custom_instructions",
+                "retain_extract_causal_links",
+                "retain_chunk_size",
+                "entity_labels",
+                "entities_allow_free_form",
+                "llm_output_language",
+            )
+            overrides = {f: getattr(body, f) for f in override_fields if getattr(body, f) is not None}
+            return await app.state.memory.extract_dry_run(
+                bank_id,
+                body.content,
+                context=body.context or "",
+                event_date=body.timestamp,
+                overrides=overrides,
+                agent_name=body.agent_name,
+                request_context=request_context,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in /v1/default/banks/{bank_id}/memories/dry-run-extract: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(

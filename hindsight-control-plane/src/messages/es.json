@@ -59,6 +59,13 @@
     "viewOnGitHub": "Ver en GitHub"
   },
   "bank": {
+    "dryRunExtraction": "Extracción de prueba",
+    "dryRunExtractionDescription": "Previsualiza lo que la configuración actual de este banco (misión de retención, modo de extracción, tamaño de fragmento) extrae del texto: sin ingesta, no se almacena nada.",
+    "dryRunExtractionTextLabel": "Texto",
+    "dryRunExtractionPlaceholder": "Pega un documento o fragmento para extraer hechos…",
+    "dryRunExtractionResponseLabel": "Respuesta",
+    "dryRunExtractionEmptyState": "Ejecuta la extracción para ver la respuesta JSON.",
+    "dryRunExtractionRun": "Extraer (prueba)",
     "bankConfiguration": "Configuración del banco",
     "bankConfigurationDescription": "Administra los ajustes, el perfil y las operaciones del banco.",
     "actions": "Acciones",
