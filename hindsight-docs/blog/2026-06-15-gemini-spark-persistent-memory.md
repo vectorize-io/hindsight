@@ -11,7 +11,11 @@ hide_table_of_contents: true
 
 ![Gemini Spark Persistent Memory with Hindsight](/img/blog/gemini-spark-persistent-memory.png)
 
-[Gemini Spark](https://blog.google/products/gemini/gemini-spark/) is Google's always-on agentic assistant. It plans, calls tools, and works across your day. What it doesn't do on its own is carry anything from one conversation into the next. Ask it to remember a decision today and it's gone tomorrow.
+[Gemini Spark](https://gemini.google/overview/agent/spark/) is Google's always-on agentic assistant. It plans, calls tools, and works across your day. What it doesn't do on its own is carry anything from one conversation into the next. Ask it to remember a decision today and it's gone tomorrow.
+
+:::note Spark is rolling out
+As of this writing, Gemini Spark is **"coming soon."** Google describes it as *rolling out to trusted testers*, with availability for Google AI Ultra subscribers (18+, US) and select business users. The Hindsight integration below is ready now and targets that early-access audience; if you don't have Spark access yet, treat this as a guide to how memory will work once you do. The MCP config shapes follow Google's I/O 2026 developer guidance and may shift when the formal schema lands.
+:::
 
 This post is a walkthrough of the new Hindsight integration for Gemini Spark. It's a different shape than most of our integrations: there are no lifecycle hooks and no plugin code running next to the agent. Spark lives entirely on Google's cloud, so the only way in is **MCP**, and the integration is a config snippet that registers Hindsight as an MCP server Spark can call.
 
