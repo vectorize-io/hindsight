@@ -1245,23 +1245,6 @@ class ConfiguredLLMProvider:
         """
         return object.__getattribute__(self, "_trace_ctx")
 
-    def with_config(
-        self,
-        config: Any,
-        *,
-        bank_id: str | None = None,
-        operation: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> "ConfiguredLLMProvider":
-        """Re-bind per-bank config and trace attribution on the underlying provider."""
-        provider = object.__getattribute__(self, "_provider")
-        return provider.with_config(
-            config,
-            bank_id=bank_id,
-            operation=operation,
-            metadata=metadata,
-        )
-
     def _bind_trace_context(self) -> Any | None:
         """Bind bank/operation attribution for the duration of one call."""
         trace_ctx = object.__getattribute__(self, "_trace_ctx")

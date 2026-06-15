@@ -176,6 +176,23 @@ class DeltaOperationList(BaseModel):
     operations: list[Operation] = Field(default_factory=list)
 
 
+class DeltaAllOpsInvalidError(ValueError):
+    """Raised when the model emitted operations but none survived validation.
+
+    Distinct from an empty ``operations`` array (a legitimate no-op): here every
+    op was malformed, so returning zero valid ops would make the caller apply
+    nothing and silently drop this refresh's new facts. Raising instead lets the
+    caller fall back to a full rewrite, which still integrates the new facts.
+    """
+
+
+def _finalize_operations(valid: list[Operation], skipped: list[dict[str, Any]]) -> DeltaOperationList:
+    """Build the result, but refuse a wholesale validation failure as a silent no-op."""
+    if skipped and not valid:
+        raise DeltaAllOpsInvalidError(f"all {len(skipped)} delta operation(s) failed validation")
+    return DeltaOperationList(operations=valid)
+
+
 def _extract_balanced_json_object(text: str) -> str | None:
     """Return the first top-level ``{...}`` slice, ignoring trailing junk."""
     start = text.find("{")
@@ -218,7 +235,7 @@ def parse_delta_operation_list(raw: Any) -> DeltaOperationList:
                 len(valid),
                 len(skipped),
             )
-        return DeltaOperationList(operations=valid)
+        return _finalize_operations(valid, skipped)
 
     text = (raw or "").strip()
     if not text:
@@ -241,15 +258,16 @@ def parse_delta_operation_list(raw: Any) -> DeltaOperationList:
             continue
         try:
             valid, skipped = _validate_operations_list(payload["operations"])
-            if skipped:
-                logger.info(
-                    "[STRUCTURED_DELTA] parsed %s op(s), skipped %s invalid op(s)",
-                    len(valid),
-                    len(skipped),
-                )
-            return DeltaOperationList(operations=valid)
         except TypeError as exc:
             last_error = exc
+            continue
+        if skipped:
+            logger.info(
+                "[STRUCTURED_DELTA] parsed %s op(s), skipped %s invalid op(s)",
+                len(valid),
+                len(skipped),
+            )
+        return _finalize_operations(valid, skipped)
 
     if last_error is not None:
         raise last_error

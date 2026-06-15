@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
 from hindsight_api.engine.reflect.delta_ops import (
     AppendBlockOp,
+    DeltaAllOpsInvalidError,
     DeltaOperationList,
     parse_delta_operation_list,
 )
@@ -62,6 +65,37 @@ def test_parse_delta_operation_list_skips_invalid_op_keeps_valid():
 
 def test_parse_delta_operation_list_empty():
     assert parse_delta_operation_list("").operations == []
+
+
+def test_parse_delta_operation_list_empty_operations_is_noop():
+    """A genuine empty operations array is a valid no-op, not an error."""
+    assert parse_delta_operation_list('{"operations": []}').operations == []
+    assert parse_delta_operation_list({"operations": []}).operations == []
+
+
+def test_parse_delta_operation_list_all_invalid_raises():
+    """If the model emits ops but every one is malformed, raise so the caller
+    falls back to a full rewrite instead of applying zero ops — which would
+    silently drop this refresh's new facts."""
+    raw = (
+        '{"operations": ['
+        '{"op": "replace_block", "section_id": "s", '
+        '"block": {"type": "paragraph", "text": "missing index a"}}, '
+        '{"op": "replace_block", "section_id": "s", '
+        '"block": {"type": "paragraph", "text": "missing index b"}}'
+        "]}"
+    )
+    with pytest.raises(DeltaAllOpsInvalidError):
+        parse_delta_operation_list(raw)
+    # Same payload shape as a dict must behave identically.
+    with pytest.raises(DeltaAllOpsInvalidError):
+        parse_delta_operation_list(
+            {
+                "operations": [
+                    {"op": "replace_block", "section_id": "s", "block": {"type": "paragraph", "text": "no index"}},
+                ]
+            }
+        )
 
 
 def test_parse_delta_operation_list_pydantic_instance():
