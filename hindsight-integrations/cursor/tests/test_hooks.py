@@ -33,7 +33,9 @@ class TestSessionStartHook:
 
         mock_client = MagicMock()
         mock_client.recall.return_value = {
-            "results": [{"text": "User prefers TypeScript", "type": "world", "mentioned_at": "2026-01-01"}]
+            "results": [
+                {"text": "User prefers TypeScript", "type": "world", "mentioned_at": "2026-01-01", "score": 0.9}
+            ]
         }
 
         hook_input = {"workspace_roots": ["/tmp/test-project"], "cwd": "/tmp/test-project"}
@@ -84,7 +86,7 @@ class TestSessionStartHook:
         monkeypatch.setenv("CURSOR_PLUGIN_ROOT", "/nonexistent")
 
         mock_client = MagicMock()
-        mock_client.recall.return_value = {"results": [{"text": "Uses FastAPI", "type": "world"}]}
+        mock_client.recall.return_value = {"results": [{"text": "Uses FastAPI", "type": "world", "score": 0.9}]}
 
         hook_input = {"workspace_roots": ["/home/user/projects/my-app"]}
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_input)))
