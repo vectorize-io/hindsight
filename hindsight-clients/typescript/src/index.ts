@@ -114,7 +114,7 @@ export interface MemoryItemInput {
   document_id?: string;
   entities?: EntityInput[];
   tags?: string[];
-  observation_scopes?: "per_tag" | "combined" | "all_combinations" | string[][];
+  observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
   strategy?: string;
   update_mode?: "replace" | "append";
 }
@@ -180,8 +180,8 @@ export class HindsightClient {
       tags?: string[];
       /** How to handle existing documents: 'replace' (default) or 'append' */
       updateMode?: "replace" | "append";
-      /** Observation scoping strategy: 'per_tag', 'combined', 'all_combinations', or explicit scope groups */
-      observationScopes?: "per_tag" | "combined" | "all_combinations" | string[][];
+      /** Observation scoping strategy: 'per_tag', 'combined', 'all_combinations', 'shared', or explicit scope groups */
+      observationScopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
       /** Extraction strategy override */
       strategy?: string;
       signal?: AbortSignal;
