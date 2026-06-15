@@ -172,9 +172,7 @@ describe("plugin default export", () => {
     // need them import from "@vectorize-io/opencode-hindsight/dist/config.js"
     // or rely on the plugin itself using them internally.
     const mod = await import("./index.js");
-    const functionValues = Object.values(mod).filter(
-      (v) => typeof v === "function"
-    );
+    const functionValues = Object.values(mod).filter((v) => typeof v === "function");
     // Exactly two function exports remain: the default export and the
     // HindsightPlugin named export, both pointing at the same function.
     expect(functionValues.length).toBe(2);
