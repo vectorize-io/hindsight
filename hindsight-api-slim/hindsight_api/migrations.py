@@ -27,6 +27,7 @@ from alembic.config import Config
 from alembic.script.revision import ResolutionError
 from alembic.util.exc import CommandError
 from sqlalchemy import Connection, create_engine, text
+from sqlalchemy.pool import NullPool
 
 from ._pg_search import normalize_pg_search_tokenizer, pg_search_bm25_columns
 from ._vector_index import (
@@ -247,7 +248,14 @@ def run_migrations(
         #   2. After acquiring the lock, COMMIT the transaction on the advisory-lock
         #      connection itself before running migrations.  pg_advisory_lock is
         #      session-level, so the lock survives the COMMIT.
-        engine = create_engine(migration_url)
+        # NullPool: do not retain the connection in a pool after the migration.
+        # Each schema migration opens a few short-lived engines (here plus the
+        # ensure_* steps); with the default QueuePool those connections linger
+        # until GC, and running many schemas in parallel (migration_concurrency)
+        # multiplies that footprint and exhausts max_connections — observed as
+        # "FATAL: sorry, too many clients already" sweeping 20k schemas at
+        # concurrency 12. NullPool closes the connection on return.
+        engine = create_engine(migration_url, poolclass=NullPool)
         with engine.connect() as conn:
             logger.debug(f"Acquiring migration advisory lock for schema '{schema_name}' (id={lock_id})...")
             while True:
@@ -400,7 +408,7 @@ def check_migration_status(
             return None, None
 
         # Get current revision from database
-        engine = create_engine(to_libpq_url(database_url))
+        engine = create_engine(to_libpq_url(database_url), poolclass=NullPool)
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
             current_rev = context.get_current_revision()
@@ -573,7 +581,7 @@ def ensure_embedding_dimension(
     """
     schema_name = schema or "public"
 
-    engine = create_engine(to_libpq_url(database_url))
+    engine = create_engine(to_libpq_url(database_url), poolclass=NullPool)
     with engine.connect() as conn:
         # Check if memory_units table exists (proxy for schema being initialized)
         table_exists = conn.execute(
@@ -622,7 +630,7 @@ def ensure_vector_extension(
     """
     schema_name = schema or "public"
 
-    engine = create_engine(to_libpq_url(database_url))
+    engine = create_engine(to_libpq_url(database_url), poolclass=NullPool)
     with engine.connect() as conn:
         # Detect which vector extension should be used
         target_ext = _detect_vector_extension(conn, vector_extension)
@@ -836,7 +844,7 @@ def ensure_text_search_extension(
     schema_name = schema or "public"
     pg_search_tokenizer = normalize_pg_search_tokenizer(pg_search_tokenizer)
 
-    engine = create_engine(to_libpq_url(database_url))
+    engine = create_engine(to_libpq_url(database_url), poolclass=NullPool)
     with engine.connect() as conn:
         # Tables with search_vector columns to check
         tables_to_check = [
