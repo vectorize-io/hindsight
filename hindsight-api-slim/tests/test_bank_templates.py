@@ -495,9 +495,10 @@ class TestExport:
         assert resp.status_code == 200
         data = resp.json()
         assert data["version"] == "1"
-        assert data["bank"] is None
-        assert data["mental_models"] is None
-        assert data["directives"] is None
+        # An empty bank has no overrides; these null fields are omitted from the response.
+        assert data.get("bank") is None
+        assert data.get("mental_models") is None
+        assert data.get("directives") is None
 
     @pytest.mark.asyncio
     async def test_export_after_import(self, api_client, bank_id):
