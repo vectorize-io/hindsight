@@ -3541,6 +3541,20 @@ def _register_routes(app: FastAPI):
             logger.error(f"Error in /v1/default/banks/{bank_id}/memories/list: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
+    async def _require_dry_run_enabled() -> None:
+        """Feature-flag gate for dry-run extraction.
+
+        Declared as a dependency BEFORE ``precheck_for("dry_run_extract")`` so a
+        disabled route returns 404 regardless of tenant/billing state — FastAPI
+        resolves path-operation dependencies in signature order, so this runs
+        first and preserves the original "disabled → 404" contract.
+        """
+        if not get_config().enable_dry_run_extract:
+            raise HTTPException(
+                status_code=404,
+                detail="Dry-run extraction is disabled. Set HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT=true to re-enable.",
+            )
+
     @app.post(
         "/v1/default/banks/{bank_id}/memories/dry-run-extract",
         response_model=DryRunExtractionResult,
@@ -3559,12 +3573,9 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         body: DryRunExtractRequest,
         request_context: RequestContext = Depends(get_request_context),
+        _enabled: None = Depends(_require_dry_run_enabled),
+        _precheck: None = Depends(precheck_for("dry_run_extract")),
     ):
-        if not get_config().enable_dry_run_extract:
-            raise HTTPException(
-                status_code=404,
-                detail="Dry-run extraction is disabled. Set HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT=true to re-enable.",
-            )
         try:
             override_fields = (
                 "retain_mission",
