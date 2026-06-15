@@ -44,11 +44,76 @@ def _parse_metadata(metadata: Any) -> dict[str, Any]:
     return {}
 
 
-from typing import Callable
+from collections.abc import Iterable
+from types import UnionType
+from typing import Callable, Union, get_args, get_origin
 
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from hindsight_api import MemoryEngine
+
+
+def _annotation_is_nullable(annotation: Any) -> bool:
+    """True if the annotation is a Union that includes None (i.e. ``X | None``)."""
+    if get_origin(annotation) in (Union, UnionType):
+        return any(arg is type(None) for arg in get_args(annotation))
+    return False
+
+
+def _iter_models(annotation: Any) -> Iterable[type[BaseModel]]:
+    """Yield every Pydantic model referenced by an annotation, recursing through generics."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        yield annotation
+        return
+    for arg in get_args(annotation):
+        yield from _iter_models(arg)
+
+
+def _model_has_required_nullable(model: type[BaseModel], seen: set[type[BaseModel]]) -> bool:
+    """True if the model (or any nested model) declares a required *and* nullable field.
+
+    Such a field is in the OpenAPI ``required`` set but may serialize to null, so dropping
+    it (via ``exclude_none``) would omit a key that strict generated clients expect to be
+    present. Routes whose response model contains one of these must keep emitting nulls to
+    stay wire-compatible with already-generated clients.
+    """
+    if model in seen:
+        return False
+    seen.add(model)
+    for field in model.model_fields.values():
+        annotation = field.annotation
+        if field.is_required() and _annotation_is_nullable(annotation):
+            return True
+        for nested in _iter_models(annotation):
+            if _model_has_required_nullable(nested, seen):
+                return True
+    return False
+
+
+def _response_model_has_required_nullable(response_model: Any) -> bool:
+    seen: set[type[BaseModel]] = set()
+    return any(_model_has_required_nullable(model, seen) for model in _iter_models(response_model))
+
+
+class ExcludeNoneRoute(APIRoute):
+    """Route class that drops null fields from responses, preserving wire compatibility.
+
+    ``response_model_exclude_none`` is enabled automatically for every route whose response
+    model has no required-and-nullable field. Routes that *do* have such a field (where an
+    omitted key would break strict clients) are left untouched and keep emitting nulls.
+    An explicit ``response_model_exclude_none`` passed to the route decorator is respected.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        response_model = kwargs.get("response_model")
+        if (
+            not kwargs.get("response_model_exclude_none")
+            and response_model is not None
+            and not _response_model_has_required_nullable(response_model)
+        ):
+            kwargs["response_model_exclude_none"] = True
+        super().__init__(*args, **kwargs)
 
 
 def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
@@ -3012,6 +3077,10 @@ def create_app(
         lifespan=lifespan,
         root_path=config.base_path,
     )
+
+    # Drop null fields from responses (omit `"x": null`) for routes where it's wire-safe.
+    # Must be set before any route is registered so @app.<method> decorators pick it up.
+    app.router.route_class = ExcludeNoneRoute
 
     # IMPORTANT: Set memory on app.state immediately, don't wait for lifespan
     # This is required for mounted sub-applications where lifespan may not fire
