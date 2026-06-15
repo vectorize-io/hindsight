@@ -22,7 +22,7 @@ export interface RecallResult {
   score?: number | null;
 }
 
-/** Return recall results whose score meets the configured threshold. */
+/** Return scored recall results whose score meets the configured threshold. */
 export function filterMemoriesByScore<T extends object>(
   results: T[],
   minScore: number = 0.25
@@ -30,7 +30,9 @@ export function filterMemoriesByScore<T extends object>(
   const threshold = Number.isFinite(minScore) ? minScore : 0.25;
   return results.filter((result) => {
     const rawScore = (result as { score?: unknown }).score;
-    const score = typeof rawScore === "number" && Number.isFinite(rawScore) ? rawScore : 0;
+    if (rawScore === undefined || rawScore === null) return true;
+    if (typeof rawScore !== "number" || !Number.isFinite(rawScore)) return true;
+    const score = rawScore;
     return score >= threshold;
   });
 }

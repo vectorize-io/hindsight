@@ -223,9 +223,12 @@ impl ApiClient {
                 Err(e) => return Err(humanize_client_error(e).await),
             };
             let mut response = response.into_inner();
-            response
-                .results
-                .retain(|result| result.score.unwrap_or(0.0) >= self.recall_score_min);
+            response.results.retain(|result| {
+                result
+                    .score
+                    .map(|score| score >= self.recall_score_min)
+                    .unwrap_or(true)
+            });
             Ok(response)
         })
     }

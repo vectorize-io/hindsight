@@ -208,9 +208,9 @@ class TestFormatMemories:
         result = filter_memories_by_score(mems, 0.25)
         assert [m["text"] for m in result] == ["edge", "strong"]
 
-    def test_filter_memories_by_score_treats_missing_score_as_zero(self):
+    def test_filter_memories_by_score_passes_missing_score_through(self):
         mems = [{"text": "missing"}, {"text": "zero", "score": 0.0}]
-        assert filter_memories_by_score(mems, 0.25) == []
+        assert [m["text"] for m in filter_memories_by_score(mems, 0.25)] == ["missing"]
         assert [m["text"] for m in filter_memories_by_score(mems, 0.0)] == ["missing", "zero"]
 
     def test_formats_single_memory(self):

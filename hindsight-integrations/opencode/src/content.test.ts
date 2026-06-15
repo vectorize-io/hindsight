@@ -42,9 +42,9 @@ describe("formatMemories", () => {
     expect(filterMemoriesByScore(results, 0.25).map((r) => r.text)).toEqual(["edge", "strong"]);
   });
 
-  it("treats missing scores as zero", () => {
+  it("passes through missing scores and filters explicit zero scores", () => {
     const results = [{ text: "missing" }, { text: "zero", score: 0.0 }];
-    expect(filterMemoriesByScore(results, 0.25)).toEqual([]);
+    expect(filterMemoriesByScore(results, 0.25).map((r) => r.text)).toEqual(["missing"]);
     expect(filterMemoriesByScore(results, 0.0).map((r) => r.text)).toEqual(["missing", "zero"]);
   });
 

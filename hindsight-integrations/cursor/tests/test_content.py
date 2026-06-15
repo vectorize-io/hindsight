@@ -58,6 +58,11 @@ class TestFormatMemories:
         out = filter_memories_by_score(results, 0.25)
         assert [r["text"] for r in out] == ["edge", "strong"]
 
+    def test_filter_memories_by_score_passes_missing_score_through(self):
+        results = [{"text": "missing"}, {"text": "zero", "score": 0.0}]
+        assert [r["text"] for r in filter_memories_by_score(results, 0.25)] == ["missing"]
+        assert [r["text"] for r in filter_memories_by_score(results, 0.0)] == ["missing", "zero"]
+
     def test_formats_with_type_and_date(self):
         results = [
             {"text": "User likes Python", "type": "world", "mentioned_at": "2026-01-01"},

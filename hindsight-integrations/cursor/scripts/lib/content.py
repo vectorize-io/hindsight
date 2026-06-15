@@ -86,7 +86,7 @@ def slice_last_turns_by_user_boundary(messages: list, turns: int) -> list:
 
 
 def filter_memories_by_score(results: list, min_score: float = 0.25) -> list:
-    """Return recall results whose score meets the configured threshold."""
+    """Return scored recall results whose score meets the configured threshold."""
     try:
         threshold = float(min_score)
     except (TypeError, ValueError):
@@ -94,10 +94,15 @@ def filter_memories_by_score(results: list, min_score: float = 0.25) -> list:
 
     filtered = []
     for result in results or []:
+        raw_score = result.get("score")
+        if raw_score is None:
+            filtered.append(result)
+            continue
         try:
-            score = float(result.get("score") or 0.0)
+            score = float(raw_score)
         except (TypeError, ValueError):
-            score = 0.0
+            filtered.append(result)
+            continue
         if score >= threshold:
             filtered.append(result)
     return filtered
