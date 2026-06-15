@@ -44,11 +44,76 @@ def _parse_metadata(metadata: Any) -> dict[str, Any]:
     return {}
 
 
-from typing import Callable
+from collections.abc import Iterable
+from types import UnionType
+from typing import Callable, Union, get_args, get_origin
 
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from hindsight_api import MemoryEngine
+
+
+def _annotation_is_nullable(annotation: Any) -> bool:
+    """True if the annotation is a Union that includes None (i.e. ``X | None``)."""
+    if get_origin(annotation) in (Union, UnionType):
+        return any(arg is type(None) for arg in get_args(annotation))
+    return False
+
+
+def _iter_models(annotation: Any) -> Iterable[type[BaseModel]]:
+    """Yield every Pydantic model referenced by an annotation, recursing through generics."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        yield annotation
+        return
+    for arg in get_args(annotation):
+        yield from _iter_models(arg)
+
+
+def _model_has_required_nullable(model: type[BaseModel], seen: set[type[BaseModel]]) -> bool:
+    """True if the model (or any nested model) declares a required *and* nullable field.
+
+    Such a field is in the OpenAPI ``required`` set but may serialize to null, so dropping
+    it (via ``exclude_none``) would omit a key that strict generated clients expect to be
+    present. Routes whose response model contains one of these must keep emitting nulls to
+    stay wire-compatible with already-generated clients.
+    """
+    if model in seen:
+        return False
+    seen.add(model)
+    for field in model.model_fields.values():
+        annotation = field.annotation
+        if field.is_required() and _annotation_is_nullable(annotation):
+            return True
+        for nested in _iter_models(annotation):
+            if _model_has_required_nullable(nested, seen):
+                return True
+    return False
+
+
+def _response_model_has_required_nullable(response_model: Any) -> bool:
+    seen: set[type[BaseModel]] = set()
+    return any(_model_has_required_nullable(model, seen) for model in _iter_models(response_model))
+
+
+class ExcludeNoneRoute(APIRoute):
+    """Route class that drops null fields from responses, preserving wire compatibility.
+
+    ``response_model_exclude_none`` is enabled automatically for every route whose response
+    model has no required-and-nullable field. Routes that *do* have such a field (where an
+    omitted key would break strict clients) are left untouched and keep emitting nulls.
+    An explicit ``response_model_exclude_none`` passed to the route decorator is respected.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        response_model = kwargs.get("response_model")
+        if (
+            not kwargs.get("response_model_exclude_none")
+            and response_model is not None
+            and not _response_model_has_required_nullable(response_model)
+        ):
+            kwargs["response_model_exclude_none"] = True
+        super().__init__(*args, **kwargs)
 
 
 def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
@@ -85,7 +150,12 @@ def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
 from hindsight_api.config import get_config
 from hindsight_api.engine.memory_engine import Budget, _current_schema, _get_tiktoken_encoding
 from hindsight_api.engine.providers.none_llm import LLMNotAvailableError
-from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, MemoryFact, TokenUsage
+from hindsight_api.engine.response_models import (
+    VALID_RECALL_FACT_TYPES,
+    DryRunExtractionResult,
+    MemoryFact,
+    TokenUsage,
+)
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.extensions import HttpExtension, OperationValidationError, load_extension
 from hindsight_api.metrics import create_metrics_collector, get_metrics_collector, initialize_metrics
@@ -545,13 +615,16 @@ class MemoryItem(BaseModel):
             return [v]
         return v
 
-    observation_scopes: Literal["per_tag", "combined", "all_combinations"] | list[list[str]] | None = Field(
+    observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = Field(
         default=None,
         title="ObservationScopes",
         description=(
             "How to scope observations during consolidation. "
             "'per_tag' runs one consolidation pass per individual tag, creating separate observations for each tag. "
             "'combined' (default) runs a single pass with all tags together. "
+            "'shared' runs a single pass over one global, untagged scope, so memories consolidate together "
+            "regardless of their tags — useful for deduplicating across volatile per-call provenance tags "
+            "(e.g. per-session ids) while keeping those tags on the source facts. "
             "A list of tag lists runs one pass per inner list, giving full control over which combinations to use."
         ),
     )
@@ -1149,7 +1222,14 @@ class CreateBankRequest(BaseModel):
     )
     retain_chunk_size: int | None = Field(
         default=None,
-        description="Maximum token size for each content chunk during retain.",
+        description="Target maximum characters for each content chunk during retain.",
+    )
+    retain_structured_chunk_size: int | None = Field(
+        default=None,
+        description=(
+            "Maximum characters for a single JSONL line or conversation turn to keep whole during retain. "
+            "Defaults to retain_chunk_size when unset."
+        ),
     )
     enable_observations: bool | None = Field(
         default=None,
@@ -1189,6 +1269,7 @@ class CreateBankRequest(BaseModel):
             "retain_extraction_mode",
             "retain_custom_instructions",
             "retain_chunk_size",
+            "retain_structured_chunk_size",
             "enable_observations",
             "observations_mission",
         ):
@@ -1334,6 +1415,32 @@ class ListMemoryUnitsResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class DryRunExtractRequest(BaseModel):
+    """Request to run fact extraction ONLY (no resolution/links/embeddings/persistence).
+
+    Every field below the content/context/date is a prompt-affecting override applied just for this
+    call — used to preview what a candidate retain mission (or any extraction setting) would extract,
+    without changing the bank. Unset (null) fields fall back to the bank's resolved config.
+    """
+
+    content: str = Field(description="Text to extract facts from (e.g. a document or a single chunk).")
+    context: str = Field(default="", description="Optional context about the content.")
+    # Named `timestamp` to match the retain item payload (retain maps timestamp -> event_date internally).
+    timestamp: datetime | None = Field(
+        default=None, description="Reference timestamp for resolving relative times (ISO 8601)."
+    )
+    agent_name: str | None = Field(default=None, description="Narrator override (memory owner) primed in the prompt.")
+    # --- prompt-affecting config overrides (null = use the bank's value) ---
+    retain_mission: str | None = None
+    retain_extraction_mode: str | None = None
+    retain_custom_instructions: str | None = None
+    retain_extract_causal_links: bool | None = None
+    retain_chunk_size: int | None = None
+    entity_labels: list | None = None
+    entities_allow_free_form: bool | None = None
+    llm_output_language: str | None = None
 
 
 class ListDocumentsResponse(BaseModel):
@@ -2027,7 +2134,14 @@ class BankTemplateConfig(BaseModel):
     retain_custom_instructions: str | None = Field(
         default=None, description="Custom extraction prompt (when mode='custom')"
     )
-    retain_chunk_size: int | None = Field(default=None, description="Max token size for each content chunk")
+    retain_chunk_size: int | None = Field(default=None, description="Target max characters for each content chunk")
+    retain_structured_chunk_size: int | None = Field(
+        default=None,
+        description=(
+            "Max characters for a single JSONL line or conversation turn to keep whole; "
+            "defaults to retain_chunk_size when unset"
+        ),
+    )
     enable_observations: bool | None = Field(default=None, description="Toggle observation consolidation")
     observations_mission: str | None = Field(default=None, description="Controls what gets synthesised")
     disposition_skepticism: int | None = Field(default=None, ge=1, le=5, description="Skepticism trait (1-5)")
@@ -3010,6 +3124,10 @@ def create_app(
         root_path=config.base_path,
     )
 
+    # Drop null fields from responses (omit `"x": null`) for routes where it's wire-safe.
+    # Must be set before any route is registered so @app.<method> decorators pick it up.
+    app.router.route_class = ExcludeNoneRoute
+
     # IMPORTANT: Set memory on app.state immediately, don't wait for lifespan
     # This is required for mounted sub-applications where lifespan may not fire
     app.state.memory = memory
@@ -3421,6 +3539,64 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in /v1/default/banks/{bank_id}/memories/list: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/memories/dry-run-extract",
+        response_model=DryRunExtractionResult,
+        summary="Dry-run fact extraction (preview, no persistence)",
+        description=(
+            "Preview what the retain step would extract from text WITHOUT changing the bank — no "
+            "entity resolution, links, embeddings, or persistence. Returns the candidate facts and "
+            "the LLM token usage. Every prompt-affecting setting (retain mission, extraction mode, "
+            "chunk size, …) is overridable in the body to A/B a candidate config against the bank's "
+            "current one. This is a read-only tool: nothing is stored."
+        ),
+        operation_id="dry_run_extract_memories",
+        tags=["Memory"],
+    )
+    async def api_dry_run_extract(
+        bank_id: str,
+        body: DryRunExtractRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        if not get_config().enable_dry_run_extract:
+            raise HTTPException(
+                status_code=404,
+                detail="Dry-run extraction is disabled. Set HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT=true to re-enable.",
+            )
+        try:
+            override_fields = (
+                "retain_mission",
+                "retain_extraction_mode",
+                "retain_custom_instructions",
+                "retain_extract_causal_links",
+                "retain_chunk_size",
+                "entity_labels",
+                "entities_allow_free_form",
+                "llm_output_language",
+            )
+            overrides = {f: getattr(body, f) for f in override_fields if getattr(body, f) is not None}
+            return await app.state.memory.extract_dry_run(
+                bank_id,
+                body.content,
+                context=body.context or "",
+                event_date=body.timestamp,
+                overrides=overrides,
+                agent_name=body.agent_name,
+                request_context=request_context,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in /v1/default/banks/{bank_id}/memories/dry-run-extract: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(

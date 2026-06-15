@@ -352,6 +352,7 @@ from .reflect import run_reflect_agent
 from .reflect.tools import tool_expand, tool_recall, tool_search_mental_models, tool_search_observations
 from .response_models import (
     VALID_RECALL_FACT_TYPES,
+    DryRunExtractionResult,
     EntityState,
     LLMCallTrace,
     MemoryFact,
@@ -422,6 +423,12 @@ class _SubBatchSplit:
     sub_batches: list[list[RetainContentDict]]
     origin_indices: list[list[int]]
     document_body_overrides: list[str | None] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _RetainChunkingConfig:
+    chunk_size: int
+    structured_chunk_size: int | None
 
 
 def _split_contents_into_sub_batches(
@@ -2605,50 +2612,39 @@ class MemoryEngine(MemoryEngineInterface):
             tenants = await self._tenant_extension.list_tenants()
             if tenants:
                 logger.info(f"Running migrations on {len(tenants)} schema(s)...")
-                for tenant in tenants:
-                    schema = tenant.schema
-                    if schema:
-                        schema = self._backend.normalize_schema(schema)
-                        self._backend.run_migrations(self.db_url, schema=schema)
+                if self._database_backend_type == "postgresql":
+                    # PG: fan out across schemas (up to migration_concurrency, each
+                    # in its own process) and fold the PG-specific post-migration
+                    # extension/dimension sync into the same per-schema unit. Run
+                    # off the event loop so the process pool's blocking joins don't
+                    # stall it.
+                    from ..migrations import run_migrations_for_schemas
+
+                    schemas = [tenant.schema for tenant in tenants if tenant.schema]
+                    await asyncio.to_thread(
+                        run_migrations_for_schemas,
+                        self.db_url,
+                        schemas,
+                        concurrency=config.migration_concurrency,
+                        migration_database_url=config.migration_database_url,
+                        embedding_dimension=self.embeddings.dimension,
+                        vector_extension=config.vector_extension,
+                        text_search_extension=config.text_search_extension,
+                        pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
+                        ensure_extensions=self._backend.supports_bm25,
+                    )
+                else:
+                    # Oracle and other backends: Alembic's non-thread-safe globals
+                    # and the absence of per-schema extension steps make parallelism
+                    # unnecessary; run sequentially via the backend's own runner.
+                    # normalize_schema() maps PG's "public" default to None (the
+                    # connecting user's schema) on Oracle.
+                    for tenant in tenants:
+                        if tenant.schema:
+                            self._backend.run_migrations(
+                                self.db_url, schema=self._backend.normalize_schema(tenant.schema)
+                            )
                 logger.info("Schema migrations completed")
-
-            # PG-specific post-migration steps: ensure vector/text search extensions
-            # and embedding dimensions match configuration. These are no-ops for
-            # non-PG backends since they use different indexing strategies.
-            if self._backend.supports_bm25:
-                from ..migrations import (
-                    ensure_embedding_dimension,
-                    ensure_text_search_extension,
-                    ensure_vector_extension,
-                )
-
-                if tenants:
-                    for tenant in tenants:
-                        schema = tenant.schema
-                        if schema:
-                            ensure_embedding_dimension(
-                                self.db_url,
-                                self.embeddings.dimension,
-                                schema=schema,
-                                vector_extension=config.vector_extension,
-                            )
-
-                    for tenant in tenants:
-                        schema = tenant.schema
-                        if schema:
-                            ensure_vector_extension(
-                                self.db_url, vector_extension=config.vector_extension, schema=schema
-                            )
-
-                    for tenant in tenants:
-                        schema = tenant.schema
-                        if schema:
-                            ensure_text_search_extension(
-                                self.db_url,
-                                text_search_extension=config.text_search_extension,
-                                pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
-                                schema=schema,
-                            )
 
         logger.info(f"Connecting to database at {mask_network_location(self.db_url)}")
 
@@ -3234,7 +3230,7 @@ class MemoryEngine(MemoryEngineInterface):
             # with, so the offsets match the chunk_index values it assigns.
             from .retain import fact_extraction, fact_storage
 
-            sub_chunk_size = await self._resolve_retain_chunk_size(bank_id, request_context, strategy)
+            chunking_config = await self._resolve_retain_chunking_config(bank_id, request_context, strategy)
             chunk_offsets: dict[str, int] = {}
 
             # In update_mode="append", retain_batch prepends the existing document
@@ -3257,7 +3253,11 @@ class MemoryEngine(MemoryEngineInterface):
                     existing_text = await fact_storage.get_document_content(conn, bank_id, append_doc_id)
                 if existing_text:
                     append_prepend_chunks[append_doc_id] = len(
-                        fact_extraction.chunk_text(existing_text, sub_chunk_size)
+                        fact_extraction.chunk_text(
+                            existing_text,
+                            chunking_config.chunk_size,
+                            structured_chunk_size=chunking_config.structured_chunk_size,
+                        )
                     )
 
             for i, (sub_batch, sub_origins) in enumerate(zip(sub_batches, origin_indices), 1):
@@ -3311,7 +3311,13 @@ class MemoryEngine(MemoryEngineInterface):
                 # document continues the sequence.
                 if sub_doc_id:
                     sub_chunk_count = sum(
-                        len(fact_extraction.chunk_text(item.get("content", "") or "", sub_chunk_size))
+                        len(
+                            fact_extraction.chunk_text(
+                                item.get("content", "") or "",
+                                chunking_config.chunk_size,
+                                structured_chunk_size=chunking_config.structured_chunk_size,
+                            )
+                        )
                         for item in sub_batch
                     )
                     # retain_batch only prepends the existing body on the global
@@ -3422,13 +3428,13 @@ class MemoryEngine(MemoryEngineInterface):
         except Exception as e:
             logger.warning(f"Failed to submit graph maintenance task for bank {bank_id}: {e}")
 
-    async def _resolve_retain_chunk_size(
+    async def _resolve_retain_chunking_config(
         self,
         bank_id: str,
         request_context: "RequestContext",
         strategy: str | None,
-    ) -> int:
-        """Resolve the effective ``retain_chunk_size`` for a bank.
+    ) -> _RetainChunkingConfig:
+        """Resolve the effective retain chunking settings for a bank.
 
         Mirrors the bank-config + strategy resolution that
         ``_retain_batch_async_internal`` applies before handing config to the
@@ -3442,7 +3448,10 @@ class MemoryEngine(MemoryEngineInterface):
         effective_strategy = strategy or resolved_config.retain_default_strategy
         if effective_strategy:
             resolved_config = apply_strategy(resolved_config, effective_strategy)
-        return getattr(resolved_config, "retain_chunk_size", 3000)
+        return _RetainChunkingConfig(
+            chunk_size=getattr(resolved_config, "retain_chunk_size", 3000),
+            structured_chunk_size=getattr(resolved_config, "retain_structured_chunk_size", None),
+        )
 
     async def _retain_batch_async_internal(
         self,
@@ -6705,6 +6714,84 @@ class MemoryEngine(MemoryEngineInterface):
 
         return {"nodes": nodes, "edges": edges, "table_rows": table_rows, "total_units": total_count, "limit": limit}
 
+    # Prompt-affecting settings overridable per dry-run extraction call.
+    _EXTRACTION_OVERRIDE_FIELDS = frozenset(
+        {
+            "retain_mission",
+            "retain_extraction_mode",
+            "retain_custom_instructions",
+            "retain_extract_causal_links",
+            "retain_chunk_size",
+            "entity_labels",
+            "entities_allow_free_form",
+            "llm_output_language",
+        }
+    )
+
+    async def extract_dry_run(
+        self,
+        bank_id: str,
+        content: str,
+        *,
+        context: str = "",
+        event_date: "datetime | None" = None,
+        overrides: dict | None = None,
+        agent_name: str | None = None,
+        request_context: "RequestContext",
+    ) -> "DryRunExtractionResult":
+        """Run fact extraction ONLY — no entity resolution, links, embeddings, or persistence.
+
+        Returns candidate facts (a subset of the ``list_memory_units`` item shape) plus the LLM token
+        usage, so callers can diff a mission's extraction output against stored memories without
+        mutating the bank. Every prompt-affecting setting is overridable per call via ``overrides``
+        (e.g. to test a candidate retain mission); ``agent_name`` overrides the narrator.
+        Side-effect-free and idempotent.
+        """
+        from .response_models import ExtractedFact
+        from .retain import bank_utils, fact_extraction
+
+        # Resolve the tenant schema before touching any bank-scoped data (config, bank profile).
+        await self._authenticate_tenant(request_context)
+        resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+        if self._llm_config.provider == "none":
+            resolved_config.retain_extraction_mode = "chunks"
+
+        for key, value in (overrides or {}).items():
+            if key not in self._EXTRACTION_OVERRIDE_FIELDS:
+                raise ValueError(
+                    f"Unsupported extraction override '{key}'. Allowed: {sorted(self._EXTRACTION_OVERRIDE_FIELDS)}"
+                )
+            setattr(resolved_config, key, value)
+
+        backend = await self._get_backend()
+        # Narrator primes the "Narrator:" line in the prompt — resolve it the same way retain does.
+        if agent_name is None:
+            profile = await bank_utils.get_bank_profile(backend, bank_id)
+            profile_name = profile["name"] if profile else bank_id
+            agent_name = None if profile_name == bank_id else profile_name
+
+        retain_llm = self._retain_llm_config.with_config(resolved_config, bank_id=bank_id, operation="retain")
+        facts, _chunks, usage = await fact_extraction.extract_facts_from_text(
+            text=content,
+            event_date=event_date,
+            llm_config=retain_llm,
+            agent_name=agent_name or "",
+            config=resolved_config,
+            context=context,
+        )
+
+        extracted = [
+            ExtractedFact(
+                text=fact.fact,
+                fact_type=fact.fact_type,
+                occurred_start=fact.occurred_start,
+                occurred_end=fact.occurred_end,
+                entities=[e.text for e in (fact.entities or []) if getattr(e, "text", None)],
+            )
+            for fact in facts
+        ]
+        return DryRunExtractionResult(facts=extracted, usage=usage)
+
     async def list_memory_units(
         self,
         bank_id: str,
@@ -8249,11 +8336,14 @@ class MemoryEngine(MemoryEngineInterface):
         """
         Reflect and formulate an answer using an agentic loop with tools.
 
-        The reflect agent iteratively uses tools to:
+        The reflect agent iteratively uses read-only tools to:
         1. lookup: Get mental models (synthesized knowledge)
         2. recall: Search facts (semantic + temporal retrieval)
-        3. learn: Create/update mental models with new insights
+        3. search observations: Retrieve prior observations
         4. expand: Get chunk/document context for memories
+
+        Reflect is read-only: it synthesizes an answer from the bank's stored
+        memories and persists nothing.
 
         The agent starts with empty context and must call tools to gather
         information. On the last iteration, tools are removed to force a
@@ -9960,6 +10050,13 @@ class MemoryEngine(MemoryEngineInterface):
                         )
                 based_on_serialized_payload[fact_type] = serialized_facts
 
+            # Facts from this reflect only — for the structured-delta LLM prompt.
+            # Accumulated based_on below is audit/grounding; re-sending all historical
+            # facts each refresh blows past provider input limits (e.g. Z.ai 1261).
+            delta_supporting_facts: list[dict[str, Any]] = []
+            for _facts in based_on_serialized_payload.values():
+                delta_supporting_facts.extend(_facts)
+
             # In delta mode, based_on must accumulate: the mental model is
             # grounded on ALL facts ever used, not just the latest delta's new
             # ones. Merge previous based_on with current, deduplicating by id.
@@ -9986,8 +10083,8 @@ class MemoryEngine(MemoryEngineInterface):
             # drift is structurally impossible. Falls back to the full candidate
             # markdown if either the structuring or the LLM op call fails.
             from .reflect.delta_ops import (
-                DeltaOperationList,
                 apply_operations,
+                parse_delta_operation_list,
             )
             from .reflect.prompts import (
                 STRUCTURED_DELTA_SYSTEM_PROMPT,
@@ -10022,9 +10119,7 @@ class MemoryEngine(MemoryEngineInterface):
                     current_doc = None
 
                 if current_doc is not None:
-                    supporting_facts: list[dict[str, Any]] = []
-                    for _ftype, facts in based_on_serialized_payload.items():
-                        supporting_facts.extend(facts)
+                    supporting_facts = delta_supporting_facts
 
                     # No new facts since last refresh — skip the delta LLM call
                     # and preserve existing content unchanged.
@@ -10052,7 +10147,7 @@ class MemoryEngine(MemoryEngineInterface):
                     doc_max_tokens = mental_model.get("max_tokens") or 2048
                     delta_max_tokens = max(2048, int(doc_max_tokens * 1.5))
                     user_prompt = build_structured_delta_prompt(
-                        current_document_json=current_doc.model_dump_json(indent=2),
+                        current_document_json=current_doc.model_dump_json(),
                         candidate_markdown=reflect_result.text,
                         supporting_facts=supporting_facts,
                         source_query=current_source_query,
@@ -10073,19 +10168,7 @@ class MemoryEngine(MemoryEngineInterface):
                             temperature=0.0,
                             scope="mental_model_delta_ops",
                         )
-                        op_list: DeltaOperationList
-                        if isinstance(raw, DeltaOperationList):
-                            op_list = raw
-                        elif isinstance(raw, dict):
-                            op_list = DeltaOperationList.model_validate(raw)
-                        else:
-                            text = (raw or "").strip()
-                            # Strip optional fenced code block.
-                            if text.startswith("```"):
-                                text = text.split("\n", 1)[1] if "\n" in text else ""
-                                if text.endswith("```"):
-                                    text = text[:-3].rstrip()
-                            op_list = DeltaOperationList.model_validate_json(text)
+                        op_list = parse_delta_operation_list(raw)
                         outcome = apply_operations(current_doc, op_list.operations)
                         final_structured = outcome.document
                         final_content = render_document(outcome.document)

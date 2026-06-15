@@ -105,6 +105,34 @@ class TokenUsage(BaseModel):
         )
 
 
+class ExtractedFact(BaseModel):
+    """A single candidate fact produced by dry-run extraction (no resolution/links/persistence).
+
+    A deliberate subset of the persisted memory-unit shape — only the fields a fresh extraction
+    yields. Storage/consolidation/curation fields (id, document_id, chunk_id, proof_count, state, …)
+    are omitted because nothing is stored. Entities are raw, unresolved names.
+    """
+
+    text: str = Field(description="The extracted fact text.")
+    fact_type: str = Field(description="Perspective classification: 'world' or 'experience'.")
+    occurred_start: str | None = Field(default=None, description="ISO timestamp the fact's event started, if dated.")
+    occurred_end: str | None = Field(default=None, description="ISO timestamp the fact's event ended, if dated.")
+    entities: list[str] = Field(
+        default_factory=list, description="Raw (unresolved) entity names mentioned in the fact."
+    )
+
+
+class DryRunExtractionResult(BaseModel):
+    """Result of dry-run fact extraction: candidate facts plus aggregated LLM token usage."""
+
+    facts: list[ExtractedFact] = Field(
+        default_factory=list, description="Candidate facts the retain step would extract."
+    )
+    usage: TokenUsage = Field(
+        default_factory=TokenUsage, description="Aggregated token usage across the extraction LLM calls."
+    )
+
+
 class DispositionTraits(BaseModel):
     """
     Disposition traits for a memory bank.

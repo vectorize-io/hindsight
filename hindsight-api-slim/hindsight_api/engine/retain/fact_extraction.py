@@ -420,19 +420,14 @@ _RECURSIVE_TEXT_SEPARATORS = [
     "",  # Characters (last resort)
 ]
 
-# A single structured unit (a JSONL line or a conversation turn) is kept whole
-# even when it overflows the budget — but only up to this multiple. Beyond it,
-# the unit is split as text rather than handed to the LLM wildly over budget
-# (the extractor has no second re-chunk pass; an oversized chunk just errors).
-_CHUNK_OVERFLOW_FACTOR = 1.5
-
 
 def _split_oversized_unit(text: str, max_chars: int) -> list[str]:
     """Sentence-aware split of a single unit that overflowed the budget.
 
     Used when one JSONL line / conversation turn is so large it can't be kept
-    whole within ``_CHUNK_OVERFLOW_FACTOR``. The resulting fragments are no
-    longer valid JSON, but the fact extractor treats every chunk as plain text.
+    whole within the configured structured-chunk limit. The resulting fragments
+    are no longer valid JSON, but the fact extractor treats every chunk as plain
+    text.
     """
     from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -446,18 +441,21 @@ def _split_oversized_unit(text: str, max_chars: int) -> list[str]:
     return splitter.split_text(text)
 
 
-def chunk_text(text: str, max_chars: int) -> list[str]:
+def chunk_text(text: str, max_chars: int, structured_chunk_size: int | None = None) -> list[str]:
     """
     Split text into chunks, preserving conversation structure when possible.
 
     For JSON conversation arrays (user/assistant turns) and JSONL (newline-delimited
     JSON objects), splits at turn/line boundaries so no object is split across chunks.
-    A single turn/line that overflows is kept whole up to ``_CHUNK_OVERFLOW_FACTOR``×
-    the budget, then split as text. For plain text, uses sentence-aware splitting.
+    A single turn/line that overflows ``max_chars`` is kept whole only up to
+    ``structured_chunk_size``. When unset, that limit defaults to ``max_chars``.
+    For plain text, uses sentence-aware splitting.
 
     Args:
         text: Input text to chunk (plain text, JSON conversation, or JSONL)
-        max_chars: Maximum characters per chunk (default 120k ≈ 30k tokens)
+        max_chars: Target maximum characters per chunk
+        structured_chunk_size: Maximum characters for a single JSONL line or
+            conversation turn to keep whole. Defaults to ``max_chars``.
 
     Returns:
         List of text chunks, roughly under max_chars
@@ -466,17 +464,19 @@ def chunk_text(text: str, max_chars: int) -> list[str]:
     if len(text) <= max_chars:
         return [text]
 
+    structured_limit = structured_chunk_size if structured_chunk_size is not None else max_chars
+
     # Try to parse as JSON conversation array
     try:
         parsed = json.loads(text)
         if isinstance(parsed, list) and all(isinstance(turn, dict) for turn in parsed):
             # This looks like a conversation - chunk at turn boundaries
-            return _chunk_conversation(parsed, max_chars)
+            return _chunk_conversation(parsed, max_chars, structured_limit)
     except (json.JSONDecodeError, ValueError):
         pass
 
     # Try to parse as JSONL (newline-delimited JSON objects, e.g. session logs)
-    jsonl_chunks = _chunk_jsonl(text, max_chars)
+    jsonl_chunks = _chunk_jsonl(text, max_chars, structured_limit)
     if jsonl_chunks is not None:
         return jsonl_chunks
 
@@ -484,19 +484,18 @@ def chunk_text(text: str, max_chars: int) -> list[str]:
     return _split_oversized_unit(text, max_chars)
 
 
-def _chunk_conversation(turns: list[dict], max_chars: int) -> list[str]:
+def _chunk_conversation(turns: list[dict], max_chars: int, structured_limit: int) -> list[str]:
     """
     Chunk a conversation array at turn boundaries, preserving complete turns.
 
     Args:
         turns: List of conversation turn dicts (with 'role' and 'content' keys)
         max_chars: Maximum characters per chunk
+        structured_limit: Maximum characters for a single turn to keep whole
 
     Returns:
         List of JSON-serialized chunks, each containing complete turns
     """
-
-    overflow_limit = int(max_chars * _CHUNK_OVERFLOW_FACTOR)
 
     chunks = []
     current_chunk = []
@@ -512,13 +511,14 @@ def _chunk_conversation(turns: list[dict], max_chars: int) -> list[str]:
     for turn in turns:
         # Estimate size of this turn when serialized (with comma separator)
         turn_json = json.dumps(turn, ensure_ascii=False)
-        turn_size = len(turn_json) + 1  # +1 for comma
+        turn_unit_size = len(turn_json)
+        turn_size = turn_unit_size + 1  # +1 for comma
 
         # A turn too large to keep whole even alone: flush, then split it as
         # text so no chunk runs far over budget (the extractor won't re-chunk).
-        if turn_size > overflow_limit:
+        if turn_unit_size > structured_limit:
             _flush()
-            chunks.extend(_split_oversized_unit(turn_json, max_chars))
+            chunks.extend(_split_oversized_unit(turn_json, structured_limit))
             continue
 
         # If adding this turn would exceed limit and we have turns, save current chunk
@@ -535,18 +535,20 @@ def _chunk_conversation(turns: list[dict], max_chars: int) -> list[str]:
     return chunks if chunks else [json.dumps(turns, ensure_ascii=False)]
 
 
-def _chunk_jsonl(text: str, max_chars: int) -> list[str] | None:
+def _chunk_jsonl(text: str, max_chars: int, structured_limit: int) -> list[str] | None:
     """Chunk newline-delimited JSON (JSONL) at line boundaries.
 
     Detects JSONL — two or more non-empty lines, each a complete JSON object —
     and packs whole lines into chunks so no line is split across chunks (multiple
-    short lines may share a chunk). A line that overflows is kept whole up to
-    ``_CHUNK_OVERFLOW_FACTOR``× the budget, then split as text. Returns ``None``
-    if the input is not JSONL, so the caller falls back to plain-text splitting.
+    short lines may share a chunk). A line that overflows ``max_chars`` is kept
+    whole only up to ``structured_limit``. Returns ``None`` if the input is not
+    JSONL, so the caller falls back to plain-text splitting.
 
     Args:
         text: Input text to inspect/chunk.
         max_chars: Maximum characters per chunk.
+        structured_limit: Maximum characters for a single JSONL line to
+            keep whole.
 
     Returns:
         List of JSONL chunks (lines joined by newline), or ``None`` if not JSONL.
@@ -563,8 +565,6 @@ def _chunk_jsonl(text: str, max_chars: int) -> list[str] | None:
         if not isinstance(obj, dict):
             return None
 
-    overflow_limit = int(max_chars * _CHUNK_OVERFLOW_FACTOR)
-
     chunks: list[str] = []
     current_chunk: list[str] = []
     current_size = 0
@@ -577,17 +577,18 @@ def _chunk_jsonl(text: str, max_chars: int) -> list[str] | None:
             current_size = 0
 
     for line in lines:
+        line_unit_size = len(line)
         line_size = len(line) + 1  # +1 for the joining newline
 
         # A line too large to keep whole even alone: flush, then split it as
         # text so no chunk runs far over budget (the extractor won't re-chunk).
-        if line_size > overflow_limit:
+        if line_unit_size > structured_limit:
             _flush()
-            chunks.extend(_split_oversized_unit(line, max_chars))
+            chunks.extend(_split_oversized_unit(line, structured_limit))
             continue
 
         # If adding this line would exceed the limit and we have lines, flush.
-        # A line up to overflow_limit is kept whole (a small, bounded overflow).
+        # A line up to structured_limit is kept whole (a bounded overflow).
         if current_size + line_size > max_chars and current_chunk:
             _flush()
 
@@ -1738,7 +1739,11 @@ async def extract_facts_from_text(
         - chunks: List of tuples (chunk_text, fact_count) for each chunk
         - usage: Aggregated token usage across all LLM calls
     """
-    chunks = chunk_text(text, max_chars=config.retain_chunk_size)
+    chunks = chunk_text(
+        text,
+        max_chars=config.retain_chunk_size,
+        structured_chunk_size=config.retain_structured_chunk_size,
+    )
 
     # Log chunk count before starting LLM requests
     total_chars = sum(len(c) for c in chunks)
@@ -1921,7 +1926,11 @@ async def extract_facts_from_contents_batch_api(
     prompt, response_schema = _build_extraction_prompt_and_schema(config)
 
     for content_index, item in enumerate(contents):
-        chunks = chunk_text(item.content, max_chars=config.retain_chunk_size)
+        chunks = chunk_text(
+            item.content,
+            max_chars=config.retain_chunk_size,
+            structured_chunk_size=config.retain_structured_chunk_size,
+        )
 
         for chunk_index_in_content, chunk in enumerate(chunks):
             all_chunks_info.append((chunk, content_index, chunk_index_in_content, item.event_date, item.context))
@@ -2342,7 +2351,11 @@ def _extract_facts_chunks(
     global_chunk_idx = 0
 
     for content_index, content in enumerate(contents):
-        chunks = chunk_text(content.content, config.retain_chunk_size)
+        chunks = chunk_text(
+            content.content,
+            config.retain_chunk_size,
+            structured_chunk_size=config.retain_structured_chunk_size,
+        )
         for chunk in chunks:
             chunks_metadata.append(
                 ChunkMetadata(

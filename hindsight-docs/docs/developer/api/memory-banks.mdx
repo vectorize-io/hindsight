@@ -90,6 +90,12 @@ Maximum number of characters per chunk when splitting content for fact extractio
 
 Default: `3000`
 
+### retain_structured_chunk_size
+
+Maximum number of characters for a single JSONL line or conversation turn to keep whole when it exceeds `retain_chunk_size`. When unset, the limit is exactly `retain_chunk_size`; set a larger value for structured logs or chat transcripts where splitting a single record would lose useful context.
+
+Default: unset, which uses `retain_chunk_size`
+
 See [Retain configuration](/developer/configuration#retain) for environment variable names and defaults.
 
 ### entity_labels {#entity-labels}

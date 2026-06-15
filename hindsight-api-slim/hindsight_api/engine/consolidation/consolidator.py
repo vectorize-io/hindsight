@@ -335,7 +335,15 @@ def _resolve_obs_tags_list(memory: dict[str, Any]) -> list[list[str]] | None:
 
     Returns ``None`` for the default ``combined``-mode single pass (caller uses
     the memory's own tags). Returns a list[list[str]] when the memory requested
-    multi-pass scoping (``per_tag``, ``all_combinations``, or an explicit list).
+    multi-pass scoping (``per_tag``, ``all_combinations``, ``shared``, or an
+    explicit list).
+
+    ``shared`` resolves to ``[[]]`` — a single pass over the empty (untagged)
+    scope. The created observation carries no tags and recall/dedup match it with
+    ``tags_match="any"``, so every memory consolidates into one shared observation
+    regardless of its own tags. Use it to deduplicate across volatile per-call
+    provenance tags (e.g. per-session ids) without dropping those tags from the
+    source facts.
     """
     parsed = _parse_observation_scopes(memory)
     tags = list(memory.get("tags") or [])
@@ -346,6 +354,8 @@ def _resolve_obs_tags_list(memory: dict[str, Any]) -> list[list[str]] | None:
         if not tags:
             return None
         return [list(c) for r in range(1, len(tags) + 1) for c in combinations(tags, r)]
+    if parsed == "shared":
+        return [[]]
     if parsed == "combined" or parsed is None:
         return None
     return parsed  # explicit list[list[str]]
@@ -362,6 +372,7 @@ def _resolve_write_scopes(memory: dict[str, Any]) -> list[frozenset[str]]:
     - ``combined`` / ``None``    -> ``[frozenset(memory.tags)]``
     - ``per_tag``                -> ``[frozenset({t}) for t in memory.tags]``
     - ``all_combinations``       -> one frozenset per nonempty subset of tags
+    - ``shared``                 -> ``[frozenset()]`` (the single untagged scope)
     - explicit ``list[list[str]]`` -> one frozenset per declared scope
 
     Empty-tag memories collapse to a single ``frozenset()`` in all modes so they
@@ -376,6 +387,8 @@ def _resolve_write_scopes(memory: dict[str, Any]) -> list[frozenset[str]]:
         if not tags:
             return [frozenset()]
         return [frozenset(c) for r in range(1, len(tags) + 1) for c in combinations(tags, r)]
+    if parsed == "shared":
+        return [frozenset()]
     if parsed == "combined" or parsed is None:
         return [frozenset(tags)]
     return [frozenset(s) for s in parsed]  # explicit list[list[str]]
@@ -1492,11 +1505,7 @@ async def _process_memory_batch(
     if max_obs >= 0 and fact_tags:
         # max_obs == 0 means "no new observations": there are no slots regardless
         # of the current count, so skip the count query for that case.
-        current_count = (
-            await _count_observations_for_scope(conn, bank_id, fact_tags)
-            if max_obs > 0
-            else 0
-        )
+        current_count = await _count_observations_for_scope(conn, bank_id, fact_tags) if max_obs > 0 else 0
         remaining_observation_slots = max(max_obs - current_count, 0)
         if remaining_observation_slots == 0:
             logger.info(

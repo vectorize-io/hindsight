@@ -59,6 +59,13 @@
     "viewOnGitHub": "在 GitHub 查看"
   },
   "bank": {
+    "dryRunExtraction": "试运行提取",
+    "dryRunExtractionDescription": "预览此记忆库的当前配置（保留任务、提取模式、分块大小）会从文本中提取出什么——不会写入，不存储任何内容。",
+    "dryRunExtractionTextLabel": "文本",
+    "dryRunExtractionPlaceholder": "粘贴文档或文本块以提取事实……",
+    "dryRunExtractionResponseLabel": "响应",
+    "dryRunExtractionEmptyState": "运行提取以查看 JSON 响应。",
+    "dryRunExtractionRun": "提取（试运行）",
     "bankConfiguration": "记忆库配置",
     "bankConfigurationDescription": "管理记忆库设置、配置文件和后台操作。",
     "actions": "操作",
@@ -317,6 +324,8 @@
     "retainFailedToSave": "无法保存保留设置",
     "chunkSizeLabel": "分块大小",
     "chunkSizeDescription": "处理的文本分块大小（字符数）",
+    "structuredChunkSizeLabel": "结构化分块大小",
+    "structuredChunkSizeDescription": "单条 JSONL 行或对话轮次保持完整的最大字符数。留空则使用分块大小。",
     "missionLabel": "使命",
     "retainMissionDescription": "此库在提取期间应关注的内容。在不替换提取规则的情况下引导 LLM — 与任何提取模式配合使用。",
     "retainMissionPlaceholder": "例如：始终包含技术决策、API 设计选择和架构权衡。忽略会议事务、问候语和社交交流。",

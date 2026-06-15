@@ -20,6 +20,7 @@ def setup_test_env():
         "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS",
         "HINDSIGHT_API_CONSOLIDATION_MAX_COMPLETION_TOKENS",
         "HINDSIGHT_API_RETAIN_CHUNK_SIZE",
+        "HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE",
         "HINDSIGHT_API_LLM_PROVIDER",
         "HINDSIGHT_API_LLM_MODEL",
         "HINDSIGHT_API_LLM_REASONING_EFFORT",
@@ -104,6 +105,54 @@ def test_valid_retain_config_succeeds():
     config = HindsightConfig.from_env()
     assert config.retain_max_completion_tokens == 64000
     assert config.retain_chunk_size == 3000
+    assert config.retain_structured_chunk_size is None
+
+
+def test_retain_structured_chunk_size_reads_from_env():
+    """Structured JSONL/conversation units can have an explicit character cap."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"] = "64000"
+    os.environ["HINDSIGHT_API_RETAIN_CHUNK_SIZE"] = "3000"
+    os.environ["HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE"] = "9000"
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+
+    config = HindsightConfig.from_env()
+    assert config.retain_structured_chunk_size == 9000
+
+
+def test_retain_structured_chunk_size_can_be_less_than_chunk_size():
+    """Structured-chunk cap can be smaller than the retain chunk target."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"] = "64000"
+    os.environ["HINDSIGHT_API_RETAIN_CHUNK_SIZE"] = "3000"
+    os.environ["HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE"] = "2000"
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+
+    config = HindsightConfig.from_env()
+    assert config.retain_chunk_size == 3000
+    assert config.retain_structured_chunk_size == 2000
+
+
+def test_retain_strategy_structured_chunk_size_validation():
+    """Retain strategies allow structured-chunk caps below chunk size."""
+    from hindsight_api.config import HindsightConfig
+    from hindsight_api.config_resolver import apply_strategy
+
+    os.environ["HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"] = "64000"
+    os.environ["HINDSIGHT_API_RETAIN_CHUNK_SIZE"] = "3000"
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+
+    config = HindsightConfig.from_env()
+    config.retain_strategies = {
+        "jsonl": {
+            "retain_structured_chunk_size": 2000,
+        }
+    }
+
+    resolved = apply_strategy(config, "jsonl")
+    assert resolved.retain_structured_chunk_size == 2000
 
 
 def test_semantic_min_similarity_reads_from_env():

@@ -17,6 +17,10 @@ function describeErrorDetails(details: unknown): string | undefined {
   if (details == null) return undefined;
   if (typeof details === "string") return details;
   if (typeof details === "object") {
+    const detail = (details as { detail?: unknown }).detail;
+    if (typeof detail === "string") return detail;
+    const nestedDetails = (details as { details?: unknown }).details;
+    if (typeof nestedDetails === "string") return nestedDetails;
     const violations = (details as { violations?: Array<{ message?: string }> }).violations;
     if (Array.isArray(violations)) {
       const messages = violations.map((v) => v?.message).filter(Boolean);
@@ -219,6 +223,7 @@ export class ControlPlaneClient {
       });
 
       if (!response.ok) {
+        const isClientError = response.status >= 400 && response.status < 500;
         // Redirect to login on 401 (session expired or not authenticated)
         const currentPath = stripBasePath(`${window.location.pathname}${window.location.search}`);
         if (response.status === 401 && !currentPath.startsWith("/login")) {
@@ -232,17 +237,21 @@ export class ControlPlaneClient {
 
         try {
           const errorData = await response.json();
-          errorMessage = errorData.error || errorMessage;
-          errorDetails = errorData.details;
+          if (isClientError) {
+            errorMessage = errorData.error || errorMessage;
+            errorDetails = errorData.details ?? errorData.detail ?? errorData.upstream?.detail;
+          }
         } catch {
-          // If JSON parse fails, try to get text
-          try {
-            const errorText = await response.text();
-            if (errorText) {
-              errorDetails = errorText;
+          if (isClientError) {
+            // If JSON parse fails, try to get text
+            try {
+              const errorText = await response.text();
+              if (errorText) {
+                errorDetails = errorText;
+              }
+            } catch {
+              // Ignore text parse errors
             }
-          } catch {
-            // Ignore text parse errors
           }
         }
 
@@ -253,7 +262,7 @@ export class ControlPlaneClient {
         const description = describeErrorDetails(errorDetails) || errorMessage;
         const status = response.status;
 
-        if (status >= 400 && status < 500) {
+        if (isClientError) {
           // Client errors (4xx) - validation, bad request, etc. - show as warning
           toast.warning("Client Error", {
             description,
@@ -274,7 +283,7 @@ export class ControlPlaneClient {
         }
 
         // Still throw error for callers that want to handle it
-        const error = new Error(errorMessage);
+        const error = new Error(description || errorMessage);
         (error as any).status = response.status;
         (error as any).details = errorDetails;
         throw error;
@@ -388,7 +397,7 @@ export class ControlPlaneClient {
       metadata?: Record<string, string>;
       entities?: Array<{ text: string; type?: string }>;
       tags?: string[];
-      observation_scopes?: "per_tag" | "combined" | "all_combinations" | string[][];
+      observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
       strategy?: string;
     }>;
     document_id?: string;

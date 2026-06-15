@@ -59,6 +59,13 @@
     "viewOnGitHub": "Auf GitHub ansehen"
   },
   "bank": {
+    "dryRunExtraction": "Probelauf-Extraktion",
+    "dryRunExtractionDescription": "Vorschau, was die aktuelle Konfiguration dieses Speichers (Retain-Mission, Extraktionsmodus, Chunk-Größe) aus dem Text extrahiert – ohne Aufnahme, es wird nichts gespeichert.",
+    "dryRunExtractionTextLabel": "Text",
+    "dryRunExtractionPlaceholder": "Fügen Sie ein Dokument oder einen Abschnitt ein, um Fakten zu extrahieren…",
+    "dryRunExtractionResponseLabel": "Antwort",
+    "dryRunExtractionEmptyState": "Führen Sie die Extraktion aus, um die JSON-Antwort zu sehen.",
+    "dryRunExtractionRun": "Extrahieren (Probelauf)",
     "bankConfiguration": "Bankkonfiguration",
     "bankConfigurationDescription": "Verwalten Sie Bankeinstellungen, Profil und Operationen.",
     "actions": "Aktionen",
@@ -317,6 +324,8 @@
     "retainFailedToSave": "Retain-Einstellungen konnten nicht gespeichert werden",
     "chunkSizeLabel": "Chunk-Größe",
     "chunkSizeDescription": "Größe der Textblöcke für die Verarbeitung (Zeichen)",
+    "structuredChunkSizeLabel": "Strukturierte Chunk-Größe",
+    "structuredChunkSizeDescription": "Maximale Zeichenanzahl für eine JSONL-Zeile oder Konversationsrunde, die vollständig beibehalten wird. Leer lassen, um die Chunk-Größe zu verwenden.",
     "missionLabel": "Mission",
     "retainMissionDescription": "Worauf diese Bank während der Extraktion achten soll. Steuert das LLM, ohne die Extraktionsregeln zu ersetzen — funktioniert zusammen mit jedem Extraktionsmodus.",
     "retainMissionPlaceholder": "z. B. Technische Entscheidungen, API-Designentscheidungen und architektonische Kompromisse immer einbeziehen. Meeting-Logistik, Begrüßungen und soziale Austausche ignorieren.",

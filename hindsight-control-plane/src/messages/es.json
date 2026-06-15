@@ -59,6 +59,13 @@
     "viewOnGitHub": "Ver en GitHub"
   },
   "bank": {
+    "dryRunExtraction": "Extracción de prueba",
+    "dryRunExtractionDescription": "Previsualiza lo que la configuración actual de este banco (misión de retención, modo de extracción, tamaño de fragmento) extrae del texto: sin ingesta, no se almacena nada.",
+    "dryRunExtractionTextLabel": "Texto",
+    "dryRunExtractionPlaceholder": "Pega un documento o fragmento para extraer hechos…",
+    "dryRunExtractionResponseLabel": "Respuesta",
+    "dryRunExtractionEmptyState": "Ejecuta la extracción para ver la respuesta JSON.",
+    "dryRunExtractionRun": "Extraer (prueba)",
     "bankConfiguration": "Configuración del banco",
     "bankConfigurationDescription": "Administra los ajustes, el perfil y las operaciones del banco.",
     "actions": "Acciones",
@@ -317,6 +324,8 @@
     "retainFailedToSave": "Error al guardar la configuración de Retain",
     "chunkSizeLabel": "Tamaño de fragmento",
     "chunkSizeDescription": "Tamaño de los fragmentos de texto para el procesamiento (caracteres)",
+    "structuredChunkSizeLabel": "Tamaño de chunk estructurado",
+    "structuredChunkSizeDescription": "Máximo de caracteres de una línea JSONL o turno de conversación que se conserva completo. Déjalo en blanco para usar el tamaño de fragmento.",
     "missionLabel": "Misión",
     "retainMissionDescription": "En qué debe prestar atención este banco durante la extracción. Orienta el LLM sin reemplazar las reglas de extracción — funciona junto con cualquier modo de extracción.",
     "retainMissionPlaceholder": "Ej.: Incluir siempre decisiones técnicas, opciones de diseño de API y compromisos arquitectónicos. Ignorar la logística de reuniones, saludos e intercambios sociales.",

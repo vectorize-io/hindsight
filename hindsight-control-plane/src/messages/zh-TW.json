@@ -59,6 +59,13 @@
     "viewOnGitHub": "在 GitHub 上檢視"
   },
   "bank": {
+    "dryRunExtraction": "試執行擷取",
+    "dryRunExtractionDescription": "預覽此記憶庫目前的設定（保留任務、擷取模式、分塊大小）會從文字中擷取出什麼——不會寫入，不儲存任何內容。",
+    "dryRunExtractionTextLabel": "文字",
+    "dryRunExtractionPlaceholder": "貼上文件或文字區塊以擷取事實……",
+    "dryRunExtractionResponseLabel": "回應",
+    "dryRunExtractionEmptyState": "執行擷取以查看 JSON 回應。",
+    "dryRunExtractionRun": "擷取（試執行）",
     "bankConfiguration": "記憶庫設定",
     "bankConfigurationDescription": "管理記憶庫設定、設定檔和背景作業。",
     "actions": "操作",
@@ -317,6 +324,8 @@
     "retainFailedToSave": "無法儲存保留設定",
     "chunkSizeLabel": "片段大小",
     "chunkSizeDescription": "處理的文字片段大小（字元數）",
+    "structuredChunkSizeLabel": "結構化片段大小",
+    "structuredChunkSizeDescription": "單條 JSONL 行或對話輪次保持完整的最大字元數。留空則使用片段大小。",
     "missionLabel": "使命",
     "retainMissionDescription": "此記憶庫在擷取期間應關注的內容。在不取代擷取規則的情況下引導 LLM — 可與任何擷取模式搭配使用。",
     "retainMissionPlaceholder": "例如：始終包含技術決策、API 設計選擇和架構權衡。忽略會議事務、問候語和社交交流。",

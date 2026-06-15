@@ -65,8 +65,21 @@
             }
           ],
           "default": null,
-          "description": "Max token size for each content chunk",
+          "description": "Target max characters for each content chunk",
           "title": "Retain Chunk Size"
+        },
+        "retain_structured_chunk_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max characters for a single JSONL line or conversation turn to keep whole; defaults to retain_chunk_size when unset",
+          "title": "Retain Structured Chunk Size"
         },
         "enable_observations": {
           "anyOf": [

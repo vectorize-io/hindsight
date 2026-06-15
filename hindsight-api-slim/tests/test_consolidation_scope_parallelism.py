@@ -179,6 +179,42 @@ async def test_combined_mode_parallel_writes_to_memory_tag_set(memory: MemoryEng
 
 
 @pytest.mark.asyncio
+async def test_shared_mode_parallel_writes_only_untagged_scope(memory: MemoryEngine, request_context):
+    """shared → every memory writes to the single untagged scope, ignoring its
+    own tags. Three memories with disjoint tags therefore all consolidate into
+    the same global scope (the per-session-tag dedup use case) instead of one
+    isolated observation per tag."""
+    bank_id = f"test-shared-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    try:
+        async with memory._pool.acquire() as conn:
+            await _insert_memory(conn, bank_id, "Alice likes tea", ["session:s1"], "shared")
+            await _insert_memory(conn, bank_id, "Bob bikes daily", ["session:s2"], "shared")
+            await _insert_memory(conn, bank_id, "Carol reads books", ["session:s3"], "shared")
+
+        wrapper, _ = _mock_llm_one_obs_per_fact()
+        original_llm = memory._consolidation_llm_config
+        memory._consolidation_llm_config = wrapper
+        try:
+            with (
+                _override_config(memory, consolidation_llm_parallelism=3, consolidation_llm_batch_size=1),
+                patch.object(memory, "submit_async_consolidation"),
+            ):
+                result = await run_consolidation_job(
+                    memory_engine=memory, bank_id=bank_id, request_context=request_context
+                )
+        finally:
+            memory._consolidation_llm_config = original_llm
+
+        assert result["status"] == "completed"
+        tag_sets = await _fetch_observation_tag_sets(memory, bank_id)
+        # Every observation lands at the untagged scope — none carries a session tag.
+        assert tag_sets and all(t == frozenset() for t in tag_sets), tag_sets
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_per_tag_mode_parallel_writes_one_observation_per_tag(memory: MemoryEngine, request_context):
     """per_tag with tags [a, b] → two observations, tagged [a] and [b] respectively.
 

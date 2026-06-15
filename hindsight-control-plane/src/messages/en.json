@@ -59,6 +59,13 @@
     "viewOnGitHub": "View on GitHub"
   },
   "bank": {
+    "dryRunExtraction": "Dry-run extraction",
+    "dryRunExtractionDescription": "Preview what this bank's current configuration (retain mission, extraction mode, chunk size) extracts from text — no ingestion, nothing stored.",
+    "dryRunExtractionTextLabel": "Text",
+    "dryRunExtractionPlaceholder": "Paste a document or chunk to extract facts from…",
+    "dryRunExtractionResponseLabel": "Response",
+    "dryRunExtractionEmptyState": "Run extraction to see the JSON response.",
+    "dryRunExtractionRun": "Extract (dry-run)",
     "bankConfiguration": "Bank Configuration",
     "bankConfigurationDescription": "Manage bank settings, profile, and operations.",
     "actions": "Actions",
@@ -317,6 +324,8 @@
     "retainFailedToSave": "Failed to save retain settings",
     "chunkSizeLabel": "Chunk Size",
     "chunkSizeDescription": "Size of text chunks for processing (characters)",
+    "structuredChunkSizeLabel": "Structured Chunk Size",
+    "structuredChunkSizeDescription": "Maximum characters for one JSONL line or conversation turn to keep whole. Leave blank to use the chunk size.",
     "missionLabel": "Mission",
     "retainMissionDescription": "What this bank should pay attention to during extraction. Steers the LLM without replacing the extraction rules — works alongside any extraction mode.",
     "retainMissionPlaceholder": "e.g. Always include technical decisions, API design choices, and architectural trade-offs. Ignore meeting logistics, greetings, and social exchanges.",
