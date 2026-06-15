@@ -1921,15 +1921,18 @@ fn handle_configure(
 
     // Use provided api_key, or keep existing one if not provided
     let new_api_key = api_key.or_else(|| current_config.as_ref().and_then(|c| c.api_key.clone()));
+    let new_recall_score_min =
+        recall_score_min.or_else(|| current_config.as_ref().map(|c| c.recall_score_min));
 
     // Save to config file
-    let config_path = Config::save_config(&new_api_url, new_api_key.as_deref(), recall_score_min)?;
+    let config_path =
+        Config::save_config(&new_api_url, new_api_key.as_deref(), new_recall_score_min)?;
 
     if output_format == OutputFormat::Pretty {
         ui::print_success(&format!("Configuration saved to {}", config_path.display()));
         println!();
         println!("  API URL: {}", new_api_url);
-        if let Some(score_min) = recall_score_min {
+        if let Some(score_min) = new_recall_score_min {
             println!("  Recall score min: {}", score_min);
         }
         if let Some(ref key) = new_api_key {
@@ -1946,7 +1949,7 @@ fn handle_configure(
         let result = serde_json::json!({
             "api_url": new_api_url,
             "api_key_set": new_api_key.is_some(),
-            "recall_score_min": recall_score_min,
+            "recall_score_min": new_recall_score_min,
             "config_path": config_path.display().to_string(),
         });
         output::print_output(&result, output_format)?;

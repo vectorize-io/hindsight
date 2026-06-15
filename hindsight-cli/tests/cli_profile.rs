@@ -83,6 +83,37 @@ fn stderr(out: &Output) -> String {
 }
 
 #[test]
+fn configure_preserves_existing_recall_score_min_when_omitted() {
+    let home = unique_tempdir("configure-score-preserve");
+    let out = run_with_home(
+        &home,
+        &[
+            "configure",
+            "--api-url",
+            "https://api.example.com",
+            "--recall-score-min",
+            "0",
+        ],
+    );
+    assert_success(&out);
+
+    let out = run_with_home(
+        &home,
+        &[
+            "configure",
+            "--api-url",
+            "https://other.example.com",
+        ],
+    );
+    assert_success(&out);
+
+    let path = home.join(".hindsight/config");
+    let body = std::fs::read_to_string(&path).unwrap();
+    assert!(body.contains("api_url = \"https://other.example.com\""));
+    assert!(body.contains("recall_score_min = 0"));
+}
+
+#[test]
 fn profile_create_writes_toml_and_json_output() {
     let home = unique_tempdir("create");
     let out = run_with_home(
