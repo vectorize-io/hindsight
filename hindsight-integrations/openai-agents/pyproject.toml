@@ -33,7 +33,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/vectorize-io/hindsight"
-Documentation = "https://docs.hindsight.vectorize.io/docs/sdks/integrations/openai-agents"
+Documentation = "https://hindsight.vectorize.io/sdks/integrations/openai-agents"
 Repository = "https://github.com/vectorize-io/hindsight"
 
 [build-system]

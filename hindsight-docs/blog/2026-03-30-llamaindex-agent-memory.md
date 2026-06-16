@@ -279,7 +279,7 @@ Persistent memory isn't always the right tool.
 | **Framework coupling** | LlamaIndex only | LlamaIndex only | None | None |
 | **Best for** | Single-session chat | Simple cross-session recall within LlamaIndex | Document search (RAG) | Long-term user/agent memory across frameworks |
 
-**vs. LangGraph/LangChain:** If you're using LangGraph instead of LlamaIndex, see [`hindsight-langgraph`](https://docs.hindsight.vectorize.io/docs/sdks/integrations/langgraph) which offers tools, graph nodes, and a `BaseStore` adapter.
+**vs. LangGraph/LangChain:** If you're using LangGraph instead of LlamaIndex, see [`hindsight-langgraph`](https://hindsight.vectorize.io/sdks/integrations/langgraph) which offers tools, graph nodes, and a `BaseStore` adapter.
 
 ## FAQ
 
@@ -307,5 +307,5 @@ Try it now: `pip install hindsight-all hindsight-llamaindex` and run the example
 
 ## Next Steps
 
-- **Docs**: [LlamaIndex integration guide](https://docs.hindsight.vectorize.io/docs/sdks/integrations/llamaindex)
-- **Other integrations**: [LangGraph](https://docs.hindsight.vectorize.io/docs/sdks/integrations/langgraph), [Pydantic AI](https://docs.hindsight.vectorize.io/docs/sdks/integrations/pydantic-ai), [CrewAI](https://docs.hindsight.vectorize.io/docs/sdks/integrations/crewai)
+- **Docs**: [LlamaIndex integration guide](https://hindsight.vectorize.io/sdks/integrations/llamaindex)
+- **Other integrations**: [LangGraph](https://hindsight.vectorize.io/sdks/integrations/langgraph), [Pydantic AI](https://hindsight.vectorize.io/sdks/integrations/pydantic-ai), [CrewAI](https://hindsight.vectorize.io/sdks/integrations/crewai)
