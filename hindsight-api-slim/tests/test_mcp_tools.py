@@ -1911,3 +1911,31 @@ class TestBankToolFiltering:
         # Filter bypassed — config resolver was never consulted, all tools visible
         assert "recall" in visible
         mock_memory_with_resolver._config_resolver.get_bank_config.assert_not_called()
+
+
+@pytest.mark.asyncio
+class TestToolAnnotations:
+    """Every MCP tool must carry read-only / destructive hints (openWorldHint=False)."""
+
+    async def test_read_only_tool(self, mock_memory):
+        ann = _tools(_make_mcp_server(mock_memory, {"recall"}))["recall"].annotations
+        assert ann is not None
+        assert ann.readOnlyHint is True
+        assert ann.openWorldHint is False
+
+    async def test_destructive_tool(self, mock_memory):
+        ann = _tools(_make_mcp_server(mock_memory, {"delete_bank"}))["delete_bank"].annotations
+        assert ann is not None
+        assert ann.readOnlyHint is False
+        assert ann.destructiveHint is True
+
+    async def test_write_tool_is_not_destructive(self, mock_memory):
+        ann = _tools(_make_mcp_server(mock_memory, {"retain"}))["retain"].annotations
+        assert ann is not None
+        assert ann.readOnlyHint is False
+        assert ann.destructiveHint is False
+
+    async def test_annotations_apply_in_single_bank_mode(self, mock_memory):
+        ann = _tools(_make_mcp_server(mock_memory, {"recall"}, include_bank_id=False))["recall"].annotations
+        assert ann is not None
+        assert ann.readOnlyHint is True
