@@ -6087,13 +6087,13 @@ class MemoryEngine(MemoryEngineInterface):
                     )
 
                 collist = await self._memory_unit_columns(conn)
-                # The archive is cold storage, never a recall surface, so it never keeps an
-                # embedding: we project NULL into the embedding slot when moving a row in or
-                # out. This also decouples the archive's embedding-column dimension from the
-                # live model — a model switch (which re-dimensions memory_units) can't trip a
-                # vector-dimension mismatch on the INSERT … SELECT round-trip (#2209). On revert
-                # the embedding is recomputed from the unit's text/dates/entities below.
-                collist_no_emb = collist.replace('"embedding"', "NULL")
+                # The archive is cold storage, never a recall surface, so the schema gives it
+                # no `embedding` column at all (dropped in d4f6a8c2e1b3). The move in/out is
+                # therefore over every memory_units column EXCEPT embedding; on revert the
+                # embedding is recomputed from the unit's text/dates/entities below. This makes
+                # a model switch (which re-dimensions memory_units) structurally unable to trip
+                # a vector-dimension mismatch on the INSERT … SELECT round-trip (#2209).
+                arch_cols = ", ".join(c for c in (s.strip() for s in collist.split(",")) if c != '"embedding"')
 
                 # --- Edit fields (live rows only): text / context / dates / fact_type / entities ---
                 doing_edit = any(
@@ -6185,8 +6185,8 @@ class MemoryEngine(MemoryEngineInterface):
                     # Capture relink victims BEFORE the row (and its links) disappear.
                     await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
                     await conn.execute(
-                        f"INSERT INTO {arch} ({collist}, invalidation_reason, invalidated_at, entity_ids) "
-                        f"SELECT {collist_no_emb}, $2, now(), $3::uuid[] FROM {mu} WHERE id = $1 AND bank_id = $4",
+                        f"INSERT INTO {arch} ({arch_cols}, invalidation_reason, invalidated_at, entity_ids) "
+                        f"SELECT {arch_cols}, $2, now(), $3::uuid[] FROM {mu} WHERE id = $1 AND bank_id = $4",
                         str(memory_uuid),
                         reason,
                         entity_ids,
@@ -6212,10 +6212,11 @@ class MemoryEngine(MemoryEngineInterface):
                     arch_row = await conn.fetchrow(
                         f"SELECT entity_ids FROM {arch} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id
                     )
-                    # The archive carries no embedding (see collist_no_emb above), so it comes
-                    # back NULL and is recomputed below once entities are restored.
+                    # The archive has no embedding column (see arch_cols above), so the live
+                    # row's embedding defaults to NULL on the way back and is recomputed below
+                    # once entities are restored.
                     await conn.execute(
-                        f"INSERT INTO {mu} ({collist}) SELECT {collist_no_emb} FROM {arch} WHERE id = $1 AND bank_id = $2",
+                        f"INSERT INTO {mu} ({arch_cols}) SELECT {arch_cols} FROM {arch} WHERE id = $1 AND bank_id = $2",
                         str(memory_uuid),
                         bank_id,
                     )

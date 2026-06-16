@@ -93,12 +93,21 @@ async def _in_live(conn, mem_id: uuid.UUID) -> bool:
 
 
 async def _archive_row(conn, mem_id: uuid.UUID) -> dict | None:
+    # No `embedding` column: the archive is cold storage and the schema drops it (#2209).
     row = await conn.fetchrow(
-        "SELECT text, embedding, invalidation_reason, invalidated_at, entity_ids "
-        "FROM invalidated_memory_units WHERE id = $1",
+        "SELECT text, invalidation_reason, invalidated_at, entity_ids FROM invalidated_memory_units WHERE id = $1",
         mem_id,
     )
     return dict(row) if row else None
+
+
+async def _archive_has_embedding_column(conn) -> bool:
+    return bool(
+        await conn.fetchval(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'invalidated_memory_units' AND column_name = 'embedding'"
+        )
+    )
 
 
 async def _link_count(conn, mem_id: uuid.UUID) -> int:
@@ -165,7 +174,9 @@ class TestInvalidate:
             arch = await _archive_row(conn, m1)
             assert arch is not None, "row must be in the archive"
             assert arch["invalidation_reason"] == "decommissioned"
-            assert arch["embedding"] is None, "archive is cold storage; the embedding is dropped on invalidate (#2209)"
+            assert not await _archive_has_embedding_column(conn), (
+                "archive is cold storage; the schema drops the embedding column (#2209)"
+            )
             assert await _link_count(conn, m1) == 0, "links cascade-pruned on move"
             assert str(obs_id) not in await _obs_ids(conn, bank_id), "derived observation removed"
             assert await _consolidated_at(conn, m2) is None, "surviving source reset for re-consolidation"
