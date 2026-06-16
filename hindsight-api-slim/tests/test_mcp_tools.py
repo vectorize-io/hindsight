@@ -1947,3 +1947,65 @@ class TestToolAnnotations:
         ann = _tools(_make_mcp_server(mock_memory, {"recall"}, include_bank_id=False))["recall"].annotations
         assert ann is not None
         assert ann.readOnlyHint is True
+
+
+def _reflect_mcp_with_trace(include_bank_id_param: bool):
+    """An MCP server whose reflect returns a result carrying tool_trace/llm_trace."""
+    from fastmcp import FastMCP
+
+    # Mirrors ReflectResult: the agentic loop's trace fields are large and present.
+    reflect_payload = {
+        "text": "answer",
+        "based_on": {"world": []},
+        "tool_trace": [{"tool": "recall", "output": "x" * 1000}],
+        "llm_trace": [{"model": "test", "output": "y" * 1000}],
+    }
+    memory = MagicMock()
+    memory.reflect_async = AsyncMock(
+        return_value=MagicMock(
+            model_dump_json=lambda indent=None: json.dumps(reflect_payload),
+            model_dump=lambda: dict(reflect_payload),
+            structured_output=None,
+        )
+    )
+    mcp = FastMCP("test")
+    config = MCPToolsConfig(
+        bank_id_resolver=lambda: "test-bank",
+        include_bank_id_param=include_bank_id_param,
+        tools={"reflect"},
+    )
+    register_mcp_tools(mcp, memory, config)
+    return mcp
+
+
+def _reflect_result_data(result) -> dict:
+    """The multi-bank reflect returns a JSON string; single-bank returns a dict."""
+    return json.loads(result) if isinstance(result, str) else result
+
+
+@pytest.mark.asyncio
+class TestReflectTraceOmission:
+    """reflect must not leak the agentic tool_trace/llm_trace into MCP responses by default."""
+
+    @pytest.mark.parametrize("multi_bank", [True, False])
+    async def test_trace_omitted_by_default(self, multi_bank):
+        mcp = _reflect_mcp_with_trace(multi_bank)
+        data = _reflect_result_data(await _tools(mcp)["reflect"].fn(query="q"))
+        assert data["text"] == "answer"
+        assert "tool_trace" not in data
+        assert "llm_trace" not in data
+
+    @pytest.mark.parametrize("multi_bank", [True, False])
+    async def test_trace_included_when_requested(self, multi_bank):
+        mcp = _reflect_mcp_with_trace(multi_bank)
+        data = _reflect_result_data(await _tools(mcp)["reflect"].fn(query="q", include_trace=True))
+        assert "tool_trace" in data
+        assert "llm_trace" in data
+
+    @pytest.mark.parametrize("multi_bank", [True, False])
+    async def test_based_on_flag_is_independent_of_trace(self, multi_bank):
+        # include_based_on keeps based_on but must not pull the trace back in.
+        mcp = _reflect_mcp_with_trace(multi_bank)
+        data = _reflect_result_data(await _tools(mcp)["reflect"].fn(query="q", include_based_on=True))
+        assert "based_on" in data
+        assert "tool_trace" not in data
