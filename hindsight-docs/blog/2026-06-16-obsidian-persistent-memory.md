@@ -25,9 +25,10 @@ This post is a walkthrough of the new Hindsight plugin for Obsidian. It syncs yo
 - **Your vault is canonical.** Sync is one-way (Obsidian to Hindsight), and chat conversations are **not stored by default**. Hindsight never becomes a second source of truth.
 - **Implicit scoping:** every note is auto-tagged with its vault, folder, and dates, so you can filter a question to "just the Work vault" or "notes updated this month" without any setup.
 - Hindsight Cloud means no infrastructure. [Sign up free.](https://ui.hindsight.vectorize.io/signup)
+- **Available now** in the [Obsidian community plugin store](https://community.obsidian.md/plugins/hindsight): one-click install.
 
-:::note Plugin is in beta
-The Obsidian plugin (`v0.1.2` at the time of writing) is in **beta** and installs via [BRAT](https://github.com/TfTHacker/obsidian42-brat) rather than the community store. It works today; the install step is just a little more manual until it graduates. Details in [Installing](#installing) below.
+:::tip Now in the Obsidian community store
+The Hindsight plugin is **live in the [Obsidian community plugin store](https://community.obsidian.md/plugins/hindsight)** (`v0.1.2` at the time of writing). That means a one-click install from inside Obsidian, no manual steps, and it puts Hindsight one click away from Obsidian's millions of users. See [Installing](#installing) below.
 :::
 
 ## The Problem: A Big Vault Is Hard to Reason Over
@@ -106,11 +107,12 @@ So your notes stop being trapped in one app. A nightly automation can reflect ov
 
 ## Installing
 
-The plugin is in beta, so it installs through [BRAT](https://github.com/TfTHacker/obsidian42-brat) (the Beta Reviewers Auto-update Tool) rather than Obsidian's community store.
+The plugin is in the **Obsidian community store**, so installing it is one click from inside Obsidian:
 
-1. Install **BRAT** from the community plugins store and enable it.
-2. In BRAT, **add a beta plugin** with the repository [`vectorize-io/hindsight-obsidian`](https://github.com/vectorize-io/hindsight-obsidian).
-3. Enable **Hindsight** under **Settings → Community plugins**.
+1. Open **Settings → Community plugins → Browse**.
+2. Search for **Hindsight**, click **Install**, then **Enable**.
+
+> Want bleeding-edge beta builds before they hit the store? You can also track them via [BRAT](https://github.com/TfTHacker/obsidian42-brat) by adding the repository [`vectorize-io/hindsight-obsidian`](https://github.com/vectorize-io/hindsight-obsidian).
 
 Then point it at Hindsight. The recommended path is **Hindsight Cloud**: [sign up free](https://ui.hindsight.vectorize.io/signup), grab an API key, and paste it into **Settings → Hindsight**. No server to run; sync and reflect happen against Cloud.
 
@@ -147,8 +149,6 @@ And three commands from the command palette: **Sync vault now** (full reconcile)
 
 **Reflect quality scales with `Default chat depth`.** The default is `low`, which is fast and fine for most lookups. For questions that need to pull across many notes, raise the budget; it searches more thoroughly at higher cost and latency.
 
-**Beta means BRAT.** Until the plugin is in the community store, install is the BRAT flow above. It auto-updates from the beta repo, so you stay current, but it's one extra step versus a one-click store install.
-
 **Chat memory is opt-in by design.** `Remember conversations` is off so that asking questions doesn't quietly accumulate state outside your vault. If you want the agent to remember the thread of a long working session, turn it on, but know that you're then creating memory that isn't one of your notes.
 
 ## Recap
@@ -166,6 +166,6 @@ And three commands from the command palette: **Sync vault now** (full reconcile)
 
 - **Hindsight Cloud:** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io/signup)
 - **Integration docs:** [Obsidian + Hindsight](/sdks/integrations/obsidian)
-- **Plugin repo (BRAT):** [vectorize-io/hindsight-obsidian](https://github.com/vectorize-io/hindsight-obsidian)
+- **Install (Obsidian store):** [community.obsidian.md/plugins/hindsight](https://community.obsidian.md/plugins/hindsight)
 - **Source:** [vectorize-io/hindsight/hindsight-integrations/obsidian](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/obsidian)
 - **One memory for every tool:** [One Memory for Every AI Tool](https://hindsight.vectorize.io/blog/2026/04/07/one-memory-for-every-ai-tool)
