@@ -21,7 +21,7 @@ from hindsight_api.engine.cross_encoder import (
     SiliconFlowCrossEncoder,
     ZeroEntropyCrossEncoder,
 )
-from hindsight_api.engine.embeddings import CohereEmbeddings, LocalSTEmbeddings, OpenAIEmbeddings
+from hindsight_api.engine.embeddings import CohereEmbeddings, OpenAIEmbeddings
 from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
 from hindsight_api.engine.task_backend import SyncTaskBackend
 from hindsight_api.extensions import TenantContext, TenantExtension
@@ -160,11 +160,11 @@ def get_column_dimension(db_url: str, schema: str = "public", table: str = "memo
         return result
 
 
-def get_row_count(db_url: str, schema: str = "public") -> int:
-    """Get the number of rows with embeddings in memory_units."""
+def get_row_count(db_url: str, schema: str = "public", table: str = "memory_units") -> int:
+    """Get the number of rows with embeddings in a table."""
     engine = create_engine(db_url)
     with engine.connect() as conn:
-        return conn.execute(text(f"SELECT COUNT(*) FROM {schema}.memory_units WHERE embedding IS NOT NULL")).scalar()
+        return conn.execute(text(f"SELECT COUNT(*) FROM {schema}.{table} WHERE embedding IS NOT NULL")).scalar()
 
 
 def insert_test_embedding(db_url: str, schema: str, dimension: int):
@@ -188,6 +188,30 @@ def clear_embeddings(db_url: str, schema: str):
     engine = create_engine(db_url)
     with engine.connect() as conn:
         conn.execute(text(f"DELETE FROM {schema}.memory_units"))
+        conn.commit()
+
+
+def insert_test_invalidated_embedding(db_url: str, schema: str, dimension: int):
+    """Insert an archived memory row with a dummy embedding."""
+    engine = create_engine(db_url)
+    embedding = [0.1] * dimension
+    embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
+
+    with engine.connect() as conn:
+        conn.execute(
+            text(f"""
+                INSERT INTO {schema}.invalidated_memory_units (bank_id, text, embedding, event_date, fact_type)
+                VALUES ('test-bank', 'archived test text', '{embedding_str}'::vector, NOW(), 'world')
+            """)
+        )
+        conn.commit()
+
+
+def clear_invalidated_embeddings(db_url: str, schema: str):
+    """Clear all rows from invalidated_memory_units."""
+    engine = create_engine(db_url)
+    with engine.connect() as conn:
+        conn.execute(text(f"DELETE FROM {schema}.invalidated_memory_units"))
         conn.commit()
 
 
@@ -273,6 +297,24 @@ class TestEmbeddingDimension:
         _ensure_embedding_dimension_with_retry(db_url, 384, schema=schema)
         assert get_column_dimension(db_url, schema) == 384
 
+    def test_dimension_change_updates_invalidated_memory_units(self, dimension_test_schema):
+        """The archive table must track live memory embedding dimension changes."""
+        db_url, schema = dimension_test_schema
+
+        clear_embeddings(db_url, schema)
+        clear_invalidated_embeddings(db_url, schema)
+        assert get_row_count(db_url, schema, table="invalidated_memory_units") == 0
+
+        _ensure_embedding_dimension_with_retry(db_url, 768, schema=schema)
+
+        assert get_column_dimension(db_url, schema, table="memory_units") == 768
+        assert get_column_dimension(db_url, schema, table="invalidated_memory_units") == 768
+
+        # Change back for other tests
+        _ensure_embedding_dimension_with_retry(db_url, 384, schema=schema)
+        assert get_column_dimension(db_url, schema, table="memory_units") == 384
+        assert get_column_dimension(db_url, schema, table="invalidated_memory_units") == 384
+
     def test_dimension_change_blocked_with_data(self, dimension_test_schema):
         """When table has data, dimension change should be blocked."""
         db_url, schema = dimension_test_schema
@@ -298,6 +340,26 @@ class TestEmbeddingDimension:
 
         # Cleanup
         clear_embeddings(db_url, schema)
+
+    def test_invalidated_memory_units_dimension_change_blocked_with_data(self, dimension_test_schema):
+        """Archived embeddings must also block unsafe dimension changes."""
+        db_url, schema = dimension_test_schema
+
+        clear_embeddings(db_url, schema)
+        clear_invalidated_embeddings(db_url, schema)
+        insert_test_invalidated_embedding(db_url, schema, 384)
+
+        _assert_raises_runtime_error_with_retry(
+            db_url,
+            768,
+            schema,
+            expected_messages=["Cannot change embedding dimension", "invalidated_memory_units"],
+        )
+
+        assert get_column_dimension(db_url, schema, table="invalidated_memory_units") == 384
+
+        # Cleanup
+        clear_invalidated_embeddings(db_url, schema)
 
     def test_mental_models_dimension_matches_no_change(self, dimension_test_schema):
         """When mental_models dimension matches, no changes should be made."""

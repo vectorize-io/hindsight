@@ -565,7 +565,8 @@ def ensure_embedding_dimension(
     """
     Ensure the embedding column dimension matches the model's dimension for all tables.
 
-    Checks and adjusts memory_units.embedding and mental_models.embedding:
+    Checks and adjusts memory_units.embedding, invalidated_memory_units.embedding,
+    and mental_models.embedding:
     - If dimensions match: no action needed
     - If dimensions differ and table is empty: ALTER COLUMN to new dimension
     - If dimensions differ and table has data: raise error with migration guidance
@@ -602,8 +603,37 @@ def ensure_embedding_dimension(
         vector_ext = _detect_vector_extension(conn, vector_extension)
         logger.info(f"Using vector extension: {vector_ext}")
 
-        _migrate_table_embedding_dimension(conn, schema_name, "memory_units", required_dimension, vector_ext)
-        _migrate_table_embedding_dimension(conn, schema_name, "mental_models", required_dimension, vector_ext)
+        embedding_tables = ("memory_units", "invalidated_memory_units", "mental_models")
+        for table_name in embedding_tables:
+            current_dim = conn.execute(
+                text("""
+                    SELECT atttypmod
+                    FROM pg_attribute a
+                    JOIN pg_class c ON a.attrelid = c.oid
+                    JOIN pg_namespace n ON c.relnamespace = n.oid
+                    WHERE n.nspname = :schema
+                      AND c.relname = :table
+                      AND a.attname = 'embedding'
+                """),
+                {"schema": schema_name, "table": table_name},
+            ).scalar()
+            if current_dim is None or current_dim == required_dimension:
+                continue
+
+            row_count = conn.execute(
+                text(f"SELECT COUNT(*) FROM {schema_name}.{table_name} WHERE embedding IS NOT NULL")
+            ).scalar()
+            if row_count > 0:
+                raise RuntimeError(
+                    f"Cannot change embedding dimension from {current_dim} to {required_dimension}: "
+                    f"{table_name} table contains {row_count} rows with embeddings. "
+                    f"To change dimensions, you must either:\n"
+                    f"  1. Re-embed all data: DELETE FROM {schema_name}.{table_name}; then restart\n"
+                    f"  2. Use a model with {current_dim}-dimensional embeddings"
+                )
+
+        for table_name in embedding_tables:
+            _migrate_table_embedding_dimension(conn, schema_name, table_name, required_dimension, vector_ext)
 
 
 def ensure_vector_extension(
