@@ -150,6 +150,6 @@ tools = create_hindsight_tools(
 
 ## Documentation
 
-- [Integration docs](https://docs.hindsight.vectorize.io/docs/sdks/integrations/autogen)
+- [Integration docs](https://hindsight.vectorize.io/sdks/integrations/autogen)
 - [Cookbook: AutoGen assistant with memory](https://docs.hindsight.vectorize.io/cookbook/recipes/autogen-assistant-agent)
 - [Hindsight API docs](https://docs.hindsight.vectorize.io)

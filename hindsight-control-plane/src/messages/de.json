@@ -603,7 +603,10 @@
     "scopeGlobal": "Global (keine Tags)",
     "groupByScope": "Nach Bereich gruppieren",
     "scopeSearch": "Bereiche suchen…",
-    "scopeNoResults": "Keine Bereiche gefunden"
+    "scopeNoResults": "Keine Bereiche gefunden",
+    "filterActive": "Aktiv",
+    "filterInvalidated": "Ungültig",
+    "invalidatedHint": "Ungültig gemachte Erinnerungen werden archiviert – aus Recall und Reflect ausgeblendet, aber zu Prüfzwecken aufbewahrt."
   },
   "documentsView": {
     "loadingDocuments": "Dokumente werden geladen...",
@@ -692,7 +695,8 @@
     "importConflictReplace": "Ersetzen — durch das importierte überschreiben",
     "importConflictNewId": "Beide behalten — unter neuer id importieren",
     "textNotStoredWarning": "Der Quelltext wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten.",
-    "labelObservationScopes": "Beobachtungsbereiche"
+    "labelObservationScopes": "Beobachtungsbereiche",
+    "invalidatedFactsTitle": "Ungültige Fakten"
   },
   "entitiesView": {
     "viewRelations": "Beziehungen",
@@ -790,6 +794,7 @@
     "optionsTagsMatchAll": "all — UND-Abgleich, schließt Einträge ohne Tags ein",
     "optionsTagsMatchAnyStrict": "any_strict — ODER-Abgleich, schließt Einträge ohne Tags aus",
     "optionsTagsMatchAllStrict": "all_strict — UND-Abgleich, schließt Einträge ohne Tags aus",
+    "optionsTagsMatchExact": "exact — Mengengleichheit, schließt Einträge ohne Tags aus",
     "optionsTagsMatchDescription": "Steuert, wie die Tags des Modells Erinnerungen während der Aktualisierung filtern.",
     "optionsTagGroupsLabel": "Tag-Gruppen (JSON)",
     "optionsTagGroupsDescription": "Zusammengesetzte boolesche Tag-Ausdrücke zur Filterung bei der Aktualisierung. Überschreibt flache Tags, wenn gesetzt.",
@@ -839,6 +844,7 @@
     "tagsMatchAll": "Alle (inkl. ohne Tags)",
     "tagsMatchAnyStrict": "Beliebig (strikt)",
     "tagsMatchAllStrict": "Alle (strikt)",
+    "tagsMatchExact": "Exakt (Mengengleich)",
     "excludeMentalModels": "Mentale Modelle ausschließen",
     "excludeIdsLabel": "IDs ausschließen:",
     "excludeIdsPlaceholder": "modell-a, modell-b",
@@ -915,6 +921,7 @@
     "tagsMatchAll": "Alle (inkl. ohne Tags)",
     "tagsMatchAnyStrict": "Beliebig (strikt)",
     "tagsMatchAllStrict": "Alle (strikt)",
+    "tagsMatchExact": "Exakt (Mengengleich)",
     "budgetLow": "Niedrig",
     "budgetMid": "Mittel",
     "budgetHigh": "Hoch",
@@ -1299,7 +1306,17 @@
     "curationInvalidateExplain": "Dadurch wird die Erinnerung in das Archiv für ungültige Einträge verschoben. Sie erscheint nicht mehr in Recall oder Reflect, bleibt aber zur Prüfung erhalten und kann später wiederhergestellt werden.",
     "curationReasonPlaceholder": "Grund (optional)",
     "curationCancel": "Abbrechen",
-    "curationInvalidate": "Ungültig machen"
+    "curationInvalidate": "Ungültig machen",
+    "curationActions": "Kuratierung",
+    "curationEdit": "Bearbeiten",
+    "curationReasonLabel": "Grund",
+    "curationRevert": "Wiederherstellen",
+    "curationSave": "Speichern",
+    "curationStateInvalidated": "Ungültig",
+    "editFieldContext": "Kontext",
+    "editFieldOccurredEnd": "Enddatum",
+    "editFieldOccurredStart": "Startdatum",
+    "editFieldType": "Typ"
   },
   "documentChunkModal": {
     "documentTitle": "Dokumentdetails",
@@ -1506,6 +1523,9 @@
     "strategyHelpText": "Überschreibt die Standard-Extraktionsstrategie der Bank für dieses Dokument.",
     "observationScopePerTag": "Pro Tag",
     "observationScopeAllCombinations": "Alle Kombinationen",
+    "observationScopeShared": "Geteilt",
+    "observationScopeSharedHelp": "Alle Beobachtungen werden in einem gemeinsamen, ungetaggten Bereich gespeichert (Tags werden ignoriert).",
+    "observationScopeCustom": "Benutzerdefiniert",
     "observationScopesEmpty": "Fügen Sie oben Tags hinzu, um Beobachtungsbereiche vorzuschauen",
     "metadataHelpText": "Ein <code>key: value</code> pro Zeile",
     "entitiesHelpText": "Kommagetrennte Hinweise, die mit automatisch extrahierten Entitäten zusammengeführt werden",

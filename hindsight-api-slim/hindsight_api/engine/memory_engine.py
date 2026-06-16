@@ -5992,9 +5992,10 @@ class MemoryEngine(MemoryEngineInterface):
           not ``memory_links``, so there is nothing to relink directly).
         - **Invalidate** (``state='invalidated'``): move the row to the archive
           (cascade-pruning its links/entity associations and re-deriving dependent
-          observations). The embedding + an entity-id snapshot travel with it.
+          observations). The archive is cold storage, so the embedding is dropped
+          (only an entity-id snapshot travels with it).
         - **Revert** (``state='valid'``): move the row back, restore its entity
-          associations, and re-consolidate.
+          associations, recompute its embedding, and re-consolidate.
 
         Only ``world``/``experience`` facts can be curated — observations are
         derived and regenerate from their sources. Returns the updated memory
@@ -6086,6 +6087,13 @@ class MemoryEngine(MemoryEngineInterface):
                     )
 
                 collist = await self._memory_unit_columns(conn)
+                # The archive is cold storage, never a recall surface, so the schema gives it
+                # no `embedding` column at all (dropped in d4f6a8c2e1b3). The move in/out is
+                # therefore over every memory_units column EXCEPT embedding; on revert the
+                # embedding is recomputed from the unit's text/dates/entities below. This makes
+                # a model switch (which re-dimensions memory_units) structurally unable to trip
+                # a vector-dimension mismatch on the INSERT … SELECT round-trip (#2209).
+                arch_cols = ", ".join(c for c in (s.strip() for s in collist.split(",")) if c != '"embedding"')
 
                 # --- Edit fields (live rows only): text / context / dates / fact_type / entities ---
                 doing_edit = any(
@@ -6177,8 +6185,8 @@ class MemoryEngine(MemoryEngineInterface):
                     # Capture relink victims BEFORE the row (and its links) disappear.
                     await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
                     await conn.execute(
-                        f"INSERT INTO {arch} ({collist}, invalidation_reason, invalidated_at, entity_ids) "
-                        f"SELECT {collist}, $2, now(), $3::uuid[] FROM {mu} WHERE id = $1 AND bank_id = $4",
+                        f"INSERT INTO {arch} ({arch_cols}, invalidation_reason, invalidated_at, entity_ids) "
+                        f"SELECT {arch_cols}, $2, now(), $3::uuid[] FROM {mu} WHERE id = $1 AND bank_id = $4",
                         str(memory_uuid),
                         reason,
                         entity_ids,
@@ -6204,8 +6212,11 @@ class MemoryEngine(MemoryEngineInterface):
                     arch_row = await conn.fetchrow(
                         f"SELECT entity_ids FROM {arch} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id
                     )
+                    # The archive has no embedding column (see arch_cols above), so the live
+                    # row's embedding defaults to NULL on the way back and is recomputed below
+                    # once entities are restored.
                     await conn.execute(
-                        f"INSERT INTO {mu} ({collist}) SELECT {collist} FROM {arch} WHERE id = $1 AND bank_id = $2",
+                        f"INSERT INTO {mu} ({arch_cols}) SELECT {arch_cols} FROM {arch} WHERE id = $1 AND bank_id = $2",
                         str(memory_uuid),
                         bank_id,
                     )
@@ -6228,6 +6239,35 @@ class MemoryEngine(MemoryEngineInterface):
                             arch_row["entity_ids"],
                             bank_id,
                         )
+                    # Recompute the embedding (the archive doesn't keep one) so the reverted
+                    # unit is searchable again, using the now-current model's dimension and the
+                    # restored entity set — mirroring how an edit re-embeds.
+                    reverted = await conn.fetchrow(
+                        f"SELECT text, occurred_start, occurred_end, mentioned_at FROM {mu} "
+                        f"WHERE id = $1 AND bank_id = $2",
+                        str(memory_uuid),
+                        bank_id,
+                    )
+                    if reverted:
+                        ent_rows = await conn.fetch(
+                            f"SELECT e.canonical_name FROM {ue} ue JOIN {ent} e ON ue.entity_id = e.id "
+                            f"WHERE ue.unit_id = $1",
+                            str(memory_uuid),
+                        )
+                        new_emb = await self._reembed_memory_text(
+                            text=reverted["text"],
+                            occurred_start=reverted["occurred_start"],
+                            occurred_end=reverted["occurred_end"],
+                            mentioned_at=reverted["mentioned_at"],
+                            entities=[r["canonical_name"] for r in ent_rows],
+                        )
+                        if new_emb is not None:
+                            await conn.execute(
+                                f"UPDATE {mu} SET embedding = $3::vector WHERE id = $1 AND bank_id = $2",
+                                str(memory_uuid),
+                                bank_id,
+                                new_emb,
+                            )
                     await conn.execute(f"DELETE FROM {arch} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id)
                     need_consolidation = True
                     need_graph = True
@@ -6420,9 +6460,10 @@ class MemoryEngine(MemoryEngineInterface):
                     source_memory_ids.extend(unit["source_memory_ids"])
             source_memory_ids = list(set(source_memory_ids))  # Deduplicate
 
-            # Fetch non-entity links where BOTH endpoints are in the visible set (or
-            # source memories). Entity edges are derived below from unit_entities so
-            # we don't materialize them in memory_links anymore.
+            # Fetch links where BOTH endpoints are in the visible set (or source
+            # memories). Entity edges are derived below from unit_entities so we
+            # don't materialize them in memory_links anymore (dropped in migration
+            # e9b2c7d1f3a4) — no link_type filter is needed.
             # Cap at 10k edges — the UI can't usefully render more, and uncapped queries
             # on highly-connected graphs (e.g. 1000 nodes with 500k+ edges) are too slow.
             max_edges = 10000
@@ -6436,8 +6477,7 @@ class MemoryEngine(MemoryEngineInterface):
                            ml.weight,
                            NULL::text AS entity_name
                     FROM {fq_table("memory_links")} ml
-                    WHERE ml.link_type <> 'entity'
-                      AND ml.from_unit_id = ANY($1::uuid[])
+                    WHERE ml.from_unit_id = ANY($1::uuid[])
                       AND ml.to_unit_id = ANY($1::uuid[])
                     ORDER BY ml.weight DESC NULLS LAST
                     LIMIT $2
@@ -9230,11 +9270,16 @@ class MemoryEngine(MemoryEngineInterface):
             # per-fact-type slice, and it tolerates empty maps (the section
             # prints with no rows). Response keys are kept populated below for
             # schema stability so existing SDK deserializers don't break.
+            # No link_type filter: entity edges are no longer stored in
+            # memory_links (dropped in migration e9b2c7d1f3a4 — derived on demand
+            # from unit_entities), so only temporal/semantic/caused_by rows exist
+            # here. Omitting the predicate lets the (bank_id, link_type) index
+            # serve this bank-scoped GROUP BY as an index-only scan.
             non_entity_link_rows = await conn.fetch(
                 f"""
                 SELECT link_type, COUNT(*) as count
                 FROM {fq_table("memory_links")}
-                WHERE bank_id = $1 AND link_type <> 'entity'
+                WHERE bank_id = $1
                 GROUP BY link_type
                 """,
                 bank_id,

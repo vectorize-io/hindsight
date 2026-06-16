@@ -2321,7 +2321,7 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
 
     if config.include_bank_id_param:
 
-        @mcp.tool()
+        @mcp.tool(description=_EDIT_DOC)
         async def update_memory(
             memory_id: str,
             text: str | None = None,
@@ -2332,7 +2332,7 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             entities: list[str] | None = None,
             bank_id: str | None = None,
         ) -> str:
-            f"""{_EDIT_DOC}
+            """
             Args:
                 memory_id: The ID of the memory unit to edit.
                 bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
@@ -2367,7 +2367,7 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
 
     else:
 
-        @mcp.tool()
+        @mcp.tool(description=_EDIT_DOC)
         async def update_memory(
             memory_id: str,
             text: str | None = None,
@@ -2377,7 +2377,7 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             fact_type: str | None = None,
             entities: list[str] | None = None,
         ) -> dict:
-            f"""{_EDIT_DOC}
+            """
             Args:
                 memory_id: The ID of the memory unit to edit.
             """
@@ -2426,14 +2426,14 @@ def _register_invalidate_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPT
 
     if config.include_bank_id_param:
 
-        @mcp.tool()
+        @mcp.tool(description=_INVALIDATE_DOC)
         async def invalidate_memory(
             memory_id: str,
             reason: str | None = None,
             restore: bool = False,
             bank_id: str | None = None,
         ) -> str:
-            f"""{_INVALIDATE_DOC}
+            """
             Args:
                 memory_id: The ID of the memory unit to retire (or restore).
                 reason: Optional free-text reason recorded when invalidating.
@@ -2466,13 +2466,13 @@ def _register_invalidate_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPT
 
     else:
 
-        @mcp.tool()
+        @mcp.tool(description=_INVALIDATE_DOC)
         async def invalidate_memory(
             memory_id: str,
             reason: str | None = None,
             restore: bool = False,
         ) -> dict:
-            f"""{_INVALIDATE_DOC}
+            """
             Args:
                 memory_id: The ID of the memory unit to retire (or restore).
                 reason: Optional free-text reason recorded when invalidating.

@@ -26,6 +26,14 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
 
+# Both tests in this module share one module-scoped pg0 on a fixed port (5568).
+# CI runs with `--dist loadgroup`, which, absent an xdist_group, may scatter the
+# two tests across workers that then each instantiate the module fixture and race
+# to provision the SAME instance — surfacing as flaky "Instance already running",
+# a pg_type UniqueViolation (concurrent CREATE EXTENSION), or "server closed the
+# connection". Pinning the module to a single worker serialises that provisioning.
+pytestmark = pytest.mark.xdist_group("migration-remaining-bankid-pg0")
+
 _SCRIPT_LOCATION = str(Path(__file__).parent.parent / "hindsight_api" / "alembic")
 
 _WIDEN_TABLES = ("directives", "mental_models")

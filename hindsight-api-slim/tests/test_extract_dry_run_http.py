@@ -16,6 +16,11 @@ import pytest_asyncio
 from hindsight_api import RequestContext
 from hindsight_api.api import create_app
 from hindsight_api.config import clear_config_cache
+from hindsight_api.extensions import (
+    OperationValidatorExtension,
+    PrecheckContext,
+    ValidationResult,
+)
 
 # Dry-run facts are a subset of the memory-unit shape — only fields a fresh extraction produces
 # (no storage/consolidation/curation fields, since nothing is persisted).
@@ -102,3 +107,73 @@ async def test_dry_run_rejects_unknown_override(memory):
             overrides={"embeddings_provider": "evil"},
             request_context=RequestContext(),
         )
+
+
+class _DryRunRejectingValidator(OperationValidatorExtension):
+    """Operation validator that rejects the dry-run-extract precheck.
+
+    Models an extension that gates LLM-billable routes (revoked key / exhausted
+    balance / rate-limited tenant). It rejects only the ``dry_run_extract``
+    operation so the test asserts the dry-run route is actually wired to the
+    precheck, not that the validator rejects everything.
+    """
+
+    async def precheck(self, ctx: PrecheckContext) -> ValidationResult:
+        if ctx.operation == "dry_run_extract":
+            return ValidationResult.reject("dry-run extraction not allowed", status_code=402)
+        return ValidationResult.accept()
+
+    async def validate_retain(self, ctx) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def validate_recall(self, ctx) -> ValidationResult:
+        return ValidationResult.accept()
+
+    async def validate_reflect(self, ctx) -> ValidationResult:
+        return ValidationResult.accept()
+
+
+@pytest.mark.asyncio
+async def test_dry_run_honors_operation_precheck(api_client, memory):
+    """dry-run-extract makes a real LLM call, so it must run the same billing/quota/rate-limit
+    precheck the other LLM-billable POST routes (retain/recall/reflect/mental_model_*/files_retain)
+    already wire. A validator that rejects the operation must short-circuit the request before any
+    extraction runs — without the precheck dependency the route would proceed to a 200."""
+    bank_id = f"dryrun-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+
+    previous = getattr(memory, "_operation_validator", None)
+    memory._operation_validator = _DryRunRejectingValidator({})
+    try:
+        resp = await api_client.post(
+            f"/v1/default/banks/{bank_id}/memories/dry-run-extract",
+            json={"content": "Alice moved to Berlin in 2021."},
+        )
+        assert resp.status_code == 402, resp.text
+        assert "not allowed" in resp.json()["detail"].lower()
+    finally:
+        memory._operation_validator = previous
+
+
+@pytest.mark.asyncio
+async def test_dry_run_disabled_returns_404_even_with_validator(api_client, memory):
+    """A disabled dry-run route must 404 before the billing/quota precheck runs, even with a
+    configured validator — the feature-flag gate is declared as a dependency before the precheck,
+    so it preserves the original "disabled → 404" contract instead of leaking a 402/401/429."""
+    bank_id = f"dryrun-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+
+    previous = getattr(memory, "_operation_validator", None)
+    memory._operation_validator = _DryRunRejectingValidator({})
+    try:
+        with patch.dict(os.environ, {"HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT": "false"}):
+            clear_config_cache()  # force get_config() to re-read the patched env
+            resp = await api_client.post(
+                f"/v1/default/banks/{bank_id}/memories/dry-run-extract",
+                json={"content": "Alice moved to Berlin in 2021."},
+            )
+        assert resp.status_code == 404, resp.text
+        assert "disabled" in resp.json()["detail"].lower()
+    finally:
+        clear_config_cache()  # env restored on with-exit; reset so later tests see the default
+        memory._operation_validator = previous

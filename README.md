@@ -310,7 +310,7 @@ client.reflect(bank_id="my-bank", query="What should I know about Alice?")
 | **macOS** (Intel / x86_64) | ✅ | ⚠️ | ✅ |
 | **Windows** (x86_64) | ✅ | ✅ | ✅ |
 
-⚠️ Intel Macs: use `hindsight-all-slim` — see the [installation guide](https://docs.hindsight.vectorize.io/docs/developer/installation#supported-platforms) for details.
+⚠️ Intel Macs: use `hindsight-all-slim` — see the [installation guide](https://hindsight.vectorize.io/developer/installation#supported-platforms) for details.
 
 ---
 

@@ -13,6 +13,29 @@ HINDSIGHT_URL = os.getenv("HINDSIGHT_API_URL", "http://localhost:8888")
 BANK_ID = "memories-demo-bank"
 
 
+async def wait_for_idle(client, bank_id, *, attempts=120, interval=0.5):
+    """Block until the bank has no pending/processing async operations.
+
+    Retain and every update_memory edit re-embed and re-consolidate in the
+    background. Draining that queue between curation steps keeps the example
+    deterministic — otherwise a later step can race the prior step's
+    re-consolidation and 404 on a unit that is mid-rewrite.
+    """
+    await asyncio.sleep(interval)  # let the just-submitted operation register
+    for _ in range(attempts):
+        busy = False
+        for state in ("pending", "processing"):
+            res = await client.operations.list_operations(
+                bank_id=bank_id, status=state, limit=1
+            )
+            if res.operations:
+                busy = True
+                break
+        if not busy:
+            return
+        await asyncio.sleep(interval)
+
+
 async def main():
     # =========================================================================
     # Setup (not shown in docs)
@@ -21,7 +44,7 @@ async def main():
     await client.acreate_bank(bank_id=BANK_ID, name="Memories Demo")
     await client.aretain(bank_id=BANK_ID, content="The assistant visited Paris in 2023.")
     await client.aretain(bank_id=BANK_ID, content="The deploy server srv-04 runs PostgreSQL 14.")
-    await asyncio.sleep(3)  # let extraction finish
+    await wait_for_idle(client, BANK_ID)  # let extraction + consolidation finish
 
     # =========================================================================
     # Doc Examples
@@ -81,6 +104,10 @@ async def main():
     )
     # [/docs:edit-memory]
 
+    # The text edit re-consolidates in the background; let it settle before the
+    # next edit so the unit isn't mid-rewrite when we touch it again.
+    await wait_for_idle(client, BANK_ID)
+
     # [docs:edit-memory-fields]
     # Correct dates, fact type, and entities in one call. "" clears a field;
     # entities replaces the set ([] detaches all); omit to leave unchanged.
@@ -95,6 +122,8 @@ async def main():
     )
     # [/docs:edit-memory-fields]
 
+    await wait_for_idle(client, BANK_ID)
+
     # [docs:invalidate-memory]
     # Soft-retire a fact: removed from recall/consolidation/graph, links pruned,
     # derived observations recomputed without it — but kept for audit.
@@ -107,6 +136,10 @@ async def main():
         ),
     )
     # [/docs:invalidate-memory]
+
+    # Invalidation also re-derives observations in the background; drain it so the
+    # restore below doesn't race a unit that is being moved between tables.
+    await wait_for_idle(client, BANK_ID)
 
     # [docs:restore-memory]
     # Restore a previously invalidated fact.

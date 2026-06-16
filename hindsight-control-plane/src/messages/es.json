@@ -603,7 +603,10 @@
     "scopeGlobal": "Global (sin etiquetas)",
     "groupByScope": "Agrupar por ámbito",
     "scopeSearch": "Buscar ámbitos…",
-    "scopeNoResults": "No se encontraron ámbitos"
+    "scopeNoResults": "No se encontraron ámbitos",
+    "filterActive": "Activas",
+    "filterInvalidated": "Invalidadas",
+    "invalidatedHint": "Las memorias invalidadas se archivan: se ocultan de recall y reflect, pero se conservan para auditoría."
   },
   "documentsView": {
     "loadingDocuments": "Cargando documentos...",
@@ -692,7 +695,8 @@
     "importConflictReplace": "Reemplazar — sobrescribir con el importado",
     "importConflictNewId": "Conservar ambos — importar con un nuevo id",
     "textNotStoredWarning": "El texto original no se almacena en este servidor: solo se conservan las memorias extraídas.",
-    "labelObservationScopes": "Ámbitos de observación"
+    "labelObservationScopes": "Ámbitos de observación",
+    "invalidatedFactsTitle": "Hechos invalidados"
   },
   "entitiesView": {
     "viewRelations": "Relaciones",
@@ -790,6 +794,7 @@
     "optionsTagsMatchAll": "all — coincidencia AND, incluye sin etiqueta",
     "optionsTagsMatchAnyStrict": "any_strict — coincidencia OR, excluye sin etiqueta",
     "optionsTagsMatchAllStrict": "all_strict — coincidencia AND, excluye sin etiqueta",
+    "optionsTagsMatchExact": "exact — igualdad de conjuntos, excluye sin etiqueta",
     "optionsTagsMatchDescription": "Controla cómo las etiquetas del modelo filtran las memorias durante la actualización.",
     "optionsTagGroupsLabel": "Grupos de etiquetas (JSON)",
     "optionsTagGroupsDescription": "Expresiones booleanas compuestas de etiquetas para filtrar durante la actualización. Anula las etiquetas planas cuando está configurado.",
@@ -839,6 +844,7 @@
     "tagsMatchAll": "Todas (incl. sin etiqueta)",
     "tagsMatchAnyStrict": "Cualquiera (estricto)",
     "tagsMatchAllStrict": "Todas (estricto)",
+    "tagsMatchExact": "Exacto (conjunto)",
     "excludeMentalModels": "Excluir modelos mentales",
     "excludeIdsLabel": "Excluir IDs:",
     "excludeIdsPlaceholder": "modelo-a, modelo-b",
@@ -915,6 +921,7 @@
     "tagsMatchAll": "Todas (incl. sin etiqueta)",
     "tagsMatchAnyStrict": "Cualquiera (estricto)",
     "tagsMatchAllStrict": "Todas (estricto)",
+    "tagsMatchExact": "Exacto (conjunto)",
     "budgetLow": "Bajo",
     "budgetMid": "Medio",
     "budgetHigh": "Alto",
@@ -1299,7 +1306,17 @@
     "curationInvalidateExplain": "Esto mueve la memoria al archivo de elementos invalidados. Ya no aparecerá en Recall ni Reflect, pero se conserva para auditoría y puede restaurarse más tarde.",
     "curationReasonPlaceholder": "Motivo (opcional)",
     "curationCancel": "Cancelar",
-    "curationInvalidate": "Invalidar"
+    "curationInvalidate": "Invalidar",
+    "curationActions": "Curación",
+    "curationEdit": "Editar",
+    "curationReasonLabel": "Motivo",
+    "curationRevert": "Restaurar",
+    "curationSave": "Guardar",
+    "curationStateInvalidated": "Invalidada",
+    "editFieldContext": "Contexto",
+    "editFieldOccurredEnd": "Fecha de fin",
+    "editFieldOccurredStart": "Fecha de inicio",
+    "editFieldType": "Tipo"
   },
   "documentChunkModal": {
     "documentTitle": "Detalles del documento",
@@ -1506,6 +1523,9 @@
     "strategyHelpText": "Anula la estrategia de extracción predeterminada del banco para este documento.",
     "observationScopePerTag": "Por etiqueta",
     "observationScopeAllCombinations": "Todas las combinaciones",
+    "observationScopeShared": "Compartido",
+    "observationScopeSharedHelp": "Todas las observaciones se almacenan en un ámbito compartido y sin etiquetas (las etiquetas se ignoran).",
+    "observationScopeCustom": "Personalizado",
     "observationScopesEmpty": "Añade etiquetas arriba para previsualizar los ámbitos de observación",
     "metadataHelpText": "Un <code>key: value</code> por línea",
     "entitiesHelpText": "Sugerencias separadas por comas que se combinan con las entidades extraídas automáticamente",

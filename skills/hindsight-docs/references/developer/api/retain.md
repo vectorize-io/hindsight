@@ -7,7 +7,8 @@ When you **retain** content, Hindsight doesn't just store the raw text—it inte
 
 {/* Import raw source files */}
 
-:::info How Retain Works
+> **ℹ️ How Retain Works**
+> 
 Learn about fact extraction, entity resolution, and graph construction in the [Retain Architecture](../retain.md) guide.
 > **💡 Prerequisites**
 > 
@@ -228,7 +229,8 @@ See [Recall API](./recall#tags) for filtering by tags during retrieval.
 
 Controls which [observations](../observations) this memory contributes to during consolidation. Each scope runs an independent pass, creating or updating observations tagged with only that scope's tags.
 
-:::info Scope isolation
+> **ℹ️ Scope isolation**
+> 
 During consolidation, Hindsight uses `all_strict` matching to find existing observations to update — only observations whose tags exactly match the current scope are considered. This keeps scopes isolated: a memory consolidated under `["student:alice"]` will never bleed into an observation tagged `["student:alice", "teacher:bob"]`.
 The examples below use a lesson transcript retained with `tags: ["student:alice", "teacher:bob", "session-id:s1"]`.
 
@@ -253,7 +255,8 @@ One consolidation pass over a single global, **untagged** scope. The memory's ow
 
 **Use when** your tags are per-call provenance (e.g. session ids) that you want for recall filtering and debugging but not as a consolidation boundary — keep the tag on `tags` and set `observation_scopes: "shared"`.
 
-:::caution `shared` vs `[[]]` vs `[]`
+> **🚨 `shared` vs `[[]]` vs `[]`**
+> 
 `shared` is equivalent to the explicit scope `[[]]` — a list containing one empty scope. Do **not** confuse it with `[]` (an empty list), which declares *zero* scopes and silently falls back to `combined`.
 #### per_tag
 
@@ -467,7 +470,8 @@ hindsight memory retain-files my-bank "$SCRIPT_DIR/" --async
 # Section 'retain-files' not found in api/retain.go
 ```
 
-:::info File Storage
+> **ℹ️ File Storage**
+> 
 Uploaded files are stored server-side (PostgreSQL by default, or S3/GCS/Azure for production). Configure storage via `HINDSIGHT_API_FILE_STORAGE_TYPE`. See [Configuration](../configuration#file-processing) for details.
 ---
 
@@ -528,5 +532,6 @@ export HINDSIGHT_API_RETAIN_BATCH_ENABLED=true
 
 Hindsight submits fact extraction calls as a batch job to the provider, polls for completion, and processes results automatically. No changes to your API calls are needed.
 
-:::note
+> **📝 Note**
+> 
 Batch API cost savings require `async=true` in your retain request and a compatible provider (OpenAI, Groq, or Gemini).

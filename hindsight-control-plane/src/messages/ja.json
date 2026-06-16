@@ -603,7 +603,10 @@
     "scopeGlobal": "グローバル（タグなし）",
     "groupByScope": "スコープでグループ化",
     "scopeSearch": "スコープを検索…",
-    "scopeNoResults": "スコープが見つかりません"
+    "scopeNoResults": "スコープが見つかりません",
+    "filterActive": "有効",
+    "filterInvalidated": "無効化済み",
+    "invalidatedHint": "無効化されたメモリはアーカイブされ、recall と reflect には表示されませんが、監査のために保持されます。"
   },
   "documentsView": {
     "loadingDocuments": "ドキュメントを読み込み中...",
@@ -692,7 +695,8 @@
     "importConflictReplace": "置換 — インポート版で上書き",
     "importConflictNewId": "両方保持 — 新しい id でインポート",
     "textNotStoredWarning": "このサーバーでは元のテキストは保存されません。抽出されたメモリのみが保持されます。",
-    "labelObservationScopes": "観測スコープ"
+    "labelObservationScopes": "観測スコープ",
+    "invalidatedFactsTitle": "無効化されたファクト"
   },
   "entitiesView": {
     "viewRelations": "関係",
@@ -790,6 +794,7 @@
     "optionsTagsMatchAll": "all — AND一致、タグなし含む",
     "optionsTagsMatchAnyStrict": "any_strict — OR一致、タグなし除く",
     "optionsTagsMatchAllStrict": "all_strict — AND一致、タグなし除く",
+    "optionsTagsMatchExact": "exact — 集合一致、タグなし除く",
     "optionsTagsMatchDescription": "更新中にモデルのタグがメモリをフィルタリングする方法を制御します。",
     "optionsTagGroupsLabel": "タググループ（JSON）",
     "optionsTagGroupsDescription": "更新フィルタリング用の複合ブール型タグ式。設定された場合、フラットタグより優先されます。",
@@ -839,6 +844,7 @@
     "tagsMatchAll": "すべて（タグなし含む）",
     "tagsMatchAnyStrict": "いずれか（厳密）",
     "tagsMatchAllStrict": "すべて（厳密）",
+    "tagsMatchExact": "完全一致（集合）",
     "excludeMentalModels": "メンタルモデルを除外",
     "excludeIdsLabel": "IDを除外：",
     "excludeIdsPlaceholder": "model-a, model-b",
@@ -915,6 +921,7 @@
     "tagsMatchAll": "すべて（タグなし含む）",
     "tagsMatchAnyStrict": "いずれか（厳密）",
     "tagsMatchAllStrict": "すべて（厳密）",
+    "tagsMatchExact": "完全一致（集合）",
     "budgetLow": "低",
     "budgetMid": "中",
     "budgetHigh": "高",
@@ -1299,7 +1306,17 @@
     "curationInvalidateExplain": "メモリを無効化アーカイブに移動します。recall や reflect には表示されなくなりますが、監査用に保持され、後で復元できます。",
     "curationReasonPlaceholder": "理由（任意）",
     "curationCancel": "キャンセル",
-    "curationInvalidate": "無効化"
+    "curationInvalidate": "無効化",
+    "curationActions": "キュレーション",
+    "curationEdit": "編集",
+    "curationReasonLabel": "理由",
+    "curationRevert": "復元",
+    "curationSave": "保存",
+    "curationStateInvalidated": "無効化済み",
+    "editFieldContext": "コンテキスト",
+    "editFieldOccurredEnd": "終了日",
+    "editFieldOccurredStart": "開始日",
+    "editFieldType": "タイプ"
   },
   "documentChunkModal": {
     "documentTitle": "ドキュメント詳細",
@@ -1506,6 +1523,9 @@
     "strategyHelpText": "このドキュメントのバンクのデフォルト抽出戦略を上書きします。",
     "observationScopePerTag": "タグごと",
     "observationScopeAllCombinations": "すべての組み合わせ",
+    "observationScopeShared": "共有",
+    "observationScopeSharedHelp": "すべての観察は、共有のタグなしスコープに保存されます（タグは無視されます）。",
+    "observationScopeCustom": "カスタム",
     "observationScopesEmpty": "観察スコープをプレビューするには、上にタグを追加してください",
     "metadataHelpText": "1行に1つの <code>key: value</code>",
     "entitiesHelpText": "自動抽出されたエンティティとマージされるカンマ区切りのヒント",

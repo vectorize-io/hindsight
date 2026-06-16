@@ -115,7 +115,7 @@ function BankSelectorInner() {
   const [docDocumentId, setDocDocumentId] = React.useState("");
   const [docTags, setDocTags] = React.useState("");
   const [docObservationScopes, setDocObservationScopes] = React.useState<
-    "per_tag" | "combined" | "all_combinations" | "custom"
+    "per_tag" | "combined" | "all_combinations" | "custom" | "shared"
   >("combined");
   const [docObservationScopesCustom, setDocObservationScopesCustom] = React.useState("");
   const [docMetadata, setDocMetadata] = React.useState("");
@@ -268,8 +268,12 @@ function BankSelectorInner() {
 
   const computeScopes = (
     tags: string[],
-    mode: "per_tag" | "combined" | "all_combinations"
+    mode: "per_tag" | "combined" | "all_combinations" | "custom" | "shared"
   ): string[][] => {
+    // "shared" is tag-independent: a single global (untagged) scope, matching the
+    // server's `parsed === "shared" -> [[]]` handling in consolidator.py.
+    if (mode === "shared") return [[]];
+    if (mode === "custom") return [];
     if (tags.length === 0) return [];
     if (mode === "per_tag") return tags.map((t) => [t]);
     if (mode === "combined") return [tags];
@@ -399,7 +403,12 @@ function BankSelectorInner() {
         timestamp?: string;
         document_id?: string;
         tags?: string[];
-        observation_scopes?: "per_tag" | "combined" | "all_combinations" | string[][];
+        observation_scopes?:
+          | "per_tag"
+          | "combined"
+          | "all_combinations"
+          | "shared"
+          | string[][];
         metadata?: Record<string, string>;
         entities?: Array<{ text: string }>;
         strategy?: string;
@@ -414,6 +423,8 @@ function BankSelectorInner() {
         item.observation_scopes = "combined";
       } else if (docObservationScopes === "all_combinations") {
         item.observation_scopes = "all_combinations";
+      } else if (docObservationScopes === "shared") {
+        item.observation_scopes = "shared";
       } else if (docObservationScopes === "custom") {
         const customScopes = docObservationScopesCustom
           .split("\n")
@@ -1194,7 +1205,12 @@ function BankSelectorInner() {
                             value={docObservationScopes}
                             onValueChange={(v) =>
                               setDocObservationScopes(
-                                v as "per_tag" | "combined" | "all_combinations" | "custom"
+                                v as
+                                  | "per_tag"
+                                  | "combined"
+                                  | "all_combinations"
+                                  | "custom"
+                                  | "shared"
                               )
                             }
                           >
@@ -1209,10 +1225,21 @@ function BankSelectorInner() {
                               <SelectItem value="all_combinations">
                                 {tAddDocument("observationScopeAllCombinations")}
                               </SelectItem>
-                              <SelectItem value="custom">Custom</SelectItem>
+                              <SelectItem value="shared">
+                                {tAddDocument("observationScopeShared")}
+                              </SelectItem>
+                              <SelectItem value="custom">
+                                {tAddDocument("observationScopeCustom")}
+                              </SelectItem>
                             </SelectContent>
                           </Select>
+                          {docObservationScopes === "shared" && (
+                            <p className="text-xs text-muted-foreground mt-1.5 italic">
+                              {tAddDocument("observationScopeSharedHelp")}
+                            </p>
+                          )}
                           {docObservationScopes !== "custom" &&
+                            docObservationScopes !== "shared" &&
                             (() => {
                               const tags = docTags
                                 .split(",")

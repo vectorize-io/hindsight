@@ -161,6 +161,16 @@
       "icon": "/img/icons/codex.svg"
     },
     {
+      "id": "continue",
+      "name": "Continue",
+      "description": "Long-term memory for the Continue.dev coding assistant. Recall relevant project memory into chat with @hindsight, plus optional automatic recall/retain via the Hindsight MCP server.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/continue",
+      "icon": "/img/icons/continue.png"
+    },
+    {
       "id": "cursor",
       "name": "Cursor",
       "description": "Biomimetic long-term memory for the Cursor editor via Hindsight. Recalls relevant context at session start and retains conversation transcripts for future sessions.",
@@ -329,6 +339,16 @@
       "category": "framework",
       "link": "/sdks/integrations/n8n",
       "icon": "/img/icons/n8n.png"
+    },
+    {
+      "id": "zapier",
+      "name": "Zapier",
+      "description": "Long-term memory for your Zaps. Retain, Recall, and Reflect actions plus instant memory-event triggers connect Hindsight to 7,000+ apps.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/zapier",
+      "icon": "/img/icons/zapier.png"
     },
     {
       "id": "openai-agents",

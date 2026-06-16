@@ -603,7 +603,10 @@
     "scopeGlobal": "全局（无标签）",
     "groupByScope": "按范围分组",
     "scopeSearch": "搜索范围…",
-    "scopeNoResults": "未找到范围"
+    "scopeNoResults": "未找到范围",
+    "filterActive": "有效",
+    "filterInvalidated": "已失效",
+    "invalidatedHint": "失效的记忆会被归档——不会出现在 recall 和 reflect 中，但会保留以供审计。"
   },
   "documentsView": {
     "loadingDocuments": "正在加载文档...",
@@ -692,7 +695,8 @@
     "importConflictReplace": "替换 — 用导入的覆盖",
     "importConflictNewId": "两者都保留 — 以新 id 导入",
     "textNotStoredWarning": "此服务器不存储原始文本，仅保留提取的记忆。",
-    "labelObservationScopes": "观测范围"
+    "labelObservationScopes": "观测范围",
+    "invalidatedFactsTitle": "已失效的事实"
   },
   "entitiesView": {
     "viewRelations": "关系",
@@ -790,6 +794,7 @@
     "optionsTagsMatchAll": "all — AND 匹配，含无标签",
     "optionsTagsMatchAnyStrict": "any_strict — OR 匹配，不含无标签",
     "optionsTagsMatchAllStrict": "all_strict — AND 匹配，不含无标签",
+    "optionsTagsMatchExact": "exact — 标签集完全相同，不含无标签",
     "optionsTagsMatchDescription": "控制模型标签在刷新期间筛选记忆的方式。",
     "optionsTagGroupsLabel": "标签组（JSON）",
     "optionsTagGroupsDescription": "用于刷新筛选的复合布尔标签表达式。设置后覆盖平铺标签。",
@@ -839,6 +844,7 @@
     "tagsMatchAll": "全部（含未标记）",
     "tagsMatchAnyStrict": "任意（严格）",
     "tagsMatchAllStrict": "全部（严格）",
+    "tagsMatchExact": "完全匹配（集合）",
     "excludeMentalModels": "排除心智模型",
     "excludeIdsLabel": "排除 ID：",
     "excludeIdsPlaceholder": "model-a, model-b",
@@ -915,6 +921,7 @@
     "tagsMatchAll": "全部（含未标记）",
     "tagsMatchAnyStrict": "任意（严格）",
     "tagsMatchAllStrict": "全部（严格）",
+    "tagsMatchExact": "完全匹配（集合）",
     "budgetLow": "低",
     "budgetMid": "中",
     "budgetHigh": "高",
@@ -1299,7 +1306,17 @@
     "curationInvalidateExplain": "这会将该记忆移至已失效归档。它将不再出现在 Recall 或 Reflect 中，但会保留以供审计，并可在以后恢复。",
     "curationReasonPlaceholder": "原因（可选）",
     "curationCancel": "取消",
-    "curationInvalidate": "失效"
+    "curationInvalidate": "失效",
+    "curationActions": "整理",
+    "curationEdit": "编辑",
+    "curationReasonLabel": "原因",
+    "curationRevert": "恢复",
+    "curationSave": "保存",
+    "curationStateInvalidated": "已失效",
+    "editFieldContext": "上下文",
+    "editFieldOccurredEnd": "结束日期",
+    "editFieldOccurredStart": "开始日期",
+    "editFieldType": "类型"
   },
   "documentChunkModal": {
     "documentTitle": "文档详情",
@@ -1506,6 +1523,9 @@
     "strategyHelpText": "为此文档覆盖记忆库的默认提取策略。",
     "observationScopePerTag": "按标签",
     "observationScopeAllCombinations": "所有组合",
+    "observationScopeShared": "共享",
+    "observationScopeSharedHelp": "所有观察都存储在一个共享的无标签范围内（标签会被忽略）。",
+    "observationScopeCustom": "自定义",
     "observationScopesEmpty": "在上方添加标签以预览观察范围",
     "metadataHelpText": "每行一个 <code>key: value</code>",
     "entitiesHelpText": "逗号分隔的提示，与自动提取的实体合并",

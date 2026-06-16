@@ -603,7 +603,10 @@
     "scopeGlobal": "Global (no tags)",
     "groupByScope": "Group by scope",
     "scopeSearch": "Search scopes…",
-    "scopeNoResults": "No scopes found"
+    "scopeNoResults": "No scopes found",
+    "filterActive": "Active",
+    "filterInvalidated": "Invalidated",
+    "invalidatedHint": "Invalidated memories are archived — hidden from recall and reflect, but kept for audit."
   },
   "documentsView": {
     "loadingDocuments": "Loading documents...",
@@ -692,7 +695,8 @@
     "importConflictReplace": "Replace — overwrite with the imported one",
     "importConflictNewId": "Keep both — import under a new id",
     "textNotStoredWarning": "Source text isn't stored on this server — only the extracted memories are kept.",
-    "labelObservationScopes": "Observation scopes"
+    "labelObservationScopes": "Observation scopes",
+    "invalidatedFactsTitle": "Invalidated facts"
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -790,6 +794,7 @@
     "optionsTagsMatchAll": "all — AND matching, includes untagged",
     "optionsTagsMatchAnyStrict": "any_strict — OR matching, excludes untagged",
     "optionsTagsMatchAllStrict": "all_strict — AND matching, excludes untagged",
+    "optionsTagsMatchExact": "exact — set equality, excludes untagged",
     "optionsTagsMatchDescription": "Controls how the model's tags filter memories during refresh.",
     "optionsTagGroupsLabel": "Tag Groups (JSON)",
     "optionsTagGroupsDescription": "Compound boolean tag expressions for refresh filtering. Overrides flat tags when set.",
@@ -839,6 +844,7 @@
     "tagsMatchAll": "All (incl. untagged)",
     "tagsMatchAnyStrict": "Any (strict)",
     "tagsMatchAllStrict": "All (strict)",
+    "tagsMatchExact": "Exact (set match)",
     "excludeMentalModels": "Exclude mental models",
     "excludeIdsLabel": "Exclude IDs:",
     "excludeIdsPlaceholder": "model-a, model-b",
@@ -915,6 +921,7 @@
     "tagsMatchAll": "All (incl. untagged)",
     "tagsMatchAnyStrict": "Any (strict)",
     "tagsMatchAllStrict": "All (strict)",
+    "tagsMatchExact": "Exact (set match)",
     "budgetLow": "Low",
     "budgetMid": "Mid",
     "budgetHigh": "High",
@@ -1299,7 +1306,17 @@
     "curationInvalidateExplain": "This moves the memory to the invalidated archive. It will no longer surface in recall or reflect, but is kept for audit and can be restored later.",
     "curationReasonPlaceholder": "Reason (optional)",
     "curationCancel": "Cancel",
-    "curationInvalidate": "Invalidate"
+    "curationInvalidate": "Invalidate",
+    "curationActions": "Curation",
+    "curationEdit": "Edit",
+    "curationReasonLabel": "Reason",
+    "curationRevert": "Restore",
+    "curationSave": "Save",
+    "curationStateInvalidated": "Invalidated",
+    "editFieldContext": "Context",
+    "editFieldOccurredEnd": "End date",
+    "editFieldOccurredStart": "Start date",
+    "editFieldType": "Type"
   },
   "documentChunkModal": {
     "documentTitle": "Document Details",
@@ -1506,6 +1523,9 @@
     "strategyHelpText": "Override the bank's default extraction strategy for this document.",
     "observationScopePerTag": "Per tag",
     "observationScopeAllCombinations": "All combinations",
+    "observationScopeShared": "Shared",
+    "observationScopeSharedHelp": "All observations are stored in one shared, untagged scope (tags are ignored).",
+    "observationScopeCustom": "Custom",
     "observationScopesEmpty": "Add tags above to preview observation scopes",
     "metadataHelpText": "One <code>key: value</code> per line",
     "entitiesHelpText": "Comma-separated hints merged with auto-extracted entities",

@@ -200,6 +200,7 @@ select = [
     "W",      # pycodestyle warnings
     "F",      # Pyflakes
     "I",      # isort
+    "B021",   # flake8-bugbear: f-string used as docstring (leaves __doc__ None)
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)

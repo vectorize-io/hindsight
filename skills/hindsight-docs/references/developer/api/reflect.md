@@ -7,7 +7,8 @@ When you call **reflect**, Hindsight runs an agentic loop that autonomously sear
 
 {/* Import raw source files */}
 
-:::info How Reflect Works
+> **ℹ️ How Reflect Works**
+> 
 Learn about disposition-driven reasoning in the [Reflect Architecture](../reflect.md) guide.
 > **💡 Prerequisites**
 > 
@@ -173,7 +174,7 @@ rm -f schema.json
 
 ### tags
 
-Filters which memories the agent can access during reflection. Works identically to [recall tags](./recall#tags) — only memories matching the specified tags are considered. The `tags_match` parameter controls the matching logic (`any`, `all`, `any_strict`, `all_strict`) with the same semantics as recall.
+Filters which memories the agent can access during reflection. Works identically to [recall tags](./recall#tags) — only memories matching the specified tags are considered. The `tags_match` parameter controls the matching logic (`any`, `all`, `any_strict`, `all_strict`, `exact`) with the same semantics as recall.
 
 ### Python
 

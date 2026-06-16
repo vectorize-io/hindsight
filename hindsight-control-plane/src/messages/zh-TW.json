@@ -603,7 +603,10 @@
     "scopeGlobal": "全域（無標籤）",
     "groupByScope": "按範圍分組",
     "scopeSearch": "搜尋範圍…",
-    "scopeNoResults": "找不到範圍"
+    "scopeNoResults": "找不到範圍",
+    "filterActive": "有效",
+    "filterInvalidated": "已失效",
+    "invalidatedHint": "失效的記憶會被封存——不會出現在 recall 和 reflect 中，但會保留以供稽核。"
   },
   "documentsView": {
     "loadingDocuments": "正在載入文件…",
@@ -692,7 +695,8 @@
     "importConflictReplace": "取代 — 以匯入的覆寫",
     "importConflictNewId": "兩者都保留 — 以新 id 匯入",
     "textNotStoredWarning": "此伺服器不會儲存原始文字，僅保留擷取的記憶。",
-    "labelObservationScopes": "觀測範圍"
+    "labelObservationScopes": "觀測範圍",
+    "invalidatedFactsTitle": "已失效的事實"
   },
   "entitiesView": {
     "viewRelations": "關係",
@@ -790,6 +794,7 @@
     "optionsTagsMatchAll": "all — AND 符合，包含未加標籤項目",
     "optionsTagsMatchAnyStrict": "any_strict — OR 符合，不包含未加標籤項目",
     "optionsTagsMatchAllStrict": "all_strict — AND 符合，不包含未加標籤項目",
+    "optionsTagsMatchExact": "exact — 標籤集完全相同，不包含未加標籤項目",
     "optionsTagsMatchDescription": "控制模型標籤在重新整理期間篩選記憶的方式。",
     "optionsTagGroupsLabel": "標籤組（JSON）",
     "optionsTagGroupsDescription": "用於重新整理篩選的複合布林標籤表示式。設定後覆寫平鋪標籤。",
@@ -839,6 +844,7 @@
     "tagsMatchAll": "全部（含未標記）",
     "tagsMatchAnyStrict": "任一（嚴格）",
     "tagsMatchAllStrict": "全部（嚴格）",
+    "tagsMatchExact": "完全相符（集合）",
     "excludeMentalModels": "排除心智模型",
     "excludeIdsLabel": "排除 ID：",
     "excludeIdsPlaceholder": "model-a, model-b",
@@ -915,6 +921,7 @@
     "tagsMatchAll": "全部（含未標記）",
     "tagsMatchAnyStrict": "任一（嚴格）",
     "tagsMatchAllStrict": "全部（嚴格）",
+    "tagsMatchExact": "完全相符（集合）",
     "budgetLow": "低",
     "budgetMid": "中",
     "budgetHigh": "高",
@@ -1299,7 +1306,17 @@
     "curationInvalidateExplain": "這會將該記憶移至已失效封存。它將不再出現在 Recall 或 Reflect 中，但會保留以供稽核，並可在日後復原。",
     "curationReasonPlaceholder": "原因（可選）",
     "curationCancel": "取消",
-    "curationInvalidate": "失效"
+    "curationInvalidate": "失效",
+    "curationActions": "整理",
+    "curationEdit": "編輯",
+    "curationReasonLabel": "原因",
+    "curationRevert": "還原",
+    "curationSave": "儲存",
+    "curationStateInvalidated": "已失效",
+    "editFieldContext": "情境",
+    "editFieldOccurredEnd": "結束日期",
+    "editFieldOccurredStart": "開始日期",
+    "editFieldType": "類型"
   },
   "documentChunkModal": {
     "documentTitle": "文件詳情",
@@ -1506,6 +1523,9 @@
     "strategyHelpText": "為此文件覆寫記憶庫的預設擷取策略。",
     "observationScopePerTag": "按標籤",
     "observationScopeAllCombinations": "所有組合",
+    "observationScopeShared": "共享",
+    "observationScopeSharedHelp": "所有觀察都會儲存在一個共享且未加標籤的範圍內（標籤會被忽略）。",
+    "observationScopeCustom": "自訂",
     "observationScopesEmpty": "在上方新增標籤以預覽觀察範圍",
     "metadataHelpText": "每行一個 <code>key: value</code>",
     "entitiesHelpText": "逗號分隔的提示，與自動擷取的實體合併",
