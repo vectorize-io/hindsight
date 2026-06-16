@@ -14,6 +14,9 @@ import type {
   AuditLogStatsData,
   AuditLogStatsErrors,
   AuditLogStatsResponses,
+  BackupBankData,
+  BackupBankErrors,
+  BackupBankResponses,
   CancelOperationData,
   CancelOperationErrors,
   CancelOperationResponses,
@@ -193,6 +196,9 @@ import type {
   ResetBankConfigData,
   ResetBankConfigErrors,
   ResetBankConfigResponses,
+  RestoreBankData,
+  RestoreBankErrors,
+  RestoreBankResponses,
   RetainMemoriesData,
   RetainMemoriesErrors,
   RetainMemoriesResponses,
@@ -1040,6 +1046,37 @@ export const exportBankTemplate = <ThrowOnError extends boolean = false>(
     ExportBankTemplateErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/export", ...options });
+
+/**
+ * Backup bank
+ *
+ * Export a complete bank backup archive. The archive can be restored with POST /restore.
+ */
+export const backupBank = <ThrowOnError extends boolean = false>(
+  options: Options<BackupBankData, ThrowOnError>
+) =>
+  (options.client ?? client).get<BackupBankResponses, BackupBankErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/backup",
+    ...options,
+  });
+
+/**
+ * Restore bank backup
+ *
+ * Replace a bank with a whole-bank backup archive produced by GET /backup.
+ */
+export const restoreBank = <ThrowOnError extends boolean = false>(
+  options: Options<RestoreBankData, ThrowOnError>
+) =>
+  (options.client ?? client).post<RestoreBankResponses, RestoreBankErrors, ThrowOnError>({
+    ...formDataBodySerializer,
+    url: "/v1/default/banks/{bank_id}/restore",
+    ...options,
+    headers: {
+      "Content-Type": null,
+      ...options.headers,
+    },
+  });
 
 /**
  * Export documents

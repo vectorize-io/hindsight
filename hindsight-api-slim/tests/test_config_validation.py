@@ -28,6 +28,7 @@ def setup_test_env():
         "HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY",
         "HINDSIGHT_API_DATABASE_URL",
         "HINDSIGHT_API_MIGRATION_DATABASE_URL",
+        "HINDSIGHT_API_BACKUP_RETENTION_DAYS",
     ]
 
     # Save original values
@@ -580,3 +581,23 @@ def test_bedrock_service_tier_rejects_invalid_value(monkeypatch):
     assert "HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER" in error_message
     assert "standard" in error_message
     assert "'standard' is not a valid Bedrock service tier" in error_message
+
+
+def test_backup_retention_days_loaded_from_env():
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+    os.environ["HINDSIGHT_API_BACKUP_RETENTION_DAYS"] = "5"
+
+    config = HindsightConfig.from_env()
+    assert config.backup_retention_days == 5
+
+
+def test_backup_retention_days_must_be_between_one_and_seven():
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+    os.environ["HINDSIGHT_API_BACKUP_RETENTION_DAYS"] = "8"
+
+    with pytest.raises(ValueError, match="backup_retention_days"):
+        HindsightConfig.from_env()

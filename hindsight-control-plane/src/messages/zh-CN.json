@@ -165,7 +165,19 @@
     "llmRequestsDisabledMessage": "此服务器上的 LLM 请求追踪已禁用。请设置 <envVar></envVar> 以启用。",
     "deleteWillDeleteDetails": "这将删除 {memories, plural, other {# 条记忆}}、{documents, plural, other {# 个文档}} 和 {links, plural, other {# 个链接}}。",
     "deleteWillDeleteObservations": "这将删除 {count, plural, other {# 个观察}}。",
-    "memoryDefense": "记忆防护"
+    "memoryDefense": "记忆防护",
+    "backup": "备份",
+    "backupBank": "备份记忆库",
+    "backingUp": "备份中...",
+    "backupDownloaded": "备份已下载",
+    "failedToBackupBank": "备份记忆库失败",
+    "restoreBank": "恢复记忆库",
+    "restoreBankTitle": "恢复记忆库",
+    "restoreBankPrompt": "确定要从备份归档恢复 <bankName></bankName> 吗？",
+    "restoreBankWarning": "这会用备份归档的内容替换当前记忆库。当前记忆、实体、文档和设置会先被删除。",
+    "restoring": "恢复中...",
+    "bankRestored": "记忆库已恢复",
+    "failedToRestoreBank": "恢复记忆库失败"
   },
   "bankProfile": {
     "noBankSelected": "未选择记忆库",
@@ -1665,5 +1677,19 @@
         "deliveries": "获取 Webhook 投递失败"
       }
     }
+  },
+  "bankBackup": {
+    "title": "每日备份",
+    "description": "为此记忆库安排自动每日备份。默认关闭。",
+    "enableDailyLabel": "启用每日备份",
+    "enableDailyDescription": "每天为此记忆库写入一个备份归档。",
+    "retentionLabel": "保留天数",
+    "retentionDescription": "删除早于此天数的自动备份。1-7。",
+    "saved": "备份设置已保存",
+    "saveFailed": "保存备份设置失败",
+    "loadFailed": "加载备份设置失败",
+    "saving": "保存中...",
+    "save": "保存",
+    "noBankSelected": "未选择记忆库"
   }
 }

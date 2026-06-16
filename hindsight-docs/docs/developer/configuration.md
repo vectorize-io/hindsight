@@ -1631,6 +1631,14 @@ LLM request tracing records every LLM call Hindsight makes — for retain, refle
 | `HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS` | Number of days to retain trace rows. `-1` = keep forever. | `1` |
 | `HINDSIGHT_API_LLM_TRACE_MAX_CHARS` | Truncate stored input/output beyond this many characters (keeps the row, stores a truncated preview). | `50000` |
 
+### Backups
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_BACKUP_DIRECTORY` | Local directory where automatic bank backup archives are written. One subdirectory is created per schema and bank. | `hindsight-backups` |
+| `HINDSIGHT_API_BACKUP_ENABLED` | Default daily-backup setting for banks. The Control Plane Backup tab can override this per bank. Disabled by default. | `false` |
+| `HINDSIGHT_API_BACKUP_RETENTION_DAYS` | Delete automatic bank backups older than this many days. Configurable per bank. Must be between `1` and `7`. | `7` |
+
 ### Programmatic Configuration
 
 You can also configure the API programmatically using `MemoryEngine.from_env()`:

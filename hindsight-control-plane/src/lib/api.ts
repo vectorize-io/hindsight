@@ -717,6 +717,51 @@ export class ControlPlaneClient {
   }
 
   /**
+   * Download a complete bank backup archive.
+   */
+  async backupBank(bankId: string): Promise<Blob> {
+    const response = await fetch(withBasePath(bankApi(bankId, "/backup")));
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        errorMessage = describeErrorDetails(await response.json()) || errorMessage;
+      } catch {
+        // Ignore parse errors for non-JSON responses.
+      }
+      throw new Error(errorMessage);
+    }
+    return response.blob();
+  }
+
+  /**
+   * Restore a bank from a complete bank backup archive.
+   */
+  async restoreBank(bankId: string, zipFile: File): Promise<{
+    bank_id: string;
+    documents_imported: number;
+    facts_imported: number;
+    observations_imported: number;
+    status: string;
+  }> {
+    const formData = new FormData();
+    formData.append("file", zipFile);
+    const response = await fetch(withBasePath(bankApi(bankId, "/restore")), {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        errorMessage = describeErrorDetails(await response.json()) || errorMessage;
+      } catch {
+        // Ignore parse errors for non-JSON responses.
+      }
+      throw new Error(errorMessage);
+    }
+    return response.json();
+  }
+
+  /**
    * Trigger consolidation for a bank
    */
   async triggerConsolidation(bankId: string) {

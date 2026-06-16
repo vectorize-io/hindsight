@@ -566,6 +566,9 @@ ENV_LLM_TRACE_MAX_CHARS = "HINDSIGHT_API_LLM_TRACE_MAX_CHARS"
 
 # Background maintenance settings
 ENV_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS = "HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS"
+ENV_BACKUP_DIRECTORY = "HINDSIGHT_API_BACKUP_DIRECTORY"
+ENV_BACKUP_ENABLED = "HINDSIGHT_API_BACKUP_ENABLED"
+ENV_BACKUP_RETENTION_DAYS = "HINDSIGHT_API_BACKUP_RETENTION_DAYS"
 
 # Disposition settings
 ENV_DISPOSITION_SKEPTICISM = "HINDSIGHT_API_DISPOSITION_SKEPTICISM"
@@ -982,6 +985,10 @@ DEFAULT_LLM_TRACE_MAX_CHARS = 50000  # Truncate stored input/output beyond this 
 # facts (e.g. after a consolidation operation failed terminally and left them unscheduled).
 # 0 disables the reconcile sweep.
 DEFAULT_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS = 300
+DEFAULT_BACKUP_DIRECTORY = "hindsight-backups"
+DEFAULT_BACKUP_ENABLED = False
+DEFAULT_BACKUP_RETENTION_DAYS = 7
+
 
 # Default MCP tool descriptions (can be customized via env vars)
 DEFAULT_MCP_RETAIN_DESCRIPTION = """Store important information to long-term memory.
@@ -1676,6 +1683,11 @@ class HindsightConfig:
     embeddings_zeroentropy_encoding_format: str = DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT
     embeddings_zeroentropy_batch_size: int = DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE
     embeddings_zeroentropy_latency: str | None = DEFAULT_EMBEDDINGS_ZEROENTROPY_LATENCY
+    # Backup configuration. ``backup_enabled`` and ``backup_retention_days`` are
+    # behavioral bank settings; ``backup_directory`` is server-local storage.
+    backup_directory: str = DEFAULT_BACKUP_DIRECTORY
+    backup_enabled: bool = DEFAULT_BACKUP_ENABLED
+    backup_retention_days: int = DEFAULT_BACKUP_RETENTION_DAYS
 
     # Class-level sets for configuration categorization
 
@@ -1774,6 +1786,9 @@ class HindsightConfig:
         "llm_gemini_safety_settings",
         # Memory Defense policy (validated against DefensePolicy schema on write)
         "memory_defense",
+        # Backup settings
+        "backup_enabled",
+        "backup_retention_days",
     }
 
     @property
@@ -1878,6 +1893,9 @@ class HindsightConfig:
                 f"{', '.join(t for t in valid_bedrock_tiers if t is not None)}. "
                 f"Note: 'standard' is not a valid Bedrock service tier -- use unset for default tier."
             )
+
+        if not 1 <= self.backup_retention_days <= 7:
+            raise ValueError(f"Invalid backup_retention_days: {self.backup_retention_days}. Must be between 1 and 7")
 
         # When LLM provider is "none", force chunks-only mode and disable LLM-dependent features
         if self.llm_provider == "none":
@@ -2638,6 +2656,9 @@ class HindsightConfig:
                     str(DEFAULT_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS),
                 )
             ),
+            backup_directory=os.getenv(ENV_BACKUP_DIRECTORY, DEFAULT_BACKUP_DIRECTORY),
+            backup_enabled=os.getenv(ENV_BACKUP_ENABLED, str(DEFAULT_BACKUP_ENABLED)).lower() == "true",
+            backup_retention_days=int(os.getenv(ENV_BACKUP_RETENTION_DAYS, str(DEFAULT_BACKUP_RETENTION_DAYS))),
             # Webhook configuration (static, server-level only)
             webhook_url=os.getenv(ENV_WEBHOOK_URL) or DEFAULT_WEBHOOK_URL,
             webhook_secret=os.getenv(ENV_WEBHOOK_SECRET) or DEFAULT_WEBHOOK_SECRET,

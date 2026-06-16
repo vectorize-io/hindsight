@@ -165,7 +165,19 @@
     "llmRequestsDisabledMessage": "此伺服器上的 LLM 請求追蹤已停用。請設定 <envVar></envVar> 以啟用。",
     "deleteWillDeleteDetails": "將刪除 {memories, plural, other {# 條記憶}}、{documents, plural, other {# 個文件}} 和 {links, plural, other {# 個連結}}。",
     "deleteWillDeleteObservations": "將刪除 {count, plural, other {# 個觀察}}。",
-    "memoryDefense": "記憶防護"
+    "memoryDefense": "記憶防護",
+    "backup": "備份",
+    "backupBank": "備份記憶庫",
+    "backingUp": "備份中...",
+    "backupDownloaded": "已下載備份",
+    "failedToBackupBank": "備份記憶庫失敗",
+    "restoreBank": "還原記憶庫",
+    "restoreBankTitle": "還原記憶庫",
+    "restoreBankPrompt": "你確定要由備份封存還原 <bankName></bankName> 嗎？",
+    "restoreBankWarning": "呢個操作會用備份封存內容取代目前記憶庫。現有記憶、實體、文件同設定會先被刪除。",
+    "restoring": "還原中...",
+    "bankRestored": "已還原記憶庫",
+    "failedToRestoreBank": "還原記憶庫失敗"
   },
   "bankProfile": {
     "noBankSelected": "未選擇記憶庫",
@@ -1665,5 +1677,19 @@
         "deliveries": "未能載入 Webhook 投遞"
       }
     }
+  },
+  "bankBackup": {
+    "title": "每日備份",
+    "description": "為呢個記憶庫設定每日自動備份。預設為停用。",
+    "enableDailyLabel": "啟用每日備份",
+    "enableDailyDescription": "每日為呢個記憶庫寫入一個備份封存。",
+    "retentionLabel": "保留天數",
+    "retentionDescription": "刪除早過呢個天數嘅自動備份。1-7。",
+    "saved": "已儲存備份設定",
+    "saveFailed": "儲存備份設定失敗",
+    "loadFailed": "載入備份設定失敗",
+    "saving": "儲存中...",
+    "save": "儲存",
+    "noBankSelected": "未揀記憶庫"
   }
 }

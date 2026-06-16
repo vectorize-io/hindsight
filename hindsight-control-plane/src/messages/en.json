@@ -165,7 +165,19 @@
     "llmRequestsNotEnabled": "LLM Requests Not Enabled",
     "llmRequestsDisabledMessage": "LLM request tracing is disabled on this server. Set <envVar></envVar> to enable.",
     "deleteWillDeleteDetails": "This will delete {memories, plural, one {# memory} other {# memories}}, {documents, plural, one {# document} other {# documents}}, and {links, plural, one {# link} other {# links}}.",
-    "deleteWillDeleteObservations": "This will delete {count, plural, one {# observation} other {# observations}}."
+    "deleteWillDeleteObservations": "This will delete {count, plural, one {# observation} other {# observations}}.",
+    "backup": "Backup",
+    "backupBank": "Backup Bank",
+    "backingUp": "Backing Up...",
+    "backupDownloaded": "Backup downloaded",
+    "failedToBackupBank": "Failed to backup bank",
+    "restoreBank": "Restore Bank",
+    "restoreBankTitle": "Restore Bank",
+    "restoreBankPrompt": "Are you sure you want to restore <bankName></bankName> from a backup archive?",
+    "restoreBankWarning": "This replaces the current bank with the contents of the backup archive. Current memories, entities, documents, and settings will be deleted first.",
+    "restoring": "Restoring...",
+    "bankRestored": "Bank restored",
+    "failedToRestoreBank": "Failed to restore bank"
   },
   "bankProfile": {
     "noBankSelected": "No Bank Selected",
@@ -1665,5 +1677,19 @@
         "deliveries": "Failed to fetch webhook deliveries"
       }
     }
+  },
+  "bankBackup": {
+    "title": "Daily Backups",
+    "description": "Schedule automatic daily backups for this bank. Disabled by default.",
+    "enableDailyLabel": "Enable Daily Backup",
+    "enableDailyDescription": "Write one bank backup archive per day for this bank.",
+    "retentionLabel": "Retention (Days)",
+    "retentionDescription": "Delete automatic backups older than this many days. 1-7.",
+    "saved": "Backup settings saved",
+    "saveFailed": "Failed to save backup settings",
+    "loadFailed": "Failed to load backup settings",
+    "saving": "Saving...",
+    "save": "Save",
+    "noBankSelected": "No bank selected"
   }
 }

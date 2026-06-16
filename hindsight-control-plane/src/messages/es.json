@@ -165,7 +165,19 @@
     "llmRequestsDisabledMessage": "El rastreo de solicitudes LLM está deshabilitado en este servidor. Establece <envVar></envVar> para habilitarlo.",
     "deleteWillDeleteDetails": "Esto eliminará {memories, plural, one {# memoria} other {# memorias}}, {documents, plural, one {# documento} other {# documentos}} y {links, plural, one {# enlace} other {# enlaces}}.",
     "deleteWillDeleteObservations": "Esto eliminará {count, plural, one {# observación} other {# observaciones}}.",
-    "memoryDefense": "Defensa de memoria"
+    "memoryDefense": "Defensa de memoria",
+    "backup": "Respaldo",
+    "backupBank": "Respaldar banco",
+    "backingUp": "Respaldando...",
+    "backupDownloaded": "Respaldo descargado",
+    "failedToBackupBank": "No se pudo respaldar el banco",
+    "restoreBank": "Restaurar banco",
+    "restoreBankTitle": "Restaurar banco",
+    "restoreBankPrompt": "¿Seguro que quieres restaurar <bankName></bankName> desde un archivo de respaldo?",
+    "restoreBankWarning": "Esto reemplazará el banco actual con el contenido del archivo de respaldo. Las memorias, entidades, documentos y ajustes actuales se eliminarán primero.",
+    "restoring": "Restaurando...",
+    "bankRestored": "Banco restaurado",
+    "failedToRestoreBank": "No se pudo restaurar el banco"
   },
   "bankProfile": {
     "noBankSelected": "Ningún banco seleccionado",
@@ -1665,5 +1677,19 @@
         "deliveries": "No se pudieron obtener las entregas del webhook"
       }
     }
+  },
+  "bankBackup": {
+    "title": "Respaldos diarios",
+    "description": "Programa respaldos automáticos diarios para este banco. Desactivado por defecto.",
+    "enableDailyLabel": "Activar respaldo diario",
+    "enableDailyDescription": "Escribe un archivo de respaldo de este banco una vez al día.",
+    "retentionLabel": "Retención (días)",
+    "retentionDescription": "Elimina los respaldos automáticos más antiguos que esta cantidad de días. 1-7.",
+    "saved": "Ajustes de respaldo guardados",
+    "saveFailed": "No se pudieron guardar los ajustes de respaldo",
+    "loadFailed": "No se pudieron cargar los ajustes de respaldo",
+    "saving": "Guardando...",
+    "save": "Guardar",
+    "noBankSelected": "Ningún banco seleccionado"
   }
 }

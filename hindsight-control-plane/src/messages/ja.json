@@ -165,7 +165,19 @@
     "llmRequestsDisabledMessage": "このサーバーではLLMリクエストのトレースが無効になっています。有効にするには <envVar></envVar> を設定してください。",
     "deleteWillDeleteDetails": "{memories, plural, other {# 件のメモリ}}、{documents, plural, other {# 件のドキュメント}}、および {links, plural, other {# 件のリンク}} が削除されます。",
     "deleteWillDeleteObservations": "{count, plural, other {# 件の観測}} が削除されます。",
-    "memoryDefense": "メモリ防御"
+    "memoryDefense": "メモリ防御",
+    "backup": "バックアップ",
+    "backupBank": "バンクをバックアップ",
+    "backingUp": "バックアップ中...",
+    "backupDownloaded": "バックアップをダウンロードしました",
+    "failedToBackupBank": "バンクのバックアップに失敗しました",
+    "restoreBank": "バンクを復元",
+    "restoreBankTitle": "バンクを復元",
+    "restoreBankPrompt": "バックアップアーカイブから <bankName></bankName> を復元してもよろしいですか？",
+    "restoreBankWarning": "現在のバンクはバックアップアーカイブの内容で置き換えられます。現在のメモリ、エンティティ、ドキュメント、設定は先に削除されます。",
+    "restoring": "復元中...",
+    "bankRestored": "バンクを復元しました",
+    "failedToRestoreBank": "バンクの復元に失敗しました"
   },
   "bankProfile": {
     "noBankSelected": "バンクが選択されていません",
@@ -1665,5 +1677,19 @@
         "deliveries": "Webhook配信の取得に失敗しました"
       }
     }
+  },
+  "bankBackup": {
+    "title": "毎日のバックアップ",
+    "description": "このバンクの自動日次バックアップを設定します。初期状態では無効です。",
+    "enableDailyLabel": "日次バックアップを有効化",
+    "enableDailyDescription": "このバンクのバックアップアーカイブを1日1回作成します。",
+    "retentionLabel": "保持日数",
+    "retentionDescription": "この日数より古い自動バックアップを削除します。1〜7。",
+    "saved": "バックアップ設定を保存しました",
+    "saveFailed": "バックアップ設定の保存に失敗しました",
+    "loadFailed": "バックアップ設定の読み込みに失敗しました",
+    "saving": "保存中...",
+    "save": "保存",
+    "noBankSelected": "バンクが選択されていません"
   }
 }

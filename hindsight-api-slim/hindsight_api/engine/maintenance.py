@@ -24,10 +24,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..config import HindsightConfig, get_config
+from ..config import HindsightConfig, _get_raw_config, get_config
 from ..models import RequestContext
 from .db_utils import acquire_with_retry
 from .schema import _is_oracle
@@ -41,6 +44,8 @@ logger = logging.getLogger(__name__)
 _TICK_SECONDS = 60
 # Retention sweeps are not time-sensitive; hourly matches the previous per-sweep cadence.
 _RETENTION_INTERVAL_SECONDS = 3600
+_BANK_BACKUP_INTERVAL_SECONDS = 24 * 60 * 60
+_SAFE_PATH_SEGMENT_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 class MaintenanceLoop:
@@ -88,10 +93,15 @@ class MaintenanceLoop:
     @staticmethod
     def _any_job_enabled() -> bool:
         cfg = get_config()
+        raw_cfg = _get_raw_config()
         reconcile_on = cfg.consolidation_reconcile_interval_seconds > 0
         audit_on = cfg.audit_log_enabled and cfg.audit_log_retention_days > 0
         llm_on = cfg.llm_trace_enabled and cfg.llm_trace_retention_days > 0
-        return reconcile_on or audit_on or llm_on
+        # Per-bank backup opt-in lives in bank config, so we cannot cheaply know
+        # at startup whether any bank enabled it. When the bank-config API is on,
+        # keep the loop running so the daily sweep can discover opted-in banks.
+        backup_on = raw_cfg.backup_enabled or cfg.enable_bank_config_api
+        return reconcile_on or audit_on or llm_on or backup_on
 
     # ── loop ───────────────────────────────────────────────────────────────
 
@@ -116,6 +126,8 @@ class MaintenanceLoop:
         return True
 
     async def _tick(self) -> None:
+        if self._is_due("bank_backup", _BANK_BACKUP_INTERVAL_SECONDS):
+            await self._run_bank_backups()
         cfg = get_config()
         if self._is_due("retention", _RETENTION_INTERVAL_SECONDS):
             await self._run_retention(cfg)
@@ -153,6 +165,83 @@ class MaintenanceLoop:
                         logger.info(f"Retention sweep {schema}.{table}: {result}")
         except Exception as e:
             logger.warning(f"Retention sweep failed for {table}: {e}")
+
+    # ── scheduled bank backups ──────────────────────────────────────────────
+
+    async def _run_bank_backups(self) -> None:
+        """Write daily whole-bank backup archives for banks that opt in."""
+        engine = self._engine
+        try:
+            tenants = await engine._tenant_extension.list_tenants()
+        except Exception as e:
+            logger.warning(f"Bank backup tenant discovery failed: {e}")
+            return
+
+        default_schema = get_config().database_schema
+        targets = [(default_schema, None)]
+        targets.extend((tenant.schema, tenant.tenant_id) for tenant in tenants if tenant.schema != default_schema)
+
+        from .memory_engine import _current_schema
+
+        for schema, tenant_id in targets:
+            token = _current_schema.set(schema)
+            try:
+                qschema = '"' + schema.replace('"', '""') + '"'
+                async with acquire_with_retry(engine._backend, max_retries=1) as conn:
+                    rows = await conn.fetch(f"SELECT bank_id FROM {qschema}.banks ORDER BY bank_id")
+                for row in rows:
+                    bank_id = row["bank_id"]
+                    context = RequestContext(internal=True, tenant_id=tenant_id)
+                    try:
+                        resolved = await engine._config_resolver.resolve_full_config(bank_id, context)
+                        if not resolved.backup_enabled:
+                            continue
+                        await self._write_bank_backup(schema, bank_id, resolved.backup_retention_days, context)
+                    except Exception as e:
+                        logger.warning(f"Scheduled backup failed for bank {bank_id} in {schema}: {e}")
+            except Exception as e:
+                logger.warning(f"Bank backup discovery failed for schema {schema}: {e}")
+            finally:
+                _current_schema.reset(token)
+
+    async def _write_bank_backup(
+        self,
+        schema: str,
+        bank_id: str,
+        retention_days: int,
+        request_context: RequestContext,
+    ) -> None:
+        backup_dir = self._bank_backup_dir(schema, bank_id)
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        self._prune_bank_backups(backup_dir, retention_days)
+        latest = max(backup_dir.glob("*.zip"), key=lambda path: path.stat().st_mtime, default=None)
+        if latest is not None and (time.time() - latest.stat().st_mtime) < _BANK_BACKUP_INTERVAL_SECONDS:
+            return
+
+        archive = await self._engine.export_bank_async(bank_id, request_context)
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        path = backup_dir / f"{timestamp}-{self._safe_path_segment(bank_id)}.zip"
+        tmp_path = path.with_suffix(".tmp")
+        tmp_path.write_bytes(archive)
+        tmp_path.replace(path)
+        logger.info("Wrote scheduled bank backup: %s", path)
+
+    @staticmethod
+    def _prune_bank_backups(backup_dir: Path, retention_days: int) -> None:
+        cutoff = time.time() - (retention_days * 24 * 60 * 60)
+        for path in backup_dir.glob("*.zip"):
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+
+    @staticmethod
+    def _bank_backup_dir(schema: str, bank_id: str) -> Path:
+        root = Path(get_config().backup_directory)
+        return root / MaintenanceLoop._safe_path_segment(schema) / MaintenanceLoop._safe_path_segment(bank_id)
+
+    @staticmethod
+    def _safe_path_segment(value: str) -> str:
+        segment = _SAFE_PATH_SEGMENT_RE.sub("_", value).strip("._")
+        return segment or "bank"
 
     # ── consolidation reconcile ──────────────────────────────────────────────
 

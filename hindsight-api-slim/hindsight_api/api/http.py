@@ -1721,6 +1721,21 @@ class DocumentImportSubmitResponse(BaseModel):
     status: str = "pending"
 
 
+class BankRestoreResponse(BaseModel):
+    """Response model for restoring a whole-bank backup archive."""
+
+    bank_id: str
+    documents_imported: int = 0
+    facts_imported: int = 0
+    observations_imported: int = 0
+    mental_models_imported: int = 0
+    mental_model_history_imported: int = 0
+    directives_imported: int = 0
+    webhooks_imported: int = 0
+    history_rows_imported: int = 0
+    status: str = "restored"
+
+
 class DeleteResponse(BaseModel):
     """Response model for delete operations."""
 
@@ -2186,6 +2201,10 @@ class BankTemplateConfig(BaseModel):
             "(every tag matched by a glob and every glob matched by a tag). The first "
             "matching rule wins; unmatched scopes fall back to max_observations_per_scope."
         ),
+    )
+    backup_enabled: bool | None = Field(default=None, description="Enable daily automatic backups for this bank")
+    backup_retention_days: int | None = Field(
+        default=None, ge=1, le=7, description="Delete automatic backups older than this many days"
     )
     reflect_source_facts_max_tokens: int | None = Field(
         default=None, description="Max tokens of source facts per reflect call"
@@ -5840,6 +5859,90 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in GET /v1/default/banks/{bank_id}/export: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # =====================================================================
+    # Bank Backup / Restore
+    # =====================================================================
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/backup",
+        summary="Backup bank",
+        description="Export a complete bank backup archive. The archive can be restored with POST /restore.",
+        operation_id="backup_bank",
+        tags=["Bank Backup"],
+        responses={200: {"content": {"application/zip": {}}, "description": "Whole-bank backup archive"}},
+    )
+    async def api_backup_bank(
+        bank_id: str,
+        include_history: bool = Query(default=False, description="Include audit and LLM request history"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Export a whole-bank backup archive."""
+        from fastapi.responses import Response
+
+        try:
+            archive = await app.state.memory.export_bank_async(
+                bank_id,
+                request_context,
+                include_history=include_history,
+            )
+            return Response(
+                content=archive,
+                media_type="application/zip",
+                headers={"Content-Disposition": f'attachment; filename="{bank_id}-bank-backup.zip"'},
+            )
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except ValueError as e:
+            message = str(e)
+            if "not found" in message.lower():
+                raise HTTPException(status_code=404, detail=message)
+            raise HTTPException(status_code=400, detail=message)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/backup: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/restore",
+        response_model=BankRestoreResponse,
+        summary="Restore bank backup",
+        description="Replace a bank with a whole-bank backup archive produced by GET /backup.",
+        operation_id="restore_bank",
+        tags=["Bank Backup"],
+    )
+    @audited("restore_bank", request_param=None)
+    async def api_restore_bank(
+        bank_id: str,
+        file: UploadFile = File(..., description="Whole-bank backup ZIP archive"),
+        include_history: bool = Query(default=False, description="Restore audit and LLM request history if present"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Restore a whole-bank backup archive into the matching bank."""
+        try:
+            archive_bytes = await file.read()
+            try:
+                result = await app.state.memory.restore_bank_async(
+                    bank_id,
+                    archive_bytes,
+                    request_context,
+                    include_history=include_history,
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            return BankRestoreResponse(**result.__dict__)
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            logger.error(f"Error in POST /v1/default/banks/{bank_id}/restore: {traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=str(e))
 
     # =====================================================================

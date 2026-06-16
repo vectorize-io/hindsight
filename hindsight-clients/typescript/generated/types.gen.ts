@@ -340,6 +340,54 @@ export type BankProfileResponse = {
 };
 
 /**
+ * BankRestoreResponse
+ *
+ * Response model for restoring a whole-bank backup archive.
+ */
+export type BankRestoreResponse = {
+  /**
+   * Bank Id
+   */
+  bank_id: string;
+  /**
+   * Documents Imported
+   */
+  documents_imported?: number;
+  /**
+   * Facts Imported
+   */
+  facts_imported?: number;
+  /**
+   * Observations Imported
+   */
+  observations_imported?: number;
+  /**
+   * Mental Models Imported
+   */
+  mental_models_imported?: number;
+  /**
+   * Mental Model History Imported
+   */
+  mental_model_history_imported?: number;
+  /**
+   * Directives Imported
+   */
+  directives_imported?: number;
+  /**
+   * Webhooks Imported
+   */
+  webhooks_imported?: number;
+  /**
+   * History Rows Imported
+   */
+  history_rows_imported?: number;
+  /**
+   * Status
+   */
+  status?: string;
+};
+
+/**
  * BankStatsResponse
  *
  * Response model for bank statistics endpoint.
@@ -576,6 +624,18 @@ export type BankTemplateConfig = {
   observation_scope_limits?: Array<{
     [key: string]: unknown;
   }> | null;
+  /**
+   * Backup Enabled
+   *
+   * Enable daily automatic backups for this bank
+   */
+  backup_enabled?: boolean | null;
+  /**
+   * Backup Retention Days
+   *
+   * Delete automatic backups older than this many days
+   */
+  backup_retention_days?: number | null;
   /**
    * Reflect Source Facts Max Tokens
    *
@@ -842,6 +902,18 @@ export type BodyImportDocuments = {
    * File
    *
    * Transfer ZIP archive
+   */
+  file: Blob | File;
+};
+
+/**
+ * Body_restore_bank
+ */
+export type BodyRestoreBank = {
+  /**
+   * File
+   *
+   * Whole-bank backup ZIP archive
    */
   file: Blob | File;
 };
@@ -6239,6 +6311,90 @@ export type ExportBankTemplateResponses = {
 
 export type ExportBankTemplateResponse =
   ExportBankTemplateResponses[keyof ExportBankTemplateResponses];
+
+export type BackupBankData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Include History
+     *
+     * Include audit and LLM request history
+     */
+    include_history?: boolean;
+  };
+  url: "/v1/default/banks/{bank_id}/backup";
+};
+
+export type BackupBankErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type BackupBankError = BackupBankErrors[keyof BackupBankErrors];
+
+export type BackupBankResponses = {
+  /**
+   * Whole-bank backup archive
+   */
+  200: unknown;
+};
+
+export type RestoreBankData = {
+  body: BodyRestoreBank;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Include History
+     *
+     * Restore audit and LLM request history if present
+     */
+    include_history?: boolean;
+  };
+  url: "/v1/default/banks/{bank_id}/restore";
+};
+
+export type RestoreBankErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type RestoreBankError = RestoreBankErrors[keyof RestoreBankErrors];
+
+export type RestoreBankResponses = {
+  /**
+   * Successful Response
+   */
+  200: BankRestoreResponse;
+};
+
+export type RestoreBankResponse = RestoreBankResponses[keyof RestoreBankResponses];
 
 export type ExportDocumentsData = {
   body?: never;

@@ -109,3 +109,37 @@ async def test_purge_expired_deletes_old_rows_across_schema(memory: MemoryEngine
     async with memory._pool.acquire() as conn:
         remaining = await conn.fetchval("SELECT COUNT(*) FROM audit_log WHERE action = $1", tag)
     assert remaining == 1  # only the recent row survives
+
+
+@pytest.mark.asyncio
+async def test_write_bank_backup_creates_one_archive_per_day(monkeypatch, tmp_path):
+    """Daily backups are written once and re-used until the next day window."""
+    from hindsight_api.config import clear_config_cache
+    from hindsight_api.models import RequestContext
+
+    class _FakeEngine:
+        def __init__(self):
+            self.calls: list[str] = []
+
+        async def export_bank_async(self, bank_id: str, request_context: RequestContext) -> bytes:
+            self.calls.append(bank_id)
+            return b"bank-backup"
+
+    monkeypatch.setenv("HINDSIGHT_API_BACKUP_DIRECTORY", str(tmp_path))
+    clear_config_cache()
+    try:
+        engine = _FakeEngine()
+        loop = MaintenanceLoop(engine)
+        context = RequestContext(internal=True)
+
+        await loop._write_bank_backup("public", "agent::alpha/beta", 7, context)
+        files = sorted(tmp_path.rglob("*.zip"))
+        assert len(files) == 1
+        assert files[0].read_bytes() == b"bank-backup"
+
+        await loop._write_bank_backup("public", "agent::alpha/beta", 7, context)
+        files = sorted(tmp_path.rglob("*.zip"))
+        assert len(files) == 1
+        assert engine.calls == ["agent::alpha/beta"]
+    finally:
+        clear_config_cache()

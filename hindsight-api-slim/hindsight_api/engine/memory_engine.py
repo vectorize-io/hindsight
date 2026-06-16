@@ -3570,6 +3570,66 @@ class MemoryEngine(MemoryEngineInterface):
         await self._get_backend()
         return await export_documents(self._backend, bank_id, document_ids, include_observations=include_observations)
 
+    async def export_bank_async(
+        self,
+        bank_id: str,
+        request_context: "RequestContext",
+        *,
+        include_history: bool = False,
+    ) -> bytes:
+        """Export a complete bank into a portable ZIP archive."""
+        from .transfer import export_bank
+
+        if self._operation_validator:
+            from hindsight_api.extensions import BankReadContext
+
+            ctx = BankReadContext(bank_id=bank_id, operation="backup_bank", request_context=request_context)
+            await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+
+        profile = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+        if profile is None:
+            raise ValueError(f"Bank '{bank_id}' not found")
+
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            return await export_bank(conn, bank_id, include_history=include_history)
+
+    async def restore_bank_async(
+        self,
+        bank_id: str,
+        archive_bytes: bytes,
+        request_context: "RequestContext",
+        *,
+        include_history: bool = False,
+    ) -> "BankImportResult":
+        """Replace ``bank_id`` with a whole-bank backup archive for the same bank."""
+        from hindsight_api.extensions import BankWriteContext
+
+        from .transfer.importer import parse_archive, parse_bank_archive
+
+        parse_archive(archive_bytes)
+        parsed = parse_bank_archive(archive_bytes)
+        if parsed.manifest.source_bank_id != bank_id:
+            raise ValueError(
+                f"Backup is for bank '{parsed.manifest.source_bank_id}', not '{bank_id}'. "
+                "Restore to the matching bank to avoid accidental cross-bank replacement."
+            )
+
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            ctx = BankWriteContext(bank_id=bank_id, operation="restore_bank", request_context=request_context)
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+
+        existing = await self.get_bank_profile(bank_id, request_context=request_context, create_if_missing=False)
+        if existing is not None:
+            await self.delete_bank(bank_id, request_context=request_context)
+        return await self.import_bank_async(
+            archive_bytes,
+            request_context,
+            target_bank_id=bank_id,
+            include_history=include_history,
+        )
+
     async def import_bank_async(
         self,
         archive_bytes: bytes,

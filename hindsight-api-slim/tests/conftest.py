@@ -4,6 +4,7 @@ Pytest configuration and shared fixtures.
 
 import asyncio
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 import filelock
@@ -20,6 +21,39 @@ from hindsight_api.pg0 import EmbeddedPostgres
 # Default pg0 instance configuration for tests
 DEFAULT_PG0_INSTANCE_NAME = "hindsight-test"
 DEFAULT_PG0_PORT = int(os.environ.get("HINDSIGHT_TEST_PG_PORT", "5556"))
+
+
+@dataclass(frozen=True)
+class _TestPg0Target:
+    """Resolved pg0 target for the shared test database fixture."""
+
+    name: str
+    port: int
+
+
+def _resolve_test_pg0_target(db_url: str | None) -> _TestPg0Target:
+    """Resolve a test-owned pg0 target, never the production default instance.
+
+    The repo root ``.env`` can legitimately use ``HINDSIGHT_API_DATABASE_URL=pg0``
+    for local development. In tests, that alias resolves to the live ``hindsight``
+    pg0 instance; the fixture cleanup below truncates every bank table. Rewrite
+    the default/live alias to the dedicated shared test instance instead.
+    """
+    if not db_url:
+        return _TestPg0Target(DEFAULT_PG0_INSTANCE_NAME, DEFAULT_PG0_PORT)
+
+    from hindsight_api.pg0 import parse_pg0_url as _parse_pg0_url
+
+    is_pg0, pg0_name, pg0_port = _parse_pg0_url(db_url)
+    if not is_pg0:
+        raise ValueError("_resolve_test_pg0_target only accepts pg0 database URLs")
+
+    pg0_instance_name = pg0_name or DEFAULT_PG0_INSTANCE_NAME
+    if pg0_instance_name == "hindsight":
+        pg0_instance_name = DEFAULT_PG0_INSTANCE_NAME
+
+    return _TestPg0Target(pg0_instance_name, pg0_port or DEFAULT_PG0_PORT)
+
 
 # Keep the background MaintenanceLoop from auto-starting during tests. In
 # production it sweeps retention and re-schedules consolidation, but its timers
@@ -81,13 +115,9 @@ def pg0_db_url(db_url, tmp_path_factory, worker_id):
         run_migrations(db_url)
         return db_url
 
-    if db_url:
-        _, pg0_name, pg0_port = _parse_pg0_url(db_url)
-        pg0_instance_name = pg0_name or DEFAULT_PG0_INSTANCE_NAME
-        pg0_instance_port = pg0_port or DEFAULT_PG0_PORT
-    else:
-        pg0_instance_name = DEFAULT_PG0_INSTANCE_NAME
-        pg0_instance_port = DEFAULT_PG0_PORT
+    pg0_target = _resolve_test_pg0_target(db_url)
+    pg0_instance_name = pg0_target.name
+    pg0_instance_port = pg0_target.port
 
     # Get shared temp dir for coordination between xdist workers
     if worker_id == "master":

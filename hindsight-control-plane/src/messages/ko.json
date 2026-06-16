@@ -165,7 +165,19 @@
     "llmRequestsDisabledMessage": "이 서버에서는 LLM 요청 추적이 비활성화되어 있습니다. 활성화하려면 <envVar></envVar>를 설정하세요.",
     "deleteWillDeleteDetails": "{memories, plural, other {# 메모리}}, {documents, plural, other {# 문서}}, {links, plural, other {# 링크}}가 삭제됩니다.",
     "deleteWillDeleteObservations": "{count, plural, other {# 관찰}}이 삭제됩니다.",
-    "memoryDefense": "메모리 방어"
+    "memoryDefense": "메모리 방어",
+    "backup": "백업",
+    "backupBank": "뱅크 백업",
+    "backingUp": "백업 중...",
+    "backupDownloaded": "백업을 다운로드했습니다",
+    "failedToBackupBank": "뱅크 백업에 실패했습니다",
+    "restoreBank": "뱅크 복원",
+    "restoreBankTitle": "뱅크 복원",
+    "restoreBankPrompt": "백업 아카이브에서 <bankName></bankName> 을(를) 복원하시겠습니까?",
+    "restoreBankWarning": "현재 뱅크는 백업 아카이브 내용으로 교체됩니다. 현재 메모리, 엔티티, 문서, 설정은 먼저 삭제됩니다.",
+    "restoring": "복원 중...",
+    "bankRestored": "뱅크를 복원했습니다",
+    "failedToRestoreBank": "뱅크를 복원하지 못했습니다"
   },
   "bankProfile": {
     "noBankSelected": "선택된 뱅크 없음",
@@ -1665,5 +1677,19 @@
         "deliveries": "Webhook 전달 내역을 가져오지 못했습니다"
       }
     }
+  },
+  "bankBackup": {
+    "title": "일일 백업",
+    "description": "이 뱅크에 대한 자동 일일 백업을 설정합니다. 기본값은 꺼짐입니다.",
+    "enableDailyLabel": "일일 백업 사용",
+    "enableDailyDescription": "이 뱅크의 백업 아카이브를 하루에 한 번 작성합니다.",
+    "retentionLabel": "보관 기간(일)",
+    "retentionDescription": "이 일수보다 오래된 자동 백업을 삭제합니다. 1-7.",
+    "saved": "백업 설정을 저장했습니다",
+    "saveFailed": "백업 설정 저장에 실패했습니다",
+    "loadFailed": "백업 설정을 불러오지 못했습니다",
+    "saving": "저장 중...",
+    "save": "저장",
+    "noBankSelected": "선택된 뱅크가 없습니다"
   }
 }

@@ -165,7 +165,19 @@
     "llmRequestsDisabledMessage": "O rastreamento de requisições LLM está desabilitado neste servidor. Defina <envVar></envVar> para habilitar.",
     "deleteWillDeleteDetails": "Isso excluirá {memories, plural, one {# memória} other {# memórias}}, {documents, plural, one {# documento} other {# documentos}} e {links, plural, one {# link} other {# links}}.",
     "deleteWillDeleteObservations": "Isso excluirá {count, plural, one {# observação} other {# observações}}.",
-    "memoryDefense": "Defesa da memória"
+    "memoryDefense": "Defesa da memória",
+    "backup": "Backup",
+    "backupBank": "Fazer backup do banco",
+    "backingUp": "Fazendo backup...",
+    "backupDownloaded": "Backup baixado",
+    "failedToBackupBank": "Falha ao fazer backup do banco",
+    "restoreBank": "Restaurar banco",
+    "restoreBankTitle": "Restaurar banco",
+    "restoreBankPrompt": "Tem certeza de que deseja restaurar <bankName></bankName> a partir de um arquivo de backup?",
+    "restoreBankWarning": "Isso substituirá o banco atual pelo conteúdo do arquivo de backup. As memórias, entidades, documentos e configurações atuais serão excluídos primeiro.",
+    "restoring": "Restaurando...",
+    "bankRestored": "Banco restaurado",
+    "failedToRestoreBank": "Falha ao restaurar o banco"
   },
   "bankProfile": {
     "noBankSelected": "Nenhum Banco Selecionado",
@@ -1665,5 +1677,19 @@
         "deliveries": "Falha ao buscar entregas do webhook"
       }
     }
+  },
+  "bankBackup": {
+    "title": "Backups diários",
+    "description": "Agende backups diários automáticos para este banco. Desativado por padrão.",
+    "enableDailyLabel": "Ativar backup diário",
+    "enableDailyDescription": "Grava um arquivo de backup deste banco uma vez por dia.",
+    "retentionLabel": "Retenção (dias)",
+    "retentionDescription": "Exclui backups automáticos mais antigos que esta quantidade de dias. 1-7.",
+    "saved": "Configurações de backup salvas",
+    "saveFailed": "Falha ao salvar as configurações de backup",
+    "loadFailed": "Falha ao carregar as configurações de backup",
+    "saving": "Salvando...",
+    "save": "Salvar",
+    "noBankSelected": "Nenhum banco selecionado"
   }
 }

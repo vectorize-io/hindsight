@@ -165,7 +165,19 @@
     "llmRequestsDisabledMessage": "Das Tracing von LLM-Anfragen ist auf diesem Server deaktiviert. Setzen Sie <envVar></envVar>, um es zu aktivieren.",
     "deleteWillDeleteDetails": "Dadurch werden {memories, plural, one {# Erinnerung} other {# Erinnerungen}}, {documents, plural, one {# Dokument} other {# Dokumente}} und {links, plural, one {# Verknüpfung} other {# Verknüpfungen}} gelöscht.",
     "deleteWillDeleteObservations": "Dadurch werden {count, plural, one {# Beobachtung} other {# Beobachtungen}} gelöscht.",
-    "memoryDefense": "Speicherschutz"
+    "memoryDefense": "Speicherschutz",
+    "backup": "Backup",
+    "backupBank": "Bank sichern",
+    "backingUp": "Sichere...",
+    "backupDownloaded": "Backup heruntergeladen",
+    "failedToBackupBank": "Bank-Backup fehlgeschlagen",
+    "restoreBank": "Bank wiederherstellen",
+    "restoreBankTitle": "Bank wiederherstellen",
+    "restoreBankPrompt": "Möchten Sie <bankName></bankName> wirklich aus einem Backup-Archiv wiederherstellen?",
+    "restoreBankWarning": "Dadurch wird die aktuelle Bank durch den Inhalt des Backup-Archivs ersetzt. Bestehende Erinnerungen, Entitäten, Dokumente und Einstellungen werden vorher gelöscht.",
+    "restoring": "Wird wiederhergestellt...",
+    "bankRestored": "Bank wiederhergestellt",
+    "failedToRestoreBank": "Bank konnte nicht wiederhergestellt werden"
   },
   "bankProfile": {
     "noBankSelected": "Keine Bank ausgewählt",
@@ -1665,5 +1677,19 @@
         "deliveries": "Webhook-Zustellungen konnten nicht abgerufen werden"
       }
     }
+  },
+  "bankBackup": {
+    "title": "Tägliche Backups",
+    "description": "Plane automatische tägliche Backups für diese Bank. Standardmäßig deaktiviert.",
+    "enableDailyLabel": "Tägliches Backup aktivieren",
+    "enableDailyDescription": "Schreibt einmal pro Tag ein Backup-Archiv für diese Bank.",
+    "retentionLabel": "Aufbewahrung (Tage)",
+    "retentionDescription": "Löscht automatische Backups, die älter als diese Anzahl Tage sind. 1-7.",
+    "saved": "Backup-Einstellungen gespeichert",
+    "saveFailed": "Backup-Einstellungen konnten nicht gespeichert werden",
+    "loadFailed": "Backup-Einstellungen konnten nicht geladen werden",
+    "saving": "Speichern...",
+    "save": "Speichern",
+    "noBankSelected": "Keine Bank ausgewählt"
   }
 }

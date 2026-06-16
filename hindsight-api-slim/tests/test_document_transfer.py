@@ -841,6 +841,50 @@ async def test_http_export_import_endpoints(api_client, memory, request_context)
 
 
 @pytest.mark.asyncio
+async def test_http_bank_backup_restore_endpoints(api_client, memory, request_context):
+    """Whole-bank backup downloads a bank archive and restore recreates the bank."""
+    bank = _unique_bank("bank_backup_http")
+    try:
+        await _retain(memory, bank, "Erin lives in Lisbon.", request_context, document_id="doc-bank-backup")
+
+        export = await api_client.get(f"/v1/default/banks/{bank}/backup")
+        assert export.status_code == 200
+        assert export.headers["content-type"] == "application/zip"
+        archive = export.content
+        with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+            manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
+        assert manifest.archive_type == "bank"
+        assert manifest.source_bank_id == bank
+
+        await memory.delete_bank(bank, request_context=request_context)
+        restored = await api_client.post(
+            f"/v1/default/banks/{bank}/restore",
+            files={"file": ("bank.zip", archive, "application/zip")},
+        )
+        assert restored.status_code == 200
+        payload = restored.json()
+        assert payload["bank_id"] == bank
+        assert payload["documents_imported"] == 1
+        assert payload["facts_imported"] >= 1
+
+        docs = await memory.list_documents(bank, request_context=request_context)
+        assert docs["total"] == 1
+
+        docs_only = await memory.export_documents_async(bank, request_context)
+        bad = await api_client.post(
+            f"/v1/default/banks/{bank}/restore",
+            files={"file": ("documents.zip", docs_only, "application/zip")},
+        )
+        assert bad.status_code == 400
+        assert "whole-bank" in bad.json()["detail"]
+
+        missing = await api_client.get("/v1/default/banks/does-not-exist-bank/backup")
+        assert missing.status_code == 404
+    finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_endpoints_disabled_by_config(api_client, monkeypatch):
     """When the feature flags are off, the endpoints return 404 and /version reports disabled."""
     from hindsight_api.config import clear_config_cache

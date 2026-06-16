@@ -165,7 +165,19 @@
     "llmRequestsDisabledMessage": "Le traçage des requêtes LLM est désactivé sur ce serveur. Définissez <envVar></envVar> pour l'activer.",
     "deleteWillDeleteDetails": "Cela supprimera {memories, plural, one {# mémoire} other {# mémoires}}, {documents, plural, one {# document} other {# documents}} et {links, plural, one {# lien} other {# liens}}.",
     "deleteWillDeleteObservations": "Cela supprimera {count, plural, one {# observation} other {# observations}}.",
-    "memoryDefense": "Défense de la mémoire"
+    "memoryDefense": "Défense de la mémoire",
+    "backup": "Sauvegarde",
+    "backupBank": "Sauvegarder la banque",
+    "backingUp": "Sauvegarde...",
+    "backupDownloaded": "Sauvegarde téléchargée",
+    "failedToBackupBank": "Échec de la sauvegarde de la banque",
+    "restoreBank": "Restaurer la banque",
+    "restoreBankTitle": "Restaurer la banque",
+    "restoreBankPrompt": "Voulez-vous vraiment restaurer <bankName></bankName> à partir d'une archive de sauvegarde ?",
+    "restoreBankWarning": "Cela remplacera la banque actuelle par le contenu de l'archive de sauvegarde. Les souvenirs, entités, documents et paramètres actuels seront d'abord supprimés.",
+    "restoring": "Restauration...",
+    "bankRestored": "Banque restaurée",
+    "failedToRestoreBank": "Impossible de restaurer la banque"
   },
   "bankProfile": {
     "noBankSelected": "Aucune banque sélectionnée",
@@ -1665,5 +1677,19 @@
         "deliveries": "Impossible de récupérer les livraisons du webhook"
       }
     }
+  },
+  "bankBackup": {
+    "title": "Sauvegardes quotidiennes",
+    "description": "Planifiez des sauvegardes quotidiennes automatiques pour cette banque. Désactivé par défaut.",
+    "enableDailyLabel": "Activer la sauvegarde quotidienne",
+    "enableDailyDescription": "Écrit une archive de sauvegarde de cette banque une fois par jour.",
+    "retentionLabel": "Rétention (jours)",
+    "retentionDescription": "Supprime les sauvegardes automatiques plus anciennes que ce nombre de jours. 1-7.",
+    "saved": "Paramètres de sauvegarde enregistrés",
+    "saveFailed": "Impossible d'enregistrer les paramètres de sauvegarde",
+    "loadFailed": "Impossible de charger les paramètres de sauvegarde",
+    "saving": "Enregistrement...",
+    "save": "Enregistrer",
+    "noBankSelected": "Aucune banque sélectionnée"
   }
 }

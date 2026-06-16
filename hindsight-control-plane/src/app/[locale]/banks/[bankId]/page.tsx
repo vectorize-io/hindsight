@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { BankSelector } from "@/components/bank-selector";
@@ -20,6 +20,7 @@ import { MentalModelsView } from "@/components/mental-models-view";
 import { WebhooksView } from "@/components/webhooks-view";
 import { AuditLogsView } from "@/components/audit-logs-view";
 import { LLMRequestsView } from "@/components/llm-requests-view";
+import { BankBackupSettingsView } from "@/components/bank-backup-settings-view";
 import { FeatureNotEnabled } from "@/components/feature-not-enabled";
 import { useFeatures } from "@/lib/features-context";
 import { useBank } from "@/lib/bank-context";
@@ -49,10 +50,10 @@ import {
   Trash2,
   Loader2,
   MoreVertical,
-  Pencil,
   RotateCcw,
   Activity,
   FlaskConical,
+  Upload,
 } from "lucide-react";
 import { LlmHealthDialog } from "@/components/llm-health-dialog";
 import { ExtractDialog } from "@/components/extract-dialog";
@@ -63,12 +64,12 @@ type BankConfigTab =
   | "general"
   | "memory-defense"
   | "configuration"
+  | "backup"
   | "webhooks"
   | "audit-logs"
   | "llm-requests";
 
 export default function BankPage() {
-  const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
   const t = useTranslations("bank");
@@ -92,6 +93,10 @@ export default function BankPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [showClearObservationsDialog, setShowClearObservationsDialog] = useState(false);
   const [isClearingObservations, setIsClearingObservations] = useState(false);
+  const [isBackingUp, setIsBackingUp] = useState(false);
+  const [showRestoreDialog, setShowRestoreDialog] = useState(false);
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
   const [isConsolidating, setIsConsolidating] = useState(false);
   const [isRecoveringConsolidation, setIsRecoveringConsolidation] = useState(false);
   const [showResetConfigDialog, setShowResetConfigDialog] = useState(false);
@@ -122,7 +127,7 @@ export default function BankPage() {
       setCurrentBank(null);
       await loadBanks();
       router.push("/");
-    } catch (error) {
+    } catch {
       // Error toast is shown automatically by the API client interceptor
     } finally {
       setIsDeleting(false);
@@ -139,10 +144,49 @@ export default function BankPage() {
       toast.success(t("observationsCleared"), {
         description: result.message || t("observationsClearedDefault"),
       });
-    } catch (error) {
+    } catch {
       // Error toast is shown automatically by the API client interceptor
     } finally {
       setIsClearingObservations(false);
+    }
+  };
+
+  const handleBackupBank = async () => {
+    if (!bankId) return;
+
+    setIsBackingUp(true);
+    try {
+      const blob = await client.backupBank(bankId);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${bankId}-bank-backup.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast.success(t("backupDownloaded"));
+    } catch {
+      toast.error(t("failedToBackupBank"));
+    } finally {
+      setIsBackingUp(false);
+    }
+  };
+
+  const handleRestoreBank = async () => {
+    if (!bankId || !restoreFile) return;
+
+    setIsRestoring(true);
+    try {
+      await client.restoreBank(bankId, restoreFile);
+      setShowRestoreDialog(false);
+      setRestoreFile(null);
+      await loadBanks();
+      toast.success(t("bankRestored"));
+    } catch {
+      toast.error(t("failedToRestoreBank"));
+    } finally {
+      setIsRestoring(false);
     }
   };
 
@@ -165,7 +209,7 @@ export default function BankPage() {
     setIsConsolidating(true);
     try {
       await client.triggerConsolidation(bankId);
-    } catch (error) {
+    } catch {
       // Error toast is shown automatically by the API client interceptor
     } finally {
       setIsConsolidating(false);
@@ -179,7 +223,7 @@ export default function BankPage() {
     try {
       const result = await client.recoverConsolidation(bankId);
       toast.success(t("recoveredMemories", { count: result.retried_count }));
-    } catch (error) {
+    } catch {
       // Error toast is shown automatically by the API client interceptor
     } finally {
       setIsRecoveringConsolidation(false);
@@ -275,6 +319,30 @@ export default function BankPage() {
                         )}
                       </DropdownMenuItem>
                       <DropdownMenuItem
+                        onClick={handleBackupBank}
+                        disabled={isBackingUp}
+                        className="text-amber-600 dark:text-amber-400 focus:text-amber-700 dark:focus:text-amber-300"
+                      >
+                        {isBackingUp ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <Download className="w-4 h-4 mr-2" />
+                        )}
+                        {isBackingUp ? t("backingUp") : t("backupBank")}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => setShowRestoreDialog(true)}
+                        disabled={isRestoring}
+                        className="text-amber-600 dark:text-amber-400 focus:text-amber-700 dark:focus:text-amber-300"
+                      >
+                        {isRestoring ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <Upload className="w-4 h-4 mr-2" />
+                        )}
+                        {isRestoring ? t("restoring") : t("restoreBank")}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
                         onClick={() => setShowClearObservationsDialog(true)}
                         disabled={!observationsEnabled}
                         className="text-amber-600 dark:text-amber-400 focus:text-amber-700 dark:focus:text-amber-300"
@@ -359,6 +427,21 @@ export default function BankPage() {
                         )}
                       </button>
                     )}
+                    {bankConfigEnabled && (
+                      <button
+                        onClick={() => handleBankConfigTabChange("backup")}
+                        className={`px-6 py-3 font-semibold text-sm transition-all relative ${
+                          bankConfigTab === "backup"
+                            ? "text-primary"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {t("backup")}
+                        {bankConfigTab === "backup" && (
+                          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                        )}
+                      </button>
+                    )}
                     <button
                       onClick={() => handleBankConfigTabChange("webhooks")}
                       className={`px-6 py-3 font-semibold text-sm transition-all relative ${
@@ -433,6 +516,11 @@ export default function BankPage() {
                   {bankConfigTab === "configuration" && bankConfigEnabled && (
                     <div className="space-y-6">
                       <BankConfigView />
+                    </div>
+                  )}
+                  {bankConfigTab === "backup" && bankConfigEnabled && (
+                    <div className="space-y-6">
+                      <BankBackupSettingsView />
                     </div>
                   )}
                   {bankConfigTab === "webhooks" && (
@@ -725,6 +813,59 @@ export default function BankPage() {
                 <>
                   <RotateCcw className="w-4 h-4 mr-2" />
                   {t("resetConfiguration")}
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Restore Bank Confirmation Dialog */}
+      <AlertDialog
+        open={showRestoreDialog}
+        onOpenChange={(open) => {
+          setShowRestoreDialog(open);
+          if (!open) setRestoreFile(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("restoreBankTitle")}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm text-muted-foreground">
+                <p>
+                  {t.rich("restoreBankPrompt", {
+                    bankName: () => <span className="font-semibold text-foreground">{bankId}</span>,
+                  })}
+                </p>
+                <p className="text-amber-600 dark:text-amber-400 font-medium">
+                  {t("restoreBankWarning")}
+                </p>
+                <input
+                  type="file"
+                  accept=".zip,application/zip"
+                  onChange={(event) => setRestoreFile(event.target.files?.[0] ?? null)}
+                  className="block w-full text-sm file:mr-4 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-medium"
+                />
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isRestoring}>{tCommon("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleRestoreBank}
+              disabled={isRestoring || !restoreFile}
+              className="bg-amber-500 text-white hover:bg-amber-600"
+            >
+              {isRestoring ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  {t("restoring")}
+                </>
+              ) : (
+                <>
+                  <Upload className="w-4 h-4 mr-2" />
+                  {t("restoreBank")}
                 </>
               )}
             </AlertDialogAction>

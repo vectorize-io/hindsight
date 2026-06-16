@@ -137,9 +137,11 @@ async def test_hierarchical_fields_categorization():
     assert "retain_chunk_batch_size" in configurable
     assert "enable_auto_consolidation" in configurable
     assert "consolidation_llm_parallelism" in configurable
+    assert "backup_enabled" in configurable
+    assert "backup_retention_days" in configurable
 
     # Verify count is correct
-    assert len(configurable) == 40
+    assert len(configurable) == 42
 
     # Verify credential fields (NEVER exposed)
     assert "llm_api_key" in credentials
