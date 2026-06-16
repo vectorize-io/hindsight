@@ -640,6 +640,7 @@ class ConsolidationPerfLog:
         self.start_time = time.time()
         self.lines: list[str] = []
         self.timings: dict[str, float] = {}
+        self.timing_counts: dict[str, int] = {}
         self.llm_calls: int = 0
         self.total_obs_in_context: int = 0
         self.total_prompt_chars: int = 0
@@ -649,11 +650,13 @@ class ConsolidationPerfLog:
         self.lines.append(message)
 
     def record_timing(self, key: str, duration: float) -> None:
-        """Record a timing measurement."""
-        if key in self.timings:
-            self.timings[key] += duration
-        else:
-            self.timings[key] = duration
+        """Record a timing measurement.
+
+        Tracks both total seconds and call count so the summary can
+        distinguish one slow call from many fast calls in aggregate.
+        """
+        self.timings[key] = self.timings.get(key, 0.0) + duration
+        self.timing_counts[key] = self.timing_counts.get(key, 0) + 1
 
     def record_llm_call(self, obs_count: int, prompt_chars: int) -> None:
         """Record stats for a single LLM call."""
@@ -676,6 +679,8 @@ class ConsolidationPerfLog:
         """
         for key, value in other.timings.items():
             self.timings[key] = self.timings.get(key, 0.0) + value
+        for key, count in other.timing_counts.items():
+            self.timing_counts[key] = self.timing_counts.get(key, 0) + count
         self.llm_calls += other.llm_calls
         self.total_obs_in_context += other.total_obs_in_context
         self.total_prompt_chars += other.total_prompt_chars
@@ -1276,16 +1281,22 @@ async def _run_consolidation_job(
         f"{stats['skipped']} skipped)"
     )
 
-    # Add timing breakdown
+    # Add timing breakdown. Each phase is recorded once per call, so the count
+    # disambiguates a single slow call from many fast calls — important for
+    # operators triaging "the recall phase took 15s" log lines, where the
+    # total is the sum of many serial sub-calls rather than one slow query.
+    def _fmt(key: str) -> str:
+        total = perf.timings[key]
+        count = perf.timing_counts.get(key, 0)
+        if count > 1:
+            avg_ms = total * 1000.0 / count
+            return f"{key}={total:.3f}s ({count} calls, avg={avg_ms:.0f}ms)"
+        return f"{key}={total:.3f}s"
+
     timing_parts = []
-    if "recall" in perf.timings:
-        timing_parts.append(f"recall={perf.timings['recall']:.3f}s")
-    if "llm" in perf.timings:
-        timing_parts.append(f"llm={perf.timings['llm']:.3f}s")
-    if "embedding" in perf.timings:
-        timing_parts.append(f"embedding={perf.timings['embedding']:.3f}s")
-    if "db_write" in perf.timings:
-        timing_parts.append(f"db_write={perf.timings['db_write']:.3f}s")
+    for key in ("recall", "llm", "embedding", "db_write"):
+        if key in perf.timings:
+            timing_parts.append(_fmt(key))
 
     if perf.llm_calls > 0:
         timing_parts.append(f"avg_obs={perf.total_obs_in_context / perf.llm_calls:.1f}")
