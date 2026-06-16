@@ -12,6 +12,11 @@ re-dimensioned but the archive was not, so a stale old-dimension embedding in
 the archive tripped a vector-dimension mismatch on the INSERT … SELECT
 round-trip. With no column at all, there is nothing to mismatch.
 
+The creation sites no longer add the column (the PG ``LIKE`` clone in
+c9a1b2d3e4f5 drops it; the Oracle baseline omits it), so on a fresh database
+this migration is a no-op (DROP ... IF EXISTS / Oracle ORA-00904 swallow). It
+does the real work on databases created before the column was removed there.
+
 DROP COLUMN is a metadata-only operation on both PostgreSQL and Oracle 23ai (no
 table rewrite), so it is cheap even across many tenant schemas. The downgrade
 re-adds an unconstrained vector column (any dimension) — empty, since the

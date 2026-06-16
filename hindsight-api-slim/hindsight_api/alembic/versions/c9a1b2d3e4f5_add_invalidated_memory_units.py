@@ -6,8 +6,11 @@ place. If a row is in ``memory_units`` it is live; if it is in
 ``invalidated_memory_units`` it has been retired. Recall/consolidation/graph
 queries never need a state predicate — the rows simply aren't there.
 
-The archive mirrors ``memory_units`` column-for-column (so a row round-trips
-losslessly on revert) plus:
+The archive mirrors ``memory_units`` column-for-column — except ``embedding``,
+which it never keeps: the archive is cold storage, never a recall surface, and
+revert recomputes the embedding from the unit's text/dates/entities. Keeping no
+archive vector also means a later embedding-model switch (which re-dimensions
+``memory_units``) can't trip a dimension mismatch on the move (#2209). Plus:
 - ``invalidation_reason``  optional free text recorded on invalidate
 - ``invalidated_at``       when it was retired
 - ``entity_ids``           snapshot of the unit's entity associations, so revert
@@ -49,13 +52,18 @@ def _pg_upgrade() -> None:
     # Add edited_at to the live table FIRST so the archive's LIKE clone below
     # inherits it (keeps the two tables column-for-column identical for round-trip).
     op.execute(f"ALTER TABLE {schema}memory_units ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ")
-    # LIKE ... INCLUDING DEFAULTS clones every memory_units column (incl. the
-    # embedding vector and edited_at) so an invalidated row can move back verbatim.
-    # We deliberately omit indexes/constraints — the archive is cold storage, not a
-    # recall surface; only the lookups below need indexing.
+    # LIKE ... INCLUDING DEFAULTS clones every memory_units column (incl.
+    # edited_at) so an invalidated row can move back verbatim. We deliberately
+    # omit indexes/constraints — the archive is cold storage, not a recall
+    # surface; only the lookups below need indexing.
     op.execute(
         f"CREATE TABLE IF NOT EXISTS {schema}invalidated_memory_units (LIKE {schema}memory_units INCLUDING DEFAULTS)"
     )
+    # ...then drop the inherited embedding: the archive never stores one (revert
+    # recomputes it), so it isn't created here only to be dropped again later by
+    # d4f6a8c2e1b3. That migration still runs as a no-op (DROP ... IF EXISTS) on
+    # fresh DBs and does the real drop on DBs created before this column was removed.
+    op.execute(f"ALTER TABLE {schema}invalidated_memory_units DROP COLUMN IF EXISTS embedding")
     op.execute(
         f"ALTER TABLE {schema}invalidated_memory_units "
         f"ADD COLUMN IF NOT EXISTS invalidation_reason TEXT, "

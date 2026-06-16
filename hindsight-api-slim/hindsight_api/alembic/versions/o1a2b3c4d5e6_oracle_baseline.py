@@ -142,6 +142,9 @@ _TABLES: tuple[str, ...] = (
     # Cold archive for curation: invalidated facts are MOVED here out of
     # memory_units so the recall hot-path never sees them. Mirrors memory_units
     # plus invalidation bookkeeping and an entity-id snapshot for lossless revert.
+    # No `embedding` column: the archive is cold storage and revert recomputes the
+    # embedding, so there is no archive vector to fall out of sync with the live
+    # model's dimension on a model switch (#2209).
     """
     CREATE TABLE IF NOT EXISTS invalidated_memory_units (
         id                RAW(16)        NOT NULL,
@@ -149,7 +152,6 @@ _TABLES: tuple[str, ...] = (
         document_id       VARCHAR2(512),
         chunk_id          VARCHAR2(512),
         text              CLOB           NOT NULL,
-        embedding         VECTOR(384, FLOAT32),
         context           CLOB,
         event_date        TIMESTAMP WITH TIME ZONE NOT NULL,
         occurred_start    TIMESTAMP WITH TIME ZONE,
