@@ -7,7 +7,8 @@ When you **recall**, Hindsight runs four retrieval strategies in parallel — se
 
 {/* Import raw source files */}
 
-:::info How Recall Works
+> **ℹ️ How Recall Works**
+> 
 Learn about the four retrieval strategies (semantic, keyword, graph, temporal) and RRF fusion in the [Recall Architecture](../retrieval.md) guide.
 > **💡 Prerequisites**
 > 
@@ -244,7 +245,8 @@ An optional object controlling supplementary data returned alongside the main fa
 
 When enabled, the response includes the raw source text chunks from which each fact was extracted. Chunks are fetched before the `max_tokens` filter, so setting `max_tokens=0` returns no facts but can still return chunks. The `max_tokens` sub-option (default `8192`) controls the total chunk token budget independently of the main fact budget. This is useful when agents need surrounding context beyond the extracted fact text.
 
-:::note
+> **📝 Note**
+> 
 When `include_chunks` is enabled, chunks are fetched based on the top-scored reranked results before token filtering. The last chunk is truncated (not dropped) to fit exactly within the budget, and each chunk carries a `truncated` flag indicating whether it was cut.
 #### source_facts
 

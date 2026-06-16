@@ -18,7 +18,8 @@ Webhooks are registered per memory bank and fire automatically when matching eve
 
 A delivery is considered failed if your endpoint returns a non-2xx status code or does not respond within the configured timeout (default 30 seconds). After 6 failed attempts, the delivery is marked as permanently failed and no further retries are made.
 
-:::info At-least-once delivery
+> **ℹ️ At-least-once delivery**
+> 
 Webhook delivery tasks are queued in the same database transaction as the primary operation (e.g. the retain or consolidation write). This means if the server crashes after committing but before sending, the delivery task survives and will be retried. As a result, **your endpoint may receive the same event more than once** — use the `operation_id` field to deduplicate if needed.
 ## Event Types
 

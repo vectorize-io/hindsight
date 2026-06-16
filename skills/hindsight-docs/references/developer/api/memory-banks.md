@@ -290,7 +290,8 @@ How much to weight emotional context when reasoning during `reflect`. Scale 1–
 | `3` *(default)* | Balanced |
 | `5` | Empathetic — considers emotional context |
 
-:::info
+> **ℹ️ Info**
+> 
 Disposition traits and `reflect_mission` only affect the `reflect` operation. `retain_mission` and `observations_mission` are separate per-operation settings.
 ### mcp_enabled_tools
 
@@ -508,7 +509,8 @@ You can also update configuration directly from the Control Plane UI — navigat
 
 Directives are hard rules that the agent must follow during [reflect](./reflect) operations. Unlike disposition traits which influence *how* the agent reasons, directives are explicit instructions that are *always* enforced.
 
-:::info
+> **ℹ️ Info**
+> 
 Directives only affect the `reflect` operation. They are injected into prompts and the agent is required to comply with them in all responses.
 ### When to Use Directives
 

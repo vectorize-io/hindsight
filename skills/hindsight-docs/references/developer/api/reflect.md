@@ -7,7 +7,8 @@ When you call **reflect**, Hindsight runs an agentic loop that autonomously sear
 
 {/* Import raw source files */}
 
-:::info How Reflect Works
+> **ℹ️ How Reflect Works**
+> 
 Learn about disposition-driven reasoning in the [Reflect Architecture](../reflect.md) guide.
 > **💡 Prerequisites**
 > 
