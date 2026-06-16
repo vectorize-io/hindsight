@@ -3333,6 +3333,7 @@ def _register_routes(app: FastAPI):
 
         async def _precheck_dep(
             bank_id: str,
+            request: Request,
             request_context: RequestContext = Depends(get_request_context),
         ) -> None:
             validator = getattr(app.state.memory, "_operation_validator", None)
@@ -3341,10 +3342,20 @@ def _register_routes(app: FastAPI):
             from hindsight_api.extensions import PrecheckContext
 
             await app.state.memory._authenticate_tenant(request_context)
+            cl_header = request.headers.get("content-length")
+            content_length: int | None = None
+            if cl_header is not None:
+                try:
+                    parsed = int(cl_header)
+                except ValueError:
+                    parsed = -1
+                if parsed >= 0:
+                    content_length = parsed
             ctx = PrecheckContext(
                 operation=operation,
                 bank_id=bank_id,
                 request_context=request_context,
+                content_length=content_length,
             )
             result = await validator.precheck(ctx)
             if not result.allowed:
