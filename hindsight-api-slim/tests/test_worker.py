@@ -70,6 +70,19 @@ async def clean_operations(pool):
     )
 
 
+def test_metric_operation_label_normalises_retain_variants():
+    """Worker completion metrics collapse retain variants onto operation="retain"
+    so they share the API path's series; other types pass through unchanged."""
+    from hindsight_api.worker.poller import _metric_operation_label
+
+    assert _metric_operation_label("retain") == "retain"
+    assert _metric_operation_label("batch_retain") == "retain"
+    assert _metric_operation_label("file_convert_retain") == "retain"
+    assert _metric_operation_label("consolidation") == "consolidation"
+    assert _metric_operation_label("reflect") == "reflect"
+    assert _metric_operation_label(None) == "unknown"
+
+
 def test_all_operation_types_have_slot_reservation_config():
     """Every operation_type used in memory_engine must be listed in
     WORKER_SLOT_RESERVATION_TYPES so it can be reserved via env var.

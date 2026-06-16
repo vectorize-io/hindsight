@@ -20,8 +20,21 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..engine.schema import fq_table_explicit as fq_table
+from ..metrics import get_metrics_collector
 from .exceptions import DeferOperation, RetryTaskAt
 from .stage import StageHolder, bind_holder
+
+# Map DB operation_type -> metric `operation` label, collapsing the retain
+# variants onto "retain" so async worker completions land on the same
+# operation="retain" series the synchronous API path emits. Unknown types
+# pass through unchanged.
+_RETAIN_OP_TYPES = {"retain", "batch_retain", "file_convert_retain"}
+
+
+def _metric_operation_label(operation_type: str | None) -> str:
+    if operation_type in _RETAIN_OP_TYPES:
+        return "retain"
+    return operation_type or "unknown"
 
 if TYPE_CHECKING:
     from hindsight_api.engine.db.base import DatabaseBackend, DatabaseConnection
@@ -701,6 +714,15 @@ class WorkerPoller:
         """
         task_type = task.task_dict.get("type", "unknown")
         bank_id = task.task_dict.get("bank_id", "unknown")
+        # Emit operation metrics (source="worker") on terminal outcomes so async
+        # retain/reflect/consolidation throughput, latency and success/failure are
+        # visible in Prometheus. Prefer the DB-authoritative operation_type.
+        # ponytail: success here reflects whether _executor raised; executors that
+        # mark themselves failed and return normally still count as success — fix by
+        # threading the executor's own status back if that granularity is needed.
+        op_label = _metric_operation_label(task.task_dict.get("operation_type") or task_type)
+        op_start = time.time()
+        metrics = get_metrics_collector()
 
         # Bind the stage holder in this task's own contextvar scope so engine
         # code running under us can update it via stage.set_stage(). If holder
@@ -717,14 +739,22 @@ class WorkerPoller:
                 task.task_dict["_schema"] = task.schema
             await self._executor(task.task_dict)
             logger.debug(f"Task {task.operation_id} execution finished")
+            metrics.record_operation_result(
+                op_label, bank_id, success=True, duration=time.time() - op_start, source="worker"
+            )
         except DeferOperation as e:
+            # Deferral is not a terminal outcome — do not record a completion.
             await self._defer_operation(task.operation_id, e.exec_date, e.reason, task.schema)
         except RetryTaskAt as e:
+            # Retry is not a terminal outcome — do not record a completion.
             await self._schedule_retry(task.operation_id, e.retry_at, str(e), task.schema)
         except Exception as e:
             logger.error(f"Task {task.operation_id} failed: {e}")
             traceback.print_exc()
             await self._mark_failed(task.operation_id, str(e), task.schema)
+            metrics.record_operation_result(
+                op_label, bank_id, success=False, duration=time.time() - op_start, source="worker"
+            )
 
     async def recover_own_tasks(self) -> int:
         """
