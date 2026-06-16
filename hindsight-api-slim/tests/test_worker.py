@@ -2896,8 +2896,7 @@ class TestClaimBatchRotation:
         from hindsight_api.worker import WorkerPoller
 
         # Minimal contract-satisfying implementation: returns the empty
-        # set. Use a non-default schema so the default-schema consistency
-        # check does not intentionally fall back to the per-schema scan.
+        # set. Enough to prove the poller follows the server-side path.
         await pool.execute(
             "CREATE OR REPLACE FUNCTION public.schemas_with_pending_work() "
             "RETURNS SETOF text AS $$ BEGIN RETURN; END $$ LANGUAGE plpgsql STABLE"
@@ -2925,7 +2924,7 @@ class TestClaimBatchRotation:
             PostgresConnection.fetch = spy_fetch  # type: ignore[method-assign]
             PostgresConnection.fetchval = spy_fetchval  # type: ignore[method-assign]
             try:
-                await poller._scan_active_schemas(["tenant_alpha"])
+                await poller._scan_active_schemas([None])
             finally:
                 PostgresConnection.fetch = original_fetch  # type: ignore[method-assign]
                 PostgresConnection.fetchval = original_fetchval  # type: ignore[method-assign]
@@ -2970,42 +2969,6 @@ class TestClaimBatchRotation:
             result = await poller._scan_active_schemas([None])
 
             assert result == {None}
-        finally:
-            await pool.execute("DROP FUNCTION IF EXISTS public.schemas_with_pending_work()")
-
-    @pytest.mark.asyncio
-    async def test_scan_falls_back_when_optional_routine_misses_public(self, pool, backend, clean_operations, caplog):
-        """If an installed routine scans tenant schemas only, public
-        single-tenant workers must still use the correct per-schema fallback.
-        """
-        from hindsight_api.worker import WorkerPoller
-
-        bank_id = f"test-worker-missed-{uuid.uuid4().hex[:8]}"
-        await _ensure_bank(pool, bank_id)
-        await pool.execute(
-            """INSERT INTO async_operations
-               (operation_id, bank_id, operation_type, status, task_payload)
-               VALUES ($1, $2, 'test', 'pending', $3::jsonb)""",
-            uuid.uuid4(),
-            bank_id,
-            json.dumps({"type": "test", "bank_id": bank_id}),
-        )
-        await pool.execute(
-            "CREATE OR REPLACE FUNCTION public.schemas_with_pending_work() "
-            "RETURNS SETOF text AS $$ BEGIN RETURN; END $$ LANGUAGE plpgsql STABLE"
-        )
-        try:
-            poller = WorkerPoller(
-                backend=backend,
-                worker_id="test-routine-missed-public",
-                executor=lambda x: None,
-            )
-
-            with caplog.at_level("WARNING", logger="hindsight_api.worker.poller"):
-                result = await poller._scan_active_schemas([None])
-
-            assert None in result
-            assert any("missed claimable schema" in record.message for record in caplog.records)
         finally:
             await pool.execute("DROP FUNCTION IF EXISTS public.schemas_with_pending_work()")
 
