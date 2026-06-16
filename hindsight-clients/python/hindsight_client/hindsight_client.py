@@ -383,7 +383,7 @@ class Hindsight:
         include_source_facts: bool = False,
         max_source_facts_tokens: int = 4096,
         tags: list[str] | None = None,
-        tags_match: Literal["any", "all", "any_strict", "all_strict"] = "any",
+        tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         tag_groups: list[dict[str, Any]] | None = None,
     ) -> RecallResponse:
         """
@@ -406,7 +406,8 @@ class Hindsight:
             max_source_facts_tokens: Maximum tokens for source facts (default: 4096)
             tags: Optional list of tags to filter memories by
             tags_match: How to match tags - "any" (OR, includes untagged), "all" (AND, includes untagged),
-                "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged). Default: "any"
+                "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged),
+                "exact" (set equality, excludes untagged). Default: "any"
             tag_groups: Optional list of tag group filters for advanced boolean tag matching.
 
         Returns:
@@ -442,7 +443,7 @@ class Hindsight:
         max_tokens: int | None = None,
         response_schema: dict[str, Any] | None = None,
         tags: list[str] | None = None,
-        tags_match: Literal["any", "all", "any_strict", "all_strict"] = "any",
+        tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         include_facts: bool = False,
         include_tool_calls: bool = False,
         include_tool_call_output: bool = True,
@@ -465,7 +466,8 @@ class Hindsight:
                 response parsed according to this schema.
             tags: Optional list of tags to filter memories by
             tags_match: How to match tags - "any" (OR, includes untagged), "all" (AND, includes untagged),
-                "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged). Default: "any"
+                "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged),
+                "exact" (set equality, excludes untagged). Default: "any"
             include_facts: If True, the response will include a 'based_on' field listing
                 the memories, mental models, and directives used to construct the answer.
             include_tool_calls: If True, the response will include a 'trace' field with the
@@ -855,7 +857,7 @@ class Hindsight:
         include_source_facts: bool = False,
         max_source_facts_tokens: int = 4096,
         tags: list[str] | None = None,
-        tags_match: Literal["any", "all", "any_strict", "all_strict"] = "any",
+        tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         tag_groups: list[dict[str, Any]] | None = None,
     ) -> RecallResponse:
         """
@@ -878,7 +880,8 @@ class Hindsight:
             max_source_facts_tokens: Maximum tokens for source facts (default: 4096)
             tags: Optional list of tags to filter memories by
             tags_match: How to match tags - "any" (OR, includes untagged), "all" (AND, includes untagged),
-                "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged). Default: "any"
+                "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged),
+                "exact" (set equality, excludes untagged). Default: "any"
             tag_groups: Optional list of tag group filters for advanced boolean tag matching.
                 Each element is a dict representing a tag group node (TagGroupLeaf, TagGroupAnd,
                 TagGroupOr, or TagGroupNot). Example::
@@ -935,7 +938,7 @@ class Hindsight:
         max_tokens: int | None = None,
         response_schema: dict[str, Any] | None = None,
         tags: list[str] | None = None,
-        tags_match: Literal["any", "all", "any_strict", "all_strict"] = "any",
+        tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         include_facts: bool = False,
         include_tool_calls: bool = False,
         include_tool_call_output: bool = True,
@@ -958,7 +961,8 @@ class Hindsight:
                 response parsed according to this schema.
             tags: Optional list of tags to filter memories by
             tags_match: How to match tags - "any" (OR, includes untagged), "all" (AND, includes untagged),
-                "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged). Default: "any"
+                "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged),
+                "exact" (set equality, excludes untagged). Default: "any"
             include_facts: If True, the response will include a 'based_on' field listing
                 the memories, mental models, and directives used to construct the answer.
             include_tool_calls: If True, the response will include a 'trace' field with the

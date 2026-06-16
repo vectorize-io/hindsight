@@ -168,7 +168,7 @@ export interface OperationProgress {
   detail?: Record<string, number> | null;
 }
 
-export type TagsMatch = "any" | "all" | "any_strict" | "all_strict";
+export type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
 
 export type TagGroup =
   | { tags: string[]; match?: TagsMatch }
@@ -354,7 +354,7 @@ export class ControlPlaneClient {
     };
     query_timestamp?: string;
     tags?: string[];
-    tags_match?: "any" | "all" | "any_strict" | "all_strict";
+    tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
   }) {
     return this.fetchApi("/api/recall", {
       method: "POST",
@@ -373,7 +373,7 @@ export class ControlPlaneClient {
     include_facts?: boolean;
     include_tool_calls?: boolean;
     tags?: string[];
-    tags_match?: "any" | "all" | "any_strict" | "all_strict";
+    tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
     fact_types?: Array<"world" | "experience" | "observation">;
     exclude_mental_models?: boolean;
     exclude_mental_model_ids?: string[];
