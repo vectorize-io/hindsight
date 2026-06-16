@@ -603,7 +603,8 @@
     "scopeGlobal": "Global (sem tags)",
     "groupByScope": "Agrupar por escopo",
     "scopeSearch": "Pesquisar escopos…",
-    "scopeNoResults": "Nenhum escopo encontrado"
+    "scopeNoResults": "Nenhum escopo encontrado",
+    "filterActive": "Filtro ativo"
   },
   "documentsView": {
     "loadingDocuments": "Carregando documentos...",

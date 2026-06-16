@@ -603,7 +603,8 @@
     "scopeGlobal": "Global (sans tags)",
     "groupByScope": "Grouper par portée",
     "scopeSearch": "Rechercher des portées…",
-    "scopeNoResults": "Aucune portée trouvée"
+    "scopeNoResults": "Aucune portée trouvée",
+    "filterActive": "Filtre actif"
   },
   "documentsView": {
     "loadingDocuments": "Chargement des documents...",

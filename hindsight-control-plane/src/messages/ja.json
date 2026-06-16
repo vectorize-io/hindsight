@@ -603,7 +603,8 @@
     "scopeGlobal": "グローバル（タグなし）",
     "groupByScope": "スコープでグループ化",
     "scopeSearch": "スコープを検索…",
-    "scopeNoResults": "スコープが見つかりません"
+    "scopeNoResults": "スコープが見つかりません",
+    "filterActive": "フィルター有効"
   },
   "documentsView": {
     "loadingDocuments": "ドキュメントを読み込み中...",

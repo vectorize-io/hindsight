@@ -603,7 +603,8 @@
     "scopeGlobal": "Global (no tags)",
     "groupByScope": "Group by scope",
     "scopeSearch": "Search scopes…",
-    "scopeNoResults": "No scopes found"
+    "scopeNoResults": "No scopes found",
+    "filterActive": "Filter Active"
   },
   "documentsView": {
     "loadingDocuments": "Loading documents...",

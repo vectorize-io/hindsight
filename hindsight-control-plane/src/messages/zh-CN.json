@@ -603,7 +603,8 @@
     "scopeGlobal": "全局（无标签）",
     "groupByScope": "按范围分组",
     "scopeSearch": "搜索范围…",
-    "scopeNoResults": "未找到范围"
+    "scopeNoResults": "未找到范围",
+    "filterActive": "筛选器已启用"
   },
   "documentsView": {
     "loadingDocuments": "正在加载文档...",

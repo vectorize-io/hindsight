@@ -603,7 +603,8 @@
     "scopeGlobal": "Global (keine Tags)",
     "groupByScope": "Nach Bereich gruppieren",
     "scopeSearch": "Bereiche suchen…",
-    "scopeNoResults": "Keine Bereiche gefunden"
+    "scopeNoResults": "Keine Bereiche gefunden",
+    "filterActive": "Filter aktiv"
   },
   "documentsView": {
     "loadingDocuments": "Dokumente werden geladen...",

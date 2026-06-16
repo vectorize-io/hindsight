@@ -603,7 +603,8 @@
     "scopeGlobal": "전역(태그 없음)",
     "groupByScope": "범위별 그룹화",
     "scopeSearch": "범위 검색…",
-    "scopeNoResults": "범위를 찾을 수 없음"
+    "scopeNoResults": "범위를 찾을 수 없음",
+    "filterActive": "필터 활성"
   },
   "documentsView": {
     "loadingDocuments": "문서 불러오는 중...",
