@@ -1,30 +1,28 @@
 [Unit]
-Description=Hindsight Control Plane Web UI
+Description=Hindsight Worker (async task processor)
 After=network.target hindsight-api.service
-Requires=hindsight-api.service
 Wants=hindsight-api.service
 
 [Service]
 Type=simple
 User=hindsight
 Group=hindsight
-WorkingDirectory=/opt/hindsight/control-plane/standalone
+WorkingDirectory=/var/lib/hindsight
 Environment="HOME=/var/lib/hindsight"
-Environment="PORT=9966"
-ExecStart=/usr/bin/node /opt/hindsight/control-plane/standalone/server.js
+Environment="PATH=/opt/hindsight/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/opt/hindsight/venv/bin/hindsight-worker
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=hindsight-cp
+SyslogIdentifier=hindsight-worker
 TimeoutStopSec=30s
 
-# Security hardening
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/var/lib/hindsight /opt/hindsight/control-plane
+ReadWritePaths=/var/lib/hindsight
 
 [Install]
 WantedBy=multi-user.target

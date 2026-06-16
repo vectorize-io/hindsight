@@ -4,8 +4,8 @@ This directory contains systemd service units for Hindsight.
 
 ## Services
 
-- `hindsight-api.service` — FastAPI API server (port 8888)
-- `hindsight-control-plane.service` — Next.js web UI (port 9999)
+- `hindsight-api.service` — FastAPI API server (port 6699)
+- `hindsight-control-plane.service` — Next.js web UI (port 9966)
 
 ## Installation
 
@@ -36,7 +36,7 @@ sudo systemctl status hindsight-api
 sudo systemctl status hindsight-control-plane
 
 # Verify API is responding
-curl http://localhost:8888/health
+curl http://localhost:6699/health
 
 # View logs
 sudo journalctl -u hindsight-api --no-pager -f
@@ -47,9 +47,8 @@ sudo journalctl -u hindsight-control-plane --no-pager -f
 
 | Service | Port | URL |
 |---------|------|-----|
-| API | 8888 | http://localhost:8888 |
-| Control Plane | 9999 | http://localhost:9999 |
-
+| API | 6699 | http://localhost:6699 |
+| Control Plane | 9966 | http://localhost:9966 |
 ## Notes
 
 - The API service starts before the control plane (via `Wants=`/`After=`).

@@ -1,14 +1,26 @@
 [Unit]
 Description=Hindsight API Server
-After=network.target
+After=network.target postgresql.service
 
 [Service]
 Type=simple
+TimeoutStartSec=180s
 User=hindsight
 Group=hindsight
 WorkingDirectory=/var/lib/hindsight
 Environment="PATH=/opt/hindsight/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin"
 Environment="HOME=/var/lib/hindsight"
+# LLM — set BASE_URL for local Ollama
+Environment="HINDSIGHT_API_LLM_PROVIDER=ollama"
+Environment="HINDSIGHT_API_LLM_API_KEY="
+Environment="HINDSIGHT_API_LLM_MODEL=llama3.2:latest"
+Environment="HINDSIGHT_API_LLM_BASE_URL=http://127.0.0.1:11434/v1"
+Environment="HINDSIGHT_API_SKIP_LLM_VERIFICATION=true"
+# Server
+Environment="HINDSIGHT_API_PORT=6699"
+# Embeddings — local CPU (XPU torch caused iGPU init spin; CPU works)
+Environment="HINDSIGHT_API_EMBEDDINGS_PROVIDER=local"
+Environment="HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL=all-MiniLM-L6-v2"
 ExecStart=/opt/hindsight/venv/bin/hindsight-api
 Restart=on-failure
 RestartSec=5s
@@ -16,16 +28,19 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=hindsight-api
 
-# Graceful shutdown: give process 30s to finish
-TimeoutStopSec=30s
+# Graceful shutdown
+TimeoutStopSec=300s
 
 # Security hardening
+# NOTE: PrivateTmp=false + ProtectSystem=full is the working combo.
+# PrivateTmp=false shares the host's /tmp which is in the ProtectSystem=full whitelist.
+# PrivateTmp=true with NoNewPrivileges makes the tmpfs read-only for the service user.
+# ProtectSystem=strict denies access to /tmp entirely even with PrivateTmp=false.
 NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
+PrivateTmp=false
+ProtectSystem=full
 ProtectHome=read-only
 ReadWritePaths=/var/lib/hindsight
-EnvironmentFile=/etc/hindsight/env
 
 [Install]
 WantedBy=multi-user.target
