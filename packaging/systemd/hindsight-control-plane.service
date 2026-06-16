@@ -1,3 +1,11 @@
+# hindsight-control-plane.service — Hindsight Control Plane Web UI
+#
+# NOTE: HINDSIGHT_CP_DATAPLANE_API_URL is set inline below (not via EnvironmentFile).
+# The CP proxies /api/* requests to the API at this URL. Without it, all CP→API
+# proxied requests return 502 Bad Gateway.
+#
+# If you add an EnvironmentFile line later, ensure it sets HINDSIGHT_CP_DATAPLANE_API_URL.
+#
 [Unit]
 Description=Hindsight Control Plane Web UI
 After=network.target hindsight-api.service
@@ -11,6 +19,8 @@ Group=hindsight
 WorkingDirectory=/opt/hindsight/control-plane/standalone
 Environment="HOME=/var/lib/hindsight"
 Environment="PORT=9966"
+# CP→API dataplane proxy — must match the API's HINDSIGHT_API_PORT
+Environment="HINDSIGHT_CP_DATAPLANE_API_URL=http://127.0.0.1:6699"
 ExecStart=/usr/bin/node /opt/hindsight/control-plane/standalone/server.js
 Restart=on-failure
 RestartSec=5s
