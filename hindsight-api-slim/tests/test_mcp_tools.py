@@ -424,6 +424,56 @@ class TestMentalModelToolRegistration:
                 f"tools with empty descriptions (include_bank_id_param={include_bank_id_param}): {missing}"
             )
 
+    def test_no_mcp_tool_definition_can_lack_a_description(self):
+        """Statically reject any @mcp.tool that would register without a description.
+
+        Complements test_all_tools_have_nonempty_descriptions: that test exercises
+        the *default* tool set at runtime, this one parses the source so it also
+        covers tools gated behind feature flags / non-default configs, and points
+        at the offending line directly. A tool must carry either a ``description=``
+        kwarg on the decorator or a real string-literal docstring. An f-string
+        ``docstring`` (f\"\"\"{_DOC}...\"\"\") is an expression, not a literal, so
+        __doc__ stays None and FastMCP emits an empty description — which Bedrock's
+        Converse API rejects, breaking every request that advertises the tool.
+        """
+        import ast
+        import pathlib
+
+        from hindsight_api import mcp_tools
+
+        source = pathlib.Path(mcp_tools.__file__).read_text()
+        tree = ast.parse(source)
+
+        def is_tool_decorator(dec: ast.expr) -> bool:
+            target = dec.func if isinstance(dec, ast.Call) else dec
+            return isinstance(target, ast.Attribute) and target.attr == "tool"
+
+        def has_valid_docstring(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+            first = fn.body[0] if fn.body else None
+            if not isinstance(first, ast.Expr):
+                return False
+            value = first.value
+            # ast.JoinedStr == f-string: __doc__ becomes None, not a docstring.
+            return isinstance(value, ast.Constant) and isinstance(value.value, str) and bool(value.value.strip())
+
+        offenders: list[str] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            tool_decorators = [d for d in node.decorator_list if is_tool_decorator(d)]
+            if not tool_decorators:
+                continue
+            dec = tool_decorators[0]
+            has_description_kwarg = isinstance(dec, ast.Call) and any(k.arg == "description" for k in dec.keywords)
+            if has_description_kwarg or has_valid_docstring(node):
+                continue
+            offenders.append(f"{node.name} (line {node.lineno})")
+
+        assert not offenders, (
+            "@mcp.tool definitions missing a description (need a description= kwarg or a "
+            f"plain-literal docstring, not an f-string): {offenders}"
+        )
+
 
 @pytest.fixture
 def no_bank_mcp_server(mock_memory):
