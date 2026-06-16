@@ -1442,6 +1442,13 @@ class DryRunExtractRequest(BaseModel):
     entities_allow_free_form: bool | None = None
     llm_output_language: str | None = None
 
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("content cannot be empty")
+        return v
+
 
 class ListDocumentsResponse(BaseModel):
     """Response model for list documents endpoint."""
