@@ -594,7 +594,10 @@
     "scopeGlobal": "グローバル（タグなし）",
     "groupByScope": "スコープでグループ化",
     "scopeSearch": "スコープを検索…",
-    "scopeNoResults": "スコープが見つかりません"
+    "scopeNoResults": "スコープが見つかりません",
+    "filterActive": "有効",
+    "filterInvalidated": "無効化済み",
+    "invalidatedHint": "無効化されたメモリはアーカイブされ、recall と reflect には表示されませんが、監査のために保持されます。"
   },
   "documentsView": {
     "loadingDocuments": "ドキュメントを読み込み中...",
@@ -683,7 +686,8 @@
     "importConflictReplace": "置換 — インポート版で上書き",
     "importConflictNewId": "両方保持 — 新しい id でインポート",
     "textNotStoredWarning": "このサーバーでは元のテキストは保存されません。抽出されたメモリのみが保持されます。",
-    "labelObservationScopes": "観測スコープ"
+    "labelObservationScopes": "観測スコープ",
+    "invalidatedFactsTitle": "無効化されたファクト"
   },
   "entitiesView": {
     "viewRelations": "関係",
@@ -1290,7 +1294,17 @@
     "curationInvalidateExplain": "メモリを無効化アーカイブに移動します。recall や reflect には表示されなくなりますが、監査用に保持され、後で復元できます。",
     "curationReasonPlaceholder": "理由（任意）",
     "curationCancel": "キャンセル",
-    "curationInvalidate": "無効化"
+    "curationInvalidate": "無効化",
+    "curationActions": "キュレーション",
+    "curationEdit": "編集",
+    "curationReasonLabel": "理由",
+    "curationRevert": "復元",
+    "curationSave": "保存",
+    "curationStateInvalidated": "無効化済み",
+    "editFieldContext": "コンテキスト",
+    "editFieldOccurredEnd": "終了日",
+    "editFieldOccurredStart": "開始日",
+    "editFieldType": "タイプ"
   },
   "documentChunkModal": {
     "documentTitle": "ドキュメント詳細",

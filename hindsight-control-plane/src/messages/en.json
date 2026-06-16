@@ -594,7 +594,10 @@
     "scopeGlobal": "Global (no tags)",
     "groupByScope": "Group by scope",
     "scopeSearch": "Search scopes…",
-    "scopeNoResults": "No scopes found"
+    "scopeNoResults": "No scopes found",
+    "filterActive": "Active",
+    "filterInvalidated": "Invalidated",
+    "invalidatedHint": "Invalidated memories are archived — hidden from recall and reflect, but kept for audit."
   },
   "documentsView": {
     "loadingDocuments": "Loading documents...",
@@ -683,7 +686,8 @@
     "importConflictReplace": "Replace — overwrite with the imported one",
     "importConflictNewId": "Keep both — import under a new id",
     "textNotStoredWarning": "Source text isn't stored on this server — only the extracted memories are kept.",
-    "labelObservationScopes": "Observation scopes"
+    "labelObservationScopes": "Observation scopes",
+    "invalidatedFactsTitle": "Invalidated facts"
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -1290,7 +1294,17 @@
     "curationInvalidateExplain": "This moves the memory to the invalidated archive. It will no longer surface in recall or reflect, but is kept for audit and can be restored later.",
     "curationReasonPlaceholder": "Reason (optional)",
     "curationCancel": "Cancel",
-    "curationInvalidate": "Invalidate"
+    "curationInvalidate": "Invalidate",
+    "curationActions": "Curation",
+    "curationEdit": "Edit",
+    "curationReasonLabel": "Reason",
+    "curationRevert": "Restore",
+    "curationSave": "Save",
+    "curationStateInvalidated": "Invalidated",
+    "editFieldContext": "Context",
+    "editFieldOccurredEnd": "End date",
+    "editFieldOccurredStart": "Start date",
+    "editFieldType": "Type"
   },
   "documentChunkModal": {
     "documentTitle": "Document Details",

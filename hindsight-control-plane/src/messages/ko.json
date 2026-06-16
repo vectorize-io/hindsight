@@ -594,7 +594,10 @@
     "scopeGlobal": "전역(태그 없음)",
     "groupByScope": "범위별 그룹화",
     "scopeSearch": "범위 검색…",
-    "scopeNoResults": "범위를 찾을 수 없음"
+    "scopeNoResults": "범위를 찾을 수 없음",
+    "filterActive": "활성",
+    "filterInvalidated": "무효화됨",
+    "invalidatedHint": "무효화된 메모리는 보관되어 recall 및 reflect에 표시되지 않지만 감사를 위해 유지됩니다."
   },
   "documentsView": {
     "loadingDocuments": "문서 불러오는 중...",
@@ -683,7 +686,8 @@
     "importConflictReplace": "교체 — 가져온 것으로 덮어쓰기",
     "importConflictNewId": "둘 다 유지 — 새 id로 가져오기",
     "textNotStoredWarning": "이 서버에는 원본 텍스트가 저장되지 않습니다. 추출된 메모리만 보관됩니다.",
-    "labelObservationScopes": "관찰 범위"
+    "labelObservationScopes": "관찰 범위",
+    "invalidatedFactsTitle": "무효화된 사실"
   },
   "entitiesView": {
     "viewRelations": "관계",
@@ -1290,7 +1294,17 @@
     "curationInvalidateExplain": "메모리를 무효화 보관소로 이동합니다. recall이나 reflect에 더 이상 표시되지 않지만 감사를 위해 보관되며 나중에 복원할 수 있습니다.",
     "curationReasonPlaceholder": "사유 (선택)",
     "curationCancel": "취소",
-    "curationInvalidate": "무효화"
+    "curationInvalidate": "무효화",
+    "curationActions": "큐레이션",
+    "curationEdit": "편집",
+    "curationReasonLabel": "사유",
+    "curationRevert": "복원",
+    "curationSave": "저장",
+    "curationStateInvalidated": "무효화됨",
+    "editFieldContext": "컨텍스트",
+    "editFieldOccurredEnd": "종료일",
+    "editFieldOccurredStart": "시작일",
+    "editFieldType": "유형"
   },
   "documentChunkModal": {
     "documentTitle": "문서 상세 정보",

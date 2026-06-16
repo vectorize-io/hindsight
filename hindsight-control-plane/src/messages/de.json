@@ -594,7 +594,10 @@
     "scopeGlobal": "Global (keine Tags)",
     "groupByScope": "Nach Bereich gruppieren",
     "scopeSearch": "Bereiche suchen…",
-    "scopeNoResults": "Keine Bereiche gefunden"
+    "scopeNoResults": "Keine Bereiche gefunden",
+    "filterActive": "Aktiv",
+    "filterInvalidated": "Ungültig",
+    "invalidatedHint": "Ungültig gemachte Erinnerungen werden archiviert – aus Recall und Reflect ausgeblendet, aber zu Prüfzwecken aufbewahrt."
   },
   "documentsView": {
     "loadingDocuments": "Dokumente werden geladen...",
@@ -683,7 +686,8 @@
     "importConflictReplace": "Ersetzen — durch das importierte überschreiben",
     "importConflictNewId": "Beide behalten — unter neuer id importieren",
     "textNotStoredWarning": "Der Quelltext wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten.",
-    "labelObservationScopes": "Beobachtungsbereiche"
+    "labelObservationScopes": "Beobachtungsbereiche",
+    "invalidatedFactsTitle": "Ungültige Fakten"
   },
   "entitiesView": {
     "viewRelations": "Beziehungen",
@@ -1290,7 +1294,17 @@
     "curationInvalidateExplain": "Dadurch wird die Erinnerung in das Archiv für ungültige Einträge verschoben. Sie erscheint nicht mehr in Recall oder Reflect, bleibt aber zur Prüfung erhalten und kann später wiederhergestellt werden.",
     "curationReasonPlaceholder": "Grund (optional)",
     "curationCancel": "Abbrechen",
-    "curationInvalidate": "Ungültig machen"
+    "curationInvalidate": "Ungültig machen",
+    "curationActions": "Kuratierung",
+    "curationEdit": "Bearbeiten",
+    "curationReasonLabel": "Grund",
+    "curationRevert": "Wiederherstellen",
+    "curationSave": "Speichern",
+    "curationStateInvalidated": "Ungültig",
+    "editFieldContext": "Kontext",
+    "editFieldOccurredEnd": "Enddatum",
+    "editFieldOccurredStart": "Startdatum",
+    "editFieldType": "Typ"
   },
   "documentChunkModal": {
     "documentTitle": "Dokumentdetails",

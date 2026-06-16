@@ -594,7 +594,10 @@
     "scopeGlobal": "全局（无标签）",
     "groupByScope": "按范围分组",
     "scopeSearch": "搜索范围…",
-    "scopeNoResults": "未找到范围"
+    "scopeNoResults": "未找到范围",
+    "filterActive": "有效",
+    "filterInvalidated": "已失效",
+    "invalidatedHint": "失效的记忆会被归档——不会出现在 recall 和 reflect 中，但会保留以供审计。"
   },
   "documentsView": {
     "loadingDocuments": "正在加载文档...",
@@ -683,7 +686,8 @@
     "importConflictReplace": "替换 — 用导入的覆盖",
     "importConflictNewId": "两者都保留 — 以新 id 导入",
     "textNotStoredWarning": "此服务器不存储原始文本，仅保留提取的记忆。",
-    "labelObservationScopes": "观测范围"
+    "labelObservationScopes": "观测范围",
+    "invalidatedFactsTitle": "已失效的事实"
   },
   "entitiesView": {
     "viewRelations": "关系",
@@ -1290,7 +1294,17 @@
     "curationInvalidateExplain": "这会将该记忆移至已失效归档。它将不再出现在 Recall 或 Reflect 中，但会保留以供审计，并可在以后恢复。",
     "curationReasonPlaceholder": "原因（可选）",
     "curationCancel": "取消",
-    "curationInvalidate": "失效"
+    "curationInvalidate": "失效",
+    "curationActions": "整理",
+    "curationEdit": "编辑",
+    "curationReasonLabel": "原因",
+    "curationRevert": "恢复",
+    "curationSave": "保存",
+    "curationStateInvalidated": "已失效",
+    "editFieldContext": "上下文",
+    "editFieldOccurredEnd": "结束日期",
+    "editFieldOccurredStart": "开始日期",
+    "editFieldType": "类型"
   },
   "documentChunkModal": {
     "documentTitle": "文档详情",

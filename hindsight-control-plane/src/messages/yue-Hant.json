@@ -594,7 +594,10 @@
     "scopeGlobal": "全域（冇標籤）",
     "groupByScope": "按範圍分組",
     "scopeSearch": "搜尋範圍…",
-    "scopeNoResults": "搵唔到範圍"
+    "scopeNoResults": "搵唔到範圍",
+    "filterActive": "有效",
+    "filterInvalidated": "已失效",
+    "invalidatedHint": "失效咗嘅記憶會封存——唔會喺 recall 同 reflect 度出現，但會保留以供稽核。"
   },
   "documentsView": {
     "loadingDocuments": "載入文件中...",
@@ -683,7 +686,8 @@
     "importConflictReplace": "取代 — 以匯入嘅覆寫",
     "importConflictNewId": "兩者都保留 — 以新 id 匯入",
     "textNotStoredWarning": "呢個伺服器唔會儲存原始文字，淨係保留擷取到嘅記憶。",
-    "labelObservationScopes": "觀測範圍"
+    "labelObservationScopes": "觀測範圍",
+    "invalidatedFactsTitle": "已失效嘅事實"
   },
   "entitiesView": {
     "viewRelations": "關係",
@@ -1290,7 +1294,17 @@
     "curationInvalidateExplain": "呢個動作會將記憶移去已失效封存。佢唔會再喺 Recall 或 Reflect 出現，但會保留以供稽核，可以遲啲復原。",
     "curationReasonPlaceholder": "原因（可選）",
     "curationCancel": "取消",
-    "curationInvalidate": "使失效"
+    "curationInvalidate": "使失效",
+    "curationActions": "整理",
+    "curationEdit": "編輯",
+    "curationReasonLabel": "原因",
+    "curationRevert": "還原",
+    "curationSave": "儲存",
+    "curationStateInvalidated": "已失效",
+    "editFieldContext": "情境",
+    "editFieldOccurredEnd": "結束日期",
+    "editFieldOccurredStart": "開始日期",
+    "editFieldType": "類型"
   },
   "documentChunkModal": {
     "documentTitle": "文件詳情",

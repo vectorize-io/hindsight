@@ -594,7 +594,10 @@
     "scopeGlobal": "Global (sem tags)",
     "groupByScope": "Agrupar por escopo",
     "scopeSearch": "Pesquisar escopos…",
-    "scopeNoResults": "Nenhum escopo encontrado"
+    "scopeNoResults": "Nenhum escopo encontrado",
+    "filterActive": "Ativas",
+    "filterInvalidated": "Invalidadas",
+    "invalidatedHint": "As memórias invalidadas são arquivadas — ocultas de recall e reflect, mas mantidas para auditoria."
   },
   "documentsView": {
     "loadingDocuments": "Carregando documentos...",
@@ -683,7 +686,8 @@
     "importConflictReplace": "Substituir — sobrescrever pelo importado",
     "importConflictNewId": "Manter ambos — importar com novo id",
     "textNotStoredWarning": "O texto de origem não é armazenado neste servidor — apenas as memórias extraídas são mantidas.",
-    "labelObservationScopes": "Escopos de observação"
+    "labelObservationScopes": "Escopos de observação",
+    "invalidatedFactsTitle": "Fatos invalidados"
   },
   "entitiesView": {
     "viewRelations": "Relações",
@@ -1290,7 +1294,17 @@
     "curationInvalidateExplain": "Isto move a memória para o arquivo de itens invalidados. Ela não aparecerá mais em Recall ou Reflect, mas é mantida para auditoria e pode ser restaurada depois.",
     "curationReasonPlaceholder": "Motivo (opcional)",
     "curationCancel": "Cancelar",
-    "curationInvalidate": "Invalidar"
+    "curationInvalidate": "Invalidar",
+    "curationActions": "Curadoria",
+    "curationEdit": "Editar",
+    "curationReasonLabel": "Motivo",
+    "curationRevert": "Restaurar",
+    "curationSave": "Salvar",
+    "curationStateInvalidated": "Invalidada",
+    "editFieldContext": "Contexto",
+    "editFieldOccurredEnd": "Data de término",
+    "editFieldOccurredStart": "Data de início",
+    "editFieldType": "Tipo"
   },
   "documentChunkModal": {
     "documentTitle": "Detalhes do Documento",
