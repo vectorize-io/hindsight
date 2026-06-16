@@ -253,7 +253,6 @@ def create_llm_provider(
     gemini_safety_settings: list | None = None,
     prompt_cache_enabled: bool = False,
     litellmrouter_config: dict[str, Any] | None = None,
-    timeout: float | None = None,
 ) -> Any:  # Returns LLMInterface
     """
     Factory function to create the appropriate LLM provider implementation.
@@ -278,10 +277,6 @@ def create_llm_provider(
         vertexai_project_id: Vertex AI project ID (for VertexAI provider).
         vertexai_region: Vertex AI region (for VertexAI provider).
         vertexai_credentials: Vertex AI credentials object (for VertexAI provider).
-        timeout: Per-call timeout in seconds for providers that honor it (LiteLLM
-            and Bedrock). ``None`` keeps the provider's own default. Bounds the
-            LiteLLM provider's hard ``asyncio.wait_for`` cap so a hung completion
-            cannot block a worker slot indefinitely.
 
     Returns:
         LLMInterface implementation for the specified provider.
@@ -372,7 +367,6 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
-            timeout=timeout,
         )
 
     elif provider_lower == "litellmrouter":
@@ -391,7 +385,6 @@ def create_llm_provider(
             config=litellmrouter_config,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
-            timeout=timeout,
         )
 
     elif provider_lower == "bedrock":
@@ -405,7 +398,6 @@ def create_llm_provider(
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
             bedrock_service_tier=bedrock_service_tier,
-            timeout=timeout,
         )
 
     elif provider_lower == "llamacpp":
@@ -504,7 +496,6 @@ class LLMProvider:
         extra_body: dict[str, Any] | None = None,
         default_headers: dict[str, str] | None = None,
         litellmrouter_config: dict[str, Any] | None = None,
-        timeout: float | None = None,
     ):
         """
         Initialize LLM provider.
@@ -548,10 +539,6 @@ class LLMProvider:
         # input-token cost. Off by default so the change is observable behind
         # a flip rather than a silent behaviour change on upgrade.
         self.prompt_cache_enabled = prompt_cache_enabled
-        # Per-call timeout (seconds) for providers that honor it. ``None`` lets
-        # the provider keep its own default. Bounds the LiteLLM provider's hard
-        # ``asyncio.wait_for`` cap so a hung completion cannot block forever.
-        self.timeout = timeout
         # Extra body params for OpenAI-compatible providers (e.g. chat_template_kwargs)
         self.extra_body = extra_body
         # Default headers passed to provider SDK clients (e.g. proxy auth, request tracing).
@@ -719,7 +706,6 @@ class LLMProvider:
             gemini_safety_settings=self.gemini_safety_settings,
             prompt_cache_enabled=self.prompt_cache_enabled,
             litellmrouter_config=router_config,
-            timeout=self.timeout,
         )
 
         # Backward compatibility: Keep mock provider properties

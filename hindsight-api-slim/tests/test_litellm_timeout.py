@@ -14,6 +14,7 @@ import time
 
 import pytest
 
+from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
 from hindsight_api.engine.providers.litellm_llm import LiteLLMLLM
 
 
@@ -73,8 +74,9 @@ async def test_call_with_tools_cancels_hung_completion(monkeypatch):
         )
 
 
-async def test_unset_timeout_falls_back_to_default():
+async def test_unset_timeout_falls_back_to_default(monkeypatch):
     """``None`` must resolve to a finite default — never ``None``, which would
     make ``asyncio.wait_for`` wait forever and reintroduce the hang."""
+    monkeypatch.delenv(ENV_LLM_TIMEOUT, raising=False)
     provider = _make_provider(timeout=None)
-    assert provider.timeout == 300.0
+    assert provider.timeout == DEFAULT_LLM_TIMEOUT

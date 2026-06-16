@@ -269,7 +269,7 @@ class OpenAICompatibleLLM(LLMInterface):
             base_url: Base URL for the API (uses defaults for groq/ollama/lmstudio if empty).
             model: Model name.
             reasoning_effort: Reasoning effort level for supported models ("low", "medium", "high").
-            timeout: Request timeout in seconds (uses env var or 300s default).
+            timeout: Request timeout in seconds (uses env var or 120s default).
             groq_service_tier: Groq service tier ("on_demand", "flex", "auto").
             extra_body: Extra body params merged into every API call.
             **kwargs: Additional provider-specific parameters.
