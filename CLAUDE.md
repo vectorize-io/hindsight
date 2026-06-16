@@ -327,7 +327,10 @@ Fields must be categorized as either **hierarchical** (can be overridden per-ten
    ```
 
 2. **main.py** (`hindsight-api-slim/hindsight_api/main.py`):
-   - Add field to the manual `HindsightConfig()` constructor call (search for "CLI override")
+   - No change is needed for ordinary environment-backed config fields. The CLI starts from `_get_raw_config()`,
+     so new `HindsightConfig` fields are carried through automatically.
+   - If the new field should be overridable by a CLI flag, add the argparse option in `_parse_cli_args()` and include
+     that field in the `dataclasses.replace(config, ...)` call near the "CLI override" comment.
 
 3. **Use hierarchical config in MemoryEngine**:
    ```python
@@ -373,7 +376,7 @@ Fields must be categorized as either **hierarchical** (can be overridden per-ten
 
 ```bash
 cp .env.example .env
-# Edit .env with LLM API key
+# Edit .env with the LLM provider/model and credentials for your setup
 
 # Python deps
 uv sync --directory hindsight-api-slim/
@@ -382,10 +385,10 @@ uv sync --directory hindsight-api-slim/
 npm install
 ```
 
-Required env vars:
+Common LLM settings:
 - `HINDSIGHT_API_LLM_PROVIDER`: openai, anthropic, gemini, groq, minimax, ollama, lmstudio
-- `HINDSIGHT_API_LLM_API_KEY`: Your API key
-- `HINDSIGHT_API_LLM_MODEL`: Model name (e.g., gpt-4o-mini, claude-sonnet-4-20250514)
+- `HINDSIGHT_API_LLM_API_KEY`: API key for providers that require one
+- `HINDSIGHT_API_LLM_MODEL`: Model name (defaults are provider-specific)
 
 Optional (uses local models by default):
 - `HINDSIGHT_API_EMBEDDINGS_PROVIDER`: local (default) or tei
