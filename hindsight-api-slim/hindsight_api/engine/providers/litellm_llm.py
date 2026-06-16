@@ -19,6 +19,8 @@ import os
 import time
 from typing import Any
 
+from litellm.exceptions import Timeout as LiteLLMTimeout
+
 from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
 from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
@@ -207,8 +209,6 @@ class LiteLLMLLM(LLMInterface):
                 },
             }
 
-        from litellm.exceptions import Timeout as LiteLLMTimeout
-
         last_exception = None
 
         for attempt in range(max_retries + 1):
@@ -376,8 +376,6 @@ class LiteLLMLLM(LLMInterface):
         call_kwargs = self._build_common_kwargs(messages, max_completion_tokens, temperature)
         call_kwargs["tools"] = tools
         call_kwargs["tool_choice"] = tool_choice
-
-        from litellm.exceptions import Timeout as LiteLLMTimeout
 
         last_exception = None
         for attempt in range(max_retries + 1):
