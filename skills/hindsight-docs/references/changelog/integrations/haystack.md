@@ -8,7 +8,7 @@ Changelog for [`hindsight-haystack`](https://pypi.org/project/hindsight-haystack
 
 For the source code, see [`hindsight-integrations/haystack`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/haystack).
 
-← [Back to main changelog](..\index.md)
+← [Back to main changelog](../index.md)
 
 ## [0.1.1](https://github.com/vectorize-io/hindsight/tree/integrations/haystack/v0.1.1)
 

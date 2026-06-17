@@ -8,7 +8,7 @@ Changelog for [`hindsight-vapi`](https://pypi.org/project/hindsight-vapi/).
 
 For the source code, see [`hindsight-integrations/vapi`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/vapi).
 
-← [Back to main changelog](..\index.md)
+← [Back to main changelog](../index.md)
 
 ## [0.1.0](https://github.com/vectorize-io/hindsight/tree/integrations/vapi/v0.1.0)
 

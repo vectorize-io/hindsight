@@ -123,7 +123,7 @@ Browse all supported integrations in the Integrations Hub.
 ## Next Steps
 
 ### Getting Started
-- [**Quick Start**](api\quickstart.md) — Install and get up and running in 60 seconds
+- [**Quick Start**](api/quickstart.md) — Install and get up and running in 60 seconds
 - [**RAG vs Hindsight**](rag-vs-hindsight.md) — See how Hindsight differs from traditional RAG with real examples
 
 ### Core Concepts
@@ -132,13 +132,13 @@ Browse all supported integrations in the Integrations Hub.
 - [**Reflect**](reflect.md) — How mission, directives, and disposition shape reasoning
 
 ### API Methods
-- [**Retain**](api\retain.md) — Store information in memory banks
-- [**Recall**](api\recall.md) — Search and retrieve memories
-- [**Reflect**](api\reflect.md) — Agentic reasoning with memory
-- [**Mental Models**](api\mental-models.md) — User-curated summaries for common queries
-- [**Memory Banks**](api\memory-banks.md) — Configure mission, directives, and disposition
-- [**Documents**](api\documents.md) — Manage document sources
-- [**Operations**](api\operations.md) — Monitor async tasks
+- [**Retain**](api/retain.md) — Store information in memory banks
+- [**Recall**](api/recall.md) — Search and retrieve memories
+- [**Reflect**](api/reflect.md) — Agentic reasoning with memory
+- [**Mental Models**](api/mental-models.md) — User-curated summaries for common queries
+- [**Memory Banks**](api/memory-banks.md) — Configure mission, directives, and disposition
+- [**Documents**](api/documents.md) — Manage document sources
+- [**Operations**](api/operations.md) — Monitor async tasks
 
 ### Deployment
 - [**Server Setup**](installation.md) — Deploy with Docker Compose, Helm, or pip

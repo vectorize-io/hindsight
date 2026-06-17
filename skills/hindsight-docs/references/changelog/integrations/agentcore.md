@@ -8,7 +8,7 @@ Changelog for [`hindsight-agentcore`](https://pypi.org/project/hindsight-agentco
 
 For the source code, see [`hindsight-integrations/agentcore`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/agentcore).
 
-← [Back to main changelog](..\index.md)
+← [Back to main changelog](../index.md)
 
 ## [0.1.1](https://github.com/vectorize-io/hindsight/tree/integrations/agentcore/v0.1.1)
 

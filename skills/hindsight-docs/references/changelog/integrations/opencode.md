@@ -8,7 +8,7 @@ Changelog for [`@vectorize-io/opencode-hindsight`](https://www.npmjs.com/package
 
 For the source code, see [`hindsight-integrations/opencode`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/opencode).
 
-← [Back to main changelog](..\index.md)
+← [Back to main changelog](../index.md)
 
 ## [0.2.5](https://github.com/vectorize-io/hindsight/tree/integrations/opencode/v0.2.5)
 

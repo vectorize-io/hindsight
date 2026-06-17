@@ -456,7 +456,9 @@ for md_file in refs_dir.rglob("*.md"):
         resolved = try_resolve(url, refs_dir)
         if resolved is None:
             return text  # strip unresolvable link, keep text
-        rel = os.path.relpath(resolved, md_file.parent)
+        # Use POSIX separators in markdown links so the generated skill is
+        # byte-stable across Windows and Linux runs.
+        rel = os.path.relpath(resolved, md_file.parent).replace(os.sep, '/')
         return f'[{text}]({rel}{anchor})'
 
     new_content = link_pattern.sub(rewrite, content)

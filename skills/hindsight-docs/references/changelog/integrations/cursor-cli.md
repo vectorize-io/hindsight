@@ -8,7 +8,7 @@ Changelog for [`hindsight-cursor-cli`](https://pypi.org/project/hindsight-cursor
 
 For the source code, see [`hindsight-integrations/cursor-cli`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/cursor-cli).
 
-← [Back to main changelog](..\index.md)
+← [Back to main changelog](../index.md)
 
 ## [0.2.0](https://github.com/vectorize-io/hindsight/tree/integrations/cursor-cli/v0.2.0)
 

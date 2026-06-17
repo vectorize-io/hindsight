@@ -8,7 +8,7 @@ Changelog for [`hindsight-claude-agent-sdk`](https://pypi.org/project/hindsight-
 
 For the source code, see [`hindsight-integrations/claude-agent-sdk`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/claude-agent-sdk).
 
-← [Back to main changelog](..\index.md)
+← [Back to main changelog](../index.md)
 
 ## [0.1.0](https://github.com/vectorize-io/hindsight/tree/integrations/claude-agent-sdk/v0.1.0)
 

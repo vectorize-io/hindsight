@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # CLI Reference
 
-The Hindsight CLI provides command-line access to memory operations and bank management. All commands follow the [OpenAPI specification](..\openapi.json), so you can use `--help` on any command to see all available options.
+The Hindsight CLI provides command-line access to memory operations and bank management. All commands follow the [OpenAPI specification](../openapi.json), so you can use `--help` on any command to see all available options.
 
 ## Installation
 

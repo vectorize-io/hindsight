@@ -54,11 +54,11 @@ When enabled, Hindsight reconciles them automatically. Whenever an observation i
 
 This is controlled by the [`HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD`](configuration.md#observations) setting: the cosine similarity at or above which two observations are reconciled. It is **enabled by default** (`0.97`); a lower value reconciles more aggressively, and `1.0` disables it. Reconciliation runs on PostgreSQL deployments only — it is skipped on Oracle regardless of the threshold.
 
-Reconciliation only compares observations **within the same tag scope**. If you tag retains with a unique per-call value (e.g. a `session-id`), each session lands in its own scope and never dedups against the others — producing one near-identical observation per session. To consolidate across those volatile tags, retain with [`observation_scopes: "shared"`](api\retain.md#shared), which scopes observations to one global, untagged belief while leaving the session tag on the source facts for recall filtering.
+Reconciliation only compares observations **within the same tag scope**. If you tag retains with a unique per-call value (e.g. a `session-id`), each session lands in its own scope and never dedups against the others — producing one near-identical observation per session. To consolidate across those volatile tags, retain with [`observation_scopes: "shared"`](api/retain.md#shared), which scopes observations to one global, untagged belief while leaving the session tag on the source facts for recall filtering.
 
 ### Disabling Auto-Consolidation
 
-Set `HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION=false` (or configure per-bank via the [bank config API](api\memory-banks.md#observations-configuration)) to prevent consolidation from running automatically after retain, delete, and update operations. When disabled, consolidation only runs when you explicitly call the [consolidate endpoint](#trigger-consolidation).
+Set `HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION=false` (or configure per-bank via the [bank config API](api/memory-banks.md#observations-configuration)) to prevent consolidation from running automatically after retain, delete, and update operations. When disabled, consolidation only runs when you explicitly call the [consolidate endpoint](#trigger-consolidation).
 
 This is useful when you want full control over consolidation timing — for example, batching many retains before consolidating, or running consolidation only for specific scopes.
 
@@ -160,7 +160,7 @@ observations = client.recall(
 
 The reflect agent uses **hierarchical retrieval**:
 
-1. **[Mental Models](api\mental-models.md)** — User-curated summaries (highest priority)
+1. **[Mental Models](api/mental-models.md)** — User-curated summaries (highest priority)
 2. **Observations** — Consolidated knowledge with freshness awareness
 3. **Raw Facts** — Ground truth for verification
 
@@ -208,7 +208,7 @@ Leave it blank to use the server default — durable, specific facts that stay t
 | *"Observations are stable facts about named individuals only"* | Person-centric knowledge, tied to specific people |
 | *"Observations are recurring patterns in customer support interactions"* | Failure modes, common requests, pain points |
 
-Set `observations_mission` via the [bank config API](api\memory-banks.md#observations-configuration) or the [`HINDSIGHT_API_OBSERVATIONS_MISSION`](configuration.md#observations) environment variable.
+Set `observations_mission` via the [bank config API](api/memory-banks.md#observations-configuration) or the [`HINDSIGHT_API_OBSERVATIONS_MISSION`](configuration.md#observations) environment variable.
 
 ---
 

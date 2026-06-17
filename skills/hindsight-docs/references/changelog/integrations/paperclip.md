@@ -8,7 +8,7 @@ Changelog for [`@vectorize-io/hindsight-paperclip`](https://www.npmjs.com/packag
 
 For the source code, see [`hindsight-integrations/paperclip`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/paperclip).
 
-← [Back to main changelog](..\index.md)
+← [Back to main changelog](../index.md)
 
 ## [0.2.3](https://github.com/vectorize-io/hindsight/tree/integrations/paperclip/v0.2.3)
 

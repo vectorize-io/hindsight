@@ -400,7 +400,7 @@ recall(
 
 When a single bank contains semantically similar memories that serve different purposes (e.g., concise operating rules vs. detailed troubleshooting procedures), ranking alone cannot reliably distinguish them — two memories about "entrypoints" will score similarly regardless of whether one is a one-line rule and the other is a multi-step runbook.
 
-Use [entity labels](developer\api\memory-banks.md#entity-labels) with `tag: true` to classify facts at retain time and hard-filter at recall time.
+Use [entity labels](developer/api/memory-banks.md#entity-labels) with `tag: true` to classify facts at retain time and hard-filter at recall time.
 
 **1. Define a label group on the bank:**
 

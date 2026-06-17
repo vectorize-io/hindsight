@@ -31,7 +31,7 @@ Hindsight is an agent memory system that provides long-term memory for AI agents
 - **Supports temporal reasoning** with time-aware retrieval
 - **Enables disposition-aware reflection** for nuanced reasoning
 
-For a detailed comparison, see [RAG vs Memory](developer\rag-vs-hindsight.md).
+For a detailed comparison, see [RAG vs Memory](developer/rag-vs-hindsight.md).
 
 ---
 
@@ -89,7 +89,7 @@ Browse all supported integrations in the Integrations Hub.
 - OpenAI Compatible
 - LiteLLM (100+)
 
-See [Models](developer\models.md) for the full list of supported providers, recommended models, and configuration examples.
+See [Models](developer/models.md) for the full list of supported providers, recommended models, and configuration examples.
 
 ---
 
@@ -99,7 +99,7 @@ The **[Model Leaderboard](https://benchmarks.hindsight.vectorize.io/)** benchmar
 
 [](https://benchmarks.hindsight.vectorize.io/)
 
-See [Models](developer\models.md) for the full list of supported and tested models, provider defaults, and configuration examples.
+See [Models](developer/models.md) for the full list of supported and tested models, provider defaults, and configuration examples.
 
 ---
 
@@ -110,7 +110,7 @@ No! You have two options:
 1. **Hindsight Cloud** - Fully managed service at [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)
 2. **Self-hosted** - Deploy on your own infrastructure using Docker or direct installation
 
-See [Installation](developer\installation.md) for self-hosting instructions.
+See [Installation](developer/installation.md) for self-hosting instructions.
 
 ---
 
@@ -121,7 +121,7 @@ For running the Hindsight API server locally:
 - 4GB RAM minimum (8GB recommended for production)
 - LLM API key (OpenAI, Anthropic, etc.) or local LLM setup
 
-See [Installation](developer\installation.md) for setup instructions.
+See [Installation](developer/installation.md) for setup instructions.
 
 ---
 
@@ -143,7 +143,7 @@ hindsight-admin decommission-workers
 
 **Prevent it** by setting `HINDSIGHT_API_WORKER_ID` to a stable value (Docker `-e HINDSIGHT_API_WORKER_ID=...`, or `--worker-id` on bare metal). The Helm chart already handles this — its StatefulSet wires the pod name automatically.
 
-See [Admin CLI — Recovering stuck operations](developer\admin-cli.md#recovering-stuck-or-zombie-operations) for the full diagnosis and recovery flow.
+See [Admin CLI — Recovering stuck operations](developer/admin-cli.md#recovering-stuck-or-zombie-operations) for the full diagnosis and recovery flow.
 
 ---
 
@@ -166,7 +166,7 @@ There are two approaches for multi-user applications:
 - Filter by tags during recall/reflect for per-user queries
 - **Advantage**: Enables both per-user AND cross-user queries (e.g., analyze specific users or aggregate across all users)
 
-Choose per-user banks for simplicity and privacy, or single bank with tags if you need holistic reasoning across users. See [Memory Banks](developer\api\memory-banks.md) for management details.
+Choose per-user banks for simplicity and privacy, or single bank with tags if you need holistic reasoning across users. See [Memory Banks](developer/api/memory-banks.md) for management details.
 
 ---
 
@@ -178,7 +178,7 @@ Hindsight has three core operations:
 - **Recall**: Search and retrieve raw memory data based on a query
 - **Reflect**: Use an AI agent to answer a query using retrieved memories
 
-See [Operations](developer\api\operations.md) for API details.
+See [Operations](developer/api/operations.md) for API details.
 
 ---
 
@@ -208,7 +208,7 @@ reflect("What should I order for Alice?")
 → "I'd recommend a vegetarian sushi platter — Alice loves sushi and prefers vegetarian options."  # grounded answer
 ```
 
-See [Recall](developer\api\recall.md) and [Reflect](developer\reflect.md) for full API details.
+See [Recall](developer/api/recall.md) and [Reflect](developer/reflect.md) for full API details.
 
 ---
 
@@ -220,7 +220,7 @@ See [Recall](developer\api\recall.md) and [Reflect](developer\reflect.md) for fu
 - Long-term behavioral patterns (e.g., "Customer is price-sensitive but values quality")
 - Context for AI agent reasoning during **reflect** operations
 
-Mental models are automatically built during retain and used by reflect to provide richer, more contextual responses. See [Mental Models](developer\api\mental-models.md).
+Mental models are automatically built during retain and used by reflect to provide richer, more contextual responses. See [Mental Models](developer/api/mental-models.md).
 
 ---
 
@@ -230,7 +230,7 @@ Typical latencies:
 - **Without reranking**: 50-100ms
 - **With reranking**: 200-500ms (depends on reranker model and installation)
 
-See [Performance](developer\performance.md) for tuning options.
+See [Performance](developer/performance.md) for tuning options.
 
 ---
 
@@ -249,7 +249,7 @@ client.retain(bank_id="my-bank", items=[{
 client.recall(bank_id="my-bank", query="...", tags=["user:alice"])
 ```
 
-See [Tags](developer\api\retain.md#tags-and-document_tags) for full details including document-level tagging.
+See [Tags](developer/api/retain.md#tags-and-document_tags) for full details including document-level tagging.
 
 **What about filtering by entities?**
 
@@ -273,7 +273,7 @@ If you need explicit tag-based filtering on entity-like values, use **entity lab
 client.recall(bank_id="my-bank", query="...", tags=["user:alice"])
 ```
 
-See [Entity Labels](developer\retain.md#entity-labels) for configuration details.
+See [Entity Labels](developer/retain.md#entity-labels) for configuration details.
 
 **What about document `metadata`?**
 
@@ -295,7 +295,7 @@ If your bank mixes different shapes of memory (e.g., concise rules and detailed 
 
 This is a SQL-level filter applied before ranking, not a scoring signal — the excluded memories never enter the retrieval pipeline. This is more reliable than adjusting ranking weights, which only nudge continuous scores and cannot guarantee ordering.
 
-See [Best Practices — Filtering by Memory Shape](best-practices.md#filtering-by-memory-shape-with-entity-labels) for a full walkthrough, or [Entity Labels](developer\api\memory-banks.md#entity-labels) for the configuration reference.
+See [Best Practices — Filtering by Memory Shape](best-practices.md#filtering-by-memory-shape-with-entity-labels) for a full walkthrough, or [Entity Labels](developer/api/memory-banks.md#entity-labels) for the configuration reference.
 
 ---
 
@@ -373,7 +373,7 @@ This is where traditional graphs run into major limitations when used for AI mem
 The creation of stickers happens through a mix of AI automation and developer control:
 
 - **Open-world automation (default):** Hindsight's LLM pipeline automatically detects and extracts standard entities — people, places, dates — from raw text and turns them into stickers.
-- **Developer control via `entity_labels`:** You can define a custom schema using [entity labels](developer\retain.md#entity-labels). This forces the LLM to categorize memories using a strict, predefined vocabulary. Instead of letting the AI invent random descriptors, you choose the exact names and parameters for the stickers — for example, forcing a `pedagogy` key to only choose from `scaffolding`, `direct_instruction`, or `socratic_questioning`. To lock the bank to *only* your configured labels and turn off the open-world automation above, also set `entities_allow_free_form: false` on the bank config — the LLM then skips free-form named entities entirely and emits only entries that match your schema.
+- **Developer control via `entity_labels`:** You can define a custom schema using [entity labels](developer/retain.md#entity-labels). This forces the LLM to categorize memories using a strict, predefined vocabulary. Instead of letting the AI invent random descriptors, you choose the exact names and parameters for the stickers — for example, forcing a `pedagogy` key to only choose from `scaffolding`, `direct_instruction`, or `socratic_questioning`. To lock the bank to *only* your configured labels and turn off the open-world automation above, also set `entities_allow_free_form: false` on the bank config — the LLM then skips free-form named entities entirely and emits only entries that match your schema.
 
 #### Can I build direct entity-to-entity pipelines?
 

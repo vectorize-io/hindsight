@@ -9,7 +9,7 @@ When you **retain** content, Hindsight doesn't just store the raw text—it inte
 
 > **ℹ️ How Retain Works**
 > 
-Learn about fact extraction, entity resolution, and graph construction in the [Retain Architecture](..\retain.md) guide.
+Learn about fact extraction, entity resolution, and graph construction in the [Retain Architecture](../retain.md) guide.
 > **💡 Prerequisites**
 > 
 Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
