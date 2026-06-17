@@ -403,12 +403,7 @@ function BankSelectorInner() {
         timestamp?: string;
         document_id?: string;
         tags?: string[];
-        observation_scopes?:
-          | "per_tag"
-          | "combined"
-          | "all_combinations"
-          | "shared"
-          | string[][];
+        observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
         metadata?: Record<string, string>;
         entities?: Array<{ text: string }>;
         strategy?: string;

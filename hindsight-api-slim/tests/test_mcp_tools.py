@@ -1923,6 +1923,14 @@ class TestToolAnnotations:
         assert ann.readOnlyHint is True
         assert ann.openWorldHint is False
 
+    async def test_reflect_is_read_only(self, mock_memory):
+        # reflect synthesizes an answer and persists nothing (memory_engine.reflect_async),
+        # so it carries readOnlyHint=True like recall.
+        ann = _tools(_make_mcp_server(mock_memory, {"reflect"}))["reflect"].annotations
+        assert ann is not None
+        assert ann.readOnlyHint is True
+        assert ann.openWorldHint is False
+
     async def test_destructive_tool(self, mock_memory):
         ann = _tools(_make_mcp_server(mock_memory, {"delete_bank"}))["delete_bank"].annotations
         assert ann is not None

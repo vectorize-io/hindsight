@@ -205,6 +205,7 @@ def build_content_dict(
 # auto-approve safe reads; destructiveHint flags tools that delete or clear memory.
 _READ_ONLY_TOOLS = {
     "recall",
+    "reflect",
     "list_banks",
     "get_bank",
     "get_bank_stats",
@@ -236,7 +237,7 @@ def _tool_annotations(name: str) -> ToolAnnotations:
     if name in _DESTRUCTIVE_TOOLS:
         return ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False)
     # Everything else writes but does not destructively delete/clear memory
-    # (retain, reflect, create_*, update_*, refresh_mental_model, cancel_operation).
+    # (retain, create_*, update_*, refresh_mental_model, cancel_operation).
     return ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
 
 
