@@ -3334,6 +3334,28 @@ class MemoryEngine(MemoryEngineInterface):
                 sub_doc_id = document_id or (sub_batch[0].get("document_id") if len(sub_batch) == 1 else None)
                 sub_offset = chunk_offsets.get(sub_doc_id, 0) if sub_doc_id else 0
 
+                # Count the chunks this sub-batch will produce BEFORE handing it
+                # to the orchestrator. retain_batch consumes (pops) each item's
+                # "content" while streaming, so reading it back after the call
+                # yields "" — and chunk_text("") returns [""] (count 1),
+                # advancing the per-document cursor by 1 regardless of the real
+                # chunk count. For slices that each span several chunks the next
+                # sub-batch then restarts ~1 slot in, colliding chunk_ids and
+                # overwriting earlier chunks (only ~1 new chunk survives per
+                # sub-batch). Capture it here while content is still present.
+                sub_chunk_count = 0
+                if sub_doc_id:
+                    sub_chunk_count = sum(
+                        len(
+                            fact_extraction.chunk_text(
+                                item.get("content", "") or "",
+                                chunking_config.chunk_size,
+                                structured_chunk_size=chunking_config.structured_chunk_size,
+                            )
+                        )
+                        for item in sub_batch
+                    )
+
                 sub_results, sub_usage, sub_processed = await self._retain_batch_async_internal(
                     bank_id=bank_id,
                     contents=sub_batch,
@@ -3353,20 +3375,10 @@ class MemoryEngine(MemoryEngineInterface):
                 )
 
                 # Advance the document's chunk_index cursor by the number of
-                # chunks this sub-batch produced (computed with the same chunk
-                # size the orchestrator uses), so the next sub-batch sharing the
-                # document continues the sequence.
+                # chunks this sub-batch produced (counted above, before the
+                # orchestrator consumed the content), so the next sub-batch
+                # sharing the document continues the sequence.
                 if sub_doc_id:
-                    sub_chunk_count = sum(
-                        len(
-                            fact_extraction.chunk_text(
-                                item.get("content", "") or "",
-                                chunking_config.chunk_size,
-                                structured_chunk_size=chunking_config.structured_chunk_size,
-                            )
-                        )
-                        for item in sub_batch
-                    )
                     # retain_batch only prepends the existing body on the global
                     # first sub-batch (is_first_batch == i == 1), so fold its chunk
                     # count in only there.
