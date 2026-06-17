@@ -170,11 +170,6 @@
         "description": "When true (default) and retainFormat is 'json', each message's content is an Anthropic-shaped array of typed blocks including tool_use (agent tool calls) and tool_result (truncated at 2000 chars). Operational MCP tools — Hindsight's own recall/retain/search — are filtered out to avoid feedback loops. Set to false to retain text-only content, one string per message.",
         "default": true
       },
-      "includeSenderContext": {
-        "type": "boolean",
-        "description": "Deprecated compatibility option. Sender/channel/provider stay in retain metadata/context and are not prepended to retained transcript content.",
-        "default": true
-      },
       "retainEveryNTurns": {
         "type": "integer",
         "description": "Retain every Nth turn instead of every turn. 1 = every turn (default). Values > 1 enable chunked retention with a sliding window.",
@@ -429,10 +424,6 @@
     "retainToolCalls": {
       "label": "Retain Tool Calls",
       "placeholder": "true (default) — include tool_use / tool_result blocks in retained JSON"
-    },
-    "includeSenderContext": {
-      "label": "Include Sender Context",
-      "placeholder": "deprecated; routing metadata is retained outside content"
     },
     "retainEveryNTurns": {
       "label": "Retain Every N Turns",

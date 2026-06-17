@@ -2522,12 +2522,7 @@ ${memoriesFormatted}
         const retention = prepareRetentionTranscript(
           messagesToRetain,
           pluginConfig,
-          retainFullWindow,
-          {
-            senderId: resolvedCtxForRetain?.senderId,
-            channelId: effectiveCtxForRetain?.channelId,
-            provider: effectiveCtxForRetain?.messageProvider,
-          }
+          retainFullWindow
         );
         if (!retention) {
           debug("[Hindsight Hook] No messages to retain (filtered/short/no-user)");
@@ -2783,36 +2778,10 @@ export function buildRetainRequest(
   };
 }
 
-export interface RetentionSessionContext {
-  senderId?: string;
-  channelId?: string;
-  provider?: string;
-}
-
-/**
- * Build a session-context block describing who is speaking, on which channel,
- * via which provider. Prepending this to retained transcripts lets similarity
- * search distinguish memories by speaker without requiring per-user banks
- * (`dynamicBankGranularity: ["agent", "user"]`). Returns null when no usable
- * fields are available.
- */
-export function formatRetentionSessionContext(
-  ctx: RetentionSessionContext | null | undefined
-): string | null {
-  if (!ctx) return null;
-  const lines: string[] = [];
-  if (ctx.senderId) lines.push(`sender: ${ctx.senderId}`);
-  if (ctx.channelId) lines.push(`channel: ${ctx.channelId}`);
-  if (ctx.provider) lines.push(`provider: ${ctx.provider}`);
-  if (lines.length === 0) return null;
-  return ["[context]", ...lines, "[/context]"].join("\n");
-}
-
 export function prepareRetentionTranscript(
   messages: any[],
   pluginConfig: PluginConfig,
-  retainFullWindow = false,
-  _sessionContext?: RetentionSessionContext | null
+  retainFullWindow = false
 ): { transcript: string; messageCount: number } | null {
   if (!messages || messages.length === 0) {
     return null;

@@ -998,68 +998,30 @@ describe("prepareRetentionTranscript", () => {
     expect(result?.messageCount).toBe(2);
   });
 
-  it("does not prepend session context as retained JSON content", () => {
+  it("does not wrap retained JSON content in a context header", () => {
     const config: PluginConfig = { ...baseConfig, retainToolCalls: false };
     const messages = [{ role: "user", content: "What's MIN-123 status?" }];
-    const result = prepareRetentionTranscript(messages, config, false, {
-      senderId: "ou_cb923a19782fe748cd9fff99454eee31",
-      channelId: "oc_abcdef123456",
-      provider: "feishu",
-    });
+    const result = prepareRetentionTranscript(messages, config);
     expect(result).not.toBeNull();
     const parsed = JSON.parse(result!.transcript);
     expect(parsed).toEqual([{ role: "user", content: "What's MIN-123 status?" }]);
     expect(result!.transcript).not.toContain("[context]");
-    expect(result!.transcript).not.toContain("sender: ou_");
+    expect(result!.transcript).not.toContain("sender:");
     expect(result!.transcript).not.toContain("channel:");
     expect(result!.transcript).not.toContain("provider:");
     expect(result?.messageCount).toBe(1);
   });
 
-  it("does not prepend session context as retained text content", () => {
+  it("does not wrap retained text content in a context header", () => {
     const config: PluginConfig = { ...baseConfig, retainFormat: "text" };
     const messages = [{ role: "user", content: "ping" }];
-    const result = prepareRetentionTranscript(messages, config, false, {
-      senderId: "ou_cb923a19782fe748cd9fff99454eee31",
-      channelId: "oc_abcdef123456",
-      provider: "feishu",
-    });
+    const result = prepareRetentionTranscript(messages, config);
     expect(result).not.toBeNull();
     expect(result!.transcript).not.toContain("[context]");
-    expect(result!.transcript).not.toContain("sender: ou_");
+    expect(result!.transcript).not.toContain("sender:");
     expect(result!.transcript).not.toContain("channel:");
     expect(result!.transcript).not.toContain("provider:");
     expect(result!.transcript).toContain("[role: user]\nping\n[user:end]");
-  });
-
-  it("does not prepend the context header when includeSenderContext is explicitly enabled", () => {
-    const config: PluginConfig = {
-      ...baseConfig,
-      retainFormat: "text",
-      includeSenderContext: true,
-    };
-    const messages = [{ role: "user", content: "ping" }];
-    const result = prepareRetentionTranscript(messages, config, false, {
-      senderId: "ou_cb923a19782fe748cd9fff99454eee31",
-    });
-    expect(result).not.toBeNull();
-    expect(result!.transcript).not.toContain("[context]");
-    expect(result!.transcript.startsWith("[role: user]")).toBe(true);
-  });
-
-  it("omits the context header when sessionContext has no usable fields", () => {
-    const config: PluginConfig = { ...baseConfig, retainFormat: "text" };
-    const messages = [{ role: "user", content: "ping" }];
-    const result = prepareRetentionTranscript(messages, config, false, {});
-    expect(result).not.toBeNull();
-    expect(result!.transcript).not.toContain("[context]");
-  });
-
-  it("falls back gracefully when sessionContext is omitted", () => {
-    const messages = [{ role: "user", content: "ping" }];
-    const result = prepareRetentionTranscript(messages, baseConfig);
-    expect(result).not.toBeNull();
-    expect(result!.transcript).not.toContain("[context]");
   });
 });
 
