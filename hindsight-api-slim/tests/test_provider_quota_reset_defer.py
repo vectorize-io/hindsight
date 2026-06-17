@@ -103,7 +103,7 @@ async def test_extract_facts_from_text_preserves_provider_quota_reset(monkeypatc
             event_date=None,
             llm_config=object(),
             agent_name="TestAgent",
-            config=SimpleNamespace(retain_chunk_size=1000),
+            config=SimpleNamespace(retain_chunk_size=1000, retain_structured_chunk_size=None),
         )
 
     assert exc_info.value.retry_at == retry_at
