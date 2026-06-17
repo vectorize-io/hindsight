@@ -35,6 +35,13 @@ import pytest
 
 from hindsight_api.config import clear_config_cache
 
+# The async test submits via submit_async_retain, which inserts parent/child rows
+# into async_operations. test_worker.py drives its own WorkerPoller.claim_batch()
+# against the same pool, so running the two files on different xdist workers lets
+# them steal each other's pending rows. Share the "worker_tests" group so they
+# serialize on the same xdist process (matches test_async_batch_retain.py).
+pytestmark = pytest.mark.xdist_group("worker_tests")
+
 # Planted in a late paragraph so it lands in a late sub-batch slice — the first
 # thing either bug drops (mirrors the field-reported "165 commits" fact that
 # vanished on the async path). A single no-space token so it can't straddle a
