@@ -745,9 +745,17 @@ def _resolve_refresh_tag_filtering(
     return RefreshTagFiltering(tags=model_tags, tags_match=tags_match, tag_groups=None)
 
 
+@dataclass
+class ResolvedDispositionMission:
+    """Disposition + mission after overlaying resolved bank config on the legacy columns."""
+
+    disposition: dict[str, int]
+    mission: str
+
+
 def _overlay_bank_config_disposition_mission(
     disposition: dict[str, int], mission: str, config_dict: dict[str, Any]
-) -> tuple[dict[str, int], str]:
+) -> ResolvedDispositionMission:
     """Overlay resolved bank config on top of the legacy banks.disposition /
     banks.mission column values.
 
@@ -765,7 +773,7 @@ def _overlay_bank_config_disposition_mission(
         "literalism": cfg_lit if cfg_lit is not None else disposition["literalism"],
         "empathy": cfg_emp if cfg_emp is not None else disposition["empathy"],
     }
-    return resolved_disposition, resolved_mission
+    return ResolvedDispositionMission(disposition=resolved_disposition, mission=resolved_mission)
 
 
 class MemoryEngine(MemoryEngineInterface):
@@ -8149,13 +8157,13 @@ class MemoryEngine(MemoryEngineInterface):
         config_dict = await self._config_resolver.get_bank_config(bank_id, request_context)
         db_disp = profile["disposition"]
         db_disp_dict = db_disp.model_dump() if hasattr(db_disp, "model_dump") else dict(db_disp)
-        disposition, mission = _overlay_bank_config_disposition_mission(db_disp_dict, profile["mission"], config_dict)
+        resolved = _overlay_bank_config_disposition_mission(db_disp_dict, profile["mission"], config_dict)
 
         return {
             "bank_id": bank_id,
             "name": profile["name"],
-            "disposition": disposition,
-            "mission": mission,
+            "disposition": resolved.disposition,
+            "mission": resolved.mission,
         }
 
     async def _ensure_bank_exists(
@@ -8373,11 +8381,14 @@ class MemoryEngine(MemoryEngineInterface):
         # Overlay resolved bank config (reflect_mission + disposition_*) on top of the
         # legacy banks.disposition / banks.mission columns, mirroring get_bank_profile so
         # the list and get paths return identical disposition + mission for a bank.
+        # Resolve every bank's config in one batch (single config-column query + a single
+        # tenant-config resolve) rather than one round-trip per bank.
+        configs = await self._config_resolver.get_bank_configs([bank["bank_id"] for bank in banks], request_context)
         for bank in banks:
-            config_dict = await self._config_resolver.get_bank_config(bank["bank_id"], request_context)
-            bank["disposition"], bank["mission"] = _overlay_bank_config_disposition_mission(
-                bank["disposition"], bank["mission"], config_dict
+            resolved = _overlay_bank_config_disposition_mission(
+                bank["disposition"], bank["mission"], configs.get(bank["bank_id"], {})
             )
+            bank["disposition"], bank["mission"] = resolved.disposition, resolved.mission
         return banks
 
     # ==================== Reflect Methods ====================
