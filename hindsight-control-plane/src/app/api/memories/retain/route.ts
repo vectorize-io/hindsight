@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { hindsightClient } from "@/lib/hindsight-client";
+import { createDataplaneClientForRequest, sdk } from "@/lib/hindsight-client";
+import { respondWithSdk } from "@/lib/sdk-response";
 
 export async function POST(request: NextRequest) {
   try {
@@ -27,12 +28,23 @@ export async function POST(request: NextRequest) {
         }))
       : items;
 
-    const response = await hindsightClient.retainBatch(bankId, mappedItems, {
-      documentId: document_id,
-      documentTags: document_tags,
+    const itemsWithDocId = mappedItems?.map((item: any) => ({
+      ...item,
+      document_id: item.document_id || document_id,
+    }));
+    const response = await sdk.retainMemories({
+      client: createDataplaneClientForRequest(request),
+      path: { bank_id: bankId },
+      body: {
+        items: itemsWithDocId,
+        document_tags,
+      },
     });
 
-    return NextResponse.json(response, { status: 200 });
+    return respondWithSdk(response, "Failed to batch retain", {
+      request,
+      errorKey: "api.errors.memories.retain",
+    });
   } catch (error: any) {
     console.error("Error batch retain:", error);
 

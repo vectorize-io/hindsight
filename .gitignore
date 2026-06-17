@@ -63,3 +63,5 @@ hindsight-integrations/_drafts/
 
 blog-post*
 .worktrees/
+hindsight-control-plane/supabase/.branches/
+hindsight-control-plane/supabase/.temp/

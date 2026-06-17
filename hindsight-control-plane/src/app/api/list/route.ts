@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { hindsightClient } from "@/lib/hindsight-client";
+import { createDataplaneClientForRequest, sdk } from "@/lib/hindsight-client";
+import { respondWithSdk } from "@/lib/sdk-response";
 
 export async function GET(request: NextRequest) {
   try {
@@ -33,17 +34,24 @@ export async function GET(request: NextRequest) {
     const state = stateParam === "valid" || stateParam === "invalidated" ? stateParam : undefined;
     const documentId = searchParams.get("document_id") || undefined;
 
-    const response = await hindsightClient.listMemories(bankId, {
-      limit,
-      offset,
-      type,
-      q,
-      consolidationState,
-      state,
-      documentId,
+    const response = await sdk.listMemories({
+      client: createDataplaneClientForRequest(request),
+      path: { bank_id: bankId },
+      query: {
+        limit,
+        offset,
+        type,
+        q,
+        consolidation_state: consolidationState,
+        state,
+        document_id: documentId,
+      },
     });
 
-    return NextResponse.json(response, { status: 200 });
+    return respondWithSdk(response, "Failed to list memory units", {
+      request,
+      errorKey: "api.errors.memories.list",
+    });
   } catch (error) {
     console.error("Error listing memory units:", error);
     return NextResponse.json(

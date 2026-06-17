@@ -2742,6 +2742,12 @@ class AsyncOperationSubmitResponse(BaseModel):
 class FeaturesInfo(BaseModel):
     """Feature flags indicating which capabilities are enabled."""
 
+    authz_profile: str = Field(default="disabled", description="Configured authorization deployment profile")
+    tenant_extension: str | None = Field(default=None, description="Loaded tenant extension class name")
+    operation_validator_extension: str | None = Field(
+        default=None, description="Loaded operation validator extension class name"
+    )
+    supabase_org_ready: bool = Field(default=False, description="Whether the supabase_org profile is fully configured")
     observations: bool = Field(description="Whether observations (auto-consolidation) are enabled")
     mcp: bool = Field(description="Whether MCP (Model Context Protocol) server is enabled")
     worker: bool = Field(description="Whether the background worker is enabled")
@@ -3040,6 +3046,20 @@ def create_app(
                     logging.error(f"Failed to initialize tracing: {e}")
                     logging.warning("Continuing without tracing")
 
+        # Call tenant and validator startup hooks before memory.initialize().
+        # Startup migrations call tenant_extension.list_tenants(), so external
+        # tenant resolvers (for example Supabase-backed org discovery) must be
+        # connected before initialization starts.
+        tenant_extension = memory.tenant_extension
+        if tenant_extension:
+            await tenant_extension.on_startup()
+            logging.info("Tenant extension started")
+
+        operation_validator = getattr(memory, "_operation_validator", None)
+        if operation_validator:
+            await operation_validator.on_startup()
+            logging.info("Operation validator extension started")
+
         # Startup: Initialize database and memory system (migrations run inside initialize if enabled)
         if initialize_memory:
             await memory.initialize()
@@ -3078,12 +3098,6 @@ def create_app(
                 "Tasks (mental model refresh, consolidation) will run synchronously."
             )
 
-        # Call tenant extension startup hook (e.g. JWKS fetch for Supabase)
-        tenant_extension = memory.tenant_extension
-        if tenant_extension:
-            await tenant_extension.on_startup()
-            logging.info("Tenant extension started")
-
         # Call HTTP extension startup hook
         if http_extension:
             await http_extension.on_startup()
@@ -3106,6 +3120,10 @@ def create_app(
         if tenant_extension:
             await tenant_extension.on_shutdown()
             logging.info("Tenant extension stopped")
+
+        if operation_validator:
+            await operation_validator.on_shutdown()
+            logging.info("Operation validator extension stopped")
 
         # Call HTTP extension shutdown hook
         if http_extension:
@@ -3292,7 +3310,10 @@ def _register_routes(app: FastAPI):
     # Create audit decorator bound to this app's audit logger
     audited = _make_audited_http(lambda: getattr(app.state, "audit_logger", None))
 
-    def get_request_context(authorization: str | None = Header(default=None)) -> RequestContext:
+    def get_request_context(
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> RequestContext:
         """
         Extract request context from Authorization header.
 
@@ -3308,7 +3329,10 @@ def _register_routes(app: FastAPI):
                 api_key = authorization[7:].strip()
             else:
                 api_key = authorization.strip()
-        return RequestContext(api_key=api_key)
+        return RequestContext(
+            api_key=api_key,
+            selected_org_id=request.headers.get("x-hindsight-org-id"),
+        )
 
     def precheck_for(operation: str):
         """
@@ -3421,11 +3445,20 @@ def _register_routes(app: FastAPI):
         """
         from hindsight_api import __version__
         from hindsight_api.config import _get_raw_config
+        from hindsight_api.extensions.authz_profile import get_authz_profile_info
 
         config = _get_raw_config()
+        authz_info = get_authz_profile_info(
+            app.state.memory.tenant_extension,
+            getattr(app.state.memory, "_operation_validator", None),
+        )
         return VersionResponse(
             api_version=__version__,
             features=FeaturesInfo(
+                authz_profile=authz_info.authz_profile,
+                tenant_extension=authz_info.tenant_extension,
+                operation_validator_extension=authz_info.operation_validator_extension,
+                supabase_org_ready=authz_info.supabase_org_ready,
                 observations=config.enable_observations,
                 mcp=config.mcp_enabled,
                 worker=config.worker_enabled,

@@ -56,7 +56,8 @@
       "copyName": "이름 복사",
       "copied": "클립보드에 복사됨"
     },
-    "viewOnGitHub": "GitHub에서 보기"
+    "viewOnGitHub": "GitHub에서 보기",
+    "organizationSettings": "Organization settings"
   },
   "bank": {
     "dryRunExtraction": "드라이런 추출",
@@ -1544,7 +1545,10 @@
     "signIn": "로그인",
     "signingIn": "로그인 중...",
     "invalidKey": "유효하지 않은 액세스 키",
-    "connectFailed": "서버에 연결할 수 없습니다"
+    "connectFailed": "서버에 연결할 수 없습니다",
+    "signInAction": "Sign in",
+    "signUpAction": "Sign up",
+    "organizationNamePlaceholder": "Organization name"
   },
   "api": {
     "errors": {
@@ -1685,5 +1689,16 @@
         "deliveries": "Webhook 전달 내역을 가져오지 못했습니다"
       }
     }
+  },
+  "settings": {
+    "organizationSettings": "Organization settings",
+    "noOrganizationSelected": "No organization selected",
+    "selectOrganization": "Select organization",
+    "newOrganization": "New organization",
+    "inviteLinkCreated": "Invite link created",
+    "inviteLinkOneTime": "Copy this link now. It is only shown after creation and will not be available after you leave or refresh this page.",
+    "apiKeys": "API keys",
+    "keyName": "Key name",
+    "organizationName": "Organization name"
   }
 }

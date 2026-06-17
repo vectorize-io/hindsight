@@ -1393,6 +1393,13 @@ export class ControlPlaneClient {
     return this.fetchApi<{
       api_version: string;
       features: {
+        authz_profile?: string;
+        tenant_extension?: string | null;
+        operation_validator_extension?: string | null;
+        supabase_org_ready?: boolean;
+        auth_provider?: "disabled" | "access_key" | "supabase_org";
+        profile_match?: boolean;
+        access_key_auth?: boolean;
         observations: boolean;
         mcp: boolean;
         worker: boolean;

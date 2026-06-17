@@ -21,6 +21,12 @@ var _ MappedNullable = &FeaturesInfo{}
 
 // FeaturesInfo Feature flags indicating which capabilities are enabled.
 type FeaturesInfo struct {
+	// Configured authorization deployment profile
+	AuthzProfile *string `json:"authz_profile,omitempty"`
+	TenantExtension NullableString `json:"tenant_extension,omitempty"`
+	OperationValidatorExtension NullableString `json:"operation_validator_extension,omitempty"`
+	// Whether the supabase_org profile is fully configured
+	SupabaseOrgReady *bool `json:"supabase_org_ready,omitempty"`
 	// Whether observations (auto-consolidation) are enabled
 	Observations bool `json:"observations"`
 	// Whether MCP (Model Context Protocol) server is enabled
@@ -53,6 +59,10 @@ type _FeaturesInfo FeaturesInfo
 // will change when the set of required properties is changed
 func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi bool, bankLlmHealth bool, fileUploadApi bool, documentExportApi bool, documentImportApi bool, auditLog bool, llmTrace bool, storeDocumentText bool) *FeaturesInfo {
 	this := FeaturesInfo{}
+	var authzProfile string = "disabled"
+	this.AuthzProfile = &authzProfile
+	var supabaseOrgReady bool = false
+	this.SupabaseOrgReady = &supabaseOrgReady
 	this.Observations = observations
 	this.Mcp = mcp
 	this.Worker = worker
@@ -72,7 +82,159 @@ func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi boo
 // but it doesn't guarantee that properties required by API are set
 func NewFeaturesInfoWithDefaults() *FeaturesInfo {
 	this := FeaturesInfo{}
+	var authzProfile string = "disabled"
+	this.AuthzProfile = &authzProfile
+	var supabaseOrgReady bool = false
+	this.SupabaseOrgReady = &supabaseOrgReady
 	return &this
+}
+
+// GetAuthzProfile returns the AuthzProfile field value if set, zero value otherwise.
+func (o *FeaturesInfo) GetAuthzProfile() string {
+	if o == nil || IsNil(o.AuthzProfile) {
+		var ret string
+		return ret
+	}
+	return *o.AuthzProfile
+}
+
+// GetAuthzProfileOk returns a tuple with the AuthzProfile field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *FeaturesInfo) GetAuthzProfileOk() (*string, bool) {
+	if o == nil || IsNil(o.AuthzProfile) {
+		return nil, false
+	}
+	return o.AuthzProfile, true
+}
+
+// HasAuthzProfile returns a boolean if a field has been set.
+func (o *FeaturesInfo) HasAuthzProfile() bool {
+	if o != nil && !IsNil(o.AuthzProfile) {
+		return true
+	}
+
+	return false
+}
+
+// SetAuthzProfile gets a reference to the given string and assigns it to the AuthzProfile field.
+func (o *FeaturesInfo) SetAuthzProfile(v string) {
+	o.AuthzProfile = &v
+}
+
+// GetTenantExtension returns the TenantExtension field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *FeaturesInfo) GetTenantExtension() string {
+	if o == nil || IsNil(o.TenantExtension.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.TenantExtension.Get()
+}
+
+// GetTenantExtensionOk returns a tuple with the TenantExtension field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *FeaturesInfo) GetTenantExtensionOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.TenantExtension.Get(), o.TenantExtension.IsSet()
+}
+
+// HasTenantExtension returns a boolean if a field has been set.
+func (o *FeaturesInfo) HasTenantExtension() bool {
+	if o != nil && o.TenantExtension.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetTenantExtension gets a reference to the given NullableString and assigns it to the TenantExtension field.
+func (o *FeaturesInfo) SetTenantExtension(v string) {
+	o.TenantExtension.Set(&v)
+}
+// SetTenantExtensionNil sets the value for TenantExtension to be an explicit nil
+func (o *FeaturesInfo) SetTenantExtensionNil() {
+	o.TenantExtension.Set(nil)
+}
+
+// UnsetTenantExtension ensures that no value is present for TenantExtension, not even an explicit nil
+func (o *FeaturesInfo) UnsetTenantExtension() {
+	o.TenantExtension.Unset()
+}
+
+// GetOperationValidatorExtension returns the OperationValidatorExtension field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *FeaturesInfo) GetOperationValidatorExtension() string {
+	if o == nil || IsNil(o.OperationValidatorExtension.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.OperationValidatorExtension.Get()
+}
+
+// GetOperationValidatorExtensionOk returns a tuple with the OperationValidatorExtension field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *FeaturesInfo) GetOperationValidatorExtensionOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.OperationValidatorExtension.Get(), o.OperationValidatorExtension.IsSet()
+}
+
+// HasOperationValidatorExtension returns a boolean if a field has been set.
+func (o *FeaturesInfo) HasOperationValidatorExtension() bool {
+	if o != nil && o.OperationValidatorExtension.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetOperationValidatorExtension gets a reference to the given NullableString and assigns it to the OperationValidatorExtension field.
+func (o *FeaturesInfo) SetOperationValidatorExtension(v string) {
+	o.OperationValidatorExtension.Set(&v)
+}
+// SetOperationValidatorExtensionNil sets the value for OperationValidatorExtension to be an explicit nil
+func (o *FeaturesInfo) SetOperationValidatorExtensionNil() {
+	o.OperationValidatorExtension.Set(nil)
+}
+
+// UnsetOperationValidatorExtension ensures that no value is present for OperationValidatorExtension, not even an explicit nil
+func (o *FeaturesInfo) UnsetOperationValidatorExtension() {
+	o.OperationValidatorExtension.Unset()
+}
+
+// GetSupabaseOrgReady returns the SupabaseOrgReady field value if set, zero value otherwise.
+func (o *FeaturesInfo) GetSupabaseOrgReady() bool {
+	if o == nil || IsNil(o.SupabaseOrgReady) {
+		var ret bool
+		return ret
+	}
+	return *o.SupabaseOrgReady
+}
+
+// GetSupabaseOrgReadyOk returns a tuple with the SupabaseOrgReady field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *FeaturesInfo) GetSupabaseOrgReadyOk() (*bool, bool) {
+	if o == nil || IsNil(o.SupabaseOrgReady) {
+		return nil, false
+	}
+	return o.SupabaseOrgReady, true
+}
+
+// HasSupabaseOrgReady returns a boolean if a field has been set.
+func (o *FeaturesInfo) HasSupabaseOrgReady() bool {
+	if o != nil && !IsNil(o.SupabaseOrgReady) {
+		return true
+	}
+
+	return false
+}
+
+// SetSupabaseOrgReady gets a reference to the given bool and assigns it to the SupabaseOrgReady field.
+func (o *FeaturesInfo) SetSupabaseOrgReady(v bool) {
+	o.SupabaseOrgReady = &v
 }
 
 // GetObservations returns the Observations field value
@@ -349,6 +511,18 @@ func (o FeaturesInfo) MarshalJSON() ([]byte, error) {
 
 func (o FeaturesInfo) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
+	if !IsNil(o.AuthzProfile) {
+		toSerialize["authz_profile"] = o.AuthzProfile
+	}
+	if o.TenantExtension.IsSet() {
+		toSerialize["tenant_extension"] = o.TenantExtension.Get()
+	}
+	if o.OperationValidatorExtension.IsSet() {
+		toSerialize["operation_validator_extension"] = o.OperationValidatorExtension.Get()
+	}
+	if !IsNil(o.SupabaseOrgReady) {
+		toSerialize["supabase_org_ready"] = o.SupabaseOrgReady
+	}
 	toSerialize["observations"] = o.Observations
 	toSerialize["mcp"] = o.Mcp
 	toSerialize["worker"] = o.Worker

@@ -202,6 +202,7 @@ def main():
         import uvicorn
 
         from ..extensions import OperationValidatorExtension, TenantExtension, load_extension
+        from ..extensions.authz_profile import validate_authz_profile
 
         # Load tenant extension BEFORE creating MemoryEngine so it can
         # set correct schema context during task execution. Without this,
@@ -214,6 +215,8 @@ def main():
         operation_validator = load_extension("OPERATION_VALIDATOR", OperationValidatorExtension)
         if operation_validator:
             logger.info(f"Loaded operation validator: {operation_validator.__class__.__name__}")
+
+        validate_authz_profile(tenant_extension, operation_validator)
 
         # Initialize MemoryEngine
         # Workers use WorkerTaskBackend: submit_task is a no-op because the
@@ -228,6 +231,11 @@ def main():
         )
 
         await memory.initialize()
+
+        if tenant_extension:
+            await tenant_extension.on_startup()
+        if operation_validator:
+            await operation_validator.on_startup()
 
         print(f"Database connected: {config.database_url}")
 
@@ -340,6 +348,11 @@ def main():
                 await http_task
             except asyncio.CancelledError:
                 pass
+
+        if operation_validator:
+            await operation_validator.on_shutdown()
+        if tenant_extension:
+            await tenant_extension.on_shutdown()
 
         # Close memory engine
         await memory.close()

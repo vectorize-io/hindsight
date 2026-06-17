@@ -15,6 +15,8 @@ interface Features {
   audit_log: boolean;
   llm_trace: boolean;
   store_document_text: boolean;
+  auth_provider?: "disabled" | "access_key" | "supabase_org";
+  supabase_org_ready?: boolean;
 }
 
 interface FeaturesContextType {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { DATAPLANE_URL, getDataplaneHeadersForRequest } from "@/lib/hindsight-client";
 
 export async function GET(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
   try {
@@ -18,7 +18,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
 
     const response = await fetch(
       `${DATAPLANE_URL}/v1/default/banks/${bankId}/observations/scopes`,
-      { headers: getDataplaneHeaders() }
+      { headers: getDataplaneHeadersForRequest(request) }
     );
 
     if (!response.ok) {

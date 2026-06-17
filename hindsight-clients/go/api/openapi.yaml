@@ -5776,6 +5776,22 @@ components:
     FeaturesInfo:
       description: Feature flags indicating which capabilities are enabled.
       properties:
+        authz_profile:
+          default: disabled
+          description: Configured authorization deployment profile
+          title: Authz Profile
+          type: string
+        tenant_extension:
+          nullable: true
+          type: string
+        operation_validator_extension:
+          nullable: true
+          type: string
+        supabase_org_ready:
+          default: false
+          description: Whether the supabase_org profile is fully configured
+          title: Supabase Org Ready
+          type: boolean
         observations:
           description: Whether observations (auto-consolidation) are enabled
           title: Observations
