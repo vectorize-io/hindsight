@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { retrievedNotes, retrievedNotesDetailed } from "../src/reflect-util";
+import { groundedNotes, retrievedNotes, retrievedNotesDetailed } from "../src/reflect-util";
 import type { ReflectResponse } from "../src/types";
 
 describe("retrievedNotes", () => {
@@ -67,5 +67,87 @@ describe("retrievedNotesDetailed", () => {
       { docId: "Personal/journal.md", snippets: ["felt scattered"] },
       { docId: "Work/acme.md", snippets: ["Acme cares about SOC2"] },
     ]);
+  });
+});
+
+describe("groundedNotes", () => {
+  it("returns only the notes the answer cited, joined to the trace by fact id", () => {
+    const response: ReflectResponse = {
+      text: "Jon's favorite band is Tool.",
+      // The answer is grounded on just one fact...
+      based_on: { memories: [{ id: "f-tool", text: "Jon's favorite band is Tool" }] },
+      trace: {
+        tool_calls: [
+          {
+            tool: "recall",
+            input: { query: "Jon band" },
+            // ...even though the agent's scratchpad retrieved several notes.
+            output: {
+              results: [
+                { id: "f-tool", text: "Jon's favorite band is Tool", document_id: "Music/Jon.md" },
+                { id: "f-x", text: "Jon likes hiking", document_id: "People/Jon-misc.md" },
+                { id: "f-y", text: "unrelated", document_id: "Random/notes.md" },
+              ],
+            },
+          },
+        ],
+      },
+    };
+
+    // Only the cited note appears — not the full scratchpad.
+    expect(groundedNotes(response)).toEqual([
+      { docId: "Music/Jon.md", snippets: ["Jon's favorite band is Tool"] },
+    ]);
+  });
+
+  it("dedupes by note and preserves citation order", () => {
+    const response: ReflectResponse = {
+      text: "answer",
+      based_on: {
+        memories: [
+          { id: "b1", text: "from acme" },
+          { id: "a1", text: "from journal" },
+          { id: "b2", text: "also acme" },
+        ],
+      },
+      trace: {
+        tool_calls: [
+          {
+            tool: "recall",
+            input: { query: "q" },
+            output: {
+              results: [
+                { id: "b1", text: "from acme", document_id: "Work/acme.md" },
+                { id: "a1", text: "from journal", document_id: "Personal/journal.md" },
+                { id: "b2", text: "also acme", document_id: "Work/acme.md" },
+              ],
+            },
+          },
+        ],
+      },
+    };
+
+    expect(groundedNotes(response)).toEqual([
+      { docId: "Work/acme.md", snippets: ["from acme", "also acme"] },
+      { docId: "Personal/journal.md", snippets: ["from journal"] },
+    ]);
+  });
+
+  it("falls back to the full retrieved list when nothing was cited", () => {
+    const response: ReflectResponse = {
+      text: "answer",
+      // No based_on (some responses omit it) — don't show an empty panel.
+      trace: {
+        tool_calls: [
+          {
+            tool: "recall",
+            input: { query: "q" },
+            output: { results: [{ id: "a", text: "x", document_id: "Work/acme.md" }] },
+          },
+        ],
+      },
+    };
+
+    expect(groundedNotes(response)).toEqual([{ docId: "Work/acme.md", snippets: ["x"] }]);
   });
 });

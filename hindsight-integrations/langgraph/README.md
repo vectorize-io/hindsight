@@ -153,6 +153,6 @@ All factory functions accept `client`, `hindsight_api_url`, and `api_key` to ove
 
 ## Documentation
 
-- [Integration docs](https://docs.hindsight.vectorize.io/docs/sdks/integrations/langgraph)
+- [Integration docs](https://hindsight.vectorize.io/sdks/integrations/langgraph)
 - [Cookbook: ReAct agent with memory](https://docs.hindsight.vectorize.io/cookbook/recipes/langgraph-react-agent)
 - [Hindsight API docs](https://docs.hindsight.vectorize.io)

@@ -2,8 +2,9 @@
 OpenAI Codex LLM provider using ChatGPT Plus/Pro OAuth authentication.
 
 This provider enables using ChatGPT Plus/Pro subscriptions for API calls
-without separate OpenAI Platform API credits. It uses OAuth tokens from
-~/.codex/auth.json and communicates with the ChatGPT backend API.
+without separate OpenAI Platform API credits. It uses OAuth tokens from the
+Codex ``auth.json`` (``$CODEX_HOME/auth.json``, or ``~/.codex/auth.json`` when
+``CODEX_HOME`` is unset) and communicates with the ChatGPT backend API.
 
 Tokens are refreshed automatically: the provider decodes the access_token
 JWT's ``exp`` claim and proactively refreshes via
@@ -24,7 +25,7 @@ from typing import Any
 
 import httpx
 
-from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
+from hindsight_api.engine.llm_interface import LLMInterface
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 
@@ -35,6 +36,7 @@ from .codex_auth import (
     _CODEX_TOKEN_REFRESH_SKEW_SECONDS,
     CodexAuthManager,
     CodexRefreshExpiredError,
+    default_codex_auth_file,
 )
 
 # Re-export for backward compatibility (tests import from this module).
@@ -55,14 +57,15 @@ class CodexLLM(LLMInterface):
     """
     LLM provider using OpenAI Codex OAuth authentication.
 
-    Authenticates using ChatGPT Plus/Pro credentials stored in ~/.codex/auth.json
-    and makes API calls to chatgpt.com/backend-api/codex/responses.
+    Authenticates using ChatGPT Plus/Pro credentials stored in the Codex
+    ``auth.json`` (honoring ``CODEX_HOME``, default ``~/.codex``) and makes API
+    calls to chatgpt.com/backend-api/codex/responses.
     """
 
     def __init__(
         self,
         provider: str,
-        api_key: str,  # Will be ignored, reads from ~/.codex/auth.json
+        api_key: str,  # Will be ignored, reads from the Codex auth.json (CODEX_HOME or ~/.codex)
         base_url: str,
         model: str,
         reasoning_effort: str = "low",
@@ -81,12 +84,14 @@ class CodexLLM(LLMInterface):
             refresh_token = self._load_codex_refresh_token()
             logger.info(f"Loaded Codex OAuth credentials for account: {account_id}")
         except Exception as e:
+            auth_file = default_codex_auth_file()
             raise RuntimeError(
-                f"Failed to load Codex OAuth credentials from ~/.codex/auth.json: {e}\n\n"
+                f"Failed to load Codex OAuth credentials from {auth_file}: {e}\n\n"
                 "To set up Codex authentication:\n"
                 "1. Install Codex CLI: npm install -g @openai/codex\n"
                 "2. Login: codex auth login\n"
-                "3. Verify: ls ~/.codex/auth.json\n\n"
+                f"3. Verify: ls {auth_file}\n\n"
+                "(Set CODEX_HOME to use a credentials directory other than ~/.codex.)\n\n"
                 "Or use a different provider (openai, anthropic, gemini) with API keys."
             ) from e
 
@@ -94,7 +99,7 @@ class CodexLLM(LLMInterface):
             access_token=access_token,
             account_id=account_id,
             refresh_token=refresh_token,
-            auth_file=Path.home() / ".codex" / "auth.json",
+            auth_file=default_codex_auth_file(),
         )
 
         # Use ChatGPT backend API endpoint. Codex auth is tied to
@@ -156,7 +161,7 @@ class CodexLLM(LLMInterface):
 
     def _load_codex_auth(self) -> tuple[str, str]:
         """
-        Load OAuth credentials from ~/.codex/auth.json.
+        Load OAuth credentials from the Codex ``auth.json`` (CODEX_HOME or ~/.codex).
 
         Returns:
             Tuple of (access_token, account_id).
@@ -165,7 +170,7 @@ class CodexLLM(LLMInterface):
             FileNotFoundError: If auth file doesn't exist.
             ValueError: If auth file is invalid.
         """
-        auth_file = Path.home() / ".codex" / "auth.json"
+        auth_file = default_codex_auth_file()
 
         if not auth_file.exists():
             raise FileNotFoundError(
@@ -197,9 +202,7 @@ class CodexLLM(LLMInterface):
         pre- and post-``__init__`` because it does not depend on
         ``_auth_manager`` being constructed yet.
         """
-        auth_file = (
-            self._auth_manager._auth_file if hasattr(self, "_auth_manager") else Path.home() / ".codex" / "auth.json"
-        )
+        auth_file = self._auth_manager._auth_file if hasattr(self, "_auth_manager") else default_codex_auth_file()
         return CodexAuthManager.load_refresh_token_from_file(auth_file)
 
     @staticmethod
@@ -397,7 +400,6 @@ class CodexLLM(LLMInterface):
         }
 
         url = f"{self.base_url}/codex/responses"
-        last_exception = None
 
         # Manual attempt tracking instead of ``for attempt in range(...)`` so
         # that the reactive-refresh path can retry once without consuming a
@@ -428,7 +430,6 @@ class CodexLLM(LLMInterface):
                         if attempt < max_retries:
                             backoff = min(initial_backoff * (2**attempt), max_backoff)
                             await asyncio.sleep(backoff)
-                            last_exception = e
                             attempt += 1
                             continue
                         raise
@@ -490,7 +491,6 @@ class CodexLLM(LLMInterface):
                 return result
 
             except httpx.HTTPStatusError as e:
-                last_exception = e
                 status_code = e.response.status_code
 
                 # Auth error: try one OAuth refresh + retry before giving up.
@@ -549,7 +549,6 @@ class CodexLLM(LLMInterface):
                     raise
 
             except httpx.RequestError as e:
-                last_exception = e
                 if attempt < max_retries:
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                     logger.warning(f"Codex connection error (attempt {attempt + 1}/{max_retries + 1}): {e}")
@@ -563,10 +562,6 @@ class CodexLLM(LLMInterface):
             except Exception as e:
                 logger.error(f"Unexpected Codex error: {type(e).__name__}: {e}")
                 raise
-
-        if last_exception:
-            raise last_exception
-        raise RuntimeError("Codex call failed after all retries")
 
     async def _parse_sse_stream(self, response: httpx.Response) -> str:
         """

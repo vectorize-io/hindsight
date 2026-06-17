@@ -83,6 +83,28 @@ PROFILE_PORT_RANGE = 1000  # 8889-9888
 # UI port offset from daemon port (e.g., daemon 8888 -> UI 18888)
 UI_PORT_OFFSET = 10000
 
+# Ports are stored in the profile's .env (source of truth) so they're editable
+# from the control center. The API port is allocated-then-persisted; the UI port
+# is optional and defaults to API + UI_PORT_OFFSET when unset.
+ENV_API_PORT = "HINDSIGHT_API_PORT"
+ENV_CP_PORT = "HINDSIGHT_EMBED_CP_PORT"
+
+
+@dataclass
+class _PortOverrides:
+    """API/UI ports read from a profile's .env (None when not set)."""
+
+    api: Optional[int] = None
+    ui: Optional[int] = None
+
+
+@dataclass
+class _ResolvedPorts:
+    """The effective API and UI ports for a profile."""
+
+    api: int
+    ui: int
+
 
 @dataclass
 class ProfilePaths:
@@ -93,10 +115,13 @@ class ProfilePaths:
     log: Path
     port: int
     ui_log: Path = None  # type: ignore[assignment]
+    ui_port: int = 0  # 0 → derive as port + UI_PORT_OFFSET
 
     def __post_init__(self):
         if self.ui_log is None:
             self.ui_log = self.log.parent / self.log.name.replace(".log", ".ui.log")
+        if not self.ui_port:
+            self.ui_port = self.port + UI_PORT_OFFSET
 
 
 @dataclass
@@ -159,27 +184,30 @@ class ProfileManager:
         # Add default profile if config exists
         default_config = self._get_config_dir() / "embed"
         if default_config.exists():
+            default_port = self.resolve_profile_paths("").port
             profiles.append(
                 ProfileInfo(
                     name="",  # Empty name = default
-                    port=DEFAULT_PORT,
+                    port=default_port,
                     created_at="",  # Don't track for default
                     last_used=None,
                     is_active=active_profile == "",
-                    daemon_running=self._check_daemon_running(DEFAULT_PORT),
+                    daemon_running=self._check_daemon_running(default_port),
                 )
             )
 
-        # Add named profiles
+        # Add named profiles. The port now lives in each profile's .env, so
+        # resolve it rather than reading the (port-less) metadata entry.
         for name, info in metadata.profiles.items():
+            port = self.resolve_profile_paths(name).port
             profiles.append(
                 ProfileInfo(
                     name=name,
-                    port=info["port"],
+                    port=port,
                     created_at=info.get("created_at", ""),
                     last_used=info.get("last_used"),
                     is_active=active_profile == name,
-                    daemon_running=self._check_daemon_running(info["port"]),
+                    daemon_running=self._check_daemon_running(port),
                 )
             )
 
@@ -255,32 +283,32 @@ class ProfileManager:
         # Load metadata to check if profile already exists
         metadata = self._load_metadata()
 
-        # Determine port: use provided port, preserve existing, or allocate new
-        if port is None:
-            if name in metadata.profiles and "port" in metadata.profiles[name]:
-                port = metadata.profiles[name]["port"]
-            else:
-                port = self._allocate_port(name)
-
-        # Write config file
         config_path = self._get_profiles_dir() / f"{name}.env"
-        config_lines = [f"{key}={value}" for key, value in config.items()]
-        config_path.write_text("\n".join(config_lines) + "\n")
 
-        # Update metadata (reuse metadata loaded earlier to avoid race conditions)
+        # The API port lives in the .env (source of truth), not metadata. Use the
+        # explicit port if given; otherwise keep whatever the caller already
+        # carries in the config, else resolve from the existing .env / legacy
+        # metadata / a fresh allocation (so legacy profiles migrate without
+        # changing port).
+        config = dict(config)
+        if port is None and ENV_API_PORT not in config:
+            port = self._resolve_ports(name, config_path, None).api
+        if port is not None:
+            config[ENV_API_PORT] = str(port)
+
+        # Write config file, seeded from the bundled .env.example template so
+        # the profile carries the full documented option set as comments.
+        from .env_template import render_config
+
+        config_path.write_text(render_config(config))
+
+        # Metadata now only tracks discovery + timestamps; the port moved to .env.
         now_iso = datetime.now(timezone.utc).isoformat()
-
         if name in metadata.profiles:
-            # Update existing profile
             metadata.profiles[name]["last_used"] = now_iso
-            metadata.profiles[name]["port"] = port
+            metadata.profiles[name].pop("port", None)  # migrate away from metadata port
         else:
-            # Create new profile
-            metadata.profiles[name] = {
-                "port": port,
-                "created_at": now_iso,
-                "last_used": now_iso,
-            }
+            metadata.profiles[name] = {"created_at": now_iso, "last_used": now_iso}
 
         self._save_metadata(metadata)
 
@@ -369,24 +397,70 @@ class ProfileManager:
         profiles_dir = config_dir / "profiles"
 
         if not name:
-            # Default profile
+            # Default profile — port also overridable via its .env (~/.hindsight/embed).
+            config_path = config_dir / "embed"
+            ports = self._resolve_ports("", config_path, DEFAULT_PORT)
             return ProfilePaths(
-                config=config_dir / "embed",
+                config=config_path,
                 lock=config_dir / "daemon.lock",
                 log=config_dir / "daemon.log",
-                port=DEFAULT_PORT,
+                port=ports.api,
+                ui_port=ports.ui,
             )
 
         # Named profile
-        metadata = self._load_metadata()
-        port = metadata.profiles.get(name, {}).get("port", self._allocate_port(name))
+        config_path = profiles_dir / f"{name}.env"
+        ports = self._resolve_ports(name, config_path, None)
 
         return ProfilePaths(
-            config=profiles_dir / f"{name}.env",
+            config=config_path,
             lock=profiles_dir / f"{name}.lock",
             log=profiles_dir / f"{name}.log",
-            port=port,
+            port=ports.api,
+            ui_port=ports.ui,
         )
+
+    def _read_port_overrides(self, config_path: Path) -> _PortOverrides:
+        """Parse a profile's .env for the API/UI port keys (no recursion into
+        load_profile_config, which itself resolves paths)."""
+        ov = _PortOverrides()
+        if not config_path.exists():
+            return ov
+        for line in config_path.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("export "):
+                line = line[7:]
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key, value = key.strip(), value.strip()
+            try:
+                if key == ENV_API_PORT:
+                    ov.api = int(value)
+                elif key == ENV_CP_PORT:
+                    ov.ui = int(value)
+            except ValueError:
+                continue
+        return ov
+
+    def _resolve_ports(self, name: str, config_path: Path, default_api: Optional[int]) -> _ResolvedPorts:
+        """Resolve the effective API/UI ports for a profile.
+
+        Priority for the API port: explicit ``.env`` value → ``default_api`` (the
+        default profile's fixed 8888) → legacy metadata port → fresh allocation.
+        The UI port uses its ``.env`` value, else API + UI_PORT_OFFSET.
+        """
+        ov = self._read_port_overrides(config_path)
+        if ov.api is not None:
+            api_port = ov.api
+        elif default_api is not None:
+            api_port = default_api
+        else:
+            # Legacy profiles stored the port in metadata; otherwise allocate.
+            legacy = self._load_metadata().profiles.get(name, {}).get("port")
+            api_port = legacy if legacy else self._allocate_port(name)
+        ui_port = ov.ui if ov.ui is not None else api_port + UI_PORT_OFFSET
+        return _ResolvedPorts(api=api_port, ui=ui_port)
 
     def load_profile_config(self, name: str) -> dict[str, str]:
         """Load configuration from a profile's .env file.
@@ -449,9 +523,9 @@ class ProfileManager:
         hash_val = int(hashlib.sha256(name.encode()).hexdigest(), 16)
         port = PROFILE_PORT_BASE + (hash_val % PROFILE_PORT_RANGE)
 
-        # Check if port is already allocated in metadata
-        metadata = self._load_metadata()
-        allocated_ports = {info["port"] for info in metadata.profiles.values() if info.get("port")}
+        # Ports now live in the .env files, so scan those (plus legacy metadata)
+        # to find what's already taken.
+        allocated_ports = self._allocated_api_ports()
 
         # If collision, find next available port
         attempt = 0
@@ -467,6 +541,20 @@ class ProfileManager:
             raise RuntimeError("No available ports for profile")
 
         return port
+
+    def _allocated_api_ports(self) -> set[int]:
+        """API ports already taken by other profiles (from their .env files,
+        plus any legacy metadata ports not yet migrated)."""
+        ports: set[int] = set()
+        for env_path in self._get_profiles_dir().glob("*.env"):
+            api = self._read_port_overrides(env_path).api
+            if api is not None:
+                ports.add(api)
+        # Legacy: profiles whose port still lives in metadata (pre-migration).
+        for info in self._load_metadata().profiles.values():
+            if info.get("port"):
+                ports.add(info["port"])
+        return ports
 
     def _check_daemon_running(self, port: int) -> bool:
         """Check if daemon is running on a port.

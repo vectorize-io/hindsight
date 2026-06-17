@@ -3,6 +3,7 @@ Embedding generation utilities for memory units.
 """
 
 import asyncio
+import contextvars
 import logging
 from typing import Literal, Protocol
 
@@ -89,7 +90,14 @@ async def generate_embeddings_batch(
     """
     try:
         loop = asyncio.get_event_loop()
-        embeddings = await loop.run_in_executor(None, _encode_with_input_type, embeddings_backend, texts, input_type)
+        # run_in_executor runs the encode in a worker thread, which does NOT inherit
+        # the caller's contextvars. Capture the current context and run the encode
+        # inside it so context-dependent behavior (e.g. per-bank `user` attribution
+        # read via get_current_bank_id()) survives the thread hop.
+        ctx = contextvars.copy_context()
+        embeddings = await loop.run_in_executor(
+            None, lambda: ctx.run(_encode_with_input_type, embeddings_backend, texts, input_type)
+        )
     except Exception as e:
         raise Exception(f"Failed to generate batch embeddings: {str(e)}")
 

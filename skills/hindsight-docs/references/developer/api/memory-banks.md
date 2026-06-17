@@ -83,6 +83,12 @@ Maximum number of characters per chunk when splitting content for fact extractio
 
 Default: `3000`
 
+### retain_structured_chunk_size
+
+Maximum number of characters for a single JSONL line or conversation turn to keep whole when it exceeds `retain_chunk_size`. When unset, the limit is exactly `retain_chunk_size`; set a larger value for structured logs or chat transcripts where splitting a single record would lose useful context.
+
+Default: unset, which uses `retain_chunk_size`
+
 See [Retain configuration](../configuration.md#retain) for environment variable names and defaults.
 
 ### entity_labels {#entity-labels}
@@ -284,7 +290,8 @@ How much to weight emotional context when reasoning during `reflect`. Scale 1–
 | `3` *(default)* | Balanced |
 | `5` | Empathetic — considers emotional context |
 
-:::info
+> **ℹ️ Info**
+> 
 Disposition traits and `reflect_mission` only affect the `reflect` operation. `retain_mission` and `observations_mission` are separate per-operation settings.
 ### mcp_enabled_tools
 
@@ -342,6 +349,31 @@ When `recall_budget_function` is `adaptive`, these positive ratios multiply the 
 Floor and ceiling applied to the result of the adaptive function (after the ratio multiplication). Both must be positive integers and `min ≤ max`. Defaults: `20` / `2000`.
 
 See [Recall budget mapping](../configuration.md#recall-budget-mapping) for environment variable names and full defaults.
+
+### memory_defense {#memory_defense}
+
+Per-bank Memory Defense policy. Defaults to absent (Memory Defense disabled on this bank).
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch. |
+| `default_action` | `allow`\|`redact`\|`quarantine`\|`block` | `allow` | Fallback action when no rule matches. |
+| `protected_tag_namespaces` | `list[str]` | `[]` | Writes with tags in these namespaces (`ns:*`) are subject to the `protected_key` detector. |
+| `immutable_tag_namespaces` | `list[str]` | `[]` | Writes to these namespaces are blocked. |
+| `rules` | `list[Rule]` | `[]` | Detector-to-action mappings (see below). |
+| `detector_overrides` | `dict` | `{}` | Per-detector tuning (e.g. `size_anomaly.max_size`). |
+
+`Rule` shape:
+
+| Field | Required | Description |
+|---|---|---|
+| `on` | yes | Detector name (`prompt_injection`, `sensitive_data`, `protected_key`, `immutable_key`, `size_anomaly`) or `*` for any. |
+| `action` | yes | One of `allow`, `redact`, `quarantine`, `block`. |
+| `min_severity` | no | Minimum severity (`low`, `medium`, `high`, `critical`) for the rule to fire. Defaults to `low`. |
+
+Invalid policies are rejected on PATCH with HTTP 422.
+
+See the [Memory Defense guide](../memory-defense/index.md) for usage examples.
 
 ---
 
@@ -477,7 +509,8 @@ You can also update configuration directly from the Control Plane UI — navigat
 
 Directives are hard rules that the agent must follow during [reflect](./reflect) operations. Unlike disposition traits which influence *how* the agent reasons, directives are explicit instructions that are *always* enforced.
 
-:::info
+> **ℹ️ Info**
+> 
 Directives only affect the `reflect` operation. They are injected into prompts and the agent is required to comply with them in all responses.
 ### When to Use Directives
 

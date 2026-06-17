@@ -24,6 +24,7 @@ from collections import defaultdict
 from contextlib import AsyncExitStack
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 from itertools import combinations
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -334,7 +335,15 @@ def _resolve_obs_tags_list(memory: dict[str, Any]) -> list[list[str]] | None:
 
     Returns ``None`` for the default ``combined``-mode single pass (caller uses
     the memory's own tags). Returns a list[list[str]] when the memory requested
-    multi-pass scoping (``per_tag``, ``all_combinations``, or an explicit list).
+    multi-pass scoping (``per_tag``, ``all_combinations``, ``shared``, or an
+    explicit list).
+
+    ``shared`` resolves to ``[[]]`` — a single pass over the empty (untagged)
+    scope. The created observation carries no tags and recall/dedup match it with
+    ``tags_match="any"``, so every memory consolidates into one shared observation
+    regardless of its own tags. Use it to deduplicate across volatile per-call
+    provenance tags (e.g. per-session ids) without dropping those tags from the
+    source facts.
     """
     parsed = _parse_observation_scopes(memory)
     tags = list(memory.get("tags") or [])
@@ -345,6 +354,8 @@ def _resolve_obs_tags_list(memory: dict[str, Any]) -> list[list[str]] | None:
         if not tags:
             return None
         return [list(c) for r in range(1, len(tags) + 1) for c in combinations(tags, r)]
+    if parsed == "shared":
+        return [[]]
     if parsed == "combined" or parsed is None:
         return None
     return parsed  # explicit list[list[str]]
@@ -361,6 +372,7 @@ def _resolve_write_scopes(memory: dict[str, Any]) -> list[frozenset[str]]:
     - ``combined`` / ``None``    -> ``[frozenset(memory.tags)]``
     - ``per_tag``                -> ``[frozenset({t}) for t in memory.tags]``
     - ``all_combinations``       -> one frozenset per nonempty subset of tags
+    - ``shared``                 -> ``[frozenset()]`` (the single untagged scope)
     - explicit ``list[list[str]]`` -> one frozenset per declared scope
 
     Empty-tag memories collapse to a single ``frozenset()`` in all modes so they
@@ -375,6 +387,8 @@ def _resolve_write_scopes(memory: dict[str, Any]) -> list[frozenset[str]]:
         if not tags:
             return [frozenset()]
         return [frozenset(c) for r in range(1, len(tags) + 1) for c in combinations(tags, r)]
+    if parsed == "shared":
+        return [frozenset()]
     if parsed == "combined" or parsed is None:
         return [frozenset(tags)]
     return [frozenset(s) for s in parsed]  # explicit list[list[str]]
@@ -521,6 +535,86 @@ async def _count_observations_for_scope(
         bank_id,
         tags,
     )
+
+
+@dataclass(frozen=True)
+class _ScopeLimitRule:
+    """One ``observation_scope_limits`` rule: a scope pattern -> an observation cap.
+
+    ``globs`` is a tuple of fnmatch tag-globs describing one consolidation scope.
+    A concrete scope (the set of ``fact_tags`` for a consolidation pass) matches
+    under *exact cover*: every tag is matched by some glob AND every glob matches
+    some tag. So ``["shared"]`` matches the scope ``{shared}`` but not
+    ``{run_1, shared}``, and ``["run_*", "shared"]`` matches ``{run_1, shared}``
+    but not ``{shared}``.
+
+    ``limit`` is the cap applied to matching scopes (-1 = unlimited, 0 = no new
+    observations, >0 = hard cap), mirroring ``max_observations_per_scope``.
+    """
+
+    globs: tuple[str, ...]
+    limit: int
+
+
+def _parse_scope_limit_rules(raw: Any) -> list[_ScopeLimitRule]:
+    """Parse the raw ``observation_scope_limits`` config into ordered rules.
+
+    The config round-trips as JSON through env and the bank-config API, so this
+    is defensive: malformed entries are skipped rather than raising, and list
+    order is preserved (first match wins in :func:`_effective_scope_limit`).
+    """
+    if not isinstance(raw, list):
+        return []
+    rules: list[_ScopeLimitRule] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        scope = entry.get("scope")
+        limit = entry.get("limit")
+        if not isinstance(scope, list) or not scope:
+            continue
+        if not all(isinstance(g, str) and g for g in scope):
+            continue
+        # bool is an int subclass — reject True/False masquerading as a limit.
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            continue
+        rules.append(_ScopeLimitRule(globs=tuple(scope), limit=limit))
+    return rules
+
+
+def _scope_matches_globs(globs: tuple[str, ...], tags: list[str]) -> bool:
+    """Exact-cover match between a scope pattern and a concrete tag set.
+
+    True iff every tag is covered by at least one glob AND every glob covers at
+    least one tag (no uncovered tags, no vacuous globs). Untagged scopes never
+    match, so a scope limit never applies to untagged observations (consistent
+    with the ``and fact_tags`` guard at the call site). Matching is
+    case-sensitive (``fnmatchcase``) for deterministic cross-platform behaviour.
+    """
+    tagset = set(tags)
+    if not tagset:
+        return False
+    if not all(any(fnmatchcase(t, g) for g in globs) for t in tagset):
+        return False
+    if not all(any(fnmatchcase(t, g) for t in tagset) for g in globs):
+        return False
+    return True
+
+
+def _effective_scope_limit(config: Any, fact_tags: list[str]) -> int:
+    """Resolve the observation cap for one concrete consolidation scope.
+
+    The first rule in ``observation_scope_limits`` whose pattern exact-covers
+    ``fact_tags`` wins; otherwise falls back to the bank-wide
+    ``max_observations_per_scope``. Wildcards live only here, matched against the
+    already-resolved concrete tags — the SQL count stays exact and indexed.
+    """
+    if config is None:
+        return -1
+    for rule in _parse_scope_limit_rules(getattr(config, "observation_scope_limits", None)):
+        if _scope_matches_globs(rule.globs, fact_tags):
+            return rule.limit
+    return config.max_observations_per_scope
 
 
 def _build_response_model(max_creates: int | None = None) -> type[_ConsolidationBatchResponse]:
@@ -1403,11 +1497,15 @@ async def _process_memory_batch(
         # All memories in the batch share the same tag set (enforced by batching)
         fact_tags = memories[0].get("tags") or [] if memories else []
 
-    # 2b. Compute remaining observation slots for this scope (if limit configured)
-    max_obs = config.max_observations_per_scope if config is not None else -1
+    # 2b. Compute remaining observation slots for this scope (if limit configured).
+    # The cap is resolved per-scope: an observation_scope_limits rule may override
+    # the bank-wide max_observations_per_scope for scopes matching its tag pattern.
+    max_obs = _effective_scope_limit(config, fact_tags)
     remaining_observation_slots: int | None = None
-    if max_obs > 0 and fact_tags:
-        current_count = await _count_observations_for_scope(conn, bank_id, fact_tags)
+    if max_obs >= 0 and fact_tags:
+        # max_obs == 0 means "no new observations": there are no slots regardless
+        # of the current count, so skip the count query for that case.
+        current_count = await _count_observations_for_scope(conn, bank_id, fact_tags) if max_obs > 0 else 0
         remaining_observation_slots = max(max_obs - current_count, 0)
         if remaining_observation_slots == 0:
             logger.info(
@@ -2045,7 +2143,7 @@ async def _consolidate_batch_with_llm(
 
     # Build capacity note for the prompt when observation limit is configured
     observation_capacity_note: str | None = None
-    if remaining_observation_slots is not None and max_observations_per_scope > 0:
+    if remaining_observation_slots is not None and max_observations_per_scope >= 0:
         if remaining_observation_slots == 0:
             observation_capacity_note = (
                 f"OBSERVATION LIMIT REACHED ({max_observations_per_scope}/{max_observations_per_scope}). "

@@ -41,14 +41,14 @@ result = agent.run(messages=[ChatMessage.from_user("Remember that I prefer dark 
 print(result["messages"][-1].text)
 ```
 
-## Automatic Memory with HindsightToolset
+## Automatic Memory with HindsightMemoryWrapper
 
 For automatic recall and retain without relying on the agent to call tools:
 
 ```python
-from hindsight_haystack import HindsightToolset
+from hindsight_haystack import HindsightMemoryWrapper
 
-toolset = HindsightToolset(
+toolset = HindsightMemoryWrapper(
     client=client,
     bank_id="user-123",
     mission="Track user preferences",
@@ -103,6 +103,6 @@ tools = create_hindsight_tools(bank_id="user-123")
 
 ## Documentation
 
-- [Integration docs](https://docs.hindsight.vectorize.io/docs/sdks/integrations/haystack)
+- [Integration docs](https://hindsight.vectorize.io/sdks/integrations/haystack)
 - [Hindsight API docs](https://docs.hindsight.vectorize.io)
 

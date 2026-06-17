@@ -16,9 +16,7 @@ retention parameters, retrieval settings, etc.) in Python field name format.
 
 from collections.abc import Sequence
 
-import sqlalchemy as sa
 from alembic import context, op
-from sqlalchemy.dialects.postgresql import JSONB
 
 from hindsight_api.alembic._dialect import run_for_dialect
 

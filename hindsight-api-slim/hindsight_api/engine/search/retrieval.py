@@ -13,7 +13,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ...config import get_config
 from ..db_utils import acquire_with_retry
@@ -23,6 +23,9 @@ from .graph_retrieval import GraphRetriever
 from .link_expansion_retrieval import LinkExpansionRetriever
 from .tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause_simple
 from .types import GraphRetrievalTimings, RetrievalResult
+
+if TYPE_CHECKING:
+    from ..query_analyzer import QueryAnalyzer
 
 logger = logging.getLogger(__name__)
 

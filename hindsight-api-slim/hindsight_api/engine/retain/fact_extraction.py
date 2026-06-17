@@ -14,7 +14,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
-from ...config import get_config
+from ..llm_interface import ProviderRateLimitResetError
 from ..llm_wrapper import LLMConfig, OutputTooLongError, sanitize_llm_output
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
@@ -406,64 +406,93 @@ class VerbatimFactExtractionResponse(BaseModel):
     facts: list[VerbatimExtractedFact] = Field(description="List of metadata entries (one per chunk)")
 
 
-def chunk_text(text: str, max_chars: int) -> list[str]:
+# Separators for sentence-aware recursive text splitting, ordered most- to
+# least-preferred. The final "" lets the splitter break mid-word as a last
+# resort so a chunk can never exceed the size budget.
+_RECURSIVE_TEXT_SEPARATORS = [
+    "\n\n",  # Paragraph breaks
+    "\n",  # Line breaks
+    ". ",  # Sentence endings
+    "! ",  # Exclamations
+    "? ",  # Questions
+    "; ",  # Semicolons
+    ", ",  # Commas
+    " ",  # Words
+    "",  # Characters (last resort)
+]
+
+
+def _split_oversized_unit(text: str, max_chars: int) -> list[str]:
+    """Sentence-aware split of a single unit that overflowed the budget.
+
+    Used when one JSONL line / conversation turn is so large it can't be kept
+    whole within the configured structured-chunk limit. The resulting fragments
+    are no longer valid JSON, but the fact extractor treats every chunk as plain
+    text.
+    """
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=max_chars,
+        chunk_overlap=0,
+        length_function=len,
+        is_separator_regex=False,
+        separators=_RECURSIVE_TEXT_SEPARATORS,
+    )
+    return splitter.split_text(text)
+
+
+def chunk_text(text: str, max_chars: int, structured_chunk_size: int | None = None) -> list[str]:
     """
     Split text into chunks, preserving conversation structure when possible.
 
-    For JSON conversation arrays (user/assistant turns), splits at turn boundaries
-    while preserving speaker context. For plain text, uses sentence-aware splitting.
+    For JSON conversation arrays (user/assistant turns) and JSONL (newline-delimited
+    JSON objects), splits at turn/line boundaries so no object is split across chunks.
+    A single turn/line that overflows ``max_chars`` is kept whole only up to
+    ``structured_chunk_size``. When unset, that limit defaults to ``max_chars``.
+    For plain text, uses sentence-aware splitting.
 
     Args:
-        text: Input text to chunk (plain text or JSON conversation)
-        max_chars: Maximum characters per chunk (default 120k ≈ 30k tokens)
+        text: Input text to chunk (plain text, JSON conversation, or JSONL)
+        max_chars: Target maximum characters per chunk
+        structured_chunk_size: Maximum characters for a single JSONL line or
+            conversation turn to keep whole. Defaults to ``max_chars``.
 
     Returns:
         List of text chunks, roughly under max_chars
     """
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-
     # If text is small enough, return as-is
     if len(text) <= max_chars:
         return [text]
+
+    structured_limit = structured_chunk_size if structured_chunk_size is not None else max_chars
 
     # Try to parse as JSON conversation array
     try:
         parsed = json.loads(text)
         if isinstance(parsed, list) and all(isinstance(turn, dict) for turn in parsed):
             # This looks like a conversation - chunk at turn boundaries
-            return _chunk_conversation(parsed, max_chars)
+            return _chunk_conversation(parsed, max_chars, structured_limit)
     except (json.JSONDecodeError, ValueError):
         pass
 
+    # Try to parse as JSONL (newline-delimited JSON objects, e.g. session logs)
+    jsonl_chunks = _chunk_jsonl(text, max_chars, structured_limit)
+    if jsonl_chunks is not None:
+        return jsonl_chunks
+
     # Fall back to sentence-aware text splitting
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=max_chars,
-        chunk_overlap=0,
-        length_function=len,
-        is_separator_regex=False,
-        separators=[
-            "\n\n",  # Paragraph breaks
-            "\n",  # Line breaks
-            ". ",  # Sentence endings
-            "! ",  # Exclamations
-            "? ",  # Questions
-            "; ",  # Semicolons
-            ", ",  # Commas
-            " ",  # Words
-            "",  # Characters (last resort)
-        ],
-    )
-
-    return splitter.split_text(text)
+    return _split_oversized_unit(text, max_chars)
 
 
-def _chunk_conversation(turns: list[dict], max_chars: int) -> list[str]:
+def _chunk_conversation(turns: list[dict], max_chars: int, structured_limit: int) -> list[str]:
     """
     Chunk a conversation array at turn boundaries, preserving complete turns.
 
     Args:
         turns: List of conversation turn dicts (with 'role' and 'content' keys)
         max_chars: Maximum characters per chunk
+        structured_limit: Maximum characters for a single turn to keep whole
 
     Returns:
         List of JSON-serialized chunks, each containing complete turns
@@ -473,26 +502,103 @@ def _chunk_conversation(turns: list[dict], max_chars: int) -> list[str]:
     current_chunk = []
     current_size = 2  # Account for "[]"
 
-    for turn in turns:
-        # Estimate size of this turn when serialized (with comma separator)
-        turn_json = json.dumps(turn, ensure_ascii=False)
-        turn_size = len(turn_json) + 1  # +1 for comma
-
-        # If adding this turn would exceed limit and we have turns, save current chunk
-        if current_size + turn_size > max_chars and current_chunk:
+    def _flush() -> None:
+        nonlocal current_chunk, current_size
+        if current_chunk:
             chunks.append(json.dumps(current_chunk, ensure_ascii=False))
             current_chunk = []
             current_size = 2  # Reset to "[]"
+
+    for turn in turns:
+        # Estimate size of this turn when serialized (with comma separator)
+        turn_json = json.dumps(turn, ensure_ascii=False)
+        turn_unit_size = len(turn_json)
+        turn_size = turn_unit_size + 1  # +1 for comma
+
+        # A turn too large to keep whole even alone: flush, then split it as
+        # text so no chunk runs far over budget (the extractor won't re-chunk).
+        if turn_unit_size > structured_limit:
+            _flush()
+            chunks.extend(_split_oversized_unit(turn_json, structured_limit))
+            continue
+
+        # If adding this turn would exceed limit and we have turns, save current chunk
+        if current_size + turn_size > max_chars and current_chunk:
+            _flush()
 
         # Add turn to current chunk
         current_chunk.append(turn)
         current_size += turn_size
 
     # Add final chunk if non-empty
-    if current_chunk:
-        chunks.append(json.dumps(current_chunk, ensure_ascii=False))
+    _flush()
 
     return chunks if chunks else [json.dumps(turns, ensure_ascii=False)]
+
+
+def _chunk_jsonl(text: str, max_chars: int, structured_limit: int) -> list[str] | None:
+    """Chunk newline-delimited JSON (JSONL) at line boundaries.
+
+    Detects JSONL — two or more non-empty lines, each a complete JSON object —
+    and packs whole lines into chunks so no line is split across chunks (multiple
+    short lines may share a chunk). A line that overflows ``max_chars`` is kept
+    whole only up to ``structured_limit``. Returns ``None`` if the input is not
+    JSONL, so the caller falls back to plain-text splitting.
+
+    Args:
+        text: Input text to inspect/chunk.
+        max_chars: Maximum characters per chunk.
+        structured_limit: Maximum characters for a single JSONL line to
+            keep whole.
+
+    Returns:
+        List of JSONL chunks (lines joined by newline), or ``None`` if not JSONL.
+    """
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return None
+
+    for line in lines:
+        try:
+            obj = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        if not isinstance(obj, dict):
+            return None
+
+    chunks: list[str] = []
+    current_chunk: list[str] = []
+    current_size = 0
+
+    def _flush() -> None:
+        nonlocal current_chunk, current_size
+        if current_chunk:
+            chunks.append("\n".join(current_chunk))
+            current_chunk = []
+            current_size = 0
+
+    for line in lines:
+        line_unit_size = len(line)
+        line_size = len(line) + 1  # +1 for the joining newline
+
+        # A line too large to keep whole even alone: flush, then split it as
+        # text so no chunk runs far over budget (the extractor won't re-chunk).
+        if line_unit_size > structured_limit:
+            _flush()
+            chunks.extend(_split_oversized_unit(line, structured_limit))
+            continue
+
+        # If adding this line would exceed the limit and we have lines, flush.
+        # A line up to structured_limit is kept whole (a bounded overflow).
+        if current_size + line_size > max_chars and current_chunk:
+            _flush()
+
+        current_chunk.append(line)
+        current_size += line_size
+
+    _flush()
+
+    return chunks
 
 
 # =============================================================================
@@ -1634,7 +1740,11 @@ async def extract_facts_from_text(
         - chunks: List of tuples (chunk_text, fact_count) for each chunk
         - usage: Aggregated token usage across all LLM calls
     """
-    chunks = chunk_text(text, max_chars=config.retain_chunk_size)
+    chunks = chunk_text(
+        text,
+        max_chars=config.retain_chunk_size,
+        structured_chunk_size=config.retain_structured_chunk_size,
+    )
 
     # Log chunk count before starting LLM requests
     total_chars = sum(len(c) for c in chunks)
@@ -1683,10 +1793,21 @@ async def extract_facts_from_text(
         total_usage = total_usage + chunk_usage
 
     if failed_chunks:
+        failed_summary = ", ".join(f"chunk {idx}: {type(err).__name__}" for idx, err in failed_chunks[:5])
+        quota_errors = [err for _, err in failed_chunks if isinstance(err, ProviderRateLimitResetError)]
+        if quota_errors and len(quota_errors) == len(failed_chunks):
+            retry_at = max(err.retry_at for err in quota_errors)
+            raise ProviderRateLimitResetError(
+                retry_at=retry_at,
+                message=(
+                    f"Fact extraction deferred by provider quota: {len(failed_chunks)}/{len(chunks)} chunks failed. "
+                    f"First failures: {failed_summary}. Provider detail: {quota_errors[0]}"
+                ),
+            ) from quota_errors[0]
+
         # Fail the entire retain — partial extraction is not acceptable.
         # All successfully extracted facts are discarded because the transaction
         # hasn't committed yet. The worker poller will retry the entire task.
-        failed_summary = ", ".join(f"chunk {idx}: {type(err).__name__}" for idx, err in failed_chunks[:5])
         raise RuntimeError(
             f"Fact extraction failed: {len(failed_chunks)}/{len(chunks)} chunks failed. "
             f"First failures: {failed_summary}"
@@ -1776,8 +1897,7 @@ async def extract_facts_from_contents_batch_api(
 
     logger.info(f"Using Batch API for fact extraction ({len(contents)} contents)")
 
-    # Check config for extraction mode and causal link extraction (used throughout)
-    extraction_mode = config.retain_extraction_mode
+    # Check config for causal link extraction (used throughout)
     extract_causal_links = config.retain_extract_causal_links
 
     # Check if provider supports batch API
@@ -1818,7 +1938,11 @@ async def extract_facts_from_contents_batch_api(
     prompt, response_schema = _build_extraction_prompt_and_schema(config)
 
     for content_index, item in enumerate(contents):
-        chunks = chunk_text(item.content, max_chars=config.retain_chunk_size)
+        chunks = chunk_text(
+            item.content,
+            max_chars=config.retain_chunk_size,
+            structured_chunk_size=config.retain_structured_chunk_size,
+        )
 
         for chunk_index_in_content, chunk in enumerate(chunks):
             all_chunks_info.append((chunk, content_index, chunk_index_in_content, item.event_date, item.context))
@@ -2239,7 +2363,11 @@ def _extract_facts_chunks(
     global_chunk_idx = 0
 
     for content_index, content in enumerate(contents):
-        chunks = chunk_text(content.content, config.retain_chunk_size)
+        chunks = chunk_text(
+            content.content,
+            config.retain_chunk_size,
+            structured_chunk_size=config.retain_structured_chunk_size,
+        )
         for chunk in chunks:
             chunks_metadata.append(
                 ChunkMetadata(

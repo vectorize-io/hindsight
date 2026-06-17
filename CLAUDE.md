@@ -216,6 +216,18 @@ migration file dispatches through `run_for_dialect`, which calls either
 ./scripts/hooks/lint.sh
 ```
 
+Dead-code detection runs in CI (the `check-unused-code` job) at two levels:
+- **Blocking:** unused imports (ruff `F401`) and variables (`F841`) — `lint.sh` auto-removes
+  them and `verify-generated-files` fails on any leftover diff; and **knip** for orphaned
+  control-plane files / unused (or unlisted) `package.json` dependencies.
+- **Advisory:** whole unused Python functions (vulture) and unused control-plane *exports*
+  (the shadcn/ui surface is kept on purpose) — surfaced, not gated.
+
+Run both locally with:
+```bash
+./scripts/hooks/check-unused.sh
+```
+
 **After completing any implementation work, run `/code-review`** to verify your changes against project standards (missing tests, dead code, type safety, etc.). Fix any "must fix" issues before considering the task done.
 
 **MANDATORY: Run `/code-review` before pushing code or creating a pull request.** Do not push or create a PR until all "must fix" issues are resolved.
@@ -315,7 +327,10 @@ Fields must be categorized as either **hierarchical** (can be overridden per-ten
    ```
 
 2. **main.py** (`hindsight-api-slim/hindsight_api/main.py`):
-   - Add field to the manual `HindsightConfig()` constructor call (search for "CLI override")
+   - No change is needed for ordinary environment-backed config fields. The CLI starts from `_get_raw_config()`,
+     so new `HindsightConfig` fields are carried through automatically.
+   - If the new field should be overridable by a CLI flag, add the argparse option in `_parse_cli_args()` and include
+     that field in the `dataclasses.replace(config, ...)` call near the "CLI override" comment.
 
 3. **Use hierarchical config in MemoryEngine**:
    ```python
@@ -335,6 +350,16 @@ Fields must be categorized as either **hierarchical** (can be overridden per-ten
    - Add to appropriate section table with Variable, Description, Default
    - Mark if it's hierarchical (can be overridden per-bank)
 
+6. **Env template** (`.env.example`):
+   - Add the variable to the appropriate section, commented if optional, with a
+     short inline comment describing it (mirror the documentation entry).
+   - This file is the single source of truth for the env template:
+     `scripts/dev/setup.sh` copies it to `.env`, and `hindsight-embed` ships a
+     bundled copy (`hindsight-embed/hindsight_embed/env.example`) that seeds
+     embed/profile configs. After editing `.env.example`, re-copy it to the
+     embed package (`cp .env.example hindsight-embed/hindsight_embed/env.example`)
+     or the `test_bundled_template_matches_repo_root` sync test will fail.
+
 #### Hierarchical vs Static Guidelines
 
 **Hierarchical** (per-bank overridable):
@@ -351,7 +376,7 @@ Fields must be categorized as either **hierarchical** (can be overridden per-ten
 
 ```bash
 cp .env.example .env
-# Edit .env with LLM API key
+# Edit .env with the LLM provider/model and credentials for your setup
 
 # Python deps
 uv sync --directory hindsight-api-slim/
@@ -360,10 +385,10 @@ uv sync --directory hindsight-api-slim/
 npm install
 ```
 
-Required env vars:
+Common LLM settings:
 - `HINDSIGHT_API_LLM_PROVIDER`: openai, anthropic, gemini, groq, minimax, ollama, lmstudio
-- `HINDSIGHT_API_LLM_API_KEY`: Your API key
-- `HINDSIGHT_API_LLM_MODEL`: Model name (e.g., gpt-4o-mini, claude-sonnet-4-20250514)
+- `HINDSIGHT_API_LLM_API_KEY`: API key for providers that require one
+- `HINDSIGHT_API_LLM_MODEL`: Model name (defaults are provider-specific)
 
 Optional (uses local models by default):
 - `HINDSIGHT_API_EMBEDDINGS_PROVIDER`: local (default) or tei

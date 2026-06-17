@@ -11,6 +11,26 @@
       "icon": "/img/icons/litellm.png"
     },
     {
+      "id": "agent-framework",
+      "name": "Microsoft Agent Framework",
+      "description": "Persistent memory for Microsoft Agent Framework (the successor to Semantic Kernel) via a context provider that auto-recalls and auto-retains each turn.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/agent-framework",
+      "icon": "/img/icons/agent-framework.svg"
+    },
+    {
+      "id": "composio",
+      "name": "Composio",
+      "description": "Hindsight memory as Composio custom tools. Retain, recall, and reflect drop into any Composio agent — memory is isolated per session user automatically.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/composio",
+      "icon": "/img/icons/composio.png"
+    },
+    {
       "id": "crewai",
       "name": "CrewAI",
       "description": "Give CrewAI agents persistent, cross-session memory. Facts learned in one run are available in every future run.",
@@ -141,6 +161,16 @@
       "icon": "/img/icons/codex.svg"
     },
     {
+      "id": "continue",
+      "name": "Continue",
+      "description": "Long-term memory for the Continue.dev coding assistant. Recall relevant project memory into chat with @hindsight, plus optional automatic recall/retain via the Hindsight MCP server.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/continue",
+      "icon": "/img/icons/continue.png"
+    },
+    {
       "id": "cursor",
       "name": "Cursor",
       "description": "Biomimetic long-term memory for the Cursor editor via Hindsight. Recalls relevant context at session start and retains conversation transcripts for future sessions.",
@@ -164,8 +194,8 @@
       "id": "cursor-cli",
       "name": "Cursor CLI",
       "description": "Automatic long-term memory for Cursor CLI via Hindsight hooks. Recalls relevant context before each prompt and retains conversations after each turn.",
-      "type": "official",
-      "by": "hindsight",
+      "type": "community",
+      "by": "Korayem",
       "category": "tool",
       "link": "/sdks/integrations/cursor-cli",
       "icon": "/img/icons/cursor-cli.svg"
@@ -223,7 +253,7 @@
     {
       "id": "haystack",
       "name": "Haystack",
-      "description": "Persistent memory for Haystack agents. Provides retain/recall/reflect Tools plus a HindsightToolset with optional auto-recall and auto-retain.",
+      "description": "Persistent memory for Haystack agents. Provides retain/recall/reflect Tools plus a HindsightMemoryWrapper with optional auto-recall and auto-retain.",
       "type": "official",
       "by": "hindsight",
       "category": "framework",
@@ -309,6 +339,16 @@
       "category": "framework",
       "link": "/sdks/integrations/n8n",
       "icon": "/img/icons/n8n.png"
+    },
+    {
+      "id": "zapier",
+      "name": "Zapier",
+      "description": "Long-term memory for your Zaps. Retain, Recall, and Reflect actions plus instant memory-event triggers connect Hindsight to 7,000+ apps.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/zapier",
+      "icon": "/img/icons/zapier.png"
     },
     {
       "id": "openai-agents",
@@ -439,6 +479,16 @@
       "category": "mcp",
       "link": "/sdks/integrations/context-forge",
       "icon": "/img/icons/mcp.png"
+    },
+    {
+      "id": "gemini-spark",
+      "name": "Gemini Spark",
+      "description": "Persistent memory for Google's Gemini Spark assistant via MCP. Spark calls Hindsight's recall and retain tools through its built-in MCP client — works with Hindsight Cloud or self-hosted via an OAuth proxy.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/gemini-spark",
+      "icon": "/img/icons/gemini.svg"
     },
     {
       "id": "outsystems",

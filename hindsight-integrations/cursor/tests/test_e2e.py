@@ -100,8 +100,7 @@ def hook_env(tmp_path):
             # boilerplate; that's correct for production but too diffuse to
             # surface targeted test fixtures within a 15s wait.
             "HINDSIGHT_BANK_MISSION": (
-                "Track project canary markers and user coding preferences "
-                "for the development assistant."
+                "Track project canary markers and user coding preferences for the development assistant."
             ),
             # retain.py batches retains every N turns (default 10). For a
             # single-shot E2E that drives one stop event, force every-turn
@@ -154,9 +153,7 @@ def _wait_for_recall_to_surface(client, bank_id: str, query: str, attempts: int 
 
 
 class TestE2ESessionStart:
-    def test_writes_rules_file_with_recalled_content_and_appends_gitignore(
-        self, live, hook_env, tmp_path
-    ):
+    def test_writes_rules_file_with_recalled_content_and_appends_gitignore(self, live, hook_env, tmp_path):
         client, bank_id = live
         # The fact is phrased to overlap with the bank-mission query the hook
         # builds, so it actually surfaces in the session-start recall (otherwise
@@ -184,8 +181,7 @@ class TestE2ESessionStart:
             hook_env,
         )
         assert result.returncode == 0, (
-            f"session_start exited {result.returncode}\n"
-            f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+            f"session_start exited {result.returncode}\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
         )
 
         # Rules-file workaround content
@@ -194,9 +190,7 @@ class TestE2ESessionStart:
         content = rule_path.read_text()
         assert "alwaysApply: true" in content, "rules file missing alwaysApply: true"
         assert "<hindsight_memories>" in content, "rules file missing memory wrapper"
-        assert "FROBNICATE_QUUX_42" in content, (
-            f"canary not surfaced in rules file:\n{content}"
-        )
+        assert "FROBNICATE_QUUX_42" in content, f"canary not surfaced in rules file:\n{content}"
         # In-file comment links to the upstream Cursor bug for future readers
         assert "forum.cursor.com" in content
         assert "158452" in content
@@ -213,9 +207,7 @@ class TestE2ESessionStart:
         assert "additionalContext" in stdout_json
         assert "FROBNICATE_QUUX_42" in stdout_json["additionalContext"]
 
-    def test_empty_bank_writes_no_rules_file_but_still_succeeds(
-        self, live, hook_env, tmp_path
-    ):
+    def test_empty_bank_writes_no_rules_file_but_still_succeeds(self, live, hook_env, tmp_path):
         _, bank_id = live  # bank exists but is empty
         workspace = _make_workspace(tmp_path)
         hook_env["HINDSIGHT_BANK_ID"] = bank_id
@@ -237,9 +229,7 @@ class TestE2ESessionStart:
         rule_path = workspace / ".cursor" / "rules" / "hindsight-session.mdc"
         assert not rule_path.exists()
 
-    def test_useRulesFileFallback_false_disables_workaround(
-        self, live, hook_env, tmp_path
-    ):
+    def test_useRulesFileFallback_false_disables_workaround(self, live, hook_env, tmp_path):
         client, bank_id = live
         # Use the same on-topic fixture as the first test so the hook's
         # session-recall reliably surfaces content. The point of *this* test
@@ -270,18 +260,12 @@ class TestE2ESessionStart:
         assert result.returncode == 0, f"stderr: {result.stderr!r}"
         # Workaround disabled → no rules-dir, no .gitignore touch. This is the
         # only assertion that matters for the opt-out contract.
-        assert not (workspace / ".cursor").exists(), (
-            ".cursor was created despite useRulesFileFallback=false"
-        )
-        assert not (workspace / ".gitignore").exists(), (
-            ".gitignore was created despite useRulesFileFallback=false"
-        )
+        assert not (workspace / ".cursor").exists(), ".cursor was created despite useRulesFileFallback=false"
+        assert not (workspace / ".gitignore").exists(), ".gitignore was created despite useRulesFileFallback=false"
 
 
 class TestE2ERetain:
-    def test_retain_persists_transcript_so_recall_surfaces_it(
-        self, live, hook_env, tmp_path
-    ):
+    def test_retain_persists_transcript_so_recall_surfaces_it(self, live, hook_env, tmp_path):
         client, bank_id = live
         hook_env["HINDSIGHT_BANK_ID"] = bank_id
 
@@ -291,14 +275,24 @@ class TestE2ERetain:
         # under test.
         transcript_path = tmp_path / "transcript.jsonl"
         with open(transcript_path, "w") as f:
-            f.write(json.dumps({
-                "role": "user",
-                "content": "We picked Postgres 16 in us-east-1 for the new analytics service.",
-            }) + "\n")
-            f.write(json.dumps({
-                "role": "assistant",
-                "content": "Confirmed — Postgres 16 in us-east-1 for analytics.",
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "role": "user",
+                        "content": "We picked Postgres 16 in us-east-1 for the new analytics service.",
+                    }
+                )
+                + "\n"
+            )
+            f.write(
+                json.dumps(
+                    {
+                        "role": "assistant",
+                        "content": "Confirmed — Postgres 16 in us-east-1 for analytics.",
+                    }
+                )
+                + "\n"
+            )
 
         result = _run_hook(
             RETAIN_SCRIPT,
@@ -316,12 +310,8 @@ class TestE2ERetain:
         # output shape. What matters is that the bank ends up holding the
         # fact, verified via direct recall (not the hook's session query,
         # which is bank-mission-shaped for auto-inject).
-        assert result.returncode == 0, (
-            f"retain exited {result.returncode}\nstderr: {result.stderr!r}"
-        )
-        results = _wait_for_recall_to_surface(
-            client, bank_id, "Postgres deployment region"
-        )
+        assert result.returncode == 0, f"retain exited {result.returncode}\nstderr: {result.stderr!r}"
+        results = _wait_for_recall_to_surface(client, bank_id, "Postgres deployment region")
         joined = " | ".join(r.text for r in results).lower()
         assert "postgres" in joined or "us-east" in joined, (
             f"recall surfaced results but none referenced the retained content: {joined[:400]}"

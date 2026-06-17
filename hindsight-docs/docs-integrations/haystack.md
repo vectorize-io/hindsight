@@ -1,7 +1,7 @@
 ---
 sidebar_position: 34
 title: "Haystack Persistent Memory with Hindsight | Integration"
-description: "Add persistent long-term memory to Haystack agents with Hindsight. Provides retain/recall/reflect Tools plus a HindsightToolset with optional auto-recall and auto-retain."
+description: "Add persistent long-term memory to Haystack agents with Hindsight. Provides retain/recall/reflect Tools plus a HindsightMemoryWrapper with optional auto-recall and auto-retain."
 ---
 
 # Haystack
@@ -9,7 +9,7 @@ description: "Add persistent long-term memory to Haystack agents with Hindsight.
 Persistent long-term memory for [Haystack](https://haystack.deepset.ai/) agents via Hindsight. The `hindsight-haystack` package gives you two complementary patterns:
 
 - **`create_hindsight_tools(...)`** — Returns a list of Haystack `Tool`s (`retain_memory`, `recall_memory`, `reflect_on_memory`) the model can call directly inside a turn.
-- **`HindsightToolset`** — A Haystack `Toolset` that bundles the same tools and adds optional **auto-recall** (inject relevant memories into the system prompt before each turn) and **auto-retain** (store user + assistant messages after each turn).
+- **`HindsightMemoryWrapper`** — A Haystack `Toolset` that bundles the same tools and adds optional **auto-recall** (inject relevant memories into the system prompt before each turn) and **auto-retain** (store user + assistant messages after each turn).
 
 ## Installation
 
@@ -48,14 +48,14 @@ result = agent.run(messages=[ChatMessage.from_user("Remember that I prefer dark 
 print(result["messages"][-1].text)
 ```
 
-## Automatic Memory with HindsightToolset
+## Automatic Memory with HindsightMemoryWrapper
 
 For automatic recall and retain without relying on the agent to call tools:
 
 ```python
-from hindsight_haystack import HindsightToolset
+from hindsight_haystack import HindsightMemoryWrapper
 
-toolset = HindsightToolset(
+toolset = HindsightMemoryWrapper(
     client=client,
     bank_id="user-123",
     mission="Track user preferences",

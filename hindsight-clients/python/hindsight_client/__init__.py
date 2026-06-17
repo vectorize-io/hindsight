@@ -53,6 +53,7 @@ from hindsight_client_api.models.reflect_response import ReflectResponse
 
 # Re-export response types for convenient access
 from hindsight_client_api.models.retain_response import RetainResponse
+from hindsight_client_api.models.version_response import VersionResponse
 
 from .hindsight_client import Hindsight
 
@@ -159,4 +160,5 @@ __all__ = [
     "ListMemoryUnitsResponse",
     "BankProfileResponse",
     "DispositionTraits",
+    "VersionResponse",
 ]

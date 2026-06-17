@@ -141,7 +141,8 @@ async def test_full_api_workflow(api_client, test_bank_id):
     reflect_result = response.json()
     assert "text" in reflect_result
     assert len(reflect_result["text"]) > 0
-    assert "based_on" in reflect_result
+    # based_on is only populated when facts are requested; it's null (and thus omitted) here.
+    assert reflect_result.get("based_on") is None
 
     # Verify the reflect endpoint returned a non-trivial response
     assert len(reflect_result["text"]) > 5, "Reflect should return a substantive response"

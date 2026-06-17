@@ -14,7 +14,6 @@ import { Logger } from "./logger.js";
 import {
   formatMemories,
   formatCurrentTime,
-  stripMemoryTags,
   composeRecallQuery,
   truncateRecallQuery,
   prepareRetentionTranscript,

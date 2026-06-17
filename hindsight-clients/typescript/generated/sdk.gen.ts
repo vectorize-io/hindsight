@@ -56,6 +56,9 @@ import type {
   DeleteWebhookData,
   DeleteWebhookErrors,
   DeleteWebhookResponses,
+  DryRunExtractMemoriesData,
+  DryRunExtractMemoriesErrors,
+  DryRunExtractMemoriesResponses,
   ExportBankTemplateData,
   ExportBankTemplateErrors,
   ExportBankTemplateResponses,
@@ -149,6 +152,9 @@ import type {
   ListMentalModelsData,
   ListMentalModelsErrors,
   ListMentalModelsResponses,
+  ListObservationScopesData,
+  ListObservationScopesErrors,
+  ListObservationScopesResponses,
   ListOperationsData,
   ListOperationsErrors,
   ListOperationsResponses,
@@ -193,6 +199,9 @@ import type {
   RetryOperationData,
   RetryOperationErrors,
   RetryOperationResponses,
+  TestBankLlmData,
+  TestBankLlmErrors,
+  TestBankLlmResponses,
   TriggerConsolidationData,
   TriggerConsolidationErrors,
   TriggerConsolidationResponses,
@@ -211,6 +220,9 @@ import type {
   UpdateDocumentData,
   UpdateDocumentErrors,
   UpdateDocumentResponses,
+  UpdateMemoryData,
+  UpdateMemoryErrors,
+  UpdateMemoryResponses,
   UpdateMentalModelData,
   UpdateMentalModelErrors,
   UpdateMentalModelResponses,
@@ -278,7 +290,7 @@ export const metricsEndpointMetricsGet = <ThrowOnError extends boolean = false>(
 /**
  * Get memory graph data
  *
- * Retrieve graph data for visualization, optionally filtered by type (world/experience/opinion).
+ * Retrieve graph data for visualization, optionally filtered by type (world/experience/observation).
  */
 export const getGraph = <ThrowOnError extends boolean = false>(
   options: Options<GetGraphData, ThrowOnError>
@@ -302,6 +314,27 @@ export const listMemories = <ThrowOnError extends boolean = false>(
   });
 
 /**
+ * Dry-run fact extraction (preview, no persistence)
+ *
+ * Preview what the retain step would extract from text WITHOUT changing the bank — no entity resolution, links, embeddings, or persistence. Returns the candidate facts and the LLM token usage. Every prompt-affecting setting (retain mission, extraction mode, chunk size, …) is overridable in the body to A/B a candidate config against the bank's current one. This is a read-only tool: nothing is stored.
+ */
+export const dryRunExtractMemories = <ThrowOnError extends boolean = false>(
+  options: Options<DryRunExtractMemoriesData, ThrowOnError>
+) =>
+  (options.client ?? client).post<
+    DryRunExtractMemoriesResponses,
+    DryRunExtractMemoriesErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/memories/dry-run-extract",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
  * Get memory unit
  *
  * Get a single memory unit by ID with all its metadata including entities and tags. Note: the 'history' field is deprecated and always returns an empty list - use GET /memories/{memory_id}/history instead.
@@ -312,6 +345,23 @@ export const getMemory = <ThrowOnError extends boolean = false>(
   (options.client ?? client).get<GetMemoryResponses, GetMemoryErrors, ThrowOnError>({
     url: "/v1/default/banks/{bank_id}/memories/{memory_id}",
     ...options,
+  });
+
+/**
+ * Curate memory unit
+ *
+ * Edit a memory's text and/or change its curation state (invalidate / revert). Invalidated memories are excluded from recall, consolidation, and graph maintenance but kept for audit (reversible). Only world/experience facts can be curated; observations are derived.
+ */
+export const updateMemory = <ThrowOnError extends boolean = false>(
+  options: Options<UpdateMemoryData, ThrowOnError>
+) =>
+  (options.client ?? client).patch<UpdateMemoryResponses, UpdateMemoryErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/memories/{memory_id}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   });
 
 /**
@@ -352,12 +402,12 @@ export const recallMemories = <ThrowOnError extends boolean = false>(
 /**
  * Reflect and generate answer
  *
- * Reflect and formulate an answer using bank identity, world facts, and opinions.
+ * Reflect and formulate an answer using bank identity, world facts, observations, and mental models.
  *
  * This endpoint:
  * 1. Retrieves experience (conversations and events)
  * 2. Retrieves world facts relevant to the query
- * 3. Retrieves existing opinions (bank's perspectives)
+ * 3. Retrieves observations and mental models (bank's synthesized perspectives)
  * 4. Uses LLM to formulate a contextual answer
  * 5. Returns plain text answer and the facts used
  */
@@ -396,6 +446,19 @@ export const getAgentStats = <ThrowOnError extends boolean = false>(
 ) =>
   (options.client ?? client).get<GetAgentStatsResponses, GetAgentStatsErrors, ThrowOnError>({
     url: "/v1/default/banks/{bank_id}/stats",
+    ...options,
+  });
+
+/**
+ * Test the bank's LLM connectivity
+ *
+ * Probe the LLMs this bank would use for retain / consolidation / reflect with one minimal call each (configs shared across operations are probed once), so you can discover 'not configured / unreachable' instead of a silent stall. Deliberate action (makes a real provider call); not for polling. Returns status only — never the provider, model, endpoint, API key, or raw error. Disable with HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH=false.
+ */
+export const testBankLlm = <ThrowOnError extends boolean = false>(
+  options: Options<TestBankLlmData, ThrowOnError>
+) =>
+  (options.client ?? client).post<TestBankLlmResponses, TestBankLlmErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/health/llm",
     ...options,
   });
 
@@ -1037,6 +1100,20 @@ export const clearObservations = <ThrowOnError extends boolean = false>(
   >({ url: "/v1/default/banks/{bank_id}/observations", ...options });
 
 /**
+ * List observation scopes
+ *
+ * Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope.
+ */
+export const listObservationScopes = <ThrowOnError extends boolean = false>(
+  options: Options<ListObservationScopesData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    ListObservationScopesResponses,
+    ListObservationScopesErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/observations/scopes", ...options });
+
+/**
  * Recover failed consolidation
  *
  * Reset all memories that were permanently marked as failed during consolidation (after exhausting all LLM retries and adaptive batch splitting) so they are picked up again on the next consolidation run. Does not delete any observations.
@@ -1207,7 +1284,7 @@ export const listWebhookDeliveries = <ThrowOnError extends boolean = false>(
 /**
  * Clear memory bank memories
  *
- * Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
+ * Delete memory units for a memory bank. Optionally filter by type (world, experience, observation) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
  */
 export const clearBankMemories = <ThrowOnError extends boolean = false>(
   options: Options<ClearBankMemoriesData, ThrowOnError>
@@ -1266,7 +1343,7 @@ export const retainMemories = <ThrowOnError extends boolean = false>(
  * This endpoint handles file upload, conversion, and memory creation in a single operation.
  *
  * **Features:**
- * - Supports PDF, DOCX, PPTX, XLSX, images (with OCR), audio (with transcription)
+ * - Supports PDF, DOCX, PPTX, XLSX, images (parser-dependent OCR), audio (with transcription)
  * - Automatic file-to-markdown conversion using pluggable parsers
  * - Files stored in object storage (PostgreSQL by default, S3 for production)
  * - Each file becomes a separate document with optional metadata/tags

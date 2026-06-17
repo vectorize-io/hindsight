@@ -2,7 +2,7 @@
 
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 
 import obstore as obs
 from obstore.store import GCSStore

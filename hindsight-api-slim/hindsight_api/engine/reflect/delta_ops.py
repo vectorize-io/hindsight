@@ -26,10 +26,13 @@ or stay the same per refresh, never get worse.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+
+from hindsight_api.engine.llm_wrapper import parse_llm_json
 
 from .structured_doc import (
     Block,
@@ -144,12 +147,131 @@ Operation = Annotated[
     Field(discriminator="op"),
 ]
 
+_OPERATION_ADAPTER: TypeAdapter[Operation] = TypeAdapter(Operation)
+
+
+def _validate_operations_list(raw_ops: Any) -> tuple[list[Operation], list[dict[str, Any]]]:
+    """Validate each operation independently; drop invalid ops instead of failing the batch."""
+    if not isinstance(raw_ops, list):
+        raise TypeError(f"operations must be a list, got {type(raw_ops)!r}")
+    valid: list[Operation] = []
+    skipped: list[dict[str, Any]] = []
+    for i, item in enumerate(raw_ops):
+        try:
+            valid.append(_OPERATION_ADAPTER.validate_python(item))
+        except ValidationError as exc:
+            skipped.append({"index": i, "op": item, "error": exc.errors(include_url=False)})
+            logger.warning(
+                "[STRUCTURED_DELTA] skipping invalid operation at index %s: %s",
+                i,
+                exc.errors(include_url=False),
+            )
+    return valid, skipped
+
 
 class DeltaOperationList(BaseModel):
     """Container for the operations produced by an LLM delta call."""
 
     model_config = ConfigDict(extra="forbid")
     operations: list[Operation] = Field(default_factory=list)
+
+
+class DeltaAllOpsInvalidError(ValueError):
+    """Raised when the model emitted operations but none survived validation.
+
+    Distinct from an empty ``operations`` array (a legitimate no-op): here every
+    op was malformed, so returning zero valid ops would make the caller apply
+    nothing and silently drop this refresh's new facts. Raising instead lets the
+    caller fall back to a full rewrite, which still integrates the new facts.
+    """
+
+
+def _finalize_operations(valid: list[Operation], skipped: list[dict[str, Any]]) -> DeltaOperationList:
+    """Build the result, but refuse a wholesale validation failure as a silent no-op."""
+    if skipped and not valid:
+        raise DeltaAllOpsInvalidError(f"all {len(skipped)} delta operation(s) failed validation")
+    return DeltaOperationList(operations=valid)
+
+
+def _extract_balanced_json_object(text: str) -> str | None:
+    """Return the first top-level ``{...}`` slice, ignoring trailing junk."""
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
+
+
+def parse_delta_operation_list(raw: Any) -> DeltaOperationList:
+    """Parse structured-delta LLM output into a validated operation list."""
+    if isinstance(raw, DeltaOperationList):
+        return raw
+    if isinstance(raw, dict):
+        ops_raw = raw.get("operations", [])
+        valid, skipped = _validate_operations_list(ops_raw)
+        if skipped:
+            logger.info(
+                "[STRUCTURED_DELTA] parsed %s op(s), skipped %s invalid op(s) from dict payload",
+                len(valid),
+                len(skipped),
+            )
+        return _finalize_operations(valid, skipped)
+
+    text = (raw or "").strip()
+    if not text:
+        return DeltaOperationList()
+
+    candidates: list[str] = [text]
+    extracted = _extract_balanced_json_object(text)
+    if extracted and extracted != text:
+        candidates.append(extracted)
+
+    last_error: Exception | None = None
+    for candidate in candidates:
+        try:
+            payload = parse_llm_json(candidate)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            continue
+        if not isinstance(payload, dict) or "operations" not in payload:
+            last_error = ValueError("delta payload must be an object with an operations array")
+            continue
+        try:
+            valid, skipped = _validate_operations_list(payload["operations"])
+        except TypeError as exc:
+            last_error = exc
+            continue
+        if skipped:
+            logger.info(
+                "[STRUCTURED_DELTA] parsed %s op(s), skipped %s invalid op(s)",
+                len(valid),
+                len(skipped),
+            )
+        return _finalize_operations(valid, skipped)
+
+    if last_error is not None:
+        raise last_error
+    return DeltaOperationList()
 
 
 # Application ---------------------------------------------------------------

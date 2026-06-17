@@ -9,7 +9,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Optional
 
 DEFAULT_TIMEOUT = 15
 HEALTH_CHECK_RETRIES = 3

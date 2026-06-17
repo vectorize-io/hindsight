@@ -160,7 +160,7 @@ Glob syntax:
 
 ## Retention details
 
-Retained documents use stable session-scoped IDs derived from the OpenClaw `sessionKey`. By default (`retainDocumentScope: 'session'`) every retain in a session shares one document id like `openclaw:agent:agentname:discord:channel:123`, so all turns of the conversation accumulate under a single Hindsight document. Set `retainDocumentScope: 'turn'` to fall back to the per-retain ids (`...:turn:000001`, `...:window:000002` for chunked retention). Either way, retained documents include richer metadata such as `session_key`, `agent_id`, `provider`, `channel_id`, `thread_id`, `sender_id`, `turn_index`, and `retention_scope`. Each message in the retained JSON also carries a structured `timestamp` field (ISO 8601) lifted from OpenClaw's per-message time, so facts are not polluted by inline weekday/date prefixes.
+Retained documents use stable session-scoped IDs derived from the OpenClaw `sessionKey`. Every retain in a session shares one document id like `openclaw:agent:agentname:discord:channel:123`, so all turns of the conversation accumulate under a single Hindsight document (on legacy APIs without `update_mode: 'append'` support, the integration falls back to per-retain ids — `...:turn:000001`, `...:window:000002` for chunked retention — so prior turns aren't overwritten). Retained documents include richer metadata such as `session_key`, `agent_id`, `provider`, `channel_id`, `thread_id`, `sender_id`, `turn_index`, and `retention_scope`. Each message in the retained JSON also carries a structured `timestamp` field (ISO 8601) lifted from OpenClaw's per-message time, so facts are not polluted by inline weekday/date prefixes.
 
 ## Documentation
 

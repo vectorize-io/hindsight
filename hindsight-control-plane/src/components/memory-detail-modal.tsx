@@ -6,10 +6,22 @@ import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Calendar, Users, FileText, Layers, Tag, History } from "lucide-react";
+import {
+  Loader2,
+  Calendar,
+  Users,
+  FileText,
+  Layers,
+  Tag,
+  History,
+  RotateCcw,
+  Pencil,
+} from "lucide-react";
 import { TagList } from "@/components/ui/tag-list";
 import { Button } from "@/components/ui/button";
 import { ObservationHistoryView, type HistoryEntry } from "@/components/observation-history-view";
+import { InvalidateMemoryDialog } from "@/components/invalidate-memory-dialog";
+import { EditMemoryForm, type EditMemoryFields } from "@/components/edit-memory-form";
 
 interface SourceMemory {
   id: string;
@@ -34,6 +46,10 @@ interface MemoryDetail {
   chunk_id: string | null;
   tags: string[];
   observation_scopes: string | string[][] | null;
+  state?: "valid" | "invalidated";
+  invalidation_reason?: string | null;
+  invalidated_at?: string | null;
+  edited_at?: string | null;
   source_memories?: SourceMemory[];
 }
 
@@ -41,13 +57,25 @@ interface MemoryDetailModalProps {
   memoryId: string | null;
   onClose: () => void;
   initialTab?: string;
+  // Fired after a curation change (invalidate/restore) so callers can refresh lists.
+  onChanged?: () => void;
 }
 
-export function MemoryDetailModal({ memoryId, onClose, initialTab }: MemoryDetailModalProps) {
+export function MemoryDetailModal({
+  memoryId,
+  onClose,
+  initialTab,
+  onChanged,
+}: MemoryDetailModalProps) {
   const t = useTranslations("memoryDetailModal");
+  const tCuration = useTranslations("memoryDetailPanel");
   const { currentBank } = useBank();
   const [memory, setMemory] = useState<MemoryDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [curating, setCurating] = useState(false);
+  const [askingReason, setAskingReason] = useState(false);
+  const [editingText, setEditingText] = useState(false);
+  const [savingText, setSavingText] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(initialTab ?? "memory");
 
@@ -90,6 +118,51 @@ export function MemoryDetailModal({ memoryId, onClose, initialTab }: MemoryDetai
 
     loadMemory();
   }, [memoryId, currentBank]);
+
+  // Invalidate / restore this fact (world/experience only).
+  const handleCurate = async (nextState: "valid" | "invalidated", reason?: string) => {
+    if (!memory || !currentBank || curating) return;
+    setCurating(true);
+    try {
+      await client.updateMemory(memory.id, currentBank, {
+        state: nextState,
+        ...(reason ? { reason } : {}),
+      });
+      const data = await client.getMemory(memory.id, currentBank);
+      setMemory(data);
+      setAskingReason(false);
+      onChanged?.();
+    } catch (err) {
+      console.error("Failed to curate memory:", err);
+    } finally {
+      setCurating(false);
+    }
+  };
+
+  // Edit this fact's text (world/experience only). Re-embeds + re-derives its
+  // observations server-side; the previous text is kept in history.
+  const handleSaveEdit = async (fields: EditMemoryFields) => {
+    if (!memory || !currentBank || savingText) return;
+    setSavingText(true);
+    try {
+      await client.updateMemory(memory.id, currentBank, {
+        text: fields.text,
+        context: fields.context,
+        occurredStart: fields.occurredStart,
+        occurredEnd: fields.occurredEnd,
+        factType: fields.factType,
+        entities: fields.entities,
+      });
+      const data = await client.getMemory(memory.id, currentBank);
+      setMemory(data);
+      setEditingText(false);
+      onChanged?.();
+    } catch (err) {
+      console.error("Failed to edit memory:", err);
+    } finally {
+      setSavingText(false);
+    }
+  };
 
   // Load history lazily when history tab is selected
   useEffect(() => {
@@ -425,111 +498,195 @@ export function MemoryDetailModal({ memoryId, onClose, initialTab }: MemoryDetai
 
                 <div className="flex-1 overflow-y-auto mt-4">
                   <TabsContent value="memory" className="mt-0 space-y-4">
-                    {/* Memory text */}
-                    <div>
-                      <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-                        {t("sectionMemoryText")}
-                      </div>
-                      <p className="text-sm text-foreground leading-relaxed">{memory.text}</p>
-                    </div>
-
-                    {/* Context */}
-                    {memory.context && (
-                      <div>
-                        <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
-                          {t("sectionContext")}
-                        </div>
-                        <div className="text-sm text-foreground">{memory.context}</div>
-                      </div>
-                    )}
-
-                    {/* Dates */}
-                    {memory.occurred_start && (
-                      <div>
-                        <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-                          {t("sectionOccurred")}
-                        </div>
-                        <div className="flex items-center gap-2 text-sm text-foreground">
-                          <Calendar className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                          <span>
-                            {new Date(memory.occurred_start).toLocaleString()}
-                            {memory.occurred_end &&
-                              memory.occurred_end !== memory.occurred_start && (
-                                <>
-                                  <span className="text-muted-foreground mx-1">→</span>
-                                  {new Date(memory.occurred_end).toLocaleString()}
-                                </>
+                    {editingText ? (
+                      <EditMemoryForm
+                        memory={memory}
+                        busy={savingText}
+                        onCancel={() => setEditingText(false)}
+                        onSave={handleSaveEdit}
+                      />
+                    ) : (
+                      <div className="space-y-4">
+                        {/* Memory text */}
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <div className="text-xs font-bold text-muted-foreground uppercase">
+                                {t("sectionMemoryText")}
+                              </div>
+                              {memory.edited_at && (
+                                <span
+                                  className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-medium"
+                                  title={new Date(memory.edited_at).toLocaleString()}
+                                >
+                                  {tCuration("editedBadge")}
+                                </span>
                               )}
-                          </span>
+                            </div>
+                            {memory.type !== "observation" && memory.state !== "invalidated" && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-2 gap-1 text-xs"
+                                onClick={() => setEditingText(true)}
+                              >
+                                <Pencil className="h-3 w-3" />
+                                {tCuration("curationEdit")}
+                              </Button>
+                            )}
+                          </div>
+                          <p className="text-sm text-foreground leading-relaxed">{memory.text}</p>
                         </div>
-                      </div>
-                    )}
 
-                    {memory.mentioned_at && (
-                      <div>
-                        <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-                          {t("sectionMentionedAt")}
-                        </div>
-                        <div className="flex items-center gap-2 text-sm text-foreground">
-                          <Calendar className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                          <span>{new Date(memory.mentioned_at).toLocaleString()}</span>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Entities */}
-                    {memory.entities && memory.entities.length > 0 && (
-                      <div>
-                        <div className="text-xs font-bold text-muted-foreground uppercase mb-2 flex items-center gap-1">
-                          <Users className="w-3 h-3" />
-                          {t("sectionEntities")}
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {memory.entities.map((entity, idx) => (
-                            <span
-                              key={idx}
-                              className="px-2 py-0.5 bg-primary/10 text-primary rounded text-xs"
-                            >
-                              {entity}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Tags */}
-                    <TagList tags={memory.tags} showLabel />
-
-                    {/* Observation Scopes */}
-                    {memory.observation_scopes && (
-                      <div>
-                        <div className="text-xs font-bold text-muted-foreground uppercase mb-2 flex items-center gap-1">
-                          <Tag className="w-3 h-3" />
-                          {t("sectionObservationScopes")}
-                        </div>
-                        {typeof memory.observation_scopes === "string" ? (
-                          <span className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">
-                            {memory.observation_scopes}
-                          </span>
-                        ) : (
-                          <div className="space-y-1.5">
-                            {(memory.observation_scopes as string[][]).map((scope, i) => (
-                              <TagList key={i} tags={scope} />
-                            ))}
+                        {/* Curation: invalidate / restore (raw facts only) */}
+                        {memory.type !== "observation" && (
+                          <div>
+                            <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                              {tCuration("curationActions")}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {memory.state === "invalidated" ? (
+                                <>
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    disabled={curating}
+                                    onClick={() => handleCurate("valid")}
+                                  >
+                                    <RotateCcw className="h-4 w-4 mr-1.5" />
+                                    {tCuration("curationRevert")}
+                                  </Button>
+                                  <span className="inline-flex items-center rounded-full bg-muted text-muted-foreground px-2 py-0.5 text-xs font-medium">
+                                    {tCuration("curationStateInvalidated")}
+                                  </span>
+                                </>
+                              ) : (
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  disabled={curating}
+                                  onClick={() => setAskingReason(true)}
+                                >
+                                  {tCuration("curationInvalidate")}
+                                </Button>
+                              )}
+                            </div>
+                            {memory.state === "invalidated" &&
+                              (memory.invalidation_reason || memory.invalidated_at) && (
+                                <div className="mt-2 text-xs text-muted-foreground">
+                                  {memory.invalidation_reason && (
+                                    <>
+                                      {tCuration("curationReasonLabel")}:{" "}
+                                      {memory.invalidation_reason}
+                                    </>
+                                  )}
+                                  {memory.invalidation_reason && memory.invalidated_at && " · "}
+                                  {memory.invalidated_at &&
+                                    new Date(memory.invalidated_at).toLocaleString()}
+                                </div>
+                              )}
                           </div>
                         )}
+
+                        {/* Context */}
+                        {memory.context && (
+                          <div>
+                            <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
+                              {t("sectionContext")}
+                            </div>
+                            <div className="text-sm text-foreground">{memory.context}</div>
+                          </div>
+                        )}
+
+                        {/* Dates */}
+                        {memory.occurred_start && (
+                          <div>
+                            <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                              {t("sectionOccurred")}
+                            </div>
+                            <div className="flex items-center gap-2 text-sm text-foreground">
+                              <Calendar className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                              <span>
+                                {new Date(memory.occurred_start).toLocaleString()}
+                                {memory.occurred_end &&
+                                  memory.occurred_end !== memory.occurred_start && (
+                                    <>
+                                      <span className="text-muted-foreground mx-1">→</span>
+                                      {new Date(memory.occurred_end).toLocaleString()}
+                                    </>
+                                  )}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {memory.mentioned_at && (
+                          <div>
+                            <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                              {t("sectionMentionedAt")}
+                            </div>
+                            <div className="flex items-center gap-2 text-sm text-foreground">
+                              <Calendar className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                              <span>{new Date(memory.mentioned_at).toLocaleString()}</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Entities */}
+                        {memory.entities && memory.entities.length > 0 && (
+                          <div>
+                            <div className="text-xs font-bold text-muted-foreground uppercase mb-2 flex items-center gap-1">
+                              <Users className="w-3 h-3" />
+                              {t("sectionEntities")}
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {memory.entities.map((entity, idx) => (
+                                <span
+                                  key={idx}
+                                  className="px-2 py-0.5 bg-primary/10 text-primary rounded text-xs"
+                                >
+                                  {entity}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Tags */}
+                        <TagList tags={memory.tags} showLabel />
+
+                        {/* Observation Scopes */}
+                        {memory.observation_scopes && (
+                          <div>
+                            <div className="text-xs font-bold text-muted-foreground uppercase mb-2 flex items-center gap-1">
+                              <Tag className="w-3 h-3" />
+                              {t("sectionObservationScopes")}
+                            </div>
+                            {typeof memory.observation_scopes === "string" ? (
+                              <span className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">
+                                {memory.observation_scopes}
+                              </span>
+                            ) : (
+                              <div className="space-y-1.5">
+                                {(memory.observation_scopes as string[][]).map((scope, i) => (
+                                  <TagList key={i} tags={scope} />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* ID */}
+                        <div>
+                          <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
+                            {t("sectionMemoryId")}
+                          </div>
+                          <code className="text-xs font-mono text-muted-foreground break-all">
+                            {memory.id}
+                          </code>
+                        </div>
                       </div>
                     )}
-
-                    {/* ID */}
-                    <div>
-                      <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
-                        {t("sectionMemoryId")}
-                      </div>
-                      <code className="text-xs font-mono text-muted-foreground break-all">
-                        {memory.id}
-                      </code>
-                    </div>
                   </TabsContent>
 
                   <TabsContent value="chunk" className="mt-0 space-y-4">
@@ -674,6 +831,13 @@ export function MemoryDetailModal({ memoryId, onClose, initialTab }: MemoryDetai
           onClose={() => setSourceMemoryModalId(null)}
         />
       )}
+
+      <InvalidateMemoryDialog
+        open={askingReason}
+        onOpenChange={setAskingReason}
+        onConfirm={(reason) => handleCurate("invalidated", reason)}
+        busy={curating}
+      />
     </>
   );
 }

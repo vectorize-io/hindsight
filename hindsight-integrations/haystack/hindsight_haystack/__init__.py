@@ -21,7 +21,7 @@ from .config import (
     reset_config,
 )
 from .errors import HindsightError
-from .tools import HindsightToolset, create_hindsight_tools
+from .tools import HindsightMemoryWrapper, create_hindsight_tools
 
 __version__ = "0.1.0"
 
@@ -32,5 +32,5 @@ __all__ = [
     "HindsightHaystackConfig",
     "HindsightError",
     "create_hindsight_tools",
-    "HindsightToolset",
+    "HindsightMemoryWrapper",
 ]

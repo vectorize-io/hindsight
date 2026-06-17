@@ -967,6 +967,7 @@ function CreateMentalModelDialog({
                       <SelectItem value="all">{t("optionsTagsMatchAll")}</SelectItem>
                       <SelectItem value="any_strict">{t("optionsTagsMatchAnyStrict")}</SelectItem>
                       <SelectItem value="all_strict">{t("optionsTagsMatchAllStrict")}</SelectItem>
+                      <SelectItem value="exact">{t("optionsTagsMatchExact")}</SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
@@ -1366,6 +1367,7 @@ function UpdateMentalModelDialog({
                       <SelectItem value="all">{t("optionsTagsMatchAll")}</SelectItem>
                       <SelectItem value="any_strict">{t("optionsTagsMatchAnyStrict")}</SelectItem>
                       <SelectItem value="all_strict">{t("optionsTagsMatchAllStrict")}</SelectItem>
+                      <SelectItem value="exact">{t("optionsTagsMatchExact")}</SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">

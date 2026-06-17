@@ -26,11 +26,8 @@ from ..config import (
     DEFAULT_EMBEDDINGS_GEMINI_MODEL,
     DEFAULT_EMBEDDINGS_LITELLM_MODEL,
     DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL,
-    DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU,
     DEFAULT_EMBEDDINGS_LOCAL_MODEL,
-    DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE,
     DEFAULT_EMBEDDINGS_OPENAI_MODEL,
-    DEFAULT_EMBEDDINGS_PROVIDER,
     DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE,
     DEFAULT_EMBEDDINGS_ZEROENTROPY_DIMENSIONS,
     DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT,
@@ -40,13 +37,6 @@ from ..config import (
     DEFAULT_ZEROENTROPY_BASE_URL,
     ENV_EMBEDDINGS_COHERE_API_KEY,
     ENV_EMBEDDINGS_GEMINI_API_KEY,
-    ENV_EMBEDDINGS_LOCAL_FORCE_CPU,
-    ENV_EMBEDDINGS_LOCAL_MODEL,
-    ENV_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE,
-    ENV_EMBEDDINGS_ONNX_DIMENSIONS,
-    ENV_EMBEDDINGS_ONNX_MODEL_ID,
-    ENV_EMBEDDINGS_ONNX_MODEL_PATH,
-    ENV_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH,
     ENV_EMBEDDINGS_OPENAI_API_KEY,
     ENV_EMBEDDINGS_OPENAI_BASE_URL,
     ENV_EMBEDDINGS_OPENAI_MODEL,
@@ -57,6 +47,7 @@ from ..config import (
     ENV_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT,
     ENV_LLM_API_KEY,
 )
+from .bank_attribution import apply_bank_attribution
 
 logger = logging.getLogger(__name__)
 
@@ -705,6 +696,7 @@ class OpenAIEmbeddings(Embeddings):
             }
             if self.dimensions is not None:
                 request["dimensions"] = self.dimensions
+            apply_bank_attribution(request)
 
             response = self._client.embeddings.create(**request)
 
@@ -717,7 +709,8 @@ class OpenAIEmbeddings(Embeddings):
 
 class CodexOAuthEmbeddings(OpenAIEmbeddings):
     """
-    OpenAI embeddings using the Codex/ChatGPT OAuth token from ``~/.codex/auth.json``.
+    OpenAI embeddings using the Codex/ChatGPT OAuth token from the Codex
+    ``auth.json`` (``$CODEX_HOME/auth.json``, or ``~/.codex/auth.json`` when unset).
 
     Codex OAuth is an LLM-provider auth path in Hindsight, but the same bearer token
     can also authenticate against the standard OpenAI embeddings endpoint. This keeps

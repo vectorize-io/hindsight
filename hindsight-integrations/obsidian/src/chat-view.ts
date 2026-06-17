@@ -8,11 +8,15 @@ import { ItemView, MarkdownRenderer, Notice, type WorkspaceLeaf, setIcon } from 
 import { HINDSIGHT_ICON_ID, HINDSIGHT_MARK_DATA_URI } from "./branding";
 import { runChatTurn } from "./chat";
 import type HindsightPlugin from "./main";
-import { collectDocIds, retrievedNotesDetailed } from "./reflect-util";
+import { collectDocIds, groundedNotes, type RetrievedNote } from "./reflect-util";
 import { renderSyncStatus } from "./status-bar";
-import type { ReflectResponse, ReflectToolCall, TagGroup, TagLeaf } from "./types";
+import type { Budget, ReflectResponse, ReflectToolCall, TagGroup, TagLeaf } from "./types";
 
 const SNIPPET_MAX = 160;
+
+// Grounded notes shown before the "show all" toggle — keeps a long retrieval
+// list from burying the answer (the rest are one click away).
+const NOTES_VISIBLE = 3;
 
 // px — the composer grows with the message up to this height, then scrolls.
 const INPUT_MAX_HEIGHT = 240;
@@ -89,8 +93,10 @@ export class ChatView extends ItemView {
   /** Resize the composer to fit its content, up to INPUT_MAX_HEIGHT (then it scrolls). */
   private autoGrowInput(): void {
     const el = this.input;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, INPUT_MAX_HEIGHT)}px`;
+    // Use Obsidian's setCssStyles (not el.style.x =) per the plugin guidelines.
+    // Reset to auto first so scrollHeight reflects the content's natural height.
+    el.setCssStyles({ height: "auto" });
+    el.setCssStyles({ height: `${Math.min(el.scrollHeight, INPUT_MAX_HEIGHT)}px` });
   }
 
   private buildHeader(root: HTMLElement): void {
@@ -163,6 +169,23 @@ export class ChatView extends ItemView {
     folderSel.addEventListener("change", () => {
       this.folderFilter = folderSel.value;
     });
+
+    // Chat depth (reflect budget) — settable inline, and written back to the
+    // persisted default so the chat-window choice sticks across turns/sessions.
+    const depthSel = bar.createEl("select", { cls: "hindsight-chat__filter" });
+    const depths: Record<Budget, string> = {
+      low: "Depth: Low",
+      mid: "Depth: Medium",
+      high: "Depth: High",
+    };
+    for (const [value, label] of Object.entries(depths)) {
+      depthSel.createEl("option", { text: label, value });
+    }
+    depthSel.value = this.plugin.settings.defaultBudget;
+    depthSel.addEventListener("change", () => {
+      this.plugin.settings.defaultBudget = depthSel.value as Budget;
+      void this.plugin.saveSettings();
+    });
   }
 
   /** Distinct folder paths in the current vault (mirrors the folder: tags we emit). */
@@ -218,34 +241,62 @@ export class ChatView extends ItemView {
     });
   }
 
-  /** The actual notes pulled in by the reflect agent's tool calls, with snippets. */
+  /** Render one grounded note (citation link + snippet); returns the row element. */
+  private renderNoteItem(parent: HTMLElement, note: RetrievedNote): HTMLElement {
+    const item = parent.createDiv({ cls: "hindsight-chat__note" });
+    const link = item.createEl("a", {
+      cls: "hindsight-chat__citation",
+      text: this.plugin.stripDocPrefix(note.docId),
+      href: "#",
+    });
+    link.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      this.openNote(note.docId);
+    });
+    const snippet = note.snippets[0];
+    if (snippet) {
+      item.createDiv({
+        cls: "hindsight-chat__snippet",
+        text: snippet.length > SNIPPET_MAX ? `${snippet.slice(0, SNIPPET_MAX)}…` : snippet,
+      });
+    }
+    return item;
+  }
+
+  /** The notes the answer is grounded on (citations), capped with a "show all". */
   private renderRetrievedNotes(container: HTMLElement, response: ReflectResponse): void {
-    const notes = retrievedNotesDetailed(response);
+    const notes = groundedNotes(response);
     const models = response.based_on?.mental_models ?? [];
     if (notes.length === 0 && models.length === 0) return;
 
     const details = container.createEl("details", { cls: "hindsight-chat__disclosure" });
-    details.open = true; // notes are the most useful evidence — show by default
+    // Collapsed by default; thereafter remembers the user's last choice (persisted).
+    details.open = this.plugin.settings.notesExpanded;
+    this.persistDisclosure(details, "notesExpanded");
     details.createEl("summary", { text: `Notes retrieved (${notes.length})` });
-    for (const note of notes) {
-      const item = details.createDiv({ cls: "hindsight-chat__note" });
-      const link = item.createEl("a", {
-        cls: "hindsight-chat__citation",
-        text: this.plugin.stripDocPrefix(note.docId),
+
+    // Render all rows but hide the overflow; "show all" reveals them in place.
+    const overflow: HTMLElement[] = [];
+    notes.forEach((note, i) => {
+      const item = this.renderNoteItem(details, note);
+      if (i >= NOTES_VISIBLE) {
+        item.hidden = true;
+        overflow.push(item);
+      }
+    });
+    if (overflow.length > 0) {
+      const more = details.createEl("a", {
+        cls: "hindsight-chat__show-all",
+        text: `Show all (${overflow.length} more)`,
         href: "#",
       });
-      link.addEventListener("click", (evt) => {
+      more.addEventListener("click", (evt) => {
         evt.preventDefault();
-        this.openNote(note.docId);
+        more.remove();
+        for (const el of overflow) el.hidden = false;
       });
-      const snippet = note.snippets[0];
-      if (snippet) {
-        item.createDiv({
-          cls: "hindsight-chat__snippet",
-          text: snippet.length > SNIPPET_MAX ? `${snippet.slice(0, SNIPPET_MAX)}…` : snippet,
-        });
-      }
     }
+
     for (const model of models) {
       details.createEl("span", {
         cls: "hindsight-chat__citation",
@@ -254,10 +305,23 @@ export class ChatView extends ItemView {
     }
   }
 
+  /** Persist a disclosure's open/closed state to settings (last value wins). */
+  private persistDisclosure(
+    details: HTMLDetailsElement,
+    key: "notesExpanded" | "reasoningExpanded"
+  ): void {
+    details.addEventListener("toggle", () => {
+      this.plugin.settings[key] = details.open;
+      void this.plugin.saveSettings();
+    });
+  }
+
   private renderReasoning(container: HTMLElement, response: ReflectResponse): void {
     const calls = response.trace?.tool_calls ?? [];
     if (calls.length === 0) return;
     const details = container.createEl("details", { cls: "hindsight-chat__disclosure" });
+    details.open = this.plugin.settings.reasoningExpanded;
+    this.persistDisclosure(details, "reasoningExpanded");
     details.createEl("summary", { text: `Reasoning (${calls.length} steps)` });
     for (const call of calls) {
       const ids = new Set<string>();

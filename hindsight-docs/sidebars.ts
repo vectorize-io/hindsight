@@ -100,6 +100,12 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
+          id: 'developer/api/memories',
+          label: 'Memories',
+          customProps: { icon: 'lu-eraser' },
+        },
+        {
+          type: 'doc',
           id: 'developer/api/memory-banks',
           label: 'Memory Banks',
           customProps: { icon: 'lu-memory' },
@@ -133,6 +139,19 @@ const sidebars: SidebarsConfig = {
           href: '/api-reference',
           label: 'API Reference',
           customProps: { icon: 'lu-book-open', iconAfter: 'lu-arrow-up-right' },
+        },
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Security',
+      collapsible: false,
+      items: [
+        {
+          type: 'doc',
+          id: 'developer/memory-defense/index',
+          label: 'Memory Defense',
+          customProps: { icon: 'lu-shield' },
         },
       ],
     },

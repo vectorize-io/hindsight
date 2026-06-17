@@ -67,7 +67,7 @@ class LiteLLMRouterLLM(LiteLLMLLM):
         model: str,
         config: dict[str, Any],
         reasoning_effort: str = "low",
-        timeout: float = 300.0,
+        timeout: float | None = None,
         **kwargs: Any,
     ):
         super().__init__(

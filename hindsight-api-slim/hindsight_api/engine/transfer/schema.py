@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 # Bump when the archive layout changes in a backward-incompatible way.
 SCHEMA_VERSION = 1
 
-ObservationScopes = Literal["per_tag", "combined", "all_combinations"] | list[list[str]]
+ObservationScopes = Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]]
 
 
 class TransferCausalRelation(BaseModel):

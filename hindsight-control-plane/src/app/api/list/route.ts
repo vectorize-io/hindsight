@@ -29,6 +29,9 @@ export async function GET(request: NextRequest) {
       consolidationStateParam === "done"
         ? consolidationStateParam
         : undefined;
+    const stateParam = searchParams.get("state");
+    const state = stateParam === "valid" || stateParam === "invalidated" ? stateParam : undefined;
+    const documentId = searchParams.get("document_id") || undefined;
 
     const response = await hindsightClient.listMemories(bankId, {
       limit,
@@ -36,6 +39,8 @@ export async function GET(request: NextRequest) {
       type,
       q,
       consolidationState,
+      state,
+      documentId,
     });
 
     return NextResponse.json(response, { status: 200 });

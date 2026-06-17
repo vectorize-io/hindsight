@@ -47,6 +47,7 @@ function getActionOptions(t: TranslateFn) {
     { value: "delete_directive", label: t("actionDeleteDirective") },
     { value: "file_convert_retain", label: t("actionFileConvertRetain") },
     { value: "webhook_delivery", label: t("actionWebhookDelivery") },
+    { value: "memory_defense", label: t("actionMemoryDefense") },
   ];
 }
 

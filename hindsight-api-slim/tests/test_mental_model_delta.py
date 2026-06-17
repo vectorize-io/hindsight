@@ -342,7 +342,7 @@ class TestDeltaRefreshPlumbing:
         assert "obs-bob" in user_msg
         assert "Bob joined" in user_msg
         # The structured JSON of the current doc must include the section id "members".
-        assert '"id": "members"' in user_msg
+        assert '"members"' in user_msg
 
         # New content includes the new bullet.
         assert "Bob — junior engineer" in refreshed["content"]
@@ -354,6 +354,96 @@ class TestDeltaRefreshPlumbing:
         assert len(applied) == 1
         assert applied[0]["op"] == "append_block"
         assert applied[0]["section_id"] == "members"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_delta_prompt_sends_only_new_facts_not_accumulated_history(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_llm_call,
+    ):
+        """Regression: the delta prompt carries only THIS refresh's facts.
+
+        ``based_on`` accumulates across refreshes for grounding/audit, but the
+        structured-delta LLM call must receive only the facts produced by the
+        current reflect. Re-sending every historical fact each refresh grows the
+        prompt without bound and trips provider input limits (e.g. Z.ai 1261).
+        The accumulated set is still persisted in ``reflect_response.based_on``.
+        """
+        bank_id = f"test-delta-newfacts-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        existing = "# Team\n\nAlice is the lead.\n\n## Members\n\n- Alice — lead\n"
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query="Tell me about the team",
+            content=existing,
+            trigger={"mode": "delta"},
+            request_context=request_context,
+        )
+
+        # First refresh seeds prior based_on with an OLD fact (zero ops applied).
+        patch_reflect(
+            memory,
+            text="ignored — delta keeps existing",
+            facts=[
+                {
+                    "id": "obs-old-alice",
+                    "text": "Alice has been the team lead since 2019",
+                    "type": "observation",
+                    "context": None,
+                }
+            ],
+        )
+        patch_llm_call(memory, returns=[])
+        first = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+        first_based_on = (first.get("reflect_response") or {}).get("based_on") or {}
+        assert "obs-old-alice" in {f.get("id") for f in first_based_on.get("observation", [])}
+
+        # Second refresh brings only a NEW fact.
+        patch_reflect(
+            memory,
+            text="# Team\n\nAlice is the lead. Bob joined.",
+            facts=[
+                {
+                    "id": "obs-new-bob",
+                    "text": "Bob joined the team as junior engineer",
+                    "type": "observation",
+                    "context": None,
+                }
+            ],
+        )
+        ops = [
+            {
+                "op": "append_block",
+                "section_id": "members",
+                "block": {"type": "bullet_list", "items": ["Bob — junior engineer"]},
+            }
+        ]
+        llm_calls = patch_llm_call(memory, returns=ops)
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+
+        assert len(llm_calls) == 1
+        user_msg = llm_calls[0]["messages"][1]["content"]
+        # The NEW fact is sent to the delta call...
+        assert "obs-new-bob" in user_msg
+        assert "Bob joined the team" in user_msg
+        # ...but the accumulated OLD fact must NOT be re-sent (the regression).
+        assert "obs-old-alice" not in user_msg
+        assert "Alice has been the team lead since 2019" not in user_msg
+
+        # based_on still ACCUMULATES both facts for grounding/audit.
+        based_on = (refreshed.get("reflect_response") or {}).get("based_on") or {}
+        obs_ids = {f.get("id") for f in based_on.get("observation", [])}
+        assert obs_ids == {"obs-new-bob", "obs-old-alice"}
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

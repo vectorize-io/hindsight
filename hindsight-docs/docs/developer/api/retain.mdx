@@ -179,6 +179,20 @@ One consolidation pass using all tags together. The resulting observation is tag
 
 **Use when** the memory is meaningful only as a whole and you never need to query any single tag in isolation.
 
+#### shared
+
+One consolidation pass over a single global, **untagged** scope. The memory's own tags are ignored for observation scoping (they stay on the source facts for recall filtering), so memories with *different* tags all consolidate into the **same** observation.
+
+- Observations created: one untagged observation (`[]`)
+- ✓ Untagged observations match every recall regardless of tag filter
+- Deduplicates across volatile per-call tags: if each session is retained with a unique `session-id:…` tag, `combined` and `per_tag` create a fresh observation every session (the tag never repeats), whereas `shared` folds them all into one.
+
+**Use when** your tags are per-call provenance (e.g. session ids) that you want for recall filtering and debugging but not as a consolidation boundary — keep the tag on `tags` and set `observation_scopes: "shared"`.
+
+:::caution `shared` vs `[[]]` vs `[]`
+`shared` is equivalent to the explicit scope `[[]]` — a list containing one empty scope. Do **not** confuse it with `[]` (an empty list), which declares *zero* scopes and silently falls back to `combined`.
+:::
+
 #### per_tag
 
 One consolidation pass per individual tag. Each tag gets its own isolated observation that grows with every new memory sharing that tag.
@@ -256,7 +270,7 @@ Multiple items can be submitted in a single request. Batch ingestion is the reco
 
 Upload files directly — Hindsight converts them to text and extracts memories automatically. File processing always runs asynchronously and returns operation IDs for tracking.
 
-**Supported formats:** PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, images (JPG, PNG, GIF, etc. — OCR), audio (MP3, WAV, FLAC, etc. — transcription), HTML, and plain text formats (TXT, MD, CSV, JSON, YAML, etc.)
+**Supported formats:** PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, images (JPG, PNG, GIF, etc. — OCR support depends on the configured parser), audio (MP3, WAV, FLAC, etc. — transcription), HTML, and plain text formats (TXT, MD, CSV, JSON, YAML, etc.)
 
 <Tabs>
 <TabItem value="python" label="Python">
@@ -321,7 +335,7 @@ When `async: true`, the call returns immediately with an `operation_id`. Process
 
 ### Cut Costs 50% with Provider Batch APIs
 
-When using async retain, enable the provider Batch API to reduce LLM fact-extraction costs by 50%. OpenAI and Groq both offer this discount in exchange for a processing window of up to 24 hours — a trade-off that's typically invisible when retain already runs in the background.
+When using async retain, enable the provider Batch API to reduce LLM fact-extraction costs by 50%. OpenAI, Groq, and Gemini all offer this discount in exchange for a processing window of up to 24 hours — a trade-off that's typically invisible when retain already runs in the background.
 
 ```bash
 export HINDSIGHT_API_RETAIN_BATCH_ENABLED=true
@@ -330,5 +344,5 @@ export HINDSIGHT_API_RETAIN_BATCH_ENABLED=true
 Hindsight submits fact extraction calls as a batch job to the provider, polls for completion, and processes results automatically. No changes to your API calls are needed.
 
 :::note
-Batch API cost savings require `async=true` in your retain request and a compatible provider (OpenAI or Groq).
+Batch API cost savings require `async=true` in your retain request and a compatible provider (OpenAI, Groq, or Gemini).
 :::

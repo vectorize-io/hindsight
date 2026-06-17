@@ -92,6 +92,18 @@ class TestResolveWriteScopesAllCombinations:
         assert _resolve_write_scopes(memory) == [frozenset()]
 
 
+class TestResolveWriteScopesShared:
+    def test_collapses_to_single_untagged_scope_regardless_of_tags(self):
+        # "shared" ignores the memory's own tags and writes to one global scope,
+        # so every memory deduplicates against the same observation.
+        memory = {"tags": ["alice", "session"], "observation_scopes": _as_json_string("shared")}
+        assert _resolve_write_scopes(memory) == [frozenset()]
+
+    def test_empty_tags_also_untagged_scope(self):
+        memory = {"tags": [], "observation_scopes": _as_json_string("shared")}
+        assert _resolve_write_scopes(memory) == [frozenset()]
+
+
 class TestResolveWriteScopesExplicitList:
     def test_uses_declared_scopes_verbatim(self):
         memory = {
@@ -166,6 +178,12 @@ class TestResolveObsTagsList:
         memory = {"tags": ["a", "b"], "observation_scopes": json.dumps(spec)}
         assert _resolve_obs_tags_list(memory) == spec
 
+    def test_shared_returns_single_empty_scope(self):
+        # One pass over the empty (untagged) scope; the memory's own tags are
+        # ignored so cross-tag memories consolidate into one observation.
+        memory = {"tags": ["a", "b"], "observation_scopes": json.dumps("shared")}
+        assert _resolve_obs_tags_list(memory) == [[]]
+
 
 # ---------------------------------------------------------------------------
 # Agreement between obs_tags_list (dispatch) and write_scopes (locks)
@@ -185,6 +203,7 @@ class TestDispatchLockAgreement:
             {"tags": ["a", "b", "c"], "observation_scopes": json.dumps("combined")},
             {"tags": ["a", "b"], "observation_scopes": json.dumps("per_tag")},
             {"tags": ["a", "b", "c"], "observation_scopes": json.dumps("all_combinations")},
+            {"tags": ["a", "b"], "observation_scopes": json.dumps("shared")},
             {"tags": ["a", "b"], "observation_scopes": json.dumps([["a"], ["b"], ["a", "b"]])},
             {"tags": ["a"], "observation_scopes": json.dumps([["a"], ["x"]])},
             # Pre-parsed Python shape (defensive — covers callers that hand the

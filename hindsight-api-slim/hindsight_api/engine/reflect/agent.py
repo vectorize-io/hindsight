@@ -341,6 +341,7 @@ async def run_reflect_agent(
     budget: str | None = None,
     max_context_tokens: int = 100_000,
     llm_output_language: str | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> ReflectAgentResult:
     """
     Execute the reflect agent loop using native tool calling.
@@ -493,6 +494,13 @@ async def run_reflect_agent(
     # under ``auto`` tool choice. None means the full forced path still applies.
     stop_forcing_from_iteration: int | None = None
     for iteration in range(max_iterations):
+        # Cooperative cancellation checkpoint: abort the agent loop between
+        # iterations if the caller (e.g. an HTTP client) has gone away, rather
+        # than spending another LLM round-trip on a result nobody will read
+        # (issue #2122). Raises OperationCancelledError when fired.
+        if cancel_check is not None:
+            cancel_check()
+
         is_last = iteration == max_iterations - 1
 
         if is_last:
@@ -505,7 +513,9 @@ async def run_reflect_agent(
                 messages=[
                     {
                         "role": "system",
-                        "content": build_final_system_prompt(bank_profile.get("mission"), llm_output_language),
+                        "content": build_final_system_prompt(
+                            bank_profile.get("mission"), llm_output_language, directives
+                        ),
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -565,7 +575,9 @@ async def run_reflect_agent(
                 messages=[
                     {
                         "role": "system",
-                        "content": build_final_system_prompt(bank_profile.get("mission"), llm_output_language),
+                        "content": build_final_system_prompt(
+                            bank_profile.get("mission"), llm_output_language, directives
+                        ),
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -684,7 +696,9 @@ async def run_reflect_agent(
                 messages=[
                     {
                         "role": "system",
-                        "content": build_final_system_prompt(bank_profile.get("mission"), llm_output_language),
+                        "content": build_final_system_prompt(
+                            bank_profile.get("mission"), llm_output_language, directives
+                        ),
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -808,7 +822,9 @@ async def run_reflect_agent(
                 messages=[
                     {
                         "role": "system",
-                        "content": build_final_system_prompt(bank_profile.get("mission"), llm_output_language),
+                        "content": build_final_system_prompt(
+                            bank_profile.get("mission"), llm_output_language, directives
+                        ),
                     },
                     {"role": "user", "content": prompt},
                 ],

@@ -15,6 +15,7 @@ import asyncio
 import importlib
 import logging
 import os
+import re
 
 _resource_mod = importlib.import_module("resource") if importlib.util.find_spec("resource") else None
 import threading
@@ -38,6 +39,32 @@ def _get_tenant() -> str:
     from hindsight_api.engine.memory_engine import get_current_schema
 
     return get_current_schema()
+
+
+def _is_client_cancellation(exc: BaseException) -> bool:
+    """Whether *exc* is a client-disconnect cancellation rather than a failure.
+
+    An abandoned recall/reflect raises OperationCancelledError (issue #2122);
+    the HTTP layer re-raises it as ``HTTPException(499) from exc`` (see
+    api/http.py run_cancellable_on_disconnect). The exception itself, or any
+    link in its ``__cause__`` chain, being an OperationCancelledError marks it
+    as a cancellation. Matching on the cause chain rather than a bare status
+    code avoids misclassifying an unrelated 499 as a cancellation. Per the
+    engine contract a cancellation is "not a failure to retry or report"
+    (cancellation.OperationCancelledError), so it must not be counted against
+    ``hindsight.operation.total``.
+    """
+    # Imported lazily to avoid import-time coupling (cf. _get_tenant above).
+    from hindsight_api.cancellation import OperationCancelledError
+
+    cause: BaseException | None = exc
+    seen: set[int] = set()  # guard against a cyclic __cause__ chain
+    while cause is not None and id(cause) not in seen:
+        if isinstance(cause, OperationCancelledError):
+            return True
+        seen.add(id(cause))
+        cause = cause.__cause__
+    return False
 
 
 # Custom bucket boundaries for operation duration (in seconds)
@@ -108,6 +135,27 @@ def get_token_bucket(token_count: int) -> str:
         return "10k-50k"
     else:
         return "50k+"
+
+
+# Template unbounded id segments before a path is used as the low-cardinality
+# "endpoint" metric label. A raw per-bank path segment (e.g. user-123) would
+# otherwise create one never-evicted OTel series per bank.
+_METRIC_BANK_SEGMENT_RE = re.compile(r"(/banks/)[^/]+")
+_METRIC_UUID_RE = re.compile(r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_METRIC_NUMERIC_ID_RE = re.compile(r"/\d+(?=/|$)")
+
+
+def normalize_http_endpoint(path: str) -> str:
+    """Template high-cardinality id segments in an HTTP path for safe metric labeling.
+
+    Collapses the "/banks/<id>" segment (any bank id, including non-numeric ones like
+    "user-123"), UUIDs, and numeric ids to placeholders so the "endpoint" metric label
+    has bounded cardinality. Analogous to get_token_bucket for token counts.
+    """
+    path = _METRIC_BANK_SEGMENT_RE.sub(r"\g<1>{bank_id}", path)
+    path = _METRIC_UUID_RE.sub("/{id}", path)
+    path = _METRIC_NUMERIC_ID_RE.sub("/{id}", path)
+    return path
 
 
 logger = logging.getLogger(__name__)
@@ -403,20 +451,31 @@ class MetricsCollector(MetricsCollectorBase):
             attributes["max_tokens"] = str(max_tokens)
 
         success = True
+        cancelled = False
         try:
             yield
-        except Exception:
-            success = False
+        except Exception as exc:
+            # A client disconnect cancels the operation cooperatively (#2122),
+            # raised as OperationCancelledError and re-raised by the HTTP layer
+            # as HTTPException(499) from it. An abandoned request is neither a
+            # success nor a failure, so it is excluded from the metric entirely
+            # rather than inflating either the failure or the success rate on
+            # hindsight.operation.total.
+            if _is_client_cancellation(exc):
+                cancelled = True
+            else:
+                success = False
             raise
         finally:
-            duration = time.time() - start_time
-            attributes["success"] = str(success).lower()
+            if not cancelled:
+                duration = time.time() - start_time
+                attributes["success"] = str(success).lower()
 
-            # Record duration
-            self.operation_duration.record(duration, attributes)
+                # Record duration
+                self.operation_duration.record(duration, attributes)
 
-            # Record operation count
-            self.operation_total.add(1, attributes)
+                # Record operation count
+                self.operation_total.add(1, attributes)
 
     def record_llm_call(
         self,

@@ -38,6 +38,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - Claude Code
 - AWS Bedrock
 - Fireworks AI
+- Nous Portal
 - OpenAI Compatible
 - LiteLLM (100+)
 
@@ -50,7 +51,7 @@ Hindsight works with any provider that exposes an OpenAI-compatible API (e.g., A
 See [Configuration](./configuration#llm-provider) for setup examples.
 > **💡 AWS Bedrock**
 > 
-Set `HINDSIGHT_API_LLM_PROVIDER=bedrock` to use AWS Bedrock models directly. Model names use Bedrock model IDs (e.g., `us.amazon.nova-2-lite-v1:0`). No API key is required — authentication uses AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION_NAME`) or IAM roles.
+Set `HINDSIGHT_API_LLM_PROVIDER=bedrock` to use AWS Bedrock models directly. Model names use Bedrock model IDs (e.g., `us.amazon.nova-2-lite-v1:0`). No API key is required — authentication uses AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION_NAME`) or IAM roles. For 50% cost savings on throughput, set `HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER=flex` (see [Configuration](./configuration#llm-provider)).
 
 See [Configuration](./configuration#llm-provider) for setup examples.
 > **💡 Built-in llama.cpp (fully local, no API key)**
@@ -78,7 +79,7 @@ Beyond basic generation, some providers support optional features that lower cos
 |----------|:---------:|:-----------------------:|
 | OpenAI (`openai`) | ✅ | — |
 | Anthropic (`anthropic`) | — | — |
-| Google Gemini (`gemini`) | — | ✅ |
+| Google Gemini (`gemini`) | ✅ | ✅ |
 | Vertex AI (`vertexai`) | — | ✅ |
 | Groq (`groq`) | ✅ | — |
 | Ollama (`ollama`) | — | — |
@@ -95,12 +96,14 @@ Beyond basic generation, some providers support optional features that lower cos
 | Claude Code (`claude-code`) | — | — |
 | AWS Bedrock (`bedrock`) | — | — |
 | Fireworks AI (`fireworks`) | ✅ | — |
+| Nous Portal (`nous`) | — | — |
 | LiteLLM (100+) (`litellm`) | — | — |
 
 - **Batch API** — submits bulk retain extraction through the provider's asynchronous batch endpoint, typically at ~50% lower cost. Used automatically when available; otherwise calls run synchronously.
 - **Explicit prompt caching** — reuses the large, fixed system prefix that retain (fact extraction), consolidation, and the reflect tool-loop send on every call, billing it at the provider's cached-input rate. On Gemini/Vertex this uses the `CachedContent` API. **On by default**; disable with `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED=false`. Hindsight structures these prompts so the cached prefix is **bank-agnostic** — one cache is shared across all banks rather than one per bank/mission, and creation soft-fails to an uncached call, so it never breaks a request.
 
-:::note
+> **📝 Note**
+> 
 A blank "Explicit prompt caching" cell does not mean a provider has no caching. OpenAI, for example, caches a stable leading prompt prefix **automatically** server-side, so it benefits with no configuration; Anthropic supports caching via `cache_control` breakpoints which can be wired up through the same provider hook. The column tracks only Hindsight's explicit `get_or_create_cached_prefix` hook, which Gemini/Vertex implement today.
 ### Benchmarks
 
@@ -154,6 +157,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `claude-code` | `claude-sonnet-4-5-20250929` |
 | `bedrock` | `us.amazon.nova-2-lite-v1:0` |
 | `fireworks` | `accounts/fireworks/models/llama-v3p1-8b-instruct` |
+| `nous` | `deepseek/deepseek-v4-flash` |
 | `litellm` | `gpt-4o-mini` |
 
 **Example:** Setting just the provider uses its default model:
@@ -258,6 +262,11 @@ export HINDSIGHT_API_LLM_PROVIDER=opencode-go
 export HINDSIGHT_API_LLM_API_KEY=your-opencode-go-api-key
 export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
 
+# Nous Portal (OpenAI-compatible; no API key — uses your `hermes portal` login)
+export HINDSIGHT_API_LLM_PROVIDER=nous
+export HINDSIGHT_API_LLM_MODEL=deepseek/deepseek-v4-flash  # any Nous-hosted slug
+# No API key needed — reads a rotating JWT from ~/.hermes/auth.json (see "Nous Portal Setup" below)
+
 # Vertex AI (Google Cloud)
 export HINDSIGHT_API_LLM_PROVIDER=vertexai
 export HINDSIGHT_API_LLM_MODEL=gemini-3.1-flash-lite
@@ -317,6 +326,49 @@ You can use any model supported by OpenAI Codex CLI
 - Tokens refresh automatically when needed
 - Usage is billed to your ChatGPT subscription (not separate API costs)
 - For personal development use only (see ChatGPT Terms of Service)
+
+---
+
+### Nous Portal Setup (Hermes)
+
+Use your [Nous Portal](https://portal.nousresearch.com) subscription for Hindsight via the Hermes CLI login — no static API key required.
+
+**Prerequisites:**
+- A Nous Portal account
+- The [Hermes](https://hermes-agent.nousresearch.com) CLI installed
+
+**Setup Steps:**
+
+1. **Log in to Nous Portal:**
+   ```bash
+   hermes portal
+   ```
+   This opens a browser to authenticate with Nous Portal and saves OAuth credentials to `~/.hermes/auth.json`.
+
+2. **Verify authentication:**
+   ```bash
+   hermes portal status  # should show "Auth: ✓ logged in"
+   ```
+
+3. **Configure Hindsight:**
+   ```bash
+   export HINDSIGHT_API_LLM_PROVIDER=nous
+   # export HINDSIGHT_API_LLM_MODEL=deepseek/deepseek-v4-flash  # defaults to deepseek/deepseek-v4-flash
+   # No API key needed — reads from ~/.hermes/auth.json automatically
+   ```
+
+4. **Start Hindsight:**
+   ```bash
+   hindsight-api
+   ```
+
+You can use any model hosted on the Nous Portal inference API.
+
+**Important Notes:**
+- Credentials are read from `~/.hermes/auth.json` (the same store the Hermes agent uses) — no static API key in Hindsight's config.
+- The short-lived inference JWT is refreshed automatically, before expiry and reactively on a 401.
+- Refreshes coordinate with a running Hermes agent through the shared auth store, so the two never disrupt each other's session.
+- Default base URL: `https://inference-api.nousresearch.com/v1` (override with `HINDSIGHT_API_LLM_BASE_URL`).
 
 ---
 
@@ -490,8 +542,11 @@ Converts text into dense vector representations for semantic similarity search.
 | Model | Dimensions | Use Case |
 |-------|------------|----------|
 | `gemini-embedding-001` | 768 (configurable) | Default Google, general purpose |
+| `gemini-embedding-2-preview` | 768 (configurable) | Gemini Embedding 2 family; multimodal, one vector per input |
 
 Google's `gemini-embedding-001` supports configurable output dimensionality via truncation, google recommend using: 768, 1536, 3072, via `HINDSIGHT_API_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY`. Default is 768.
+
+The `gemini-embedding-2` family, including `gemini-embedding-2-preview`, is supported on both the Gemini API and Vertex AI. These models aggregate multi-input requests, so Hindsight automatically embeds one input per call to keep per-fact vectors aligned.
 
 ### Cohere Models
 

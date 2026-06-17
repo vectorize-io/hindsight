@@ -106,6 +106,15 @@ SCHEMAS_WITH_PENDING_WORK = OptionalRoutine(
         deployment.
       * Should be cheap and idempotent — called every poll cycle (~30s).
 
+    The poller trusts the result wholesale: any schema the routine does
+    not return is treated as having no work this cycle. It does NOT
+    second-guess omissions with a per-schema scan — that would re-run the
+    exact queries this routine exists to avoid. Consequently the routine
+    is *only* appropriate for multi-tenant deployments. Single-schema
+    (default/public only) installs should NOT create it: the per-schema
+    fallback below is a single cheap EXISTS check that covers ``public``
+    correctly and cannot starve.
+
     Fallback when the routine is absent: per-schema ``EXISTS`` queries
     from Python (~4ms per schema). The server-side path is a single-
     round-trip optimisation worth ~200ms in deployments with thousands

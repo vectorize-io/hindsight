@@ -24,7 +24,9 @@ class RetainContentDict(TypedDict, total=False):
         tags: Visibility scope tags for this content item (optional)
         observation_scopes: How to scope observations for consolidation (optional).
             "per_tag" runs one pass per individual tag; "combined" (default) runs a
-            single pass with all tags; a list[list[str]] specifies exact passes.
+            single pass with all tags; "shared" runs a single pass over one global,
+            untagged scope so memories consolidate together regardless of tags;
+            a list[list[str]] specifies exact passes.
         update_mode: How to handle existing documents with the same document_id (optional).
             "replace" (default) deletes old data and reprocesses. "append" concatenates
             new content to the existing document and reprocesses.
@@ -38,7 +40,7 @@ class RetainContentDict(TypedDict, total=False):
     entities: list[dict[str, str]]  # [{"text": "...", "type": "..."}]
     tags: list[str]  # Visibility scope tags
     observation_scopes: (
-        Literal["per_tag", "combined", "all_combinations"] | list[list[str]]
+        Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]]
     )  # Observation scopes for consolidation
     update_mode: Literal["replace", "append"]
 
@@ -57,7 +59,7 @@ class RetainContent:
     metadata: dict[str, str] = field(default_factory=dict)
     entities: list[dict[str, str]] = field(default_factory=list)  # User-provided entities
     tags: list[str] = field(default_factory=list)  # Visibility scope tags
-    observation_scopes: Literal["per_tag", "combined", "all_combinations"] | list[list[str]] | None = (
+    observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = (
         None  # Observation scopes
     )
 
@@ -124,7 +126,7 @@ class ExtractedFact:
     mentioned_at: datetime | None = None
     metadata: dict[str, str] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)  # Visibility scope tags
-    observation_scopes: Literal["per_tag", "combined", "all_combinations"] | list[list[str]] | None = (
+    observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = (
         None  # Observation scopes
     )
 
@@ -176,7 +178,7 @@ class ProcessedFact:
     tags: list[str] = field(default_factory=list)
 
     # Observation scopes for consolidation
-    observation_scopes: Literal["per_tag", "combined", "all_combinations"] | list[list[str]] | None = None
+    observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = None
 
     @property
     def is_duplicate(self) -> bool:

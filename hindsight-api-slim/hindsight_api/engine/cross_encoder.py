@@ -27,34 +27,21 @@ from ..config import (
     DEFAULT_RERANKER_LITELLM_MODEL,
     DEFAULT_RERANKER_LITELLM_SDK_MODEL,
     DEFAULT_RERANKER_LOCAL_BATCH_SIZE,
-    DEFAULT_RERANKER_LOCAL_FORCE_CPU,
-    DEFAULT_RERANKER_LOCAL_MAX_CONCURRENT,
     DEFAULT_RERANKER_LOCAL_MODEL,
-    DEFAULT_RERANKER_LOCAL_TRUST_REMOTE_CODE,
-    DEFAULT_RERANKER_PROVIDER,
     DEFAULT_RERANKER_SILICONFLOW_BASE_URL,
     DEFAULT_RERANKER_SILICONFLOW_MODEL,
     DEFAULT_RERANKER_TEI_BATCH_SIZE,
-    DEFAULT_RERANKER_TEI_HTTP_TIMEOUT,
     DEFAULT_RERANKER_TEI_MAX_CONCURRENT,
     DEFAULT_RERANKER_ZEROENTROPY_MODEL,
     DEFAULT_ZEROENTROPY_BASE_URL,
     ENV_RERANKER_ALIBABA_API_KEY,
     ENV_RERANKER_COHERE_API_KEY,
-    ENV_RERANKER_COHERE_MODEL,
     ENV_RERANKER_FLASHRANK_CACHE_DIR,
     ENV_RERANKER_FLASHRANK_CPU_MEM_ARENA,
     ENV_RERANKER_FLASHRANK_MODEL,
     ENV_RERANKER_GOOGLE_PROJECT_ID,
-    ENV_RERANKER_LOCAL_FORCE_CPU,
-    ENV_RERANKER_LOCAL_MAX_CONCURRENT,
-    ENV_RERANKER_LOCAL_MODEL,
-    ENV_RERANKER_LOCAL_TRUST_REMOTE_CODE,
     ENV_RERANKER_PROVIDER,
     ENV_RERANKER_SILICONFLOW_API_KEY,
-    ENV_RERANKER_TEI_BATCH_SIZE,
-    ENV_RERANKER_TEI_HTTP_TIMEOUT,
-    ENV_RERANKER_TEI_MAX_CONCURRENT,
     ENV_RERANKER_TEI_URL,
     ENV_RERANKER_ZEROENTROPY_API_KEY,
 )
@@ -303,7 +290,6 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         - bucket_batching: sort pairs by token length to reduce padding waste (36-54% speedup)
         - batch_size: explicit batch size for predict() calls (MPS optimal: 32)
         """
-        import numpy as np
 
         try:
             if self.bucket_batching and len(pairs) > 1:
@@ -1679,7 +1665,7 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
         return CohereCrossEncoder(
             api_key=api_key,
             model=config.reranker_openrouter_model,
-            base_url="https://openrouter.ai/api/v1/rerank",
+            base_url=config.reranker_openrouter_base_url,
             timeout=config.reranker_openrouter_timeout,
         )
     elif provider == "flashrank":

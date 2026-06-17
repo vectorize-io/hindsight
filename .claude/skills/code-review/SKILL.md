@@ -192,6 +192,18 @@ If a migration adds a new PostgreSQL table (look for `CREATE TABLE` / `op.create
 - The guard test `test_backup_tables_covers_entire_schema` in `tests/test_admin_backup_restore.py` enforces this — flag it as a **must fix** if a new table is absent from `BACKUP_TABLES`.
 - Oracle-only tables (e.g. `observation_sources`) are intentionally excluded — admin backup/restore is PostgreSQL-only.
 
+### 11b. Check new config flags update the env template
+
+If the diff adds a new configuration field (a new `ENV_*` / `HINDSIGHT_*` env var
+in `hindsight-api-slim/hindsight_api/config.py`):
+- **`.env.example`** (repo root) — must add the variable (commented if optional)
+  alongside the docs entry in `hindsight-docs/docs/developer/configuration.md`.
+  A flag added to `config.py` but absent from `.env.example` is a **should fix**.
+- **`hindsight-embed/hindsight_embed/env.example`** — the bundled copy must stay
+  byte-identical to the repo-root `.env.example` (it seeds embed/profile configs).
+  The `test_bundled_template_matches_repo_root` sync test fails on drift; if the
+  root file changed without re-copying, flag it as a **must fix**.
+
 ### 12. Review against other coding standards
 
 Check the diff for violations of the standards listed above:

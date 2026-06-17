@@ -4,7 +4,19 @@ import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { TagList } from "@/components/ui/tag-list";
-import { Copy, Check, X, Loader2, Calendar, History, Activity } from "lucide-react";
+import {
+  Copy,
+  Check,
+  X,
+  Loader2,
+  Calendar,
+  History,
+  Activity,
+  RotateCcw,
+  Pencil,
+} from "lucide-react";
+import { InvalidateMemoryDialog } from "./invalidate-memory-dialog";
+import { EditMemoryForm, type EditMemoryFields } from "./edit-memory-form";
 import { DocumentChunkModal } from "./document-chunk-modal";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { TraceDialog } from "./llm-requests-view";
@@ -167,6 +179,10 @@ export function MemoryDetailPanel({
   const [loading, setLoading] = useState(false);
   const [sourceMemoryModalId, setSourceMemoryModalId] = useState<string | null>(null);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [curating, setCurating] = useState(false);
+  const [askingReason, setAskingReason] = useState(false);
+  const [editingText, setEditingText] = useState(false);
+  const [savingText, setSavingText] = useState(false);
 
   // Fetch full memory data when panel opens
   // For mental models, use getMentalModel to get source memories
@@ -235,10 +251,58 @@ export function MemoryDetailPanel({
     setModalId(null);
   };
 
+  const handleCurate = async (nextState: "valid" | "invalidated", reason?: string) => {
+    const id = displayMemory?.id || displayMemory?.node_id;
+    if (!id || !bankId || curating) return;
+    setCurating(true);
+    try {
+      await client.updateMemory(id, bankId, {
+        state: nextState,
+        ...(reason ? { reason } : {}),
+      });
+      const refreshed = await client.getMemory(id, bankId);
+      setFullMemory(refreshed);
+      setAskingReason(false);
+    } catch (err) {
+      console.error("Failed to curate memory:", err);
+    } finally {
+      setCurating(false);
+    }
+  };
+
+  // Edit this fact's text (world/experience only). Re-embeds + re-derives its
+  // observations server-side; the previous text is kept in history.
+  const handleSaveEdit = async (fields: EditMemoryFields) => {
+    const id = displayMemory?.id || displayMemory?.node_id;
+    if (!id || !bankId || savingText) return;
+    setSavingText(true);
+    try {
+      await client.updateMemory(id, bankId, {
+        text: fields.text,
+        context: fields.context,
+        occurredStart: fields.occurredStart,
+        occurredEnd: fields.occurredEnd,
+        factType: fields.factType,
+        entities: fields.entities,
+      });
+      const refreshed = await client.getMemory(id, bankId);
+      setFullMemory(refreshed);
+      setEditingText(false);
+    } catch (err) {
+      console.error("Failed to edit memory:", err);
+    } finally {
+      setSavingText(false);
+    }
+  };
+
   if (!memory) return null;
 
   // Handle both 'id' and 'node_id' (trace results use node_id)
   const memoryId = displayMemory.id || displayMemory.node_id;
+  const isInvalidated = displayMemory?.state === "invalidated";
+  // Curation applies only to raw world/experience facts, not derived observations.
+  const canCurate =
+    !isObservation && Boolean(displayMemory?.id || displayMemory?.node_id) && Boolean(bankId);
 
   const labelSize = compact ? "text-[10px]" : "text-xs";
   const textSize = compact ? "text-xs" : "text-sm";
@@ -261,17 +325,96 @@ export function MemoryDetailPanel({
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               <span className="ml-2 text-muted-foreground">{t("loadingDetails")}</span>
             </div>
+          ) : editingText ? (
+            <EditMemoryForm
+              memory={displayMemory}
+              busy={savingText}
+              onCancel={() => setEditingText(false)}
+              onSave={handleSaveEdit}
+            />
           ) : (
             <div className="space-y-5">
               {/* Text */}
               <div>
-                <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-                  {t("sectionFullText")}
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs font-bold text-muted-foreground uppercase">
+                      {t("sectionFullText")}
+                    </div>
+                    {displayMemory.edited_at && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-medium"
+                        title={new Date(displayMemory.edited_at).toLocaleString()}
+                      >
+                        {t("editedBadge")}
+                      </span>
+                    )}
+                  </div>
+                  {canCurate && !isInvalidated && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 gap-1 text-xs"
+                      onClick={() => setEditingText(true)}
+                    >
+                      <Pencil className="h-3 w-3" />
+                      {t("curationEdit")}
+                    </Button>
+                  )}
                 </div>
                 <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground">
                   {displayMemory.text}
                 </div>
               </div>
+
+              {/* Curation: state badge + invalidate/revert (raw facts only) */}
+              {canCurate && (
+                <div>
+                  <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                    {t("curationActions")}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isInvalidated ? (
+                      <>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={curating}
+                          onClick={() => handleCurate("valid")}
+                        >
+                          <RotateCcw className="h-4 w-4 mr-1.5" />
+                          {t("curationRevert")}
+                        </Button>
+                        <span className="inline-flex items-center rounded-full bg-muted text-muted-foreground px-2 py-0.5 text-xs font-medium">
+                          {t("curationStateInvalidated")}
+                        </span>
+                      </>
+                    ) : (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        disabled={curating}
+                        onClick={() => setAskingReason(true)}
+                      >
+                        {t("curationInvalidate")}
+                      </Button>
+                    )}
+                  </div>
+                  {isInvalidated &&
+                    (displayMemory.invalidation_reason || displayMemory.invalidated_at) && (
+                      <div className="mt-2 text-xs text-muted-foreground">
+                        {displayMemory.invalidation_reason && (
+                          <>
+                            {t("curationReasonLabel")}: {displayMemory.invalidation_reason}
+                          </>
+                        )}
+                        {displayMemory.invalidation_reason && displayMemory.invalidated_at && " · "}
+                        {displayMemory.invalidated_at &&
+                          new Date(displayMemory.invalidated_at).toLocaleString()}
+                      </div>
+                    )}
+                </div>
+              )}
 
               {/* Context (not shown for observations) */}
               {displayMemory.context && !isObservation && (
@@ -503,6 +646,13 @@ export function MemoryDetailPanel({
             initialTab="history"
           />
         )}
+
+        <InvalidateMemoryDialog
+          open={askingReason}
+          onOpenChange={setAskingReason}
+          onConfirm={(reason) => handleCurate("invalidated", reason)}
+          busy={curating}
+        />
       </>
     );
   }

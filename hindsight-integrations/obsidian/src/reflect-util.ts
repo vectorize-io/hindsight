@@ -68,3 +68,61 @@ export function retrievedNotesDetailed(response: ReflectResponse): RetrievedNote
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([docId, snippets]) => ({ docId, snippets: [...snippets] }));
 }
+
+/**
+ * The notes the answer is actually *grounded on* — not every note the agent
+ * glanced at. `based_on.memories` lists the cited facts (with `id` + `text` but
+ * no `document_id`); the trace's recall results carry both `id` and
+ * `document_id`. We join the two by fact `id` to recover which note each cited
+ * fact came from, deduped by note and kept in citation order.
+ *
+ * This is a much tighter, more relevant list than `retrievedNotesDetailed` (the
+ * agent's whole scratchpad). Falls back to the scratchpad only when the answer
+ * cited nothing resolvable, so the panel never goes empty while notes exist.
+ */
+export function groundedNotes(response: ReflectResponse): RetrievedNote[] {
+  // fact id → {docId, text} harvested from the trace (recall/expand/source_facts
+  // results all carry both id and document_id).
+  const factToDoc = new Map<string, { docId: string; text: string }>();
+  const indexTrace = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const v of value) indexTrace(v);
+      return;
+    }
+    if (value && typeof value === "object") {
+      const obj = value as Record<string, unknown>;
+      const id = obj.id;
+      const docId = obj.document_id;
+      if (
+        typeof id === "string" &&
+        id &&
+        typeof docId === "string" &&
+        docId &&
+        !factToDoc.has(id)
+      ) {
+        factToDoc.set(id, { docId, text: typeof obj.text === "string" ? obj.text.trim() : "" });
+      }
+      for (const v of Object.values(obj)) indexTrace(v);
+    }
+  };
+  for (const call of response.trace?.tool_calls ?? []) indexTrace(call.output);
+
+  const byDoc = new Map<string, Set<string>>();
+  const order: string[] = [];
+  for (const mem of response.based_on?.memories ?? []) {
+    // Prefer a document_id on the cited fact itself; otherwise resolve via the trace.
+    const resolved = mem.document_id ? { docId: mem.document_id, text: "" } : factToDoc.get(mem.id);
+    if (!resolved) continue;
+    let snippets = byDoc.get(resolved.docId);
+    if (!snippets) {
+      snippets = new Set<string>();
+      byDoc.set(resolved.docId, snippets);
+      order.push(resolved.docId);
+    }
+    const snippet = (mem.text || resolved.text || "").trim();
+    if (snippet) snippets.add(snippet);
+  }
+
+  if (order.length === 0) return retrievedNotesDetailed(response);
+  return order.map((docId) => ({ docId, snippets: [...(byDoc.get(docId) ?? [])] }));
+}

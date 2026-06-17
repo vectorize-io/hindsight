@@ -179,7 +179,6 @@ def test_get_config_respects_profile(temp_home, monkeypatch):
         "HINDSIGHT_API_LLM_PROVIDER=openai\n"
         "HINDSIGHT_API_LLM_MODEL=gpt-4o-mini\n"
         "HINDSIGHT_API_LLM_API_KEY=sk-default-key\n"
-        "HINDSIGHT_EMBED_BANK_ID=default-bank\n"
     )
 
     # Create named profile
@@ -192,7 +191,6 @@ def test_get_config_respects_profile(temp_home, monkeypatch):
         "HINDSIGHT_API_LLM_PROVIDER=anthropic\n"
         "HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-20250514\n"
         "HINDSIGHT_API_LLM_API_KEY=sk-ant-production\n"
-        "HINDSIGHT_EMBED_BANK_ID=production-bank\n"
     )
 
     # Create metadata
@@ -215,7 +213,6 @@ def test_get_config_respects_profile(temp_home, monkeypatch):
     monkeypatch.delenv("HINDSIGHT_API_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("HINDSIGHT_API_LLM_MODEL", raising=False)
     monkeypatch.delenv("HINDSIGHT_API_LLM_API_KEY", raising=False)
-    monkeypatch.delenv("HINDSIGHT_EMBED_BANK_ID", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     # Test with named profile
@@ -226,7 +223,6 @@ def test_get_config_respects_profile(temp_home, monkeypatch):
     assert config["llm_provider"] == "anthropic", "Should use profile's provider"
     assert config["llm_model"] == "claude-sonnet-4-20250514", "Should use profile's model"
     assert config["llm_api_key"] == "sk-ant-production", "Should use profile's API key"
-    assert config["bank_id"] == "production-bank", "Should use profile's bank_id"
 
 
 def test_profile_env_propagates_arbitrary_hindsight_keys_to_daemon(temp_home, monkeypatch):
@@ -543,8 +539,13 @@ def test_configure_from_env_omits_model_when_unset(temp_home, monkeypatch):
 
     contents = (config_dir / "embed").read_text()
     assert "HINDSIGHT_API_LLM_PROVIDER=gemini" in contents
-    assert "HINDSIGHT_API_LLM_MODEL" not in contents, (
-        "model line must be omitted when the user didn't set one, so the daemon picks the provider default"
+    # The config is seeded from .env.example, which carries a commented
+    # `# HINDSIGHT_API_LLM_MODEL=gpt-4o-mini` reference line. What must not
+    # appear is an *active* (uncommented) model line — that's what would get
+    # re-injected on daemon start and suppress the provider-keyed default.
+    active_lines = [ln.strip() for ln in contents.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    assert not any(ln.startswith("HINDSIGHT_API_LLM_MODEL=") for ln in active_lines), (
+        "active model line must be omitted when the user didn't set one, so the daemon picks the provider default"
     )
 
 
@@ -615,7 +616,7 @@ def test_windows_daemon_launches_via_gui_interpreter(temp_home, tmp_path, monkey
         str(scripts_dir / "python.exe"),
     )
 
-    cmd = manager._find_api_command()
+    cmd = manager._find_api_command("0.0.0")
     assert cmd == [str(scripts_dir / "pythonw.exe"), "-m", "hindsight_api.main"]
 
 
@@ -641,7 +642,7 @@ def test_windows_daemon_falls_back_to_console_exe_without_pythonw(temp_home, tmp
         str(scripts_dir / "python.exe"),
     )
 
-    cmd = manager._find_api_command()
+    cmd = manager._find_api_command("0.0.0")
     assert cmd == [str(scripts_dir / "hindsight-api.exe")]
 
 
@@ -662,5 +663,5 @@ def test_posix_daemon_uses_console_entrypoint(temp_home, tmp_path, monkeypatch):
         lambda name: str(scripts_dir),
     )
 
-    cmd = manager._find_api_command()
+    cmd = manager._find_api_command("0.0.0")
     assert cmd == [str(console_bin)]
