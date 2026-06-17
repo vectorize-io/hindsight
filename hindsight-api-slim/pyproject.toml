@@ -63,7 +63,7 @@ dependencies = [
     "langsmith>=0.6.3", # SSRF via tracing header injection fix
     "protobuf>=6.33.5", # JSON recursion depth bypass fix
     "pillow>=12.1.1", # Out-of-bounds write in PSD image loading fix
-    "cryptography>=46.0.6,<47", # Incomplete DNS name constraint enforcement fix; cap <47 — 47.0.0 SIGILLs on some ARM64 Linux VMs (Docker/Podman on Apple Silicon), pyca/cryptography#14733
+    "cryptography>=48.0.1", # GHSA-537c-gmf6-5ccf: bundled-OpenSSL OOB read fix needs >=48.0.1. Prior <47 cap (47.0.0 SIGILL on ARM64 Docker/Podman, pyca/cryptography#14733) lifted — 47/48/49 verified importing + RSA sign/verify cleanly on linux/arm64 (Docker on Apple Silicon) and native arm64 macOS; upstream issue closed unconfirmed.
     "filelock>=3.20.1", # TOCTOU race condition fix
     "authlib>=1.6.9", # Account takeover/JWS header injection vulnerability fix
     "pyjwt>=2.12.0", # Accepts unknown crit header extensions fix
