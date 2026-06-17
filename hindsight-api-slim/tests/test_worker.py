@@ -83,6 +83,82 @@ def test_metric_operation_label_normalises_retain_variants():
     assert _metric_operation_label(None) == "unknown"
 
 
+class TestWorkerOperationMetrics:
+    """_execute_task_inner emits operation metrics on terminal outcomes only (no DB)."""
+
+    def _make_poller(self, executor):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from hindsight_api.worker import WorkerPoller
+
+        poller = WorkerPoller(backend=MagicMock(), worker_id="w-test", executor=executor)
+        # Stub terminal-state handlers so _execute_task_inner never touches the DB.
+        poller._mark_failed = AsyncMock()
+        poller._defer_operation = AsyncMock()
+        poller._schedule_retry = AsyncMock()
+        return poller
+
+    async def _run(self, executor, task_type="batch_retain"):
+        from unittest.mock import MagicMock, patch
+
+        from hindsight_api.worker.poller import ClaimedTask
+
+        poller = self._make_poller(executor)
+        task = ClaimedTask(
+            operation_id=str(uuid.uuid4()),
+            task_dict={"type": task_type, "operation_type": task_type, "bank_id": "bank-1"},
+            schema=None,
+        )
+        collector = MagicMock()
+        with patch("hindsight_api.worker.poller.get_metrics_collector", return_value=collector):
+            await poller._execute_task_inner(task)
+        return collector
+
+    @pytest.mark.asyncio
+    async def test_completion_records_success(self):
+        from unittest.mock import AsyncMock
+
+        collector = await self._run(AsyncMock())  # executor returns normally
+        collector.record_operation_result.assert_called_once()
+        call = collector.record_operation_result.call_args
+        assert call.args[0] == "retain"  # batch_retain normalised
+        assert call.kwargs["success"] is True
+        assert call.kwargs["source"] == "worker"
+
+    @pytest.mark.asyncio
+    async def test_failure_records_failure(self):
+        async def boom(_):
+            raise RuntimeError("kaboom")
+
+        collector = await self._run(boom)
+        collector.record_operation_result.assert_called_once()
+        assert collector.record_operation_result.call_args.kwargs["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_deferral_not_counted(self):
+        from datetime import datetime, timezone
+
+        from hindsight_api.worker.exceptions import DeferOperation
+
+        async def defer(_):
+            raise DeferOperation(exec_date=datetime.now(timezone.utc), reason="later")
+
+        collector = await self._run(defer)
+        collector.record_operation_result.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_retry_not_counted(self):
+        from datetime import datetime, timezone
+
+        from hindsight_api.worker.exceptions import RetryTaskAt
+
+        async def retry(_):
+            raise RetryTaskAt(retry_at=datetime.now(timezone.utc), message="transient")
+
+        collector = await self._run(retry)
+        collector.record_operation_result.assert_not_called()
+
+
 def test_all_operation_types_have_slot_reservation_config():
     """Every operation_type used in memory_engine must be listed in
     WORKER_SLOT_RESERVATION_TYPES so it can be reserved via env var.

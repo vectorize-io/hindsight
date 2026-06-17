@@ -714,15 +714,17 @@ class WorkerPoller:
         """
         task_type = task.task_dict.get("type", "unknown")
         bank_id = task.task_dict.get("bank_id", "unknown")
-        # Emit operation metrics (source="worker") on terminal outcomes so async
-        # retain/reflect/consolidation throughput, latency and success/failure are
-        # visible in Prometheus. Prefer the DB-authoritative operation_type.
-        # ponytail: success here reflects whether _executor raised; executors that
+        # Operation metric (source="worker"): record on terminal outcomes only, so
+        # async retain/reflect/consolidation throughput, latency and success/failure
+        # are visible in Prometheus. Prefer the DB-authoritative operation_type.
+        # Note: success here reflects whether _executor raised; executors that
         # mark themselves failed and return normally still count as success — fix by
         # threading the executor's own status back if that granularity is needed.
         op_label = _metric_operation_label(task.task_dict.get("operation_type") or task_type)
         op_start = time.time()
         metrics = get_metrics_collector()
+        # None = not a terminal outcome (deferred/retried) → no metric.
+        terminal_success: bool | None = None
 
         # Bind the stage holder in this task's own contextvar scope so engine
         # code running under us can update it via stage.set_stage(). If holder
@@ -739,9 +741,7 @@ class WorkerPoller:
                 task.task_dict["_schema"] = task.schema
             await self._executor(task.task_dict)
             logger.debug(f"Task {task.operation_id} execution finished")
-            metrics.record_operation_result(
-                op_label, bank_id, success=True, duration=time.time() - op_start, source="worker"
-            )
+            terminal_success = True
         except DeferOperation as e:
             # Deferral is not a terminal outcome — do not record a completion.
             await self._defer_operation(task.operation_id, e.exec_date, e.reason, task.schema)
@@ -752,9 +752,17 @@ class WorkerPoller:
             logger.error(f"Task {task.operation_id} failed: {e}")
             traceback.print_exc()
             await self._mark_failed(task.operation_id, str(e), task.schema)
-            metrics.record_operation_result(
-                op_label, bank_id, success=False, duration=time.time() - op_start, source="worker"
-            )
+            terminal_success = False
+
+        # Record the metric outside the executor's exception scope so a metrics
+        # reporting failure can never be mistaken for a task failure and flip terminal state.
+        if terminal_success is not None:
+            try:
+                metrics.record_operation_result(
+                    op_label, bank_id, success=terminal_success, duration=time.time() - op_start, source="worker"
+                )
+            except Exception:
+                logger.warning(f"Failed to record worker operation metric for {task.operation_id}", exc_info=True)
 
     async def recover_own_tasks(self) -> int:
         """
