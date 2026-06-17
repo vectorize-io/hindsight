@@ -189,9 +189,25 @@ main() {
   log "installing plugin from tarball (no --dangerously-force-unsafe-install)…"
   local install_log
   install_log="$(mktemp)"
-  if ! openclaw plugins install "$TARBALL" >"$install_log" 2>&1; then
+  local install_succeeded=0
+  for install_attempt in 1 2 3; do
+    if openclaw plugins install "$TARBALL" >"$install_log" 2>&1; then
+      install_succeeded=1
+      break
+    fi
+    if grep -qiE "npm error (network|code EAI_AGAIN|code ECONNRESET|code ETIMEDOUT)" "$install_log"; then
+      warn "plugin install hit a transient npm/network failure (attempt $install_attempt/3); retrying"
+      yes 2>/dev/null | openclaw plugins uninstall hindsight-openclaw >/dev/null 2>&1 || true
+      rm -rf "$EXT_DIR"
+      sleep $((install_attempt * 2))
+      continue
+    fi
     cat "$install_log" >&2
     fail "openclaw plugins install failed"
+  done
+  if [[ "$install_succeeded" -ne 1 ]]; then
+    cat "$install_log" >&2
+    fail "openclaw plugins install failed after retries"
   fi
   if grep -qi "dangerous code patterns detected" "$install_log"; then
     cat "$install_log" >&2
