@@ -28,12 +28,26 @@ usage() {
     exit 1
 }
 
-if [ -z "$1" ] || [ -z "$2" ]; then
+if [ "${1:-}" = "--list-integrations" ] && [ "$#" -eq 1 ]; then
+    printf "%s\n" "${VALID_INTEGRATIONS[@]}"
+    exit 0
+fi
+
+VALIDATE_ONLY=false
+if [ "${1:-}" = "--validate-only" ]; then
+    VALIDATE_ONLY=true
+    shift
+    if [ -z "${1:-}" ] || [ "$#" -ne 1 ]; then
+        usage
+    fi
+fi
+
+if [ -z "$1" ] || { [ "$VALIDATE_ONLY" = false ] && [ -z "$2" ]; }; then
     usage
 fi
 
 INTEGRATION=$1
-VERSION_ARG=$2
+VERSION_ARG=${2:-}
 
 # Validate integration name
 VALID=false
@@ -76,6 +90,54 @@ bump_version() {
         patch) echo "$major.$minor.$((patch + 1))" ;;
     esac
 }
+
+validate_manifest_version_field() {
+    local manifest=$1
+    python3 - "$manifest" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if path.name == "pyproject.toml":
+    import tomllib
+
+    data = tomllib.loads(path.read_text())
+    version = data.get("project", {}).get("version")
+else:
+    data = json.loads(path.read_text())
+    version = data.get("version")
+
+if not isinstance(version, str) or not version:
+    raise SystemExit(f"Could not read a top-level release version from {path}")
+PY
+}
+
+INTEGRATION_DIR="hindsight-integrations/$INTEGRATION"
+
+if [ ! -d "$INTEGRATION_DIR" ]; then
+    print_error "Integration directory not found: $INTEGRATION_DIR"
+    exit 1
+fi
+
+if [ -f "$INTEGRATION_DIR/pyproject.toml" ]; then
+    MANIFEST_PATH="$INTEGRATION_DIR/pyproject.toml"
+elif [ -f "$INTEGRATION_DIR/package.json" ]; then
+    MANIFEST_PATH="$INTEGRATION_DIR/package.json"
+elif [ -f "$INTEGRATION_DIR/.claude-plugin/plugin.json" ]; then
+    MANIFEST_PATH="$INTEGRATION_DIR/.claude-plugin/plugin.json"
+elif [ -f "$INTEGRATION_DIR/settings.json" ] && grep -q '"version"' "$INTEGRATION_DIR/settings.json"; then
+    MANIFEST_PATH="$INTEGRATION_DIR/settings.json"
+else
+    print_error "No pyproject.toml, package.json, plugin.json, or versioned settings.json found in $INTEGRATION_DIR"
+    exit 1
+fi
+
+if [ "$VALIDATE_ONLY" = true ]; then
+    validate_manifest_version_field "$MANIFEST_PATH"
+    print_info "Validated $INTEGRATION release path via $MANIFEST_PATH"
+    exit 0
+fi
 
 # Resolve version: either an explicit semver or a bump keyword
 if [[ "$VERSION_ARG" =~ ^(patch|minor|major)$ ]]; then
@@ -135,14 +197,6 @@ if [ -z "$OPENAI_API_KEY" ]; then
     exit 1
 fi
 
-# Determine integration type and update version
-INTEGRATION_DIR="hindsight-integrations/$INTEGRATION"
-
-if [ ! -d "$INTEGRATION_DIR" ]; then
-    print_error "Integration directory not found: $INTEGRATION_DIR"
-    exit 1
-fi
-
 if [ -f "$INTEGRATION_DIR/pyproject.toml" ]; then
     print_info "Updating version in $INTEGRATION_DIR/pyproject.toml"
     sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" "$INTEGRATION_DIR/pyproject.toml"
@@ -159,9 +213,6 @@ elif [ -f "$INTEGRATION_DIR/settings.json" ] && grep -q '"version"' "$INTEGRATIO
     print_info "Updating version in $INTEGRATION_DIR/settings.json"
     sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$INTEGRATION_DIR/settings.json"
     rm "$INTEGRATION_DIR/settings.json.bak"
-else
-    print_error "No pyproject.toml, package.json, plugin.json, or versioned settings.json found in $INTEGRATION_DIR"
-    exit 1
 fi
 
 # Generate changelog entry using LLM
