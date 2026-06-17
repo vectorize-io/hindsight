@@ -74,6 +74,35 @@ const response = await client.reflect("my-bank", "What should I do this weekend?
 console.log(response.text);
 ```
 
+### `getVersion(options?)`
+
+Read the connected Hindsight API version and feature flags. This is useful for
+integrations that need to enforce a minimum server version before enabling a
+workflow.
+
+```typescript
+const version = await client.getVersion();
+
+const isAtLeast = (actual: string, minimum: string) => {
+  const actualParts = actual.split(".").map(Number);
+  const minimumParts = minimum.split(".").map(Number);
+  for (let i = 0; i < Math.max(actualParts.length, minimumParts.length); i++) {
+    const actualPart = actualParts[i] ?? 0;
+    const minimumPart = minimumParts[i] ?? 0;
+    if (actualPart !== minimumPart) return actualPart > minimumPart;
+  }
+  return true;
+};
+
+if (!isAtLeast(version.api_version, "0.8.2")) {
+  throw new Error(`Hindsight ${version.api_version} is too old for this integration`);
+}
+
+if (version.features.observations) {
+  console.log("Observation consolidation is enabled.");
+}
+```
+
 ### `createBank(bankId, options)`
 
 Create or update a memory bank with personality.

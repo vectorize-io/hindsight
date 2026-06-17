@@ -1,0 +1,68 @@
+[project]
+name = "hindsight-agent-framework"
+version = "0.1.0"
+description = "Microsoft Agent Framework integration for Hindsight - persistent memory for AI agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Vectorize", email = "support@vectorize.io" }
+]
+keywords = [
+    "ai",
+    "memory",
+    "agent-framework",
+    "microsoft-agent-framework",
+    "semantic-kernel",
+    "agents",
+    "hindsight",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    # Provides agent_framework.ContextProvider / SessionContext / Message.
+    # Pinned to the 1.x line — the context-provider API has churned across
+    # minors, so the tests subclass the real base class to catch drift.
+    "agent-framework-core>=1.7,<2",
+    "hindsight-client>=0.4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/vectorize-io/hindsight"
+Documentation = "https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/agent-framework"
+Repository = "https://github.com/vectorize-io/hindsight"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hindsight_agent_framework"]
+
+# agent-framework-core currently resolves a pre-release pydantic (2.14.x alpha),
+# so allow pre-releases for reproducible installs.
+[tool.uv]
+prerelease = "allow"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "requires_real_llm: end-to-end test that needs live external services (a running Hindsight server and/or real LLM provider keys). Excluded from the deterministic PR-CI bucket via -m 'not requires_real_llm'; run on its own via -m requires_real_llm.",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.8.0",
+]

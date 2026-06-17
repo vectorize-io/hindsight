@@ -99,9 +99,15 @@ def apply_combined_scoring(
 
     for sr in scored_results:
         # Recency: linear decay over 365 days → [0.1, 1.0]; neutral 0.5 if no date.
+        # Use the unit's effective time (occurred_start, then mentioned_at, then
+        # occurred_end) — the same COALESCE order as retrieval._coalesce_date — so a
+        # memory that carries only a mentioned_at / occurred_end (e.g. conversation
+        # facts or ongoing states that intentionally lack occurred_start) still gets
+        # correct recency ordering instead of a flat neutral 0.5.
         sr.recency = 0.5
-        if sr.retrieval.occurred_start:
-            occurred = sr.retrieval.occurred_start
+        effective = sr.retrieval.occurred_start or sr.retrieval.mentioned_at or sr.retrieval.occurred_end
+        if effective:
+            occurred = effective
             if occurred.tzinfo is None:
                 occurred = occurred.replace(tzinfo=UTC)
             days_ago = (now - occurred).total_seconds() / 86400
@@ -160,13 +166,29 @@ class CrossEncoderReranker:
 
         import asyncio
 
+        from hindsight_api.config import ENV_MODEL_INIT_TIMEOUT, get_config
+
         cross_encoder = self.cross_encoder
         # For local providers, run in thread pool to avoid blocking event loop
         if cross_encoder.provider_name == "local":
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, lambda: asyncio.run(cross_encoder.initialize()))
+            init = loop.run_in_executor(None, lambda: asyncio.run(cross_encoder.initialize()))
         else:
-            await cross_encoder.initialize()
+            init = cross_encoder.initialize()
+
+        # Cap lazy init with the same wall-clock timeout used at startup so a
+        # hung model download surfaces as a clear error on the request that
+        # triggered it, rather than hanging the caller forever.
+        init_timeout = get_config().model_init_timeout
+        try:
+            await asyncio.wait_for(init, timeout=init_timeout)
+        except TimeoutError as e:
+            raise RuntimeError(
+                f"Cross-encoder initialization did not complete within {init_timeout:g}s. "
+                f"The reranker model is likely blocked loading — e.g. an offline model "
+                f"download. Increase {ENV_MODEL_INIT_TIMEOUT} if the first-time download "
+                f"legitimately needs more time."
+            ) from e
         self._initialized = True
 
     async def rerank(self, query: str, candidates: list[MergedCandidate]) -> list[ScoredResult]:

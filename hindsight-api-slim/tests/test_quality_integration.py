@@ -151,7 +151,9 @@ class TestDispositionInfluence:
         return memory_real_llm
 
     @pytest.mark.asyncio
-    @pytest.mark.flaky(reruns=2, reruns_delay=2)
+    # Disposition is a subtle, judge-evaluated signal; 2 reruns still flaked in CI,
+    # so give this borderline comparison a little more margin.
+    @pytest.mark.flaky(reruns=3, reruns_delay=2)
     async def test_high_skepticism_response_is_more_hedged_than_low(self, memory: MemoryEngine, request_context):
         """Skepticism=5 should produce a measurably more hedged response than skepticism=1.
 

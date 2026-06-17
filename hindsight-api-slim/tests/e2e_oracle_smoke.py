@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _log(step: int, total: int, msg: str) -> None:
     print(f"  [{step}/{total}] {msg}")
 
@@ -64,8 +65,7 @@ def _bootstrap_test_user(admin_dsn: dict[str, str]) -> str:
         # Create user (skip if already exists - ORA-01920)
         try:
             cursor.execute(
-                f'CREATE USER {test_user} IDENTIFIED BY "{test_pass}" '
-                f"DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS"
+                f'CREATE USER {test_user} IDENTIFIED BY "{test_pass}" DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS'
             )
         except oracledb.DatabaseError as e:
             if hasattr(e.args[0], "code") and e.args[0].code == 1920:
@@ -99,6 +99,7 @@ def _bootstrap_test_user(admin_dsn: dict[str, str]) -> str:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 async def _run() -> None:
     total_steps = 8
@@ -290,6 +291,7 @@ def main() -> int:
     except Exception as exc:
         print(f"\nFAILED: {exc}", file=sys.stderr)
         import traceback
+
         traceback.print_exc()
         return 1
 

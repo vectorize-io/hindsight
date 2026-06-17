@@ -12,8 +12,8 @@ excluded from export — they are derived by consolidation and are regenerated i
 the target bank.
 """
 
-from .export import export_documents
-from .importer import ImportResult, import_documents
+from .export import export_bank, export_documents
+from .importer import BankImportResult, ImportResult, import_bank, import_documents
 from .schema import (
     SCHEMA_VERSION,
     TransferCausalRelation,
@@ -27,6 +27,7 @@ from .schema import (
 
 __all__ = [
     "SCHEMA_VERSION",
+    "BankImportResult",
     "ImportResult",
     "TransferCausalRelation",
     "TransferChunk",
@@ -35,6 +36,8 @@ __all__ = [
     "TransferManifest",
     "TransferObservation",
     "TransferObservationSource",
+    "export_bank",
     "export_documents",
+    "import_bank",
     "import_documents",
 ]

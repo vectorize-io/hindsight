@@ -30,6 +30,7 @@ from hindsight_api.api.http import BankTemplateConfig
 # Each tuple is (field_name, applied_value). Values chosen to differ
 # visibly from defaults so round-trip bugs surface.
 NEW_FIELDS: list[tuple[str, object]] = [
+    ("retain_structured_chunk_size", 6000),
     ("retain_default_strategy", "strategy-a"),
     ("retain_strategies", {"strategy-a": {"mode": "concise", "max_tokens": 512}}),
     ("retain_chunk_batch_size", 7),

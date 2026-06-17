@@ -97,19 +97,23 @@ class TestGoogleCrossEncoder:
     async def test_predict_single_query(self):
         """Test prediction with a single query and multiple documents."""
         mock_creds = _make_mock_credentials()
-        mock_client = _make_mock_httpx_client([
-            _make_rank_response([("1", 0.95), ("0", 0.30)]),
-        ])
+        mock_client = _make_mock_httpx_client(
+            [
+                _make_rank_response([("1", 0.95), ("0", 0.30)]),
+            ]
+        )
 
         encoder = GoogleCrossEncoder(project_id="test-project")
         with patch("google.auth.default", return_value=(mock_creds, "p")):
             await encoder.initialize()
         encoder._client = mock_client
 
-        scores = await encoder.predict([
-            ("What is AI?", "AI is artificial intelligence"),
-            ("What is AI?", "The sky is blue"),
-        ])
+        scores = await encoder.predict(
+            [
+                ("What is AI?", "AI is artificial intelligence"),
+                ("What is AI?", "The sky is blue"),
+            ]
+        )
 
         assert len(scores) == 2
         assert scores[0] == 0.30  # id="0" -> index 0
@@ -119,21 +123,25 @@ class TestGoogleCrossEncoder:
     async def test_predict_multiple_queries(self):
         """Test prediction with multiple distinct queries."""
         mock_creds = _make_mock_credentials()
-        mock_client = _make_mock_httpx_client([
-            _make_rank_response([("0", 0.9), ("1", 0.1)]),
-            _make_rank_response([("0", 0.8)]),
-        ])
+        mock_client = _make_mock_httpx_client(
+            [
+                _make_rank_response([("0", 0.9), ("1", 0.1)]),
+                _make_rank_response([("0", 0.8)]),
+            ]
+        )
 
         encoder = GoogleCrossEncoder(project_id="test-project")
         with patch("google.auth.default", return_value=(mock_creds, "p")):
             await encoder.initialize()
         encoder._client = mock_client
 
-        scores = await encoder.predict([
-            ("Query A", "Doc A1"),
-            ("Query A", "Doc A2"),
-            ("Query B", "Doc B1"),
-        ])
+        scores = await encoder.predict(
+            [
+                ("Query A", "Doc A1"),
+                ("Query A", "Doc A2"),
+                ("Query B", "Doc B1"),
+            ]
+        )
 
         assert len(scores) == 3
         assert scores[0] == 0.9
@@ -161,10 +169,12 @@ class TestGoogleCrossEncoder:
     async def test_predict_batching(self):
         """Test that >200 records are split into batches."""
         mock_creds = _make_mock_credentials()
-        mock_client = _make_mock_httpx_client([
-            _make_rank_response([(str(i), 0.5) for i in range(200)]),
-            _make_rank_response([(str(i), 0.3) for i in range(50)]),
-        ])
+        mock_client = _make_mock_httpx_client(
+            [
+                _make_rank_response([(str(i), 0.5) for i in range(200)]),
+                _make_rank_response([(str(i), 0.3) for i in range(50)]),
+            ]
+        )
 
         encoder = GoogleCrossEncoder(project_id="test-project")
         with patch("google.auth.default", return_value=(mock_creds, "p")):
@@ -181,9 +191,11 @@ class TestGoogleCrossEncoder:
         """Test that Authorization header is sent with requests."""
         mock_creds = _make_mock_credentials()
         mock_creds.token = "test-bearer-token"
-        mock_client = _make_mock_httpx_client([
-            _make_rank_response([("0", 0.9)]),
-        ])
+        mock_client = _make_mock_httpx_client(
+            [
+                _make_rank_response([("0", 0.9)]),
+            ]
+        )
 
         encoder = GoogleCrossEncoder(project_id="test-project")
         with patch("google.auth.default", return_value=(mock_creds, "p")):

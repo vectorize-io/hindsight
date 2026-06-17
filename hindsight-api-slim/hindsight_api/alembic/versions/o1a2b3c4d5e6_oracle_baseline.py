@@ -122,6 +122,7 @@ _TABLES: tuple[str, ...] = (
         text_signals      CLOB,
         consolidation_failed_at TIMESTAMP WITH TIME ZONE,
         search_vector     CLOB,
+        edited_at         TIMESTAMP WITH TIME ZONE,
         created_at        TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
         updated_at        TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
         CONSTRAINT pk_memory_units PRIMARY KEY (id),
@@ -137,6 +138,50 @@ _TABLES: tuple[str, ...] = (
     )
     PARTITION BY LIST (bank_id) AUTOMATIC
     (PARTITION p_default VALUES ('__default__'))
+    """,
+    # Cold archive for curation: invalidated facts are MOVED here out of
+    # memory_units so the recall hot-path never sees them. Mirrors memory_units
+    # plus invalidation bookkeeping and an entity-id snapshot for lossless revert.
+    # No `embedding` column: the archive is cold storage and revert recomputes the
+    # embedding, so there is no archive vector to fall out of sync with the live
+    # model's dimension on a model switch (#2209).
+    """
+    CREATE TABLE IF NOT EXISTS invalidated_memory_units (
+        id                RAW(16)        NOT NULL,
+        bank_id           VARCHAR2(256)  NOT NULL,
+        document_id       VARCHAR2(512),
+        chunk_id          VARCHAR2(512),
+        text              CLOB           NOT NULL,
+        context           CLOB,
+        event_date        TIMESTAMP WITH TIME ZONE NOT NULL,
+        occurred_start    TIMESTAMP WITH TIME ZONE,
+        occurred_end      TIMESTAMP WITH TIME ZONE,
+        mentioned_at      TIMESTAMP WITH TIME ZONE,
+        fact_type         VARCHAR2(64)   DEFAULT 'world' NOT NULL,
+        confidence_score  BINARY_DOUBLE,
+        access_count      NUMBER(10)     DEFAULT 0 NOT NULL,
+        consolidated_at   TIMESTAMP WITH TIME ZONE,
+        observation_scopes CLOB          CONSTRAINT imu_obs_scopes_json CHECK (observation_scopes IS JSON OR observation_scopes IS NULL),
+        tags              CLOB           DEFAULT '[]' NOT NULL,
+        metadata          CLOB           DEFAULT '{}' NOT NULL
+                                         CONSTRAINT imu_metadata_json CHECK (metadata IS JSON),
+        proof_count       NUMBER(10)     DEFAULT 1,
+        source_memory_ids CLOB,
+        history           CLOB           DEFAULT '[]'
+                                         CONSTRAINT imu_history_json CHECK (history IS JSON OR history IS NULL),
+        text_signals      CLOB,
+        consolidation_failed_at TIMESTAMP WITH TIME ZONE,
+        search_vector     CLOB,
+        edited_at         TIMESTAMP WITH TIME ZONE,
+        created_at        TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
+        updated_at        TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
+        invalidation_reason CLOB,
+        invalidated_at    TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP,
+        entity_ids        CLOB           CONSTRAINT imu_entity_ids_json CHECK (entity_ids IS JSON OR entity_ids IS NULL),
+        CONSTRAINT pk_invalidated_memory_units PRIMARY KEY (id),
+        CONSTRAINT fk_imu_document FOREIGN KEY (document_id, bank_id)
+            REFERENCES documents(id, bank_id) ON DELETE CASCADE
+    )
     """,
     """
     CREATE TABLE IF NOT EXISTS entities (

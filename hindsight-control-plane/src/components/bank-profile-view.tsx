@@ -7,20 +7,11 @@ import remarkGfm from "remark-gfm";
 import { useRouter } from "next/navigation";
 import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
-import { useFeatures } from "@/lib/features-context";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   Dialog,
   DialogContent,
@@ -40,23 +31,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   RefreshCw,
-  Save,
   Brain,
   Clock,
-  AlertCircle,
-  CheckCircle,
-  Database,
-  Link2,
-  FolderOpen,
-  Activity,
   Trash2,
   Target,
   AlertTriangle,
@@ -64,7 +41,6 @@ import {
   Tag,
   Loader2,
   X,
-  MoreVertical,
   Pencil,
 } from "lucide-react";
 
@@ -102,16 +78,6 @@ interface BankStats {
   last_consolidated_at: string | null;
   pending_consolidation: number;
   total_observations: number;
-}
-
-interface Operation {
-  id: string;
-  task_type: string;
-  items_count: number;
-  document_id: string | null;
-  created_at: string;
-  status: string;
-  error_message: string | null;
 }
 
 interface Directive {
@@ -168,14 +134,9 @@ export function BankProfileView({ hideReflectFields = false }: { hideReflectFiel
   const tBank = useTranslations("bank");
   const traitLabels = useTraitLabels();
   const { currentBank, setCurrentBank, loadBanks } = useBank();
-  const { features } = useFeatures();
-  const observationsEnabled = features?.observations ?? false;
   const [profile, setProfile] = useState<BankProfile | null>(null);
   const [stats, setStats] = useState<BankStats | null>(null);
-  const [operations, setOperations] = useState<Operation[]>([]);
-  const [totalOperations, setTotalOperations] = useState(0);
   const [directives, setDirectives] = useState<Directive[]>([]);
-  const [mentalModelsCount, setMentalModelsCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [showDispositionDialog, setShowDispositionDialog] = useState(false);
   const [showMissionDialog, setShowMissionDialog] = useState(false);
@@ -197,49 +158,19 @@ export function BankProfileView({ hideReflectFields = false }: { hideReflectFiel
   const [showClearObservationsDialog, setShowClearObservationsDialog] = useState(false);
   const [isClearingObservations, setIsClearingObservations] = useState(false);
 
-  // Consolidation state
-  const [isConsolidating, setIsConsolidating] = useState(false);
-
-  // Operations filter/pagination state
-  const [opsStatusFilter, setOpsStatusFilter] = useState<string | null>(null);
-  const [opsLimit] = useState(10);
-  const [opsOffset, setOpsOffset] = useState(0);
-  const [cancellingOpId, setCancellingOpId] = useState<string | null>(null);
-
-  const loadOperations = async (
-    statusFilter: string | null = opsStatusFilter,
-    offset: number = opsOffset
-  ) => {
-    if (!currentBank) return;
-    try {
-      const opsData = await client.listOperations(currentBank, {
-        status: statusFilter || undefined,
-        limit: opsLimit,
-        offset,
-      });
-      setOperations(opsData.operations || []);
-      setTotalOperations(opsData.total || 0);
-    } catch (error) {
-      console.error("Error loading operations:", error);
-    }
-  };
-
   const loadData = async (isPolling = false) => {
     if (!currentBank) return;
 
-    // During polling, only refresh stats (not operations to avoid interfering with filters)
+    // During polling, only refresh read-only profile data to avoid overwriting form edits.
     // Use ref to get current value (avoids stale closure in setInterval)
     if (isPolling) {
       try {
-        const [statsData, directivesData, mentalModelsData] = await Promise.all([
+        const [statsData, directivesData] = await Promise.all([
           client.getBankStats(currentBank),
           client.listDirectives(currentBank),
-          client.listMentalModels(currentBank),
         ]);
         setStats(statsData as BankStats);
         setDirectives(directivesData.items || []);
-        setMentalModelsCount(mentalModelsData.items?.length || 0);
-        // Skip operations refresh during polling to not interfere with filter/pagination state
       } catch (error) {
         console.error("Error refreshing stats:", error);
       }
@@ -248,17 +179,14 @@ export function BankProfileView({ hideReflectFields = false }: { hideReflectFiel
 
     setLoading(true);
     try {
-      const [profileData, statsData, directivesData, mentalModelsData] = await Promise.all([
+      const [profileData, statsData, directivesData] = await Promise.all([
         client.getBankProfile(currentBank),
         client.getBankStats(currentBank),
         client.listDirectives(currentBank),
-        client.listMentalModels(currentBank),
       ]);
       setProfile(profileData);
       setStats(statsData as BankStats);
       setDirectives(directivesData.items || []);
-      setMentalModelsCount(mentalModelsData.items?.length || 0);
-      await loadOperations();
     } catch (error) {
       // Error toast is shown automatically by the API client interceptor
     } finally {
@@ -301,47 +229,6 @@ export function BankProfileView({ hideReflectFields = false }: { hideReflectFiel
     }
   };
 
-  const handleTriggerConsolidation = async () => {
-    if (!currentBank) return;
-
-    setIsConsolidating(true);
-    try {
-      await client.triggerConsolidation(currentBank);
-      // Reload to show the new operation in the list
-      await loadData();
-      await loadOperations();
-    } catch (error) {
-      // Error toast is shown automatically by the API client interceptor
-    } finally {
-      setIsConsolidating(false);
-    }
-  };
-
-  const handleOpsFilterChange = (newFilter: string | null) => {
-    setOpsStatusFilter(newFilter);
-    setOpsOffset(0); // Reset to first page when filter changes
-    loadOperations(newFilter, 0);
-  };
-
-  const handleOpsPageChange = (newOffset: number) => {
-    setOpsOffset(newOffset);
-    loadOperations(opsStatusFilter, newOffset);
-  };
-
-  const handleCancelOperation = async (operationId: string) => {
-    if (!currentBank) return;
-
-    setCancellingOpId(operationId);
-    try {
-      await client.cancelOperation(currentBank, operationId);
-      await loadOperations();
-    } catch (error) {
-      // Error toast is shown automatically by the API client interceptor
-    } finally {
-      setCancellingOpId(null);
-    }
-  };
-
   const handleDeleteDirective = async () => {
     if (!currentBank || !directiveDeleteTarget) return;
 
@@ -361,7 +248,7 @@ export function BankProfileView({ hideReflectFields = false }: { hideReflectFiel
   useEffect(() => {
     if (currentBank) {
       loadData();
-      // Refresh stats/operations every 5 seconds (isPolling=true to avoid overwriting form)
+      // Refresh read-only profile data every 5 seconds without overwriting form state.
       const interval = setInterval(() => loadData(true), 5000);
       return () => clearInterval(interval);
     }

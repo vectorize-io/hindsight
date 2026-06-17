@@ -4,7 +4,11 @@ SQLAlchemy models for the memory system.
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID as PyUUID
+
+if TYPE_CHECKING:
+    from .cancellation import CancellationToken
 
 
 @dataclass
@@ -30,6 +34,21 @@ class RequestContext:
     # validators that want exponential backoff on repeated failures (e.g.
     # "defer for 2^retry_count minutes") without querying the DB themselves.
     retry_count: int = 0
+    # Cooperative cancellation signal for long-running operations. The HTTP
+    # layer sets this to a token that fires when the client disconnects; the
+    # engine checks it at stage boundaries and aborts abandoned work so it stops
+    # consuming CPU/DB resources (issue #2122). None means "never cancelled" —
+    # every checkpoint is a no-op.
+    cancellation: "CancellationToken | None" = None
+
+    def raise_if_cancelled(self) -> None:
+        """Abort the current operation if its cancellation token has fired.
+
+        A no-op when no token is attached, so engine code can call it at every
+        stage boundary without caring whether the caller opted into cancellation.
+        """
+        if self.cancellation is not None:
+            self.cancellation.raise_if_cancelled()
 
 
 from pgvector.sqlalchemy import Vector

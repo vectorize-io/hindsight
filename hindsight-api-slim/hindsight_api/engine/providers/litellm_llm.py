@@ -15,9 +15,13 @@ is handled automatically by LiteLLM.
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Any
 
+from litellm.exceptions import Timeout as LiteLLMTimeout
+
+from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
 from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
@@ -47,12 +51,23 @@ class LiteLLMLLM(LLMInterface):
         base_url: str,
         model: str,
         reasoning_effort: str = "low",
-        timeout: float = 300.0,
+        timeout: float | None = None,
+        extra_body: dict[str, Any] | None = None,
+        bedrock_service_tier: str | None = None,
         **kwargs: Any,
     ):
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
-        self.timeout = timeout
+        # ``None`` falls back to HINDSIGHT_API_LLM_TIMEOUT, then DEFAULT_LLM_TIMEOUT — never None,
+        # so the hard ``asyncio.wait_for`` backstop in ``call`` is always bounded.
+        self.timeout = timeout if timeout is not None else float(os.getenv(ENV_LLM_TIMEOUT, str(DEFAULT_LLM_TIMEOUT)))
         self._litellm: Any = None
+        # User-configured extra params merged as top-level kwargs into every
+        # completion call so LiteLLM normalizes them per-provider (e.g. maps
+        # temperature/top_p/max_tokens across OpenAI, Anthropic, Bedrock, …) and
+        # drops any the target model rejects (litellm.drop_params=True below).
+        # Sourced from llm_extra_body (env: HINDSIGHT_API_LLM_EXTRA_BODY).
+        self._extra_body: dict[str, Any] = extra_body or {}
+        self.bedrock_service_tier = bedrock_service_tier
 
         try:
             import litellm
@@ -106,6 +121,15 @@ class LiteLLMLLM(LLMInterface):
             kwargs["max_completion_tokens"] = self._cap_max_completion_tokens(max_completion_tokens)
         if temperature is not None:
             kwargs["temperature"] = temperature
+
+        # User-configured extras fill in only where the caller didn't set a value,
+        # so explicit per-call params (model, messages, temperature, …) always win.
+        for key, value in self._extra_body.items():
+            kwargs.setdefault(key, value)
+
+        # Bedrock service tier: flex (50% cheaper), priority, or reserved
+        if self.model.startswith("bedrock/") and self.bedrock_service_tier is not None:
+            kwargs["service_tier"] = self.bedrock_service_tier
 
         return kwargs
 
@@ -191,7 +215,10 @@ class LiteLLMLLM(LLMInterface):
             if attempt > 0:
                 set_stage(f"llm.{self._stage_label}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
             try:
-                response = await self._acompletion(**call_kwargs)
+                response = await asyncio.wait_for(
+                    self._acompletion(**call_kwargs),
+                    timeout=self.timeout,
+                )
 
                 content = response.choices[0].message.content or ""
                 finish_reason = response.choices[0].finish_reason
@@ -286,6 +313,25 @@ class LiteLLMLLM(LLMInterface):
                     logger.error(f"LiteLLM returned invalid JSON after {max_retries + 1} attempts")
                     raise
 
+            except (TimeoutError, asyncio.TimeoutError, LiteLLMTimeout) as e:
+                # litellm/httpx don't always honor their own ``timeout=`` (e.g. a connection held
+                # open with no token progress), so ``wait_for`` is the hard cap that cancels a hung
+                # call regardless — otherwise one straggler pins a worker slot and stalls its gather.
+                last_exception = e
+                exc_name = type(e).__name__
+                if attempt < max_retries:
+                    logger.warning(
+                        f"LiteLLM call exceeded timeout={self.timeout}s ({exc_name}, scope={scope}), retrying..."
+                    )
+                    backoff = min(initial_backoff * (2**attempt), max_backoff)
+                    await asyncio.sleep(backoff)
+                    continue
+                logger.error(
+                    f"LiteLLM call timed out after {self.timeout}s on {attempt + 1} attempts "
+                    f"({exc_name}, scope={scope})"
+                )
+                raise
+
             except Exception as e:
                 error_str = str(e).lower()
                 # Fast fail on auth errors
@@ -336,7 +382,10 @@ class LiteLLMLLM(LLMInterface):
             if attempt > 0:
                 set_stage(f"llm.{self._stage_label}.tools.attempt={attempt + 1}/{max_retries + 1}")
             try:
-                response = await self._acompletion(**call_kwargs)
+                response = await asyncio.wait_for(
+                    self._acompletion(**call_kwargs),
+                    timeout=self.timeout,
+                )
 
                 message = response.choices[0].message
                 content = message.content
@@ -405,6 +454,23 @@ class LiteLLMLLM(LLMInterface):
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                 )
+
+            except (TimeoutError, asyncio.TimeoutError, LiteLLMTimeout) as e:
+                # See ``call`` — hard cap so a hung completion cannot block
+                # forever and pin a worker slot / concurrency permit.
+                last_exception = e
+                exc_name = type(e).__name__
+                if attempt < max_retries:
+                    logger.warning(
+                        f"LiteLLM tool call exceeded timeout={self.timeout}s ({exc_name}, scope={scope}), retrying..."
+                    )
+                    await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
+                    continue
+                logger.error(
+                    f"LiteLLM tool call timed out after {self.timeout}s on {attempt + 1} attempts "
+                    f"({exc_name}, scope={scope})"
+                )
+                raise
 
             except Exception as e:
                 error_str = str(e).lower()

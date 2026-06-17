@@ -1,4 +1,5 @@
 """Tests for link_utils datetime handling, temporal link computation, and semantic link splitting."""
+
 import numpy as np
 import pytest
 from datetime import datetime, timezone, timedelta
@@ -374,6 +375,7 @@ class TestComputeSemanticLinksWithinBatch:
         links = compute_semantic_links_within_batch(unit_ids, embs, top_k=3, threshold=0.5)
         # Each unit should have at most 3 outgoing links
         from collections import Counter
+
         from_counts = Counter(lnk[0] for lnk in links)
         for count in from_counts.values():
             assert count <= 3
@@ -509,16 +511,13 @@ class TestComputeSemanticLinksAnnPgBouncerSafety:
         )
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("ext", "guc"),
-        [("pgvector", "hnsw.ef_search"), ("vchord", "vchordrq.probes")],
-    )
-    async def test_uses_set_local_for_ann_tuning(self, mock_conn, monkeypatch, ext, guc):
+    async def test_uses_set_local_for_pgvector_ann_tuning(self, mock_conn, monkeypatch):
         """The per-backend ANN tuning GUC must be set with SET LOCAL so the
         change is scoped to the transaction. Without SET LOCAL, the setting
         would leak onto the pooled backend and affect subsequent recall
         queries that land on the same backend."""
-        monkeypatch.setenv("HINDSIGHT_API_VECTOR_EXTENSION", ext)
+        monkeypatch.setenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector")
+        guc = "hnsw.ef_search"
         emb = [0.1] * 384
         await compute_semantic_links_ann(
             conn=mock_conn,
@@ -530,10 +529,29 @@ class TestComputeSemanticLinksAnnPgBouncerSafety:
 
         executed_sql = [call.args[0] for call in mock_conn.execute.call_args_list]
         tuning_statements = [s for s in executed_sql if guc in s]
-        assert tuning_statements, f"{guc} must be tuned for retain ANN under ext={ext}"
+        assert tuning_statements, f"{guc} must be tuned for retain ANN under pgvector"
         for stmt in tuning_statements:
-            assert stmt.strip().startswith("SET LOCAL"), (
-                f"{guc} must use SET LOCAL, got: {stmt}"
-            )
+            assert stmt.strip().startswith("SET LOCAL"), f"{guc} must use SET LOCAL, got: {stmt}"
         # And there must not be a RESET — SET LOCAL handles it at commit.
         assert not any(f"RESET {guc}" in s for s in executed_sql)
+
+    @pytest.mark.asyncio
+    async def test_vchord_ann_does_not_set_fixed_probe_count(self, mock_conn, monkeypatch):
+        """VectorChord probe counts must come from index/default config.
+
+        VectorChord requires vchordrq.probes to match the index's
+        build.internal.lists shape. Hindsight must not apply one fixed session
+        GUC across listless and partitioned vchordrq indexes.
+        """
+        monkeypatch.setenv("HINDSIGHT_API_VECTOR_EXTENSION", "vchord")
+        emb = [0.1] * 384
+        await compute_semantic_links_ann(
+            conn=mock_conn,
+            bank_id="bank-1",
+            unit_ids=["u1"],
+            embeddings=[emb],
+            fact_types=["world"],
+        )
+
+        executed_sql = [call.args[0] for call in mock_conn.execute.call_args_list]
+        assert not any("vchordrq.probes" in s for s in executed_sql)

@@ -6,9 +6,10 @@ enabling support for multiple LLM backends (OpenAI, Anthropic, Gemini, Codex, et
 """
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any
 
-from .response_models import LLMToolCallResult, TokenUsage
+from .response_models import LLMToolCallResult
 
 
 class LLMInterface(ABC):
@@ -69,6 +70,7 @@ class LLMInterface(ABC):
         skip_validation: bool = False,
         strict_schema: bool = False,
         return_usage: bool = False,
+        cached_prefix: str | None = None,
     ) -> Any:
         """
         Make an LLM API call with retry logic.
@@ -83,8 +85,13 @@ class LLMInterface(ABC):
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
             skip_validation: Return raw JSON without Pydantic validation.
-            strict_schema: Use strict JSON schema enforcement (OpenAI only).
+            strict_schema: Grammar-enforce structured output via json_schema strict
+                (OpenAI-compatible, LiteLLM) instead of the soft json_object path. Gemini
+                enforces its response_schema natively; providers without a strict mode ignore it.
             return_usage: If True, return tuple (result, TokenUsage) instead of just result.
+            cached_prefix: Opaque handle from ``get_or_create_cached_prefix`` for the
+                cacheable system prefix, or None. Providers without explicit prompt
+                caching ignore it (and the wrapper only forwards it when set).
 
         Returns:
             If return_usage=False: Parsed response if response_format is provided, otherwise text content.
@@ -108,6 +115,7 @@ class LLMInterface(ABC):
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
         tool_choice: str | dict[str, Any] = "auto",
+        cached_prefix: str | None = None,
     ) -> LLMToolCallResult:
         """
         Make an LLM API call with tool/function calling support.
@@ -136,6 +144,46 @@ class LLMInterface(ABC):
             True if provider supports submit_batch/get_batch_status/retrieve_batch_results
         """
         return False
+
+    # ── Prompt prefix caching (optional, per-provider) ─────────────────────────
+
+    def supports_prompt_caching(self) -> bool:
+        """Whether this provider can cache a reusable prompt prefix.
+
+        Default False. Providers that return True must implement
+        ``get_or_create_cached_prefix`` and honour the ``cached_prefix`` argument
+        of ``call`` / ``call_with_tools``.
+        """
+        return False
+
+    async def get_or_create_cached_prefix(
+        self,
+        *,
+        system_instruction: str,
+        response_schema: Any | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> str | None:
+        """Cache a reusable prompt prefix and return an opaque handle, or None.
+
+        The engine has already decided WHAT is cacheable: it puts the stable,
+        bank-agnostic instructions in ``system_instruction`` (plus ``tools``) and
+        keeps all per-request / per-bank data (documents, facts, the bank mission)
+        in the user message. A provider only chooses HOW to cache that prefix:
+
+        - Explicit-cache providers (e.g. Gemini ``CachedContent``): create the
+          cache, return its handle; the engine passes the handle back via
+          ``call(cached_prefix=...)`` and the provider then drops the prefix from
+          the request, billing it at the cached rate.
+        - Automatic-cache providers (e.g. OpenAI): no handle needed — caching is
+          transparent as long as the prefix is a stable leading block, which it
+          already is. They can keep this default (return None) and still benefit.
+        - Inline-marker providers (e.g. Anthropic ``cache_control``): mark the
+          prefix block inside ``call`` instead; may also keep this default.
+
+        Returns None when caching is disabled/unsupported or the prefix is too
+        small; callers MUST fall back to an uncached call in that case.
+        """
+        return None
 
     async def submit_batch(
         self,
@@ -205,3 +253,11 @@ class OutputTooLongError(Exception):
     """
 
     pass
+
+
+class ProviderRateLimitResetError(Exception):
+    """Raised when an upstream provider says quota will reopen at a known time."""
+
+    def __init__(self, retry_at: datetime, message: str = "") -> None:
+        self.retry_at = retry_at
+        super().__init__(message)

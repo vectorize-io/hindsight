@@ -1,6 +1,7 @@
 """
 Tests for list_documents pagination and tags filtering.
 """
+
 from datetime import datetime, timezone
 
 import pytest
@@ -28,25 +29,19 @@ async def test_list_documents_offset_pagination(memory, request_context):
             await _retain_doc(memory, bank_id, f"doc-{i:02d}", [], request_context)
 
         # All documents, ordered by created_at DESC → doc-03, doc-02, doc-01, doc-00
-        all_docs = await memory.list_documents(
-            bank_id=bank_id, limit=10, offset=0, request_context=request_context
-        )
+        all_docs = await memory.list_documents(bank_id=bank_id, limit=10, offset=0, request_context=request_context)
         assert all_docs["total"] == 4
         assert len(all_docs["items"]) == 4
         all_ids = [d["id"] for d in all_docs["items"]]
 
         # offset=2 should skip the first two and return the remaining two
-        page2 = await memory.list_documents(
-            bank_id=bank_id, limit=10, offset=2, request_context=request_context
-        )
+        page2 = await memory.list_documents(bank_id=bank_id, limit=10, offset=2, request_context=request_context)
         assert page2["total"] == 4  # total is always the full count
         assert len(page2["items"]) == 2
         assert [d["id"] for d in page2["items"]] == all_ids[2:]
 
         # offset beyond total returns empty items but correct total
-        beyond = await memory.list_documents(
-            bank_id=bank_id, limit=10, offset=10, request_context=request_context
-        )
+        beyond = await memory.list_documents(bank_id=bank_id, limit=10, offset=10, request_context=request_context)
         assert beyond["total"] == 4
         assert beyond["items"] == []
 

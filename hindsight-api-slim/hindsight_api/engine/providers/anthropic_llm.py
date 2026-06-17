@@ -14,7 +14,7 @@ import logging
 import time
 from typing import Any
 
-from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
+from hindsight_api.engine.llm_interface import LLMInterface
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 
@@ -38,6 +38,7 @@ class AnthropicLLM(LLMInterface):
         reasoning_effort: str = "low",
         timeout: float = 300.0,
         default_headers: dict[str, str] | None = None,
+        extra_body: dict[str, Any] | None = None,
         **kwargs: Any,
     ):
         """
@@ -54,12 +55,19 @@ class AnthropicLLM(LLMInterface):
                 the Anthropic SDK client. Used by operators routing through proxies
                 or request-tracing middleware. Sourced from ``llm_default_headers`` in
                 ``HindsightConfig`` (env: ``HINDSIGHT_API_LLM_DEFAULT_HEADERS``).
+            extra_body: Extra request-body params (e.g. ``{"temperature": 0.2,
+                "top_p": 0.9, "top_k": 40}``) passed via the Anthropic SDK's
+                ``extra_body`` so they merge into the JSON sent to the Messages API.
+                Sourced from ``llm_extra_body`` (env: ``HINDSIGHT_API_LLM_EXTRA_BODY``).
             **kwargs: Additional provider-specific parameters.
         """
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
 
         if not self.api_key:
             raise ValueError("API key is required for Anthropic provider")
+
+        # User-configured extra body params (merged into every Messages API call)
+        self._extra_body = extra_body or {}
 
         # Import and initialize Anthropic client
         try:
@@ -177,6 +185,9 @@ class AnthropicLLM(LLMInterface):
 
         if system_prompt:
             call_params["system"] = system_prompt
+
+        if self._extra_body:
+            call_params["extra_body"] = self._extra_body
 
         last_exception = None
 
@@ -396,6 +407,9 @@ class AnthropicLLM(LLMInterface):
         }
         if system_prompt:
             call_params["system"] = system_prompt
+
+        if self._extra_body:
+            call_params["extra_body"] = self._extra_body
 
         last_exception = None
         for attempt in range(max_retries + 1):

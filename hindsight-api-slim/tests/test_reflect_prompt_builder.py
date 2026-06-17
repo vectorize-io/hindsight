@@ -19,7 +19,7 @@ without hiding what each one produces — the ``_assemble`` helper is a
 mechanical join, not a re-implementation of the builder.
 """
 
-from hindsight_api.engine.reflect.prompts import build_system_prompt_for_tools
+from hindsight_api.engine.reflect.prompts import build_final_system_prompt, build_system_prompt_for_tools
 
 BANK = {"name": "TestBank", "mission": ""}
 
@@ -386,9 +386,7 @@ class TestBudgetBranches:
             include_observations=False,
             budget="low",
         )
-        assert actual == _assemble(
-            _RETRIEVAL_RECALL_ONLY, _WORKFLOW_RECALL_ONLY, budget=_BUDGET_LOW
-        )
+        assert actual == _assemble(_RETRIEVAL_RECALL_ONLY, _WORKFLOW_RECALL_ONLY, budget=_BUDGET_LOW)
 
     def test_budget_mid_inserts_moderate_block(self):
         actual = build_system_prompt_for_tools(
@@ -397,9 +395,7 @@ class TestBudgetBranches:
             include_observations=False,
             budget="mid",
         )
-        assert actual == _assemble(
-            _RETRIEVAL_RECALL_ONLY, _WORKFLOW_RECALL_ONLY, budget=_BUDGET_MID
-        )
+        assert actual == _assemble(_RETRIEVAL_RECALL_ONLY, _WORKFLOW_RECALL_ONLY, budget=_BUDGET_MID)
 
     def test_budget_high_inserts_deep_block(self):
         actual = build_system_prompt_for_tools(
@@ -408,9 +404,7 @@ class TestBudgetBranches:
             include_observations=False,
             budget="high",
         )
-        assert actual == _assemble(
-            _RETRIEVAL_RECALL_ONLY, _WORKFLOW_RECALL_ONLY, budget=_BUDGET_HIGH
-        )
+        assert actual == _assemble(_RETRIEVAL_RECALL_ONLY, _WORKFLOW_RECALL_ONLY, budget=_BUDGET_HIGH)
 
     def test_unknown_budget_inserts_nothing(self):
         # The builder only recognises low/mid/high; any other value is a no-op.
@@ -544,7 +538,53 @@ def test_include_observations_defaults_to_true():
     """Callers that don't pass ``include_observations`` get the original
     observations-enabled prompt — this guards the API default so reflect
     paths that don't gate the flag aren't silently changed."""
-    actual = build_system_prompt_for_tools(
-        bank_profile=BANK, has_mental_models=False
-    )
+    actual = build_system_prompt_for_tools(bank_profile=BANK, has_mental_models=False)
     assert actual == _assemble(_RETRIEVAL_OBS_ONLY, _WORKFLOW_OBS_ONLY)
+
+
+# =========================================================================
+# build_final_system_prompt: language rule + directives
+#
+# The final synthesis is a SEPARATE LLM call from the agent loop, so its
+# system prompt must independently carry the language rule and any directives
+# — otherwise the answer-writing model has no instruction to stay in the
+# query's language / obey a language directive and weaker models drift to
+# English (flaky multilingual reflect tests).
+# =========================================================================
+
+_FRENCH_DIRECTIVE = {
+    "name": "Language Policy",
+    "content": "ALWAYS respond in French language. Never respond in English.",
+}
+
+
+def test_final_prompt_always_includes_language_rule():
+    prompt = build_final_system_prompt()
+    assert "## LANGUAGE" in prompt
+    assert "SAME language as the user's question" in prompt
+
+
+def test_final_prompt_without_directives_omits_directives_section():
+    prompt = build_final_system_prompt()
+    assert "## DIRECTIVES (MANDATORY)" not in prompt
+    assert "REMINDER: MANDATORY DIRECTIVES" not in prompt
+
+
+def test_final_prompt_injects_directives_so_answer_obeys_them():
+    """The answer-writing model — not just the reasoning loop — must see the
+    directive, else a 'respond in French' rule is silently dropped at synthesis."""
+    prompt = build_final_system_prompt(directives=[_FRENCH_DIRECTIVE])
+    assert "## DIRECTIVES (MANDATORY)" in prompt
+    assert "respond in French" in prompt
+    # End-of-prompt reminder reinforces compliance, mirroring the reasoning prompt.
+    assert "REMINDER: MANDATORY DIRECTIVES" in prompt
+    # The default language rule still defers to the directive.
+    assert "takes precedence over this default" in prompt
+
+
+def test_final_prompt_output_language_override_is_appended_last():
+    """HINDSIGHT_API_LLM_OUTPUT_LANGUAGE forces a language regardless of query/directive."""
+    prompt = build_final_system_prompt(llm_output_language="Spanish")
+    assert "Respond exclusively in Spanish" in prompt
+    # The config override is appended after the default LANGUAGE rule so it wins.
+    assert prompt.index("Respond exclusively in Spanish") > prompt.index("## LANGUAGE")

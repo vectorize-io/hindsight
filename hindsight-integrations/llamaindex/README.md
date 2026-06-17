@@ -78,5 +78,5 @@ configure(
 
 ## Documentation
 
-- [Integration docs](https://docs.hindsight.vectorize.io/docs/sdks/integrations/llamaindex)
+- [Integration docs](https://hindsight.vectorize.io/sdks/integrations/llamaindex)
 - [Hindsight API docs](https://docs.hindsight.vectorize.io)

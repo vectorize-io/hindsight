@@ -60,6 +60,22 @@ _CODEX_TERMINAL_REFRESH_ERROR_CODES = frozenset(
 )
 
 
+def default_codex_auth_file() -> Path:
+    """Return the path to Codex's ``auth.json``.
+
+    Honors the ``CODEX_HOME`` environment variable — the same variable the
+    canonical ``@openai/codex`` CLI uses to relocate its config/credentials
+    directory — and falls back to ``~/.codex`` when it is unset or empty.
+
+    Resolved lazily on each call (rather than cached at import time) so that
+    the environment is read at the point of use.
+    """
+    codex_home = os.environ.get("CODEX_HOME")
+    if codex_home:
+        return Path(codex_home) / "auth.json"
+    return Path.home() / ".codex" / "auth.json"
+
+
 class CodexRefreshExpiredError(RuntimeError):
     """Raised when the Codex refresh_token itself is no longer valid.
 
@@ -86,7 +102,7 @@ class CodexAuthManager:
         The OAuth refresh token. May be ``None`` when the auth file omits it;
         the provider still works as a one-shot loader in that case.
     auth_file:
-        Path to ``~/.codex/auth.json``. Used for re-reading the refresh token
+        Path to the Codex ``auth.json``. Used for re-reading the refresh token
         on demand and for atomic persistence of rotated credentials.
     """
 
@@ -115,7 +131,8 @@ class CodexAuthManager:
         Parameters
         ----------
         auth_file:
-            Defaults to ``~/.codex/auth.json``.
+            Defaults to ``$CODEX_HOME/auth.json`` (or ``~/.codex/auth.json``
+            when ``CODEX_HOME`` is unset).
 
         Raises
         ------
@@ -126,7 +143,7 @@ class CodexAuthManager:
             ``auth_mode``.
         """
         if auth_file is None:
-            auth_file = Path.home() / ".codex" / "auth.json"
+            auth_file = default_codex_auth_file()
 
         if not auth_file.exists():
             raise FileNotFoundError(f"Codex auth file not found: {auth_file}. Run 'codex auth login' to authenticate.")

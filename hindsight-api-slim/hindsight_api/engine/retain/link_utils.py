@@ -574,12 +574,10 @@ async def compute_semantic_links_ann(
     # the transaction end handles both.
     rows: list = []
     async with conn.transaction():
-        # Transaction-local ANN tuning. Each supported backend exposes its own
-        # GUC (hnsw.ef_search on pgvector, vchordrq.probes on vchord); the
-        # dispatcher returns the right knob for the configured backend with a
-        # value tuned for top-50 semantic link creation (lower recall but much
-        # lower latency than the recall-side default). SET LOCAL auto-reverts
-        # at commit, so we don't pollute the pool for subsequent queries.
+        # Transaction-local ANN tuning. The dispatcher only returns GUCs that
+        # are safe to apply at session/transaction scope for the configured
+        # backend. VectorChord probe values are index-shaped, so vchordrq uses
+        # index storage fallback parameters instead of a blanket SET LOCAL.
         for guc, value in ann_search_tuning_settings(configured_vector_extension(), kind="low_latency"):
             await conn.execute(f"SET LOCAL {guc} = {value}")
 
@@ -636,7 +634,7 @@ async def compute_semantic_links_ann(
             logger.debug(f"[ANN] fact_type={fact_type}: {len(ft_rows)} rows in {time_mod.time() - t_query:.3f}s")
             rows.extend(ft_rows)
     # Transaction commits here. _ann_seeds is dropped (ON COMMIT DROP).
-    # hnsw.ef_search reverts (SET LOCAL).
+    # Transaction-local ANN tuning reverts (SET LOCAL).
 
     for row in rows:
         sim = float(min(1.0, max(0.0, row["similarity"])))
@@ -801,8 +799,6 @@ async def create_causal_links_batch(
 
     try:
         import time as time_mod
-
-        create_start = time_mod.time()
 
         # Build links list
         links = []

@@ -7,7 +7,6 @@
 [![CI](https://github.com/vectorize-io/hindsight/actions/workflows/release.yml/badge.svg)](https://github.com/vectorize-io/hindsight/actions/workflows/release.yml)
 [![Slack Community](https://img.shields.io/badge/Slack-Join%20Community-4A154B?logo=slack)](https://join.slack.com/t/hindsight-space/shared_invite/zt-3nhbm4w29-LeSJ5Ixi6j8PdiYOCPlOgg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![gitcgr](https://gitcgr.com/badge/vectorize-io/hindsight.svg)](https://gitcgr.com/vectorize-io/hindsight)
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/hindsight-api?label=PyPI)
 ![NPM Downloads](https://img.shields.io/npm/dm/%40vectorize-io%2Fhindsight-client?logoColor=orange&label=NPM&color=blue&link=https%3A%2F%2Fwww.npmjs.com%2Fpackage%2F%40vectorize-io%2Fhindsight-client)
 <br/>
@@ -64,7 +63,7 @@ export OPENAI_API_KEY=sk-xxx
 
 docker run -it --pull always --name hindsight --restart unless-stopped -p 8888:8888 -p 9999:9999 \
   -e HINDSIGHT_API_LLM_API_KEY=$OPENAI_API_KEY \
-  -v $HOME/.hindsight-docker:/home/hindsight/.pg0 \
+  -v hindsight-data:/home/hindsight/.pg0 \
   ghcr.io/vectorize-io/hindsight:latest
 ```
 
@@ -142,6 +141,8 @@ main();
 ```bash
 pip install hindsight-all -U
 ```
+
+On Intel (x86_64) Macs, install `hindsight-all-slim` instead — see [Supported Platforms](#supported-platforms).
 
 ```python
 import os
@@ -298,6 +299,19 @@ client.reflect(bank_id="my-bank", query="What should I know about Alice?")
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=vectorize-io/hindsight&type=date&legend=top-left)](https://www.star-history.com/#vectorize-io/hindsight&type=date&legend=top-left)
+---
+
+## Supported Platforms
+
+| Platform | Docker | Bare Metal (pip) | Embedded DB (pg0) |
+|----------|--------|------------------|--------------------|
+| **Linux** (x86_64, ARM64) | ✅ | ✅ | ✅ |
+| **macOS** (Apple Silicon / arm64) | ✅ | ✅ | ✅ |
+| **macOS** (Intel / x86_64) | ✅ | ⚠️ | ✅ |
+| **Windows** (x86_64) | ✅ | ✅ | ✅ |
+
+⚠️ Intel Macs: use `hindsight-all-slim` — see the [installation guide](https://hindsight.vectorize.io/developer/installation#supported-platforms) for details.
+
 ---
 
 ## Contributing

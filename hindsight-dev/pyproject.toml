@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-dev"
-version = "0.7.2"
+version = "0.8.2"
 description = "Development utilities for Hindsight"
 requires-python = ">=3.11"
 dependencies = [
-    "hindsight-api==0.7.2",
+    "hindsight-api==0.8.2",
     "python-fasthtml>=0.12.33",
     "streamlit>=1.54.0",
     "openai>=1.0.0",
@@ -63,10 +63,8 @@ ignore = [
     "E501",   # line too long (handled by formatter)
     "E402",   # module import not at top of file
     "E712",   # avoid equality comparisons to False (intentional for optional bools)
-    "F401",   # unused import (too noisy during development)
     "F403",   # star imports (fasthtml uses this pattern)
     "F405",   # may be undefined from star imports (fasthtml uses this pattern)
-    "F841",   # unused variable (too noisy during development)
     "F811",   # redefined while unused
     "F821",   # undefined name (forward references in type hints)
     "W291",   # trailing whitespace (in multiline strings)

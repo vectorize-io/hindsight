@@ -18,6 +18,8 @@ from hindsight_api.config import (
     HindsightConfig,
     _get_raw_config,
     normalize_config_dict,
+    validate_retain_chunking_config,
+    validate_retain_completion_token_budget,
 )
 from hindsight_api.engine.memory_engine import fq_table
 from hindsight_api.extensions.tenant import TenantExtension
@@ -27,6 +29,35 @@ if TYPE_CHECKING:
     from hindsight_api.engine.db.base import DatabaseBackend
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_retain_strategy_chunking(base_config: HindsightConfig, strategies: Any) -> None:
+    """Validate retain strategy chunking with the same semantics as apply_strategy()."""
+    if not isinstance(strategies, dict):
+        return
+    configurable = HindsightConfig.get_configurable_fields()
+    for strategy_name, overrides in strategies.items():
+        if not isinstance(overrides, dict):
+            raise ValueError(f"Invalid retain strategy {strategy_name!r}: must be an object")
+        filtered = {k: v for k, v in overrides.items() if k in configurable}
+        if not filtered:
+            continue
+        try:
+            resolved = replace(base_config, **filtered)
+            validate_retain_chunking_config(
+                resolved.retain_chunk_size,
+                resolved.retain_structured_chunk_size,
+            )
+            validate_retain_completion_token_budget(
+                llm_provider=resolved.llm_provider,
+                retain_max_completion_tokens=resolved.retain_max_completion_tokens,
+                retain_chunk_size=resolved.retain_chunk_size,
+                retain_llm_model=resolved.retain_llm_model,
+                llm_model=resolved.llm_model,
+                retain_llm_provider=resolved.retain_llm_provider,
+            )
+        except ValueError as e:
+            raise ValueError(f"Invalid retain strategy {strategy_name!r}: {e}") from e
 
 
 class ConfigResolver:
@@ -45,6 +76,26 @@ class ConfigResolver:
         self._global_config = _get_raw_config()
         self._configurable_fields = HindsightConfig.get_configurable_fields()
         self._credential_fields = HindsightConfig.get_credential_fields()
+
+    async def _resolve_parent_config_dict(self, bank_id: str, context: RequestContext | None = None) -> dict[str, Any]:
+        """Resolve global + tenant config before bank-level overrides."""
+        config_dict = asdict(self._global_config)
+
+        if self.tenant_extension and context:
+            try:
+                tenant_overrides = await self.tenant_extension.get_tenant_config(context)
+                if tenant_overrides:
+                    # Normalize keys and filter to configurable fields only
+                    normalized_tenant = normalize_config_dict(tenant_overrides)
+                    configurable_tenant = {k: v for k, v in normalized_tenant.items() if k in self._configurable_fields}
+                    config_dict.update(configurable_tenant)
+                    logger.debug(
+                        f"Applied tenant config overrides for bank {bank_id}: {list(configurable_tenant.keys())}"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to load tenant config for bank {bank_id}: {e}")
+
+        return config_dict
 
     async def resolve_full_config(self, bank_id: str, context: RequestContext | None = None) -> HindsightConfig:
         """
@@ -65,23 +116,7 @@ class ConfigResolver:
         Returns:
             Complete HindsightConfig with hierarchical overrides applied
         """
-        # Start with global config (all fields)
-        config_dict = asdict(self._global_config)
-
-        # Load tenant config overrides (if tenant extension available)
-        if self.tenant_extension and context:
-            try:
-                tenant_overrides = await self.tenant_extension.get_tenant_config(context)
-                if tenant_overrides:
-                    # Normalize keys and filter to configurable fields only
-                    normalized_tenant = normalize_config_dict(tenant_overrides)
-                    configurable_tenant = {k: v for k, v in normalized_tenant.items() if k in self._configurable_fields}
-                    config_dict.update(configurable_tenant)
-                    logger.debug(
-                        f"Applied tenant config overrides for bank {bank_id}: {list(configurable_tenant.keys())}"
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to load tenant config for bank {bank_id}: {e}")
+        config_dict = await self._resolve_parent_config_dict(bank_id, context)
 
         # Load bank config overrides
         bank_overrides = await self._load_bank_config(bank_id)
@@ -92,6 +127,10 @@ class ConfigResolver:
         # Return full config object (dataclass doesn't have __init__ that accepts kwargs, so we update the object)
         # Create a new config instance by copying the global config and updating fields
         resolved_config = HindsightConfig(**config_dict)
+        validate_retain_chunking_config(
+            resolved_config.retain_chunk_size,
+            resolved_config.retain_structured_chunk_size,
+        )
         return resolved_config
 
     async def get_bank_config(self, bank_id: str, context: RequestContext | None = None) -> dict[str, Any]:
@@ -266,6 +305,29 @@ class ConfigResolver:
         # Validate recall budget fields
         _validate_recall_budget_updates(normalized_updates)
 
+        chunking_fields_updated = (
+            "retain_chunk_size" in normalized_updates
+            or "retain_structured_chunk_size" in normalized_updates
+            or "retain_strategies" in normalized_updates
+        )
+        if chunking_fields_updated:
+            config_dict = await self._resolve_parent_config_dict(bank_id, context)
+            active_bank_overrides = await self._load_bank_config(bank_id)
+            for key, value in normalized_updates.items():
+                if key not in self._configurable_fields:
+                    continue
+                if value is None:
+                    active_bank_overrides.pop(key, None)
+                else:
+                    active_bank_overrides[key] = value
+            config_dict.update(active_bank_overrides)
+            base_config = HindsightConfig(**config_dict)
+            validate_retain_chunking_config(
+                base_config.retain_chunk_size,
+                base_config.retain_structured_chunk_size,
+            )
+            _validate_retain_strategy_chunking(base_config, base_config.retain_strategies)
+
         # Persist the override. Banks are created lazily (on first retain), so a
         # PATCH that precedes any ingestion would otherwise UPDATE zero rows and
         # silently no-op while returning 200. Ensure the bank row exists first
@@ -364,7 +426,8 @@ def apply_strategy(config: HindsightConfig, strategy_name: str) -> HindsightConf
     A strategy is a named set of hierarchical field overrides stored in
     config.retain_strategies. Any field in _HIERARCHICAL_FIELDS can be
     overridden, including retain_extraction_mode, retain_chunk_size,
-    entity_labels, entities_allow_free_form, etc.
+    retain_structured_chunk_size, entity_labels,
+    entities_allow_free_form, etc.
 
     Unknown strategy names log a warning and return config unchanged.
     Unknown or non-hierarchical fields in the strategy are silently ignored.
@@ -386,4 +449,17 @@ def apply_strategy(config: HindsightConfig, strategy_name: str) -> HindsightConf
         return config
 
     logger.debug(f"Applying retain strategy '{strategy_name}': {list(filtered.keys())}")
-    return replace(config, **filtered)
+    resolved = replace(config, **filtered)
+    validate_retain_chunking_config(
+        resolved.retain_chunk_size,
+        resolved.retain_structured_chunk_size,
+    )
+    validate_retain_completion_token_budget(
+        llm_provider=resolved.llm_provider,
+        retain_max_completion_tokens=resolved.retain_max_completion_tokens,
+        retain_chunk_size=resolved.retain_chunk_size,
+        retain_llm_model=resolved.retain_llm_model,
+        llm_model=resolved.llm_model,
+        retain_llm_provider=resolved.retain_llm_provider,
+    )
+    return resolved

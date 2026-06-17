@@ -369,6 +369,14 @@ enum BankCommands {
         #[arg(long)]
         retain_extraction_mode: Option<String>,
 
+        /// Target maximum characters for each content chunk during retain
+        #[arg(long, value_parser = clap::value_parser!(i64).range(1..))]
+        retain_chunk_size: Option<i64>,
+
+        /// Maximum characters for a JSONL line or conversation turn to keep whole during retain
+        #[arg(long, value_parser = clap::value_parser!(i64).range(1..))]
+        retain_structured_chunk_size: Option<i64>,
+
         /// Observations mission: what to synthesize into durable observations
         #[arg(long)]
         observations_mission: Option<String>,
@@ -1294,6 +1302,8 @@ fn run() -> Result<()> {
                 llm_base_url,
                 retain_mission,
                 retain_extraction_mode,
+                retain_chunk_size,
+                retain_structured_chunk_size,
                 observations_mission,
                 reflect_mission,
                 disposition_skepticism,
@@ -1308,6 +1318,8 @@ fn run() -> Result<()> {
                 llm_base_url,
                 retain_mission,
                 retain_extraction_mode,
+                retain_chunk_size,
+                retain_structured_chunk_size,
                 observations_mission,
                 reflect_mission,
                 disposition_skepticism,
@@ -2083,7 +2095,11 @@ fn handle_profile(cmd: ProfileCommands, output_format: OutputFormat) -> Result<(
             }
             let deleted = Config::delete_profile(&name)?;
             if output_format == OutputFormat::Pretty {
-                ui::print_success(&format!("Deleted profile '{}' ({})", name, deleted.display()));
+                ui::print_success(&format!(
+                    "Deleted profile '{}' ({})",
+                    name,
+                    deleted.display()
+                ));
             } else {
                 output::print_output(
                     &serde_json::json!({

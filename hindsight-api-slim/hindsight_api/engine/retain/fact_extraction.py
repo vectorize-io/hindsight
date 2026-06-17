@@ -10,12 +10,13 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
-from ...config import get_config
+from ..llm_interface import ProviderRateLimitResetError
 from ..llm_wrapper import LLMConfig, OutputTooLongError, sanitize_llm_output
+from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
 from .entity_labels import (
     EntityLabelsConfig,
@@ -405,64 +406,93 @@ class VerbatimFactExtractionResponse(BaseModel):
     facts: list[VerbatimExtractedFact] = Field(description="List of metadata entries (one per chunk)")
 
 
-def chunk_text(text: str, max_chars: int) -> list[str]:
+# Separators for sentence-aware recursive text splitting, ordered most- to
+# least-preferred. The final "" lets the splitter break mid-word as a last
+# resort so a chunk can never exceed the size budget.
+_RECURSIVE_TEXT_SEPARATORS = [
+    "\n\n",  # Paragraph breaks
+    "\n",  # Line breaks
+    ". ",  # Sentence endings
+    "! ",  # Exclamations
+    "? ",  # Questions
+    "; ",  # Semicolons
+    ", ",  # Commas
+    " ",  # Words
+    "",  # Characters (last resort)
+]
+
+
+def _split_oversized_unit(text: str, max_chars: int) -> list[str]:
+    """Sentence-aware split of a single unit that overflowed the budget.
+
+    Used when one JSONL line / conversation turn is so large it can't be kept
+    whole within the configured structured-chunk limit. The resulting fragments
+    are no longer valid JSON, but the fact extractor treats every chunk as plain
+    text.
+    """
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=max_chars,
+        chunk_overlap=0,
+        length_function=len,
+        is_separator_regex=False,
+        separators=_RECURSIVE_TEXT_SEPARATORS,
+    )
+    return splitter.split_text(text)
+
+
+def chunk_text(text: str, max_chars: int, structured_chunk_size: int | None = None) -> list[str]:
     """
     Split text into chunks, preserving conversation structure when possible.
 
-    For JSON conversation arrays (user/assistant turns), splits at turn boundaries
-    while preserving speaker context. For plain text, uses sentence-aware splitting.
+    For JSON conversation arrays (user/assistant turns) and JSONL (newline-delimited
+    JSON objects), splits at turn/line boundaries so no object is split across chunks.
+    A single turn/line that overflows ``max_chars`` is kept whole only up to
+    ``structured_chunk_size``. When unset, that limit defaults to ``max_chars``.
+    For plain text, uses sentence-aware splitting.
 
     Args:
-        text: Input text to chunk (plain text or JSON conversation)
-        max_chars: Maximum characters per chunk (default 120k ≈ 30k tokens)
+        text: Input text to chunk (plain text, JSON conversation, or JSONL)
+        max_chars: Target maximum characters per chunk
+        structured_chunk_size: Maximum characters for a single JSONL line or
+            conversation turn to keep whole. Defaults to ``max_chars``.
 
     Returns:
         List of text chunks, roughly under max_chars
     """
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-
     # If text is small enough, return as-is
     if len(text) <= max_chars:
         return [text]
+
+    structured_limit = structured_chunk_size if structured_chunk_size is not None else max_chars
 
     # Try to parse as JSON conversation array
     try:
         parsed = json.loads(text)
         if isinstance(parsed, list) and all(isinstance(turn, dict) for turn in parsed):
             # This looks like a conversation - chunk at turn boundaries
-            return _chunk_conversation(parsed, max_chars)
+            return _chunk_conversation(parsed, max_chars, structured_limit)
     except (json.JSONDecodeError, ValueError):
         pass
 
+    # Try to parse as JSONL (newline-delimited JSON objects, e.g. session logs)
+    jsonl_chunks = _chunk_jsonl(text, max_chars, structured_limit)
+    if jsonl_chunks is not None:
+        return jsonl_chunks
+
     # Fall back to sentence-aware text splitting
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=max_chars,
-        chunk_overlap=0,
-        length_function=len,
-        is_separator_regex=False,
-        separators=[
-            "\n\n",  # Paragraph breaks
-            "\n",  # Line breaks
-            ". ",  # Sentence endings
-            "! ",  # Exclamations
-            "? ",  # Questions
-            "; ",  # Semicolons
-            ", ",  # Commas
-            " ",  # Words
-            "",  # Characters (last resort)
-        ],
-    )
-
-    return splitter.split_text(text)
+    return _split_oversized_unit(text, max_chars)
 
 
-def _chunk_conversation(turns: list[dict], max_chars: int) -> list[str]:
+def _chunk_conversation(turns: list[dict], max_chars: int, structured_limit: int) -> list[str]:
     """
     Chunk a conversation array at turn boundaries, preserving complete turns.
 
     Args:
         turns: List of conversation turn dicts (with 'role' and 'content' keys)
         max_chars: Maximum characters per chunk
+        structured_limit: Maximum characters for a single turn to keep whole
 
     Returns:
         List of JSON-serialized chunks, each containing complete turns
@@ -472,26 +502,103 @@ def _chunk_conversation(turns: list[dict], max_chars: int) -> list[str]:
     current_chunk = []
     current_size = 2  # Account for "[]"
 
-    for turn in turns:
-        # Estimate size of this turn when serialized (with comma separator)
-        turn_json = json.dumps(turn, ensure_ascii=False)
-        turn_size = len(turn_json) + 1  # +1 for comma
-
-        # If adding this turn would exceed limit and we have turns, save current chunk
-        if current_size + turn_size > max_chars and current_chunk:
+    def _flush() -> None:
+        nonlocal current_chunk, current_size
+        if current_chunk:
             chunks.append(json.dumps(current_chunk, ensure_ascii=False))
             current_chunk = []
             current_size = 2  # Reset to "[]"
+
+    for turn in turns:
+        # Estimate size of this turn when serialized (with comma separator)
+        turn_json = json.dumps(turn, ensure_ascii=False)
+        turn_unit_size = len(turn_json)
+        turn_size = turn_unit_size + 1  # +1 for comma
+
+        # A turn too large to keep whole even alone: flush, then split it as
+        # text so no chunk runs far over budget (the extractor won't re-chunk).
+        if turn_unit_size > structured_limit:
+            _flush()
+            chunks.extend(_split_oversized_unit(turn_json, structured_limit))
+            continue
+
+        # If adding this turn would exceed limit and we have turns, save current chunk
+        if current_size + turn_size > max_chars and current_chunk:
+            _flush()
 
         # Add turn to current chunk
         current_chunk.append(turn)
         current_size += turn_size
 
     # Add final chunk if non-empty
-    if current_chunk:
-        chunks.append(json.dumps(current_chunk, ensure_ascii=False))
+    _flush()
 
     return chunks if chunks else [json.dumps(turns, ensure_ascii=False)]
+
+
+def _chunk_jsonl(text: str, max_chars: int, structured_limit: int) -> list[str] | None:
+    """Chunk newline-delimited JSON (JSONL) at line boundaries.
+
+    Detects JSONL — two or more non-empty lines, each a complete JSON object —
+    and packs whole lines into chunks so no line is split across chunks (multiple
+    short lines may share a chunk). A line that overflows ``max_chars`` is kept
+    whole only up to ``structured_limit``. Returns ``None`` if the input is not
+    JSONL, so the caller falls back to plain-text splitting.
+
+    Args:
+        text: Input text to inspect/chunk.
+        max_chars: Maximum characters per chunk.
+        structured_limit: Maximum characters for a single JSONL line to
+            keep whole.
+
+    Returns:
+        List of JSONL chunks (lines joined by newline), or ``None`` if not JSONL.
+    """
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return None
+
+    for line in lines:
+        try:
+            obj = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        if not isinstance(obj, dict):
+            return None
+
+    chunks: list[str] = []
+    current_chunk: list[str] = []
+    current_size = 0
+
+    def _flush() -> None:
+        nonlocal current_chunk, current_size
+        if current_chunk:
+            chunks.append("\n".join(current_chunk))
+            current_chunk = []
+            current_size = 0
+
+    for line in lines:
+        line_unit_size = len(line)
+        line_size = len(line) + 1  # +1 for the joining newline
+
+        # A line too large to keep whole even alone: flush, then split it as
+        # text so no chunk runs far over budget (the extractor won't re-chunk).
+        if line_unit_size > structured_limit:
+            _flush()
+            chunks.extend(_split_oversized_unit(line, structured_limit))
+            continue
+
+        # If adding this line would exceed the limit and we have lines, flush.
+        # A line up to structured_limit is kept whole (a bounded overflow).
+        if current_size + line_size > max_chars and current_chunk:
+            _flush()
+
+        current_chunk.append(line)
+        current_size += line_size
+
+    _flush()
+
+    return chunks
 
 
 # =============================================================================
@@ -510,11 +617,11 @@ LANGUAGE: MANDATORY — Detect the language of the input text and produce ALL ou
 FACT FORMAT - BE CONCISE
 ══════════════════════════════════════════════════════════════════════════
 
-1. **what**: Core fact - concise but complete (1-2 sentences max)
-2. **when**: Temporal info if mentioned. "N/A" if none. Use day name when known.
-3. **where**: Location if relevant. "N/A" if none.
-4. **who**: People involved with relationships. "N/A" if just general info.
-5. **why**: Context/significance ONLY if important. "N/A" if obvious.
+1. "what": Core fact - concise but complete (1-2 sentences max)
+2. "when": Temporal info if mentioned. "N/A" if none. Use day name when known.
+3. "where": Location if relevant. "N/A" if none.
+4. "who": People involved with relationships. "N/A" if just general info.
+5. "why": Context/significance ONLY if important. "N/A" if obvious.
 
 CONCISENESS: Capture the essence, not every word. One good sentence beats three mediocre ones.
 
@@ -887,20 +994,15 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     extraction_mode = config.retain_extraction_mode
     extract_causal_links = config.retain_extract_causal_links
 
-    # Build retain_mission section if set - injected before the mode-specific guidelines
-    # Escape braces so user-supplied text survives str.format() on the prompt template.
+    # The per-bank retain mission is NOT baked into this system prompt: it would
+    # make the prompt bank-specific and force a separate Gemini context cache per
+    # mission (one per bank). Instead the prompt is bank-agnostic so a single
+    # CachedContent serves every bank, and the mission rides in the per-request
+    # user message via _retain_mission_preamble(). The {retain_mission_section}
+    # placeholder is kept (templates still reference it) but always empty here.
     from hindsight_api.engine.prompt_utils import escape_for_prompt
 
-    retain_mission = getattr(config, "retain_mission", None)
-    if retain_mission:
-        retain_mission_section = (
-            f"══════════════════════════════════════════════════════════════════════════\n"
-            f"FOCUS — What to retain for this bank\n"
-            f"══════════════════════════════════════════════════════════════════════════\n\n"
-            f"{escape_for_prompt(retain_mission)}\n\n"
-        )
-    else:
-        retain_mission_section = ""
+    retain_mission_section = ""
 
     # Select base prompt based on extraction mode
     if extraction_mode == "custom":
@@ -997,6 +1099,26 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     return prompt, response_schema
 
 
+def _retain_mission_preamble(config) -> str:
+    """The bank's retain mission, formatted for the per-request user message.
+
+    Kept OUT of the cached system prompt (which must stay bank-agnostic so one
+    CachedContent serves every bank — otherwise each distinct mission spawns its
+    own cache) and prepended to the user message instead. Returns "" when unset.
+    No brace-escaping needed: unlike the system template, the user message is
+    used verbatim, not passed through str.format().
+    """
+    retain_mission = getattr(config, "retain_mission", None)
+    if not retain_mission:
+        return ""
+    return (
+        "══════════════════════════════════════════════════════════════════════════\n"
+        "FOCUS — What to retain for this bank (takes priority over the general guidelines)\n"
+        "══════════════════════════════════════════════════════════════════════════\n\n"
+        f"{retain_mission}\n\n"
+    )
+
+
 def _build_user_message(
     chunk: str,
     chunk_index: int,
@@ -1005,8 +1127,14 @@ def _build_user_message(
     context: str,
     metadata: dict[str, str] | None = None,
     agent_name: str | None = None,
+    mission_preamble: str = "",
 ) -> str:
-    """Build user message for fact extraction."""
+    """Build user message for fact extraction.
+
+    ``mission_preamble`` (the bank's retain mission, possibly empty) is prepended
+    so the bank-specific focus lives in the variable user turn rather than the
+    cached, bank-agnostic system prompt.
+    """
     from .orchestrator import parse_datetime_flexible
 
     sanitized_chunk = _sanitize_text(chunk)
@@ -1039,7 +1167,7 @@ def _build_user_message(
                 'statements to that speaker and classify them as "world", not "assistant".'
             )
 
-    return f"""Extract facts from the following text chunk.
+    return f"""{mission_preamble}Extract facts from the following text chunk.
 
 Chunk: {chunk_index + 1}/{total_chunks}
 Event Date: {event_date_str}
@@ -1065,12 +1193,15 @@ def _build_request_body(llm_config, config, prompt: str, user_message: str, resp
     if llm_config.provider == "openai" and llm_config._provider_impl.openai_service_tier:
         request_body["service_tier"] = llm_config._provider_impl.openai_service_tier
 
-    # Add response_format (JSON schema)
+    # Add response_format (JSON schema). The batch path builds the request body
+    # directly instead of going through LLMProvider.call(), so honour
+    # HINDSIGHT_API_LLM_STRICT_SCHEMA here too: strict=True grammar-enforces the
+    # output on capable backends rather than relying on the model to emit clean JSON.
     if hasattr(response_schema, "model_json_schema"):
         schema = response_schema.model_json_schema()
         request_body["response_format"] = {
             "type": "json_schema",
-            "json_schema": {"name": "facts", "schema": schema},
+            "json_schema": {"name": "facts", "schema": schema, "strict": config.llm_strict_schema},
         }
 
     return request_body
@@ -1106,8 +1237,38 @@ async def _extract_facts_from_chunk(
     extraction_mode = config.retain_extraction_mode
     extract_causal_links = config.retain_extract_causal_links
 
-    # Build user message using helper function
-    user_message = _build_user_message(chunk, chunk_index, total_chunks, event_date, context, metadata, agent_name)
+    # Build user message — the bank mission rides here (not in the cached prefix).
+    user_message = _build_user_message(
+        chunk,
+        chunk_index,
+        total_chunks,
+        event_date,
+        context,
+        metadata,
+        agent_name,
+        mission_preamble=_retain_mission_preamble(config),
+    )
+
+    # Opt into context caching when the provider supports it. The prompt and
+    # response_schema are bank-agnostic (the mission lives in the user message),
+    # so one cached prefix serves every bank; reusing it across many small-payload
+    # retain calls dramatically lowers per-call input
+    # cost. ``get_or_create_cached_prefix`` returns None when caching is
+    # disabled, unsupported, or the prefix is too small; the LLM call
+    # transparently falls back to the uncached path in that case.
+    cached_prefix_name: str | None = None
+    provider_impl = getattr(llm_config, "_provider_impl", None)
+    if provider_impl is not None and provider_impl.supports_prompt_caching():
+        try:
+            cached_prefix_name = await provider_impl.get_or_create_cached_prefix(
+                system_instruction=prompt,
+                response_schema=response_schema,
+            )
+        except Exception:
+            # Caching is a soft optimisation — never let a cache-side
+            # error block a retain operation.
+            logger.exception("Cache prefix lookup failed; falling back to uncached call")
+            cached_prefix_name = None
 
     # Retry logic for JSON validation errors
     # Use retain-specific overrides if set, otherwise fall back to global LLM config
@@ -1128,7 +1289,7 @@ async def _extract_facts_from_chunk(
                 config.retain_llm_max_backoff if config.retain_llm_max_backoff is not None else config.llm_max_backoff
             )
 
-            extraction_response_json, call_usage = await llm_config.call(
+            call_kwargs: dict[str, Any] = dict(
                 messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_message}],
                 response_format=response_schema,
                 scope="retain_extract_facts",
@@ -1140,6 +1301,10 @@ async def _extract_facts_from_chunk(
                 skip_validation=True,  # Get raw JSON, we'll validate leniently
                 return_usage=True,
             )
+            if cached_prefix_name is not None:
+                call_kwargs["cached_prefix"] = cached_prefix_name
+
+            extraction_response_json, call_usage = await llm_config.call(**call_kwargs)
             usage = usage + call_usage  # Aggregate usage across retries
 
             # Lenient parsing of facts from raw JSON
@@ -1575,7 +1740,11 @@ async def extract_facts_from_text(
         - chunks: List of tuples (chunk_text, fact_count) for each chunk
         - usage: Aggregated token usage across all LLM calls
     """
-    chunks = chunk_text(text, max_chars=config.retain_chunk_size)
+    chunks = chunk_text(
+        text,
+        max_chars=config.retain_chunk_size,
+        structured_chunk_size=config.retain_structured_chunk_size,
+    )
 
     # Log chunk count before starting LLM requests
     total_chars = sum(len(c) for c in chunks)
@@ -1624,10 +1793,21 @@ async def extract_facts_from_text(
         total_usage = total_usage + chunk_usage
 
     if failed_chunks:
+        failed_summary = ", ".join(f"chunk {idx}: {type(err).__name__}" for idx, err in failed_chunks[:5])
+        quota_errors = [err for _, err in failed_chunks if isinstance(err, ProviderRateLimitResetError)]
+        if quota_errors and len(quota_errors) == len(failed_chunks):
+            retry_at = max(err.retry_at for err in quota_errors)
+            raise ProviderRateLimitResetError(
+                retry_at=retry_at,
+                message=(
+                    f"Fact extraction deferred by provider quota: {len(failed_chunks)}/{len(chunks)} chunks failed. "
+                    f"First failures: {failed_summary}. Provider detail: {quota_errors[0]}"
+                ),
+            ) from quota_errors[0]
+
         # Fail the entire retain — partial extraction is not acceptable.
         # All successfully extracted facts are discarded because the transaction
         # hasn't committed yet. The worker poller will retry the entire task.
-        failed_summary = ", ".join(f"chunk {idx}: {type(err).__name__}" for idx, err in failed_chunks[:5])
         raise RuntimeError(
             f"Fact extraction failed: {len(failed_chunks)}/{len(chunks)} chunks failed. "
             f"First failures: {failed_summary}"
@@ -1650,6 +1830,39 @@ logger = logging.getLogger(__name__)
 
 # Each fact gets 10ms offset to preserve ordering within a document
 SECONDS_PER_FACT = 0.01
+
+
+async def _write_batch_extraction_errors(
+    pool: Any,
+    operation_id: str | None,
+    schema: str | None,
+    errors: RetainExtractionErrors,
+) -> None:
+    """Persist non-fatal Batch API extraction errors into operation result_metadata."""
+    if not pool or not operation_id or errors.count == 0:
+        return
+
+    from ..db_utils import acquire_with_retry
+    from ..task_backend import fq_table
+
+    # `errors` is the complete set for this extraction run, so overwrite the
+    # extraction_errors_* keys rather than folding in what's already stored. On
+    # batch crash recovery the resumed batch reprocesses every result and
+    # recomputes `errors` from scratch; reading + merging the prior run's
+    # counters here would double-count them. The SQL `||` merge still preserves
+    # unrelated keys (e.g. batch_id) already on result_metadata.
+    table = fq_table("async_operations", schema)
+    async with acquire_with_retry(pool) as conn:
+        await conn.execute(
+            f"""
+            UPDATE {table}
+            SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $2::jsonb,
+                updated_at = now()
+            WHERE operation_id = $1
+            """,
+            operation_id,
+            json.dumps(errors.to_dict()),
+        )
 
 
 async def extract_facts_from_contents_batch_api(
@@ -1684,8 +1897,7 @@ async def extract_facts_from_contents_batch_api(
 
     logger.info(f"Using Batch API for fact extraction ({len(contents)} contents)")
 
-    # Check config for extraction mode and causal link extraction (used throughout)
-    extraction_mode = config.retain_extraction_mode
+    # Check config for causal link extraction (used throughout)
     extract_causal_links = config.retain_extract_causal_links
 
     # Check if provider supports batch API
@@ -1726,7 +1938,11 @@ async def extract_facts_from_contents_batch_api(
     prompt, response_schema = _build_extraction_prompt_and_schema(config)
 
     for content_index, item in enumerate(contents):
-        chunks = chunk_text(item.content, max_chars=config.retain_chunk_size)
+        chunks = chunk_text(
+            item.content,
+            max_chars=config.retain_chunk_size,
+            structured_chunk_size=config.retain_structured_chunk_size,
+        )
 
         for chunk_index_in_content, chunk in enumerate(chunks):
             all_chunks_info.append((chunk, content_index, chunk_index_in_content, item.event_date, item.context))
@@ -1743,6 +1959,7 @@ async def extract_facts_from_contents_batch_api(
                 item.context,
                 item.metadata or None,
                 agent_name,
+                mission_preamble=_retain_mission_preamble(config),
             )
 
             # Build request body using helper function
@@ -1828,6 +2045,7 @@ async def extract_facts_from_contents_batch_api(
     all_facts_from_llm = []
     chunks_metadata = []
     total_usage = TokenUsage()
+    extraction_errors = RetainExtractionErrors()
 
     for chunk_idx, (chunk_content, content_index, chunk_index_in_content, event_date, context) in enumerate(
         all_chunks_info
@@ -1836,7 +2054,9 @@ async def extract_facts_from_contents_batch_api(
         result = results_by_id.get(custom_id)
 
         if not result:
-            logger.warning(f"Missing result for {custom_id}, skipping")
+            message = f"{custom_id}: missing batch result"
+            logger.warning(message)
+            extraction_errors.add(message)
             chunks_metadata.append(
                 ChunkMetadata(
                     chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
@@ -1846,7 +2066,9 @@ async def extract_facts_from_contents_batch_api(
 
         # Check for errors
         if result.get("error"):
-            logger.error(f"Error in {custom_id}: {result['error']}")
+            message = f"{custom_id}: {result['error']}"
+            logger.error(f"Error in {message}")
+            extraction_errors.add(message)
             chunks_metadata.append(
                 ChunkMetadata(
                     chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
@@ -1859,7 +2081,9 @@ async def extract_facts_from_contents_batch_api(
         choices = response_body.get("choices", [])
 
         if not choices:
-            logger.warning(f"No choices in response for {custom_id}")
+            message = f"{custom_id}: no choices in response"
+            logger.warning(message)
+            extraction_errors.add(message)
             chunks_metadata.append(
                 ChunkMetadata(
                     chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
@@ -1874,7 +2098,9 @@ async def extract_facts_from_contents_batch_api(
         try:
             extraction_response_json = json.loads(content_str)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON for {custom_id}: {e}")
+            message = f"{custom_id}: failed to parse JSON: {e}"
+            logger.error(message)
+            extraction_errors.add(message)
             chunks_metadata.append(
                 ChunkMetadata(
                     chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
@@ -2047,7 +2273,9 @@ async def extract_facts_from_contents_batch_api(
                 fact = Fact(fact=combined_text, fact_type=fact_type, **fact_data)
                 chunk_facts.append(fact)
             except Exception as e:
-                logger.error(f"Failed to create Fact model for fact {i}: {e}")
+                message = f"{custom_id}: failed to create Fact model for fact {i}: {e}"
+                logger.error(message)
+                extraction_errors.add(message)
                 continue
 
         all_facts_from_llm.extend(chunk_facts)
@@ -2112,6 +2340,8 @@ async def extract_facts_from_contents_batch_api(
     # Step 8: Auto-tag facts from label groups with tag=True
     _inject_label_tags(extracted_facts, config)
 
+    await _write_batch_extraction_errors(pool, operation_id, schema, extraction_errors)
+
     logger.info(f"Batch API extracted {len(extracted_facts)} facts from {len(all_chunks_info)} chunks")
 
     return extracted_facts, chunks_metadata, total_usage
@@ -2133,7 +2363,11 @@ def _extract_facts_chunks(
     global_chunk_idx = 0
 
     for content_index, content in enumerate(contents):
-        chunks = chunk_text(content.content, config.retain_chunk_size)
+        chunks = chunk_text(
+            content.content,
+            config.retain_chunk_size,
+            structured_chunk_size=config.retain_structured_chunk_size,
+        )
         for chunk in chunks:
             chunks_metadata.append(
                 ChunkMetadata(

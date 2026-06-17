@@ -9,6 +9,7 @@ Use cases:
 
 The tags use OR-based matching: a memory matches if ANY of its tags overlap with the request tags.
 """
+
 from datetime import datetime
 
 import httpx
@@ -118,6 +119,23 @@ class TestTagsWhereClauseBuilder:
         result = build_tags_where_clause_simple(["user_a"], 5, match="all_strict")
         assert "@>" in result
 
+    # ---- Test "exact" mode (set equality, excludes untagged) ----
+
+    def test_tags_match_exact_uses_set_equality(self):
+        """When match='exact', should require superset AND subset (set equality)."""
+        result = build_tags_where_clause_simple(["user_a"], 5, match="exact")
+        assert "@>" in result  # contains-all
+        assert "<@" in result  # contained-by
+        # Both halves bind the same parameter
+        assert result.count("$5") == 2
+
+    def test_tags_match_exact_with_table_alias(self):
+        """Should include table alias on both halves of the exact clause."""
+        result = build_tags_where_clause_simple(["user_a", "user_b"], 3, table_alias="mu.", match="exact")
+        assert result.count("mu.tags") == 2
+        assert "@>" in result
+        assert "<@" in result
+
     # ---- Test table alias with all modes ----
 
     def test_tags_match_any_with_table_alias(self):
@@ -212,6 +230,30 @@ class TestFilterResultsByTags:
         # Only ["a", "b"] has both tags, but untagged would also be included
         tags_found = [r.tags for r in filtered]
         assert ["a", "b"] in tags_found
+
+    # ---- Test "exact" mode (set equality, excludes untagged) ----
+
+    def test_exact_mode_matches_only_equal_set(self):
+        """'exact' mode should match only results whose tag set equals the scope."""
+        results = [MockResult(["a"]), MockResult(["a", "b"]), MockResult(["b"]), MockResult(None)]
+        filtered = filter_results_by_tags(results, ["a"], match="exact")
+        # Only the exact scope ["a"] matches; ["a", "b"] is a different scope.
+        assert len(filtered) == 1
+        assert filtered[0].tags == ["a"]
+
+    def test_exact_mode_is_order_independent(self):
+        """'exact' mode should treat tag order as irrelevant (set equality)."""
+        results = [MockResult(["b", "a"]), MockResult(["a"]), MockResult(["a", "b", "c"])]
+        filtered = filter_results_by_tags(results, ["a", "b"], match="exact")
+        assert len(filtered) == 1
+        assert filtered[0].tags == ["b", "a"]
+
+    def test_exact_mode_excludes_untagged(self):
+        """'exact' mode with a non-empty scope should exclude untagged results."""
+        results = [MockResult(["a"]), MockResult(None), MockResult([])]
+        filtered = filter_results_by_tags(results, ["a"], match="exact")
+        assert len(filtered) == 1
+        assert filtered[0].tags == ["a"]
 
     def test_all_mode_includes_untagged(self):
         """'all' mode should include untagged results."""
@@ -329,10 +371,12 @@ class TestBuildTagGroupsWhereClause:
         """AND of two leaves generates AND-joined clause."""
         groups = [
             TagGroupAnd.model_validate(
-                {"and": [
-                    {"tags": ["step:5"], "match": "any_strict"},
-                    {"tags": ["user:ep_42"], "match": "all_strict"},
-                ]}
+                {
+                    "and": [
+                        {"tags": ["step:5"], "match": "any_strict"},
+                        {"tags": ["user:ep_42"], "match": "all_strict"},
+                    ]
+                }
             )
         ]
         clause, params, next_offset = build_tag_groups_where_clause(groups, 3)
@@ -348,10 +392,12 @@ class TestBuildTagGroupsWhereClause:
         """OR of two leaves generates OR-joined clause."""
         groups = [
             TagGroupOr.model_validate(
-                {"or": [
-                    {"tags": ["step:5"], "match": "any_strict"},
-                    {"tags": ["priority:high"], "match": "all_strict"},
-                ]}
+                {
+                    "or": [
+                        {"tags": ["step:5"], "match": "any_strict"},
+                        {"tags": ["priority:high"], "match": "all_strict"},
+                    ]
+                }
             )
         ]
         clause, params, next_offset = build_tag_groups_where_clause(groups, 1)
@@ -363,11 +409,7 @@ class TestBuildTagGroupsWhereClause:
 
     def test_not_wraps_with_not(self):
         """NOT group wraps child clause with NOT."""
-        groups = [
-            TagGroupNot.model_validate(
-                {"not": {"tags": ["archived"], "match": "any_strict"}}
-            )
-        ]
+        groups = [TagGroupNot.model_validate({"not": {"tags": ["archived"], "match": "any_strict"}})]
         clause, params, next_offset = build_tag_groups_where_clause(groups, 2)
         assert "NOT" in clause
         assert "$2" in clause
@@ -378,13 +420,17 @@ class TestBuildTagGroupsWhereClause:
         """AND containing an OR generates correct nested SQL."""
         groups = [
             TagGroupAnd.model_validate(
-                {"and": [
-                    {"tags": ["user:alice"], "match": "all_strict"},
-                    {"or": [
-                        {"tags": ["step:5"], "match": "any_strict"},
-                        {"tags": ["priority:high"], "match": "all_strict"},
-                    ]},
-                ]}
+                {
+                    "and": [
+                        {"tags": ["user:alice"], "match": "all_strict"},
+                        {
+                            "or": [
+                                {"tags": ["step:5"], "match": "any_strict"},
+                                {"tags": ["priority:high"], "match": "all_strict"},
+                            ]
+                        },
+                    ]
+                }
             )
         ]
         clause, params, next_offset = build_tag_groups_where_clause(groups, 1)
@@ -397,11 +443,13 @@ class TestBuildTagGroupsWhereClause:
         """Params are numbered sequentially starting from param_offset."""
         groups = [
             TagGroupAnd.model_validate(
-                {"and": [
-                    {"tags": ["a"], "match": "any_strict"},
-                    {"tags": ["b"], "match": "any_strict"},
-                    {"tags": ["c"], "match": "any_strict"},
-                ]}
+                {
+                    "and": [
+                        {"tags": ["a"], "match": "any_strict"},
+                        {"tags": ["b"], "match": "any_strict"},
+                        {"tags": ["c"], "match": "any_strict"},
+                    ]
+                }
             )
         ]
         clause, params, next_offset = build_tag_groups_where_clause(groups, 5)
@@ -421,10 +469,12 @@ class TestBuildTagGroupsWhereClause:
         """Table alias propagates to nested leaves (each leaf uses the alias)."""
         groups = [
             TagGroupAnd.model_validate(
-                {"and": [
-                    {"tags": ["a"], "match": "any_strict"},
-                    {"tags": ["b"], "match": "any_strict"},
-                ]}
+                {
+                    "and": [
+                        {"tags": ["a"], "match": "any_strict"},
+                        {"tags": ["b"], "match": "any_strict"},
+                    ]
+                }
             )
         ]
         clause, params, next_offset = build_tag_groups_where_clause(groups, 1, table_alias="mu.")
@@ -433,6 +483,7 @@ class TestBuildTagGroupsWhereClause:
         assert "mu.tags" in clause
         # No bare 'tags' keyword without the alias prefix (other than inside the alias itself)
         import re
+
         bare_tags = re.findall(r"(?<!\.)tags", clause)
         assert len(bare_tags) == 0, f"Found bare 'tags' references without alias: {bare_tags}"
 
@@ -496,16 +547,18 @@ class TestFilterResultsByTagGroups:
         """AND group: both leaf conditions must match."""
         groups = [
             TagGroupAnd.model_validate(
-                {"and": [
-                    {"tags": ["user:alice"], "match": "all_strict"},
-                    {"tags": ["step:5"], "match": "any_strict"},
-                ]}
+                {
+                    "and": [
+                        {"tags": ["user:alice"], "match": "all_strict"},
+                        {"tags": ["step:5"], "match": "any_strict"},
+                    ]
+                }
             )
         ]
         results = [
             MockResult(["user:alice", "step:5"]),  # matches both
-            MockResult(["user:alice"]),              # only matches first
-            MockResult(["step:5"]),                  # only matches second
+            MockResult(["user:alice"]),  # only matches first
+            MockResult(["step:5"]),  # only matches second
             MockResult(None),
         ]
         filtered = filter_results_by_tag_groups(results, groups)
@@ -516,10 +569,12 @@ class TestFilterResultsByTagGroups:
         """OR group: either condition matching is sufficient."""
         groups = [
             TagGroupOr.model_validate(
-                {"or": [
-                    {"tags": ["step:5"], "match": "any_strict"},
-                    {"tags": ["priority:high"], "match": "all_strict"},
-                ]}
+                {
+                    "or": [
+                        {"tags": ["step:5"], "match": "any_strict"},
+                        {"tags": ["priority:high"], "match": "all_strict"},
+                    ]
+                }
             )
         ]
         results = [
@@ -535,11 +590,7 @@ class TestFilterResultsByTagGroups:
 
     def test_not_negation(self):
         """NOT group: inverts the child match."""
-        groups = [
-            TagGroupNot.model_validate(
-                {"not": {"tags": ["archived"], "match": "any_strict"}}
-            )
-        ]
+        groups = [TagGroupNot.model_validate({"not": {"tags": ["archived"], "match": "any_strict"}})]
         results = [
             MockResult(["archived"]),
             MockResult(["active"]),
@@ -558,20 +609,24 @@ class TestFilterResultsByTagGroups:
         """AND containing OR: nested boolean logic works correctly."""
         groups = [
             TagGroupAnd.model_validate(
-                {"and": [
-                    {"tags": ["user:alice"], "match": "all_strict"},
-                    {"or": [
-                        {"tags": ["step:5"], "match": "any_strict"},
-                        {"tags": ["priority:high"], "match": "any_strict"},
-                    ]},
-                ]}
+                {
+                    "and": [
+                        {"tags": ["user:alice"], "match": "all_strict"},
+                        {
+                            "or": [
+                                {"tags": ["step:5"], "match": "any_strict"},
+                                {"tags": ["priority:high"], "match": "any_strict"},
+                            ]
+                        },
+                    ]
+                }
             )
         ]
         results = [
-            MockResult(["user:alice", "step:5"]),          # user:alice AND (step:5 OR ...)
-            MockResult(["user:alice", "priority:high"]),   # user:alice AND (... OR priority:high)
-            MockResult(["user:alice"]),                     # user:alice but neither step nor priority
-            MockResult(["step:5"]),                         # step:5 but not user:alice
+            MockResult(["user:alice", "step:5"]),  # user:alice AND (step:5 OR ...)
+            MockResult(["user:alice", "priority:high"]),  # user:alice AND (... OR priority:high)
+            MockResult(["user:alice"]),  # user:alice but neither step nor priority
+            MockResult(["step:5"]),  # step:5 but not user:alice
             MockResult(None),
         ]
         filtered = filter_results_by_tag_groups(results, groups)
@@ -585,8 +640,8 @@ class TestFilterResultsByTagGroups:
         ]
         results = [
             MockResult(["user:alice", "step:5"]),  # both match
-            MockResult(["user:alice"]),              # only first
-            MockResult(["step:5"]),                  # only second
+            MockResult(["user:alice"]),  # only first
+            MockResult(["step:5"]),  # only second
         ]
         filtered = filter_results_by_tag_groups(results, groups)
         assert len(filtered) == 1
@@ -619,14 +674,7 @@ async def test_retain_with_tags(api_client, test_bank_id):
     # Store memory with tags
     response = await api_client.post(
         f"/v1/default/banks/{test_bank_id}/memories",
-        json={
-            "items": [
-                {
-                    "content": "Alice loves hiking in the mountains.",
-                    "tags": ["user_alice"]
-                }
-            ]
-        }
+        json={"items": [{"content": "Alice loves hiking in the mountains.", "tags": ["user_alice"]}]},
     )
     assert response.status_code == 200
     result = response.json()
@@ -644,9 +692,9 @@ async def test_retain_with_document_tags(api_client, test_bank_id):
             "document_tags": ["session_123"],
             "items": [
                 {"content": "Bob discussed the quarterly report."},
-                {"content": "Charlie mentioned the new product launch."}
-            ]
-        }
+                {"content": "Charlie mentioned the new product launch."},
+            ],
+        },
     )
     assert response.status_code == 200
     result = response.json()
@@ -662,13 +710,8 @@ async def test_retain_merges_document_and_item_tags(api_client, test_bank_id):
         f"/v1/default/banks/{test_bank_id}/memories",
         json={
             "document_tags": ["session_abc"],
-            "items": [
-                {
-                    "content": "Dave talked about machine learning.",
-                    "tags": ["user_dave"]
-                }
-            ]
-        }
+            "items": [{"content": "Dave talked about machine learning.", "tags": ["user_dave"]}],
+        },
     )
     assert response.status_code == 200
     result = response.json()
@@ -686,14 +729,13 @@ async def test_recall_without_tags_returns_all_memories(api_client, test_bank_id
                 {"content": "Eve works on natural language processing.", "tags": ["user_eve"]},
                 {"content": "Frank specializes in computer vision.", "tags": ["user_frank"]},
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
     # Recall without tags - should return all
     response = await api_client.post(
-        f"/v1/default/banks/{test_bank_id}/memories/recall",
-        json={"query": "Who works on what?", "budget": "low"}
+        f"/v1/default/banks/{test_bank_id}/memories/recall", json={"query": "Who works on what?", "budget": "low"}
     )
     assert response.status_code == 200
     results = response.json()["results"]
@@ -715,14 +757,14 @@ async def test_recall_with_tags_filters_memories(api_client, test_bank_id):
                 {"content": "Grace is a data scientist at Google.", "tags": ["user_grace"]},
                 {"content": "Henry is a software engineer at Meta.", "tags": ["user_henry"]},
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
     # Recall with user_grace tag - should only return Grace's memory
     response = await api_client.post(
         f"/v1/default/banks/{test_bank_id}/memories/recall",
-        json={"query": "Who works at which company?", "budget": "low", "tags": ["user_grace"]}
+        json={"query": "Who works at which company?", "budget": "low", "tags": ["user_grace"]},
     )
     assert response.status_code == 200
     results = response.json()["results"]
@@ -746,14 +788,14 @@ async def test_recall_with_multiple_tags_uses_or_matching(api_client, test_bank_
                 {"content": "Julia manages the design team.", "tags": ["user_julia"]},
                 {"content": "Karl oversees the marketing team.", "tags": ["user_karl"]},
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
     # Recall with user_ivan OR user_julia - should return both Ivan and Julia, but not Karl
     response = await api_client.post(
         f"/v1/default/banks/{test_bank_id}/memories/recall",
-        json={"query": "Who leads which team?", "budget": "low", "tags": ["user_ivan", "user_julia"]}
+        json={"query": "Who leads which team?", "budget": "low", "tags": ["user_ivan", "user_julia"]},
     )
     assert response.status_code == 200
     results = response.json()["results"]
@@ -774,18 +816,18 @@ async def test_recall_returns_memories_with_any_overlapping_tag(api_client, test
             "items": [
                 {
                     "content": "Lisa and Mike discussed the budget in a group chat.",
-                    "tags": ["user_lisa", "user_mike"]  # Memory visible to both
+                    "tags": ["user_lisa", "user_mike"],  # Memory visible to both
                 },
                 {"content": "Nancy reviewed the budget alone.", "tags": ["user_nancy"]},
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
     # Recall with user_lisa - should return the group chat memory
     response = await api_client.post(
         f"/v1/default/banks/{test_bank_id}/memories/recall",
-        json={"query": "What was discussed about the budget?", "budget": "low", "tags": ["user_lisa"]}
+        json={"query": "What was discussed about the budget?", "budget": "low", "tags": ["user_lisa"]},
     )
     assert response.status_code == 200
     results = response.json()["results"]
@@ -806,7 +848,7 @@ async def test_reflect_with_tags_filters_memories(api_client, test_bank_id):
                 {"content": "Oscar's favorite color is blue.", "tags": ["user_oscar"]},
                 {"content": "Peter's favorite color is red.", "tags": ["user_peter"]},
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
@@ -817,8 +859,8 @@ async def test_reflect_with_tags_filters_memories(api_client, test_bank_id):
             "query": "What is the favorite color?",
             "budget": "low",
             "tags": ["user_oscar"],
-            "include": {"facts": {}}  # Request facts to verify what was used
-        }
+            "include": {"facts": {}},  # Request facts to verify what was used
+        },
     )
     assert response.status_code == 200
     result = response.json()
@@ -845,14 +887,14 @@ async def test_recall_with_empty_tags_returns_all(api_client, test_bank_id):
                 {"content": "Quinn studies mathematics.", "tags": ["user_quinn"]},
                 {"content": "Rachel studies physics.", "tags": ["user_rachel"]},
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
     # Recall with empty tags list - should return all
     response = await api_client.post(
         f"/v1/default/banks/{test_bank_id}/memories/recall",
-        json={"query": "Who studies what?", "budget": "low", "tags": []}
+        json={"query": "Who studies what?", "budget": "low", "tags": []},
     )
     assert response.status_code == 200
     results = response.json()["results"]
@@ -889,14 +931,14 @@ async def test_multi_user_agent_visibility(api_client):
                 # Room 3: Group chat with both users
                 {"content": "In the group meeting, they agreed to meet at noon.", "tags": ["user_a", "user_b"]},
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
     # User A queries - should see their private chat and group chat
     response = await api_client.post(
         f"/v1/default/banks/{bank_id}/memories/recall",
-        json={"query": "What meeting time preferences were discussed?", "budget": "low", "tags": ["user_a"]}
+        json={"query": "What meeting time preferences were discussed?", "budget": "low", "tags": ["user_a"]},
     )
     assert response.status_code == 200
     user_a_results = response.json()["results"]
@@ -909,7 +951,7 @@ async def test_multi_user_agent_visibility(api_client):
     # User B queries - should see their private chat and group chat
     response = await api_client.post(
         f"/v1/default/banks/{bank_id}/memories/recall",
-        json={"query": "What meeting time preferences were discussed?", "budget": "low", "tags": ["user_b"]}
+        json={"query": "What meeting time preferences were discussed?", "budget": "low", "tags": ["user_b"]},
     )
     assert response.status_code == 200
     user_b_results = response.json()["results"]
@@ -922,7 +964,7 @@ async def test_multi_user_agent_visibility(api_client):
     # Agent queries (no filter) - should see everything
     response = await api_client.post(
         f"/v1/default/banks/{bank_id}/memories/recall",
-        json={"query": "What meeting time preferences were discussed?", "budget": "low"}  # No tags
+        json={"query": "What meeting time preferences were discussed?", "budget": "low"},  # No tags
     )
     assert response.status_code == 200
     agent_results = response.json()["results"]
@@ -955,14 +997,14 @@ async def test_student_tracking_visibility(api_client):
                 {"content": "Student B struggled with geometry concepts.", "tags": ["student_b"]},
                 {"content": "Student A participated actively in class discussion.", "tags": ["student_a"]},
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
     # Student A queries - should only see their own data
     response = await api_client.post(
         f"/v1/default/banks/{bank_id}/memories/recall",
-        json={"query": "How am I doing in class?", "budget": "low", "tags": ["student_a"]}
+        json={"query": "How am I doing in class?", "budget": "low", "tags": ["student_a"]},
     )
     assert response.status_code == 200
     student_a_results = response.json()["results"]
@@ -970,12 +1012,14 @@ async def test_student_tracking_visibility(api_client):
 
     assert any("algebra" in t for t in student_a_texts), "Student A should see their algebra progress"
     assert any("participated" in t for t in student_a_texts), "Student A should see their participation"
-    assert not any("Student B" in t or "geometry" in t for t in student_a_texts), "Student A should NOT see Student B's data"
+    assert not any("Student B" in t or "geometry" in t for t in student_a_texts), (
+        "Student A should NOT see Student B's data"
+    )
 
     # Teacher queries (no filter) - should see all students
     response = await api_client.post(
         f"/v1/default/banks/{bank_id}/memories/recall",
-        json={"query": "Which students need help?", "budget": "low"}  # No tags
+        json={"query": "Which students need help?", "budget": "low"},  # No tags
     )
     assert response.status_code == 200
     teacher_results = response.json()["results"]
@@ -1011,7 +1055,7 @@ async def test_list_tags_returns_all_tags(api_client):
                 {"content": "Memory 4 in session 123.", "tags": ["session:123"]},
                 {"content": "Memory 5 for alice in session 456.", "tags": ["user:alice", "session:456"]},
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
@@ -1057,7 +1101,7 @@ async def test_list_tags_with_wildcard_prefix(api_client):
                 {"content": "Session memory about the meeting.", "tags": ["session:abc"]},
                 {"content": "Room memory for conference room.", "tags": ["room:123"]},
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
@@ -1091,7 +1135,7 @@ async def test_list_tags_with_wildcard_suffix(api_client):
                 {"content": "Mike is a standard role-user who can only view content.", "tags": ["role-user"]},
                 {"content": "Alice is a role-guest visitor with limited read access.", "tags": ["role-guest"]},
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
@@ -1119,12 +1163,24 @@ async def test_list_tags_with_wildcard_middle(api_client):
         f"/v1/default/banks/{bank_id}/memories",
         json={
             "items": [
-                {"content": "The production environment is configured with high availability and uses AWS infrastructure.", "tags": ["env-prod"]},
-                {"content": "The enterprise environment for production runs on dedicated servers with 24/7 monitoring.", "tags": ["environment-prod"]},
-                {"content": "The staging environment mirrors production but uses smaller instance sizes.", "tags": ["env-staging"]},
-                {"content": "The development environment allows developers to test their code locally.", "tags": ["env-dev"]},
+                {
+                    "content": "The production environment is configured with high availability and uses AWS infrastructure.",
+                    "tags": ["env-prod"],
+                },
+                {
+                    "content": "The enterprise environment for production runs on dedicated servers with 24/7 monitoring.",
+                    "tags": ["environment-prod"],
+                },
+                {
+                    "content": "The staging environment mirrors production but uses smaller instance sizes.",
+                    "tags": ["env-staging"],
+                },
+                {
+                    "content": "The development environment allows developers to test their code locally.",
+                    "tags": ["env-dev"],
+                },
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
@@ -1152,11 +1208,17 @@ async def test_list_tags_case_insensitive(api_client):
         f"/v1/default/banks/{bank_id}/memories",
         json={
             "items": [
-                {"content": "Alice is a software engineer who specializes in machine learning algorithms.", "tags": ["User:Alice"]},
+                {
+                    "content": "Alice is a software engineer who specializes in machine learning algorithms.",
+                    "tags": ["User:Alice"],
+                },
                 {"content": "Bob works as a data scientist at a large technology company.", "tags": ["user:bob"]},
-                {"content": "Charlie is the lead designer responsible for the user interface.", "tags": ["USER:CHARLIE"]},
+                {
+                    "content": "Charlie is the lead designer responsible for the user interface.",
+                    "tags": ["USER:CHARLIE"],
+                },
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
@@ -1182,10 +1244,7 @@ async def test_list_tags_pagination(api_client):
         {"content": f"{name} works as a software engineer at company {i}.", "tags": [f"tag:{i:03d}"]}
         for i, name in enumerate(names)
     ]
-    response = await api_client.post(
-        f"/v1/default/banks/{bank_id}/memories",
-        json={"items": items}
-    )
+    response = await api_client.post(f"/v1/default/banks/{bank_id}/memories", json={"items": items})
     assert response.status_code == 200
 
     # Get first page (limit 3)
@@ -1236,7 +1295,7 @@ async def test_list_tags_ordered_by_count(api_client):
                 {"content": "Eve is a data scientist at Amazon.", "tags": ["medium"]},
                 {"content": "Frank handles customer support at Meta.", "tags": ["medium"]},
             ]
-        }
+        },
     )
     assert response.status_code == 200
 
@@ -1283,9 +1342,7 @@ async def test_list_memories_includes_tags(api_client, test_bank_id):
     memory_item = next((item for item in result["items"] if "Alice" in item["text"]), None)
     assert memory_item is not None, "Should find the stored memory"
     assert "tags" in memory_item, "Memory item must include a 'tags' field"
-    assert set(memory_item["tags"]) == set(tags), (
-        f"All {len(tags)} tags should be returned, got: {memory_item['tags']}"
-    )
+    assert set(memory_item["tags"]) == set(tags), f"All {len(tags)} tags should be returned, got: {memory_item['tags']}"
 
 
 # ============================================================================
@@ -1388,10 +1445,12 @@ async def test_tag_groups_or_compound(api_client):
             "query": "what are the engineers working on",
             "budget": "mid",
             "tag_groups": [
-                {"or": [
-                    {"tags": ["user:alice"], "match": "any_strict"},
-                    {"tags": ["user:bob"], "match": "any_strict"},
-                ]},
+                {
+                    "or": [
+                        {"tags": ["user:alice"], "match": "any_strict"},
+                        {"tags": ["user:bob"], "match": "any_strict"},
+                    ]
+                },
             ],
         },
     )
@@ -1484,13 +1543,17 @@ async def test_tag_groups_nested_and_containing_or(api_client):
             "query": "verification step completion",
             "budget": "mid",
             "tag_groups": [
-                {"and": [
-                    {"tags": ["user:alice"], "match": "all_strict"},
-                    {"or": [
-                        {"tags": ["step:5"], "match": "any_strict"},
-                        {"tags": ["step:8"], "match": "any_strict"},
-                    ]},
-                ]},
+                {
+                    "and": [
+                        {"tags": ["user:alice"], "match": "all_strict"},
+                        {
+                            "or": [
+                                {"tags": ["step:5"], "match": "any_strict"},
+                                {"tags": ["step:8"], "match": "any_strict"},
+                            ]
+                        },
+                    ]
+                },
             ],
         },
     )
@@ -1564,9 +1627,7 @@ async def test_list_mental_model_tags_with_wildcard(memory, request_context):
         memory, bank_id=bank_id, name="MM 3", tags=["session:abc"], request_context=request_context
     )
 
-    result = await memory.list_mental_model_tags(
-        bank_id=bank_id, pattern="topic:*", request_context=request_context
-    )
+    result = await memory.list_mental_model_tags(bank_id=bank_id, pattern="topic:*", request_context=request_context)
 
     returned = sorted(item["tag"] for item in result["items"])
     assert returned == ["topic:alpha", "topic:beta"]
@@ -1585,9 +1646,7 @@ async def test_list_tags_endpoint_with_source_mental_models(memory, request_cont
     app = create_app(memory, initialize_memory=False)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get(
-            f"/v1/default/banks/{bank_id}/tags", params={"source": "mental_models"}
-        )
+        response = await client.get(f"/v1/default/banks/{bank_id}/tags", params={"source": "mental_models"})
         assert response.status_code == 200, response.text
         body = response.json()
         assert {item["tag"] for item in body["items"]} == {"alpha"}
@@ -1667,9 +1726,7 @@ async def test_reflect_with_tag_groups_propagates_to_internal_recall(memory, req
             )
         if n == 2:
             return LLMToolCallResult(
-                tool_calls=[
-                    LLMToolCall(id="s1", name="search_observations", arguments={"query": "hardware"})
-                ],
+                tool_calls=[LLMToolCall(id="s1", name="search_observations", arguments={"query": "hardware"})],
                 finish_reason="tool_calls",
             )
         return LLMToolCallResult(
@@ -1703,20 +1760,13 @@ async def test_reflect_with_tag_groups_propagates_to_internal_recall(memory, req
         f"got {len(internal_calls)}: {internal_calls}"
     )
     for call in internal_calls:
-        assert call["tag_groups"] == tag_groups, (
-            f"Internal recall_async lost tag_groups; got {call!r}"
-        )
+        assert call["tag_groups"] == tag_groups, f"Internal recall_async lost tag_groups; got {call!r}"
 
     # End-to-end: the tool result messages the LLM saw must reference only the
     # tagged ("Strix Halo") memory, never the untagged ("MacBook Pro") one.
     # This catches any future regression where tag_groups is silently ignored
     # at the SQL layer even though kwargs propagation looks correct.
-    tool_messages = [
-        msg
-        for call in mock_llm.get_mock_calls()
-        for msg in call["messages"]
-        if msg.get("role") == "tool"
-    ]
+    tool_messages = [msg for call in mock_llm.get_mock_calls() for msg in call["messages"] if msg.get("role") == "tool"]
     tool_payload = "\n".join(msg.get("content", "") for msg in tool_messages)
     assert "Strix Halo" in tool_payload, (
         f"Tagged 'Strix Halo' memory must appear in the agent's tool results; got: {tool_payload[:1000]!r}"

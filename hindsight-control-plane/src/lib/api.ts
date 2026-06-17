@@ -7,6 +7,30 @@ import { toast } from "sonner";
 import { bankApi, bankStatsApi, documentApi, memoryApi } from "./bank-url";
 import { stripBasePath, withBasePath } from "./base-path";
 
+/**
+ * Reduce an API error `details` value to a string safe to render in a toast.
+ * Endpoints may return a plain string or a structured object (e.g. a Memory
+ * Defense block returns `{violations: [{message}]}`); objects cannot be passed
+ * to sonner/React directly.
+ */
+function describeErrorDetails(details: unknown): string | undefined {
+  if (details == null) return undefined;
+  if (typeof details === "string") return details;
+  if (typeof details === "object") {
+    const detail = (details as { detail?: unknown }).detail;
+    if (typeof detail === "string") return detail;
+    const nestedDetails = (details as { details?: unknown }).details;
+    if (typeof nestedDetails === "string") return nestedDetails;
+    const violations = (details as { violations?: Array<{ message?: string }> }).violations;
+    if (Array.isArray(violations)) {
+      const messages = violations.map((v) => v?.message).filter(Boolean);
+      if (messages.length > 0) return messages.join("; ");
+    }
+    return JSON.stringify(details);
+  }
+  return String(details);
+}
+
 export interface WebhookHttpConfig {
   method: string;
   timeout_seconds: number;
@@ -130,7 +154,21 @@ export interface LLMRequestStatsResponse {
   buckets: LLMRequestStatsBucket[];
 }
 
-export type TagsMatch = "any" | "all" | "any_strict" | "all_strict";
+/**
+ * Last-known progress snapshot for a long-running async operation (consolidation,
+ * batch retain). Written at coarse phase/batch boundaries by the worker; null until
+ * the operation reaches its first checkpoint. `processed`/`total` advancing across
+ * polls (with a moving `at`) means healthy; frozen numbers mean worth investigating.
+ */
+export interface OperationProgress {
+  stage: string;
+  at: string;
+  processed?: number | null;
+  total?: number | null;
+  detail?: Record<string, number> | null;
+}
+
+export type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
 
 export type TagGroup =
   | { tags: string[]; match?: TagsMatch }
@@ -185,6 +223,7 @@ export class ControlPlaneClient {
       });
 
       if (!response.ok) {
+        const isClientError = response.status >= 400 && response.status < 500;
         // Redirect to login on 401 (session expired or not authenticated)
         const currentPath = stripBasePath(`${window.location.pathname}${window.location.search}`);
         if (response.status === 401 && !currentPath.startsWith("/login")) {
@@ -194,29 +233,36 @@ export class ControlPlaneClient {
 
         // Try to parse error response
         let errorMessage = `HTTP ${response.status}`;
-        let errorDetails: string | undefined;
+        let errorDetails: unknown;
 
         try {
           const errorData = await response.json();
-          errorMessage = errorData.error || errorMessage;
-          errorDetails = errorData.details;
+          if (isClientError) {
+            errorMessage = errorData.error || errorMessage;
+            errorDetails = errorData.details ?? errorData.detail ?? errorData.upstream?.detail;
+          }
         } catch {
-          // If JSON parse fails, try to get text
-          try {
-            const errorText = await response.text();
-            if (errorText) {
-              errorDetails = errorText;
+          if (isClientError) {
+            // If JSON parse fails, try to get text
+            try {
+              const errorText = await response.text();
+              if (errorText) {
+                errorDetails = errorText;
+              }
+            } catch {
+              // Ignore text parse errors
             }
-          } catch {
-            // Ignore text parse errors
           }
         }
 
-        // Show toast with different styles based on status code
-        const description = errorDetails || errorMessage;
+        // Coerce details into a string for the toast. Some endpoints return a
+        // structured detail object — e.g. a Memory Defense block responds with
+        // {violations: [{message, ...}]} — and React/sonner cannot render an
+        // object as a child (it throws "Objects are not valid as a React child").
+        const description = describeErrorDetails(errorDetails) || errorMessage;
         const status = response.status;
 
-        if (status >= 400 && status < 500) {
+        if (isClientError) {
           // Client errors (4xx) - validation, bad request, etc. - show as warning
           toast.warning("Client Error", {
             description,
@@ -237,7 +283,7 @@ export class ControlPlaneClient {
         }
 
         // Still throw error for callers that want to handle it
-        const error = new Error(errorMessage);
+        const error = new Error(description || errorMessage);
         (error as any).status = response.status;
         (error as any).details = errorDetails;
         throw error;
@@ -308,7 +354,7 @@ export class ControlPlaneClient {
     };
     query_timestamp?: string;
     tags?: string[];
-    tags_match?: "any" | "all" | "any_strict" | "all_strict";
+    tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
   }) {
     return this.fetchApi("/api/recall", {
       method: "POST",
@@ -327,7 +373,7 @@ export class ControlPlaneClient {
     include_facts?: boolean;
     include_tool_calls?: boolean;
     tags?: string[];
-    tags_match?: "any" | "all" | "any_strict" | "all_strict";
+    tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
     fact_types?: Array<"world" | "experience" | "observation">;
     exclude_mental_models?: boolean;
     exclude_mental_model_ids?: string[];
@@ -351,7 +397,7 @@ export class ControlPlaneClient {
       metadata?: Record<string, string>;
       entities?: Array<{ text: string; type?: string }>;
       tags?: string[];
-      observation_scopes?: "per_tag" | "combined" | "all_combinations" | string[][];
+      observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
       strategy?: string;
     }>;
     document_id?: string;
@@ -404,6 +450,7 @@ export class ControlPlaneClient {
     limit?: number;
     q?: string;
     tags?: string[];
+    tags_match?: string;
     document_id?: string;
     chunk_id?: string;
   }) {
@@ -415,6 +462,10 @@ export class ControlPlaneClient {
     if (params.tags && params.tags.length > 0) {
       params.tags.forEach((tag) => queryParams.append("tags", tag));
     }
+    // Forward the match mode explicitly (e.g. "exact" for observation-scope
+    // filtering). With tags_match=exact and no tags, the dataplane treats it as
+    // the global/untagged scope.
+    if (params.tags_match) queryParams.append("tags_match", params.tags_match);
     if (params.document_id) queryParams.append("document_id", params.document_id);
     if (params.chunk_id) queryParams.append("chunk_id", params.chunk_id);
     return this.fetchApi(`/api/graph?${queryParams}`);
@@ -451,8 +502,10 @@ export class ControlPlaneClient {
         items_count: number;
         document_id: string | null;
         created_at: string;
+        updated_at?: string | null;
         status: string;
         error_message: string | null;
+        progress?: OperationProgress | null;
       }>;
     }>(`/api/operations/${encodeURIComponent(bankId)}${query ? `?${query}` : ""}`);
   }
@@ -695,6 +748,8 @@ export class ControlPlaneClient {
       type?: string;
       q?: string;
       consolidationState?: "failed" | "pending" | "done";
+      state?: "valid" | "invalidated";
+      documentId?: string;
       limit?: number;
       offset?: number;
     }
@@ -703,6 +758,8 @@ export class ControlPlaneClient {
     if (options?.type) params.set("type", options.type);
     if (options?.q) params.set("q", options.q);
     if (options?.consolidationState) params.set("consolidation_state", options.consolidationState);
+    if (options?.state) params.set("state", options.state);
+    if (options?.documentId) params.set("document_id", options.documentId);
     if (options?.limit !== undefined) params.set("limit", String(options.limit));
     if (options?.offset !== undefined) params.set("offset", String(options.offset));
     return this.fetchApi<{
@@ -721,11 +778,48 @@ export class ControlPlaneClient {
         tags: string[];
         consolidated_at: string | null;
         consolidation_failed_at: string | null;
+        state: "valid" | "invalidated";
+        invalidation_reason: string | null;
+        invalidated_at: string | null;
+        edited_at: string | null;
       }>;
       total: number;
       limit: number;
       offset: number;
     }>(`/api/list?${params.toString()}`);
+  }
+
+  /**
+   * Curate a memory unit: edit its text and/or change its state
+   * (invalidate / revert). Only world/experience facts can be curated.
+   */
+  async updateMemory(
+    memoryId: string,
+    bankId: string,
+    update: {
+      text?: string;
+      context?: string;
+      occurredStart?: string;
+      occurredEnd?: string;
+      factType?: "world" | "experience";
+      entities?: string[];
+      state?: "valid" | "invalidated";
+      reason?: string;
+    }
+  ) {
+    const body: Record<string, unknown> = { bank_id: bankId };
+    if (update.text !== undefined) body.text = update.text;
+    if (update.context !== undefined) body.context = update.context;
+    if (update.occurredStart !== undefined) body.occurred_start = update.occurredStart;
+    if (update.occurredEnd !== undefined) body.occurred_end = update.occurredEnd;
+    if (update.factType !== undefined) body.fact_type = update.factType;
+    if (update.entities !== undefined) body.entities = update.entities;
+    if (update.state !== undefined) body.state = update.state;
+    if (update.reason !== undefined) body.reason = update.reason;
+    return this.fetchApi(memoryApi(memoryId, bankId), {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
   }
 
   /**
@@ -753,6 +847,10 @@ export class ControlPlaneClient {
       chunk_id: string | null;
       tags: string[];
       observation_scopes: string | string[][] | null;
+      state: "valid" | "invalidated";
+      invalidation_reason: string | null;
+      invalidated_at: string | null;
+      edited_at: string | null;
       history?: {
         previous_text: string;
         previous_tags: string[];
@@ -945,6 +1043,7 @@ export class ControlPlaneClient {
       updated_at: string | null;
       completed_at: string | null;
       error_message: string | null;
+      progress?: OperationProgress | null;
       result_metadata?: {
         items_count?: number;
         total_tokens?: number;
@@ -1052,6 +1151,19 @@ export class ControlPlaneClient {
       created_at: string;
       updated_at: string;
     }>(bankApi(bankId, `/observations/${encodeURIComponent(observationId)}`));
+  }
+
+  /**
+   * List the distinct observation scopes for a bank.
+   *
+   * Each observation lives under a "scope": the exact set of tags it was
+   * consolidated with. Returns every distinct scope (tag order normalized) with
+   * the number of observations in it; the empty tag list is the global scope.
+   */
+  async listObservationScopes(bankId: string) {
+    return this.fetchApi<{
+      scopes: Array<{ tags: string[]; count: number }>;
+    }>(bankApi(bankId, `/observations/scopes`));
   }
 
   // ============= TAGS =============
@@ -1290,6 +1402,7 @@ export class ControlPlaneClient {
         document_import_api: boolean;
         audit_log: boolean;
         llm_trace: boolean;
+        store_document_text: boolean;
       };
     }>("/api/version");
   }
@@ -1426,6 +1539,22 @@ export class ControlPlaneClient {
       config: Record<string, any>;
       overrides: Record<string, any>;
     }>(bankApi(bankId, "/config"));
+  }
+
+  /**
+   * Probe the LLMs this bank uses (retain/consolidation/reflect). Deliberate action
+   * (makes a real provider call) — do NOT poll this. Status only; never the API key.
+   */
+  async testBankLlm(bankId: string) {
+    return this.fetchApi<{
+      bank_id: string;
+      operations: {
+        operation: "retain" | "consolidation" | "reflect";
+        ok: boolean;
+        status: "connected" | "not_configured" | "auth_failed" | "unreachable" | "timeout";
+        latency_ms: number | null;
+      }[];
+    }>(bankApi(bankId, "/health/llm"), { method: "POST" });
   }
 
   /**

@@ -26,11 +26,8 @@ from ..config import (
     DEFAULT_EMBEDDINGS_GEMINI_MODEL,
     DEFAULT_EMBEDDINGS_LITELLM_MODEL,
     DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL,
-    DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU,
     DEFAULT_EMBEDDINGS_LOCAL_MODEL,
-    DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE,
     DEFAULT_EMBEDDINGS_OPENAI_MODEL,
-    DEFAULT_EMBEDDINGS_PROVIDER,
     DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE,
     DEFAULT_EMBEDDINGS_ZEROENTROPY_DIMENSIONS,
     DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT,
@@ -40,9 +37,6 @@ from ..config import (
     DEFAULT_ZEROENTROPY_BASE_URL,
     ENV_EMBEDDINGS_COHERE_API_KEY,
     ENV_EMBEDDINGS_GEMINI_API_KEY,
-    ENV_EMBEDDINGS_LOCAL_FORCE_CPU,
-    ENV_EMBEDDINGS_LOCAL_MODEL,
-    ENV_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE,
     ENV_EMBEDDINGS_OPENAI_API_KEY,
     ENV_EMBEDDINGS_OPENAI_BASE_URL,
     ENV_EMBEDDINGS_OPENAI_MODEL,
@@ -53,6 +47,7 @@ from ..config import (
     ENV_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT,
     ENV_LLM_API_KEY,
 )
+from .bank_attribution import apply_bank_attribution
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +245,172 @@ class LocalSTEmbeddings(Embeddings):
 
         embeddings = self._model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
         return [emb.tolist() for emb in embeddings]
+
+
+class OnnxEmbeddings(Embeddings):
+    """Local ONNX Runtime embeddings provider.
+
+    This provider runs transformer embedding models in-process with ONNX Runtime,
+    avoiding a sidecar Ollama/TEI server or a remote embeddings API. It supports
+    sentence-transformer style mean pooling and E5-style asymmetric prefixes.
+    """
+
+    def __init__(
+        self,
+        model_id: str,
+        model_path: str | None = None,
+        tokenizer_name_or_path: str | None = None,
+        onnx_file: str = "onnx/model.onnx",
+        dimensions: int | None = None,
+        max_tokens: int = 512,
+        pooling: str = "mean",
+        normalize: bool = True,
+        query_prefix: str = "query: ",
+        passage_prefix: str = "passage: ",
+        output_name: str | None = None,
+    ):
+        self.model_id = model_id
+        self.model_path = model_path
+        if model_path and tokenizer_name_or_path is None:
+            logger.warning(
+                "Embeddings: ONNX model_path is set without tokenizer_name_or_path; "
+                "falling back to tokenizer from model_id %s. Set "
+                "HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH when using local ONNX artifacts.",
+                model_id,
+            )
+        self.tokenizer_name_or_path = tokenizer_name_or_path or model_id
+        self.onnx_file = onnx_file
+        self.configured_dimensions = dimensions
+        self.max_tokens = max_tokens
+        self.pooling = pooling.lower()
+        if self.pooling not in {"mean", "cls"}:
+            raise ValueError("ONNX embeddings pooling must be 'mean' or 'cls'")
+        self.normalize = normalize
+        self.query_prefix = query_prefix
+        self.passage_prefix = passage_prefix
+        self.output_name = output_name
+        self._session = None
+        self._tokenizer = None
+        self._dimension: int | None = dimensions
+
+    @property
+    def provider_name(self) -> str:
+        return "onnx"
+
+    @property
+    def dimension(self) -> int:
+        if self._dimension is None:
+            raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+        return self._dimension
+
+    async def initialize(self) -> None:
+        if self._session is not None and self._tokenizer is not None:
+            return
+
+        try:
+            import onnxruntime as ort
+            from transformers import AutoTokenizer
+        except ImportError as exc:
+            raise ImportError(
+                "onnxruntime and transformers are required for OnnxEmbeddings. "
+                "Install with: pip install 'hindsight-api-slim[local-onnx]'"
+            ) from exc
+
+        model_path = self.model_path
+        if not model_path:
+            try:
+                from huggingface_hub import snapshot_download
+            except ImportError as exc:
+                raise ImportError(
+                    "huggingface-hub is required to download ONNX embedding models. "
+                    "Set HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH or install local-onnx."
+                ) from exc
+            # Some large ONNX exports, for example BAAI/bge-m3, store weights in
+            # an external sidecar file next to model.onnx. Download both the
+            # requested graph and its conventional *_data sidecar when present.
+            snapshot_dir = snapshot_download(
+                repo_id=self.model_id,
+                allow_patterns=[self.onnx_file, f"{self.onnx_file}_data"],
+            )
+            model_path = os.path.join(snapshot_dir, self.onnx_file)
+
+        logger.info(
+            "Embeddings: initializing ONNX provider with model %s (%s)",
+            self.model_id,
+            model_path,
+        )
+        logger.info(
+            "Embeddings: ONNX query_prefix=%r passage_prefix=%r pooling=%s normalize=%s",
+            self.query_prefix,
+            self.passage_prefix,
+            self.pooling,
+            self.normalize,
+        )
+        self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name_or_path)
+        self._session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+
+        detected = len(self.encode(["test"])[0])
+        if self.configured_dimensions is not None and detected != self.configured_dimensions:
+            raise ValueError(
+                f"Configured ONNX embedding dimension {self.configured_dimensions} does not match model output {detected}"
+            )
+        self._dimension = detected
+        logger.info("Embeddings: ONNX provider initialized (dim: %s)", self._dimension)
+
+    def _encode_prefixed(self, texts: list[str], prefix: str) -> list[list[float]]:
+        if prefix:
+            return self.encode([f"{prefix}{text}" for text in texts])
+        return self.encode(texts)
+
+    def encode_query(self, texts: list[str]) -> list[list[float]]:
+        return self._encode_prefixed(texts, self.query_prefix)
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._encode_prefixed(texts, self.passage_prefix)
+
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        if self._session is None or self._tokenizer is None:
+            raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+        if not texts:
+            return []
+
+        import numpy as np
+
+        encoded = self._tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            max_length=self.max_tokens,
+            return_tensors="np",
+        )
+        input_names = {inp.name for inp in self._session.get_inputs()}
+        ort_inputs = {name: value for name, value in encoded.items() if name in input_names}
+        if "token_type_ids" in input_names and "token_type_ids" not in ort_inputs:
+            ort_inputs["token_type_ids"] = np.zeros_like(encoded["input_ids"])
+
+        outputs = self._session.run([self.output_name] if self.output_name else None, ort_inputs)
+        token_embeddings = outputs[0]
+
+        # Some exported models expose a pooled 2-D embedding as their first output.
+        if getattr(token_embeddings, "ndim", 0) == 2:
+            embeddings = token_embeddings
+        elif self.pooling == "cls":
+            embeddings = token_embeddings[:, 0]
+        else:
+            attention_mask = encoded.get("attention_mask")
+            if attention_mask is None:
+                attention_mask = np.ones(token_embeddings.shape[:2], dtype=np.float32)
+            mask = attention_mask[..., None].astype(np.float32)
+            summed = (token_embeddings * mask).sum(axis=1)
+            counts = np.clip(mask.sum(axis=1), a_min=1e-9, a_max=None)
+            embeddings = summed / counts
+
+        if self.normalize:
+            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+            norms[norms == 0] = 1
+            embeddings = embeddings / norms
+
+        return embeddings.astype(float).tolist()
 
 
 class RemoteTEIEmbeddings(Embeddings):
@@ -535,6 +696,7 @@ class OpenAIEmbeddings(Embeddings):
             }
             if self.dimensions is not None:
                 request["dimensions"] = self.dimensions
+            apply_bank_attribution(request)
 
             response = self._client.embeddings.create(**request)
 
@@ -547,7 +709,8 @@ class OpenAIEmbeddings(Embeddings):
 
 class CodexOAuthEmbeddings(OpenAIEmbeddings):
     """
-    OpenAI embeddings using the Codex/ChatGPT OAuth token from ``~/.codex/auth.json``.
+    OpenAI embeddings using the Codex/ChatGPT OAuth token from the Codex
+    ``auth.json`` (``$CODEX_HOME/auth.json``, or ``~/.codex/auth.json`` when unset).
 
     Codex OAuth is an LLM-provider auth path in Hindsight, but the same bearer token
     can also authenticate against the standard OpenAI embeddings endpoint. This keeps
@@ -1177,6 +1340,21 @@ class LiteLLMSDKEmbeddings(Embeddings):
         return all_embeddings
 
 
+# Gemini Embedding 2+ multimodal models return a SINGLE aggregated embedding
+# for a multi-input request instead of one vector per input (see
+# https://ai.google.dev/gemini-api/docs/embeddings#embedding-aggregation). For
+# these models we must embed one input per call to preserve the 1:1 input→vector
+# alignment the rest of the pipeline relies on. The marker matches preview and GA
+# names (e.g. "gemini-embedding-2-preview", "gemini-embedding-2"), with or
+# without a "google/" or "models/" prefix.
+_GEMINI_AGGREGATING_MODEL_MARKER = "gemini-embedding-2"
+
+
+def _gemini_model_aggregates_inputs(model: str) -> bool:
+    """Whether the model aggregates a multi-input request into one embedding."""
+    return _GEMINI_AGGREGATING_MODEL_MARKER in model.lower()
+
+
 class GeminiEmbeddings(Embeddings):
     """
     Google embeddings via the google.genai SDK.
@@ -1186,6 +1364,10 @@ class GeminiEmbeddings(Embeddings):
     2. Vertex AI with service account or Application Default Credentials (ADC)
 
     Uses the embed_content API: client.models.embed_content(model, contents)
+
+    Gemini Embedding 2+ multimodal models aggregate a multi-input request into a
+    single embedding, so for those the batch size is forced to 1 (one input per
+    call) to keep one vector per input.
     """
 
     def __init__(
@@ -1340,9 +1522,13 @@ class GeminiEmbeddings(Embeddings):
 
         all_embeddings = []
 
+        # Gemini Embedding 2+ multimodal models return one aggregated vector for a
+        # multi-input request, so embed one input per call to keep 1:1 alignment.
+        batch_size = 1 if _gemini_model_aggregates_inputs(self.model) else self.batch_size
+
         # Process in batches
-        for i in range(0, len(texts), self.batch_size):
-            batch = texts[i : i + self.batch_size]
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
 
             embed_kwargs = {"model": self.model, "contents": batch}
             if self._embed_config is not None:
@@ -1350,7 +1536,13 @@ class GeminiEmbeddings(Embeddings):
 
             result = self._client.models.embed_content(**embed_kwargs)
 
-            all_embeddings.extend([emb.values for emb in result.embeddings])
+            embeddings = result.embeddings or []
+            if len(embeddings) != len(batch):
+                raise RuntimeError(
+                    f"Gemini embeddings backend returned {len(embeddings)} vectors for "
+                    f"{len(batch)} input texts (model {self.model}); expected exact 1:1 alignment"
+                )
+            all_embeddings.extend([emb.values for emb in embeddings])
 
         # L2-normalize when output_dimensionality is set — Gemini only returns
         # normalized vectors at full 3072 dims; truncated dims need re-normalization
@@ -1390,6 +1582,20 @@ def create_embeddings_from_env() -> Embeddings:
             model_name=config.embeddings_local_model,
             force_cpu=config.embeddings_local_force_cpu,
             trust_remote_code=config.embeddings_local_trust_remote_code,
+        )
+    elif provider == "onnx":
+        return OnnxEmbeddings(
+            model_id=config.embeddings_onnx_model_id,
+            model_path=config.embeddings_onnx_model_path,
+            tokenizer_name_or_path=config.embeddings_onnx_tokenizer_name_or_path,
+            onnx_file=config.embeddings_onnx_file,
+            dimensions=config.embeddings_onnx_dimensions,
+            max_tokens=config.embeddings_onnx_max_tokens,
+            pooling=config.embeddings_onnx_pooling,
+            normalize=config.embeddings_onnx_normalize,
+            query_prefix=config.embeddings_onnx_query_prefix,
+            passage_prefix=config.embeddings_onnx_passage_prefix,
+            output_name=config.embeddings_onnx_output_name,
         )
     elif provider == "openai":
         # Use dedicated embeddings API key, or fall back to LLM API key
@@ -1492,6 +1698,6 @@ def create_embeddings_from_env() -> Embeddings:
     else:
         raise ValueError(
             f"Unknown embeddings provider: {provider}. "
-            f"Supported: 'local', 'tei', 'openai', 'openai-codex', 'openrouter', 'cohere', 'google', "
+            f"Supported: 'local', 'onnx', 'tei', 'openai', 'openai-codex', 'openrouter', 'cohere', 'google', "
             f"'zeroentropy', 'litellm', 'litellm-sdk'"
         )

@@ -80,9 +80,7 @@ async def _pending_consolidation_ops(memory, bank_id: str) -> list[str]:
 
 
 @pytest.mark.asyncio
-async def test_round_limited_consolidation_leaves_followup_pending_op(
-    memory: MemoryEngine, request_context
-):
+async def test_round_limited_consolidation_leaves_followup_pending_op(memory: MemoryEngine, request_context):
     """A round-limited consolidation must leave a new ``pending`` consolidation
     op in ``async_operations`` for the same bank so the worker poller can
     drain the backlog without external intervention."""
@@ -147,9 +145,7 @@ async def test_round_limited_consolidation_leaves_followup_pending_op(
             op_id,
         )
     assert row is not None
-    assert row["status"] == "completed", (
-        f"first consolidation op should be marked completed, got {row['status']}"
-    )
+    assert row["status"] == "completed", f"first consolidation op should be marked completed, got {row['status']}"
 
     # 4. Backlog must remain (round limit kept one round under the total)
     unconsolidated_after = await _count_unconsolidated(memory, bank_id)
@@ -169,8 +165,6 @@ async def test_round_limited_consolidation_leaves_followup_pending_op(
         f"backlog. Found {len(pending_ops)} pending ops; backlog still has "
         f"{unconsolidated_after} unconsolidated memory_units."
     )
-    assert pending_ops[0] != str(op_id), (
-        "The pending op must be a NEW row, not the original op we just executed."
-    )
+    assert pending_ops[0] != str(op_id), "The pending op must be a NEW row, not the original op we just executed."
 
     await memory.delete_bank(bank_id, request_context=request_context)

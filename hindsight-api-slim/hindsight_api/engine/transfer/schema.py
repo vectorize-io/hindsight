@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 # Bump when the archive layout changes in a backward-incompatible way.
 SCHEMA_VERSION = 1
 
-ObservationScopes = Literal["per_tag", "combined", "all_combinations"] | list[list[str]]
+ObservationScopes = Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]]
 
 
 class TransferCausalRelation(BaseModel):
@@ -115,7 +115,12 @@ class TransferDocument(BaseModel):
 
 
 class TransferManifest(BaseModel):
-    """Top-level archive descriptor (``manifest.json``)."""
+    """Top-level archive descriptor (``manifest.json``).
+
+    The bank-level fields default to a documents-only archive so older
+    document-only archives (and the document import path) keep parsing
+    unchanged; ``export_bank`` populates them for a whole-bank archive.
+    """
 
     schema_version: int = SCHEMA_VERSION
     source_bank_id: str
@@ -123,3 +128,11 @@ class TransferManifest(BaseModel):
     document_count: int = 0
     fact_count: int = 0
     observation_count: int = 0
+    # "documents" = doc/fact/observation subset; "bank" = whole-bank export
+    # (also carries bank config, mental models, directives, webhooks).
+    archive_type: Literal["documents", "bank"] = "documents"
+    mental_model_count: int = 0
+    directive_count: int = 0
+    webhook_count: int = 0
+    # True when --include-history carried audit_log / llm_requests.
+    includes_history: bool = False

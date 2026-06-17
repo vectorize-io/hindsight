@@ -40,9 +40,7 @@ class TestSearchObservationsSourceFacts:
         """Default source_facts_max_tokens=-1 should disable source facts."""
         engine = _make_mock_engine()
 
-        await tool_search_observations(
-            engine, "bank-1", "test query", mock_request_context
-        )
+        await tool_search_observations(engine, "bank-1", "test query", mock_request_context)
 
         engine.recall_async.assert_called_once()
         call_kwargs = engine.recall_async.call_args.kwargs
@@ -55,7 +53,10 @@ class TestSearchObservationsSourceFacts:
         engine = _make_mock_engine()
 
         await tool_search_observations(
-            engine, "bank-1", "test query", mock_request_context,
+            engine,
+            "bank-1",
+            "test query",
+            mock_request_context,
             source_facts_max_tokens=0,
         )
 
@@ -70,7 +71,10 @@ class TestSearchObservationsSourceFacts:
         engine = _make_mock_engine()
 
         await tool_search_observations(
-            engine, "bank-1", "test query", mock_request_context,
+            engine,
+            "bank-1",
+            "test query",
+            mock_request_context,
             source_facts_max_tokens=5000,
         )
 
@@ -85,7 +89,10 @@ class TestSearchObservationsSourceFacts:
         engine = _make_mock_engine()
 
         await tool_search_observations(
-            engine, "bank-1", "test query", mock_request_context,
+            engine,
+            "bank-1",
+            "test query",
+            mock_request_context,
             source_facts_max_tokens=-1,
         )
 

@@ -1,14 +1,18 @@
 line-length = 120
 target-version = "py311"
 exclude = [
-    "tests/",
-    "**/tests/",
     "**/.venv/",
     "**/dist/",
     "**/build/",
 ]
 
 [lint]
+# Tests are formatted (via `ruff format`) but excluded from lint rules, which
+# are too noisy for test code (unused imports/vars, import ordering).
+exclude = [
+    "tests/**",
+    "**/tests/**",
+]
 select = [
     "E",      # pycodestyle errors
     "W",      # pycodestyle warnings

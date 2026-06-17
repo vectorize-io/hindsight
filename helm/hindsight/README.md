@@ -66,13 +66,13 @@ helm install hindsight ./helm/hindsight -n hindsight --create-namespace -f value
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `version` | Default image tag for all components | `0.1.0` |
+| `version` | Default image tag for all components | Chart `appVersion` |
 | `api.enabled` | Enable the API component | `true` |
-| `api.image.repository` | API image repository | `hindsight/api` |
+| `api.image.repository` | API image repository | `ghcr.io/vectorize-io/hindsight-api` |
 | `api.image.tag` | API image tag (defaults to `version`) | - |
 | `api.service.port` | API service port | `8888` |
 | `controlPlane.enabled` | Enable the control plane | `true` |
-| `controlPlane.image.repository` | Control plane image repository | `hindsight/control-plane` |
+| `controlPlane.image.repository` | Control plane image repository | `ghcr.io/vectorize-io/hindsight-control-plane` |
 | `controlPlane.image.tag` | Control plane image tag (defaults to `version`) | - |
 | `controlPlane.service.port` | Control plane service port | `3000` |
 | `postgresql.enabled` | Deploy PostgreSQL as subchart | `true` |

@@ -16,7 +16,7 @@ import time
 import traceback
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..engine.schema import fq_table_explicit as fq_table
@@ -226,38 +226,23 @@ class WorkerPoller:
         """
         async with self._backend.acquire() as conn:
             if await self._optional_routines.is_installed(conn, "schemas_with_pending_work"):
+                # The routine IS the authority on where work exists: every schema
+                # it returns is claimable, and every schema it does NOT return is
+                # treated as having nothing to do this cycle. That is the entire
+                # point of installing it — one round-trip replaces N per-schema
+                # EXISTS probes. We deliberately do NOT re-verify the omitted
+                # schemas with a per-schema scan: that re-runs the exact queries
+                # the routine exists to avoid, on every idle poll, silently
+                # negating the optimisation.
+                #
+                # Because the result is trusted wholesale, the routine is only
+                # appropriate for multi-tenant deployments. A single-schema
+                # (default/public only) install should NOT create it and instead
+                # falls through to the per-schema path below — a single cheap
+                # EXISTS check that cannot starve. See
+                # ``hindsight_api.engine.db.optional_routines``.
                 rows = await conn.fetch("SELECT * FROM public.schemas_with_pending_work()")
-                routine_active = {self._normalize_poll_schema(r[0]) for r in rows}
-                known_schemas = set(schemas)
-                active = routine_active & known_schemas
-                unknown = routine_active - known_schemas
-                if unknown:
-                    logger.warning(
-                        "Optional PG routine public.schemas_with_pending_work() returned schema(s) "
-                        "not present in tenant discovery: %s",
-                        sorted(str(s) for s in unknown),
-                    )
-
-                # The optional routine returns PostgreSQL schema names, but the poller uses
-                # None for the default schema. Older operator-supplied implementations also
-                # commonly scan tenant_% only; when the default schema is in scope but absent
-                # from the routine result, verify via the fully-correct per-schema fallback so
-                # public single-tenant deployments cannot silently starve.
-                should_verify_with_fallback = (None in known_schemas and None not in active) or (
-                    bool(routine_active) and not active
-                )
-                if not should_verify_with_fallback:
-                    return active
-
-                fallback_active = await self._scan_active_schemas_by_exists(conn, schemas)
-                missed = fallback_active - active
-                if missed:
-                    logger.warning(
-                        "Optional PG routine public.schemas_with_pending_work() missed claimable schema(s) %s; "
-                        "using per-schema fallback for this poll",
-                        sorted(str(s) for s in missed),
-                    )
-                return fallback_active
+                return {self._normalize_poll_schema(r[0]) for r in rows}
 
             return await self._scan_active_schemas_by_exists(conn, schemas)
 
@@ -824,7 +809,6 @@ class WorkerPoller:
             recovered = 0
             for row in rows:
                 operation_id = str(row["operation_id"])
-                task_payload = row["task_payload"]
                 result_metadata = row["result_metadata"]
 
                 # Parse metadata
@@ -837,12 +821,6 @@ class WorkerPoller:
                 logger.info(
                     f"Recovering batch operation: operation_id={operation_id}, batch_id={batch_id}, provider={batch_provider}"
                 )
-
-                # Parse task_payload
-                if isinstance(task_payload, str):
-                    task_dict = json.loads(task_payload)
-                else:
-                    task_dict = task_payload
 
                 # Mark operation as ready for re-processing
                 # Reset to pending with task_payload intact so worker picks it up again

@@ -1,0 +1,189 @@
+---
+sidebar_position: 5
+---
+
+# Memories
+
+A **memory unit** is the atomic fact Hindsight extracts and stores. This page covers the endpoints for working with individual memory units — reading and listing them, inspecting how a derived observation evolved, and **curating** them (correcting, retiring, or restoring). Ingesting and querying memories is covered separately in [Retain](./retain.mdx) and [Recall](./recall.mdx).
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+
+{/* Import raw source files */}
+import memoriesPy from '!!raw-loader!@site/examples/api/memories.py';
+import memoriesMjs from '!!raw-loader!@site/examples/api/memories.mjs';
+import memoriesSh from '!!raw-loader!@site/examples/api/memories.sh';
+import memoriesGo from '!!raw-loader!@site/examples/api/memories.go';
+
+## Endpoints
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/v1/default/banks/{bank}/memories/list` | List/filter memory units in a bank |
+| `GET` | `/v1/default/banks/{bank}/memories/{id}` | Fetch a single memory unit |
+| `GET` | `/v1/default/banks/{bank}/memories/{id}/history` | Refresh history of a derived observation |
+| `PATCH` | `/v1/default/banks/{bank}/memories/{id}` | Curate: edit / invalidate / restore |
+| `DELETE` | `/v1/default/banks/{bank}/memories/{id}/observations` | Clear a memory's derived observations |
+
+## List memory units
+
+List the memory units in a bank. The response includes each unit's `fact_type` (`world` | `experience` | `observation`), `state` (`valid` | `invalidated`), entities, occurred dates, and — for facts a user has edited — an `edited_at` timestamp. Invalidated rows are **included by default** so curation stays auditable; filter with `state=`.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoriesPy} section="list-memories" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoriesMjs} section="list-memories" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoriesSh} section="list-memories" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoriesGo} section="list-memories" language="go" />
+</TabItem>
+</Tabs>
+
+## Fetch a single memory unit
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoriesPy} section="get-memory" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoriesMjs} section="get-memory" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoriesSh} section="get-memory" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoriesGo} section="get-memory" language="go" />
+</TabItem>
+</Tabs>
+
+For a **derived observation**, the history endpoint returns how it was refreshed over time as new source facts arrived:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoriesPy} section="observation-history" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoriesMjs} section="observation-history" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoriesSh} section="observation-history" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoriesGo} section="observation-history" language="go" />
+</TabItem>
+</Tabs>
+
+## Curation: editing, invalidating & pruning
+
+Memory is append-only by design — but sometimes a stored fact is **wrong**, has gone **stale**, or is a **duplicate**. Curation lets you correct or retire individual memories without losing the audit trail. Retired facts are moved out of the active set, so recall never returns them, while remaining fully recoverable.
+
+### When to reach for what
+
+Not every "bad memory" needs the same tool. Pick by *why* it's bad:
+
+| The memory is… | Use | Why |
+|---|---|---|
+| **Wrong because the whole bank extracts badly** (e.g. consistently wrong subject) | Fix the bank's `retain_mission` / `observations_mission`, then **reprocess** the document | Systematic problems are best fixed at the source, then replayed — see [Retain](./retain.mdx) and [Observations](../observations.mdx). |
+| **Wrong as a one-off** (a single misextracted fact) | **Edit** the memory | Corrects the fact and regenerates everything derived from it. |
+| **No longer true, with nothing to replace it** (decommissioned server, a tool that was fixed, a role that changed) | **Invalidate** the memory | Nothing in the pipeline knows the world changed, so you tell it explicitly. |
+| **A duplicate or superseded fact** | **Invalidate** the memory | Removes the noise from recall while keeping the audit trail. |
+| **Superseded by a newer fact you're storing anyway** (e.g. "likes BMW" → "likes Toyota") | Just retain the new fact | Consolidation already reconciles in-stream contradictions into a single observation. |
+
+The rule of thumb: **if Hindsight could have known, let consolidation handle it; if only you know, curate it.**
+
+Only raw **world** and **experience** facts can be curated. Observations are *derived* — they regenerate from their sources, so you curate the underlying facts, not the observation. A `PATCH` on an observation returns `400`.
+
+### Edit a memory
+
+Correct what the LLM extracted. You can change the **text**, **context**, **occurred dates**, **fact type**, and **entities** — anything the extractor could have gotten wrong. Hindsight re-embeds the fact, drops the observations and links derived from the old version, and re-consolidates, so downstream knowledge reflects the correction. Edited facts are marked with an `edited_at` timestamp (surfaced as an **Edited** badge in the control plane).
+
+You don't need to rebuild anything yourself: an edit **automatically recomputes the knowledge graph and links** in the background. The fact's entity associations are re-resolved from the new text/entities, its temporal and semantic links are re-derived, and consolidation re-runs — all triggered by the edit. The PATCH returns as soon as the change is committed; the graph/observation rebuild happens asynchronously right after.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoriesPy} section="edit-memory" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoriesMjs} section="edit-memory" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoriesSh} section="edit-memory" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoriesGo} section="edit-memory" language="go" />
+</TabItem>
+</Tabs>
+
+You can correct the dates, fact type, and entities the same way. For `context`, `occurred_start`, and `occurred_end`, an empty string `""` clears the field and omitting it leaves it unchanged. For `entities`, a list **replaces** the fact's entity set (names are resolved/find-or-created the same way retain does) and `[]` detaches them all; omitting it leaves them unchanged.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoriesPy} section="edit-memory-fields" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoriesMjs} section="edit-memory-fields" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoriesSh} section="edit-memory-fields" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoriesGo} section="edit-memory-fields" language="go" />
+</TabItem>
+</Tabs>
+
+### Invalidate a memory (reversible)
+
+Soft-retire a fact. An invalidated memory:
+
+- **disappears from recall**, consolidation, and the knowledge graph,
+- has its **links pruned** and its **derived observations re-computed** without it,
+- **stays in the bank** for audit (visible via the memory and document views), and
+- can be **restored** at any time.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoriesPy} section="invalidate-memory" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoriesMjs} section="invalidate-memory" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoriesSh} section="invalidate-memory" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoriesGo} section="invalidate-memory" language="go" />
+</TabItem>
+</Tabs>
+
+Restoring moves the fact back into the active set and re-consolidates:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoriesPy} section="restore-memory" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoriesMjs} section="restore-memory" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoriesSh} section="restore-memory" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoriesGo} section="restore-memory" language="go" />
+</TabItem>
+</Tabs>
+
+Behind the scenes, invalidating **moves** the row out of the active `memory_units` table into a separate archive, so recall and consolidation never need a "skip invalidated" filter — the rows simply aren't there.
+
+:::note Documents are the source of truth
+A memory is extracted from a document. Editing or invalidating a memory does **not** change the document it came from — that's deliberate: the document stays as an accurate historical record. As a result, **reprocessing a document resets curation** of the facts it produced (extraction runs fresh from the original text). Fix systematic issues at the mission level and reprocess; use edit/invalidate for the residue.
+:::
+
+### A pruning workflow
+
+To clean up duplicates and reclaim noise: cluster duplicates from `memories/list`, then **invalidate** them — recall is clean immediately, and the audit trail is preserved.

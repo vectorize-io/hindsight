@@ -69,9 +69,7 @@ def _tool_by_name(tools, name):
 class TestRetainTool:
     async def test_executes_retain(self):
         client = _mock_client()
-        tools = create_hindsight_tools(
-            bank_id="bank-1", client=client, tags=["env:prod"]
-        )
+        tools = create_hindsight_tools(bank_id="bank-1", client=client, tags=["env:prod"])
         retain = _tool_by_name(tools, "hindsight_retain")
         result = await retain.func(content="Remember this")
         assert result == "Memory stored successfully."

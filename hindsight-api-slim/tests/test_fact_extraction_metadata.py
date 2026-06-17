@@ -1,6 +1,7 @@
 """
 Unit tests for metadata inclusion in fact extraction LLM prompt.
 """
+
 from datetime import datetime
 
 from hindsight_api.engine.retain.fact_extraction import _build_user_message

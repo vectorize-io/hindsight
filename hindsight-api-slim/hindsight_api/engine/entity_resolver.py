@@ -834,14 +834,12 @@ class EntityResolver:
 
             best_candidate = None
             best_score = 0.0
-            best_name_similarity = 0.0
 
             nearby_entity_set = {e["text"].lower() for e in nearby_entities if e["text"] != entity_text}
 
             for row in candidates:
                 candidate_id = row["id"]
                 canonical_name = row["canonical_name"]
-                metadata = row["metadata"]
                 last_seen = row["last_seen"]
                 score = 0.0
 
@@ -888,7 +886,6 @@ class EntityResolver:
                 if score > best_score:
                     best_score = score
                     best_candidate = candidate_id
-                    best_name_similarity = name_similarity
 
             # Threshold for considering it the same entity
             threshold = 0.6

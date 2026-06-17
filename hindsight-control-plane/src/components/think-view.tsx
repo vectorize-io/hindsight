@@ -37,7 +37,7 @@ import { MentalModelDetailModal } from "./mental-model-detail-modal";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-type TagsMatch = "any" | "all" | "any_strict" | "all_strict";
+type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
 type ViewMode = "answer" | "trace" | "json";
 type BasedOnTab = "directives" | "mental_models" | "observations" | "world" | "experience";
 
@@ -286,6 +286,7 @@ export function ThinkView() {
                 <SelectItem value="all">{t("tagsMatchAll")}</SelectItem>
                 <SelectItem value="any_strict">{t("tagsMatchAnyStrict")}</SelectItem>
                 <SelectItem value="all_strict">{t("tagsMatchAllStrict")}</SelectItem>
+                <SelectItem value="exact">{t("tagsMatchExact")}</SelectItem>
               </SelectContent>
             </Select>
           </div>

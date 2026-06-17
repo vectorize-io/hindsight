@@ -13,7 +13,8 @@ Hindsight runs on **Linux**, **macOS**, and **Windows**:
 | Platform | Docker | Bare Metal (pip) | Embedded DB (pg0) | Notes |
 |----------|--------|------------------|--------------------|-------|
 | **Linux** (x86_64, ARM64) | ✅ | ✅ | ✅ | Fully supported, recommended for production |
-| **macOS** (Apple Silicon, Intel) | ✅ | ✅ | ✅ | Fully supported |
+| **macOS** (Apple Silicon / arm64) | ✅ | ✅ | ✅ | Fully supported |
+| **macOS** (Intel / x86_64) | ✅ | ⚠️ slim only | ✅ | Use `hindsight-all-slim` / `hindsight-api-slim`. The full bundle's local ML models (PyTorch, MLX) publish no Intel-Mac wheels, so `pip install hindsight-all` silently backtracks to a months-old release. Pair the slim bundle with a hosted embeddings/reranker provider or the in-process ONNX backend (`hindsight-api-slim[local-onnx]`). |
 | **Windows** (x86_64) | ✅ | ✅ | ✅ | Fully supported — see [Windows setup](#windows) for external PostgreSQL option |
 
 All platforms support the embedded database (pg0) for development. On Windows, you can also use an external PostgreSQL installation — see the [Windows](#windows) section for a step-by-step guide.
@@ -78,12 +79,18 @@ export OPENAI_API_KEY=sk-xxx
 
 docker run -it --pull always --name hindsight --restart unless-stopped -p 8888:8888 -p 9999:9999 \
   -e HINDSIGHT_API_LLM_API_KEY=$OPENAI_API_KEY \
-  -v $HOME/.hindsight-docker:/home/hindsight/.pg0 \
+  -v hindsight-data:/home/hindsight/.pg0 \
   ghcr.io/vectorize-io/hindsight:latest
 ```
 
 - **API Server**: http://localhost:8888
 - **Control Plane** (Web UI): http://localhost:9999
+
+:::note Persisting data: named volume vs. host bind mount
+The container runs as a non-root user (UID 1000). The `hindsight-data` **named volume** above is recommended — Docker creates it owned by the container user, so it works with no extra setup.
+
+If you instead bind-mount a **host directory** (`-v $HOME/.hindsight-docker:/home/hindsight/.pg0`), that directory must be writable by UID 1000, or the embedded database fails to start with `Permission denied`. Either `chown` the directory to UID 1000, or run the container as your host user: `--user $(id -u):$(id -g) -e HOME=/home/hindsight` (after `chown`-ing the directory to your own UID).
+:::
 
 All published images are [signed with Cosign](#verifying-image-signatures) — verification is optional.
 
@@ -358,9 +365,11 @@ The `HF_ENDPOINT` variable is used by Hugging Face tooling (`huggingface_hub`), 
 **Best for**: Using Hindsight programmatically from Python without running a separate server process.
 
 ```bash
-pip install hindsight-all        # Full — works out of the box
+pip install hindsight-all        # Full — works out of the box (Linux, Windows, Apple Silicon Macs)
 pip install hindsight-all-slim   # Slim — requires external services for embeddings, reranking, and the database
 ```
+
+On Intel (x86_64) Macs, install `hindsight-all-slim` — see [Supported Platforms](#supported-platforms).
 
 `hindsight-all` supports two modes of embedding:
 

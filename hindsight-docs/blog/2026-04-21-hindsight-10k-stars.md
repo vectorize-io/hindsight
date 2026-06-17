@@ -17,6 +17,8 @@ That vote of confidence came from real deployments. Moreover, it came from teams
 
 Today, we're celebrating that community and sharing what the numbers reveal about Hindsight's impact. Here's the story behind 10,000 stars, what surprised us most, and where agent memory systems are headed.
 
+<!-- truncate -->
+
 ---
 
 ## By the Numbers

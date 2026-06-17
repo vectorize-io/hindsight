@@ -14,6 +14,7 @@ import re
 import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from ...config import get_config
 from .models import DirectiveInfo, LLMCall, ReflectAgentResult, TokenUsageSummary, ToolCall
 from .prompts import (
     _extract_directive_rules,
@@ -302,6 +303,24 @@ def _is_context_overflow_error(exc: Exception) -> bool:
     )
 
 
+def _all_mental_models_are_usable_and_fresh(tool_output: dict[str, Any]) -> bool:
+    """Return whether every retrieved mental model is explicitly fresh and has answerable content.
+
+    Used to decide — without an extra LLM call — whether a forced
+    ``search_mental_models`` result is trustworthy enough to hand control back
+    to the agent. A model is usable only when it is explicitly ``is_stale ==
+    False`` (an unknown/missing staleness flag is treated as unsafe) and has
+    non-empty content.
+    """
+    models = tool_output.get("mental_models") or []
+    for model in models:
+        if model.get("is_stale") is not False:
+            return False
+        if not str(model.get("content") or "").strip():
+            return False
+    return True
+
+
 async def run_reflect_agent(
     llm_config: "LLMProvider",
     bank_id: str,
@@ -322,6 +341,7 @@ async def run_reflect_agent(
     budget: str | None = None,
     max_context_tokens: int = 100_000,
     llm_output_language: str | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> ReflectAgentResult:
     """
     Execute the reflect agent loop using native tool calling.
@@ -358,12 +378,16 @@ async def run_reflect_agent(
     # Extract directive rules for tool schema (if any)
     directive_rules = _extract_directive_rules(directives) if directives else None
 
-    # Get tools for this agent (with directive compliance field if directives exist)
+    # Get tools for this agent (with directive compliance field if directives exist).
+    # The expand tool only reads back raw source text (chunks/documents), so it is
+    # useless and excluded when document text storage is disabled.
+    include_expand = get_config().store_document_text
     tools = get_reflect_tools(
         directive_rules=directive_rules,
         include_mental_models=has_mental_models,
         include_observations=include_observations,
         include_recall=include_recall,
+        include_expand=include_expand,
     )
     # Build set of enabled tool names to guard against LLM hallucinating disabled tool calls
     enabled_tools: frozenset[str] = frozenset(t["function"]["name"] for t in tools if t.get("type") == "function")
@@ -381,6 +405,28 @@ async def run_reflect_agent(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": query},
     ]
+
+    # Opt into context caching for the agentic tool loop. The system
+    # prompt and tool definitions are stable for the duration of this
+    # reflect call (and across reflects against the same bank), so
+    # caching them once and reusing across every iteration of the loop
+    # collapses the dominant input cost — the prefix repeated on every
+    # turn. ``get_or_create_cached_prefix`` returns None when caching is
+    # disabled, unsupported, or the prefix is too small; the
+    # ``call_with_tools`` invocation below transparently falls back to
+    # the uncached path in that case.
+    cached_prefix_name: str | None = None
+    provider_impl = getattr(llm_config, "_provider_impl", None)
+    if provider_impl is not None and provider_impl.supports_prompt_caching():
+        try:
+            cached_prefix_name = await provider_impl.get_or_create_cached_prefix(
+                system_instruction=system_prompt,
+                tools=tools,
+            )
+        except Exception:
+            # Caching is a soft optimisation; never let a cache-side
+            # error block a reflect.
+            cached_prefix_name = None
 
     # Tracking
     total_tools_called = 0
@@ -442,7 +488,19 @@ async def run_reflect_agent(
         )
 
     consecutive_errors = 0
+    # When a forced ``search_mental_models`` returns fresh, usable models on a
+    # low/mid-budget call, we stop forcing the lower retrieval layers from this
+    # iteration onward and let the agent answer (or retrieve deeper itself)
+    # under ``auto`` tool choice. None means the full forced path still applies.
+    stop_forcing_from_iteration: int | None = None
     for iteration in range(max_iterations):
+        # Cooperative cancellation checkpoint: abort the agent loop between
+        # iterations if the caller (e.g. an HTTP client) has gone away, rather
+        # than spending another LLM round-trip on a result nobody will read
+        # (issue #2122). Raises OperationCancelledError when fired.
+        if cancel_check is not None:
+            cancel_check()
+
         is_last = iteration == max_iterations - 1
 
         if is_last:
@@ -455,7 +513,9 @@ async def run_reflect_agent(
                 messages=[
                     {
                         "role": "system",
-                        "content": build_final_system_prompt(bank_profile.get("mission"), llm_output_language),
+                        "content": build_final_system_prompt(
+                            bank_profile.get("mission"), llm_output_language, directives
+                        ),
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -515,7 +575,9 @@ async def run_reflect_agent(
                 messages=[
                     {
                         "role": "system",
-                        "content": build_final_system_prompt(bank_profile.get("mission"), llm_output_language),
+                        "content": build_final_system_prompt(
+                            bank_profile.get("mission"), llm_output_language, directives
+                        ),
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -570,18 +632,31 @@ async def run_reflect_agent(
         if include_recall:
             forced_sequence.append("recall")
 
-        if iteration < len(forced_sequence):
-            iter_tool_choice: str | dict = {"type": "function", "function": {"name": forced_sequence[iteration]}}
+        if stop_forcing_from_iteration is not None and iteration >= stop_forcing_from_iteration:
+            # A fresh mental model already short-circuited the forced path.
+            iter_tool_choice: str | dict = "auto"
+        elif iteration < len(forced_sequence):
+            iter_tool_choice = {"type": "function", "function": {"name": forced_sequence[iteration]}}
         else:
             iter_tool_choice = "auto"
 
         try:
-            result = await llm_config.call_with_tools(
+            ct_kwargs: dict[str, Any] = dict(
                 messages=messages,
                 tools=tools,
                 scope="reflect_tool_call",
                 tool_choice=iter_tool_choice,
             )
+            # Gemini rejects ``cached_content`` alongside a per-request
+            # ``tool_config`` (forced tool choice): "CachedContent can not be used
+            # with GenerateContent request setting system_instruction, tools or
+            # tool_config." The forced-sequence iterations set tool_config, so only
+            # the ``auto`` iterations can reference the cache; forced iterations send
+            # the prefix inline. The cache (tools + system prompt) is identical
+            # either way, so this just limits *which* iterations are billed cached.
+            if cached_prefix_name is not None and iter_tool_choice == "auto":
+                ct_kwargs["cached_prefix"] = cached_prefix_name
+            result = await llm_config.call_with_tools(**ct_kwargs)
             llm_duration = int((time.time() - llm_start) * 1000)
             consecutive_errors = 0
             total_input_tokens += result.input_tokens
@@ -621,7 +696,9 @@ async def run_reflect_agent(
                 messages=[
                     {
                         "role": "system",
-                        "content": build_final_system_prompt(bank_profile.get("mission"), llm_output_language),
+                        "content": build_final_system_prompt(
+                            bank_profile.get("mission"), llm_output_language, directives
+                        ),
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -745,7 +822,9 @@ async def run_reflect_agent(
                 messages=[
                     {
                         "role": "system",
-                        "content": build_final_system_prompt(bank_profile.get("mission"), llm_output_language),
+                        "content": build_final_system_prompt(
+                            bank_profile.get("mission"), llm_output_language, directives
+                        ),
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -850,7 +929,9 @@ async def run_reflect_agent(
             hallucinated_tools = []
             for tc in other_tools:
                 norm = _normalize_tool_name(tc.name)
-                if enabled_tools is not None and norm not in enabled_tools and norm not in ("done", "expand"):
+                # "done" is always available. "expand" is governed by enabled_tools
+                # (it is excluded when text storage is disabled), so it is not hardcoded here.
+                if enabled_tools is not None and norm not in enabled_tools and norm != "done":
                     hallucinated_tools.append(tc)
                 else:
                     allowed_tools.append(tc)
@@ -924,6 +1005,25 @@ async def run_reflect_agent(
                     for mm in output["mental_models"]:
                         if "id" in mm:
                             available_mental_model_ids.add(mm["id"])
+                    # Deterministic short-circuit (no extra LLM call): on a
+                    # low/mid-budget call, if every retrieved mental model is
+                    # fresh and has usable content, stop forcing the lower
+                    # retrieval layers. The next iteration runs under ``auto``
+                    # tool choice, so the agent can answer directly when the
+                    # mental model suffices, or — having just read it — issue a
+                    # targeted ``search_observations``/``recall`` itself. Stale,
+                    # empty, or missing mental models keep the full forced path.
+                    if (
+                        stop_forcing_from_iteration is None
+                        and (budget or "low").lower() != "high"
+                        and output.get("mental_models")
+                        and _all_mental_models_are_usable_and_fresh(output)
+                    ):
+                        stop_forcing_from_iteration = iteration + 1
+                        logger.info(
+                            f"[REFLECT {reflect_id}] Fresh mental models sufficient on iteration {iteration + 1}; "
+                            "releasing forced lower-level retrieval to auto."
+                        )
 
                 if (
                     normalized_tool_name == "search_observations"
@@ -1159,8 +1259,10 @@ async def _execute_tool(
     # Normalize tool name for various LLM output formats
     tool_name = _normalize_tool_name(tool_name)
 
-    # Guard against LLMs hallucinating calls to tools that were not provided
-    if enabled_tools is not None and tool_name not in enabled_tools and tool_name not in ("done", "expand"):
+    # Guard against LLMs hallucinating calls to tools that were not provided.
+    # "done" is always available; "expand" is governed by enabled_tools (excluded
+    # when text storage is disabled), so it is not hardcoded as always-allowed here.
+    if enabled_tools is not None and tool_name not in enabled_tools and tool_name != "done":
         return {"error": f"Tool '{tool_name}' is not available. Use only the tools provided to you."}
 
     if tool_name == "search_mental_models":

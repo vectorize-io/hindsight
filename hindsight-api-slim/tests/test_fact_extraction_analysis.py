@@ -1,6 +1,7 @@
 """
 Test to analyze fact extraction token usage and identify optimization opportunities.
 """
+
 import asyncio
 import logging
 import time
@@ -63,9 +64,9 @@ async def test_fact_extraction_basic_analysis(llm_config):
 
     duration = time.time() - start_time
 
-    logger.info(f"\n{'='*60}")
+    logger.info(f"\n{'=' * 60}")
     logger.info(f"EXTRACTION RESULTS")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
     logger.info(f"Duration: {duration:.2f}s")
     logger.info(f"Chunks: {len(chunks)}")
     logger.info(f"Facts extracted: {len(facts)}")
@@ -86,13 +87,13 @@ async def test_fact_extraction_basic_analysis(llm_config):
     # Show sample facts
     logger.info(f"\nSample facts (first 10):")
     for i, fact in enumerate(facts[:10]):
-        logger.info(f"\n  [{i+1}] {fact.fact_type}: {fact.fact[:150]}...")
+        logger.info(f"\n  [{i + 1}] {fact.fact_type}: {fact.fact[:150]}...")
 
     # Show facts containing key terms
     key_terms = ["kubernetes", "k8s", "CKA", "certification", "Alice"]
-    logger.info(f"\n{'='*60}")
+    logger.info(f"\n{'=' * 60}")
     logger.info(f"FACTS CONTAINING KEY TERMS")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
 
     for term in key_terms:
         matching = [f for f in facts if term.lower() in f.fact.lower()]

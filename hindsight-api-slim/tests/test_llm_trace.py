@@ -222,6 +222,41 @@ async def test_configured_provider_binds_bank_context(registered_recorder):
     assert current_trace_context() is None  # unwound after the call
 
 
+@pytest.mark.asyncio
+async def test_engine_teardown_unregisters_recorder_even_when_close_skipped():
+    """Regression for #2229.
+
+    Span recorders live in a process-global registry, and providers fan every call
+    out to ALL registered recorders. The engine fixtures must remove their recorder
+    on teardown even when ``close()`` is skipped (pool already closing/absent) or
+    raises before the unregister step — otherwise a leaked, still-enabled recorder
+    from an earlier test records a later test's LLM calls into the shared DB, which
+    is what made ``test_disabled_writes_no_rows`` flaky. The teardown helper must
+    leave the registry exactly as it found it.
+    """
+    from hindsight_api import tracing
+
+    from tests.conftest import _teardown_memory_engine
+
+    sentinel = object()
+    tracing.register_span_recorder(sentinel)
+    try:
+        assert sentinel in tracing.get_span_recorder()._recorders
+
+        # _pool=None makes the helper's gated close() a no-op, exercising the exact
+        # leak path; the finally must still unregister the recorder.
+        class _FakeEngine:
+            _pool = None
+            _llm_recorder = sentinel
+
+        await _teardown_memory_engine(_FakeEngine())
+        assert sentinel not in tracing.get_span_recorder()._recorders
+    finally:
+        # Belt-and-suspenders: don't leave the sentinel in the global registry if an
+        # assertion above fails (idempotent — the helper normally already removed it).
+        tracing.unregister_span_recorder(sentinel)
+
+
 # ── HTTP read API (integration) ───────────────────────────────────────────────
 
 
@@ -307,9 +342,7 @@ async def test_retain_creates_trace_rows_with_tokens(trace_api_client, bank_id):
 
     # Filtering by a trace_id returns only that operation run's calls.
     a_trace = entry["trace_id"]
-    resp = await trace_api_client.get(
-        f"/v1/default/banks/{bank_id}/llm-requests", params={"trace_id": a_trace}
-    )
+    resp = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests", params={"trace_id": a_trace})
     assert resp.status_code == 200
     filtered = resp.json()
     assert filtered["total"] >= 1
@@ -402,9 +435,7 @@ async def test_memory_ids_mapped_to_retain_and_consolidation(trace_api_client, b
     # the retain that produced it (memory_ids) and any consolidation that consumed
     # it as a source (source_memory_ids).
     by_mem = (
-        await trace_api_client.get(
-            f"/v1/default/banks/{bank_id}/llm-requests", params={"memory_id": created[0]}
-        )
+        await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests", params={"memory_id": created[0]})
     ).json()
     assert by_mem["total"] >= 1
     for it in by_mem["items"]:
@@ -433,9 +464,7 @@ async def test_filter_by_status_and_operation(trace_api_client, bank_id):
         assert item["status"] == "success"
         assert item["operation"] == "retain"
 
-    response = await trace_api_client.get(
-        f"/v1/default/banks/{bank_id}/llm-requests", params={"status": "error"}
-    )
+    response = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests", params={"status": "error"})
     assert response.json()["total"] == 0
 
 
@@ -448,9 +477,7 @@ async def test_stats_endpoint_includes_tokens(trace_api_client, bank_id):
     )
     await asyncio.sleep(1.0)
 
-    response = await trace_api_client.get(
-        f"/v1/default/banks/{bank_id}/llm-requests/stats", params={"period": "1d"}
-    )
+    response = await trace_api_client.get(f"/v1/default/banks/{bank_id}/llm-requests/stats", params={"period": "1d"})
     assert response.status_code == 200
     data = response.json()
     assert data["trunc"] == "day"

@@ -30,7 +30,7 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/vectorize-io/hindsight"
-Documentation = "https://docs.hindsight.vectorize.io/sdks/integrations/agentcore"
+Documentation = "https://hindsight.vectorize.io/sdks/integrations/agentcore"
 Repository = "https://github.com/vectorize-io/hindsight"
 
 [build-system]

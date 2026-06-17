@@ -52,14 +52,24 @@
       "empty": "Noch keine Speicherbänke vorhanden.",
       "create": "Neue Bank erstellen",
       "switchTitle": "Speicherbank wechseln",
-      "returnTo": "Zurück zu {bank}"
+      "returnTo": "Zurück zu {bank}",
+      "copyName": "Name kopieren",
+      "copied": "In Zwischenablage kopiert"
     },
     "viewOnGitHub": "Auf GitHub ansehen"
   },
   "bank": {
+    "dryRunExtraction": "Probelauf-Extraktion",
+    "dryRunExtractionDescription": "Vorschau, was die aktuelle Konfiguration dieses Speichers (Retain-Mission, Extraktionsmodus, Chunk-Größe) aus dem Text extrahiert – ohne Aufnahme, es wird nichts gespeichert.",
+    "dryRunExtractionTextLabel": "Text",
+    "dryRunExtractionPlaceholder": "Fügen Sie ein Dokument oder einen Abschnitt ein, um Fakten zu extrahieren…",
+    "dryRunExtractionResponseLabel": "Antwort",
+    "dryRunExtractionEmptyState": "Führen Sie die Extraktion aus, um die JSON-Antwort zu sehen.",
+    "dryRunExtractionRun": "Extrahieren (Probelauf)",
     "bankConfiguration": "Bankkonfiguration",
     "bankConfigurationDescription": "Verwalten Sie Bankeinstellungen, Profil und Operationen.",
     "actions": "Aktionen",
+    "health": "Status",
     "exportTemplate": "Vorlage exportieren",
     "consolidating": "Wird konsolidiert...",
     "runConsolidation": "Konsolidierung ausführen",
@@ -154,7 +164,8 @@
     "llmRequestsNotEnabled": "LLM Requests nicht aktiviert",
     "llmRequestsDisabledMessage": "Das Tracing von LLM-Anfragen ist auf diesem Server deaktiviert. Setzen Sie <envVar></envVar>, um es zu aktivieren.",
     "deleteWillDeleteDetails": "Dadurch werden {memories, plural, one {# Erinnerung} other {# Erinnerungen}}, {documents, plural, one {# Dokument} other {# Dokumente}} und {links, plural, one {# Verknüpfung} other {# Verknüpfungen}} gelöscht.",
-    "deleteWillDeleteObservations": "Dadurch werden {count, plural, one {# Beobachtung} other {# Beobachtungen}} gelöscht."
+    "deleteWillDeleteObservations": "Dadurch werden {count, plural, one {# Beobachtung} other {# Beobachtungen}} gelöscht.",
+    "memoryDefense": "Speicherschutz"
   },
   "bankProfile": {
     "noBankSelected": "Keine Bank ausgewählt",
@@ -238,6 +249,18 @@
     "entity": "Entität",
     "noLinksYet": "Noch keine Verknüpfungen",
     "consolidation": "Konsolidierung",
+    "testLlm": "LLM-Verbindung testen",
+    "testingLlm": "Wird getestet…",
+    "llmConnected": "Verbunden",
+    "llmNotConfigured": "Kein LLM konfiguriert",
+    "llmAuthFailed": "Ungültiger API-Schlüssel",
+    "llmUnreachable": "Nicht erreichbar",
+    "llmTimeout": "Zeitüberschreitung",
+    "llmTestHint": "Prüft die LLMs dieses Bank (Aufnahme, Konsolidierung, Reflexion).",
+    "llmHealthTitle": "LLM-Konnektivität",
+    "llmRetest": "Erneut testen",
+    "opRetain": "Aufnahme",
+    "opReflect": "Reflexion",
     "done": "Fertig",
     "pending": "Ausstehend",
     "failed": "Fehlgeschlagen",
@@ -301,6 +324,8 @@
     "retainFailedToSave": "Retain-Einstellungen konnten nicht gespeichert werden",
     "chunkSizeLabel": "Chunk-Größe",
     "chunkSizeDescription": "Größe der Textblöcke für die Verarbeitung (Zeichen)",
+    "structuredChunkSizeLabel": "Strukturierte Chunk-Größe",
+    "structuredChunkSizeDescription": "Maximale Zeichenanzahl für eine JSONL-Zeile oder Konversationsrunde, die vollständig beibehalten wird. Leer lassen, um die Chunk-Größe zu verwenden.",
     "missionLabel": "Mission",
     "retainMissionDescription": "Worauf diese Bank während der Extraktion achten soll. Steuert das LLM, ohne die Extraktionsregeln zu ersetzen — funktioniert zusammen mit jedem Extraktionsmodus.",
     "retainMissionPlaceholder": "z. B. Technische Entscheidungen, API-Designentscheidungen und architektonische Kompromisse immer einbeziehen. Meeting-Logistik, Begrüßungen und soziale Austausche ignorieren.",
@@ -398,7 +423,26 @@
     "extractorHintWhichPlaceholder": "Extraktor-Hinweis: wann diesen Wert wählen",
     "addField": "Feld",
     "addValueShort": "Wert",
-    "noValuesYet": "Noch keine Werte."
+    "noValuesYet": "Noch keine Werte.",
+    "memoryDefenseTitle": "Speicherschutz",
+    "memoryDefenseDescription": "Inhalte beim Speichern prüfen und entscheiden, was mit Geheimnissen und anderen Sicherheitsbedenken geschehen soll, bevor sie in den Speicher gelangen.",
+    "memoryDefenseFailedToSave": "Speicherschutz-Einstellungen konnten nicht gespeichert werden",
+    "memoryDefenseSavedToast": "Speicherschutz gespeichert",
+    "memoryDefenseActionLabel": "Aktion",
+    "memoryDefenseAction_allow": "Zulassen",
+    "memoryDefenseAction_redact": "Schwärzen",
+    "memoryDefenseAction_block": "Blockieren",
+    "memoryDefenseSecretLeakTitle": "Geheimnislecks verhindern",
+    "memoryDefenseSecretLeakDescription": "Gespeicherte Inhalte auf Geheimnisse prüfen. 44 Muster für gängige Anbieter-Schlüssel, AWS und persönliche Daten.",
+    "memoryDefenseEnterpriseTitle": "Memory Defense Enterprise",
+    "memoryDefenseEnterpriseSubtitle": "Mehr erkennen, intelligenter redigieren, alles auditieren — verfügbar in Hindsight Cloud.",
+    "memoryDefenseEnterpriseFeatureDetectSecrets": "Erweiterte Geheimnis-Erkennung: 200+ Muster für Anbieter-Schlüssel, AWS, GitHub und CI-Token",
+    "memoryDefenseEnterpriseFeatureBase64": "Base64-Decodierung: erkennt Geheimnisse in codierten Nutzlasten",
+    "memoryDefenseEnterpriseFeatureLlm": "LLM-Screening: erkennt neuartige Exfiltrationsmuster, die Regex nicht erfasst",
+    "memoryDefenseEnterpriseFeaturePromptInjection": "Prompt-Injection-Erkennung: blockiert Versuche, das Verhalten des Agenten zu überschreiben",
+    "memoryDefenseEnterpriseFeatureSizeAnomaly": "Größenanomalie: lehnt verdächtig große Nutzlasten ab",
+    "memoryDefenseEnterpriseFeatureProtectedKeys": "Geschützte Tag-Namespaces: erzwingt unveränderliche Identitäts-Tags",
+    "memoryDefenseEnterpriseCta": "Demo anfragen"
   },
   "bankOperations": {
     "title": "Hintergrundoperationen",
@@ -427,7 +471,7 @@
       "retain": "Retain",
       "consolidation": "Konsolidierung",
       "refreshMentalModel": "Mental-Model-Aktualisierung",
-      "fileConvertRetain": "Datei konvertieren und Retain",
+      "fileConvertRetain": "Datei konvertieren",
       "webhookDelivery": "Webhook-Zustellung",
       "graphMaintenance": "Graph-Wartung"
     },
@@ -437,7 +481,8 @@
       "created": "Erstellt",
       "status": "Status",
       "index": "Index",
-      "items": "Elemente"
+      "items": "Elemente",
+      "actions": "Aktionen"
     },
     "action": {
       "cancel": "Abbrechen",
@@ -453,12 +498,21 @@
       "type": "Typ",
       "created": "Erstellt",
       "updated": "Aktualisiert",
-      "completed": "Abgeschlossen"
+      "completed": "Abgeschlossen",
+      "progress": "Fortschritt",
+      "lastHeartbeat": "Letzter Heartbeat"
     },
     "metadata": "Metadaten",
     "error": "Fehler",
     "rawPayloadParentHelp": "Dies ist ein übergeordneter Vorgang: Die Rohdaten-Payload wird in jedem Teilbatch gespeichert. Öffnen Sie einen untergeordneten Vorgang, um seine Payload zu prüfen.",
-    "rawPayloadEmpty": "Für diesen Vorgang ist keine Rohdaten-Payload gespeichert."
+    "rawPayloadEmpty": "Für diesen Vorgang ist keine Rohdaten-Payload gespeichert.",
+    "heartbeat": {
+      "justNow": "gerade eben",
+      "secondsAgo": "vor {secs}s",
+      "minutesAgo": "vor {mins}m",
+      "hoursAgo": "vor {hours}h"
+    },
+    "progressEstimateNote": "Die Gesamtzahl ist eine Schätzung vom Start der Konsolidierung und kann steigen, wenn währenddessen neue Erinnerungen hinzukommen — das ist normal."
   },
   "dataView": {
     "loadingMemories": "Erinnerungen werden geladen...",
@@ -543,7 +597,16 @@
     "sourceFactsLabel": "Quellfakten",
     "errorLoadingData": "Fehler beim Laden der {factType}-Daten",
     "all": "Alle",
-    "memoryComposition": "Speicherzusammensetzung"
+    "memoryComposition": "Speicherzusammensetzung",
+    "scopeLabel": "Bereich",
+    "scopeAll": "Alle Bereiche",
+    "scopeGlobal": "Global (keine Tags)",
+    "groupByScope": "Nach Bereich gruppieren",
+    "scopeSearch": "Bereiche suchen…",
+    "scopeNoResults": "Keine Bereiche gefunden",
+    "filterActive": "Aktiv",
+    "filterInvalidated": "Ungültig",
+    "invalidatedHint": "Ungültig gemachte Erinnerungen werden archiviert – aus Recall und Reflect ausgeblendet, aber zu Prüfzwecken aufbewahrt."
   },
   "documentsView": {
     "loadingDocuments": "Dokumente werden geladen...",
@@ -630,7 +693,10 @@
     "importConflictLabel": "Wenn ein Dokument bereits existiert",
     "importConflictSkip": "Überspringen — vorhandenes Dokument behalten",
     "importConflictReplace": "Ersetzen — durch das importierte überschreiben",
-    "importConflictNewId": "Beide behalten — unter neuer id importieren"
+    "importConflictNewId": "Beide behalten — unter neuer id importieren",
+    "textNotStoredWarning": "Der Quelltext wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten.",
+    "labelObservationScopes": "Beobachtungsbereiche",
+    "invalidatedFactsTitle": "Ungültige Fakten"
   },
   "entitiesView": {
     "viewRelations": "Beziehungen",
@@ -728,6 +794,7 @@
     "optionsTagsMatchAll": "all — UND-Abgleich, schließt Einträge ohne Tags ein",
     "optionsTagsMatchAnyStrict": "any_strict — ODER-Abgleich, schließt Einträge ohne Tags aus",
     "optionsTagsMatchAllStrict": "all_strict — UND-Abgleich, schließt Einträge ohne Tags aus",
+    "optionsTagsMatchExact": "exact — Mengengleichheit, schließt Einträge ohne Tags aus",
     "optionsTagsMatchDescription": "Steuert, wie die Tags des Modells Erinnerungen während der Aktualisierung filtern.",
     "optionsTagGroupsLabel": "Tag-Gruppen (JSON)",
     "optionsTagGroupsDescription": "Zusammengesetzte boolesche Tag-Ausdrücke zur Filterung bei der Aktualisierung. Überschreibt flache Tags, wenn gesetzt.",
@@ -777,6 +844,7 @@
     "tagsMatchAll": "Alle (inkl. ohne Tags)",
     "tagsMatchAnyStrict": "Beliebig (strikt)",
     "tagsMatchAllStrict": "Alle (strikt)",
+    "tagsMatchExact": "Exakt (Mengengleich)",
     "excludeMentalModels": "Mentale Modelle ausschließen",
     "excludeIdsLabel": "IDs ausschließen:",
     "excludeIdsPlaceholder": "modell-a, modell-b",
@@ -853,6 +921,7 @@
     "tagsMatchAll": "Alle (inkl. ohne Tags)",
     "tagsMatchAnyStrict": "Beliebig (strikt)",
     "tagsMatchAllStrict": "Alle (strikt)",
+    "tagsMatchExact": "Exakt (Mengengleich)",
     "budgetLow": "Niedrig",
     "budgetMid": "Mittel",
     "budgetHigh": "Hoch",
@@ -990,8 +1059,9 @@
     "actionDeleteMentalModel": "Mentales Modell löschen",
     "actionCreateDirective": "Direktive erstellen",
     "actionDeleteDirective": "Direktive löschen",
-    "actionFileConvertRetain": "Datei konvertieren und Retain",
+    "actionFileConvertRetain": "Datei konvertieren",
     "actionWebhookDelivery": "Webhook-Zustellung",
+    "actionMemoryDefense": "Speicherschutz",
     "transportAll": "Alle Transportmittel",
     "transportHttp": "HTTP",
     "transportMcp": "MCP",
@@ -1227,7 +1297,26 @@
     "viewHistory": "Verlauf anzeigen",
     "tracedByTitle": "Erstellt von",
     "tracedBySummary": "{calls} Aufrufe · {tokens} Tokens",
-    "consolidatedByTitle": "Konsolidiert von"
+    "consolidatedByTitle": "Konsolidiert von",
+    "editFieldEntities": "Entities",
+    "editEntityPlaceholder": "Add entity…",
+    "editEntityRemove": "Remove {entity}",
+    "editedBadge": "Edited",
+    "curationInvalidateTitle": "Erinnerung ungültig machen",
+    "curationInvalidateExplain": "Dadurch wird die Erinnerung in das Archiv für ungültige Einträge verschoben. Sie erscheint nicht mehr in Recall oder Reflect, bleibt aber zur Prüfung erhalten und kann später wiederhergestellt werden.",
+    "curationReasonPlaceholder": "Grund (optional)",
+    "curationCancel": "Abbrechen",
+    "curationInvalidate": "Ungültig machen",
+    "curationActions": "Kuratierung",
+    "curationEdit": "Bearbeiten",
+    "curationReasonLabel": "Grund",
+    "curationRevert": "Wiederherstellen",
+    "curationSave": "Speichern",
+    "curationStateInvalidated": "Ungültig",
+    "editFieldContext": "Kontext",
+    "editFieldOccurredEnd": "Enddatum",
+    "editFieldOccurredStart": "Startdatum",
+    "editFieldType": "Typ"
   },
   "documentChunkModal": {
     "documentTitle": "Dokumentdetails",
@@ -1357,7 +1446,9 @@
     "linkTypeSemantic": "semantisch",
     "linkTypeTemporal": "zeitlich",
     "linkTypeEntity": "Entität",
-    "linkTypeCausal": "kausal"
+    "linkTypeCausal": "kausal",
+    "exportSvgTitle": "Als SVG zum Teilen herunterladen",
+    "exportSvgLabel": "Teilen"
   },
   "metadata": {
     "title": "Hindsight Cloud",
@@ -1376,7 +1467,7 @@
     "selectedFilesLabel": "Ausgewählte Dateien ({count})",
     "extractionMethodLabel": "Extraktionsmethode",
     "parserStandardLabel": "Standard",
-    "parserStandardDescription": "Kostenlos — für die meisten Dokumente geeignet (nicht für Bilder)",
+    "parserStandardDescription": "Kostenlos — gut für textbasierte Dokumente; Bild-OCR hängt von der Serverkonfiguration ab",
     "parserEnhancedLabel": "Erweitert (Iris)",
     "parserEnhancedDescription": "Zusätzliche Gebühr — bessere Qualität für komplexe Layouts, gescannte Dokumente und Bilder",
     "contextLabel": "Kontext",
@@ -1432,9 +1523,13 @@
     "strategyHelpText": "Überschreibt die Standard-Extraktionsstrategie der Bank für dieses Dokument.",
     "observationScopePerTag": "Pro Tag",
     "observationScopeAllCombinations": "Alle Kombinationen",
+    "observationScopeShared": "Geteilt",
+    "observationScopeSharedHelp": "Alle Beobachtungen werden in einem gemeinsamen, ungetaggten Bereich gespeichert (Tags werden ignoriert).",
+    "observationScopeCustom": "Benutzerdefiniert",
     "observationScopesEmpty": "Fügen Sie oben Tags hinzu, um Beobachtungsbereiche vorzuschauen",
     "metadataHelpText": "Ein <code>key: value</code> pro Zeile",
-    "entitiesHelpText": "Kommagetrennte Hinweise, die mit automatisch extrahierten Entitäten zusammengeführt werden"
+    "entitiesHelpText": "Kommagetrennte Hinweise, die mit automatisch extrahierten Entitäten zusammengeführt werden",
+    "textNotStoredWarning": "Der Rohtext des Dokuments wird auf diesem Server nicht gespeichert – nur die extrahierten Erinnerungen werden behalten."
   },
   "dashboard": {
     "welcome": "Willkommen bei Hindsight",
@@ -1497,7 +1592,8 @@
         "notFound": "Erinnerung nicht gefunden",
         "retain": "Batch-Retain konnte nicht ausgeführt werden",
         "retainAsync": "Asynchrones Batch-Retain konnte nicht ausgeführt werden",
-        "history": "Beobachtungsverlauf konnte nicht abgerufen werden"
+        "history": "Beobachtungsverlauf konnte nicht abgerufen werden",
+        "update": "Erinnerung konnte nicht aktualisiert werden"
       },
       "documents": {
         "fetchList": "Dokumente konnten nicht abgerufen werden",

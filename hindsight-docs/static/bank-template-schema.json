@@ -65,8 +65,21 @@
             }
           ],
           "default": null,
-          "description": "Max token size for each content chunk",
+          "description": "Target max characters for each content chunk",
           "title": "Retain Chunk Size"
+        },
+        "retain_structured_chunk_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max characters for a single JSONL line or conversation turn to keep whole; defaults to retain_chunk_size when unset",
+          "title": "Retain Structured Chunk Size"
         },
         "enable_observations": {
           "anyOf": [
@@ -276,6 +289,23 @@
           "default": null,
           "description": "Max observations to retain per consolidation scope",
           "title": "Max Observations Per Scope"
+        },
+        "observation_scope_limits": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-scope overrides of max_observations_per_scope: [{\"scope\": [\"run_*\", \"shared\"], \"limit\": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope.",
+          "title": "Observation Scope Limits"
         },
         "reflect_source_facts_max_tokens": {
           "anyOf": [
@@ -585,7 +615,8 @@
                 "any",
                 "all",
                 "any_strict",
-                "all_strict"
+                "all_strict",
+                "exact"
               ],
               "type": "string"
             },
@@ -715,7 +746,8 @@
             "any",
             "all",
             "any_strict",
-            "all_strict"
+            "all_strict",
+            "exact"
           ],
           "title": "Match",
           "type": "string"

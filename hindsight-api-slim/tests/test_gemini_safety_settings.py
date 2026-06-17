@@ -133,13 +133,17 @@ async def test_call_applies_safety_settings():
     assert hasattr(config_arg, "safety_settings"), "Config should have safety_settings"
     assert config_arg.safety_settings is not None
 
-    categories = [s.category.value if hasattr(s.category, "value") else str(s.category) for s in config_arg.safety_settings]
+    categories = [
+        s.category.value if hasattr(s.category, "value") else str(s.category) for s in config_arg.safety_settings
+    ]
     assert "HARM_CATEGORY_HARASSMENT" in categories
     assert "HARM_CATEGORY_HATE_SPEECH" in categories
     assert "HARM_CATEGORY_SEXUALLY_EXPLICIT" in categories
     assert "HARM_CATEGORY_DANGEROUS_CONTENT" in categories
 
-    thresholds = [s.threshold.value if hasattr(s.threshold, "value") else str(s.threshold) for s in config_arg.safety_settings]
+    thresholds = [
+        s.threshold.value if hasattr(s.threshold, "value") else str(s.threshold) for s in config_arg.safety_settings
+    ]
     assert all(t == "BLOCK_NONE" for t in thresholds)
 
 
@@ -212,7 +216,9 @@ async def test_call_with_tools_applies_safety_settings():
 
     assert config_arg is not None
     assert config_arg.safety_settings is not None
-    categories = [s.category.value if hasattr(s.category, "value") else str(s.category) for s in config_arg.safety_settings]
+    categories = [
+        s.category.value if hasattr(s.category, "value") else str(s.category) for s in config_arg.safety_settings
+    ]
     assert "HARM_CATEGORY_HARASSMENT" in categories
 
 
@@ -266,7 +272,9 @@ async def test_with_config_overrides_instance_settings():
 
     config_arg = provider._provider_impl._client.aio.models.generate_content.call_args.kwargs.get("config")
     assert config_arg is not None
-    categories = [s.category.value if hasattr(s.category, "value") else str(s.category) for s in config_arg.safety_settings]
+    categories = [
+        s.category.value if hasattr(s.category, "value") else str(s.category) for s in config_arg.safety_settings
+    ]
     # Should use override_settings (HATE_SPEECH), not instance_settings (HARASSMENT)
     assert "HARM_CATEGORY_HATE_SPEECH" in categories
     assert "HARM_CATEGORY_HARASSMENT" not in categories
@@ -285,7 +293,9 @@ async def test_with_config_none_falls_back_to_instance():
 
     config_arg = provider._provider_impl._client.aio.models.generate_content.call_args.kwargs.get("config")
     assert config_arg is not None
-    categories = [s.category.value if hasattr(s.category, "value") else str(s.category) for s in config_arg.safety_settings]
+    categories = [
+        s.category.value if hasattr(s.category, "value") else str(s.category) for s in config_arg.safety_settings
+    ]
     assert "HARM_CATEGORY_HARASSMENT" in categories
 
 

@@ -39,13 +39,14 @@ from hindsight_client_api.models import (
     retain_request,
 )
 from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
+from hindsight_client_api.models.tool_calls_include_options import ToolCallsIncludeOptions
 from hindsight_client_api.models.bank_profile_response import BankProfileResponse
 from hindsight_client_api.models.file_retain_response import FileRetainResponse
 from hindsight_client_api.models.list_memory_units_response import ListMemoryUnitsResponse
 from hindsight_client_api.models.recall_response import RecallResponse
-from hindsight_client_api.models.recall_result import RecallResult
 from hindsight_client_api.models.reflect_response import ReflectResponse
 from hindsight_client_api.models.retain_response import RetainResponse
+from hindsight_client_api.models.version_response import VersionResponse
 
 
 def _run_async(coro):
@@ -245,6 +246,29 @@ class Hindsight:
         if self._api_client:
             await self._api_client.close()
 
+    def get_version(self) -> VersionResponse:
+        """
+        Read the connected Hindsight API version and feature flags
+        (sync wrapper — prefer :meth:`aget_version` in async code).
+
+        Useful for integrations that need to enforce a minimum server version
+        before enabling a workflow.
+
+        Returns:
+            VersionResponse with ``api_version`` and ``features``.
+        """
+        return _run_async(self._monitoring_api.get_version(_request_timeout=self._timeout))
+
+    async def aget_version(self) -> VersionResponse:
+        """
+        Read the connected Hindsight API version and feature flags
+        (async — preferred over :meth:`get_version`).
+
+        Returns:
+            VersionResponse with ``api_version`` and ``features``.
+        """
+        return await self._monitoring_api.get_version(_request_timeout=self._timeout)
+
     # Simplified methods for main operations
 
     def retain(
@@ -361,7 +385,11 @@ class Hindsight:
 
         request_body = json.dumps({"files_metadata": meta})
 
-        return _run_async(self._files_api.file_retain(bank_id=bank_id, files=file_data, request=request_body, _request_timeout=self._timeout))
+        return _run_async(
+            self._files_api.file_retain(
+                bank_id=bank_id, files=file_data, request=request_body, _request_timeout=self._timeout
+            )
+        )
 
     def recall(
         self,
@@ -379,7 +407,7 @@ class Hindsight:
         include_source_facts: bool = False,
         max_source_facts_tokens: int = 4096,
         tags: list[str] | None = None,
-        tags_match: Literal["any", "all", "any_strict", "all_strict"] = "any",
+        tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         tag_groups: list[dict[str, Any]] | None = None,
     ) -> RecallResponse:
         """
@@ -402,7 +430,8 @@ class Hindsight:
             max_source_facts_tokens: Maximum tokens for source facts (default: 4096)
             tags: Optional list of tags to filter memories by
             tags_match: How to match tags - "any" (OR, includes untagged), "all" (AND, includes untagged),
-                "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged). Default: "any"
+                "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged),
+                "exact" (set equality, excludes untagged). Default: "any"
             tag_groups: Optional list of tag group filters for advanced boolean tag matching.
 
         Returns:
@@ -438,8 +467,10 @@ class Hindsight:
         max_tokens: int | None = None,
         response_schema: dict[str, Any] | None = None,
         tags: list[str] | None = None,
-        tags_match: Literal["any", "all", "any_strict", "all_strict"] = "any",
+        tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         include_facts: bool = False,
+        include_tool_calls: bool = False,
+        include_tool_call_output: bool = True,
         tag_groups: list[dict[str, Any]] | None = None,
         fact_types: list[str] | None = None,
         exclude_mental_models: bool = False,
@@ -459,17 +490,25 @@ class Hindsight:
                 response parsed according to this schema.
             tags: Optional list of tags to filter memories by
             tags_match: How to match tags - "any" (OR, includes untagged), "all" (AND, includes untagged),
-                "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged). Default: "any"
+                "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged),
+                "exact" (set equality, excludes untagged). Default: "any"
             include_facts: If True, the response will include a 'based_on' field listing
                 the memories, mental models, and directives used to construct the answer.
+            include_tool_calls: If True, the response will include a 'trace' field with the
+                tool calls and LLM calls made during reflection (``trace.tool_calls`` and
+                ``trace.llm_calls``).
+            include_tool_call_output: When ``include_tool_calls`` is True, controls whether tool
+                outputs are included in the trace. Set to False for a smaller payload (inputs only).
+                Ignored when ``include_tool_calls`` is False (default: True).
             tag_groups: Optional list of tag group filters for advanced boolean tag matching.
             fact_types: Optional list of fact types to include (world, experience, observation).
             exclude_mental_models: If True, exclude all mental models from reflection (default: False).
             exclude_mental_model_ids: Optional list of specific mental model IDs to exclude.
 
         Returns:
-            ReflectResponse with answer text, optionally facts used, and optionally
-            structured_output if response_schema was provided
+            ReflectResponse with answer text, optionally facts used, optionally a 'trace' with
+            tool/LLM calls (if include_tool_calls), and optionally structured_output if
+            response_schema was provided
         """
         return _run_async(
             self.areflect(
@@ -482,6 +521,8 @@ class Hindsight:
                 tags=tags,
                 tags_match=tags_match,
                 include_facts=include_facts,
+                include_tool_calls=include_tool_calls,
+                include_tool_call_output=include_tool_call_output,
                 tag_groups=tag_groups,
                 fact_types=fact_types,
                 exclude_mental_models=exclude_mental_models,
@@ -522,6 +563,7 @@ class Hindsight:
         retain_extraction_mode: str | None = None,
         retain_custom_instructions: str | None = None,
         retain_chunk_size: int | None = None,
+        retain_structured_chunk_size: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
         reflect_mission: str | None = None,
@@ -540,7 +582,9 @@ class Hindsight:
             retain_mission: Steers what gets extracted during retain(). Injected alongside built-in rules.
             retain_extraction_mode: Fact extraction mode: 'concise' (default), 'verbose', or 'custom'.
             retain_custom_instructions: Custom extraction prompt (only active when mode is 'custom').
-            retain_chunk_size: Maximum token size for each content chunk during retain.
+            retain_chunk_size: Target maximum characters for each content chunk during retain.
+            retain_structured_chunk_size: Maximum characters for a single JSONL line or conversation
+                turn to keep whole during retain. Defaults to retain_chunk_size when unset.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations. Replaces built-in rules.
             reflect_mission: Mission/context for Reflect operations.
@@ -560,6 +604,7 @@ class Hindsight:
                 retain_extraction_mode=retain_extraction_mode,
                 retain_custom_instructions=retain_custom_instructions,
                 retain_chunk_size=retain_chunk_size,
+                retain_structured_chunk_size=retain_structured_chunk_size,
                 enable_observations=enable_observations,
                 observations_mission=observations_mission,
                 background=background,
@@ -580,6 +625,7 @@ class Hindsight:
         retain_extraction_mode: str | None = None,
         retain_custom_instructions: str | None = None,
         retain_chunk_size: int | None = None,
+        retain_structured_chunk_size: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
         background: str | None = None,
@@ -616,6 +662,8 @@ class Hindsight:
             body["retain_custom_instructions"] = retain_custom_instructions
         if retain_chunk_size is not None:
             body["retain_chunk_size"] = retain_chunk_size
+        if retain_structured_chunk_size is not None:
+            body["retain_structured_chunk_size"] = retain_structured_chunk_size
         if enable_observations is not None:
             body["enable_observations"] = enable_observations
         if observations_mission is not None:
@@ -654,6 +702,7 @@ class Hindsight:
         retain_extraction_mode: str | None = None,
         retain_custom_instructions: str | None = None,
         retain_chunk_size: int | None = None,
+        retain_structured_chunk_size: int | None = None,
         enable_observations: bool | None = None,
         observations_mission: str | None = None,
         reflect_mission: str | None = None,
@@ -672,7 +721,9 @@ class Hindsight:
             retain_mission: Steers what gets extracted during retain(). Injected alongside built-in rules.
             retain_extraction_mode: Fact extraction mode: 'concise' (default), 'verbose', or 'custom'.
             retain_custom_instructions: Custom extraction prompt (only active when mode is 'custom').
-            retain_chunk_size: Maximum token size for each content chunk during retain.
+            retain_chunk_size: Target maximum characters for each content chunk during retain.
+            retain_structured_chunk_size: Maximum characters for a single JSONL line or conversation
+                turn to keep whole during retain. Defaults to retain_chunk_size when unset.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations. Replaces built-in rules.
             reflect_mission: Mission/context for Reflect operations.
@@ -691,6 +742,7 @@ class Hindsight:
             retain_extraction_mode=retain_extraction_mode,
             retain_custom_instructions=retain_custom_instructions,
             retain_chunk_size=retain_chunk_size,
+            retain_structured_chunk_size=retain_structured_chunk_size,
             enable_observations=enable_observations,
             observations_mission=observations_mission,
             background=background,
@@ -829,7 +881,7 @@ class Hindsight:
         include_source_facts: bool = False,
         max_source_facts_tokens: int = 4096,
         tags: list[str] | None = None,
-        tags_match: Literal["any", "all", "any_strict", "all_strict"] = "any",
+        tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         tag_groups: list[dict[str, Any]] | None = None,
     ) -> RecallResponse:
         """
@@ -852,7 +904,8 @@ class Hindsight:
             max_source_facts_tokens: Maximum tokens for source facts (default: 4096)
             tags: Optional list of tags to filter memories by
             tags_match: How to match tags - "any" (OR, includes untagged), "all" (AND, includes untagged),
-                "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged). Default: "any"
+                "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged),
+                "exact" (set equality, excludes untagged). Default: "any"
             tag_groups: Optional list of tag group filters for advanced boolean tag matching.
                 Each element is a dict representing a tag group node (TagGroupLeaf, TagGroupAnd,
                 TagGroupOr, or TagGroupNot). Example::
@@ -909,8 +962,10 @@ class Hindsight:
         max_tokens: int | None = None,
         response_schema: dict[str, Any] | None = None,
         tags: list[str] | None = None,
-        tags_match: Literal["any", "all", "any_strict", "all_strict"] = "any",
+        tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         include_facts: bool = False,
+        include_tool_calls: bool = False,
+        include_tool_call_output: bool = True,
         tag_groups: list[dict[str, Any]] | None = None,
         fact_types: list[str] | None = None,
         exclude_mental_models: bool = False,
@@ -930,19 +985,32 @@ class Hindsight:
                 response parsed according to this schema.
             tags: Optional list of tags to filter memories by
             tags_match: How to match tags - "any" (OR, includes untagged), "all" (AND, includes untagged),
-                "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged). Default: "any"
+                "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged),
+                "exact" (set equality, excludes untagged). Default: "any"
             include_facts: If True, the response will include a 'based_on' field listing
                 the memories, mental models, and directives used to construct the answer.
+            include_tool_calls: If True, the response will include a 'trace' field with the
+                tool calls and LLM calls made during reflection (``trace.tool_calls`` and
+                ``trace.llm_calls``).
+            include_tool_call_output: When ``include_tool_calls`` is True, controls whether tool
+                outputs are included in the trace. Set to False for a smaller payload (inputs only).
+                Ignored when ``include_tool_calls`` is False (default: True).
             tag_groups: Optional list of tag group filters for advanced boolean tag matching.
             fact_types: Optional list of fact types to include (world, experience, observation).
             exclude_mental_models: If True, exclude all mental models from reflection (default: False).
             exclude_mental_model_ids: Optional list of specific mental model IDs to exclude.
 
         Returns:
-            ReflectResponse with answer text, optionally facts used, and optionally
-            structured_output if response_schema was provided
+            ReflectResponse with answer text, optionally facts used, optionally a 'trace' with
+            tool/LLM calls (if include_tool_calls), and optionally structured_output if
+            response_schema was provided
         """
-        include = ReflectIncludeOptions(facts={}) if include_facts else None
+        include = None
+        if include_facts or include_tool_calls:
+            include = ReflectIncludeOptions(
+                facts={} if include_facts else None,
+                tool_calls=ToolCallsIncludeOptions(output=include_tool_call_output) if include_tool_calls else None,
+            )
 
         tag_groups_objs = None
         if tag_groups is not None:
@@ -1009,7 +1077,9 @@ class Hindsight:
             trigger=trigger_obj,
         )
 
-        return _run_async(self._mental_models_api.create_mental_model(bank_id, request_obj, _request_timeout=self._timeout))
+        return _run_async(
+            self._mental_models_api.create_mental_model(bank_id, request_obj, _request_timeout=self._timeout)
+        )
 
     def list_mental_models(self, bank_id: str, tags: list[str] | None = None):
         """
@@ -1022,7 +1092,9 @@ class Hindsight:
         Returns:
             ListMentalModelsResponse with items
         """
-        return _run_async(self._mental_models_api.list_mental_models(bank_id, tags=tags, _request_timeout=self._timeout))
+        return _run_async(
+            self._mental_models_api.list_mental_models(bank_id, tags=tags, _request_timeout=self._timeout)
+        )
 
     def get_mental_model(self, bank_id: str, mental_model_id: str):
         """
@@ -1035,7 +1107,9 @@ class Hindsight:
         Returns:
             MentalModelResponse
         """
-        return _run_async(self._mental_models_api.get_mental_model(bank_id, mental_model_id, _request_timeout=self._timeout))
+        return _run_async(
+            self._mental_models_api.get_mental_model(bank_id, mental_model_id, _request_timeout=self._timeout)
+        )
 
     def refresh_mental_model(self, bank_id: str, mental_model_id: str):
         """
@@ -1048,7 +1122,9 @@ class Hindsight:
         Returns:
             RefreshMentalModelResponse with operation_id
         """
-        return _run_async(self._mental_models_api.refresh_mental_model(bank_id, mental_model_id, _request_timeout=self._timeout))
+        return _run_async(
+            self._mental_models_api.refresh_mental_model(bank_id, mental_model_id, _request_timeout=self._timeout)
+        )
 
     def clear_mental_model(self, bank_id: str, mental_model_id: str):
         """
@@ -1061,7 +1137,9 @@ class Hindsight:
         Returns:
             MentalModelResponse with cleared content
         """
-        return _run_async(self._mental_models_api.clear_mental_model(bank_id, mental_model_id, _request_timeout=self._timeout))
+        return _run_async(
+            self._mental_models_api.clear_mental_model(bank_id, mental_model_id, _request_timeout=self._timeout)
+        )
 
     def update_mental_model(
         self,
@@ -1102,7 +1180,11 @@ class Hindsight:
             trigger=trigger_obj,
         )
 
-        return _run_async(self._mental_models_api.update_mental_model(bank_id, mental_model_id, request_obj, _request_timeout=self._timeout))
+        return _run_async(
+            self._mental_models_api.update_mental_model(
+                bank_id, mental_model_id, request_obj, _request_timeout=self._timeout
+            )
+        )
 
     def delete_mental_model(self, bank_id: str, mental_model_id: str):
         """
@@ -1112,7 +1194,9 @@ class Hindsight:
             bank_id: The memory bank ID
             mental_model_id: The mental model ID
         """
-        return _run_async(self._mental_models_api.delete_mental_model(bank_id, mental_model_id, _request_timeout=self._timeout))
+        return _run_async(
+            self._mental_models_api.delete_mental_model(bank_id, mental_model_id, _request_timeout=self._timeout)
+        )
 
     def get_mental_model_history(self, bank_id: str, mental_model_id: str):
         """
@@ -1125,7 +1209,9 @@ class Hindsight:
             bank_id: The memory bank ID
             mental_model_id: The mental model ID
         """
-        return _run_async(self._mental_models_api.get_mental_model_history(bank_id, mental_model_id, _request_timeout=self._timeout))
+        return _run_async(
+            self._mental_models_api.get_mental_model_history(bank_id, mental_model_id, _request_timeout=self._timeout)
+        )
 
     # Directives methods
 
@@ -1225,7 +1311,9 @@ class Hindsight:
             tags=tags,
         )
 
-        return _run_async(self._directives_api.update_directive(bank_id, directive_id, request_obj, _request_timeout=self._timeout))
+        return _run_async(
+            self._directives_api.update_directive(bank_id, directive_id, request_obj, _request_timeout=self._timeout)
+        )
 
     def delete_directive(self, bank_id: str, directive_id: str):
         """
@@ -1273,6 +1361,7 @@ class Hindsight:
         retain_extraction_mode: str | None = None,
         retain_custom_instructions: str | None = None,
         retain_chunk_size: int | None = None,
+        retain_structured_chunk_size: int | None = None,
         retain_default_strategy: str | None = None,
         retain_strategies: dict[str, Any] | None = None,
         # Entity settings
@@ -1306,7 +1395,9 @@ class Hindsight:
             retain_mission: Steers what gets extracted during retain().
             retain_extraction_mode: Fact extraction mode: 'concise', 'verbose', or 'custom'.
             retain_custom_instructions: Custom extraction prompt (only active when mode is 'custom').
-            retain_chunk_size: Maximum token size for each content chunk during retain.
+            retain_chunk_size: Target maximum characters for each content chunk during retain.
+            retain_structured_chunk_size: Maximum characters for a single JSONL line or conversation
+                turn to keep whole during retain. Defaults to retain_chunk_size when unset.
             retain_default_strategy: Default retain strategy name.
             retain_strategies: Named strategy definitions (dict of strategy name to config).
             entity_labels: Controlled vocabulary for entity type classification.
@@ -1337,6 +1428,7 @@ class Hindsight:
                 "retain_extraction_mode": retain_extraction_mode,
                 "retain_custom_instructions": retain_custom_instructions,
                 "retain_chunk_size": retain_chunk_size,
+                "retain_structured_chunk_size": retain_structured_chunk_size,
                 "retain_default_strategy": retain_default_strategy,
                 "retain_strategies": retain_strategies,
                 "entity_labels": entity_labels,

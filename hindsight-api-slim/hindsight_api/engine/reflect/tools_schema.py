@@ -232,6 +232,7 @@ def get_reflect_tools(
     include_mental_models: bool = True,
     include_observations: bool = True,
     include_recall: bool = True,
+    include_expand: bool = True,
 ) -> list[dict]:
     """
     Get the list of tools for the reflect agent.
@@ -247,6 +248,9 @@ def get_reflect_tools(
         include_mental_models: Whether to include the search_mental_models tool.
         include_observations: Whether to include the search_observations tool.
         include_recall: Whether to include the recall tool.
+        include_expand: Whether to include the expand tool. Disabled when raw
+            document/chunk text is not stored, since expand only reads back
+            source text and would return empty results.
 
     Returns:
         List of tool definitions in OpenAI format
@@ -260,7 +264,8 @@ def get_reflect_tools(
     if include_recall:
         tools.append(TOOL_RECALL)
 
-    tools.append(TOOL_EXPAND)
+    if include_expand:
+        tools.append(TOOL_EXPAND)
 
     # Use directive-aware done tool if directives are present
     if directive_rules:

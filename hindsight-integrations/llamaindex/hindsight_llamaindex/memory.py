@@ -8,7 +8,6 @@ Provides automatic memory for LlamaIndex agents:
 
 import logging
 import re
-import time
 import uuid
 from typing import Any, Optional
 
@@ -16,6 +15,8 @@ from hindsight_client import Hindsight
 from llama_index.core.bridge.pydantic import Field, PrivateAttr
 from llama_index.core.llms import ChatMessage, MessageRole
 from llama_index.core.memory.types import BaseMemory
+
+from ._client import resolve_client
 
 logger = logging.getLogger(__name__)
 
@@ -99,9 +100,59 @@ class HindsightMemory(BaseMemory):
         return "HindsightMemory"
 
     @classmethod
-    def from_defaults(cls, **kwargs: Any) -> "HindsightMemory":
-        """Create from defaults. Prefer ``from_client()`` instead."""
-        raise NotImplementedError("Use HindsightMemory.from_client() or HindsightMemory.from_url() instead.")
+    def from_defaults(
+        cls,
+        bank_id: str,
+        *,
+        client: Optional[Hindsight] = None,
+        hindsight_api_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        mission: Optional[str] = None,
+        context: str = "llamaindex",
+        budget: str = "mid",
+        max_tokens: int = 4096,
+        tags: Optional[list[str]] = None,
+        recall_tags: Optional[list[str]] = None,
+        recall_tags_match: str = "any",
+        system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+        chat_history_limit: int = 100,
+        **kwargs: Any,
+    ) -> "HindsightMemory":
+        """Create a HindsightMemory using the shared client-resolution path.
+
+        Mirrors what ``create_hindsight_tools`` does for the tools factory:
+        when neither ``client`` nor ``hindsight_api_url`` is supplied, falls
+        back to ``DEFAULT_HINDSIGHT_API_URL`` and reads ``HINDSIGHT_API_KEY``
+        from the environment. Equivalent to
+        ``from_client(resolve_client(...), bank_id, ...)`` but spells out the
+        common cloud-default and env-var paths so callers don't have to wire
+        them themselves.
+
+        Args:
+            bank_id: Memory bank ID (required).
+            client: Pre-configured Hindsight client. Wins over URL/key.
+            hindsight_api_url: API URL. Defaults to the configured value or
+                ``DEFAULT_HINDSIGHT_API_URL``.
+            api_key: API key. Defaults to the configured value or
+                ``HINDSIGHT_API_KEY`` env var.
+            mission, context, budget, max_tokens, tags, recall_tags,
+                recall_tags_match, system_prompt, chat_history_limit:
+                Passed to ``from_client``.
+        """
+        resolved = resolve_client(client, hindsight_api_url, api_key)
+        return cls.from_client(
+            client=resolved,
+            bank_id=bank_id,
+            mission=mission,
+            context=context,
+            budget=budget,
+            max_tokens=max_tokens,
+            tags=tags,
+            recall_tags=recall_tags,
+            recall_tags_match=recall_tags_match,
+            system_prompt=system_prompt,
+            chat_history_limit=chat_history_limit,
+        )
 
     @classmethod
     def from_client(
@@ -319,16 +370,33 @@ class HindsightMemory(BaseMemory):
 
     # -- BaseMemory interface --
 
+    def _recall_query(self, input: Optional[str]) -> Optional[str]:
+        """Pick the recall query: explicit input wins; otherwise the most
+        recent USER message in local history. Workflow-based LlamaIndex agents
+        (``llama_index.core.agent.workflow.ReActAgent`` and friends) call
+        ``aget()`` without an ``input`` kwarg on the main path, so without
+        this fallback automatic recall would never fire for them.
+        """
+        if input:
+            return input
+        for msg in reversed(self._chat_history):
+            if msg.role == MessageRole.USER:
+                content = str(msg.content) if msg.content else ""
+                if content.strip():
+                    return content
+        return None
+
     def get(self, input: Optional[str] = None, **kwargs: Any) -> list[ChatMessage]:
         """Get chat history, enriched with recalled Hindsight memories.
 
-        If ``input`` is provided, relevant memories are recalled and
-        prepended as a system message.
+        Recalls using ``input`` if supplied, otherwise the most recent user
+        message in local history.
         """
         messages: list[ChatMessage] = []
 
-        if input:
-            memories_text = self._recall_memories(input)
+        query = self._recall_query(input)
+        if query:
+            memories_text = self._recall_memories(query)
             if memories_text:
                 system_content = self.system_prompt.format(memories=memories_text)
                 messages.append(ChatMessage(role=MessageRole.SYSTEM, content=system_content))
@@ -340,8 +408,9 @@ class HindsightMemory(BaseMemory):
         """Async version of get()."""
         messages: list[ChatMessage] = []
 
-        if input:
-            memories_text = await self._arecall_memories(input)
+        query = self._recall_query(input)
+        if query:
+            memories_text = await self._arecall_memories(query)
             if memories_text:
                 system_content = self.system_prompt.format(memories=memories_text)
                 messages.append(ChatMessage(role=MessageRole.SYSTEM, content=system_content))

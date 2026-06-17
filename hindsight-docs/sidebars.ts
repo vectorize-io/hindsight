@@ -100,6 +100,12 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
+          id: 'developer/api/memories',
+          label: 'Memories',
+          customProps: { icon: 'lu-eraser' },
+        },
+        {
+          type: 'doc',
           id: 'developer/api/memory-banks',
           label: 'Memory Banks',
           customProps: { icon: 'lu-memory' },
@@ -138,6 +144,19 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Security',
+      collapsible: false,
+      items: [
+        {
+          type: 'doc',
+          id: 'developer/memory-defense/index',
+          label: 'Memory Defense',
+          customProps: { icon: 'lu-shield' },
+        },
+      ],
+    },
+    {
+      type: 'category',
       label: 'Clients',
       collapsible: false,
       items: [
@@ -171,164 +190,12 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Integrations',
       collapsible: false,
-      items: [
-        {
-          type: 'link',
-          href: '/sdks/integrations/local-mcp',
-          label: 'Local MCP Server',
-          customProps: { icon: '/img/icons/mcp.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/chatgpt',
-          label: 'ChatGPT',
-          customProps: { icon: '/img/icons/chatgpt.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/perplexity',
-          label: 'Perplexity',
-          customProps: { icon: '/img/icons/perplexity.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/litellm',
-          label: 'LiteLLM',
-          customProps: { icon: '/img/icons/litellm.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/claude-code',
-          label: 'Claude Code',
-          customProps: { icon: '/img/icons/claudecode.svg' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/grok-build',
-          label: 'Grok Build',
-          customProps: { icon: '/img/icons/terminal.svg' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/codex',
-          label: 'OpenAI Codex CLI',
-          customProps: { icon: '/img/icons/terminal.svg' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/openclaw',
-          label: 'OpenClaw',
-          customProps: { icon: '/img/icons/openclaw.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/ai-sdk',
-          label: 'Vercel AI SDK',
-          customProps: { icon: '/img/icons/vercel.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/chat',
-          label: 'Vercel Chat SDK',
-          customProps: { icon: '/img/icons/vercel.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/crewai',
-          label: 'CrewAI',
-          customProps: { icon: '/img/icons/crewai.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/pydantic-ai',
-          label: 'Pydantic AI',
-          customProps: { icon: '/img/icons/pydanticai.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/agno',
-          label: 'Agno',
-          customProps: { icon: '/img/icons/agno.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/hermes',
-          label: 'Hermes Agent',
-          customProps: { icon: '/img/icons/hermes.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/langgraph',
-          label: 'LangGraph / LangChain',
-          customProps: { icon: '/img/icons/langgraph.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/nemoclaw',
-          label: 'NemoClaw',
-          customProps: { icon: '/img/icons/nemoclaw.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/paperclip',
-          label: 'Paperclip',
-          customProps: { icon: '/img/icons/nodejs.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/strands',
-          label: 'Strands Agents',
-          customProps: { icon: '/img/icons/strands.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/agentcore',
-          label: 'AgentCore Runtime',
-          customProps: { icon: '/img/icons/agentcore.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/smolagents',
-          label: 'SmolAgents',
-          customProps: { icon: '/img/icons/smolagents.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/ag2',
-          label: 'AG2',
-          customProps: { icon: '/img/icons/ag2.svg' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/autogen',
-          label: 'AutoGen',
-          customProps: { icon: '/img/icons/autogen.svg' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/llamaindex',
-          label: 'LlamaIndex',
-          customProps: { icon: '/img/icons/llamaindex.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/google-adk',
-          label: 'Google ADK',
-          customProps: { icon: '/img/icons/google-adk.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/skills',
-          label: 'Skills',
-          customProps: { icon: '/img/icons/skills.png' },
-        },
-        {
-          type: 'link',
-          href: '/sdks/integrations/context-forge',
-          label: 'ContextForge',
-          customProps: { icon: '/img/icons/mcp.png' },
-        },
-      ],
+      // Positional placeholder. The real items are injected at render time from
+      // src/data/integrations.json by the swizzled DocPage/Layout/Sidebar
+      // component — single source of truth, shared across all docs versions.
+      // (Docusaurus rejects an empty category, so we seed one valid link to the
+      // gallery; the component replaces these items.)
+      items: [{type: 'link', href: '/integrations', label: 'Browse all integrations'}],
     },
     {
       type: 'category',

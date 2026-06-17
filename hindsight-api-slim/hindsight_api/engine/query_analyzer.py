@@ -6,11 +6,16 @@ structured information like temporal constraints.
 """
 
 import logging
-import re
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 
 from pydantic import BaseModel, Field
+
+from hindsight_api.engine.temporal_periods import (
+    NO_TEMPORAL_CONSTRAINT,
+    extract_period,
+    is_embedded_cjk_dateparser_match,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -123,9 +128,12 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
 
         # Check for period expressions first (these need special handling)
         query_lower = query.lower()
-        period_result = self._extract_period(query_lower, reference_date)
-        if period_result is not None:
-            return QueryAnalysis(temporal_constraint=period_result)
+        period_result = extract_period(query_lower, reference_date)
+        if period_result is NO_TEMPORAL_CONSTRAINT:
+            return QueryAnalysis(temporal_constraint=None)
+        if isinstance(period_result, tuple):
+            start_date, end_date = period_result
+            return QueryAnalysis(temporal_constraint=TemporalConstraint(start_date=start_date, end_date=end_date))
 
         # Lazy load dateparser (only imports on first call, then cached)
         self.load()
@@ -158,7 +166,12 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
 
         # Filter out false positives (common words parsed as dates)
         false_positives = {"do", "may", "march", "will", "can", "sat", "sun", "mon", "tue", "wed", "thu", "fri"}
-        valid_results = [(text, date) for text, date in results if text.lower() not in false_positives or len(text) > 3]
+        valid_results = [
+            (text, date)
+            for text, date in results
+            if (text.lower() not in false_positives or len(text) > 3)
+            and not is_embedded_cjk_dateparser_match(query, text)
+        ]
 
         if not valid_results:
             return QueryAnalysis(temporal_constraint=None)
@@ -171,127 +184,6 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
         end_date = parsed_date.replace(hour=23, minute=59, second=59, microsecond=999999)
 
         return QueryAnalysis(temporal_constraint=TemporalConstraint(start_date=start_date, end_date=end_date))
-
-    def _extract_period(self, query: str, reference_date: datetime) -> TemporalConstraint | None:
-        """
-        Extract period-based temporal expressions (week, month, year, weekend).
-
-        These need special handling as they represent date ranges, not single dates.
-        Supports multiple languages.
-        """
-
-        def constraint(start: datetime, end: datetime) -> TemporalConstraint:
-            return TemporalConstraint(
-                start_date=start.replace(hour=0, minute=0, second=0, microsecond=0),
-                end_date=end.replace(hour=23, minute=59, second=59, microsecond=999999),
-            )
-
-        # Yesterday patterns (English, Spanish, Italian, French, German)
-        if re.search(r"\b(yesterday|ayer|ieri|hier|gestern)\b", query, re.IGNORECASE):
-            d = reference_date - timedelta(days=1)
-            return constraint(d, d)
-
-        # Today patterns
-        if re.search(r"\b(today|hoy|oggi|aujourd\'?hui|heute)\b", query, re.IGNORECASE):
-            return constraint(reference_date, reference_date)
-
-        # "a couple of days ago" / "a few days ago" patterns
-        # These are imprecise so we create a range
-        if re.search(r"\b(a\s+)?couple\s+(of\s+)?days?\s+ago\b", query, re.IGNORECASE):
-            # "a couple of days" = approximately 2 days, give range of 1-3 days
-            return constraint(reference_date - timedelta(days=3), reference_date - timedelta(days=1))
-
-        if re.search(r"\b(a\s+)?few\s+days?\s+ago\b", query, re.IGNORECASE):
-            # "a few days" = approximately 3-4 days, give range of 2-5 days
-            return constraint(reference_date - timedelta(days=5), reference_date - timedelta(days=2))
-
-        # "a couple of weeks ago" / "a few weeks ago" patterns
-        if re.search(r"\b(a\s+)?couple\s+(of\s+)?weeks?\s+ago\b", query, re.IGNORECASE):
-            # "a couple of weeks" = approximately 2 weeks, give range of 1-3 weeks
-            return constraint(reference_date - timedelta(weeks=3), reference_date - timedelta(weeks=1))
-
-        if re.search(r"\b(a\s+)?few\s+weeks?\s+ago\b", query, re.IGNORECASE):
-            # "a few weeks" = approximately 3-4 weeks, give range of 2-5 weeks
-            return constraint(reference_date - timedelta(weeks=5), reference_date - timedelta(weeks=2))
-
-        # "a couple of months ago" / "a few months ago" patterns
-        if re.search(r"\b(a\s+)?couple\s+(of\s+)?months?\s+ago\b", query, re.IGNORECASE):
-            # "a couple of months" = approximately 2 months, give range of 1-3 months
-            return constraint(reference_date - timedelta(days=90), reference_date - timedelta(days=30))
-
-        if re.search(r"\b(a\s+)?few\s+months?\s+ago\b", query, re.IGNORECASE):
-            # "a few months" = approximately 3-4 months, give range of 2-5 months
-            return constraint(reference_date - timedelta(days=150), reference_date - timedelta(days=60))
-
-        # Last week patterns (English, Spanish, Italian, French, German)
-        if re.search(
-            r"\b(last\s+week|la\s+semana\s+pasada|la\s+settimana\s+scorsa|la\s+semaine\s+derni[eè]re|letzte\s+woche)\b",
-            query,
-            re.IGNORECASE,
-        ):
-            start = reference_date - timedelta(days=reference_date.weekday() + 7)
-            return constraint(start, start + timedelta(days=6))
-
-        # Last month patterns
-        if re.search(
-            r"\b(last\s+month|el\s+mes\s+pasado|il\s+mese\s+scorso|le\s+mois\s+dernier|letzten?\s+monat)\b",
-            query,
-            re.IGNORECASE,
-        ):
-            first = reference_date.replace(day=1)
-            end = first - timedelta(days=1)
-            start = end.replace(day=1)
-            return constraint(start, end)
-
-        # Last year patterns
-        if re.search(
-            r"\b(last\s+year|el\s+a[ñn]o\s+pasado|l\'anno\s+scorso|l\'ann[ée]e\s+derni[eè]re|letztes?\s+jahr)\b",
-            query,
-            re.IGNORECASE,
-        ):
-            year = reference_date.year - 1
-            return constraint(datetime(year, 1, 1), datetime(year, 12, 31))
-
-        # Last weekend patterns
-        if re.search(
-            r"\b(last\s+weekend|el\s+fin\s+de\s+semana\s+pasado|lo\s+scorso\s+fine\s+settimana|le\s+week-?end\s+dernier|letztes?\s+wochenende)\b",
-            query,
-            re.IGNORECASE,
-        ):
-            days_since_sat = (reference_date.weekday() + 2) % 7
-            if days_since_sat == 0:
-                days_since_sat = 7
-            sat = reference_date - timedelta(days=days_since_sat)
-            return constraint(sat, sat + timedelta(days=1))
-
-        # Month + Year patterns (e.g., "June 2024", "junio 2024", "giugno 2024")
-        month_patterns = {
-            "january|enero|gennaio|janvier|januar": 1,
-            "february|febrero|febbraio|f[ée]vrier|februar": 2,
-            "march|marzo|mars|m[äa]rz": 3,
-            "april|abril|aprile|avril": 4,
-            "may|mayo|maggio|mai": 5,
-            "june|junio|giugno|juin|juni": 6,
-            "july|julio|luglio|juillet|juli": 7,
-            "august|agosto|ao[uû]t": 8,
-            "september|septiembre|settembre|septembre": 9,
-            "october|octubre|ottobre|octobre|oktober": 10,
-            "november|noviembre|novembre": 11,
-            "december|diciembre|dicembre|d[ée]cembre|dezember": 12,
-        }
-
-        for pattern, month_num in month_patterns.items():
-            match = re.search(rf"\b({pattern})\s+(\d{{4}})\b", query, re.IGNORECASE)
-            if match:
-                year = int(match.group(2))
-                start = datetime(year, month_num, 1)
-                if month_num == 12:
-                    end = datetime(year, 12, 31)
-                else:
-                    end = datetime(year, month_num + 1, 1) - timedelta(days=1)
-                return constraint(start, end)
-
-        return None
 
 
 class TransformerQueryAnalyzer(QueryAnalyzer):

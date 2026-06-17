@@ -1,6 +1,6 @@
 name: hindsight
 # Docker Compose file for Hindsight with PostgreSQL and vectorchord
-# docker compose -f docker/docker-compose/docker-compose.yaml down && sleep 2 && docker compose -f docker/docker-compose/docker-compose.yaml up -d
+# docker compose -f docker/docker-compose/vchord/docker-compose.yaml down && sleep 2 && docker compose -f docker/docker-compose/vchord/docker-compose.yaml up -d
 # Make sure to set the required environment variables before running:
 # - HINDSIGHT_DB_PASSWORD: Password for the PostgreSQL user
 # - Configure LLM provider variables as needed (see below in the hindsight service)

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-embed"
-version = "0.7.2"
+version = "0.8.2"
 description = "Hindsight embedded CLI - local memory operations without a server"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,6 +18,8 @@ hindsight-embed = "hindsight_embed.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["hindsight_embed"]
+# Ship the control center's static SPA assets (incl. self-hosted fonts).
+artifacts = ["hindsight_embed/control_center/static/**/*"]
 
 [dependency-groups]
 dev = [
@@ -29,11 +31,13 @@ dev = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-exclude = [
-    "tests/",
-]
 
 [tool.ruff.lint]
+# Tests are formatted (via `ruff format`) but excluded from lint rules, which
+# are too noisy for test code (unused imports/vars, import ordering).
+exclude = [
+    "tests/**",
+]
 select = [
     "E",      # pycodestyle errors
     "W",      # pycodestyle warnings
@@ -43,8 +47,6 @@ select = [
 ignore = [
     "E501",   # line too long (handled by formatter)
     "E402",   # module import not at top of file
-    "F401",   # unused import (too noisy during development)
-    "F841",   # unused variable (too noisy during development)
 ]
 
 [tool.ruff.format]

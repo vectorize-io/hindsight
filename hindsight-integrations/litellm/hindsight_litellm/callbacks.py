@@ -13,7 +13,8 @@ import fnmatch
 import hashlib
 import logging
 import threading
-from typing import Any, Dict, List, Optional, Set
+from collections import OrderedDict
+from typing import Any, Dict, List, Optional
 
 from litellm.integrations.custom_logger import CustomLogger
 from litellm.types.utils import ModelResponse
@@ -27,6 +28,24 @@ from .config import (
     get_config,
     get_defaults,
 )
+
+
+def _hindsight_enable_active() -> bool:
+    """Return True if enable() is currently active.
+
+    Imported lazily to avoid a circular import with the top-level
+    ``hindsight_litellm`` module. Used by the callback's pre-call hooks
+    to short-circuit when enable() is also wired up — without this,
+    both the monkeypatch and the callback would inject memories on the
+    same request, producing duplicate context.
+    """
+    try:
+        from . import is_enabled as _is_enabled
+
+        return bool(_is_enabled())
+    except Exception:
+        return False
+
 
 # Use requests for sync HTTP calls to avoid async event loop issues
 try:
@@ -74,9 +93,15 @@ class HindsightCallback(CustomLogger):
     - Configurable memory injection modes
     - Support for entity observations in recall
 
+    NOTE: HindsightCallback and enable() are mutually exclusive injection paths.
+    Use one or the other — not both. Registering HindsightCallback in
+    litellm.callbacks while enable() is active causes double memory injection.
+    Prefer enable() for most use cases; use HindsightCallback directly only if
+    you need LiteLLM's native callback lifecycle (e.g., failure hooks).
+
     Usage:
         >>> from hindsight_litellm import configure, enable
-        >>> configure(bank_id="my-agent", hindsight_api_url="http://localhost:8888")
+        >>> configure(bank_id="my-agent")
         >>> enable()
         >>>
         >>> # Now all LiteLLM calls will have memory integration
@@ -92,8 +117,14 @@ class HindsightCallback(CustomLogger):
         super().__init__()
         self._http_session = None
         self._http_lock = threading.Lock()
-        # Track recently stored conversation hashes for deduplication
-        self._recent_hashes: Set[str] = set()
+        # Track recently stored conversation hashes for deduplication.
+        # OrderedDict gives us true LRU eviction (popitem(last=False)
+        # removes the *oldest* entry, unlike set.pop() which is arbitrary)
+        # and the lock makes the cache safe across the sync
+        # log_success_event path and the async-callback path that runs
+        # storage on an executor thread.
+        self._recent_hashes: "OrderedDict[str, None]" = OrderedDict()
+        self._hash_lock = threading.Lock()
         self._max_hash_cache = 1000
 
     def _get_effective_settings(self, kwargs: Dict[str, Any]) -> HindsightCallSettings:
@@ -240,15 +271,21 @@ class HindsightCallback(CustomLogger):
         return hashlib.md5(content.encode()).hexdigest()[:16]
 
     def _is_duplicate(self, conv_hash: str) -> bool:
-        """Check if this conversation was recently stored."""
-        if conv_hash in self._recent_hashes:
-            return True
+        """Check if this conversation was recently stored.
 
-        # Add to cache, evict oldest if full
-        self._recent_hashes.add(conv_hash)
-        if len(self._recent_hashes) > self._max_hash_cache:
-            # Remove oldest (arbitrary since set, but good enough)
-            self._recent_hashes.pop()
+        Thread-safe under concurrent sync + async callback paths, with
+        true LRU eviction (oldest hash dropped first) when the cache is
+        full.
+        """
+        with self._hash_lock:
+            if conv_hash in self._recent_hashes:
+                # Touch to mark as most-recently-used.
+                self._recent_hashes.move_to_end(conv_hash)
+                return True
+
+            self._recent_hashes[conv_hash] = None
+            if len(self._recent_hashes) > self._max_hash_cache:
+                self._recent_hashes.popitem(last=False)
 
         return False
 
@@ -690,6 +727,9 @@ class HindsightCallback(CustomLogger):
 
         This is where we inject memories into the messages.
         """
+        if _hindsight_enable_active():
+            return
+
         config = get_config()
         if not config or not config.inject_memories:
             return
@@ -697,7 +737,7 @@ class HindsightCallback(CustomLogger):
         # Get effective settings (kwargs override defaults)
         settings = self._get_effective_settings(kwargs)
         if not settings.bank_id:
-            raise ValueError(
+            raise HindsightError(
                 "No bank_id configured. Either call set_defaults(bank_id=...) "
                 "or pass hindsight_bank_id=... to the completion call."
             )
@@ -749,6 +789,9 @@ class HindsightCallback(CustomLogger):
 
         This is where we inject memories into the messages.
         """
+        if _hindsight_enable_active():
+            return
+
         config = get_config()
         if not config or not config.inject_memories:
             return
@@ -756,7 +799,7 @@ class HindsightCallback(CustomLogger):
         # Get effective settings (kwargs override defaults)
         settings = self._get_effective_settings(kwargs)
         if not settings.bank_id:
-            raise ValueError(
+            raise HindsightError(
                 "No bank_id configured. Either call set_defaults(bank_id=...) "
                 "or pass hindsight_bank_id=... to the completion call."
             )

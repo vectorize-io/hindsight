@@ -109,12 +109,11 @@ def _mock_llm_one_obs_per_fact():
     def callback(messages, scope):
         if scope != "consolidation":
             return _ConsolidationBatchResponse()
-        prompt = messages[0]["content"] if messages else ""
+        # Facts live in the user message; the system message (stable, cached) carries
+        # example UUIDs in its OUTPUT samples — read user only.
+        prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
         fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
-        creates = [
-            _CreateAction(text=f"Observation about fact {fid[:8]}", source_fact_ids=[fid])
-            for fid in fact_ids
-        ]
+        creates = [_CreateAction(text=f"Observation about fact {fid[:8]}", source_fact_ids=[fid]) for fid in fact_ids]
         return _ConsolidationBatchResponse(creates=creates)
 
     mock_llm.set_response_callback(callback)
@@ -168,11 +167,49 @@ async def test_combined_mode_parallel_writes_to_memory_tag_set(memory: MemoryEng
 
         assert result["status"] == "completed"
         tag_sets = _ag_sorted(await _fetch_observation_tag_sets(memory, bank_id))
-        assert tag_sets == _ag_sorted([
-            frozenset({"user:alice"}),
-            frozenset({"user:bob"}),
-            frozenset({"user:carol"}),
-        ])
+        assert tag_sets == _ag_sorted(
+            [
+                frozenset({"user:alice"}),
+                frozenset({"user:bob"}),
+                frozenset({"user:carol"}),
+            ]
+        )
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_shared_mode_parallel_writes_only_untagged_scope(memory: MemoryEngine, request_context):
+    """shared → every memory writes to the single untagged scope, ignoring its
+    own tags. Three memories with disjoint tags therefore all consolidate into
+    the same global scope (the per-session-tag dedup use case) instead of one
+    isolated observation per tag."""
+    bank_id = f"test-shared-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+    try:
+        async with memory._pool.acquire() as conn:
+            await _insert_memory(conn, bank_id, "Alice likes tea", ["session:s1"], "shared")
+            await _insert_memory(conn, bank_id, "Bob bikes daily", ["session:s2"], "shared")
+            await _insert_memory(conn, bank_id, "Carol reads books", ["session:s3"], "shared")
+
+        wrapper, _ = _mock_llm_one_obs_per_fact()
+        original_llm = memory._consolidation_llm_config
+        memory._consolidation_llm_config = wrapper
+        try:
+            with (
+                _override_config(memory, consolidation_llm_parallelism=3, consolidation_llm_batch_size=1),
+                patch.object(memory, "submit_async_consolidation"),
+            ):
+                result = await run_consolidation_job(
+                    memory_engine=memory, bank_id=bank_id, request_context=request_context
+                )
+        finally:
+            memory._consolidation_llm_config = original_llm
+
+        assert result["status"] == "completed"
+        tag_sets = await _fetch_observation_tag_sets(memory, bank_id)
+        # Every observation lands at the untagged scope — none carries a session tag.
+        assert tag_sets and all(t == frozenset() for t in tag_sets), tag_sets
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -371,8 +408,7 @@ async def test_overlapping_scopes_serialise_under_parallelism(memory: MemoryEngi
         # The whole point: lock invariant per scope.
         for scope, peak in max_concurrent.items():
             assert peak <= 1, (
-                f"scope {set(scope) or '<untagged>'} had {peak} concurrent in-flight recalls; "
-                "lock invariant violated"
+                f"scope {set(scope) or '<untagged>'} had {peak} concurrent in-flight recalls; lock invariant violated"
             )
         # Sanity: we DID see recalls for the shared scope, so the test wasn't trivial.
         assert frozenset({"a"}) in max_concurrent
@@ -419,9 +455,7 @@ async def test_per_batch_log_line_attributes_only_own_work(memory: MemoryEngine,
                 patch.object(memory, "submit_async_consolidation"),
                 caplog.at_level(logging.INFO, logger="hindsight_api.engine.consolidation.consolidator"),
             ):
-                await run_consolidation_job(
-                    memory_engine=memory, bank_id=bank_id, request_context=request_context
-                )
+                await run_consolidation_job(memory_engine=memory, bank_id=bank_id, request_context=request_context)
         finally:
             memory._consolidation_llm_config = original_llm
 
@@ -450,9 +484,7 @@ async def test_per_batch_log_line_attributes_only_own_work(memory: MemoryEngine,
         assert processed_values == sorted(processed_values), (
             f"processed counter must be monotonic, got {processed_values}"
         )
-        assert max(processed_values) == 3, (
-            f"final cumulative processed should be 3, got {max(processed_values)}"
-        )
+        assert max(processed_values) == 3, f"final cumulative processed should be 3, got {max(processed_values)}"
         assert set(processed_values) == {1, 2, 3}, (
             f"each batch should bump the counter by exactly 1, got {processed_values}"
         )
@@ -464,9 +496,7 @@ async def test_per_batch_log_line_attributes_only_own_work(memory: MemoryEngine,
             assert m_llm_time, f"expected llm=Xs timing, got: {line}"
             # Sanity: a single mock-LLM call is fast — under a second easily.
             # If snapshot leaked, this would catch concurrent batches' LLM time too.
-            assert float(m_llm_time.group(1)) < 5.0, (
-                f"llm timing implausibly large for a single mock-LLM call: {line}"
-            )
+            assert float(m_llm_time.group(1)) < 5.0, f"llm timing implausibly large for a single mock-LLM call: {line}"
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 

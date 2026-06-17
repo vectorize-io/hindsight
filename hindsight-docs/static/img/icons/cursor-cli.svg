@@ -1,0 +1,19 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="cursorA" x1="32" y1="6" x2="32" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E4E4E4"/>
+      <stop offset="1" stop-color="#9B9B9B"/>
+    </linearGradient>
+    <linearGradient id="cursorB" x1="10" y1="19" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#BDBDBD"/>
+      <stop offset="1" stop-color="#6E6E6E"/>
+    </linearGradient>
+    <linearGradient id="cursorC" x1="54" y1="19" x2="32" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7A7A7A"/>
+      <stop offset="1" stop-color="#3A3A3A"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 6 54 19 32 32 10 19Z" fill="url(#cursorA)"/>
+  <path d="M10 19 32 32 32 58 10 45Z" fill="url(#cursorB)"/>
+  <path d="M54 19 32 32 32 58 54 45Z" fill="url(#cursorC)"/>
+</svg>

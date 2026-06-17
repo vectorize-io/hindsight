@@ -141,8 +141,11 @@ ENV_LLM_TIMEOUT = "HINDSIGHT_API_LLM_TIMEOUT"
 ENV_LLM_REASONING_EFFORT = "HINDSIGHT_API_LLM_REASONING_EFFORT"
 ENV_LLM_GROQ_SERVICE_TIER = "HINDSIGHT_API_LLM_GROQ_SERVICE_TIER"
 ENV_LLM_OPENAI_SERVICE_TIER = "HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER"
+ENV_LLM_BEDROCK_SERVICE_TIER = "HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER"
 ENV_LLM_EXTRA_BODY = "HINDSIGHT_API_LLM_EXTRA_BODY"
 ENV_LLM_DEFAULT_HEADERS = "HINDSIGHT_API_LLM_DEFAULT_HEADERS"
+ENV_LLM_STRICT_SCHEMA = "HINDSIGHT_API_LLM_STRICT_SCHEMA"
+ENV_LLM_SEND_BANK_AS_USER = "HINDSIGHT_API_LLM_SEND_BANK_AS_USER"
 
 # LiteLLM Router chain — provider-specific config consumed by the "litellmrouter"
 # provider. Each entry is a deployment; the Router tries them in declared order and
@@ -155,6 +158,7 @@ ENV_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG"
 # Defaults for service tiers
 DEFAULT_LLM_GROQ_SERVICE_TIER = "auto"  # "on_demand", "flex", or "auto"
 DEFAULT_LLM_OPENAI_SERVICE_TIER = None  # None (default) or "flex" (50% cheaper)
+DEFAULT_LLM_BEDROCK_SERVICE_TIER = None  # None (default), "flex", "priority", or "reserved"
 DEFAULT_LLM_EXTRA_BODY = None  # None = no extra body params; JSON dict merged into OpenAI extra_body
 DEFAULT_LLM_DEFAULT_HEADERS = (
     None  # None = no extra headers; JSON dict passed as default_headers to provider SDK clients
@@ -209,6 +213,17 @@ ENV_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_EMBEDDINGS_PROVIDER"
 ENV_EMBEDDINGS_LOCAL_MODEL = "HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL"
 ENV_EMBEDDINGS_LOCAL_FORCE_CPU = "HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"
 ENV_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE = "HINDSIGHT_API_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE"
+ENV_EMBEDDINGS_ONNX_MODEL_ID = "HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_ID"
+ENV_EMBEDDINGS_ONNX_MODEL_PATH = "HINDSIGHT_API_EMBEDDINGS_ONNX_MODEL_PATH"
+ENV_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH = "HINDSIGHT_API_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH"
+ENV_EMBEDDINGS_ONNX_FILE = "HINDSIGHT_API_EMBEDDINGS_ONNX_FILE"
+ENV_EMBEDDINGS_ONNX_DIMENSIONS = "HINDSIGHT_API_EMBEDDINGS_ONNX_DIMENSIONS"
+ENV_EMBEDDINGS_ONNX_MAX_TOKENS = "HINDSIGHT_API_EMBEDDINGS_ONNX_MAX_TOKENS"
+ENV_EMBEDDINGS_ONNX_POOLING = "HINDSIGHT_API_EMBEDDINGS_ONNX_POOLING"
+ENV_EMBEDDINGS_ONNX_NORMALIZE = "HINDSIGHT_API_EMBEDDINGS_ONNX_NORMALIZE"
+ENV_EMBEDDINGS_ONNX_QUERY_PREFIX = "HINDSIGHT_API_EMBEDDINGS_ONNX_QUERY_PREFIX"
+ENV_EMBEDDINGS_ONNX_PASSAGE_PREFIX = "HINDSIGHT_API_EMBEDDINGS_ONNX_PASSAGE_PREFIX"
+ENV_EMBEDDINGS_ONNX_OUTPUT_NAME = "HINDSIGHT_API_EMBEDDINGS_ONNX_OUTPUT_NAME"
 ENV_EMBEDDINGS_TEI_URL = "HINDSIGHT_API_EMBEDDINGS_TEI_URL"
 ENV_EMBEDDINGS_OPENAI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY"
 ENV_EMBEDDINGS_OPENAI_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL"
@@ -240,6 +255,7 @@ ENV_EMBEDDINGS_OPENROUTER_API_KEY = "HINDSIGHT_API_EMBEDDINGS_OPENROUTER_API_KEY
 ENV_EMBEDDINGS_OPENROUTER_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENROUTER_MODEL"
 ENV_RERANKER_OPENROUTER_API_KEY = "HINDSIGHT_API_RERANKER_OPENROUTER_API_KEY"
 ENV_RERANKER_OPENROUTER_MODEL = "HINDSIGHT_API_RERANKER_OPENROUTER_MODEL"
+ENV_RERANKER_OPENROUTER_BASE_URL = "HINDSIGHT_API_RERANKER_OPENROUTER_BASE_URL"
 
 # ZeroEntropy configuration (embeddings)
 ENV_EMBEDDINGS_ZEROENTROPY_API_KEY = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY"
@@ -297,6 +313,7 @@ ENV_RERANKER_LITELLM_TIMEOUT = "HINDSIGHT_API_RERANKER_LITELLM_TIMEOUT"
 ENV_RERANKER_LITELLM_SDK_TIMEOUT = "HINDSIGHT_API_RERANKER_LITELLM_SDK_TIMEOUT"
 ENV_RERANKER_GOOGLE_TIMEOUT = "HINDSIGHT_API_RERANKER_GOOGLE_TIMEOUT"
 ENV_RERANKER_MAX_CANDIDATES = "HINDSIGHT_API_RERANKER_MAX_CANDIDATES"
+ENV_SEMANTIC_MIN_SIMILARITY = "HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY"
 ENV_RERANKER_FLASHRANK_MODEL = "HINDSIGHT_API_RERANKER_FLASHRANK_MODEL"
 ENV_RERANKER_FLASHRANK_CACHE_DIR = "HINDSIGHT_API_RERANKER_FLASHRANK_CACHE_DIR"
 ENV_RERANKER_FLASHRANK_CPU_MEM_ARENA = "HINDSIGHT_API_RERANKER_FLASHRANK_CPU_MEM_ARENA"
@@ -338,6 +355,8 @@ ENV_MCP_ENABLED = "HINDSIGHT_API_MCP_ENABLED"
 ENV_MCP_ENABLED_TOOLS = "HINDSIGHT_API_MCP_ENABLED_TOOLS"
 ENV_MCP_STATELESS = "HINDSIGHT_API_MCP_STATELESS"
 ENV_ENABLE_BANK_CONFIG_API = "HINDSIGHT_API_ENABLE_BANK_CONFIG_API"
+ENV_ENABLE_BANK_LLM_HEALTH = "HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH"
+ENV_ENABLE_DRY_RUN_EXTRACT = "HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT"
 ENV_DEFAULT_BANK_TEMPLATE = "HINDSIGHT_API_DEFAULT_BANK_TEMPLATE"
 ENV_GRAPH_RETRIEVER = "HINDSIGHT_API_GRAPH_RETRIEVER"
 ENV_RECALL_MAX_CONCURRENT = "HINDSIGHT_API_RECALL_MAX_CONCURRENT"
@@ -346,6 +365,8 @@ ENV_RECALL_MAX_QUERY_TOKENS = "HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS"
 ENV_MENTAL_MODEL_REFRESH_CONCURRENCY = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_CONCURRENCY"
 ENV_LINK_EXPANSION_PER_ENTITY_LIMIT = "HINDSIGHT_API_LINK_EXPANSION_PER_ENTITY_LIMIT"
 ENV_LINK_EXPANSION_TIMEOUT = "HINDSIGHT_API_LINK_EXPANSION_TIMEOUT"
+ENV_BANK_STATS_CACHE_TTL_SECONDS = "HINDSIGHT_API_BANK_STATS_CACHE_TTL_SECONDS"
+ENV_BANK_STATS_CACHE_MAX_ENTRIES = "HINDSIGHT_API_BANK_STATS_CACHE_MAX_ENTRIES"
 
 # OpenTelemetry tracing configuration
 ENV_OTEL_TRACES_ENABLED = "HINDSIGHT_API_OTEL_TRACES_ENABLED"
@@ -363,9 +384,20 @@ ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY = "HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOU
 # Gemini safety settings
 ENV_LLM_GEMINI_SAFETY_SETTINGS = "HINDSIGHT_API_LLM_GEMINI_SAFETY_SETTINGS"
 
+# Gemini prompt caching. When enabled, retain fact-extraction reuses a
+# CachedContent prefix for the static system_instruction + response_schema,
+# cutting per-call input cost on workloads with many small documents.
+# Provider-agnostic prompt-prefix caching. Providers that support it (currently
+# Gemini/Vertex via CachedContent) reuse the large, fixed, bank-agnostic system
+# prefix at the cached-input rate; providers that don't simply ignore it. On by
+# default — the prefix is bank-agnostic so a single cache is shared across all
+# banks, and creation soft-fails to an uncached call, so it never breaks a request.
+ENV_LLM_PROMPT_CACHE_ENABLED = "HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED"
+
 # Retain settings
 ENV_RETAIN_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"
 ENV_RETAIN_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_SIZE"
+ENV_RETAIN_STRUCTURED_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE"
 ENV_RETAIN_EXTRACT_CAUSAL_LINKS = "HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS"
 ENV_RETAIN_EXTRACTION_MODE = "HINDSIGHT_API_RETAIN_EXTRACTION_MODE"
 ENV_RETAIN_MISSION = "HINDSIGHT_API_RETAIN_MISSION"
@@ -392,6 +424,11 @@ ENV_FILE_STORAGE_AZURE_ACCOUNT_NAME = "HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_
 ENV_FILE_STORAGE_AZURE_ACCOUNT_KEY = "HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_KEY"
 ENV_FILE_PARSER = "HINDSIGHT_API_FILE_PARSER"
 ENV_FILE_PARSER_ALLOWLIST = "HINDSIGHT_API_FILE_PARSER_ALLOWLIST"
+ENV_FILE_PARSER_MARKITDOWN_OCR_ENABLED = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_ENABLED"
+ENV_FILE_PARSER_MARKITDOWN_OCR_API_KEY = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_API_KEY"
+ENV_FILE_PARSER_MARKITDOWN_OCR_BASE_URL = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_BASE_URL"
+ENV_FILE_PARSER_MARKITDOWN_OCR_MODEL = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_MODEL"
+ENV_FILE_PARSER_MARKITDOWN_OCR_PROMPT = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_PROMPT"
 ENV_FILE_PARSER_IRIS_TOKEN = "HINDSIGHT_API_FILE_PARSER_IRIS_TOKEN"
 ENV_FILE_PARSER_IRIS_ORG_ID = "HINDSIGHT_API_FILE_PARSER_IRIS_ORG_ID"
 ENV_FILE_PARSER_LLAMA_PARSE_API_KEY = "HINDSIGHT_API_FILE_PARSER_LLAMA_PARSE_API_KEY"
@@ -399,6 +436,7 @@ ENV_FILE_CONVERSION_MAX_BATCH_SIZE_MB = "HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH
 ENV_FILE_CONVERSION_MAX_BATCH_SIZE = "HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE"
 ENV_ENABLE_FILE_UPLOAD_API = "HINDSIGHT_API_ENABLE_FILE_UPLOAD_API"
 ENV_FILE_DELETE_AFTER_RETAIN = "HINDSIGHT_API_FILE_DELETE_AFTER_RETAIN"
+ENV_STORE_DOCUMENT_TEXT = "HINDSIGHT_API_STORE_DOCUMENT_TEXT"
 
 # Document transfer (export/import documents between banks without re-running the LLM)
 ENV_ENABLE_DOCUMENT_EXPORT_API = "HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API"
@@ -410,8 +448,10 @@ ENV_ENABLE_AUTO_CONSOLIDATION = "HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION"
 ENV_CONSOLIDATION_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE"
 ENV_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = "HINDSIGHT_API_CONSOLIDATION_MAX_MEMORIES_PER_ROUND"
 ENV_CONSOLIDATION_LLM_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE"
+ENV_CONSOLIDATION_DEDUP_THRESHOLD = "HINDSIGHT_API_CONSOLIDATION_DEDUP_THRESHOLD"
 ENV_CONSOLIDATION_LLM_PARALLELISM = "HINDSIGHT_API_CONSOLIDATION_LLM_PARALLELISM"
 ENV_CONSOLIDATION_MAX_TOKENS = "HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS"
+ENV_CONSOLIDATION_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_CONSOLIDATION_MAX_COMPLETION_TOKENS"
 ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS = "HINDSIGHT_API_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS"
 ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION = (
     "HINDSIGHT_API_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION"
@@ -420,7 +460,9 @@ ENV_CONSOLIDATION_RECALL_BUDGET = "HINDSIGHT_API_CONSOLIDATION_RECALL_BUDGET"
 ENV_CONSOLIDATION_MAX_ATTEMPTS = "HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS"
 ENV_OBSERVATIONS_MISSION = "HINDSIGHT_API_OBSERVATIONS_MISSION"
 ENV_MAX_OBSERVATIONS_PER_SCOPE = "HINDSIGHT_API_MAX_OBSERVATIONS_PER_SCOPE"
+ENV_OBSERVATION_SCOPE_LIMITS = "HINDSIGHT_API_OBSERVATION_SCOPE_LIMITS"
 ENV_ENABLE_OBSERVATION_HISTORY = "HINDSIGHT_API_ENABLE_OBSERVATION_HISTORY"
+ENV_OBSERVATION_HISTORY_MAX_ENTRIES = "HINDSIGHT_API_OBSERVATION_HISTORY_MAX_ENTRIES"
 ENV_ENABLE_MENTAL_MODEL_HISTORY = "HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY"
 ENV_MENTAL_MODEL_HISTORY_MAX_ENTRIES = "HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES"
 
@@ -444,6 +486,7 @@ ENV_LAZY_RERANKER = "HINDSIGHT_API_LAZY_RERANKER"
 
 # Database migrations
 ENV_RUN_MIGRATIONS_ON_STARTUP = "HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP"
+ENV_MIGRATION_CONCURRENCY = "HINDSIGHT_API_MIGRATION_CONCURRENCY"
 
 # Database connection pool
 ENV_DB_POOL_MIN_SIZE = "HINDSIGHT_API_DB_POOL_MIN_SIZE"
@@ -451,6 +494,11 @@ ENV_DB_POOL_MAX_SIZE = "HINDSIGHT_API_DB_POOL_MAX_SIZE"
 ENV_DB_COMMAND_TIMEOUT = "HINDSIGHT_API_DB_COMMAND_TIMEOUT"
 ENV_DB_ACQUIRE_TIMEOUT = "HINDSIGHT_API_DB_ACQUIRE_TIMEOUT"
 ENV_DB_STATEMENT_TIMEOUT = "HINDSIGHT_API_DB_STATEMENT_TIMEOUT"
+
+# Wall-clock cap on model/connection initialization at startup. If embeddings,
+# cross-encoder, or LLM verification hang (e.g. an offline HuggingFace download
+# or an unreachable provider), the daemon fails fast instead of hanging forever.
+ENV_MODEL_INIT_TIMEOUT = "HINDSIGHT_API_MODEL_INIT_TIMEOUT"
 
 # Worker configuration (distributed task processing)
 ENV_WORKER_ENABLED = "HINDSIGHT_API_WORKER_ENABLED"
@@ -501,6 +549,14 @@ ENV_RECALL_BUDGET_MAX = "HINDSIGHT_API_RECALL_BUDGET_MAX"
 # Recall candidate gating (per-source cap + BM25 score floor)
 ENV_BM25_MIN_SCORE = "HINDSIGHT_API_BM25_MIN_SCORE"
 ENV_RECALL_MAX_CANDIDATES_PER_SOURCE = "HINDSIGHT_API_RECALL_MAX_CANDIDATES_PER_SOURCE"
+# Per-strategy recall boost. Prioritises specific retrieval arms (semantic,
+# bm25, graph, temporal) on recall via a human priority level — e.g.
+# "graph:high" to strongly favour graph hits, or "graph:high,semantic:low".
+# Valid levels: low | medium | high. The level (not a raw number) is the knob
+# because the boost is applied on two different score scales — see
+# engine/search/recall_boost.py for the level -> magnitude mapping and rationale.
+# Empty disables the feature.
+ENV_RECALL_STRATEGY_BOOSTS = "HINDSIGHT_API_RECALL_STRATEGY_BOOSTS"
 
 # Audit log settings
 ENV_AUDIT_LOG_ENABLED = "HINDSIGHT_API_AUDIT_LOG_ENABLED"
@@ -512,6 +568,9 @@ ENV_LLM_TRACE_ENABLED = "HINDSIGHT_API_LLM_TRACE_ENABLED"
 ENV_LLM_TRACE_SCOPES = "HINDSIGHT_API_LLM_TRACE_SCOPES"
 ENV_LLM_TRACE_RETENTION_DAYS = "HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS"
 ENV_LLM_TRACE_MAX_CHARS = "HINDSIGHT_API_LLM_TRACE_MAX_CHARS"
+
+# Background maintenance settings
+ENV_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS = "HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS"
 
 # Disposition settings
 ENV_DISPOSITION_SKEPTICISM = "HINDSIGHT_API_DISPOSITION_SKEPTICISM"
@@ -528,7 +587,7 @@ DEFAULT_LLM_PROVIDER = "openai"
 PROVIDER_DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-haiku-4-5",
-    "gemini": "gemini-2.5-flash",
+    "gemini": "gemini-3.5-flash",
     "groq": "openai/gpt-oss-120b",
     "minimax": "MiniMax-M3",
     "deepseek": "deepseek-v4-flash",
@@ -538,7 +597,7 @@ PROVIDER_DEFAULT_MODELS = {
     "ollama-cloud": "gemma3:12b",
     "llamacpp": "gemma-4-e2b-it",
     "lmstudio": "local-model",
-    "vertexai": "google/gemini-2.5-flash-lite",
+    "vertexai": "google/gemini-3.1-flash-lite",
     "openai-codex": "gpt-5.4-mini",
     "claude-code": "claude-sonnet-4-5-20250929",
     "mock": "mock-model",
@@ -548,6 +607,7 @@ PROVIDER_DEFAULT_MODELS = {
     "volcano": "doubao-pro-32k",
     "openrouter": "qwen/qwen3.5-9b",
     "fireworks": "accounts/fireworks/models/llama-v3p1-8b-instruct",
+    "nous": "deepseek/deepseek-v4-flash",
 }
 DEFAULT_LLM_MODEL = "gpt-4o-mini"  # Fallback if provider not in table
 # Built-in llama.cpp defaults
@@ -557,12 +617,21 @@ DEFAULT_LLAMACPP_CHAT_FORMAT = None  # None = auto-detect from GGUF metadata
 DEFAULT_LLAMACPP_NO_GRAMMAR = False  # True = disable JSON grammar enforcement (faster but less reliable)
 DEFAULT_LLAMACPP_EXTRA_ARGS = None  # Space-separated extra CLI args for llama.cpp server
 
+# True = ask schema-capable backends to grammar-enforce structured output via
+# json_schema strict (OpenAI-compatible, LiteLLM; Gemini already enforces its
+# native response_schema). Default False keeps the soft "schema-in-prompt +
+# json_object" path, which weaker self-hosted instruction-followers can violate
+# (prose preambles, markdown fences, invalid JSON) — wedging retain/consolidation
+# on parse retries.
+DEFAULT_LLM_STRICT_SCHEMA = False
+
 DEFAULT_LLM_MAX_CONCURRENT = 32
 DEFAULT_LLM_MAX_RETRIES = 3  # Max retry attempts for LLM API calls
 DEFAULT_LLM_INITIAL_BACKOFF = 1.0  # Initial backoff in seconds for retry exponential backoff
 DEFAULT_LLM_MAX_BACKOFF = 60.0  # Max backoff cap in seconds for retry exponential backoff
 DEFAULT_LLM_TIMEOUT = 120.0  # seconds
 DEFAULT_LLM_REASONING_EFFORT = "low"
+DEFAULT_LLM_SEND_BANK_AS_USER = False  # Opt-in: tag provider calls with user=<bank_id>
 
 # Vertex AI defaults
 DEFAULT_LLM_VERTEXAI_PROJECT_ID = None  # Required for Vertex AI
@@ -576,6 +645,13 @@ DEFAULT_EMBEDDINGS_PROVIDER = "local"
 DEFAULT_EMBEDDINGS_LOCAL_MODEL = "BAAI/bge-small-en-v1.5"
 DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU = False  # Force CPU mode for local embeddings
 DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE = False  # Security: disabled by default, required for some models
+DEFAULT_EMBEDDINGS_ONNX_MODEL_ID = "intfloat/multilingual-e5-small"
+DEFAULT_EMBEDDINGS_ONNX_FILE = "onnx/model.onnx"
+DEFAULT_EMBEDDINGS_ONNX_MAX_TOKENS = 512
+DEFAULT_EMBEDDINGS_ONNX_POOLING = "mean"
+DEFAULT_EMBEDDINGS_ONNX_NORMALIZE = True
+DEFAULT_EMBEDDINGS_ONNX_QUERY_PREFIX = "query: "
+DEFAULT_EMBEDDINGS_ONNX_PASSAGE_PREFIX = "passage: "
 DEFAULT_EMBEDDINGS_OPENAI_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE = 100
 DEFAULT_EMBEDDINGS_GEMINI_MODEL = "gemini-embedding-001"
@@ -607,6 +683,7 @@ DEFAULT_RERANKER_LITELLM_TIMEOUT = 60.0
 DEFAULT_RERANKER_LITELLM_SDK_TIMEOUT = 60.0
 DEFAULT_RERANKER_GOOGLE_TIMEOUT = 60.0
 DEFAULT_RERANKER_MAX_CANDIDATES = 300
+DEFAULT_SEMANTIC_MIN_SIMILARITY = 0.3
 # Minimum BM25 score a row must exceed to enter fusion. 0.0 gates out
 # zero-score (non-matching) rows on backends — notably VectorChord — whose
 # operator ranks every document rather than pre-filtering to term matches.
@@ -615,6 +692,56 @@ DEFAULT_BM25_MIN_SCORE = 0.0
 # temporal) before RRF, so a single over-expanding backend cannot fill the
 # reranker's global candidate budget on its own. 0 disables the cap.
 DEFAULT_RECALL_MAX_CANDIDATES_PER_SOURCE = 0
+# Per-strategy recall boost, as a comma-separated "strategy:level" list (e.g.
+# "graph:high,semantic:low"). Empty disables the feature. See
+# ENV_RECALL_STRATEGY_BOOSTS for the full rationale.
+DEFAULT_RECALL_STRATEGY_BOOSTS = ""
+# Retrieval arms that can be boosted; mirrors fusion.py source_names.
+RECALL_STRATEGY_NAMES = ("semantic", "bm25", "graph", "temporal")
+# User-facing priority levels. Kept in sync with recall_boost.BOOST_LEVELS by a
+# guard test; defined here (not imported) so config stays free of the heavy
+# engine.search import graph.
+RECALL_BOOST_LEVELS = ("low", "medium", "high")
+# Level applied when a strategy is listed without one (e.g. "graph" or "graph:").
+DEFAULT_RECALL_BOOST_LEVEL = "medium"
+
+
+def _parse_strategy_boosts(raw: str | None) -> dict[str, str]:
+    """Parse a "strategy:level,strategy:level" string into a boost map.
+
+    A strategy listed without a level (``"graph"`` or ``"graph:"``) defaults to
+    ``medium``. Only the strategies you list are boosted; any strategy you omit
+    keeps its normal, unboosted weight. Unknown strategy names, unknown levels,
+    and malformed entries are skipped with a warning so a typo degrades to a
+    no-op boost rather than breaking recall.
+    """
+    if not raw or not raw.strip():
+        return {}
+    boosts: dict[str, str] = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        name, _sep, level = entry.partition(":")
+        name = name.strip().lower()
+        level = level.strip().lower() or DEFAULT_RECALL_BOOST_LEVEL
+        if name not in RECALL_STRATEGY_NAMES:
+            logger.warning(
+                "Ignoring unknown recall strategy %r in boost (valid: %s)", name, ", ".join(RECALL_STRATEGY_NAMES)
+            )
+            continue
+        if level not in RECALL_BOOST_LEVELS:
+            logger.warning(
+                "Ignoring unknown recall boost level %r for %r (valid: %s)",
+                level,
+                name,
+                ", ".join(RECALL_BOOST_LEVELS),
+            )
+            continue
+        boosts[name] = level
+    return boosts
+
+
 DEFAULT_RERANKER_FLASHRANK_MODEL = "ms-marco-MiniLM-L-12-v2"  # Best balance of speed and quality
 DEFAULT_RERANKER_FLASHRANK_CACHE_DIR = None  # Use default cache directory
 DEFAULT_RERANKER_FLASHRANK_CPU_MEM_ARENA = False  # Disable ONNX CPU memory arena to bound RSS
@@ -625,6 +752,7 @@ DEFAULT_RERANKER_COHERE_MODEL = "rerank-english-v3.0"
 # OpenRouter defaults
 DEFAULT_EMBEDDINGS_OPENROUTER_MODEL = "perplexity/pplx-embed-v1-0.6b"
 DEFAULT_RERANKER_OPENROUTER_MODEL = "cohere/rerank-v3.5"
+DEFAULT_RERANKER_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/rerank"
 
 # ZeroEntropy defaults
 DEFAULT_EMBEDDINGS_ZEROENTROPY_MODEL = "zembed-1"
@@ -682,6 +810,13 @@ DEFAULT_MCP_ENABLED = True
 DEFAULT_MCP_ENABLED_TOOLS: list[str] | None = None  # None = all tools enabled
 DEFAULT_MCP_STATELESS = False  # False = stateful (supports SSE/GET); True = stateless (POST-only)
 DEFAULT_ENABLE_BANK_CONFIG_API = True
+# Dry-run extraction is a preview tool that makes a real LLM call but stores nothing. Enabled by
+# default; set HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT=false to remove the endpoint (e.g. to cap
+# provider cost/abuse on untrusted deployments).
+DEFAULT_ENABLE_DRY_RUN_EXTRACT = True
+# The per-bank LLM connectivity probe makes a real provider call, so it's OFF by
+# default (cost/abuse concerns) and must be explicitly enabled to expose the endpoint.
+DEFAULT_ENABLE_BANK_LLM_HEALTH = False
 DEFAULT_DEFAULT_BANK_TEMPLATE: dict | None = None  # BankTemplateManifest dict applied to newly-created banks
 DEFAULT_GRAPH_RETRIEVER = "link_expansion"
 DEFAULT_RECALL_MAX_CONCURRENT = 32  # Max concurrent recall operations per worker
@@ -690,6 +825,8 @@ DEFAULT_RECALL_MAX_QUERY_TOKENS = 500  # Maximum tokens allowed in recall query
 DEFAULT_MENTAL_MODEL_REFRESH_CONCURRENCY = 8  # Max concurrent mental model refreshes
 DEFAULT_LINK_EXPANSION_PER_ENTITY_LIMIT = 200  # Max target units per entity in graph expansion
 DEFAULT_LINK_EXPANSION_TIMEOUT = 10.0  # Timeout (seconds) for entity expansion query
+DEFAULT_BANK_STATS_CACHE_TTL_SECONDS = 60.0  # TTL for get_bank_stats result cache; 0 disables
+DEFAULT_BANK_STATS_CACHE_MAX_ENTRIES = 1024  # LRU bound across (schema, bank) keys
 
 # Retain settings
 DEFAULT_RETAIN_MAX_COMPLETION_TOKENS = 64000  # Max tokens for fact extraction LLM call
@@ -708,16 +845,22 @@ DEFAULT_RETAIN_BATCH_TOKENS = 10_000  # ~40KB of text  # Max chars per sub-batch
 DEFAULT_RETAIN_ENTITY_LOOKUP = "trigram"  # "full" or "trigram"
 DEFAULT_RETAIN_ENTITY_RESOLUTION_BATCH_SIZE = 100  # Unique entity names per pg_trgm candidate lookup query
 DEFAULT_RETAIN_BATCH_ENABLED = False  # Use LLM Batch API for fact extraction (only when async=True)
+DEFAULT_LLM_PROMPT_CACHE_ENABLED = True  # Reuse the fixed system prefix via provider prompt caching
 DEFAULT_RETAIN_BATCH_POLL_INTERVAL_SECONDS = 60  # Batch API polling interval in seconds
 
 # File storage defaults
 DEFAULT_FILE_STORAGE_TYPE = "native"  # PostgreSQL BYTEA storage
 DEFAULT_FILE_PARSER = "markitdown"  # Default parser fallback chain (comma-separated, e.g. "iris,markitdown")
 DEFAULT_FILE_PARSER_ALLOWLIST = None  # Allowlist of parsers clients may request (None = all registered parsers)
+DEFAULT_FILE_PARSER_MARKITDOWN_OCR_ENABLED = False
+DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT = """You are a precise OCR transcription engine.
+
+Transcribe only the visible text in the image. Do not describe the image, summarize it, translate it, infer missing content, or add commentary. Preserve the original language, wording, numbers, punctuation, capitalization, and reading order. Reconstruct headings, lists, key-value fields, stamps, and tables as clean Markdown when the layout is clear. If text is unreadable or uncertain, write [unclear] for that span. Return only the extracted Markdown."""
 DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE_MB = 100  # Max total batch size in MB (all files combined)
 DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE = 10  # Max files per batch upload
 DEFAULT_ENABLE_FILE_UPLOAD_API = True  # Enable file upload endpoint
 DEFAULT_FILE_DELETE_AFTER_RETAIN = True  # Delete file bytes after retain (saves storage)
+DEFAULT_STORE_DOCUMENT_TEXT = True  # Persist raw source text in documents.original_text / chunks.chunk_text
 
 # Document transfer defaults (export/import enabled by default; gated independently)
 DEFAULT_ENABLE_DOCUMENT_EXPORT_API = True
@@ -728,23 +871,36 @@ DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
 DEFAULT_ENABLE_AUTO_CONSOLIDATION = True  # Auto-consolidation after retain enabled by default
 DEFAULT_ENABLE_OBSERVATION_HISTORY = True  # Observation history tracking enabled by default
 DEFAULT_ENABLE_MENTAL_MODEL_HISTORY = True  # Mental model history tracking enabled by default
-# Each history entry snapshots previous_content + previous_reflect_response. Without
-# a cap, sustained mental-model refresh load grows the jsonb array unboundedly until
-# it crosses Postgres's hard 256MB jsonb limit and subsequent UPDATEs fail with
-# SQLSTATE 54000. 50 keeps the array well under 100MB even with large reflect
-# responses, while preserving enough recent history for meaningful audit / rollback.
+# History (mental-model refresh snapshots and observation update snapshots) lives in
+# the dedicated mental_model_history / observation_history tables, one row per change.
+# On every write we insert the new entry and delete the oldest rows beyond the cap,
+# so the per-item history can never grow unboundedly (the old single-JSONB-column
+# design hit Postgres's hard 256MB jsonb limit -> SQLSTATE 54000 and stuck rows).
+# 50 preserves enough recent history for meaningful audit / rollback per item.
+# A cap <= 0 removes the trim (unbounded growth) — to turn history OFF use the
+# enable_* flag, not a zero cap.
 DEFAULT_MENTAL_MODEL_HISTORY_MAX_ENTRIES = 50
+DEFAULT_OBSERVATION_HISTORY_MAX_ENTRIES = 50
 DEFAULT_CONSOLIDATION_MAX_ATTEMPTS = 3  # Outer retry attempts for consolidation LLM batch calls
 DEFAULT_CONSOLIDATION_BATCH_SIZE = 50  # Memories to load per batch (internal memory optimization)
 DEFAULT_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = (
     100  # Max memories per consolidation round (0 = unlimited). Limits how long one bank holds a worker slot.
 )
 DEFAULT_CONSOLIDATION_LLM_BATCH_SIZE = 8  # Facts per LLM call (1 = no batching; >1 = batch mode)
+# Cosine >= this between a newly-created or freshly-updated observation and an existing one
+# triggers a focused 1-by-1 LLM "merge or keep" pass (the LLM reads both, so numbers/negation/
+# entities are respected). Enabled by default; set to 1.0 to disable. Postgres only — the merge
+# path uses Postgres-only SQL, so consolidation skips it on Oracle regardless of this value.
+DEFAULT_CONSOLIDATION_DEDUP_THRESHOLD = 0.97
 DEFAULT_CONSOLIDATION_LLM_PARALLELISM = (
     4  # Max tag groups consolidated concurrently per op. Locks on overlapping write
     # scopes degrade to sequential automatically; matches retain_max_concurrent.
 )
 DEFAULT_CONSOLIDATION_MAX_TOKENS = 512  # Max tokens for recall when finding related observations
+# Unset by default: the key is omitted from the LLM call so every provider keeps its current implicit output
+# budget — 100% backwards compatible. Operators on providers with a low hidden default (notably Bedrock imported
+# models, which cap at 4096 and truncate structured consolidation JSON) set this explicitly to fix #1939.
+DEFAULT_CONSOLIDATION_MAX_COMPLETION_TOKENS = None
 DEFAULT_CONSOLIDATION_RECALL_BUDGET = "low"  # Budget level for consolidation recall (low/mid/high)
 DEFAULT_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS = (
     4096  # Total token budget for source facts in consolidation recall (-1 = unlimited)
@@ -754,9 +910,16 @@ DEFAULT_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION = (
 )
 DEFAULT_OBSERVATIONS_MISSION = None  # Declarative spec of what observations are for this bank
 DEFAULT_MAX_OBSERVATIONS_PER_SCOPE = -1  # Max observations per tag scope (-1 = unlimited)
+# Per-scope overrides of the cap above: list of {"scope": [tag-globs], "limit": int}.
+# First rule whose pattern exact-covers a scope's tags wins; else the default above.
+DEFAULT_OBSERVATION_SCOPE_LIMITS: list | None = None
 
 # Database migrations
 DEFAULT_RUN_MIGRATIONS_ON_STARTUP = True
+# Number of tenant schemas to migrate concurrently. Each schema runs in its own
+# process (Alembic's command.upgrade() is not thread-safe); within a schema the
+# work is always sequential. 1 = fully sequential (the safe default).
+DEFAULT_MIGRATION_CONCURRENCY = 1
 
 # Database connection pool
 DEFAULT_DB_POOL_MIN_SIZE = 5
@@ -764,6 +927,7 @@ DEFAULT_DB_POOL_MAX_SIZE = 100
 DEFAULT_DB_COMMAND_TIMEOUT = 60  # seconds
 DEFAULT_DB_ACQUIRE_TIMEOUT = 30  # seconds
 DEFAULT_DB_STATEMENT_TIMEOUT = 600  # seconds (Postgres statement_timeout applied on every pool connection; 0 disables)
+DEFAULT_MODEL_INIT_TIMEOUT = 300  # seconds (cap on startup model/connection init; covers first-time downloads)
 
 # Worker configuration (distributed task processing)
 DEFAULT_WORKER_ENABLED = True  # API runs worker by default (standalone mode)
@@ -817,10 +981,16 @@ DEFAULT_AUDIT_LOG_ACTIONS = ""  # Empty = audit all eligible actions
 DEFAULT_AUDIT_LOG_RETENTION_DAYS = -1  # -1 = keep forever
 
 # LLM request tracing defaults
-DEFAULT_LLM_TRACE_ENABLED = False  # Disabled by default
+DEFAULT_LLM_TRACE_ENABLED = True  # Enabled by default
 DEFAULT_LLM_TRACE_SCOPES = ""  # Empty = trace all call scopes
-DEFAULT_LLM_TRACE_RETENTION_DAYS = -1  # -1 = keep forever
+DEFAULT_LLM_TRACE_RETENTION_DAYS = 1  # Retain trace rows for 1 day by default
 DEFAULT_LLM_TRACE_MAX_CHARS = 50000  # Truncate stored input/output beyond this many chars
+
+# Background maintenance defaults
+# Periodic reconcile that re-schedules consolidation for banks with eligible-but-unscheduled
+# facts (e.g. after a consolidation operation failed terminally and left them unscheduled).
+# 0 disables the reconcile sweep.
+DEFAULT_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS = 300
 
 # Default MCP tool descriptions (can be customized via env vars)
 DEFAULT_MCP_RETAIN_DESCRIPTION = """Store important information to long-term memory.
@@ -925,6 +1095,63 @@ def _parse_optional_positive_int(name: str, raw: str | None) -> int | None:
     if raw is None or raw == "":
         return None
     return _parse_positive_int(name, raw, 1)
+
+
+def _validate_retain_chunking_int(name: str, value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer, got {value!r}")
+    if value < 1:
+        raise ValueError(f"{name} must be >= 1, got {value}")
+    return value
+
+
+def validate_retain_chunking_config(
+    retain_chunk_size: Any,
+    retain_structured_chunk_size: Any,
+    *,
+    retain_chunk_size_name: str = "retain_chunk_size",
+    retain_structured_chunk_size_name: str = "retain_structured_chunk_size",
+) -> None:
+    """Validate retain chunking size fields.
+
+    Defaults emit field-style names ("retain_chunk_size") so API/PATCH callers
+    don't have to override them. The startup validator (HindsightConfig.validate)
+    overrides to env-style names ("HINDSIGHT_API_RETAIN_CHUNK_SIZE") for env
+    misconfig errors.
+    """
+    _validate_retain_chunking_int(retain_chunk_size_name, retain_chunk_size)
+    if retain_structured_chunk_size is None:
+        return
+    _validate_retain_chunking_int(
+        retain_structured_chunk_size_name,
+        retain_structured_chunk_size,
+    )
+
+
+def validate_retain_completion_token_budget(
+    *,
+    llm_provider: str,
+    retain_max_completion_tokens: int,
+    retain_chunk_size: int,
+    retain_llm_model: str | None = None,
+    llm_model: str | None = None,
+    retain_llm_provider: str | None = None,
+    retain_max_completion_tokens_name: str = "retain_max_completion_tokens",
+    retain_chunk_size_name: str = "retain_chunk_size",
+) -> None:
+    """Validate that retain LLM output capacity exceeds the configured chunk size."""
+    if llm_provider == "none" or retain_max_completion_tokens > retain_chunk_size:
+        return
+    raise ValueError(
+        f"Invalid configuration: {retain_max_completion_tokens_name} "
+        f"({retain_max_completion_tokens}) must be greater than "
+        f"{retain_chunk_size_name} ({retain_chunk_size}). "
+        f"\n\nYou have two options to fix this:"
+        f"\n  1. Increase {retain_max_completion_tokens_name} to a value > {retain_chunk_size}"
+        f"\n  2. Use a model that supports at least {retain_max_completion_tokens} output tokens"
+        f"\n     (current model: {retain_llm_model or llm_model}, "
+        f"provider: {retain_llm_provider or llm_provider})"
+    )
 
 
 def _parse_optional_choice(name: str, raw: str | None, allowed: frozenset[str]) -> str | None:
@@ -1079,12 +1306,19 @@ class HindsightConfig:
     llm_reasoning_effort: str
     llm_groq_service_tier: str  # Groq: "on_demand", "flex", or "auto"
     llm_openai_service_tier: str | None  # OpenAI: None (default) or "flex" (50% cheaper)
+    llm_bedrock_service_tier: str | None  # Bedrock: None (default), "flex", "priority", or "reserved"
     llm_extra_body: (
         dict | None
     )  # Extra body params merged into OpenAI-compatible API calls (e.g. {"chat_template_kwargs": {"enable_thinking": true}})
     llm_default_headers: (
         dict | None
     )  # Custom headers passed as default_headers to provider SDK clients (e.g. {"X-Component-Id": "hindsight"} for proxies / request tracing)
+    llm_strict_schema: bool  # Grammar-enforce structured output via the provider's strongest schema mode (see DEFAULT_LLM_STRICT_SCHEMA)
+    # Tags outbound OpenAI-compatible LLM + embedding calls with `user=<bank_id>` for
+    # per-bank cost attribution. Downstream cost gateways (OpenRouter usage accounting,
+    # LiteLLM, Helicone) key attribution on the OpenAI `user` field. Opt-in; never
+    # overrides a `user` the caller already set.
+    llm_send_bank_as_user: bool
 
     # LiteLLM Router chain (provider-specific; consumed by the "litellmrouter" provider).
     # List of deployment dicts evaluated in order with fallback on transient errors.
@@ -1099,6 +1333,10 @@ class HindsightConfig:
 
     # Gemini safety settings (None = use Gemini defaults; list of dicts with category/threshold)
     llm_gemini_safety_settings: list | None
+
+    # Gemini prompt caching toggle. When True, retain extraction reuses a
+    # CachedContent prefix for its system prompt + response schema.
+    llm_prompt_cache_enabled: bool
 
     # Built-in llama.cpp configuration (for provider=llamacpp)
     llamacpp_model_path: str | None  # Path to GGUF file (None = auto-download default)
@@ -1152,6 +1390,17 @@ class HindsightConfig:
     embeddings_local_model: str
     embeddings_local_force_cpu: bool
     embeddings_local_trust_remote_code: bool
+    embeddings_onnx_model_id: str
+    embeddings_onnx_model_path: str | None
+    embeddings_onnx_tokenizer_name_or_path: str | None
+    embeddings_onnx_file: str
+    embeddings_onnx_dimensions: int | None
+    embeddings_onnx_max_tokens: int
+    embeddings_onnx_pooling: str
+    embeddings_onnx_normalize: bool
+    embeddings_onnx_query_prefix: str
+    embeddings_onnx_passage_prefix: str
+    embeddings_onnx_output_name: str | None
     embeddings_tei_url: str | None
     embeddings_openai_base_url: str | None
     embeddings_cohere_api_key: str | None
@@ -1191,14 +1440,17 @@ class HindsightConfig:
     reranker_tei_max_concurrent: int
     reranker_tei_http_timeout: float
     reranker_max_candidates: int
+    semantic_min_similarity: float
     bm25_min_score: float
     recall_max_candidates_per_source: int
+    recall_strategy_boosts: dict[str, str]
     reranker_cohere_api_key: str | None
     reranker_cohere_model: str
     reranker_cohere_base_url: str | None
     reranker_cohere_timeout: float
     reranker_openrouter_api_key: str | None
     reranker_openrouter_model: str
+    reranker_openrouter_base_url: str
     reranker_openrouter_timeout: float
     reranker_litellm_api_base: str
     reranker_litellm_api_key: str | None
@@ -1236,6 +1488,8 @@ class HindsightConfig:
     mcp_enabled_tools: list[str] | None  # None = all tools; explicit list = allowlist
     mcp_stateless: bool  # True = stateless HTTP (POST-only); False = stateful (supports GET/SSE)
     enable_bank_config_api: bool
+    enable_bank_llm_health: bool
+    enable_dry_run_extract: bool
     # Default bank template (static, server-level only). When set, the manifest is applied
     # to every newly-created bank, overriding the env/config defaults for any fields it sets.
     default_bank_template: dict | None
@@ -1248,10 +1502,13 @@ class HindsightConfig:
     mental_model_refresh_concurrency: int
     link_expansion_per_entity_limit: int
     link_expansion_timeout: float
+    bank_stats_cache_ttl_seconds: float
+    bank_stats_cache_max_entries: int
 
     # Retain settings
     retain_max_completion_tokens: int
     retain_chunk_size: int
+    retain_structured_chunk_size: int | None
     retain_extract_causal_links: bool
     retain_extraction_mode: str
     retain_mission: str | None
@@ -1286,6 +1543,7 @@ class HindsightConfig:
     file_conversion_max_batch_size: int  # Max files per request
     enable_file_upload_api: bool
     file_delete_after_retain: bool
+    store_document_text: bool  # When False, store NULL original_text / empty chunk_text
     enable_document_export_api: bool
     enable_document_import_api: bool
 
@@ -1293,19 +1551,26 @@ class HindsightConfig:
     enable_observations: bool
     enable_auto_consolidation: bool
     enable_observation_history: bool
+    observation_history_max_entries: int
     enable_mental_model_history: bool
     mental_model_history_max_entries: int
     consolidation_batch_size: int
+    consolidation_dedup_threshold: float
     consolidation_max_memories_per_round: int
     consolidation_llm_batch_size: int
     consolidation_llm_parallelism: int
     consolidation_max_tokens: int
+    consolidation_max_completion_tokens: int | None
     consolidation_recall_budget: str
     consolidation_source_facts_max_tokens: int
     consolidation_source_facts_max_tokens_per_observation: int
     consolidation_max_attempts: int
     observations_mission: str | None
     max_observations_per_scope: int
+    # Per-scope observation caps overriding max_observations_per_scope.
+    # Raw JSON shape: [{"scope": ["run_*", "shared"], "limit": 1}, ...]
+    # (validated/applied in engine.consolidation.consolidator._effective_scope_limit)
+    observation_scope_limits: list | None
 
     # Entity labels (controlled vocabulary of key:value classification labels extracted at retain time)
     # List of label group dicts: [{key, description, type, optional, values: [{value, description}]}]
@@ -1313,6 +1578,10 @@ class HindsightConfig:
     # Whether to extract regular named entities alongside entity labels (default: True)
     # When False: only label entities are extracted (or no entities at all if no labels configured)
     entities_allow_free_form: bool
+
+    # Memory Defense policy (dict matching DefensePolicy schema — validated on write)
+    # None = Memory Defense disabled / not configured for this bank
+    memory_defense: dict | None
 
     # Reflect agent settings
     reflect_mission: str | None
@@ -1348,6 +1617,7 @@ class HindsightConfig:
 
     # Database migrations
     run_migrations_on_startup: bool
+    migration_concurrency: int
 
     # Database connection pool
     db_pool_min_size: int
@@ -1355,6 +1625,7 @@ class HindsightConfig:
     db_command_timeout: int
     db_acquire_timeout: int
     db_statement_timeout: int
+    model_init_timeout: float
 
     # Worker configuration (distributed task processing)
     worker_enabled: bool
@@ -1392,6 +1663,11 @@ class HindsightConfig:
     llm_trace_retention_days: int  # -1 = keep forever, >0 = delete after N days
     llm_trace_max_chars: int  # Truncate stored input/output beyond this many chars
 
+    # Background maintenance configuration (static - server-level only)
+    # Interval for the periodic sweep that re-schedules consolidation for banks with
+    # eligible-but-unscheduled facts. 0 = disabled.
+    consolidation_reconcile_interval_seconds: int
+
     # Webhook configuration (static - server-level only, not per-bank)
     webhook_url: str | None  # Global webhook URL (None = disabled)
     webhook_secret: str | None  # HMAC signing secret (None = unsigned)
@@ -1409,6 +1685,11 @@ class HindsightConfig:
     embeddings_zeroentropy_encoding_format: str = DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT
     embeddings_zeroentropy_batch_size: int = DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE
     embeddings_zeroentropy_latency: str | None = DEFAULT_EMBEDDINGS_ZEROENTROPY_LATENCY
+    file_parser_markitdown_ocr_enabled: bool = DEFAULT_FILE_PARSER_MARKITDOWN_OCR_ENABLED
+    file_parser_markitdown_ocr_api_key: str | None = None
+    file_parser_markitdown_ocr_base_url: str | None = None
+    file_parser_markitdown_ocr_model: str | None = None
+    file_parser_markitdown_ocr_prompt: str = DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT
 
     # Class-level sets for configuration categorization
 
@@ -1432,6 +1713,7 @@ class HindsightConfig:
         "embeddings_tei_base_url",
         "reranker_tei_base_url",
         "reranker_cohere_base_url",
+        "reranker_openrouter_base_url",
         "embeddings_zeroentropy_base_url",
         "reranker_zeroentropy_base_url",
         "reranker_siliconflow_base_url",
@@ -1448,6 +1730,8 @@ class HindsightConfig:
         "file_storage_gcs_service_account_key",
         "file_storage_azure_account_key",
         # File parser credentials
+        "file_parser_markitdown_ocr_api_key",
+        "file_parser_markitdown_ocr_base_url",
         "file_parser_iris_token",
         "file_parser_llama_parse_api_key",
     }
@@ -1460,6 +1744,7 @@ class HindsightConfig:
         "mcp_enabled_tools",
         # Retention settings (behavioral)
         "retain_chunk_size",
+        "retain_structured_chunk_size",
         "retain_extraction_mode",
         "retain_mission",
         "retain_custom_instructions",
@@ -1479,6 +1764,7 @@ class HindsightConfig:
         "consolidation_source_facts_max_tokens_per_observation",
         "observations_mission",
         "max_observations_per_scope",
+        "observation_scope_limits",
         # Reflect settings
         "reflect_mission",
         "reflect_source_facts_max_tokens",
@@ -1502,6 +1788,8 @@ class HindsightConfig:
         "disposition_empathy",
         # Gemini safety settings (controls content filtering for Gemini/VertexAI providers)
         "llm_gemini_safety_settings",
+        # Memory Defense policy (validated against DefensePolicy schema on write)
+        "memory_defense",
     }
 
     @property
@@ -1592,6 +1880,21 @@ class HindsightConfig:
             self.text_search_extension_pg_search_tokenizer
         )
 
+        if not 0.0 <= self.semantic_min_similarity <= 1.0:
+            raise ValueError(
+                f"Invalid semantic_min_similarity: {self.semantic_min_similarity}. Must be between 0.0 and 1.0"
+            )
+
+        # Validate bedrock_service_tier
+        valid_bedrock_tiers = (None, "flex", "priority", "reserved")
+        if self.llm_bedrock_service_tier not in valid_bedrock_tiers:
+            raise ValueError(
+                f"Invalid HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER: "
+                f"{self.llm_bedrock_service_tier!r}. Must be one of: "
+                f"{', '.join(t for t in valid_bedrock_tiers if t is not None)}. "
+                f"Note: 'standard' is not a valid Bedrock service tier -- use unset for default tier."
+            )
+
         # When LLM provider is "none", force chunks-only mode and disable LLM-dependent features
         if self.llm_provider == "none":
             self.retain_extraction_mode = "chunks"
@@ -1601,20 +1904,23 @@ class HindsightConfig:
                 "disabling observations/consolidation. Reflect will return HTTP 400."
             )
 
-        # RETAIN_MAX_COMPLETION_TOKENS must be greater than RETAIN_CHUNK_SIZE
-        # to ensure the LLM has enough output capacity to extract facts from chunks
-        # (not applicable when provider is "none" since no LLM calls are made)
-        if self.llm_provider != "none" and self.retain_max_completion_tokens <= self.retain_chunk_size:
-            raise ValueError(
-                f"Invalid configuration: HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS "
-                f"({self.retain_max_completion_tokens}) must be greater than "
-                f"HINDSIGHT_API_RETAIN_CHUNK_SIZE ({self.retain_chunk_size}). "
-                f"\n\nYou have two options to fix this:"
-                f"\n  1. Increase HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS to a value > {self.retain_chunk_size}"
-                f"\n  2. Use a model that supports at least {self.retain_max_completion_tokens} output tokens"
-                f"\n     (current model: {self.retain_llm_model or self.llm_model}, "
-                f"provider: {self.retain_llm_provider or self.llm_provider})"
-            )
+        validate_retain_chunking_config(
+            self.retain_chunk_size,
+            self.retain_structured_chunk_size,
+            retain_chunk_size_name="HINDSIGHT_API_RETAIN_CHUNK_SIZE",
+            retain_structured_chunk_size_name="HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE",
+        )
+
+        validate_retain_completion_token_budget(
+            llm_provider=self.llm_provider,
+            retain_max_completion_tokens=self.retain_max_completion_tokens,
+            retain_chunk_size=self.retain_chunk_size,
+            retain_llm_model=self.retain_llm_model,
+            llm_model=self.llm_model,
+            retain_llm_provider=self.retain_llm_provider,
+            retain_max_completion_tokens_name="HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS",
+            retain_chunk_size_name="HINDSIGHT_API_RETAIN_CHUNK_SIZE",
+        )
 
         # Warn if local ML dependencies are missing when configured.
         # Don't hard-fail here — the actual ImportError fires at model init time
@@ -1638,6 +1944,21 @@ class HindsightConfig:
                     "     HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai (or gemini, tei)\n"
                     "     HINDSIGHT_API_RERANKER_PROVIDER=none (or tei)",
                     " and ".join(missing),
+                )
+
+        if self.embeddings_provider == "onnx":
+            try:
+                import importlib
+
+                importlib.import_module("onnxruntime")
+                importlib.import_module("transformers")
+            except ImportError:
+                logger.warning(
+                    "ONNX embeddings provider configured, but 'onnxruntime' and/or "
+                    "'transformers' is not installed. The API will fail at model init time. Either:\n"
+                    "  1. Install ONNX deps: pip install hindsight-api-slim[local-onnx]\n"
+                    "  2. Use a different embeddings provider, e.g. HINDSIGHT_API_EMBEDDINGS_PROVIDER=local "
+                    "or openai"
                 )
 
         # Validate that sum of per-operation slot reservations does not exceed max_slots
@@ -1690,8 +2011,12 @@ class HindsightConfig:
             llm_reasoning_effort=os.getenv(ENV_LLM_REASONING_EFFORT, DEFAULT_LLM_REASONING_EFFORT),
             llm_groq_service_tier=os.getenv(ENV_LLM_GROQ_SERVICE_TIER, DEFAULT_LLM_GROQ_SERVICE_TIER),
             llm_openai_service_tier=os.getenv(ENV_LLM_OPENAI_SERVICE_TIER, DEFAULT_LLM_OPENAI_SERVICE_TIER),
+            llm_bedrock_service_tier=os.getenv(ENV_LLM_BEDROCK_SERVICE_TIER) or None,
             llm_extra_body=json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null")),
             llm_default_headers=json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null")),
+            llm_strict_schema=os.getenv(ENV_LLM_STRICT_SCHEMA, str(DEFAULT_LLM_STRICT_SCHEMA)).lower() in ("true", "1"),
+            llm_send_bank_as_user=os.getenv(ENV_LLM_SEND_BANK_AS_USER, str(DEFAULT_LLM_SEND_BANK_AS_USER)).lower()
+            in ("true", "1"),
             llm_litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
             # Vertex AI
             llm_vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or DEFAULT_LLM_VERTEXAI_PROJECT_ID,
@@ -1700,6 +2025,10 @@ class HindsightConfig:
             or DEFAULT_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY,
             # Gemini safety settings (JSON-encoded list of {category, threshold} dicts)
             llm_gemini_safety_settings=json.loads(os.getenv(ENV_LLM_GEMINI_SAFETY_SETTINGS, "null")),
+            llm_prompt_cache_enabled=os.getenv(
+                ENV_LLM_PROMPT_CACHE_ENABLED, str(DEFAULT_LLM_PROMPT_CACHE_ENABLED)
+            ).lower()
+            in ("1", "true", "yes", "on"),
             # Built-in llama.cpp configuration
             llamacpp_model_path=os.getenv(ENV_LLAMACPP_MODEL_PATH) or None,
             llamacpp_gpu_layers=int(os.getenv(ENV_LLAMACPP_GPU_LAYERS, str(DEFAULT_LLAMACPP_GPU_LAYERS))),
@@ -1798,6 +2127,36 @@ class HindsightConfig:
                 ENV_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE, str(DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE)
             ).lower()
             in ("true", "1"),
+            embeddings_onnx_model_id=os.getenv(ENV_EMBEDDINGS_ONNX_MODEL_ID, DEFAULT_EMBEDDINGS_ONNX_MODEL_ID),
+            embeddings_onnx_model_path=os.getenv(ENV_EMBEDDINGS_ONNX_MODEL_PATH) or None,
+            embeddings_onnx_tokenizer_name_or_path=os.getenv(ENV_EMBEDDINGS_ONNX_TOKENIZER_NAME_OR_PATH) or None,
+            embeddings_onnx_file=os.getenv(ENV_EMBEDDINGS_ONNX_FILE, DEFAULT_EMBEDDINGS_ONNX_FILE),
+            embeddings_onnx_dimensions=_parse_optional_positive_int(
+                ENV_EMBEDDINGS_ONNX_DIMENSIONS,
+                os.getenv(ENV_EMBEDDINGS_ONNX_DIMENSIONS),
+            ),
+            embeddings_onnx_max_tokens=_parse_positive_int(
+                ENV_EMBEDDINGS_ONNX_MAX_TOKENS,
+                os.getenv(ENV_EMBEDDINGS_ONNX_MAX_TOKENS),
+                DEFAULT_EMBEDDINGS_ONNX_MAX_TOKENS,
+            ),
+            embeddings_onnx_pooling=_parse_optional_choice(
+                ENV_EMBEDDINGS_ONNX_POOLING,
+                os.getenv(ENV_EMBEDDINGS_ONNX_POOLING),
+                frozenset({"mean", "cls"}),
+            )
+            or DEFAULT_EMBEDDINGS_ONNX_POOLING,
+            embeddings_onnx_normalize=os.getenv(
+                ENV_EMBEDDINGS_ONNX_NORMALIZE, str(DEFAULT_EMBEDDINGS_ONNX_NORMALIZE)
+            ).lower()
+            in ("true", "1"),
+            embeddings_onnx_query_prefix=os.getenv(
+                ENV_EMBEDDINGS_ONNX_QUERY_PREFIX, DEFAULT_EMBEDDINGS_ONNX_QUERY_PREFIX
+            ),
+            embeddings_onnx_passage_prefix=os.getenv(
+                ENV_EMBEDDINGS_ONNX_PASSAGE_PREFIX, DEFAULT_EMBEDDINGS_ONNX_PASSAGE_PREFIX
+            ),
+            embeddings_onnx_output_name=os.getenv(ENV_EMBEDDINGS_ONNX_OUTPUT_NAME) or None,
             embeddings_tei_url=os.getenv(ENV_EMBEDDINGS_TEI_URL),
             embeddings_openai_base_url=os.getenv(ENV_EMBEDDINGS_OPENAI_BASE_URL) or None,
             embeddings_openai_batch_size=_parse_positive_int(
@@ -1919,9 +2278,13 @@ class HindsightConfig:
                 os.getenv(ENV_RERANKER_TEI_HTTP_TIMEOUT, str(DEFAULT_RERANKER_TEI_HTTP_TIMEOUT))
             ),
             reranker_max_candidates=int(os.getenv(ENV_RERANKER_MAX_CANDIDATES, str(DEFAULT_RERANKER_MAX_CANDIDATES))),
+            semantic_min_similarity=float(os.getenv(ENV_SEMANTIC_MIN_SIMILARITY, str(DEFAULT_SEMANTIC_MIN_SIMILARITY))),
             bm25_min_score=float(os.getenv(ENV_BM25_MIN_SCORE, str(DEFAULT_BM25_MIN_SCORE))),
             recall_max_candidates_per_source=int(
                 os.getenv(ENV_RECALL_MAX_CANDIDATES_PER_SOURCE, str(DEFAULT_RECALL_MAX_CANDIDATES_PER_SOURCE))
+            ),
+            recall_strategy_boosts=_parse_strategy_boosts(
+                os.getenv(ENV_RECALL_STRATEGY_BOOSTS, DEFAULT_RECALL_STRATEGY_BOOSTS)
             ),
             # Cohere reranker (with backward-compatible fallback to shared API key)
             reranker_cohere_api_key=os.getenv(ENV_RERANKER_COHERE_API_KEY) or os.getenv(ENV_COHERE_API_KEY),
@@ -1933,6 +2296,9 @@ class HindsightConfig:
             or os.getenv(ENV_OPENROUTER_API_KEY)
             or os.getenv(ENV_LLM_API_KEY),
             reranker_openrouter_model=os.getenv(ENV_RERANKER_OPENROUTER_MODEL, DEFAULT_RERANKER_OPENROUTER_MODEL),
+            reranker_openrouter_base_url=os.getenv(
+                ENV_RERANKER_OPENROUTER_BASE_URL, DEFAULT_RERANKER_OPENROUTER_BASE_URL
+            ),
             reranker_openrouter_timeout=float(
                 os.getenv(ENV_RERANKER_OPENROUTER_TIMEOUT, str(DEFAULT_RERANKER_OPENROUTER_TIMEOUT))
             ),
@@ -1995,7 +2361,11 @@ class HindsightConfig:
             if os.getenv(ENV_MCP_ENABLED_TOOLS)
             else DEFAULT_MCP_ENABLED_TOOLS,
             mcp_stateless=os.getenv(ENV_MCP_STATELESS, str(DEFAULT_MCP_STATELESS)).lower() == "true",
+            enable_bank_llm_health=os.getenv(ENV_ENABLE_BANK_LLM_HEALTH, str(DEFAULT_ENABLE_BANK_LLM_HEALTH)).lower()
+            == "true",
             enable_bank_config_api=os.getenv(ENV_ENABLE_BANK_CONFIG_API, str(DEFAULT_ENABLE_BANK_CONFIG_API)).lower()
+            == "true",
+            enable_dry_run_extract=os.getenv(ENV_ENABLE_DRY_RUN_EXTRACT, str(DEFAULT_ENABLE_DRY_RUN_EXTRACT)).lower()
             == "true",
             default_bank_template=_parse_default_bank_template(os.getenv(ENV_DEFAULT_BANK_TEMPLATE)),
             # Recall
@@ -2012,6 +2382,12 @@ class HindsightConfig:
                 os.getenv(ENV_LINK_EXPANSION_PER_ENTITY_LIMIT, str(DEFAULT_LINK_EXPANSION_PER_ENTITY_LIMIT))
             ),
             link_expansion_timeout=float(os.getenv(ENV_LINK_EXPANSION_TIMEOUT, str(DEFAULT_LINK_EXPANSION_TIMEOUT))),
+            bank_stats_cache_ttl_seconds=float(
+                os.getenv(ENV_BANK_STATS_CACHE_TTL_SECONDS, str(DEFAULT_BANK_STATS_CACHE_TTL_SECONDS))
+            ),
+            bank_stats_cache_max_entries=int(
+                os.getenv(ENV_BANK_STATS_CACHE_MAX_ENTRIES, str(DEFAULT_BANK_STATS_CACHE_MAX_ENTRIES))
+            ),
             # Optimization flags
             skip_llm_verification=os.getenv(ENV_SKIP_LLM_VERIFICATION, "false").lower() == "true",
             lazy_reranker=os.getenv(ENV_LAZY_RERANKER, "false").lower() == "true",
@@ -2020,6 +2396,10 @@ class HindsightConfig:
                 os.getenv(ENV_RETAIN_MAX_COMPLETION_TOKENS, str(DEFAULT_RETAIN_MAX_COMPLETION_TOKENS))
             ),
             retain_chunk_size=int(os.getenv(ENV_RETAIN_CHUNK_SIZE, str(DEFAULT_RETAIN_CHUNK_SIZE))),
+            retain_structured_chunk_size=_parse_optional_positive_int(
+                ENV_RETAIN_STRUCTURED_CHUNK_SIZE,
+                os.getenv(ENV_RETAIN_STRUCTURED_CHUNK_SIZE),
+            ),
             retain_extract_causal_links=os.getenv(
                 ENV_RETAIN_EXTRACT_CAUSAL_LINKS, str(DEFAULT_RETAIN_EXTRACT_CAUSAL_LINKS)
             ).lower()
@@ -2060,6 +2440,18 @@ class HindsightConfig:
             file_parser_allowlist=_parse_str_list(os.getenv(ENV_FILE_PARSER_ALLOWLIST))
             if os.getenv(ENV_FILE_PARSER_ALLOWLIST)
             else None,
+            file_parser_markitdown_ocr_enabled=os.getenv(
+                ENV_FILE_PARSER_MARKITDOWN_OCR_ENABLED,
+                str(DEFAULT_FILE_PARSER_MARKITDOWN_OCR_ENABLED),
+            ).lower()
+            in ("1", "true", "yes", "on"),
+            file_parser_markitdown_ocr_api_key=os.getenv(ENV_FILE_PARSER_MARKITDOWN_OCR_API_KEY) or None,
+            file_parser_markitdown_ocr_base_url=os.getenv(ENV_FILE_PARSER_MARKITDOWN_OCR_BASE_URL) or None,
+            file_parser_markitdown_ocr_model=os.getenv(ENV_FILE_PARSER_MARKITDOWN_OCR_MODEL) or None,
+            file_parser_markitdown_ocr_prompt=os.getenv(
+                ENV_FILE_PARSER_MARKITDOWN_OCR_PROMPT,
+                DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT,
+            ),
             file_parser_iris_token=os.getenv(ENV_FILE_PARSER_IRIS_TOKEN) or None,
             file_parser_iris_org_id=os.getenv(ENV_FILE_PARSER_IRIS_ORG_ID) or None,
             file_parser_llama_parse_api_key=os.getenv(ENV_FILE_PARSER_LLAMA_PARSE_API_KEY) or None,
@@ -2075,6 +2467,7 @@ class HindsightConfig:
                 ENV_FILE_DELETE_AFTER_RETAIN, str(DEFAULT_FILE_DELETE_AFTER_RETAIN)
             ).lower()
             == "true",
+            store_document_text=os.getenv(ENV_STORE_DOCUMENT_TEXT, str(DEFAULT_STORE_DOCUMENT_TEXT)).lower() == "true",
             enable_document_export_api=os.getenv(
                 ENV_ENABLE_DOCUMENT_EXPORT_API, str(DEFAULT_ENABLE_DOCUMENT_EXPORT_API)
             ).lower()
@@ -2093,6 +2486,12 @@ class HindsightConfig:
                 ENV_ENABLE_OBSERVATION_HISTORY, str(DEFAULT_ENABLE_OBSERVATION_HISTORY)
             ).lower()
             == "true",
+            observation_history_max_entries=int(
+                os.getenv(
+                    ENV_OBSERVATION_HISTORY_MAX_ENTRIES,
+                    str(DEFAULT_OBSERVATION_HISTORY_MAX_ENTRIES),
+                )
+            ),
             enable_mental_model_history=os.getenv(
                 ENV_ENABLE_MENTAL_MODEL_HISTORY, str(DEFAULT_ENABLE_MENTAL_MODEL_HISTORY)
             ).lower()
@@ -2112,6 +2511,9 @@ class HindsightConfig:
                     str(DEFAULT_CONSOLIDATION_MAX_MEMORIES_PER_ROUND),
                 )
             ),
+            consolidation_dedup_threshold=float(
+                os.getenv(ENV_CONSOLIDATION_DEDUP_THRESHOLD, str(DEFAULT_CONSOLIDATION_DEDUP_THRESHOLD))
+            ),
             consolidation_llm_batch_size=int(
                 os.getenv(ENV_CONSOLIDATION_LLM_BATCH_SIZE, str(DEFAULT_CONSOLIDATION_LLM_BATCH_SIZE))
             ),
@@ -2126,6 +2528,11 @@ class HindsightConfig:
             ),
             consolidation_max_tokens=int(
                 os.getenv(ENV_CONSOLIDATION_MAX_TOKENS, str(DEFAULT_CONSOLIDATION_MAX_TOKENS))
+            ),
+            consolidation_max_completion_tokens=(
+                int(os.getenv(ENV_CONSOLIDATION_MAX_COMPLETION_TOKENS))
+                if os.getenv(ENV_CONSOLIDATION_MAX_COMPLETION_TOKENS)
+                else DEFAULT_CONSOLIDATION_MAX_COMPLETION_TOKENS
             ),
             consolidation_recall_budget=os.getenv(ENV_CONSOLIDATION_RECALL_BUDGET, DEFAULT_CONSOLIDATION_RECALL_BUDGET),
             consolidation_source_facts_max_tokens=int(
@@ -2144,16 +2551,21 @@ class HindsightConfig:
             max_observations_per_scope=int(
                 os.getenv(ENV_MAX_OBSERVATIONS_PER_SCOPE, str(DEFAULT_MAX_OBSERVATIONS_PER_SCOPE))
             ),
+            observation_scope_limits=json.loads(os.getenv(ENV_OBSERVATION_SCOPE_LIMITS, "null"))
+            or DEFAULT_OBSERVATION_SCOPE_LIMITS,
             entity_labels=None,
             entities_allow_free_form=True,
+            memory_defense=None,
             # Database migrations
             run_migrations_on_startup=os.getenv(ENV_RUN_MIGRATIONS_ON_STARTUP, "true").lower() == "true",
+            migration_concurrency=int(os.getenv(ENV_MIGRATION_CONCURRENCY, str(DEFAULT_MIGRATION_CONCURRENCY))),
             # Database connection pool
             db_pool_min_size=int(os.getenv(ENV_DB_POOL_MIN_SIZE, str(DEFAULT_DB_POOL_MIN_SIZE))),
             db_pool_max_size=int(os.getenv(ENV_DB_POOL_MAX_SIZE, str(DEFAULT_DB_POOL_MAX_SIZE))),
             db_command_timeout=int(os.getenv(ENV_DB_COMMAND_TIMEOUT, str(DEFAULT_DB_COMMAND_TIMEOUT))),
             db_acquire_timeout=int(os.getenv(ENV_DB_ACQUIRE_TIMEOUT, str(DEFAULT_DB_ACQUIRE_TIMEOUT))),
             db_statement_timeout=int(os.getenv(ENV_DB_STATEMENT_TIMEOUT, str(DEFAULT_DB_STATEMENT_TIMEOUT))),
+            model_init_timeout=float(os.getenv(ENV_MODEL_INIT_TIMEOUT, str(DEFAULT_MODEL_INIT_TIMEOUT))),
             # Worker configuration
             worker_enabled=os.getenv(ENV_WORKER_ENABLED, str(DEFAULT_WORKER_ENABLED)).lower() == "true",
             worker_id=os.getenv(ENV_WORKER_ID) or DEFAULT_WORKER_ID,
@@ -2247,6 +2659,13 @@ class HindsightConfig:
                 os.getenv(ENV_LLM_TRACE_RETENTION_DAYS, str(DEFAULT_LLM_TRACE_RETENTION_DAYS))
             ),
             llm_trace_max_chars=int(os.getenv(ENV_LLM_TRACE_MAX_CHARS, str(DEFAULT_LLM_TRACE_MAX_CHARS))),
+            # Background maintenance configuration (static, server-level only)
+            consolidation_reconcile_interval_seconds=int(
+                os.getenv(
+                    ENV_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS,
+                    str(DEFAULT_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS),
+                )
+            ),
             # Webhook configuration (static, server-level only)
             webhook_url=os.getenv(ENV_WEBHOOK_URL) or DEFAULT_WEBHOOK_URL,
             webhook_secret=os.getenv(ENV_WEBHOOK_SECRET) or DEFAULT_WEBHOOK_SECRET,

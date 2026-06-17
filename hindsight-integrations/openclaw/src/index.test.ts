@@ -530,28 +530,6 @@ describe("buildRetainRequest", () => {
     expect(request.updateMode).toBeUndefined();
   });
 
-  it("uses per-turn document ids when retainDocumentScope is 'turn'", () => {
-    const request = buildRetainRequest(
-      "hello world",
-      2,
-      {
-        agentId: "main",
-        sessionKey: "agent:main:main",
-        messageProvider: "discord",
-        channelId: "channel:123",
-        senderId: "user:456",
-      },
-      {
-        retainSource: "openclaw",
-        retainDocumentScope: "turn",
-      },
-      1700000000000,
-      { turnIndex: 7 }
-    );
-
-    expect(request.documentId).toBe("openclaw:agent:main:main:turn:000007");
-  });
-
   it("uses window ids and metadata for chunked retention", () => {
     const request = buildRetainRequest(
       "hello world",
@@ -564,7 +542,6 @@ describe("buildRetainRequest", () => {
       },
       {
         retainSource: "openclaw",
-        retainDocumentScope: "turn",
       },
       1700000000000,
       {

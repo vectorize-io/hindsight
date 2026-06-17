@@ -16,11 +16,24 @@ with the system (e.g., running migrations for tenant schemas).
 """
 
 from hindsight_api.extensions.base import Extension
-from hindsight_api.extensions.builtin import ApiKeyTenantExtension, SupabaseTenantExtension
+from hindsight_api.extensions.builtin import (
+    ApiKeyTenantExtension,
+    MemoryDefenseRegexExtension,
+    SupabaseTenantExtension,
+)
 from hindsight_api.extensions.context import DefaultExtensionContext, ExtensionContext
 from hindsight_api.extensions.http import HttpExtension
 from hindsight_api.extensions.loader import load_extension
 from hindsight_api.extensions.mcp import MCPExtension
+from hindsight_api.extensions.memory_defense import (
+    DefenseAction,
+    DefenseDecision,
+    DefensePolicy,
+    MemoryDefenseExtension,
+    PolicyRule,
+    apply_redaction,
+    parse_policy,
+)
 from hindsight_api.extensions.operation_validator import (
     # Bank Management operations
     BankListContext,
@@ -104,4 +117,13 @@ __all__ = [
     "Tenant",
     "TenantContext",
     "TenantExtension",
+    # Memory Defense
+    "DefenseAction",
+    "DefenseDecision",
+    "DefensePolicy",
+    "MemoryDefenseExtension",
+    "MemoryDefenseRegexExtension",
+    "PolicyRule",
+    "apply_redaction",
+    "parse_policy",
 ]

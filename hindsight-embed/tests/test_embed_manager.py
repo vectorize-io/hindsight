@@ -100,11 +100,9 @@ def test_find_ui_command_uses_npx_yes_flag_when_npx_not_on_path(monkeypatch):
     """When npx is not on PATH, fall back to a bare `npx -y` command so the
     surrounding FileNotFoundError handler can report a clean install hint."""
     manager = DaemonEmbedManager()
-    monkeypatch.setenv("HINDSIGHT_EMBED_CP_VERSION", "9.9.9")
 
-    with patch("pathlib.Path.exists", return_value=False), \
-         patch("shutil.which", return_value=None):
-        assert manager._find_ui_command() == [
+    with patch("pathlib.Path.exists", return_value=False), patch("shutil.which", return_value=None):
+        assert manager._find_ui_command("9.9.9") == [
             "npx",
             "-y",
             "@vectorize-io/hindsight-control-plane@9.9.9",
@@ -116,11 +114,9 @@ def test_find_ui_command_resolves_npx_absolute_path_with_yes_flag(monkeypatch):
     processes don't always inherit PATH — see embed_manager._find_ui_command).
     Either way, `-y` must be set so first-run installs don't block on a prompt."""
     manager = DaemonEmbedManager()
-    monkeypatch.setenv("HINDSIGHT_EMBED_CP_VERSION", "9.9.9")
 
-    with patch("pathlib.Path.exists", return_value=False), \
-         patch("shutil.which", return_value="/usr/local/bin/npx"):
-        cmd = manager._find_ui_command()
+    with patch("pathlib.Path.exists", return_value=False), patch("shutil.which", return_value="/usr/local/bin/npx"):
+        cmd = manager._find_ui_command("9.9.9")
 
     assert cmd == [
         "/usr/local/bin/npx",
@@ -143,11 +139,13 @@ def test_find_api_command_prefers_installed_binary_over_uvx(tmp_path, monkeypatc
 
     manager = DaemonEmbedManager()
     # Point __file__ away from monorepo so dev-mode check doesn't trigger
-    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py"))
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py")
+    )
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
 
-    assert manager._find_api_command() == [str(api_binary)]
+    assert manager._find_api_command("0.0.0") == [str(api_binary)]
 
 
 def test_find_api_command_target_install_uses_file_relative_fallback(tmp_path, monkeypatch):
@@ -175,7 +173,7 @@ def test_find_api_command_target_install_uses_file_relative_fallback(tmp_path, m
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(venv_scripts))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
 
-    assert manager._find_api_command() == [str(sibling_bin)]
+    assert manager._find_api_command("0.0.0") == [str(sibling_bin)]
 
 
 def test_find_api_command_falls_back_to_uvx_when_no_binary(tmp_path, monkeypatch):
@@ -185,12 +183,13 @@ def test_find_api_command_falls_back_to_uvx_when_no_binary(tmp_path, monkeypatch
     # No hindsight-api binary in scripts_dir
 
     manager = DaemonEmbedManager()
-    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py"))
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py")
+    )
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
-    monkeypatch.setenv("HINDSIGHT_EMBED_API_VERSION", "1.2.3")
 
-    assert manager._find_api_command() == ["uvx", "hindsight-api@1.2.3"]
+    assert manager._find_api_command("1.2.3") == ["uvx", "hindsight-api@1.2.3"]
 
 
 def test_find_api_command_windows_uses_exe_suffix(tmp_path, monkeypatch):
@@ -212,12 +211,14 @@ def test_find_api_command_windows_uses_exe_suffix(tmp_path, monkeypatch):
 
     manager = DaemonEmbedManager()
     # Point __file__ away from monorepo so dev-mode check doesn't trigger
-    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py"))
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py")
+    )
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sys.executable", str(interp_dir / "python.exe"))
 
-    assert manager._find_api_command() == [str(api_binary)]
+    assert manager._find_api_command("0.0.0") == [str(api_binary)]
 
 
 def test_find_api_command_windows_prefers_gui_interpreter(tmp_path, monkeypatch):
@@ -237,9 +238,78 @@ def test_find_api_command_windows_prefers_gui_interpreter(tmp_path, monkeypatch)
 
     manager = DaemonEmbedManager()
     # Point __file__ away from monorepo so dev-mode check doesn't trigger
-    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py"))
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py")
+    )
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sys.executable", str(scripts_dir / "python.exe"))
 
-    assert manager._find_api_command() == [str(pythonw), "-m", "hindsight_api.main"]
+    assert manager._find_api_command("0.0.0") == [str(pythonw), "-m", "hindsight_api.main"]
+
+
+def test_stop_ui_kills_recorded_and_configured_ports(tmp_path, monkeypatch):
+    """After a UI-port change, stop_ui must kill BOTH the recorded (old, actually
+    running) port and the configured (new) port — otherwise the old UI orphans."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+    manager = DaemonEmbedManager()
+    paths = manager._profile_manager.resolve_profile_paths("")  # default profile
+    manager._record_ui_port(paths, 9000)  # UI was actually started on 9000
+    assert manager._ui_port_file(paths).exists()
+
+    killed = []
+    monkeypatch.setattr(manager, "_find_pid_on_port", lambda port: {9000: 111, 9001: 222}.get(port))
+    monkeypatch.setattr(DaemonEmbedManager, "_kill_process", staticmethod(lambda pid: killed.append(pid) or True))
+    monkeypatch.setattr(manager, "_is_port_in_use", lambda port: False)
+
+    # configured port is now 9001 (changed); recorded is still 9000
+    assert manager.stop_ui("", ui_port=9001) is True
+    assert sorted(killed) == [111, 222]  # both old and new killed
+    assert not manager._ui_port_file(paths).exists()
+
+
+def test_register_profile_preserves_existing_embed_keys(tmp_path, monkeypatch):
+    """_register_profile rewrites the .env on daemon start; it must merge the
+    existing non-API keys (UI port, idle timeout, ...) forward instead of
+    dropping them. Regression for the HINDSIGHT_EMBED_CP_PORT wipe."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+    manager = DaemonEmbedManager()
+    # Seed a profile .env that already carries an embed-only key.
+    manager._profile_manager.create_profile(
+        "p", {"HINDSIGHT_API_LLM_PROVIDER": "openai", "HINDSIGHT_EMBED_CP_PORT": "25000"}
+    )
+
+    # Daemon start passes only HINDSIGHT_API_* config to _register_profile.
+    manager._register_profile("p", 9100, {"HINDSIGHT_API_LLM_PROVIDER": "openai", "HINDSIGHT_API_LLM_API_KEY": "sk-x"})
+
+    env = (tmp_path / ".hindsight" / "profiles" / "p.env").read_text()
+    assert "HINDSIGHT_EMBED_CP_PORT=25000" in env  # preserved, not wiped
+    assert "HINDSIGHT_API_LLM_API_KEY=sk-x" in env
+
+
+def test_component_version_resolution(tmp_path, monkeypatch):
+    """Component version: profile .env override > env var > embed __version__."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from hindsight_embed import __version__
+
+    manager = DaemonEmbedManager()
+    manager._profile_manager.create_profile("p", {"HINDSIGHT_API_LLM_PROVIDER": "openai"})
+
+    # default = embed version
+    monkeypatch.delenv("HINDSIGHT_EMBED_CP_VERSION", raising=False)
+    assert manager._component_version("p", "HINDSIGHT_EMBED_CP_VERSION") == __version__
+
+    # env var overrides the default
+    monkeypatch.setenv("HINDSIGHT_EMBED_CP_VERSION", "9.9.9")
+    assert manager._component_version("p", "HINDSIGHT_EMBED_CP_VERSION") == "9.9.9"
+
+    # profile .env override beats the env var
+    manager._profile_manager.create_profile(
+        "p", {"HINDSIGHT_API_LLM_PROVIDER": "openai", "HINDSIGHT_EMBED_CP_VERSION": "1.2.3"}
+    )
+    assert manager._component_version("p", "HINDSIGHT_EMBED_CP_VERSION") == "1.2.3"

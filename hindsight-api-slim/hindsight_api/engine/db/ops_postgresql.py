@@ -4,11 +4,6 @@ Uses unnest(), LATERAL, DISTINCT ON, and native array operations for
 efficient batch operations.
 """
 
-import json
-from datetime import UTC, datetime
-from typing import Any
-from uuid import UUID
-
 from .base import DatabaseConnection
 from .ops import DataAccessOps, TagListingParts
 from .result import ResultRow
@@ -47,6 +42,30 @@ class PostgreSQLOps(DataAccessOps):
             chunk_texts,
             chunk_indices,
             content_hashes,
+        )
+
+    async def lock_document_for_write(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        doc_id: str,
+        bank_id: str,
+    ) -> str | None:
+        # Single upsert that both creates the row (if absent) and locks it (if
+        # present) atomically. ON CONFLICT DO UPDATE always takes the row lock as
+        # part of the statement, so all concurrent same-document writers serialize
+        # on the document row in one consistent step (the earlier two-step form —
+        # DO NOTHING + a separate SELECT FOR UPDATE — could deadlock because
+        # DO NOTHING takes no lock on an existing row). The SET is a no-op
+        # self-assignment used only to acquire the lock; RETURNING yields the
+        # pre-existing hash (or '__pending__' for a freshly inserted row).
+        return await conn.fetchval(
+            f"INSERT INTO {table} (id, bank_id, original_text, content_hash) "
+            f"VALUES ($1, $2, '', '__pending__') "
+            f"ON CONFLICT (id, bank_id) DO UPDATE SET content_hash = {table}.content_hash "
+            f"RETURNING content_hash",
+            doc_id,
+            bank_id,
         )
 
     async def insert_facts_batch(
@@ -596,7 +615,6 @@ class PostgreSQLOps(DataAccessOps):
         per_entity_limit: int,
     ) -> tuple[list[ResultRow], list[ResultRow], list[ResultRow]]:
         # v0.5.6 array ops: unnest, &&, COUNT(DISTINCT) on source_memory_ids.
-        from ..schema import fq_table
 
         entity_rows = await conn.fetch(
             f"""

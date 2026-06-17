@@ -12,6 +12,7 @@ vi.mock("@vectorize-io/hindsight-client", () => {
 });
 
 import { HindsightPlugin } from "./index.js";
+import { DEFAULT_HINDSIGHT_API_URL } from "./config.js";
 import { HindsightClient } from "@vectorize-io/hindsight-client";
 
 const mockPluginInput = {
@@ -41,10 +42,19 @@ describe("HindsightPlugin", () => {
     process.env = { ...originalEnv };
   });
 
-  it("returns empty hooks when no API URL configured", async () => {
+  it("defaults to the hosted backend URL when no API URL is configured", async () => {
     const result = await HindsightPlugin(mockPluginInput as any);
-    expect(result).toEqual({});
-    expect(HindsightClient).not.toHaveBeenCalled();
+
+    expect(HindsightClient).toHaveBeenCalledWith({
+      baseUrl: DEFAULT_HINDSIGHT_API_URL,
+      apiKey: undefined,
+    });
+    // Full tool + hook surface still returned — the plugin doesn't disable
+    // itself just because the URL was left at its default.
+    expect(result.tool).toBeDefined();
+    expect(result.event).toBeDefined();
+    expect(result["experimental.session.compacting"]).toBeDefined();
+    expect(result["experimental.chat.system.transform"]).toBeDefined();
   });
 
   it("returns tools and hooks when configured", async () => {
@@ -136,5 +146,38 @@ describe("plugin default export", () => {
     // the same reference as the named HindsightPlugin export to avoid
     // running the factory twice.
     expect(mod.default).toBe(mod.HindsightPlugin);
+  });
+
+  it("does not expose non-function exports from the plugin entry (#2028)", async () => {
+    // OpenCode >=1.16 iterates EVERY export of the plugin entry and treats it
+    // as a Plugin factory, throwing "Plugin export is not a function" on any
+    // non-function value — a single re-exported constant (e.g. a string URL)
+    // bricks the whole plugin load. Keep the entry surface function-only.
+    const mod = await import("./index.js");
+    for (const [name, value] of Object.entries(mod)) {
+      expect(typeof value, `export "${name}" must be a function`).toBe("function");
+    }
+  });
+
+  it("does not expose other callable utilities from the plugin entry (legacy-loader invariant)", async () => {
+    // OpenCode's legacy plugin loader (getLegacyPlugins) iterates Object.values(mod)
+    // and calls every function export as a Plugin factory. It deduplicates by
+    // reference, so default and HindsightPlugin (same fn) are fine. But any
+    // other callable utility re-exported from the entry (e.g. loadConfig,
+    // deriveBankId) would be incorrectly invoked as a plugin — likely producing
+    // a hooks object with the wrong shape (a string, a config object, etc.) and
+    // silently breaking session behavior.
+    //
+    // The fix is to NOT re-export utilities from the entry; consumers that
+    // need them import from "@vectorize-io/opencode-hindsight/dist/config.js"
+    // or rely on the plugin itself using them internally.
+    const mod = await import("./index.js");
+    const functionValues = Object.values(mod).filter((v) => typeof v === "function");
+    // Exactly two function exports remain: the default export and the
+    // HindsightPlugin named export, both pointing at the same function.
+    expect(functionValues.length).toBe(2);
+    expect(functionValues[0]).toBe(functionValues[1]);
+    // And the only callable symbol in the entry is the plugin itself.
+    expect(new Set(functionValues).size).toBe(1);
   });
 });

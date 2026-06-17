@@ -57,7 +57,10 @@ class TestLiteLLMSDKEmbeddings:
 
     async def test_initialization_success(self, mock_litellm):
         """Test successful initialization."""
-        with patch("builtins.__import__", side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args)):
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
             emb = LiteLLMSDKEmbeddings(
                 api_key="test_key",
                 model="cohere/embed-english-v3.0",
@@ -84,7 +87,10 @@ class TestLiteLLMSDKEmbeddings:
 
     async def test_initialization_without_api_key(self, mock_litellm):
         """Test initialization without api_key (e.g. AWS Bedrock with IAM auth)."""
-        with patch("builtins.__import__", side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args)):
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
             emb = LiteLLMSDKEmbeddings(
                 model="bedrock/amazon.titan-embed-text-v2:0",
                 batch_size=100,
@@ -119,6 +125,7 @@ class TestLiteLLMSDKEmbeddings:
 
     async def test_initialization_missing_package(self):
         """Test initialization fails gracefully when litellm is not installed."""
+
         def mock_import(name, *args):
             if name == "litellm":
                 raise ImportError("No module named 'litellm'")
@@ -208,9 +215,7 @@ class TestLiteLLMSDKEmbeddings:
         # Mock responses for each batch
         def mock_embedding_side_effect(model, input, **kwargs):
             mock_response = MagicMock()
-            mock_response.data = [
-                {"embedding": [float(i)] * 768, "index": i} for i in range(len(input))
-            ]
+            mock_response.data = [{"embedding": [float(i)] * 768, "index": i} for i in range(len(input))]
             return mock_response
 
         mock_litellm.embedding.side_effect = mock_embedding_side_effect
@@ -279,7 +284,10 @@ class TestLiteLLMSDKEmbeddings:
 
     async def test_custom_api_base(self, mock_litellm):
         """Test custom API base URL is passed to embedding calls."""
-        with patch("builtins.__import__", side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args)):
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
             emb = LiteLLMSDKEmbeddings(
                 api_key="test_key",
                 model="cohere/embed-english-v3.0",
@@ -454,7 +462,7 @@ class TestLiteLLMSDKEmbeddings:
         ):
             emb = LiteLLMSDKEmbeddings(
                 api_key="test_key",
-                model="gemini/gemini-embedding-2-preview",
+                model="gemini/gemini-embedding-2",
                 encoding_format="",
             )
             await emb.initialize()
@@ -542,7 +550,7 @@ class TestLiteLLMSDKEmbeddingsFactory:
         mock_config = MagicMock()
         mock_config.embeddings_provider = "litellm-sdk"
         mock_config.embeddings_litellm_sdk_api_key = "test_key"
-        mock_config.embeddings_litellm_sdk_model = "gemini/gemini-embedding-2-preview"
+        mock_config.embeddings_litellm_sdk_model = "gemini/gemini-embedding-2"
         mock_config.embeddings_litellm_sdk_api_base = None
         mock_config.embeddings_litellm_sdk_output_dimensions = 768
 

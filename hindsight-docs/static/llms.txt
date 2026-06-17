@@ -6,13 +6,13 @@ Hindsight is an agent memory system that gives AI agents persistent, structured 
 
 ## Links
 
-- [Full Documentation (llms-full.txt)](https://vectorize-io.github.io/hindsight/llms-full.txt): Complete documentation for LLM consumption
-- [Quick Start](https://vectorize-io.github.io/hindsight/developer/api/quickstart): Get started in 60 seconds
-- [Python SDK](https://vectorize-io.github.io/hindsight/sdks/python): Python client library
-- [TypeScript SDK](https://vectorize-io.github.io/hindsight/sdks/nodejs): Node.js/TypeScript client
-- [API Reference](https://vectorize-io.github.io/hindsight/api-reference): REST API documentation
-- [OpenAPI Spec](https://vectorize-io.github.io/hindsight/openapi.json): Machine-readable API specification
-- [MCP Server](https://vectorize-io.github.io/hindsight/sdks/mcp): Model Context Protocol integration
+- [Full Documentation (llms-full.txt)](https://hindsight.vectorize.io/llms-full.txt): Complete documentation for LLM consumption
+- [Quick Start](https://hindsight.vectorize.io/developer/api/quickstart): Get started in 60 seconds
+- [Python SDK](https://hindsight.vectorize.io/sdks/python): Python client library
+- [TypeScript SDK](https://hindsight.vectorize.io/sdks/nodejs): Node.js/TypeScript client
+- [API Reference](https://hindsight.vectorize.io/api-reference): REST API documentation
+- [OpenAPI Spec](https://hindsight.vectorize.io/openapi.json): Machine-readable API specification
+- [MCP Server](https://hindsight.vectorize.io/sdks/mcp): Model Context Protocol integration
 - [GitHub](https://github.com/vectorize-io/hindsight): Source code and issues
 
 ## Core Operations
@@ -69,8 +69,8 @@ Base URL: `http://localhost:8888`
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/v1/default/banks/{bank_id}/retain` | Store memories |
-| POST | `/v1/default/banks/{bank_id}/recall` | Retrieve memories |
+| POST | `/v1/default/banks/{bank_id}/memories` | Store memories |
+| POST | `/v1/default/banks/{bank_id}/memories/recall` | Retrieve memories |
 | POST | `/v1/default/banks/{bank_id}/reflect` | Analyze and form opinions |
 | GET | `/v1/default/banks/{bank_id}/profile` | Get bank profile |
 | PUT | `/v1/default/banks/{bank_id}/profile` | Update bank profile |
@@ -81,11 +81,11 @@ Base URL: `http://localhost:8888`
 
 ### Per-User Memory
 One bank per user. Simplest pattern for chatbots and assistants.
-[Guide](https://vectorize-io.github.io/hindsight/cookbook/per-user-memory)
+[Guide](https://hindsight.vectorize.io/cookbook/per-user-memory)
 
 ### Support Agent + Shared Knowledge
 User bank + shared docs bank. Client orchestrates queries to both banks and merges results.
-[Guide](https://vectorize-io.github.io/hindsight/cookbook/support-agent-with-shared-knowledge)
+[Guide](https://hindsight.vectorize.io/cookbook/support-agent-with-shared-knowledge)
 
 ## Installation
 

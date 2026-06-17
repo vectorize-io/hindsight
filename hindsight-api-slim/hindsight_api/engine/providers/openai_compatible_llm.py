@@ -26,6 +26,8 @@ import logging
 import os
 import re
 import time
+from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import parse_qs, urlparse, urlunparse
 
@@ -33,7 +35,8 @@ import httpx
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI, LengthFinishReasonError
 
 from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
-from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
+from hindsight_api.engine.bank_attribution import apply_bank_attribution
+from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError, ProviderRateLimitResetError
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
@@ -43,6 +46,16 @@ logger = logging.getLogger(__name__)
 # Seed applied to every Groq request for deterministic behavior
 DEFAULT_LLM_SEED = 4242
 JSON_MODE_USER_HINT = "Return valid json only."
+
+# Self-hosted OpenAI-compatible servers that advertise tool_choice="required"
+# but silently ignore it: instead of forcing a tool call they return
+# finish_reason "stop"/"tool_calls" with an EMPTY tool_calls array and no error.
+# Reflect's agent loop then sees no tool call, runs synthesis with no retrieval,
+# and answers "I don't have information" even when the bank holds the answer.
+# See issues #1563 (LM Studio), #1179 (LM Studio + Qwen), #1877 (vLLM with
+# --enable-auto-tool-choice). llama-server (the "llamacpp" provider) honors
+# "required" correctly and is intentionally excluded (#1179).
+_TOOL_CHOICE_REQUIRED_UNSUPPORTED_PROVIDERS = frozenset({"lmstudio", "ollama"})
 
 
 class ProviderResponseError(RuntimeError):
@@ -70,6 +83,49 @@ def _strip_code_fences(content: str) -> str:
         return content.split("```")[1].split("```")[0].strip()
     except (IndexError, ValueError):
         return content
+
+
+# Reasoning/thinking tags emitted by extended-thinking models. Some providers
+# (e.g. MiniMax-M3) leak the chain-of-thought wrapped in these tags into the
+# response body instead of a separate reasoning_content field. Each entry is
+# (open_tag, close_tag); the open tag also matches when the close tag is missing
+# (truncated output) so a dangling block is removed to end-of-string.
+_REASONING_TAG_PAIRS: tuple[tuple[str, str], ...] = (
+    ("<think>", "</think>"),
+    ("<thinking>", "</thinking>"),
+    ("<thought>", "</thought>"),
+    ("<reasoning>", "</reasoning>"),
+    ("|startthink|", "|endthink|"),
+)
+
+
+def _strip_reasoning_tags(text: str) -> str:
+    """Strip extended-thinking/reasoning blocks from an LLM response.
+
+    Removes the full set of tag styles emitted by reasoning models:
+    ``<think>``, ``<thinking>``, ``<thought>``, ``<reasoning>`` and the
+    ``|startthink|...|endthink|`` markers. Both the structured (JSON) path and
+    the free-form path must call this — otherwise a non-structured response
+    (e.g. a mental-model markdown blob from MiniMax-M3) leaks the raw
+    ``<think>...</think>`` verbatim into stored memories.
+
+    Handles two cases:
+    1. Closed blocks: ``<think>...</think>`` removed wherever they appear.
+    2. Unclosed blocks: a dangling ``<think>`` with no closing tag (model output
+       truncated mid-thought) is removed from the open tag to end-of-string.
+
+    Returns the input unchanged (modulo surrounding whitespace) when no tags are
+    present.
+    """
+    if not text:
+        return text
+    for open_tag, close_tag in _REASONING_TAG_PAIRS:
+        open_re = re.escape(open_tag)
+        close_re = re.escape(close_tag)
+        # Closed blocks first, then any remaining unclosed (truncated) block.
+        text = re.sub(rf"{open_re}.*?{close_re}", "", text, flags=re.DOTALL)
+        text = re.sub(rf"{open_re}.*", "", text, flags=re.DOTALL)
+    return text.strip()
 
 
 def _response_get(response: Any, key: str, default: Any = None) -> Any:
@@ -223,6 +279,122 @@ def _summarize_status_error(e: APIStatusError, body_max: int = 400) -> str:
     return f"HTTP {e.status_code}: {body_str or '<no body>'}"
 
 
+_RATE_LIMIT_RESET_AT_RE = re.compile(
+    r"\breset at\s+"
+    r"(?P<reset_at>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\s*(?:Z|[+-]\d{2}:?\d{2}))?)",
+    re.IGNORECASE,
+)
+_RATE_LIMIT_WINDOW_RE = re.compile(
+    r"\b(?:for|in)\s+(?P<amount>\d+)\s*(?P<unit>second|minute|hour|day)s?\b",
+    re.IGNORECASE,
+)
+
+
+def _status_error_body_text(e: APIStatusError) -> str:
+    body: Any = getattr(e, "body", None)
+    if body is None:
+        try:
+            body = e.response.text
+        except Exception:
+            body = None
+    if isinstance(body, (dict, list)):
+        try:
+            return json.dumps(body, default=str, ensure_ascii=False)
+        except Exception:
+            return str(body)
+    return str(body or "").strip()
+
+
+def _parse_retry_after_header(value: str | None, now: datetime) -> datetime | None:
+    if not value:
+        return None
+    raw = value.strip()
+    try:
+        seconds = float(raw)
+    except ValueError:
+        seconds = -1.0
+    if seconds >= 0:
+        return now + timedelta(seconds=seconds)
+
+    try:
+        parsed = parsedate_to_datetime(raw)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _parse_reset_at_datetime(value: str) -> datetime | None:
+    raw = value.strip().replace(" ", "T")
+    if raw.endswith("Z"):
+        raw = f"{raw[:-1]}+00:00"
+    elif re.search(r"[+-]\d{4}$", raw):
+        raw = f"{raw[:-2]}:{raw[-2:]}"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        # Some providers (z.ai included) return a wall-clock reset timestamp
+        # without a zone. Interpret it in the host's local zone so logs, status
+        # pages, and the queued next_retry_at describe the same operator-facing
+        # clock instead of silently shifting by UTC offset.
+        parsed = parsed.astimezone()
+    return parsed.astimezone(UTC)
+
+
+def _rate_limit_retry_at(e: APIStatusError) -> datetime | None:
+    now = datetime.now(UTC)
+    response = getattr(e, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is not None:
+        retry_at = _parse_retry_after_header(headers.get("retry-after") or headers.get("Retry-After"), now)
+        if retry_at is not None and retry_at > now:
+            return retry_at
+
+    body_text = _status_error_body_text(e)
+    reset_match = _RATE_LIMIT_RESET_AT_RE.search(body_text)
+    if reset_match:
+        retry_at = _parse_reset_at_datetime(reset_match.group("reset_at"))
+        if retry_at is not None and retry_at > now:
+            return retry_at
+
+    window_match = _RATE_LIMIT_WINDOW_RE.search(body_text)
+    if not window_match:
+        return None
+    amount = int(window_match.group("amount"))
+    unit = window_match.group("unit").lower()
+    if unit == "second":
+        seconds = amount
+    elif unit == "minute":
+        seconds = amount * 60
+    elif unit == "hour":
+        seconds = amount * 3600
+    else:
+        seconds = amount * 86400
+    return now + timedelta(seconds=seconds)
+
+
+def _raise_provider_quota_defer(
+    e: APIStatusError, *, provider: str, model: str, scope: str, max_backoff: float
+) -> None:
+    if e.status_code != 429:
+        return
+    retry_at = _rate_limit_retry_at(e)
+    if retry_at is None:
+        return
+    if (retry_at - datetime.now(UTC)).total_seconds() <= max_backoff:
+        return
+    summary = _summarize_status_error(e)
+    raise ProviderRateLimitResetError(
+        retry_at=retry_at,
+        message=(
+            f"Provider quota exhausted ({provider}/{model}, scope={scope}); retry at {retry_at.isoformat()}: {summary}"
+        ),
+    ) from e
+
+
 class OpenAICompatibleLLM(LLMInterface):
     """
     LLM provider for OpenAI-compatible APIs.
@@ -258,7 +430,7 @@ class OpenAICompatibleLLM(LLMInterface):
             base_url: Base URL for the API (uses defaults for groq/ollama/lmstudio if empty).
             model: Model name.
             reasoning_effort: Reasoning effort level for supported models ("low", "medium", "high").
-            timeout: Request timeout in seconds (uses env var or 300s default).
+            timeout: Request timeout in seconds (uses env var or 120s default).
             groq_service_tier: Groq service tier ("on_demand", "flex", "auto").
             extra_body: Extra body params merged into every API call.
             **kwargs: Additional provider-specific parameters.
@@ -360,6 +532,21 @@ class OpenAICompatibleLLM(LLMInterface):
             f"base_url={self.base_url or 'default'}"
         )
 
+    def _drops_tool_choice_required(self) -> bool:
+        """Whether this endpoint silently ignores ``tool_choice="required"``.
+
+        True for self-hosted OpenAI-compatible servers known to return an empty
+        tool_calls array for "required" instead of forcing a call (#1563/#1179/
+        #1877). Covers LM Studio / Ollama directly, plus any server reached via
+        the generic "openai" provider with a custom ``base_url`` (e.g. a local
+        vLLM endpoint). The real OpenAI API (no base_url override) honors
+        "required", and cloud providers keep their own default base_urls, so both
+        are left untouched.
+        """
+        if self.provider in _TOOL_CHOICE_REQUIRED_UNSUPPORTED_PROVIDERS:
+            return True
+        return self.provider == "openai" and bool(self.base_url)
+
     async def verify_connection(self) -> None:
         """
         Verify that the provider is configured correctly by making a simple test call.
@@ -460,7 +647,9 @@ class OpenAICompatibleLLM(LLMInterface):
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
             skip_validation: Return raw JSON without Pydantic validation.
-            strict_schema: Use strict JSON schema enforcement (OpenAI only).
+            strict_schema: Use strict json_schema (grammar-enforced) response_format instead of
+                the soft json_object path. Supported by OpenAI and schema-capable self-hosted
+                backends (llama.cpp, vLLM). Server-wide via HINDSIGHT_API_LLM_STRICT_SCHEMA.
             return_usage: If True, return tuple (result, TokenUsage) instead of just result.
 
         Returns:
@@ -568,6 +757,8 @@ class OpenAICompatibleLLM(LLMInterface):
                     call_params["messages"] = _ensure_json_word_in_user_message(call_params["messages"])
                     call_params["response_format"] = {"type": "json_object"}
 
+        apply_bank_attribution(call_params)
+
         last_exception = None
 
         for attempt in range(max_retries + 1):
@@ -587,15 +778,10 @@ class OpenAICompatibleLLM(LLMInterface):
                         scope=scope,
                     )
 
-                    # Strip reasoning model thinking tags
+                    # Strip reasoning model thinking tags (closed and unclosed).
                     # Supports: <think>, <thinking>, <thought>, <reasoning>, |startthink|/|endthink|
                     original_len = len(content)
-                    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
-                    content = re.sub(r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL)
-                    content = re.sub(r"<thought>.*?</thought>", "", content, flags=re.DOTALL)
-                    content = re.sub(r"<reasoning>.*?</reasoning>", "", content, flags=re.DOTALL)
-                    content = re.sub(r"\|startthink\|.*?\|endthink\|", "", content, flags=re.DOTALL)
-                    content = content.strip()
+                    content = _strip_reasoning_tags(content)
                     if len(content) < original_len:
                         logger.debug(f"Stripped {original_len - len(content)} chars of reasoning tokens")
 
@@ -643,6 +829,13 @@ class OpenAICompatibleLLM(LLMInterface):
                         model=self.model,
                         scope=scope,
                     )
+
+                    # Free-form (non-structured) output also leaks reasoning tags:
+                    # reasoning models like MiniMax-M3 wrap their chain-of-thought
+                    # in <think>...</think> in the response body. Without this strip
+                    # a mental-model markdown blob is stored verbatim with the raw
+                    # thinking tags. Mirrors the structured-output path above.
+                    result = _strip_reasoning_tags(result)
 
                 # Record token usage metrics
                 duration = time.time() - start_time
@@ -731,6 +924,10 @@ class OpenAICompatibleLLM(LLMInterface):
                     logger.error(f"Auth error (HTTP {e.status_code}), not retrying: {str(e)}")
                     raise
 
+                _raise_provider_quota_defer(
+                    e, provider=self.provider, model=self.model, scope=scope, max_backoff=max_backoff
+                )
+
                 # Handle tool_use_failed error - model outputted in tool call format
                 if e.status_code == 400 and response_format is not None:
                     try:
@@ -784,7 +981,6 @@ class OpenAICompatibleLLM(LLMInterface):
                         f"scope={scope}): {_summarize_status_error(e)}"
                     )
                     raise
-
             except ProviderResponseError as e:
                 last_exception = e
                 if e.retryable and attempt < max_retries:
@@ -869,6 +1065,16 @@ class OpenAICompatibleLLM(LLMInterface):
         if request_tool_choice == "auto":
             request_tool_choice = None
 
+        # vLLM (--enable-auto-tool-choice), LM Studio, Ollama and similar
+        # self-hosted servers silently drop tool_choice="required", returning an
+        # empty tool_calls array instead of forcing a call (#1563/#1179/#1877).
+        # Downgrade to auto (None) so the model still gets to call a tool. Named
+        # tool_choice dicts were already normalized to "required" + a single
+        # filtered tool above, so the call stays practically forced even under
+        # auto. The real OpenAI API honors "required" and is left untouched.
+        if request_tool_choice == "required" and self._drops_tool_choice_required():
+            request_tool_choice = None
+
         # DeepSeek tool-call replies can carry provider-specific reasoning_content.
         # The normalized tool result does not retain it, but replaying assistant
         # tool_calls without the field can trigger a 400. DeepSeek accepts an
@@ -907,6 +1113,8 @@ class OpenAICompatibleLLM(LLMInterface):
             call_params["seed"] = DEFAULT_LLM_SEED
         if extra_body:
             call_params["extra_body"] = extra_body
+
+        apply_bank_attribution(call_params)
 
         last_exception = None
 
@@ -1005,6 +1213,10 @@ class OpenAICompatibleLLM(LLMInterface):
                         f"not retrying: {_summarize_status_error(e)}"
                     )
                     raise
+                _raise_provider_quota_defer(
+                    e, provider=self.provider, model=self.model, scope=scope, max_backoff=max_backoff
+                )
+
                 last_exception = e
                 if attempt < max_retries:
                     logger.warning(
@@ -1018,7 +1230,6 @@ class OpenAICompatibleLLM(LLMInterface):
                     f"({self.provider}/{self.model}, scope={scope}): {_summarize_status_error(e)}"
                 )
                 raise
-
             except Exception:
                 raise
 

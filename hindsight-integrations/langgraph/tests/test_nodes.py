@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from hindsight_langgraph import create_recall_node, create_retain_node
+from hindsight_langgraph.errors import HindsightError
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 
@@ -29,9 +30,7 @@ class TestRecallNode:
     @pytest.mark.asyncio
     async def test_injects_memories_as_system_message(self):
         client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(
-            ["User likes Python", "User is in NYC"]
-        )
+        client.arecall.return_value = _mock_recall_response(["User likes Python", "User is in NYC"])
         node = create_recall_node(bank_id="test-bank", client=client)
 
         state = {"messages": [HumanMessage(content="What do you remember about me?")]}
@@ -68,9 +67,7 @@ class TestRecallNode:
     @pytest.mark.asyncio
     async def test_respects_max_results(self):
         client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(
-            ["fact1", "fact2", "fact3", "fact4", "fact5"]
-        )
+        client.arecall.return_value = _mock_recall_response(["fact1", "fact2", "fact3", "fact4", "fact5"])
         node = create_recall_node(bank_id="test-bank", client=client, max_results=2)
 
         state = {"messages": [HumanMessage(content="query")]}
@@ -106,15 +103,14 @@ class TestRecallNode:
         client.arecall.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_handles_recall_error_gracefully(self):
+    async def test_raises_on_recall_error(self):
         client = _mock_client()
         client.arecall.side_effect = RuntimeError("connection refused")
         node = create_recall_node(bank_id="test-bank", client=client)
 
         state = {"messages": [HumanMessage(content="hello")]}
-        result = await node(state)
-
-        assert result["messages"] == []
+        with pytest.raises(HindsightError, match="Recall node failed"):
+            await node(state)
 
     @pytest.mark.asyncio
     async def test_passes_tags(self):
@@ -139,12 +135,8 @@ class TestRecallNodeOutputKey:
     @pytest.mark.asyncio
     async def test_output_key_returns_memory_text(self):
         client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(
-            ["User likes Python", "User is in NYC"]
-        )
-        node = create_recall_node(
-            bank_id="test-bank", client=client, output_key="memory_context"
-        )
+        client.arecall.return_value = _mock_recall_response(["User likes Python", "User is in NYC"])
+        node = create_recall_node(bank_id="test-bank", client=client, output_key="memory_context")
 
         state = {"messages": [HumanMessage(content="What do you remember?")]}
         result = await node(state)
@@ -158,9 +150,7 @@ class TestRecallNodeOutputKey:
     async def test_output_key_returns_none_when_no_results(self):
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response([])
-        node = create_recall_node(
-            bank_id="test-bank", client=client, output_key="memory_context"
-        )
+        node = create_recall_node(bank_id="test-bank", client=client, output_key="memory_context")
 
         state = {"messages": [HumanMessage(content="hello")]}
         result = await node(state)
@@ -168,17 +158,14 @@ class TestRecallNodeOutputKey:
         assert result == {"memory_context": None}
 
     @pytest.mark.asyncio
-    async def test_output_key_returns_none_on_error(self):
+    async def test_output_key_raises_on_error(self):
         client = _mock_client()
         client.arecall.side_effect = RuntimeError("connection refused")
-        node = create_recall_node(
-            bank_id="test-bank", client=client, output_key="memory_context"
-        )
+        node = create_recall_node(bank_id="test-bank", client=client, output_key="memory_context")
 
         state = {"messages": [HumanMessage(content="hello")]}
-        result = await node(state)
-
-        assert result == {"memory_context": None}
+        with pytest.raises(HindsightError, match="Recall node failed"):
+            await node(state)
 
 
 class TestRetainNode:
@@ -204,9 +191,7 @@ class TestRetainNode:
     @pytest.mark.asyncio
     async def test_retains_both_when_configured(self):
         client = _mock_client()
-        node = create_retain_node(
-            bank_id="test-bank", client=client, retain_human=True, retain_ai=True
-        )
+        node = create_retain_node(bank_id="test-bank", client=client, retain_human=True, retain_ai=True)
 
         state = {
             "messages": [
@@ -223,9 +208,7 @@ class TestRetainNode:
     @pytest.mark.asyncio
     async def test_skips_when_no_messages_match(self):
         client = _mock_client()
-        node = create_retain_node(
-            bank_id="test-bank", client=client, retain_human=False, retain_ai=False
-        )
+        node = create_retain_node(bank_id="test-bank", client=client, retain_human=False, retain_ai=False)
 
         state = {"messages": [HumanMessage(content="hello")]}
         await node(state)
@@ -235,9 +218,7 @@ class TestRetainNode:
     @pytest.mark.asyncio
     async def test_passes_tags(self):
         client = _mock_client()
-        node = create_retain_node(
-            bank_id="test-bank", client=client, tags=["source:chat"]
-        )
+        node = create_retain_node(bank_id="test-bank", client=client, tags=["source:chat"])
 
         state = {"messages": [HumanMessage(content="hello")]}
         await node(state)
@@ -258,12 +239,75 @@ class TestRetainNode:
         assert call_kwargs["bank_id"] == "user-789"
 
     @pytest.mark.asyncio
-    async def test_handles_retain_error_gracefully(self):
+    async def test_raises_on_retain_error(self):
         client = _mock_client()
         client.aretain.side_effect = RuntimeError("connection refused")
         node = create_retain_node(bank_id="test-bank", client=client)
 
         state = {"messages": [HumanMessage(content="hello")]}
-        # Should not raise
-        result = await node(state)
-        assert result["messages"] == []
+        with pytest.raises(HindsightError, match="Retain node failed"):
+            await node(state)
+
+    @pytest.mark.asyncio
+    async def test_passes_metadata_and_document_id(self):
+        client = _mock_client()
+        node = create_retain_node(
+            bank_id="test-bank",
+            client=client,
+            metadata={"source": "chat"},
+            document_id="session-1",
+        )
+
+        state = {"messages": [HumanMessage(content="hello")]}
+        await node(state)
+
+        call_kwargs = client.aretain.call_args[1]
+        assert call_kwargs["metadata"] == {"source": "chat"}
+        assert call_kwargs["document_id"] == "session-1"
+
+
+class TestRecallNodeNewParams:
+    @pytest.mark.asyncio
+    async def test_passes_recall_types(self):
+        client = _mock_client()
+        client.arecall.return_value = _mock_recall_response(["fact"])
+        node = create_recall_node(
+            bank_id="test-bank",
+            client=client,
+            recall_types=["world", "experience"],
+        )
+
+        state = {"messages": [HumanMessage(content="hello")]}
+        await node(state)
+
+        call_kwargs = client.arecall.call_args[1]
+        assert call_kwargs["types"] == ["world", "experience"]
+
+    @pytest.mark.asyncio
+    async def test_passes_recall_include_entities(self):
+        client = _mock_client()
+        client.arecall.return_value = _mock_recall_response(["fact"])
+        node = create_recall_node(
+            bank_id="test-bank",
+            client=client,
+            recall_include_entities=True,
+        )
+
+        state = {"messages": [HumanMessage(content="hello")]}
+        await node(state)
+
+        call_kwargs = client.arecall.call_args[1]
+        assert call_kwargs["include_entities"] is True
+
+    @pytest.mark.asyncio
+    async def test_recall_types_not_passed_when_none(self):
+        client = _mock_client()
+        client.arecall.return_value = _mock_recall_response(["fact"])
+        node = create_recall_node(bank_id="test-bank", client=client)
+
+        state = {"messages": [HumanMessage(content="hello")]}
+        await node(state)
+
+        call_kwargs = client.arecall.call_args[1]
+        assert "types" not in call_kwargs
+        assert "include_entities" not in call_kwargs

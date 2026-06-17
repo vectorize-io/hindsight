@@ -41,7 +41,9 @@ import {
   ChevronDown,
   ChevronRight,
   LogOut,
+  Copy,
 } from "lucide-react";
+import { toast } from "sonner";
 import { useTheme } from "@/lib/theme-context";
 import { useFeatures } from "@/lib/features-context";
 import Image from "next/image";
@@ -113,7 +115,7 @@ function BankSelectorInner() {
   const [docDocumentId, setDocDocumentId] = React.useState("");
   const [docTags, setDocTags] = React.useState("");
   const [docObservationScopes, setDocObservationScopes] = React.useState<
-    "per_tag" | "combined" | "all_combinations" | "custom"
+    "per_tag" | "combined" | "all_combinations" | "custom" | "shared"
   >("combined");
   const [docObservationScopesCustom, setDocObservationScopesCustom] = React.useState("");
   const [docMetadata, setDocMetadata] = React.useState("");
@@ -266,8 +268,12 @@ function BankSelectorInner() {
 
   const computeScopes = (
     tags: string[],
-    mode: "per_tag" | "combined" | "all_combinations"
+    mode: "per_tag" | "combined" | "all_combinations" | "custom" | "shared"
   ): string[][] => {
+    // "shared" is tag-independent: a single global (untagged) scope, matching the
+    // server's `parsed === "shared" -> [[]]` handling in consolidator.py.
+    if (mode === "shared") return [[]];
+    if (mode === "custom") return [];
     if (tags.length === 0) return [];
     if (mode === "per_tag") return tags.map((t) => [t]);
     if (mode === "combined") return [tags];
@@ -397,7 +403,7 @@ function BankSelectorInner() {
         timestamp?: string;
         document_id?: string;
         tags?: string[];
-        observation_scopes?: "per_tag" | "combined" | "all_combinations" | string[][];
+        observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
         metadata?: Record<string, string>;
         entities?: Array<{ text: string }>;
         strategy?: string;
@@ -412,6 +418,8 @@ function BankSelectorInner() {
         item.observation_scopes = "combined";
       } else if (docObservationScopes === "all_combinations") {
         item.observation_scopes = "all_combinations";
+      } else if (docObservationScopes === "shared") {
+        item.observation_scopes = "shared";
       } else if (docObservationScopes === "custom") {
         const customScopes = docObservationScopesCustom
           .split("\n")
@@ -527,7 +535,7 @@ function BankSelectorInner() {
                             : `?view=${view}`;
                           router.push(bankRoute(value, queryString));
                         }}
-                        className="relative overflow-hidden py-2.5 mb-0.5"
+                        className="relative overflow-hidden py-2.5 mb-0.5 group"
                       >
                         {/* Background bar — proportional to memory count */}
                         <div
@@ -544,6 +552,26 @@ function BankSelectorInner() {
                           <span className="truncate flex-1 font-medium" title={bank.bank_id}>
                             {bank.bank_id}
                           </span>
+                          <button
+                            type="button"
+                            aria-label={tNavBank("copyName")}
+                            title={tNavBank("copyName")}
+                            className="inline-flex h-6 w-6 items-center justify-center rounded hover:bg-accent-foreground/10 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity shrink-0"
+                            onMouseDown={(e) => {
+                              // Stop cmdk from intercepting before onClick fires.
+                              e.stopPropagation();
+                              e.preventDefault();
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigator.clipboard.writeText(bank.bank_id).then(
+                                () => toast.success(tNavBank("copied")),
+                                () => toast.error(tNavBank("copied"))
+                              );
+                            }}
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </button>
                           <span className="shrink-0 tabular-nums text-[11px] text-muted-foreground/70">
                             {bank.fact_count > 0 ? (
                               <>
@@ -1172,7 +1200,12 @@ function BankSelectorInner() {
                             value={docObservationScopes}
                             onValueChange={(v) =>
                               setDocObservationScopes(
-                                v as "per_tag" | "combined" | "all_combinations" | "custom"
+                                v as
+                                  | "per_tag"
+                                  | "combined"
+                                  | "all_combinations"
+                                  | "custom"
+                                  | "shared"
                               )
                             }
                           >
@@ -1187,10 +1220,21 @@ function BankSelectorInner() {
                               <SelectItem value="all_combinations">
                                 {tAddDocument("observationScopeAllCombinations")}
                               </SelectItem>
-                              <SelectItem value="custom">Custom</SelectItem>
+                              <SelectItem value="shared">
+                                {tAddDocument("observationScopeShared")}
+                              </SelectItem>
+                              <SelectItem value="custom">
+                                {tAddDocument("observationScopeCustom")}
+                              </SelectItem>
                             </SelectContent>
                           </Select>
+                          {docObservationScopes === "shared" && (
+                            <p className="text-xs text-muted-foreground mt-1.5 italic">
+                              {tAddDocument("observationScopeSharedHelp")}
+                            </p>
+                          )}
                           {docObservationScopes !== "custom" &&
+                            docObservationScopes !== "shared" &&
                             (() => {
                               const tags = docTags
                                 .split(",")
@@ -1275,6 +1319,13 @@ function BankSelectorInner() {
                 </div>
               )}
             </div>
+
+            {features?.store_document_text === false && (
+              <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                <Lock className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                <span>{tAddDocument("textNotStoredWarning")}</span>
+              </div>
+            )}
 
             <DialogFooter>
               <Button

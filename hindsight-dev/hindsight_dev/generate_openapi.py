@@ -6,12 +6,37 @@ This script imports the FastAPI app and exports its OpenAPI schema to a JSON fil
 """
 
 import json
-import os
 import sys
 from pathlib import Path
 
 from hindsight_api import MemoryEngine
 from hindsight_api.api import create_app
+
+
+def _restore_binary_format(node: object) -> None:
+    """Rewrite OpenAPI-3.1 binary string fields back to the 3.0 ``format: binary`` form.
+
+    FastAPI/Pydantic (>=0.136 / >=2.12) serialize binary upload fields as
+    ``{"type": "string", "contentMediaType": "application/octet-stream"}`` — valid
+    OpenAPI 3.1, but openapi-generator v7.10.0 (used by generate-clients.sh) does
+    NOT recognize ``contentMediaType`` as a file upload. It then generates the
+    ``files``/``file`` params as plain strings instead of binary multipart uploads,
+    silently breaking the Go/Python/TypeScript clients of the Files and
+    document-transfer endpoints. Earlier FastAPI emitted ``format: binary`` (still
+    under ``openapi: 3.1.0``), which the generator handles correctly, so we restore
+    that exact representation in-place. Scoped to ``application/octet-stream`` so it
+    only touches binary uploads, not arbitrary content-typed strings.
+    """
+    if isinstance(node, dict):
+        if node.get("contentMediaType") == "application/octet-stream":
+            node.pop("contentMediaType", None)
+            node.pop("contentEncoding", None)
+            node["format"] = "binary"
+        for value in node.values():
+            _restore_binary_format(value)
+    elif isinstance(node, list):
+        for item in node:
+            _restore_binary_format(item)
 
 
 def generate_openapi_spec(output_path: str = None):
@@ -33,6 +58,9 @@ def generate_openapi_spec(output_path: str = None):
 
     # Get the OpenAPI schema from the app
     openapi_schema = app.openapi()
+
+    # Keep binary upload fields generator-compatible (see helper docstring).
+    _restore_binary_format(openapi_schema)
 
     # Write to file
     output_file = Path(output_path)

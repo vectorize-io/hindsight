@@ -464,7 +464,7 @@ class TestConsolidationIntegration:
         async with memory._pool.acquire() as conn:
             observations = await conn.fetch(
                 """
-                SELECT id, text, source_memory_ids, history
+                SELECT id, text, source_memory_ids
                 FROM memory_units
                 WHERE bank_id = $1 AND fact_type = 'observation'
                 """,
@@ -3040,10 +3040,13 @@ def _make_mock_llm_one_obs_per_fact():
     def callback(messages, scope):
         if scope != "consolidation":
             return _ConsolidationBatchResponse()
-        # Parse all fact UUIDs from the prompt — one create per fact
+        # Parse all fact UUIDs from the prompt — one create per fact. Read only
+        # the user message(s): consolidation sends the facts there, while the
+        # stable (cacheable) system message carries example UUIDs in its OUTPUT
+        # FORMAT samples that must not be mistaken for real facts.
         import re
 
-        prompt = messages[0]["content"] if messages else ""
+        prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
         fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
         creates = [_CreateAction(text=f"Observation about fact {fid[:8]}", source_fact_ids=[fid]) for fid in fact_ids]
         return _ConsolidationBatchResponse(creates=creates)
@@ -3112,6 +3115,59 @@ async def test_max_observations_per_scope_limits_creates(memory: MemoryEngine, r
 
 
 @pytest.mark.asyncio
+async def test_max_observations_per_scope_zero_forbids_all_creates(memory: MemoryEngine, request_context):
+    """limit=0 means "no new observations": consolidation must create none.
+
+    Regression for the ``> 0`` call-site guards that excluded 0, leaving
+    ``remaining_observation_slots=None`` (unconstrained) so a limit of 0 behaved
+    like unlimited — the inverse of the documented ``0 = no new observations``.
+    """
+    bank_id = f"test-max-obs-zero-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    raw = _get_raw_config()
+    fake_config = type(raw)(
+        **{
+            **{f: getattr(raw, f) for f in raw.__dataclass_fields__},
+            "max_observations_per_scope": 0,
+        }
+    )
+
+    try:
+        original_global_config = memory._config_resolver._global_config
+        memory._config_resolver._global_config = fake_config
+        wrapper, mock_llm = _make_mock_llm_one_obs_per_fact()
+        original_llm = memory._consolidation_llm_config
+        memory._consolidation_llm_config = wrapper
+
+        try:
+            # Insert tagged memories; the mock LLM will try to create 1 obs per
+            # fact, but limit=0 must block every create.
+            async with memory._pool.acquire() as conn:
+                await _insert_memories_with_tags(
+                    conn,
+                    bank_id,
+                    ["Alice loves hiking.", "Bob swims daily.", "Charlie does yoga."],
+                    tags=["scope:test"],
+                )
+
+            for _ in range(3):
+                await run_consolidation_job(memory_engine=memory, bank_id=bank_id, request_context=request_context)
+
+            async with memory._pool.acquire() as conn:
+                count = await _count_observations_for_scope(conn, bank_id, ["scope:test"])
+                assert count == 0, f"Expected 0 observations (limit=0), got {count}"
+
+                consolidation_calls = [c for c in mock_llm.get_mock_calls() if c["scope"] == "consolidation"]
+                assert len(consolidation_calls) >= 1, "LLM should have been called at least once"
+        finally:
+            memory._config_resolver._global_config = original_global_config
+            memory._consolidation_llm_config = original_llm
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_max_observations_per_scope_allows_updates_at_capacity(memory: MemoryEngine, request_context):
     """At capacity, the LLM can still update existing observations."""
     from hindsight_api.engine.consolidation.consolidator import (
@@ -3145,7 +3201,9 @@ async def test_max_observations_per_scope_allows_updates_at_capacity(memory: Mem
             call_count += 1
             import re
 
-            prompt = messages[0]["content"] if messages else ""
+            # Facts live in the user message; the system message (stable, cached)
+            # carries example UUIDs in its OUTPUT samples — read user only.
+            prompt = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
             fact_ids = re.findall(r"\[([0-9a-f-]{36})\]", prompt)
             if call_count == 1 and fact_ids:
                 # First call: create an observation
@@ -3512,3 +3570,52 @@ async def test_enable_auto_consolidation_flag(memory: MemoryEngine, request_cont
     finally:
         memory._config_resolver._global_config = original_global_config
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+def test_consolidation_prompt_split_is_cacheable_and_complete():
+    """The split consolidation prompt: bank-agnostic system prefix + per-batch user.
+
+    The system prefix must be byte-identical across batches AND across banks (the
+    property that lets a single Gemini context cache serve every bank), carry only
+    stable instructions, and the per-batch/per-bank data (mission, facts,
+    observations, capacity note) must live in the user message — never in the
+    cached prefix.
+    """
+    from hindsight_api.engine.consolidation.prompts import (
+        build_consolidation_input,
+        build_consolidation_system_prompt,
+    )
+
+    sys_prompt = build_consolidation_system_prompt()
+    # Byte-stable across calls and independent of any mission → one cache for all banks.
+    assert sys_prompt == build_consolidation_system_prompt()
+    # Instructions only: no per-batch placeholders leaked into the prefix.
+    assert "{facts_text}" not in sys_prompt
+    assert "{observations_text}" not in sys_prompt
+    # JSON examples are unescaped (single braces), i.e. .format() ran.
+    assert '{"creates"' in sys_prompt
+    assert "{{" not in sys_prompt
+    # The stable observation-format boilerplate lives in the cached prefix.
+    assert "proof_count" in sys_prompt
+
+    # Two banks with DIFFERENT missions share the identical cached prefix; the
+    # mission rides in the per-batch user message instead.
+    user_a = build_consolidation_input(
+        facts_text="[id-a] Fact A.", observations_text="[]", observations_mission="Track widgets."
+    )
+    user_b = build_consolidation_input(
+        facts_text="[id-b] Fact B.", observations_text="[]", observations_mission="Track gadgets."
+    )
+    assert "Track widgets." in user_a
+    assert "Track widgets." not in sys_prompt  # mission NOT in the cached prefix
+    assert "Fact A." in user_a
+    assert user_a != user_b
+    # The format boilerplate is NOT re-sent per batch (it's in the cached prefix).
+    assert "proof_count" not in user_a
+
+    # The capacity note is per-batch too — kept out of the cached prefix.
+    capped = build_consolidation_input(
+        facts_text="[id] F.", observations_text="[]", observation_capacity_note="OBSERVATION LIMIT REACHED"
+    )
+    assert "OBSERVATION LIMIT REACHED" in capped
+    assert "OBSERVATION LIMIT REACHED" not in sys_prompt

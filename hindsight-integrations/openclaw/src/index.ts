@@ -12,7 +12,6 @@ import { RetainQueue } from "./retain-queue.js";
 import { compileSessionPatterns, matchesSessionPattern } from "./session-patterns.js";
 import { createHash } from "crypto";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
 import * as log from "./logger.js";
 import { configureLogger, setApiLogger, stopLogger } from "./logger.js";
 import { mkdirSync } from "fs";
@@ -472,10 +471,6 @@ if (typeof global !== "undefined") {
     getPluginConfig: () => currentPluginConfig,
   };
 }
-
-// Get directory of current module
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 // Default bank name (fallback when channel context not available)
 const DEFAULT_BANK_NAME = "openclaw";
@@ -2719,11 +2714,10 @@ export function buildRetainRequest(
     tags?: string[];
     /**
      * Whether the live Hindsight API supports `update_mode: 'append'`. When
-     * true with `retainDocumentScope: 'session'`, the request gets a stable
-     * per-session document id and `updateMode: 'append'` so each retain
-     * concatenates to the existing document. When false, falls back to a
-     * unique per-turn document id so prior turns aren't overwritten.
-     * Defaults to false (conservative).
+     * true, the request gets a stable per-session document id and
+     * `updateMode: 'append'` so each retain concatenates to the existing
+     * document. When false, falls back to a unique per-turn document id so
+     * prior turns aren't overwritten. Defaults to false (conservative).
      */
     appendSupported?: boolean;
   }
@@ -2733,12 +2727,12 @@ export function buildRetainRequest(
   const turnIndex = options?.turnIndex ?? nextDocumentSequence(resolvedCtx);
   const retentionScope = options?.retentionScope || "turn";
   const documentBase = getSessionDocumentBase(resolvedCtx);
-  const documentScope = pluginConfig.retainDocumentScope ?? "session";
   const documentKind = retentionScope === "window" ? "window" : "turn";
-  // Session-scope only stays session-scope when the API can append; otherwise
-  // every retain on the same id silently overwrites prior turns (behavior
-  // pre-#932). Force per-turn ids on legacy APIs.
-  const useSessionScopedDoc = documentScope === "session" && options?.appendSupported === true;
+  // Retains are session-scoped: all turns accumulate under one document id when
+  // the API can append. On legacy APIs without append support, every retain on
+  // the same id would silently overwrite prior turns (behavior pre-#932), so
+  // fall back to per-turn ids there.
+  const useSessionScopedDoc = options?.appendSupported === true;
   const documentId = useSessionScopedDoc
     ? documentBase
     : `${documentBase}:${documentKind}:${String(turnIndex).padStart(6, "0")}`;

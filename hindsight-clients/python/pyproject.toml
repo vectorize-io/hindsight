@@ -1,6 +1,6 @@
 [project]
 name = "hindsight-client"
-version = "0.7.2"
+version = "0.8.2"
 description = "Python client for Hindsight - Semantic memory system with personality-driven thinking"
 authors = [
     {name = "Hindsight Team"}

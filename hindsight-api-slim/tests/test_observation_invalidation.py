@@ -267,6 +267,7 @@ class TestDeleteDocumentObservationCleanup:
 # Tests: document upsert via retain pipeline (regression for orphan observations)
 # ---------------------------------------------------------------------------
 
+
 class TestDocumentUpsertObservationCleanup:
     """Regression: re-ingesting a document via the retain pipeline must clean up
     observations derived from the outgoing memory_units, the same way the
@@ -360,9 +361,7 @@ class TestDocumentUpsertObservationCleanup:
             # be reset for re-consolidation since one of its observations was
             # invalidated by the upsert.
             consolidated_at = await _get_consolidated_at(conn, standalone_mem)
-            assert consolidated_at is None, (
-                "Surviving co-source memory should be reset for re-consolidation"
-            )
+            assert consolidated_at is None, "Surviving co-source memory should be reset for re-consolidation"
 
             # The two doc-scoped memories are gone via FK cascade.
             doc_mem_count = await conn.fetchval(

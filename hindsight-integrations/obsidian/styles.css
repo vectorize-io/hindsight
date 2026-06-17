@@ -1,0 +1,214 @@
+/* Hindsight plugin styles */
+
+.hindsight-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.hindsight-chat__header {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2) var(--size-4-3);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.hindsight-ribbon-icon {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+.hindsight-chat__brand-mark {
+  height: 20px;
+  width: auto;
+  object-fit: contain;
+}
+
+.hindsight-chat__brand-name {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.hindsight-chat__sync {
+  margin-left: auto;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Explicit refresh button — the clear "sync now" affordance. */
+.hindsight-chat__sync-btn {
+  --icon-size: 16px;
+  flex: 0 0 auto;
+}
+
+.hindsight-statusbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.hindsight-statusbar__icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.hindsight-statusbar__icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Spin the refresh icon while a sync is in flight. */
+.hindsight-chat__sync-btn.is-syncing svg,
+.hindsight-statusbar__icon.is-syncing svg {
+  animation: hindsight-spin 0.9s linear infinite;
+}
+
+@keyframes hindsight-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.hindsight-chat__empty {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--size-4-3);
+  text-align: center;
+  color: var(--text-muted);
+  padding: var(--size-4-4);
+}
+
+.hindsight-chat__empty-mark {
+  height: 56px;
+  width: auto;
+  object-fit: contain;
+  opacity: 0.9;
+}
+
+.hindsight-chat__empty-text {
+  max-width: 22em;
+  font-size: var(--font-ui-small);
+}
+
+.hindsight-chat__filters {
+  display: flex;
+  gap: var(--size-4-2);
+  padding: var(--size-4-1) var(--size-4-2);
+  justify-content: flex-end;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.hindsight-chat__filter {
+  flex: 0 1 auto;
+  max-width: 45%;
+  font-size: var(--font-ui-smaller);
+}
+
+.hindsight-chat__messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--size-4-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-3);
+}
+
+.hindsight-chat__msg {
+  border-radius: var(--radius-m);
+  padding: var(--size-4-2) var(--size-4-3);
+  max-width: 100%;
+}
+
+.hindsight-chat__msg--user {
+  background: var(--background-modifier-hover);
+  align-self: flex-end;
+}
+
+.hindsight-chat__msg--assistant {
+  background: var(--background-secondary);
+  align-self: flex-start;
+}
+
+.hindsight-chat__disclosure {
+  margin-top: var(--size-4-2);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.hindsight-chat__disclosure summary {
+  cursor: pointer;
+}
+
+.hindsight-chat__citation {
+  display: block;
+  padding: 2px 0;
+}
+
+.hindsight-chat__note {
+  padding: 2px 0;
+}
+
+.hindsight-chat__snippet {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  padding-left: var(--size-4-2);
+  border-left: 2px solid var(--background-modifier-border);
+  margin: 1px 0 4px;
+}
+
+.hindsight-chat__show-all {
+  display: block;
+  padding: 2px 0;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.hindsight-chat__actions {
+  display: flex;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-2);
+}
+
+.hindsight-chat__action {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 8px;
+}
+
+.hindsight-chat__composer {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2);
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.hindsight-chat__composer textarea {
+  flex: 1;
+  resize: none;
+  min-height: 2.5em;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.hindsight-chat__pending {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.hindsight-memory__card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: var(--size-4-3);
+  margin-bottom: var(--size-4-3);
+}
+
+.hindsight-memory__stale {
+  color: var(--text-warning);
+  font-size: var(--font-ui-smaller);
+}
