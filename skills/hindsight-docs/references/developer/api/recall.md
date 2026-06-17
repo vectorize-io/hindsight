@@ -152,7 +152,7 @@ hindsight memory recall my-bank "query" --fact-type world,observation
 
 > **💡 About Observations**
 > 
-Observations are deduplicated, evidence-grounded beliefs consolidated from multiple facts — preferences, recurring patterns, and durable learnings the memory bank has built up. Each observation references its supporting memories (with exact quotes) and carries a computed freshness trend, and is refined rather than overwritten when new evidence arrives. They are created and maintained automatically in the background after retain operations.
+Observations are deduplicated, evidence-grounded beliefs consolidated from multiple facts — preferences, recurring patterns, and durable learnings the memory bank has built up. Each observation references its supporting memories (with exact quotes), and is refined rather than overwritten when new evidence arrives. They are created and maintained automatically in the background after retain operations.
 ### budget
 
 Controls retrieval depth and breadth. Accepted values are `low`, `mid` (default), and `high`. Use `low` for fast simple lookups, `mid` for balanced everyday queries, and `high` when you need to find indirect connections or exhaustive coverage.

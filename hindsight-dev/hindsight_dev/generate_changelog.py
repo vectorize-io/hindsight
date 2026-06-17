@@ -76,6 +76,9 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "roo-code": IntegrationMeta("hindsight-roo-code", "Roo Code"),
     "omo": IntegrationMeta("hindsight-omo", "OMO"),
     "composio": IntegrationMeta("hindsight-composio", "Composio"),
+    "continue": IntegrationMeta("hindsight-continue", "Continue"),
+    "zed": IntegrationMeta("hindsight-zed", "Zed"),
+    "openhands": IntegrationMeta("hindsight-openhands", "OpenHands"),
 }
 
 VALID_INTEGRATIONS = list(INTEGRATIONS.keys())

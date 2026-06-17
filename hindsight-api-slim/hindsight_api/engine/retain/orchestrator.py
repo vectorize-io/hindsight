@@ -1615,8 +1615,19 @@ async def _streaming_retain_batch(
     # Check if facts are already committed (recovery from previous crash).
     # If so, skip extraction+writes and jump straight to final ANN pass.
     # ---------------------------------------------------------------------------
+    # Only the call that starts a document at chunk 0 may take the whole-document
+    # skip. When an oversized single item is split into several sequential
+    # sub-batches that SHARE one document_id AND one operation_id (see
+    # _split_contents_into_sub_batches), the first sub-batch commits its chunks
+    # and stamps effective_doc_id into result_metadata.facts_committed_document_ids.
+    # Without the offset gate, every later sub-batch (chunk_index_offset > 0) would
+    # then see its own document already "committed" and skip extraction, dropping
+    # all chunks past the first slice. A non-zero offset inherently means this call
+    # continues a document another sub-batch already started, so it must always do
+    # its work — crash-safety for those chunks still comes from the per-chunk hash
+    # recovery (existing_chunk_hashes) below.
     facts_already_committed = False
-    if operation_id:
+    if operation_id and chunk_index_offset == 0:
         try:
             async with acquire_with_retry(pool) as conn:
                 row = await conn.fetchrow(

@@ -50,6 +50,7 @@ jobs:
       integrations-paperclip: ${{ steps.filter.outputs.integrations-paperclip }}
       integrations-opencode: ${{ steps.filter.outputs.integrations-opencode }}
       integrations-cursor: ${{ steps.filter.outputs.integrations-cursor }}
+      integrations-zed: ${{ steps.filter.outputs.integrations-zed }}
       integrations-n8n: ${{ steps.filter.outputs.integrations-n8n }}
       integrations-zapier: ${{ steps.filter.outputs.integrations-zapier }}
       integrations-cloudflare-oauth-proxy: ${{ steps.filter.outputs.integrations-cloudflare-oauth-proxy }}
@@ -166,6 +167,8 @@ jobs:
             - 'hindsight-integrations/opencode/**'
           integrations-cursor:
             - 'hindsight-integrations/cursor/**'
+          integrations-zed:
+            - 'hindsight-integrations/zed/**'
           integrations-n8n:
             - 'hindsight-integrations/n8n/**'
           integrations-zapier:
@@ -487,6 +490,37 @@ jobs:
     - name: Run tests
       working-directory: ./hindsight-integrations/cursor
       run: python -m pytest tests/ -v
+
+  test-zed-integration:
+    needs: [detect-changes]
+    if: >-
+      github.event_name != 'pull_request_review' &&
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-zed == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+
+    - name: Install package and pytest
+      working-directory: ./hindsight-integrations/zed
+      # Installs the package (incl. the zstandard runtime dep) so the threads.db
+      # reader tests can decompress Zed's zstd blobs.
+      run: pip install -e . pytest
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/zed
+      # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
+      # (requires_real_llm) needs a live Hindsight server and runs separately.
+      run: python -m pytest tests/ -v -m "not requires_real_llm"
 
   test-omo-integration:
     needs: [detect-changes]
