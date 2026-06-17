@@ -36,6 +36,7 @@ def _metric_operation_label(operation_type: str | None) -> str:
         return "retain"
     return operation_type or "unknown"
 
+
 if TYPE_CHECKING:
     from hindsight_api.engine.db.base import DatabaseBackend, DatabaseConnection
     from hindsight_api.extensions.tenant import TenantExtension

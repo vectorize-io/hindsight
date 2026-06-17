@@ -223,9 +223,7 @@ class TestMetricsCollector:
 
     def test_record_operation_result_records_with_explicit_success(self, collector):
         """Direct recording path used by the worker (source=worker, explicit success)."""
-        collector.record_operation_result(
-            "retain", bank_id="test_bank", success=False, duration=1.5, source="worker"
-        )
+        collector.record_operation_result("retain", bank_id="test_bank", success=False, duration=1.5, source="worker")
 
         duration, attributes = collector.operation_duration.record.call_args[0]
         assert duration == 1.5
