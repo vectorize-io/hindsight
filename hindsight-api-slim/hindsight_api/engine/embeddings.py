@@ -190,7 +190,7 @@ class LocalSTEmbeddings(Embeddings):
             device = "cpu"
             logger.info("Embeddings: forcing CPU mode")
         else:
-            # Check for GPU (CUDA) or Apple Silicon (MPS)
+            # Check for GPU (CUDA), Apple Silicon (MPS), or Intel XPU
             # Wrap in try-except to gracefully handle any device detection issues
             # (e.g., in CI environments or when PyTorch is built without GPU support)
             device = "cpu"  # Default to CPU
@@ -198,10 +198,13 @@ class LocalSTEmbeddings(Embeddings):
                 has_gpu = torch.cuda.is_available() or (
                     hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
                 )
+                # Intel Arc XPU support — torch.xpu is available when the XPU build is loaded
+                if not has_gpu and hasattr(torch, "xpu"):
+                    has_gpu = torch.xpu.is_available()
                 if has_gpu:
-                    device = None  # Let sentence-transformers auto-detect GPU/MPS
+                    device = None  # Let sentence-transformers auto-detect GPU/MPS/XPU
             except Exception as e:
-                logger.warning(f"Failed to detect GPU/MPS, falling back to CPU: {e}")
+                logger.warning(f"Failed to detect GPU/MPS/XPU, falling back to CPU: {e}")
 
         # Suppress verbose transformers warnings during model loading
         # This suppresses the "UNEXPECTED" warnings from BertModel which are harmless
