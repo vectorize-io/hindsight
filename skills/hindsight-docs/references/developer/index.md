@@ -96,7 +96,7 @@ After memories are retained, Hindsight automatically consolidates related facts 
 - **Deduplication**: Overlapping facts are merged into a single durable observation instead of piling up as repeats
 - **Evidence tracking**: Each observation references the source memories (with exact quotes) that support it, plus a proof count
 - **Continuous refinement**: Observations are updated — not overwritten — when new evidence supports, contradicts, or extends them; history is preserved
-- **Freshness trend**: Each observation carries a computed trend (stable / strengthening / weakening / stale) based on when its evidence arrived
+- **Freshness awareness**: when newer memories have been retained but not yet consolidated, `reflect` treats the affected observations as stale and verifies them against raw facts before relying on them
 
 ### Mission, Directives & Disposition
 
