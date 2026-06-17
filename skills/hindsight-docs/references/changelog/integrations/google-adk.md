@@ -8,7 +8,7 @@ Changelog for [`hindsight-google-adk`](https://pypi.org/project/hindsight-google
 
 For the source code, see [`hindsight-integrations/google-adk`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/google-adk).
 
-← [Back to main changelog](../index.md)
+← [Back to main changelog](..\index.md)
 
 ## [0.1.0](https://github.com/vectorize-io/hindsight/tree/integrations/google-adk/v0.1.0)
 

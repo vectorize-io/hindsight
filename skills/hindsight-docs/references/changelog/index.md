@@ -1217,9 +1217,9 @@ import PageHero from '@site/src/components/PageHero';
 
 | Integration | Package | Description |
 |---|---|---|
-| [LiteLLM](integrations/litellm.md) | `hindsight-litellm` | Universal LLM memory via LiteLLM (100+ providers) |
-| [Pydantic AI](integrations/pydantic-ai.md) | `hindsight-pydantic-ai` | Persistent memory tools for Pydantic AI agents |
-| [CrewAI](integrations/crewai.md) | `hindsight-crewai` | Persistent memory for CrewAI agents |
-| [AI SDK](integrations/ai-sdk.md) | `@vectorize-io/hindsight-ai-sdk` | Memory integration for Vercel AI SDK |
-| [Chat SDK](integrations/chat.md) | `@vectorize-io/hindsight-chat` | Memory integration for Vercel Chat SDK |
-| [OpenClaw](integrations/openclaw.md) | `@vectorize-io/hindsight-openclaw` | Hindsight memory plugin for OpenClaw |
+| [LiteLLM](integrations\litellm.md) | `hindsight-litellm` | Universal LLM memory via LiteLLM (100+ providers) |
+| [Pydantic AI](integrations\pydantic-ai.md) | `hindsight-pydantic-ai` | Persistent memory tools for Pydantic AI agents |
+| [CrewAI](integrations\crewai.md) | `hindsight-crewai` | Persistent memory for CrewAI agents |
+| [AI SDK](integrations\ai-sdk.md) | `@vectorize-io/hindsight-ai-sdk` | Memory integration for Vercel AI SDK |
+| [Chat SDK](integrations\chat.md) | `@vectorize-io/hindsight-chat` | Memory integration for Vercel Chat SDK |
+| [OpenClaw](integrations\openclaw.md) | `@vectorize-io/hindsight-openclaw` | Hindsight memory plugin for OpenClaw |

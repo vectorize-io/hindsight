@@ -736,7 +736,10 @@ export class ControlPlaneClient {
   /**
    * Restore a bank from a complete bank backup archive.
    */
-  async restoreBank(bankId: string, zipFile: File): Promise<{
+  async restoreBank(
+    bankId: string,
+    zipFile: File
+  ): Promise<{
     bank_id: string;
     documents_imported: number;
     facts_imported: number;

@@ -8,7 +8,7 @@ Changelog for [`hindsight-pipecat`](https://pypi.org/project/hindsight-pipecat/)
 
 For the source code, see [`hindsight-integrations/pipecat`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/pipecat).
 
-← [Back to main changelog](../index.md)
+← [Back to main changelog](..\index.md)
 
 ## [0.1.1](https://github.com/vectorize-io/hindsight/tree/integrations/pipecat/v0.1.1)
 

@@ -8,7 +8,7 @@ Changelog for [`hindsight-ag2`](https://pypi.org/project/hindsight-ag2/).
 
 For the source code, see [`hindsight-integrations/ag2`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/ag2).
 
-← [Back to main changelog](../index.md)
+← [Back to main changelog](..\index.md)
 
 ## [0.1.2](https://github.com/vectorize-io/hindsight/tree/integrations/ag2/v0.1.2)
 

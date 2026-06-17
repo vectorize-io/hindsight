@@ -2708,6 +2708,110 @@ paths:
       summary: Export bank template
       tags:
       - Bank Templates
+  /v1/default/banks/{bank_id}/backup:
+    get:
+      description: Export a complete bank backup archive. The archive can be restored
+        with POST /restore.
+      operationId: backup_bank
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: Include audit and LLM request history
+        explode: true
+        in: query
+        name: include_history
+        required: false
+        schema:
+          default: false
+          description: Include audit and LLM request history
+          title: Include History
+          type: boolean
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: {}
+            application/zip: {}
+          description: Whole-bank backup archive
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Backup bank
+      tags:
+      - Bank Backup
+  /v1/default/banks/{bank_id}/restore:
+    post:
+      description: Replace a bank with a whole-bank backup archive produced by GET
+        /backup.
+      operationId: restore_bank
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: Restore audit and LLM request history if present
+        explode: true
+        in: query
+        name: include_history
+        required: false
+        schema:
+          default: false
+          description: Restore audit and LLM request history if present
+          title: Include History
+          type: boolean
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_restore_bank'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BankRestoreResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Restore bank backup
+      tags:
+      - Bank Backup
   /v1/default/banks/{bank_id}/document-transfer:
     get:
       description: "Export documents (extracted facts, entity names, causal links,\
@@ -4377,6 +4481,62 @@ components:
       - mission
       - name
       title: BankProfileResponse
+    BankRestoreResponse:
+      description: Response model for restoring a whole-bank backup archive.
+      example:
+        directives_imported: 2
+        facts_imported: 6
+        history_rows_imported: 9
+        mental_models_imported: 5
+        mental_model_history_imported: 5
+        bank_id: bank_id
+        webhooks_imported: 7
+        documents_imported: 0
+        observations_imported: 1
+        status: restored
+      properties:
+        bank_id:
+          title: Bank Id
+          type: string
+        documents_imported:
+          default: 0
+          title: Documents Imported
+          type: integer
+        facts_imported:
+          default: 0
+          title: Facts Imported
+          type: integer
+        observations_imported:
+          default: 0
+          title: Observations Imported
+          type: integer
+        mental_models_imported:
+          default: 0
+          title: Mental Models Imported
+          type: integer
+        mental_model_history_imported:
+          default: 0
+          title: Mental Model History Imported
+          type: integer
+        directives_imported:
+          default: 0
+          title: Directives Imported
+          type: integer
+        webhooks_imported:
+          default: 0
+          title: Webhooks Imported
+          type: integer
+        history_rows_imported:
+          default: 0
+          title: History Rows Imported
+          type: integer
+        status:
+          default: restored
+          title: Status
+          type: string
+      required:
+      - bank_id
+      title: BankRestoreResponse
     BankStatsResponse:
       description: Response model for bank statistics endpoint.
       example:
@@ -4565,6 +4725,14 @@ components:
             additionalProperties: {}
           nullable: true
           type: array
+        backup_enabled:
+          nullable: true
+          type: boolean
+        backup_retention_days:
+          maximum: 7.0
+          minimum: 1.0
+          nullable: true
+          type: integer
         reflect_source_facts_max_tokens:
           nullable: true
           type: integer
@@ -4810,6 +4978,16 @@ components:
       required:
       - file
       title: Body_import_documents
+    Body_restore_bank:
+      properties:
+        file:
+          description: Whole-bank backup ZIP archive
+          format: binary
+          title: File
+          type: string
+      required:
+      - file
+      title: Body_restore_bank
     Budget:
       description: Budget levels for recall/reflect operations.
       enum:

@@ -8,7 +8,7 @@ Changelog for [`hindsight-cloudflare-oauth-proxy`](https://pypi.org/project/hind
 
 For the source code, see [`hindsight-integrations/cloudflare-oauth-proxy`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/cloudflare-oauth-proxy).
 
-← [Back to main changelog](../index.md)
+← [Back to main changelog](..\index.md)
 
 ## [1.0.1](https://github.com/vectorize-io/hindsight/tree/integrations/cloudflare-oauth-proxy/v1.0.1)
 

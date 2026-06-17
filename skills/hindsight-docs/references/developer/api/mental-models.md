@@ -615,5 +615,5 @@ History tracking is enabled by default. Set `HINDSIGHT_API_ENABLE_MENTAL_MODEL_H
 ## Next Steps
 
 - [**Reflect**](./reflect) — How the agentic loop uses mental models
-- [**Observations**](../observations.md) — How knowledge is consolidated
+- [**Observations**](..\observations.md) — How knowledge is consolidated
 - [**Operations**](./operations) — Track async mental model creation

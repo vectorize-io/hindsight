@@ -32,8 +32,10 @@ const integrationsDocsDir = join(docsDir, 'docs-integrations');
 
 // Released integrations that intentionally have no gallery/doc page.
 // cloudflare-oauth-proxy is internal infrastructure (an OAuth proxy Worker,
-// `"private": true`), not a user-facing framework integration.
-const EXCLUDED = new Set(['cloudflare-oauth-proxy']);
+// `"private": true`), not a user-facing framework integration. composio only
+// exists as a historical release tag in this repo — there is no shipped
+// package or public docs page to surface in the gallery.
+const EXCLUDED = new Set(['cloudflare-oauth-proxy', 'composio']);
 
 const { integrations } = JSON.parse(readFileSync(integrationsJson, 'utf8'));
 const internal = integrations.filter((entry) => entry.link.startsWith('/sdks/integrations/'));

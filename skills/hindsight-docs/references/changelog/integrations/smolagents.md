@@ -8,7 +8,7 @@ Changelog for [`hindsight-smolagents`](https://pypi.org/project/hindsight-smolag
 
 For the source code, see [`hindsight-integrations/smolagents`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/smolagents).
 
-← [Back to main changelog](../index.md)
+← [Back to main changelog](..\index.md)
 
 ## [0.1.0](https://github.com/vectorize-io/hindsight/tree/integrations/smolagents/v0.1.0)
 

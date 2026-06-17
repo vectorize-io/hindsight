@@ -27,6 +27,7 @@ from hindsight_client_api.models.bank_list_item import BankListItem
 from hindsight_client_api.models.bank_list_response import BankListResponse
 from hindsight_client_api.models.bank_llm_health_response import BankLlmHealthResponse
 from hindsight_client_api.models.bank_profile_response import BankProfileResponse
+from hindsight_client_api.models.bank_restore_response import BankRestoreResponse
 from hindsight_client_api.models.bank_stats_response import BankStatsResponse
 from hindsight_client_api.models.bank_template_config import BankTemplateConfig
 from hindsight_client_api.models.bank_template_directive import BankTemplateDirective

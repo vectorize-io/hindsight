@@ -66,6 +66,11 @@ llm_request_stats = "UI-only endpoint for the control plane LLM Requests stats c
 export_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
 import_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
 
+# Bank backup/restore are admin/ops recovery endpoints used from the API and
+# control plane, not the end-user Rust CLI.
+backup_bank = "Admin/ops recovery endpoint, used via the API and control plane, not the end-user CLI"
+restore_bank = "Admin/ops recovery endpoint, used via the API and control plane, not the end-user CLI"
+
 # ---------------------------------------------------------------------------
 # Per-operation parameter skips
 # ---------------------------------------------------------------------------

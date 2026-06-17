@@ -8,7 +8,7 @@ Changelog for [`hindsight-roo-code`](https://pypi.org/project/hindsight-roo-code
 
 For the source code, see [`hindsight-integrations/roo-code`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/roo-code).
 
-← [Back to main changelog](../index.md)
+← [Back to main changelog](..\index.md)
 
 ## [0.1.0](https://github.com/vectorize-io/hindsight/tree/integrations/roo-code/v0.1.0)
 

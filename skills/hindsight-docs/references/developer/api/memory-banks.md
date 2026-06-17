@@ -50,7 +50,7 @@ hindsight bank create my-bank
 
 ## Bank Configuration
 
-Each memory bank can be configured independently per operation. Configuration can be set via the [bank config API](#updating-configuration), the Control Plane UI, or [server-wide environment variables](../configuration.md).
+Each memory bank can be configured independently per operation. Configuration can be set via the [bank config API](#updating-configuration), the Control Plane UI, or [server-wide environment variables](..\configuration.md).
 
 ### retain_mission {#retain-configuration}
 
@@ -89,7 +89,7 @@ Maximum number of characters for a single JSONL line or conversation turn to kee
 
 Default: unset, which uses `retain_chunk_size`
 
-See [Retain configuration](../configuration.md#retain) for environment variable names and defaults.
+See [Retain configuration](..\configuration.md#retain) for environment variable names and defaults.
 
 ### entity_labels {#entity-labels}
 
@@ -180,9 +180,9 @@ Toggles observation consolidation on or off. When `false`, no consolidation runs
 
 ### enable_auto_consolidation
 
-Controls whether consolidation runs automatically after retain, delete, and update operations. When `false`, consolidation only runs when explicitly triggered via the [consolidate endpoint](../observations.md#trigger-consolidation). Defaults to `true`.
+Controls whether consolidation runs automatically after retain, delete, and update operations. When `false`, consolidation only runs when explicitly triggered via the [consolidate endpoint](..\observations.md#trigger-consolidation). Defaults to `true`.
 
-This is useful when you want full control over consolidation timing — for example, batching many retains before consolidating, or running [targeted consolidation](../observations.md#targeted-consolidation) for specific scopes only.
+This is useful when you want full control over consolidation timing — for example, batching many retains before consolidating, or running [targeted consolidation](..\observations.md#targeted-consolidation) for specific scopes only.
 
 ### observations_mission
 
@@ -206,7 +206,17 @@ Total token budget for source facts included with observations in the consolidat
 
 Per-observation token cap for source facts in the consolidation prompt. Each observation independently gets at most this many tokens of source facts, preventing a single observation with many source facts from consuming the entire budget. `-1` = unlimited. Leave unset to use the server default (`256`).
 
-See [Observations configuration](../configuration.md#observations) for environment variable names and defaults.
+See [Observations configuration](..\configuration.md#observations) for environment variable names and defaults.
+
+### backup_enabled
+
+Opt this bank into the daily backup sweep. When `true`, the maintenance loop writes one whole-bank backup archive per day for this bank into `HINDSIGHT_API_BACKUP_DIRECTORY`. Leave unset to use the server default (`false`).
+
+### backup_retention_days
+
+Delete this bank's automatic backups once they are older than the configured number of days. Must be between `1` and `7`. Leave unset to use the server default (`7`).
+
+See [Backups](..\configuration.md#backups) for environment variable names and defaults.
 
 ### reflect_mission
 
@@ -348,7 +358,7 @@ When `recall_budget_function` is `adaptive`, these positive ratios multiply the 
 
 Floor and ceiling applied to the result of the adaptive function (after the ratio multiplication). Both must be positive integers and `min ≤ max`. Defaults: `20` / `2000`.
 
-See [Recall budget mapping](../configuration.md#recall-budget-mapping) for environment variable names and full defaults.
+See [Recall budget mapping](..\configuration.md#recall-budget-mapping) for environment variable names and full defaults.
 
 ### memory_defense {#memory_defense}
 
@@ -680,6 +690,39 @@ await client.deleteDirective(BANK_ID, directiveId);
 
 ---
 
+## Bank backup & restore
+
+Export or replace a **whole bank** as a portable ZIP archive. Unlike document transfer, this carries the bank profile/config, mental models, directives, webhooks, facts, documents, and observations together.
+
+### Backup bank
+
+`GET /v1/default/banks/{bank_id}/backup` — synchronous; streams a ZIP archive.
+
+```bash
+curl -H "Authorization: Bearer $API_KEY" \
+  "$HINDSIGHT_URL/v1/default/banks/my-bank/backup" -o my-bank-backup.zip
+```
+
+| Query param | Description |
+|-------------|-------------|
+| `include_history` | Also carry audit log + LLM request history if present (default `false`). |
+
+### Restore bank
+
+`POST /v1/default/banks/{bank_id}/restore` — multipart upload (`file` = the ZIP). The archive must belong to the **same** bank id; restore deletes the current bank first, then recreates it from the archive.
+
+```bash
+curl -H "Authorization: Bearer $API_KEY" -F "file=@my-bank-backup.zip" \
+  "$HINDSIGHT_URL/v1/default/banks/my-bank/restore"
+```
+
+| Query param | Description |
+|-------------|-------------|
+| `include_history` | Restore audit log + LLM request history when the archive contains them (default `false`). |
+
+> **⚠️ Restore replaces the current bank**
+> 
+Restore is destructive: current memories, entities, documents, observations, directives, webhooks, and bank configuration are deleted before the archive is imported.
 ## Document export & import
 
 Move documents — and the facts already extracted from them — between banks **without re-running the LLM**. Useful for testing a different embedding model, or copying data between banks/instances without paying for re-extraction. The archive carries documents, raw chunks, and extracted facts (entities by canonical name, causal links) — but **no embeddings or database ids**. On import, facts are re-embedded with the *target* bank's model and entities/links are recomputed against it, so imported documents are integrated with whatever already exists there.

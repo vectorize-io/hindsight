@@ -8,7 +8,7 @@ Changelog for [`hindsight-strands`](https://pypi.org/project/hindsight-strands/)
 
 For the source code, see [`hindsight-integrations/strands`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/strands).
 
-← [Back to main changelog](../index.md)
+← [Back to main changelog](..\index.md)
 
 ## [0.1.3](https://github.com/vectorize-io/hindsight/tree/integrations/strands/v0.1.3)
 

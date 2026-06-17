@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
-export async function GET(request: NextRequest, { params }: { params: Promise<{ bankId: string }> }) {
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ bankId: string }> }
+) {
   try {
     const { bankId } = await params;
     if (!bankId) {
@@ -31,7 +34,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       headers: {
         "Content-Type": response.headers.get("content-type") || "application/zip",
         "Content-Disposition":
-          response.headers.get("content-disposition") || `attachment; filename="${bankId}-bank-backup.zip"`,
+          response.headers.get("content-disposition") ||
+          `attachment; filename="${bankId}-bank-backup.zip"`,
       },
     });
   } catch (error) {

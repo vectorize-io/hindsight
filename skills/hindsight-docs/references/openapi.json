@@ -3947,6 +3947,157 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/backup": {
+      "get": {
+        "tags": [
+          "Bank Backup"
+        ],
+        "summary": "Backup bank",
+        "description": "Export a complete bank backup archive. The archive can be restored with POST /restore.",
+        "operationId": "backup_bank",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "include_history",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include audit and LLM request history",
+              "default": false,
+              "title": "Include History"
+            },
+            "description": "Include audit and LLM request history"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Whole-bank backup archive",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/zip": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/restore": {
+      "post": {
+        "tags": [
+          "Bank Backup"
+        ],
+        "summary": "Restore bank backup",
+        "description": "Replace a bank with a whole-bank backup archive produced by GET /backup.",
+        "operationId": "restore_bank",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "include_history",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Restore audit and LLM request history if present",
+              "default": false,
+              "title": "Include History"
+            },
+            "description": "Restore audit and LLM request history if present"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_restore_bank"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankRestoreResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/document-transfer": {
       "get": {
         "tags": [
@@ -6388,6 +6539,65 @@
           "name": "Alice"
         }
       },
+      "BankRestoreResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "documents_imported": {
+            "type": "integer",
+            "title": "Documents Imported",
+            "default": 0
+          },
+          "facts_imported": {
+            "type": "integer",
+            "title": "Facts Imported",
+            "default": 0
+          },
+          "observations_imported": {
+            "type": "integer",
+            "title": "Observations Imported",
+            "default": 0
+          },
+          "mental_models_imported": {
+            "type": "integer",
+            "title": "Mental Models Imported",
+            "default": 0
+          },
+          "mental_model_history_imported": {
+            "type": "integer",
+            "title": "Mental Model History Imported",
+            "default": 0
+          },
+          "directives_imported": {
+            "type": "integer",
+            "title": "Directives Imported",
+            "default": 0
+          },
+          "webhooks_imported": {
+            "type": "integer",
+            "title": "Webhooks Imported",
+            "default": 0
+          },
+          "history_rows_imported": {
+            "type": "integer",
+            "title": "History Rows Imported",
+            "default": 0
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "restored"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id"
+        ],
+        "title": "BankRestoreResponse",
+        "description": "Response model for restoring a whole-bank backup archive."
+      },
       "BankStatsResponse": {
         "properties": {
           "bank_id": {
@@ -6818,6 +7028,32 @@
             "title": "Observation Scope Limits",
             "description": "Per-scope overrides of max_observations_per_scope: [{\"scope\": [\"run_*\", \"shared\"], \"limit\": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope."
           },
+          "backup_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backup Enabled",
+            "description": "Enable daily automatic backups for this bank"
+          },
+          "backup_retention_days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 7.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backup Retention Days",
+            "description": "Delete automatic backups older than this many days"
+          },
           "reflect_source_facts_max_tokens": {
             "anyOf": [
               {
@@ -7239,6 +7475,21 @@
           "file"
         ],
         "title": "Body_import_documents"
+      },
+      "Body_restore_bank": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "title": "File",
+            "description": "Whole-bank backup ZIP archive",
+            "format": "binary"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_restore_bank"
       },
       "Budget": {
         "type": "string",

@@ -55,11 +55,11 @@ The agent:
 
 The agent uses a smart retrieval hierarchy:
 
-1. **[Mental Models](api/mental-models.md)** — User-curated summaries you've pre-computed for common queries
+1. **[Mental Models](api\mental-models.md)** — User-curated summaries you've pre-computed for common queries
 2. **[Observations](observations.md)** — Consolidated knowledge with freshness awareness
 3. **Raw Facts** — Ground truth for verification when observations are stale
 
-**Mental models** are saved reflect responses that you create for frequently asked questions. They're checked first because they represent explicitly curated knowledge. See the [Mental Models API](api/mental-models.md) for how to create and manage them.
+**Mental models** are saved reflect responses that you create for frequently asked questions. They're checked first because they represent explicitly curated knowledge. See the [Mental Models API](api\mental-models.md) for how to create and manage them.
 
 If an observation is marked as **stale**, the agent automatically verifies it against current facts.
 
@@ -133,7 +133,7 @@ The reflect mission frames how the agent reasons and responds:
 
 > **ℹ️ Per-operation missions**
 > 
-The reflect mission only affects `reflect()`. To steer what gets extracted during `retain()`, use [`retain_mission`](api/memory-banks.md#retain-configuration). To control what gets synthesised into observations, use [`observations_mission`](api/memory-banks.md#observations-configuration).
+The reflect mission only affects `reflect()`. To steer what gets extracted during `retain()`, use [`retain_mission`](api\memory-banks.md#retain-configuration). To control what gets synthesised into observations, use [`observations_mission`](api\memory-banks.md#observations-configuration).
 ---
 
 ## Disposition Shapes Reasoning
@@ -189,7 +189,7 @@ Use directives for constraints that must never be violated:
 > **💡 Tip**
 > 
 Use disposition for personality and character. Use directives for compliance and guardrails.
-See [Memory Banks: Directives](api/memory-banks.md#directives) for how to create and manage directives.
+See [Memory Banks: Directives](api\memory-banks.md#directives) for how to create and manage directives.
 
 ---
 

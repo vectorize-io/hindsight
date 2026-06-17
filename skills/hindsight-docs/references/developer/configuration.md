@@ -1056,7 +1056,7 @@ export HINDSIGHT_API_FIREWORKS_ACCOUNT_ID=your-account-id
 export HINDSIGHT_API_RETAIN_BATCH_ENABLED=true
 ```
 
-> **Entity labels** (`entity_labels`) and **free-form entity extraction** (`entities_allow_free_form`) are configured per bank via the [bank config API](api/memory-banks.md#retain-configuration), not as global environment variables — each bank can have its own controlled vocabulary. See [Entity Labels](retain.md#entity-labels) for details.
+> **Entity labels** (`entity_labels`) and **free-form entity extraction** (`entities_allow_free_form`) are configured per bank via the [bank config API](api\memory-banks.md#retain-configuration), not as global environment variables — each bank can have its own controlled vocabulary. See [Entity Labels](retain.md#entity-labels) for details.
 
 #### Skip storing raw document text
 
@@ -1379,7 +1379,7 @@ Observations are deduplicated, evidence-grounded knowledge consolidated from mul
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_ENABLE_OBSERVATIONS` | Enable observation consolidation | `true` |
-| `HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION` | Automatically trigger consolidation after retain, delete, and update operations. When `false`, consolidation only runs when explicitly triggered via the [consolidate endpoint](api/operations.md#consolidation). Configurable per bank. | `true` |
+| `HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION` | Automatically trigger consolidation after retain, delete, and update operations. When `false`, consolidation only runs when explicitly triggered via the [consolidate endpoint](api\operations.md#consolidation). Configurable per bank. | `true` |
 | `HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS` | Interval for the background sweep that re-schedules consolidation for banks with unconsolidated facts but no consolidation in progress — recovering facts left unscheduled when a consolidation operation failed terminally (e.g. the LLM provider was unavailable). Only applies to banks with auto-consolidation enabled. `0` disables the sweep. | `300` |
 | `HINDSIGHT_API_ENABLE_OBSERVATION_HISTORY` | Track history of changes to each observation (previous text/tags/dates + timestamp), stored one row per change in the `observation_history` table. Set to `false` to disable entirely — no history rows are written. **This is how you turn the feature off** (not a zero cap). | `true` |
 | `HINDSIGHT_API_OBSERVATION_HISTORY_MAX_ENTRIES` | Max history rows kept per observation. On each update the previous version is inserted into the `observation_history` table and the oldest rows beyond this cap are deleted, so an often-reinforced observation's history can't grow without bound. `0` or a negative value **removes the cap** (unbounded); to turn history off entirely set `HINDSIGHT_API_ENABLE_OBSERVATION_HISTORY=false` instead. | `50` |
@@ -1630,6 +1630,14 @@ LLM request tracing records every LLM call Hindsight makes — for retain, refle
 | `HINDSIGHT_API_LLM_TRACE_SCOPES` | Comma-separated allowlist of call scopes to trace (e.g. `retain_extract_facts,reflect`; empty = all scopes) | `""` |
 | `HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS` | Number of days to retain trace rows. `-1` = keep forever. | `1` |
 | `HINDSIGHT_API_LLM_TRACE_MAX_CHARS` | Truncate stored input/output beyond this many characters (keeps the row, stores a truncated preview). | `50000` |
+
+### Backups
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_BACKUP_DIRECTORY` | Local directory where automatic bank backup archives are written. One subdirectory is created per schema and bank. | `hindsight-backups` |
+| `HINDSIGHT_API_BACKUP_ENABLED` | Default daily-backup setting for banks. The Control Plane Backup tab can override this per bank. Disabled by default. | `false` |
+| `HINDSIGHT_API_BACKUP_RETENTION_DAYS` | Delete automatic bank backups older than this many days. Configurable per bank. Must be between `1` and `7`. | `7` |
 
 ### Programmatic Configuration
 

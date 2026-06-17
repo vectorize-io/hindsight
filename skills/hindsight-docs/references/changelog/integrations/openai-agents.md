@@ -8,7 +8,7 @@ Changelog for [`hindsight-openai-agents`](https://pypi.org/project/hindsight-ope
 
 For the source code, see [`hindsight-integrations/openai-agents`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/openai-agents).
 
-← [Back to main changelog](../index.md)
+← [Back to main changelog](..\index.md)
 
 ## [0.1.2](https://github.com/vectorize-io/hindsight/tree/integrations/openai-agents/v0.1.2)
 

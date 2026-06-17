@@ -42,11 +42,11 @@ docker run -it --pull always --name hindsight --restart unless-stopped -p 8888:8
 > 
 The worker uses the container hostname as its identity, which Docker sets to the container ID by default. That value changes on every restart, so any task that was being processed when the container went down stays parked under the old ID with no way for the new container to recognize it as its own.
 
-Set `HINDSIGHT_API_WORKER_ID` to a stable value (e.g., `-e HINDSIGHT_API_WORKER_ID=hindsight-prod`) so the worker keeps the same identity across restarts. This is recommended even for single-container deployments. For diagnosis and recovery commands, see [Admin CLI - Recovering stuck operations](../admin-cli.md#recovering-stuck-or-zombie-operations).
+Set `HINDSIGHT_API_WORKER_ID` to a stable value (e.g., `-e HINDSIGHT_API_WORKER_ID=hindsight-prod`) so the worker keeps the same identity across restarts. This is recommended even for single-container deployments. For diagnosis and recovery commands, see [Admin CLI - Recovering stuck operations](..\admin-cli.md#recovering-stuck-or-zombie-operations).
 > **💡 LLM Provider**
 > 
 Hindsight requires an LLM with structured output support. Recommended: **Groq** with `gpt-oss-20b` for fast, cost-effective inference.
-See [LLM Providers](../models.md#llm) for more details.
+See [LLM Providers](..\models.md#llm) for more details.
 ---
 
 ## Use the Client
@@ -142,4 +142,4 @@ Browse all supported integrations in the Integrations Hub.
 - [**Recall**](./recall) — Search and retrieval strategies
 - [**Reflect**](./reflect) — Disposition-aware reasoning
 - [**Memory Banks**](./memory-banks) — Configure disposition and mission
-- [**Server Deployment**](../installation.md) — Docker Compose, Helm, and production setup
+- [**Server Deployment**](..\installation.md) — Docker Compose, Helm, and production setup

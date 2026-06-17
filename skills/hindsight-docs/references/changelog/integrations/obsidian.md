@@ -8,7 +8,7 @@ Changelog for [`@vectorize-io/hindsight-obsidian`](https://www.npmjs.com/package
 
 For the source code, see [`hindsight-integrations/obsidian`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/obsidian).
 
-← [Back to main changelog](../index.md)
+← [Back to main changelog](..\index.md)
 
 ## [0.1.2](https://github.com/vectorize-io/hindsight/tree/integrations/obsidian/v0.1.2)
 

@@ -8,7 +8,7 @@ Changelog for [`@vectorize-io/flowise-nodes-hindsight`](https://www.npmjs.com/pa
 
 For the source code, see [`hindsight-integrations/flowise`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/flowise).
 
-← [Back to main changelog](../index.md)
+← [Back to main changelog](..\index.md)
 
 ## [0.1.0](https://github.com/vectorize-io/hindsight/tree/integrations/flowise/v0.1.0)
 

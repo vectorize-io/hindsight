@@ -41,6 +41,8 @@ type BankTemplateConfig struct {
 	ConsolidationSourceFactsMaxTokensPerObservation NullableInt32 `json:"consolidation_source_facts_max_tokens_per_observation,omitempty"`
 	MaxObservationsPerScope NullableInt32 `json:"max_observations_per_scope,omitempty"`
 	ObservationScopeLimits []map[string]interface{} `json:"observation_scope_limits,omitempty"`
+	BackupEnabled NullableBool `json:"backup_enabled,omitempty"`
+	BackupRetentionDays NullableInt32 `json:"backup_retention_days,omitempty"`
 	ReflectSourceFactsMaxTokens NullableInt32 `json:"reflect_source_facts_max_tokens,omitempty"`
 	LlmGeminiSafetySettings []interface{} `json:"llm_gemini_safety_settings,omitempty"`
 	RecallBudgetFunction NullableString `json:"recall_budget_function,omitempty"`
@@ -959,6 +961,90 @@ func (o *BankTemplateConfig) SetObservationScopeLimits(v []map[string]interface{
 	o.ObservationScopeLimits = v
 }
 
+// GetBackupEnabled returns the BackupEnabled field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetBackupEnabled() bool {
+	if o == nil || IsNil(o.BackupEnabled.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.BackupEnabled.Get()
+}
+
+// GetBackupEnabledOk returns a tuple with the BackupEnabled field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetBackupEnabledOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.BackupEnabled.Get(), o.BackupEnabled.IsSet()
+}
+
+// HasBackupEnabled returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasBackupEnabled() bool {
+	if o != nil && o.BackupEnabled.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetBackupEnabled gets a reference to the given NullableBool and assigns it to the BackupEnabled field.
+func (o *BankTemplateConfig) SetBackupEnabled(v bool) {
+	o.BackupEnabled.Set(&v)
+}
+// SetBackupEnabledNil sets the value for BackupEnabled to be an explicit nil
+func (o *BankTemplateConfig) SetBackupEnabledNil() {
+	o.BackupEnabled.Set(nil)
+}
+
+// UnsetBackupEnabled ensures that no value is present for BackupEnabled, not even an explicit nil
+func (o *BankTemplateConfig) UnsetBackupEnabled() {
+	o.BackupEnabled.Unset()
+}
+
+// GetBackupRetentionDays returns the BackupRetentionDays field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetBackupRetentionDays() int32 {
+	if o == nil || IsNil(o.BackupRetentionDays.Get()) {
+		var ret int32
+		return ret
+	}
+	return *o.BackupRetentionDays.Get()
+}
+
+// GetBackupRetentionDaysOk returns a tuple with the BackupRetentionDays field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetBackupRetentionDaysOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.BackupRetentionDays.Get(), o.BackupRetentionDays.IsSet()
+}
+
+// HasBackupRetentionDays returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasBackupRetentionDays() bool {
+	if o != nil && o.BackupRetentionDays.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetBackupRetentionDays gets a reference to the given NullableInt32 and assigns it to the BackupRetentionDays field.
+func (o *BankTemplateConfig) SetBackupRetentionDays(v int32) {
+	o.BackupRetentionDays.Set(&v)
+}
+// SetBackupRetentionDaysNil sets the value for BackupRetentionDays to be an explicit nil
+func (o *BankTemplateConfig) SetBackupRetentionDaysNil() {
+	o.BackupRetentionDays.Set(nil)
+}
+
+// UnsetBackupRetentionDays ensures that no value is present for BackupRetentionDays, not even an explicit nil
+func (o *BankTemplateConfig) UnsetBackupRetentionDays() {
+	o.BackupRetentionDays.Unset()
+}
+
 // GetReflectSourceFactsMaxTokens returns the ReflectSourceFactsMaxTokens field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *BankTemplateConfig) GetReflectSourceFactsMaxTokens() int32 {
 	if o == nil || IsNil(o.ReflectSourceFactsMaxTokens.Get()) {
@@ -1487,6 +1573,12 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.ObservationScopeLimits != nil {
 		toSerialize["observation_scope_limits"] = o.ObservationScopeLimits
+	}
+	if o.BackupEnabled.IsSet() {
+		toSerialize["backup_enabled"] = o.BackupEnabled.Get()
+	}
+	if o.BackupRetentionDays.IsSet() {
+		toSerialize["backup_retention_days"] = o.BackupRetentionDays.Get()
 	}
 	if o.ReflectSourceFactsMaxTokens.IsSet() {
 		toSerialize["reflect_source_facts_max_tokens"] = o.ReflectSourceFactsMaxTokens.Get()
