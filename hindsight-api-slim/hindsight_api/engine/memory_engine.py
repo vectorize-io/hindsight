@@ -139,6 +139,37 @@ def fq_table(table_name: str) -> str:
     return _fq_table(table_name)
 
 
+def build_connection_search_path(text_search_extension: str, trgm_schema: str | None) -> str:
+    """Build the ``SET search_path`` statement for a runtime PostgreSQL connection.
+
+    Extension operators resolve their operand types through the session
+    ``search_path``, not through the fully-qualified table names we use for
+    tenant isolation. A connection whose role default ``search_path`` omits the
+    schema that holds the extension fails with errors like
+    ``operator does not exist: text % text`` (pg_trgm's ``%``, used by the
+    retain trigram entity lookup) or ``type "bm25vector" does not exist``
+    (vchord BM25's ``<&>``). External Postgres deployments frequently pin the
+    role ``search_path`` to a custom schema, so we set it explicitly here.
+
+    This does not weaken schema isolation: tenant tables are always accessed via
+    fully-qualified names (:func:`fq_table`); only operator/type resolution
+    relies on ``search_path``.
+
+    ``trgm_schema`` is the schema pg_trgm was actually installed into (``CREATE
+    EXTENSION`` without a ``SCHEMA`` clause lands in the first ``search_path``
+    entry at migration time, which may be a custom tenant schema rather than
+    ``public``). Pass ``None`` when pg_trgm is absent.
+    """
+    schemas = ['"$user"', "public"]
+    if trgm_schema and trgm_schema != "public":
+        schemas.append(f'"{trgm_schema}"')
+    if text_search_extension == "vchord":
+        # VectorChord BM25 registers objects in dedicated schemas
+        # (vchord_bm25 -> bm25_catalog, pg_tokenizer -> tokenizer_catalog).
+        schemas.extend(["bm25_catalog", "tokenizer_catalog"])
+    return "SET search_path TO " + ", ".join(schemas)
+
+
 def _json_default(obj: Any) -> str:
     """JSON serializer for types commonly carried through async task payloads."""
     if isinstance(obj, datetime):
@@ -2696,18 +2727,24 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Per-connection initialization callback (PostgreSQL-specific for now)
         async def _init_connection(conn: asyncpg.Connection) -> None:
-            # VectorChord BM25 registers its objects in dedicated schemas
-            # (vchord_bm25 -> bm25_catalog, pg_tokenizer -> tokenizer_catalog).
-            # The BM25 distance operator `<&>` resolves its operand types via the
-            # session search_path, so a connection that lacks these schemas fails
-            # recall with `type "bm25vector" does not exist` (and retain with
-            # `function tokenize(...) does not exist`). The official vchord-suite
-            # image masks this by shipping them in search_path; an external
-            # Postgres does not, so we add them ourselves. Tenant tables are always
-            # accessed via fully-qualified names (fq_table), so this does not
-            # affect schema isolation. Only needed for the vchord backend.
-            if text_search_extension == "vchord":
-                await conn.execute('SET search_path TO "$user", public, bm25_catalog, tokenizer_catalog')
+            # Extension operators (pg_trgm's `%` used by the retain trigram entity
+            # lookup, vchord BM25's `<&>`) resolve their operand types through the
+            # session search_path, not through the fully-qualified table names we
+            # use for tenant isolation. A connection whose role default search_path
+            # omits the extension schema fails with errors like
+            # `operator does not exist: text % text` or `type "bm25vector" does
+            # not exist`. External Postgres deployments often pin the role
+            # search_path to a custom schema, so we set it explicitly. pg_trgm may
+            # also have been installed into a non-public schema (CREATE EXTENSION
+            # without a SCHEMA clause lands in the first search_path entry at
+            # migration time), so discover where it actually lives. This does not
+            # affect schema isolation: tenant tables are always accessed via
+            # fully-qualified names (fq_table).
+            trgm_schema = await conn.fetchval(
+                "SELECT n.nspname FROM pg_extension e "
+                "JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'pg_trgm'"
+            )
+            await conn.execute(build_connection_search_path(text_search_extension, trgm_schema))
 
             # SET (not SET LOCAL) so per-backend ANN tuning persists for the
             # connection lifetime. The dispatcher returns only safe, portable
