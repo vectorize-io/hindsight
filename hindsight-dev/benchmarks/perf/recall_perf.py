@@ -19,6 +19,14 @@ Usage (run from hindsight-api/):
     uv run python ../hindsight-dev/benchmarks/perf/recall_perf.py benchmark \\
         --bank-id recall-perf-small --query "database migration" --iterations 5
 
+    # Reproduce the slow temporal recall (PR #1958): generate a bank whose memories
+    # all cluster on one date, then force the temporal arm with a window on that date:
+    uv run python ../hindsight-dev/benchmarks/perf/recall_perf.py generate \\
+        --bank-id recall-perf-temporal --scale very-large --event-date 2025-01-15
+    uv run python ../hindsight-dev/benchmarks/perf/recall_perf.py benchmark \\
+        --bank-id recall-perf-temporal --query "database migration" \\
+        --temporal-date 2025-01-15 --iterations 5
+
     # Benchmark recall (HTTP, against Docker):
     uv run python ../hindsight-dev/benchmarks/perf/recall_perf.py benchmark \\
         --bank-id recall-perf-small --query "database migration" --iterations 5 \\
@@ -31,7 +39,6 @@ Usage (run from hindsight-api/):
 
 import argparse
 import asyncio
-import json
 import os
 import statistics
 import time
@@ -616,11 +623,11 @@ async def _insert_synthetic_observations(pool: Any, bank_id: str) -> int:
             f"""
             INSERT INTO {table} (
                 id, bank_id, text, fact_type, embedding,
-                proof_count, source_memory_ids, history,
+                proof_count, source_memory_ids,
                 tags, event_date, occurred_start, occurred_end, mentioned_at
             ) VALUES (
                 $1, $2, $3, 'observation', $4::vector,
-                1, ARRAY[$5::uuid], '[]'::jsonb,
+                1, ARRAY[$5::uuid],
                 $6, $7, $8, $9, $10
             )
             ON CONFLICT DO NOTHING
@@ -699,8 +706,22 @@ async def _wait_for_operation(pool: Any, operation_id: str, timeout: float = 864
     raise TimeoutError(f"Operation {operation_id} did not complete within {timeout}s")
 
 
-async def cmd_generate(bank_id: str, scale: str, workers: int = 16, with_observations: bool = False) -> None:
-    """Submit all content as a single async batch and process with an in-process worker."""
+async def cmd_generate(
+    bank_id: str,
+    scale: str,
+    workers: int = 16,
+    with_observations: bool = False,
+    event_date: str | None = None,
+) -> None:
+    """Submit all content as a single async batch and process with an in-process worker.
+
+    When *event_date* (YYYY-MM-DD) is given, every content item is stamped with that
+    same event_date, so all memories cluster into one narrow time range. This mirrors
+    the production pathology where a retain pipeline stamps a large batch with a single
+    date — making any temporal recall that intersects the dense zone match (near-)all
+    rows. Without it, retain defaults event_date to the wall-clock time of generation,
+    which still clusters but only loosely (spread across the generation run).
+    """
     from hindsight_api.models import RequestContext
     from hindsight_api.worker.poller import WorkerPoller
 
@@ -708,7 +729,10 @@ async def cmd_generate(bank_id: str, scale: str, workers: int = 16, with_observa
     console.print(
         f"\n[bold cyan]Generate[/bold cyan] bank=[bold]{bank_id}[/bold] scale=[bold]{scale}[/bold] workers=[bold]{workers}[/bold]"
     )
-    console.print(f"  Total items : {total_items:,}\n")
+    console.print(f"  Total items : {total_items:,}")
+    if event_date:
+        console.print(f"  Event date  : {event_date}  (all memories stamped to this date — dense temporal zone)")
+    console.print("")
 
     engine = _build_engine(disable_observations=True)
     await engine.initialize()
@@ -719,7 +743,14 @@ async def cmd_generate(bank_id: str, scale: str, workers: int = 16, with_observa
     engine._llm_config.set_response_callback(callback)
 
     # Build all content items upfront
-    all_contents = [{"content": _fill_template(FACT_TEMPLATES[i % len(FACT_TEMPLATES)])} for i in range(total_items)]
+    all_contents: list[dict[str, Any]] = [
+        {"content": _fill_template(FACT_TEMPLATES[i % len(FACT_TEMPLATES)])} for i in range(total_items)
+    ]
+    if event_date:
+        # Stamp every item with the same event_date → mentioned_at clusters at one
+        # date, reproducing the dense/near-uniform date metadata regime.
+        for item in all_contents:
+            item["event_date"] = event_date
 
     # Submit the whole batch as a single async operation (auto-splits by token budget)
     console.print(f"  Submitting {total_items:,} items as async batch…")
@@ -857,6 +888,23 @@ async def recall_via_http(
 # ---------------------------------------------------------------------------
 
 
+def _augment_query_with_temporal(query: str, temporal_date: str) -> str:
+    """Append an absolute date phrase so the recall path's temporal arm fires.
+
+    The query analyzer (dateparser) extracts a 1-day window from a phrase like
+    "on January 15, 2025". When the bank's memories all cluster in that window
+    (see ``generate --event-date``), the temporal entry-point query's date filter
+    matches (near-)all rows — the exact regime that degrades to a disk-spilling
+    sort in production (see PR #1958).
+    """
+    from datetime import datetime
+
+    parsed = datetime.strptime(temporal_date, "%Y-%m-%d")
+    # "%B %d, %Y" → e.g. "January 15, 2025" (strip a leading zero from the day).
+    phrase = parsed.strftime("%B %d, %Y").replace(" 0", " ")
+    return f"{query} on {phrase}"
+
+
 async def cmd_benchmark(
     bank_id: str,
     query: str,
@@ -865,17 +913,24 @@ async def cmd_benchmark(
     reranker: str,
     fact_types: list[str] | None = None,
     api_url: str | None = None,
+    temporal_date: str | None = None,
 ) -> None:
     """Run recall in parallel and report p50/p95/p99 timings with per-step breakdown."""
+
+    effective_query = _augment_query_with_temporal(query, temporal_date) if temporal_date else query
 
     mode = f"HTTP ({api_url})" if api_url else "in-process"
     console.print(f"\n[bold cyan]Benchmark[/bold cyan] bank=[bold]{bank_id}[/bold]")
     console.print(f"  Mode        : {mode}")
-    console.print(f"  Query       : {query}")
+    console.print(f"  Query       : {effective_query}")
+    if temporal_date:
+        console.print(f"  Temporal    : ENABLED — forcing temporal arm with a 1-day window on {temporal_date}")
     console.print(f"  Iterations  : {iterations}  (total recall calls)")
     console.print(f"  Concurrency : {concurrency}")
     console.print(f"  Reranker    : {reranker}")
     console.print(f"  Fact types  : {', '.join(fact_types) if fact_types else 'all'}\n")
+
+    query = effective_query
 
     durations: list[float] = []
     all_phase_timings: dict[str, list[float]] = {}
@@ -1099,6 +1154,14 @@ def main() -> None:
         default=False,
         help="After retain, insert one synthetic observation per fact (same text, same embedding)",
     )
+    gen.add_argument(
+        "--event-date",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Stamp every memory with this event_date so all memories share one narrow time "
+        "range (dense temporal zone). Pair with `benchmark --temporal-date` to reproduce the "
+        "slow temporal recall from PR #1958.",
+    )
 
     # benchmark
     bm = sub.add_parser("benchmark", help="Run recall and report latency")
@@ -1127,6 +1190,15 @@ def main() -> None:
         help="HTTP mode: send recall requests to this Hindsight API URL (e.g., http://localhost:8080). "
         "If omitted, uses in-process MemoryEngine.",
     )
+    bm.add_argument(
+        "--temporal-date",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Force the temporal retrieval arm by appending a 1-day window on this date to the query "
+        "(e.g. 'database migration on January 15, 2025'). Use the same date passed to "
+        "`generate --event-date` so the date filter matches (near-)all rows — the regime that "
+        "causes the 30s+ temporal recall in PR #1958.",
+    )
 
     # stats
     st = sub.add_parser("stats", help="Print memory/entity/link counts for banks")
@@ -1140,7 +1212,13 @@ def main() -> None:
 
     if args.cmd == "generate":
         asyncio.run(
-            cmd_generate(args.bank_id, args.scale, workers=args.workers, with_observations=args.with_observations)
+            cmd_generate(
+                args.bank_id,
+                args.scale,
+                workers=args.workers,
+                with_observations=args.with_observations,
+                event_date=args.event_date,
+            )
         )
     elif args.cmd == "benchmark":
         asyncio.run(
@@ -1152,6 +1230,7 @@ def main() -> None:
                 args.reranker,
                 args.fact_types,
                 api_url=args.api_url,
+                temporal_date=args.temporal_date,
             )
         )
     elif args.cmd == "stats":

@@ -17,7 +17,9 @@ import asyncpg
 import typer
 
 from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig
+from ..engine.memory_engine import _current_schema
 from ..engine.schema import fq_table_explicit as _fq_table
+from ..engine.transfer import export_bank
 from ..extensions import TenantExtension, load_extension
 from ..pg0 import parse_pg0_url, resolve_database_url
 
@@ -30,20 +32,57 @@ logger = logging.getLogger(__name__)
 
 app = typer.Typer(name="hindsight-admin", help="Hindsight administrative commands")
 
-# Tables to backup/restore in dependency order
-# Import must happen in this order due to foreign key constraints
+# Tables to backup/restore in foreign-key dependency order (parents first).
+# Restore COPYs in this order and TRUNCATEs in reverse, so every child must
+# appear after the tables it references.
+#
+# This must cover EVERY persistent PostgreSQL table in the schema — a missing
+# entry silently drops that table's data on restore (and, worse, restore's
+# `TRUNCATE banks CASCADE` wipes any FK-to-banks child like mental_models even
+# when it was never backed up). test_admin_backup_restore.py asserts this list
+# equals the live schema's tables, so adding a migration that creates a table
+# without adding it here fails CI. Oracle-only tables (e.g. observation_sources)
+# are intentionally absent — admin backup/restore is PostgreSQL-only.
 BACKUP_TABLES = [
     "banks",
     "documents",
     "entities",
     "chunks",
     "memory_units",
+    "invalidated_memory_units",
     "unit_entities",
     "entity_cooccurrences",
     "memory_links",
+    "observation_history",
+    "mental_models",
+    "mental_model_history",
+    "directives",
+    "async_operations",
+    "webhooks",
+    "file_storage",
+    "audit_log",
+    "llm_requests",
+    "graph_maintenance_queue",
 ]
 
 MANIFEST_VERSION = "1"
+
+
+async def _admin_connect(db_url: str) -> asyncpg.Connection:
+    """Open a raw asyncpg connection to an admin DB URL.
+
+    ``resolve_database_url`` handles both plain ``postgres://`` (passthrough) and
+    ``pg0://`` (boots the embedded server and returns its real libpq URL), so this
+    is the only step needed to connect. JSON codecs are registered so ``jsonb``
+    columns decode to Python objects (used by the export row dumps).
+    """
+    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    if is_pg0:
+        typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
+    conn = await asyncpg.connect(await resolve_database_url(db_url))
+    for type_name in ("json", "jsonb"):
+        await conn.set_type_codec(type_name, encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
+    return conn
 
 
 async def _backup(database_url: str, output_path: Path, schema: str = "public") -> dict[str, Any]:
@@ -219,12 +258,7 @@ async def _run_migration(
     embedding_dimension: int | None = None,
 ) -> list[str]:
     """Resolve database URL and run migrations for one schema or all discovered schemas."""
-    from ..migrations import (
-        ensure_embedding_dimension,
-        ensure_text_search_extension,
-        ensure_vector_extension,
-        run_migrations,
-    )
+    from ..migrations import run_migrations_for_schemas
 
     is_pg0, instance_name, _ = parse_pg0_url(db_url)
     if is_pg0:
@@ -245,32 +279,21 @@ async def _run_migration(
         # Preserve order while removing duplicates.
         schemas = list(dict.fromkeys(schemas))
 
-    for schema in schemas:
-        run_migrations(resolved_url, schema=schema, migration_database_url=config.migration_database_url)
-
-    if embedding_dimension is not None:
-        for schema in schemas:
-            ensure_embedding_dimension(
-                resolved_url,
-                embedding_dimension,
-                schema=schema,
-                vector_extension=config.vector_extension,
-            )
-
-    for schema in schemas:
-        ensure_vector_extension(
-            resolved_url,
-            vector_extension=config.vector_extension,
-            schema=schema,
-        )
-
-    for schema in schemas:
-        ensure_text_search_extension(
-            resolved_url,
-            text_search_extension=config.text_search_extension,
-            pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
-            schema=schema,
-        )
+    # Migrate up to `migration_concurrency` schemas at once (each in its own
+    # process); within a schema the work stays sequential. Run off the event
+    # loop so the process pool's blocking joins don't stall it.
+    await asyncio.to_thread(
+        run_migrations_for_schemas,
+        resolved_url,
+        schemas,
+        concurrency=config.migration_concurrency,
+        migration_database_url=config.migration_database_url,
+        embedding_dimension=embedding_dimension,
+        vector_extension=config.vector_extension,
+        text_search_extension=config.text_search_extension,
+        pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
+        ensure_extensions=True,
+    )
 
     return schemas
 
@@ -312,6 +335,123 @@ def run_db_migration(
     )
 
     typer.echo(f"Database migrations completed successfully for {len(schemas)} schema(s)")
+
+
+async def _run_export_bank(db_url: str, bank_id: str, output: Path, schema: str, include_history: bool) -> int:
+    """Export a whole bank to a ZIP archive."""
+    conn = await _admin_connect(db_url)
+    try:
+        # export_bank resolves table names via fq_table (the _current_schema
+        # contextvar); set it so the raw connection targets the right schema.
+        _current_schema.set(schema)
+        data = await export_bank(conn, bank_id, include_history=include_history)
+    finally:
+        await conn.close()
+
+    output.write_bytes(data)
+    return len(data)
+
+
+@app.command(name="export-bank")
+def export_bank_command(
+    bank_id: str = typer.Option(..., "--bank", "-b", help="Bank id to export."),
+    output: Path = typer.Option(..., "--output", "-o", help="Path to write the .zip archive."),
+    schema: str | None = typer.Option(
+        None,
+        "--schema",
+        "-s",
+        help="Database schema the bank lives in. Defaults to the configured base schema.",
+    ),
+    include_history: bool = typer.Option(
+        False,
+        "--include-history",
+        help="Also export operational history (audit_log, llm_requests). Off by default.",
+    ),
+):
+    """Export an entire bank to a portable ZIP (no embeddings — regenerated on import).
+
+    Carries documents, facts, observations, bank config, mental models, directives
+    and webhooks so the bank can be imported into a new instance configured with a
+    different embedding model / vector / text-search backend.
+    """
+    config = HindsightConfig.from_env()
+
+    if not config.database_url:
+        typer.echo("Error: Database URL not configured.", err=True)
+        typer.echo("Set HINDSIGHT_API_DATABASE_URL environment variable.", err=True)
+        raise typer.Exit(1)
+
+    target_schema = schema or config.database_schema or DEFAULT_DATABASE_SCHEMA
+    typer.echo(f"Exporting bank '{bank_id}' from schema '{target_schema}'...")
+
+    size = asyncio.run(_run_export_bank(config.database_url, bank_id, output, target_schema, include_history))
+
+    typer.echo(f"Exported bank '{bank_id}' to {output} ({size} bytes)")
+
+
+async def _run_import_bank(archive_path: Path, schema: str, target_bank_id: str | None, include_history: bool):
+    """Boot a MemoryEngine (for the target's embedding model) and restore a bank archive."""
+    # MemoryEngine is heavy (loads embeddings); import it lazily so other admin
+    # commands don't pay for it. _current_schema is imported at module top.
+    from ..engine.memory_engine import MemoryEngine
+    from ..models import RequestContext
+
+    archive_bytes = archive_path.read_bytes()
+    # run_migrations=True so a fresh target instance is provisioned at this
+    # instance's embedding dimension / vector / text-search backend before restore.
+    engine = MemoryEngine(run_migrations=True)
+    await engine.initialize()
+    try:
+        _current_schema.set(schema)
+        context = RequestContext(internal=True, user_initiated=True)
+        return await engine.import_bank_async(
+            archive_bytes,
+            context,
+            target_bank_id=target_bank_id,
+            include_history=include_history,
+        )
+    finally:
+        await engine.close()
+
+
+@app.command(name="import-bank")
+def import_bank_command(
+    archive: Path = typer.Option(..., "--archive", "-a", help="Path to the .zip produced by export-bank."),
+    schema: str | None = typer.Option(
+        None, "--schema", "-s", help="Target schema. Defaults to the configured base schema."
+    ),
+    target_bank: str | None = typer.Option(
+        None, "--target-bank", help="Override the bank id (defaults to the archive's source bank)."
+    ),
+    include_history: bool = typer.Option(
+        False, "--include-history", help="Also restore operational history if present in the archive."
+    ),
+):
+    """Restore a whole bank from an export-bank archive into THIS instance.
+
+    Re-embeds facts with this instance's configured embedding model and rebuilds
+    links and indexes — the import half of a cross-instance migration. Run against
+    an instance configured with the desired embedding / vector / text-search backend.
+    The target bank must not already exist (import restores a whole bank, not a merge).
+    """
+    config = HindsightConfig.from_env()
+    if not config.database_url:
+        typer.echo("Error: Database URL not configured.", err=True)
+        typer.echo("Set HINDSIGHT_API_DATABASE_URL environment variable.", err=True)
+        raise typer.Exit(1)
+
+    target_schema = schema or config.database_schema or DEFAULT_DATABASE_SCHEMA
+    typer.echo(f"Importing bank archive '{archive}' into schema '{target_schema}'...")
+
+    result = asyncio.run(_run_import_bank(archive, target_schema, target_bank, include_history))
+
+    typer.echo(
+        f"Imported bank '{result.bank_id}': {result.documents_imported} doc(s), "
+        f"{result.facts_imported} fact(s), {result.observations_imported} observation(s), "
+        f"{result.mental_models_imported} mental model(s), "
+        f"{result.mental_model_history_imported} mm-history row(s), {result.directives_imported} directive(s), "
+        f"{result.webhooks_imported} webhook(s), {result.history_rows_imported} history row(s)"
+    )
 
 
 async def _decommission_worker(db_url: str, worker_id: str, schema: str = "public") -> int:

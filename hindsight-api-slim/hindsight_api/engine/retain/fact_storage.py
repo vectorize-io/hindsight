@@ -147,12 +147,13 @@ async def ensure_bank_exists(conn, bank_id: str, ops=None) -> None:
     internal_id = uuid.uuid4()
     inserted = await conn.fetchval(
         f"""
-        INSERT INTO {fq_table("banks")} (bank_id, disposition, mission, internal_id)
-        VALUES ($1, $2::jsonb, $3, $4)
+        INSERT INTO {fq_table("banks")} (bank_id, name, disposition, mission, internal_id)
+        VALUES ($1, $2, $3::jsonb, $4, $5)
         ON CONFLICT (bank_id) DO NOTHING
         RETURNING bank_id
         """,
         bank_id,
+        bank_id,  # Default name is the bank_id (matches get_or_create_bank_profile)
         json.dumps(DEFAULT_DISPOSITION),
         "",
         internal_id,
@@ -398,7 +399,12 @@ async def _upsert_document_row(
     INSERT so that re-ingesting a document (which deletes + inserts the row)
     keeps the original creation timestamp. ``updated_at`` is always set to
     ``NOW()`` on both INSERT and the ON CONFLICT UPDATE branch.
+
+    When ``store_document_text`` is disabled, the raw source text
+    is dropped and ``original_text`` is stored as NULL. The ``content_hash`` is
+    still computed from the real content so delta-retain dedup is unaffected.
     """
+    original_text = combined_content if get_config().store_document_text else None
     await conn.execute(
         f"""
         INSERT INTO {fq_table("documents")} (id, bank_id, original_text, content_hash, retain_params, tags, created_at, updated_at)
@@ -412,7 +418,7 @@ async def _upsert_document_row(
         """,
         document_id,
         bank_id,
-        combined_content,
+        original_text,
         content_hash,
         json.dumps(retain_params) if retain_params else None,
         document_tags or [],

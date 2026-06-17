@@ -15,8 +15,11 @@ Persistent long-term memory for [Roo Code](https://github.com/RooVetGit/Roo-Code
 :::
 
 ```bash
+# Install the CLI
+pip install hindsight-roo-code
+
 # Install the integration into your project (defaults to Hindsight Cloud)
-python /path/to/hindsight-integrations/roo-code/install.py
+hindsight-roo-code install
 
 # Restart Roo Code — memory is active
 ```
@@ -30,7 +33,7 @@ export HINDSIGHT_API_LLM_API_KEY=your-openai-key
 hindsight-api
 
 # Then install with the local URL
-python install.py --api-url http://localhost:8888
+hindsight-roo-code install --api-url http://localhost:8888
 ```
 
 ## How It Works
@@ -61,10 +64,10 @@ The installer writes:
 Writes to `.roo/` in the current directory — memory is scoped to this project:
 
 ```bash
-python install.py
-python install.py --api-url https://api.hindsight.vectorize.io  # default (Hindsight Cloud)
-python install.py --api-url http://localhost:8888                 # self-hosted
-python install.py --project-dir /path/to/project
+hindsight-roo-code install
+hindsight-roo-code install --api-url https://api.hindsight.vectorize.io  # default (Hindsight Cloud)
+hindsight-roo-code install --api-url http://localhost:8888                 # self-hosted
+hindsight-roo-code install --project-dir /path/to/project
 ```
 
 ### Global install
@@ -72,7 +75,7 @@ python install.py --project-dir /path/to/project
 Writes to `~/.roo/` — applies to all projects:
 
 ```bash
-python install.py --global
+hindsight-roo-code install --global
 ```
 
 ## Configuration

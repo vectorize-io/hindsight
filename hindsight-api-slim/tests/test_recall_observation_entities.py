@@ -117,9 +117,9 @@ async def seeded(memory_no_llm_verify: MemoryEngine):
             """
             INSERT INTO memory_units (
                 id, bank_id, text, fact_type, embedding, event_date,
-                source_memory_ids, history, proof_count
+                source_memory_ids, proof_count
             )
-            VALUES ($1, $2, $3, 'observation', $4::vector, now(), $5::uuid[], '[]'::jsonb, 1)
+            VALUES ($1, $2, $3, 'observation', $4::vector, now(), $5::uuid[], 1)
             """,
             ID_OBS_INHERITED,
             bank_id,
@@ -133,9 +133,9 @@ async def seeded(memory_no_llm_verify: MemoryEngine):
             """
             INSERT INTO memory_units (
                 id, bank_id, text, fact_type, embedding, event_date,
-                source_memory_ids, history, proof_count
+                source_memory_ids, proof_count
             )
-            VALUES ($1, $2, $3, 'observation', $4::vector, now(), NULL, '[]'::jsonb, 1)
+            VALUES ($1, $2, $3, 'observation', $4::vector, now(), NULL, 1)
             """,
             ID_OBS_DIRECT,
             bank_id,

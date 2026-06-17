@@ -198,7 +198,7 @@ hindsight bank disposition <bank_id>
 ### Set Disposition
 
 ```bash
-hindsight bank set-disposition <bank_id> --mission "..." --name "..."
+hindsight bank set-disposition <bank_id> --skepticism 3 --literalism 4 --empathy 5
 ```
 
 ### View Statistics

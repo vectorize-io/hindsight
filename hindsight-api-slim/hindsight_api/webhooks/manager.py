@@ -70,7 +70,10 @@ class WebhookManager:
         webhook_table = _fq_table("webhooks", schema)
         ops_table = _fq_table("async_operations", schema)
         now = datetime.now(timezone.utc)
-        payload_str = event.model_dump_json()
+        # Drop null fields so receivers don't see promised-but-unfilled keys.
+        # OSS leaves SIEM-enrichment fields (severity, api_key_name, etc.) None
+        # because it doesn't have the data; cloud populates them when it does.
+        payload_str = event.model_dump_json(exclude_none=True)
 
         try:
             async with self._backend.acquire() as conn:
@@ -150,7 +153,10 @@ class WebhookManager:
         webhook_table = _fq_table("webhooks", schema)
         ops_table = _fq_table("async_operations", schema)
         now = datetime.now(timezone.utc)
-        payload_str = event.model_dump_json()
+        # Drop null fields so receivers don't see promised-but-unfilled keys.
+        # OSS leaves SIEM-enrichment fields (severity, api_key_name, etc.) None
+        # because it doesn't have the data; cloud populates them when it does.
+        payload_str = event.model_dump_json(exclude_none=True)
 
         try:
             rows = await self._backend.ops.get_webhooks_for_dispatch(

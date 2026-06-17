@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.7.1"
+    "version": "0.8.2"
   },
   "paths": {
     "/health": {
@@ -81,7 +81,7 @@
           "Memory"
         ],
         "summary": "Get memory graph data",
-        "description": "Retrieve graph data for visualization, optionally filtered by type (world/experience/opinion).",
+        "description": "Retrieve graph data for visualization, optionally filtered by type (world/experience/observation).",
         "operationId": "get_graph",
         "parameters": [
           {
@@ -304,6 +304,38 @@
             }
           },
           {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Document Id"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -347,6 +379,75 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListMemoryUnitsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/memories/dry-run-extract": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Dry-run fact extraction (preview, no persistence)",
+        "description": "Preview what the retain step would extract from text WITHOUT changing the bank \u2014 no entity resolution, links, embeddings, or persistence. Returns the candidate facts and the LLM token usage. Every prompt-affecting setting (retain mission, extraction mode, chunk size, \u2026) is overridable in the body to A/B a candidate config against the bank's current one. This is a read-only tool: nothing is stored.",
+        "operationId": "dry_run_extract_memories",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DryRunExtractRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DryRunExtractionResult"
                 }
               }
             }
@@ -408,6 +509,80 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Curate memory unit",
+        "description": "Edit a memory's text and/or change its curation state (invalidate / revert). Invalidated memories are excluded from recall, consolidation, and graph maintenance but kept for audit (reversible). Only world/experience facts can be curated; observations are derived.",
+        "operationId": "update_memory",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "memory_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Memory Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMemoryRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -571,7 +746,7 @@
           "Memory"
         ],
         "summary": "Reflect and generate answer",
-        "description": "Reflect and formulate an answer using bank identity, world facts, and opinions.\n\nThis endpoint:\n1. Retrieves experience (conversations and events)\n2. Retrieves world facts relevant to the query\n3. Retrieves existing opinions (bank's perspectives)\n4. Uses LLM to formulate a contextual answer\n5. Returns plain text answer and the facts used",
+        "description": "Reflect and formulate an answer using bank identity, world facts, observations, and mental models.\n\nThis endpoint:\n1. Retrieves experience (conversations and events)\n2. Retrieves world facts relevant to the query\n3. Retrieves observations and mental models (bank's synthesized perspectives)\n4. Uses LLM to formulate a contextual answer\n5. Returns plain text answer and the facts used",
         "operationId": "reflect",
         "parameters": [
           {
@@ -726,6 +901,65 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BankStatsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/health/llm": {
+      "post": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Test the bank's LLM connectivity",
+        "description": "Probe the LLMs this bank would use for retain / consolidation / reflect with one minimal call each (configs shared across operations are probed once), so you can discover 'not configured / unreachable' instead of a silent stall. Deliberate action (makes a real provider call); not for polling. Returns status only \u2014 never the provider, model, endpoint, API key, or raw error. Disable with HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH=false.",
+        "operationId": "test_bank_llm",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankLlmHealthResponse"
                 }
               }
             }
@@ -3713,6 +3947,176 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/document-transfer": {
+      "get": {
+        "tags": [
+          "Document Transfer"
+        ],
+        "summary": "Export documents",
+        "description": "Export documents (extracted facts, entity names, causal links, chunks) from a bank as a transfer ZIP archive. Embeddings and database ids are not included \u2014 importing re-embeds with the target bank's model and re-resolves entities. Consolidated observations are excluded unless include_observations=true. Pass document_id query params to export specific documents, or omit to export the whole bank.",
+        "operationId": "export_documents",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Document id(s) to export; omit for all",
+              "title": "Document Id"
+            },
+            "description": "Document id(s) to export; omit for all"
+          },
+          {
+            "name": "include_observations",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Also export consolidated observations (restored on import)",
+              "default": false,
+              "title": "Include Observations"
+            },
+            "description": "Also export consolidated observations (restored on import)"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transfer archive",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/zip": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Document Transfer"
+        ],
+        "summary": "Import documents (async)",
+        "description": "Submit a transfer archive (produced by the export endpoint) for import into a bank. Runs as a background operation: facts are re-embedded with the target bank's embedding model and entities are re-resolved \u2014 no LLM extraction. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the imported/skipped counts in result_metadata. Use on_conflict to control existing document ids: skip (default), replace, or new-id.",
+        "operationId": "import_documents",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "on_conflict",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "skip | replace | new-id",
+              "default": "skip",
+              "title": "On Conflict"
+            },
+            "description": "skip | replace | new-id"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_documents"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentImportSubmitResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/bank-template-schema": {
       "get": {
         "tags": [
@@ -3775,6 +4179,65 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DeleteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/observations/scopes": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "List observation scopes",
+        "description": "Enumerate the distinct scopes across a bank's observations. Each observation lives under a scope: the exact set of tags it was consolidated with. Returns every distinct scope (tag order normalized) with the number of observations in it; the empty tag list is the global/untagged scope. Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact) to filter observations to exactly that scope.",
+        "operationId": "list_observation_scopes",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservationScopesResponse"
                 }
               }
             }
@@ -4620,7 +5083,7 @@
           "Memory"
         ],
         "summary": "Clear memory bank memories",
-        "description": "Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.",
+        "description": "Delete memory units for a memory bank. Optionally filter by type (world, experience, observation) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.",
         "operationId": "clear_bank_memories",
         "parameters": [
           {
@@ -4645,10 +5108,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Optional fact type filter (world, experience, opinion)",
+              "description": "Optional fact type filter (world, experience, observation)",
               "title": "Type"
             },
-            "description": "Optional fact type filter (world, experience, opinion)"
+            "description": "Optional fact type filter (world, experience, observation)"
           },
           {
             "name": "authorization",
@@ -4990,6 +5453,355 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AuditLogStatsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/llm-requests": {
+      "get": {
+        "tags": [
+          "LLM Traces"
+        ],
+        "summary": "List LLM request traces",
+        "description": "List traced LLM requests for a bank, ordered by most recent first. Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED).",
+        "operationId": "list_llm_requests",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by status (success, error)",
+              "title": "Status"
+            },
+            "description": "Filter by status (success, error)"
+          },
+          {
+            "name": "operation",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by operation (retain, reflect, consolidation)",
+              "title": "Operation"
+            },
+            "description": "Filter by operation (retain, reflect, consolidation)"
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by call scope",
+              "title": "Scope"
+            },
+            "description": "Filter by call scope"
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by LLM provider",
+              "title": "Provider"
+            },
+            "description": "Filter by LLM provider"
+          },
+          {
+            "name": "trace_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to one operation run (all LLM calls sharing a trace)",
+              "title": "Trace Id"
+            },
+            "description": "Filter to one operation run (all LLM calls sharing a trace)"
+          },
+          {
+            "name": "document_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to LLM calls that processed a given document",
+              "title": "Document Id"
+            },
+            "description": "Filter to LLM calls that processed a given document"
+          },
+          {
+            "name": "memory_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to the operation run(s) that produced or consumed a given memory_unit",
+              "title": "Memory Id"
+            },
+            "description": "Filter to the operation run(s) that produced or consumed a given memory_unit"
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Paginate by operation run (trace) instead of by call; returns whole runs",
+              "default": false,
+              "title": "Group"
+            },
+            "description": "Paginate by operation run (trace) instead of by call; returns whole runs"
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter from this ISO datetime (inclusive)",
+              "title": "Start Date"
+            },
+            "description": "Filter from this ISO datetime (inclusive)"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter until this ISO datetime (exclusive)",
+              "title": "End Date"
+            },
+            "description": "Filter until this ISO datetime (exclusive)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "description": "Max items to return",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Max items to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Offset for pagination",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Offset for pagination"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMRequestListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/llm-requests/stats": {
+      "get": {
+        "tags": [
+          "LLM Traces"
+        ],
+        "summary": "LLM request statistics",
+        "description": "Get LLM request counts grouped by time bucket and status for charting.",
+        "operationId": "llm_request_stats",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "operation",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by operation",
+              "title": "Operation"
+            },
+            "description": "Filter by operation"
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Time period: 1d, 7d, or 30d",
+              "default": "7d",
+              "title": "Period"
+            },
+            "description": "Time period: 1d, 7d, or 30d"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMRequestStatsResponse"
                 }
               }
             }
@@ -5479,6 +6291,52 @@
           ]
         }
       },
+      "BankLlmHealthResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id",
+            "description": "Bank identifier"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/LlmOperationHealth"
+            },
+            "type": "array",
+            "title": "Operations",
+            "description": "Connectivity status per operation (retain, consolidation, reflect)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "operations"
+        ],
+        "title": "BankLlmHealthResponse",
+        "description": "Per-bank LLM connectivity probe across retain/consolidation/reflect. Operations\nthat share a configuration are probed once. Discloses status only \u2014 never the\nprovider, model, endpoint, API key, or raw error.",
+        "example": {
+          "bank_id": "user123",
+          "operations": [
+            {
+              "latency_ms": 412.0,
+              "ok": true,
+              "operation": "retain",
+              "status": "connected"
+            },
+            {
+              "latency_ms": 412.0,
+              "ok": true,
+              "operation": "consolidation",
+              "status": "connected"
+            },
+            {
+              "ok": false,
+              "operation": "reflect",
+              "status": "not_configured"
+            }
+          ]
+        }
+      },
       "BankProfileResponse": {
         "properties": {
           "bank_id": {
@@ -5736,7 +6594,19 @@
               }
             ],
             "title": "Retain Chunk Size",
-            "description": "Max token size for each content chunk"
+            "description": "Target max characters for each content chunk"
+          },
+          "retain_structured_chunk_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Structured Chunk Size",
+            "description": "Max characters for a single JSONL line or conversation turn to keep whole; defaults to retain_chunk_size when unset"
           },
           "enable_observations": {
             "anyOf": [
@@ -5931,6 +6801,22 @@
             ],
             "title": "Max Observations Per Scope",
             "description": "Max observations to retain per consolidation scope"
+          },
+          "observation_scope_limits": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observation Scope Limits",
+            "description": "Per-scope overrides of max_observations_per_scope: [{\"scope\": [\"run_*\", \"shared\"], \"limit\": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope."
           },
           "reflect_source_facts_max_tokens": {
             "anyOf": [
@@ -6339,6 +7225,21 @@
         ],
         "title": "Body_file_retain"
       },
+      "Body_import_documents": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "title": "File",
+            "description": "Transfer ZIP archive",
+            "format": "binary"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_documents"
+      },
       "Budget": {
         "type": "string",
         "enum": [
@@ -6732,7 +7633,19 @@
               }
             ],
             "title": "Retain Chunk Size",
-            "description": "Maximum token size for each content chunk during retain."
+            "description": "Target maximum characters for each content chunk during retain."
+          },
+          "retain_structured_chunk_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Structured Chunk Size",
+            "description": "Maximum characters for a single JSONL line or conversation turn to keep whole during retain. Defaults to retain_chunk_size when unset."
           },
           "enable_observations": {
             "anyOf": [
@@ -6928,7 +7841,7 @@
             },
             "type": "array",
             "title": "Event Types",
-            "description": "List of event types to deliver. Currently supported: 'consolidation.completed'",
+            "description": "List of event types to deliver. Supported: 'retain.completed', 'consolidation.completed', 'memory_defense.triggered'.",
             "default": [
               "consolidation.completed"
             ]
@@ -7151,6 +8064,25 @@
           "skepticism": 3
         }
       },
+      "DocumentImportSubmitResponse": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "pending"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id"
+        ],
+        "title": "DocumentImportSubmitResponse",
+        "description": "Response for the async document-import endpoint (202).\n\nThe import runs in the background; poll the operations endpoint for status.\nThe imported/skipped counts (documents_imported, facts_imported,\nobservations_imported, etc.) are written to the operation's result_metadata."
+      },
       "DocumentResponse": {
         "properties": {
           "id": {
@@ -7162,7 +8094,14 @@
             "title": "Bank Id"
           },
           "original_text": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Original Text"
           },
           "content_hash": {
@@ -7237,6 +8176,27 @@
             ],
             "title": "Retain Params",
             "description": "Parameters used during retain"
+          },
+          "observation_scopes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observation Scopes",
+            "description": "The observation_scopes spec configured at retain time (e.g. 'all_combinations', 'per_tag', or explicit tag-set lists), captured into retain_params. None when none was set (default 'combined' scoping) or for documents retained before this was captured."
           }
         },
         "type": "object",
@@ -7272,6 +8232,160 @@
           ],
           "updated_at": "2024-01-15T10:30:00Z"
         }
+      },
+      "DryRunExtractRequest": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "Text to extract facts from (e.g. a document or a single chunk)."
+          },
+          "context": {
+            "type": "string",
+            "title": "Context",
+            "description": "Optional context about the content.",
+            "default": ""
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestamp",
+            "description": "Reference timestamp for resolving relative times (ISO 8601)."
+          },
+          "agent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Name",
+            "description": "Narrator override (memory owner) primed in the prompt."
+          },
+          "retain_mission": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Mission"
+          },
+          "retain_extraction_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Extraction Mode"
+          },
+          "retain_custom_instructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Custom Instructions"
+          },
+          "retain_extract_causal_links": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Extract Causal Links"
+          },
+          "retain_chunk_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Chunk Size"
+          },
+          "entity_labels": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Labels"
+          },
+          "entities_allow_free_form": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entities Allow Free Form"
+          },
+          "llm_output_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Output Language"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "DryRunExtractRequest",
+        "description": "Request to run fact extraction ONLY (no resolution/links/embeddings/persistence).\n\nEvery field below the content/context/date is a prompt-affecting override applied just for this\ncall \u2014 used to preview what a candidate retain mission (or any extraction setting) would extract,\nwithout changing the bank. Unset (null) fields fall back to the bank's resolved config."
+      },
+      "DryRunExtractionResult": {
+        "properties": {
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ExtractedFact"
+            },
+            "type": "array",
+            "title": "Facts",
+            "description": "Candidate facts the retain step would extract."
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TokenUsage",
+            "description": "Aggregated token usage across the extraction LLM calls."
+          }
+        },
+        "type": "object",
+        "title": "DryRunExtractionResult",
+        "description": "Result of dry-run fact extraction: candidate facts plus aggregated LLM token usage."
       },
       "EntityDetailResponse": {
         "properties": {
@@ -7634,6 +8748,59 @@
         "title": "EntityStateResponse",
         "description": "Current mental model of an entity."
       },
+      "ExtractedFact": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "The extracted fact text."
+          },
+          "fact_type": {
+            "type": "string",
+            "title": "Fact Type",
+            "description": "Perspective classification: 'world' or 'experience'."
+          },
+          "occurred_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred Start",
+            "description": "ISO timestamp the fact's event started, if dated."
+          },
+          "occurred_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred End",
+            "description": "ISO timestamp the fact's event ended, if dated."
+          },
+          "entities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Entities",
+            "description": "Raw (unresolved) entity names mentioned in the fact."
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "fact_type"
+        ],
+        "title": "ExtractedFact",
+        "description": "A single candidate fact produced by dry-run extraction (no resolution/links/persistence).\n\nA deliberate subset of the persisted memory-unit shape \u2014 only the fields a fresh extraction\nyields. Storage/consolidation/curation fields (id, document_id, chunk_id, proof_count, state, \u2026)\nare omitted because nothing is stored. Entities are raw, unresolved names."
+      },
       "FactsIncludeOptions": {
         "properties": {},
         "type": "object",
@@ -7662,10 +8829,40 @@
             "title": "Bank Config Api",
             "description": "Whether per-bank configuration API is enabled"
           },
+          "bank_llm_health": {
+            "type": "boolean",
+            "title": "Bank Llm Health",
+            "description": "Whether the per-bank LLM connectivity probe is enabled"
+          },
           "file_upload_api": {
             "type": "boolean",
             "title": "File Upload Api",
             "description": "Whether file upload/conversion API is enabled"
+          },
+          "document_export_api": {
+            "type": "boolean",
+            "title": "Document Export Api",
+            "description": "Whether the document export endpoint is enabled"
+          },
+          "document_import_api": {
+            "type": "boolean",
+            "title": "Document Import Api",
+            "description": "Whether the document import endpoint is enabled"
+          },
+          "audit_log": {
+            "type": "boolean",
+            "title": "Audit Log",
+            "description": "Whether audit logging is enabled"
+          },
+          "llm_trace": {
+            "type": "boolean",
+            "title": "Llm Trace",
+            "description": "Whether per-bank LLM request tracing is enabled"
+          },
+          "store_document_text": {
+            "type": "boolean",
+            "title": "Store Document Text",
+            "description": "Whether raw source text is persisted. When false, document/chunk source text is not stored."
           }
         },
         "type": "object",
@@ -7674,7 +8871,13 @@
           "mcp",
           "worker",
           "bank_config_api",
-          "file_upload_api"
+          "bank_llm_health",
+          "file_upload_api",
+          "document_export_api",
+          "document_import_api",
+          "audit_log",
+          "llm_trace",
+          "store_document_text"
         ],
         "title": "FeaturesInfo",
         "description": "Feature flags indicating which capabilities are enabled."
@@ -7838,6 +9041,369 @@
         "type": "object",
         "title": "IncludeOptions",
         "description": "Options for including additional data in recall results."
+      },
+      "LLMRequestEntry": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "bank_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Id"
+          },
+          "operation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          },
+          "span_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Span Id"
+          },
+          "parent_span_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Span Id"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Tokens"
+          },
+          "output_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Tokens"
+          },
+          "cached_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cached Tokens"
+          },
+          "total_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Tokens"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "output": {
+            "title": "Output"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "llm_info": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Llm Info"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "bank_id",
+          "operation",
+          "scope",
+          "trace_id",
+          "span_id",
+          "parent_span_id",
+          "provider",
+          "model",
+          "status",
+          "started_at",
+          "ended_at",
+          "duration_ms",
+          "input_tokens",
+          "output_tokens",
+          "cached_tokens",
+          "total_tokens",
+          "error",
+          "llm_info",
+          "metadata"
+        ],
+        "title": "LLMRequestEntry",
+        "description": "A single LLM request trace row, as returned by the read API."
+      },
+      "LLMRequestListResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LLMRequestEntry"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "total",
+          "limit",
+          "offset",
+          "items"
+        ],
+        "title": "LLMRequestListResponse",
+        "description": "Paginated list of LLM request traces for a bank."
+      },
+      "LLMRequestStatsBucket": {
+        "properties": {
+          "time": {
+            "type": "string",
+            "title": "Time"
+          },
+          "statuses": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Statuses"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "tokens": {
+            "$ref": "#/components/schemas/LLMRequestTokenSums"
+          }
+        },
+        "type": "object",
+        "required": [
+          "time",
+          "statuses",
+          "total",
+          "tokens"
+        ],
+        "title": "LLMRequestStatsBucket",
+        "description": "A single time bucket in LLM request stats."
+      },
+      "LLMRequestStatsResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "period": {
+            "type": "string",
+            "title": "Period"
+          },
+          "trunc": {
+            "type": "string",
+            "title": "Trunc"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/LLMRequestStatsBucket"
+            },
+            "type": "array",
+            "title": "Buckets"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "period",
+          "trunc",
+          "start",
+          "buckets"
+        ],
+        "title": "LLMRequestStatsResponse",
+        "description": "LLM request counts and token sums grouped by time bucket."
+      },
+      "LLMRequestTokenSums": {
+        "properties": {
+          "input": {
+            "type": "integer",
+            "title": "Input"
+          },
+          "output": {
+            "type": "integer",
+            "title": "Output"
+          },
+          "cached": {
+            "type": "integer",
+            "title": "Cached"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "input",
+          "output",
+          "cached",
+          "total"
+        ],
+        "title": "LLMRequestTokenSums",
+        "description": "Token totals for a time bucket."
       },
       "ListChunksResponse": {
         "properties": {
@@ -8023,6 +9589,57 @@
           "total": 25
         }
       },
+      "LlmOperationHealth": {
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "retain",
+              "consolidation",
+              "reflect"
+            ],
+            "title": "LlmHealthOperation",
+            "description": "Operation whose LLM was probed"
+          },
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "description": "True only when the probe connected successfully"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "connected",
+              "not_configured",
+              "auth_failed",
+              "unreachable",
+              "timeout"
+            ],
+            "title": "LlmHealthStatus",
+            "description": "'connected'; 'not_configured' (provider is 'none'); 'auth_failed' (rejected \u2014 usually a wrong/expired API key); 'unreachable' (call failed); 'timeout'"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms",
+            "description": "Round-trip latency of the probe call"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation",
+          "ok",
+          "status"
+        ],
+        "title": "LlmOperationHealth",
+        "description": "LLM connectivity status for a single operation. Status only \u2014 no provider/model/\nendpoint/error, so the probe never discloses the LLM configuration."
+      },
       "MemoriesTimeseriesResponse": {
         "properties": {
           "bank_id": {
@@ -8159,7 +9776,8 @@
                 "enum": [
                   "per_tag",
                   "combined",
-                  "all_combinations"
+                  "all_combinations",
+                  "shared"
                 ]
               },
               {
@@ -8176,7 +9794,7 @@
               }
             ],
             "title": "ObservationScopes",
-            "description": "How to scope observations during consolidation. 'per_tag' runs one consolidation pass per individual tag, creating separate observations for each tag. 'combined' (default) runs a single pass with all tags together. A list of tag lists runs one pass per inner list, giving full control over which combinations to use."
+            "description": "How to scope observations during consolidation. 'per_tag' runs one consolidation pass per individual tag, creating separate observations for each tag. 'combined' (default) runs a single pass with all tags together. 'shared' runs a single pass over one global, untagged scope, so memories consolidate together regardless of their tags \u2014 useful for deduplicating across volatile per-call provenance tags (e.g. per-session ids) while keeping those tags on the source facts. A list of tag lists runs one pass per inner list, giving full control over which combinations to use."
           },
           "strategy": {
             "anyOf": [
@@ -8477,7 +10095,8 @@
                   "any",
                   "all",
                   "any_strict",
-                  "all_strict"
+                  "all_strict",
+                  "exact"
                 ]
               },
               {
@@ -8623,7 +10242,8 @@
                   "any",
                   "all",
                   "any_strict",
-                  "all_strict"
+                  "all_strict",
+                  "exact"
                 ]
               },
               {
@@ -8702,6 +10322,129 @@
         "title": "MentalModelTrigger",
         "description": "Trigger settings for a mental model."
       },
+      "ObservationScope": {
+        "properties": {
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "The exact tag set defining this scope (normalized order). Empty list is the global/untagged scope."
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "Number of observations that live under this scope"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tags",
+          "count"
+        ],
+        "title": "ObservationScope",
+        "description": "A distinct observation scope: an exact tag set plus its observation count."
+      },
+      "ObservationScopesResponse": {
+        "properties": {
+          "scopes": {
+            "items": {
+              "$ref": "#/components/schemas/ObservationScope"
+            },
+            "type": "array",
+            "title": "Scopes",
+            "description": "Distinct observation scopes, most populous first"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scopes"
+        ],
+        "title": "ObservationScopesResponse",
+        "description": "Response model for the observation scopes enumeration endpoint.",
+        "example": {
+          "scopes": [
+            {
+              "count": 12,
+              "tags": [
+                "user:alice"
+              ]
+            },
+            {
+              "count": 4,
+              "tags": [
+                "user:alice",
+                "project:apollo"
+              ]
+            },
+            {
+              "count": 2,
+              "tags": []
+            }
+          ]
+        }
+      },
+      "OperationProgress": {
+        "properties": {
+          "stage": {
+            "type": "string",
+            "title": "Stage",
+            "description": "Coarse phase the operation last reported (e.g. 'processing_batch')."
+          },
+          "at": {
+            "type": "string",
+            "title": "At",
+            "description": "ISO-8601 timestamp when this snapshot was written."
+          },
+          "processed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processed",
+            "description": "Units of work finished so far (sub-batches, memories), when known."
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total",
+            "description": "Total units of work for the operation, when known."
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail",
+            "description": "Operation-specific counters (e.g. observations_created, round, items_in_sub_batch)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "stage",
+          "at"
+        ],
+        "title": "OperationProgress",
+        "description": "Last-known progress snapshot for a long-running async operation.\n\nWritten at coarse phase/batch boundaries by the worker (consolidation, batch\nretain). Lets an operator polling the operation status API distinguish a healthy\nlong-running job (``processed`` advancing across polls) from a frozen one (same\nnumbers, no movement in ``at``). Absent (``null``) on operations that never\nreached a checkpoint \u2014 completed-instantly or pre-feature rows."
+      },
       "OperationResponse": {
         "properties": {
           "id": {
@@ -8730,6 +10473,18 @@
           "created_at": {
             "type": "string",
             "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At",
+            "description": "When this operation's row last changed (claim, progress heartbeat, or completion)."
           },
           "status": {
             "type": "string",
@@ -8769,6 +10524,17 @@
             ],
             "title": "Next Retry At",
             "description": "When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is waiting rather than available for immediate pickup \u2014 for example, an extension may have raised DeferOperation to park the task until some backpressure window opens. Always null for completed tasks."
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperationProgress"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last-known progress snapshot for a running operation; null if none was recorded."
           }
         },
         "type": "object",
@@ -8887,6 +10653,17 @@
             ],
             "title": "Next Retry At",
             "description": "When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is parked (e.g. by an extension raising DeferOperation) rather than awaiting immediate pickup."
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperationProgress"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last-known progress snapshot for a running operation; null if none was recorded."
           },
           "result_metadata": {
             "anyOf": [
@@ -9070,7 +10847,8 @@
               "any",
               "all",
               "any_strict",
-              "all_strict"
+              "all_strict",
+              "exact"
             ],
             "title": "Tags Match",
             "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
@@ -9727,7 +11505,8 @@
               "any",
               "all",
               "any_strict",
-              "all_strict"
+              "all_strict",
+              "exact"
             ],
             "title": "Tags Match",
             "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
@@ -10307,7 +12086,8 @@
               "any",
               "all",
               "any_strict",
-              "all_strict"
+              "all_strict",
+              "exact"
             ],
             "title": "Match",
             "default": "any_strict"
@@ -10474,6 +12254,12 @@
             "title": "Total Tokens",
             "description": "Total tokens (input + output)",
             "default": 0
+          },
+          "cached_tokens": {
+            "type": "integer",
+            "title": "Cached Tokens",
+            "description": "Cached/cache-read prompt tokens, when reported by the provider",
+            "default": 0
           }
         },
         "type": "object",
@@ -10620,6 +12406,116 @@
         "type": "object",
         "title": "UpdateDocumentResponse",
         "description": "Response model for update document endpoint."
+      },
+      "UpdateMemoryRequest": {
+        "properties": {
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text",
+            "description": "New fact text. Re-embeds the memory, drops its derived observations and links, and triggers re-consolidation."
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context",
+            "description": "New context for the fact. '' clears it; omit to leave unchanged."
+          },
+          "occurred_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred Start",
+            "description": "New occurred-range start (ISO 8601). '' clears it; omit to leave unchanged."
+          },
+          "occurred_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred End",
+            "description": "New occurred-range end (ISO 8601). '' clears it; omit to leave unchanged."
+          },
+          "fact_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fact Type",
+            "description": "Reclassify the fact: 'world' or 'experience'. Omit to leave unchanged."
+          },
+          "entities": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entities",
+            "description": "Replace the fact's entities. Names are resolved/find-or-created the same way retain does; '[]' detaches all entities. Omit to leave unchanged."
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State",
+            "description": "Curation state: 'invalidated' to soft-retire the memory (excluded from recall/consolidation, links and derived observations pruned, moved to the archive) or 'valid' to revert. Reversible."
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "Optional free-text reason recorded when invalidating."
+          }
+        },
+        "type": "object",
+        "title": "UpdateMemoryRequest",
+        "description": "Request model for curating a single memory unit (edit / invalidate / revert).\n\nProvide ``text`` to correct the fact, and/or ``state`` to invalidate\n('invalidated') or revert ('valid') it. ``reason`` is optional free text\nrecorded on the memory. At least one of ``text`` or ``state`` must be set.\nOnly world/experience facts can be curated; observations are derived.",
+        "example": {
+          "reason": "superseded: server decommissioned 2026-06-01",
+          "state": "invalidated"
+        }
       },
       "UpdateMentalModelRequest": {
         "properties": {
@@ -10801,12 +12697,8 @@
             "title": "Input"
           },
           "ctx": {
-            "title": "Context",
-            "type": "object"
-          },
-          "url": {
-            "title": "URL",
-            "type": "string"
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",
@@ -10840,6 +12732,8 @@
           "api_version": "0.4.0",
           "features": {
             "bank_config_api": false,
+            "document_export_api": true,
+            "document_import_api": true,
             "file_upload_api": true,
             "mcp": true,
             "observations": false,

@@ -278,7 +278,7 @@ authored by a specific user from a shared bank.
 
 | Setting | Env Var | Default | Description |
 |---------|---------|---------|-------------|
-| `enableKnowledgeTools` | `HINDSIGHT_ENABLE_KNOWLEDGE_TOOLS` | `false` | Enable the MCP server with `agent_knowledge_*` tools. When `false`, the MCP server exits immediately on startup and no tools are registered. Set to `true` to enable knowledge page management, memory search, and document ingestion via MCP tools. |
+| `enableKnowledgeTools` | `HINDSIGHT_ENABLE_KNOWLEDGE_TOOLS` | `true` | Enable the MCP server with `agent_knowledge_*` tools (knowledge page management, memory search, document ingestion). Set to `false` to register no tools — the MCP server stays alive as an empty server (it does not exit, which would otherwise trigger a `-32000` reconnect error). |
 
 ---
 

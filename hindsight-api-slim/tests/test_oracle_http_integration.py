@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _bank_id(prefix: str = "http") -> str:
     return f"test-{prefix}-{uuid.uuid4().hex[:8]}"
 
@@ -188,11 +189,7 @@ class TestOracleHTTP:
             # Retain
             resp = await api_client.post(
                 f"/v1/default/banks/{bank_id}/memories",
-                json={
-                    "items": [
-                        {"content": "Memory CRUD via HTTP on Oracle.", "context": "test"}
-                    ]
-                },
+                json={"items": [{"content": "Memory CRUD via HTTP on Oracle.", "context": "test"}]},
             )
             assert resp.status_code == 200
 
@@ -268,9 +265,7 @@ class TestOracleHTTP:
 
             # Delete
             if directive_id:
-                resp = await api_client.delete(
-                    f"/v1/default/banks/{bank_id}/directives/{directive_id}"
-                )
+                resp = await api_client.delete(f"/v1/default/banks/{bank_id}/directives/{directive_id}")
                 assert resp.status_code == 200
         finally:
             await _safe_http_cleanup(api_client, bank_id)
@@ -306,11 +301,7 @@ class TestOracleHTTP:
         try:
             await api_client.post(
                 f"/v1/default/banks/{bank_id}/memories",
-                json={
-                    "items": [
-                        {"content": "Operations tracking test.", "context": "test"}
-                    ]
-                },
+                json={"items": [{"content": "Operations tracking test.", "context": "test"}]},
             )
             resp = await api_client.get(f"/v1/default/banks/{bank_id}/operations")
             assert resp.status_code == 200
@@ -445,9 +436,7 @@ class TestOracleEndToEnd:
 
             # --- 5. Verify the operation completed (not stuck as 'pending') ---
             if operation_id:
-                resp = await api_client.get(
-                    f"/v1/default/banks/{bank_id}/operations/{operation_id}"
-                )
+                resp = await api_client.get(f"/v1/default/banks/{bank_id}/operations/{operation_id}")
                 if resp.status_code == 200:
                     op = resp.json()
                     # SyncTaskBackend should have completed the refresh inline
@@ -456,9 +445,7 @@ class TestOracleEndToEnd:
                     )
 
             # --- 6. Verify the mental model has real content (not placeholder) ---
-            resp = await api_client.get(
-                f"/v1/default/banks/{bank_id}/mental-models/{mental_model_id}"
-            )
+            resp = await api_client.get(f"/v1/default/banks/{bank_id}/mental-models/{mental_model_id}")
             assert resp.status_code == 200, f"Get mental model failed: {resp.text}"
             mm = resp.json()
             content = mm.get("content", "")

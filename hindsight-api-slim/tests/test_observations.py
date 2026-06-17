@@ -5,6 +5,7 @@ NOTE: Observations are now stored as summaries on the entities table,
 not as separate memory_units. The observations list in EntityState is
 populated from the summary for backwards compatibility.
 """
+
 import pytest
 from hindsight_api.engine.memory_engine import Budget
 from hindsight_api import RequestContext
@@ -64,7 +65,7 @@ async def test_entity_extraction_on_retain(memory, request_context):
                 WHERE bank_id = $1 AND LOWER(canonical_name) LIKE '%john%'
                 LIMIT 1
                 """,
-                bank_id
+                bank_id,
             )
 
             # Check the fact count for this entity
@@ -73,7 +74,7 @@ async def test_entity_extraction_on_retain(memory, request_context):
                     """
                     SELECT COUNT(*) FROM unit_entities WHERE entity_id = $1
                     """,
-                    entity_row['id']
+                    entity_row["id"],
                 )
                 print(f"\n=== Entity Facts ===")
                 print(f"Entity: {entity_row['canonical_name']} has {fact_count} linked facts")
@@ -175,7 +176,7 @@ async def test_observation_fact_type_in_database(memory, request_context, disabl
                 FROM memory_units
                 WHERE bank_id = $1 AND fact_type = 'observation'
                 """,
-                bank_id
+                bank_id,
             )
 
         print(f"\n=== Observation Records in memory_units ===")
@@ -243,7 +244,7 @@ async def test_entity_mention_counts(memory, request_context):
                 WHERE e.bank_id = $1
                 ORDER BY e.mention_count DESC
                 """,
-                bank_id
+                bank_id,
             )
 
         print(f"\n=== Entity Mention Counts Test ===")
@@ -253,8 +254,8 @@ async def test_entity_mention_counts(memory, request_context):
         low_mention_entity = None
 
         for entity in entities:
-            name = entity['canonical_name'].lower()
-            mention_count = entity['mention_count']
+            name = entity["canonical_name"].lower()
+            mention_count = entity["mention_count"]
 
             print(f"  {entity['canonical_name']}: mentions={mention_count}")
 
@@ -268,8 +269,9 @@ async def test_entity_mention_counts(memory, request_context):
         assert low_mention_entity is not None, "Trivex entity should exist"
 
         # Nexora (10 mentions) must rank higher than Trivex (1 mention)
-        assert high_mention_entity['mention_count'] > low_mention_entity['mention_count'], \
+        assert high_mention_entity["mention_count"] > low_mention_entity["mention_count"], (
             f"Nexora ({high_mention_entity['mention_count']} mentions) should have more than Trivex ({low_mention_entity['mention_count']} mentions)"
+        )
 
     finally:
         # Cleanup
@@ -297,7 +299,7 @@ async def test_entity_mention_ranking(memory, request_context):
         for i in range(6):
             await memory.retain_async(
                 bank_id=bank_id,
-                content=f"Alice is mentioned here in fact {i+1}.",
+                content=f"Alice is mentioned here in fact {i + 1}.",
                 context="test",
                 event_date=datetime(2024, 1, 1 + i, tzinfo=timezone.utc),
                 request_context=request_context,
@@ -310,7 +312,7 @@ async def test_entity_mention_ranking(memory, request_context):
             for mention in range(10):
                 await memory.retain_async(
                     bank_id=bank_id,
-                    content=f"{entity_name} is a very important entity, mention {mention+1}.",
+                    content=f"{entity_name} is a very important entity, mention {mention + 1}.",
                     context="test",
                     event_date=datetime(2024, 2, 1 + mention, tzinfo=timezone.utc),
                     request_context=request_context,
@@ -329,7 +331,7 @@ async def test_entity_mention_ranking(memory, request_context):
                 WHERE bank_id = $1
                 ORDER BY mention_count DESC
                 """,
-                bank_id
+                bank_id,
             )
 
         print(f"\nAll entities by mention count:")
@@ -337,15 +339,15 @@ async def test_entity_mention_ranking(memory, request_context):
             print(f"  {e['canonical_name']}: mentions={e['mention_count']}")
 
         # Verify high-mention entities rank higher than Alice (6 mentions)
-        alice = next((e for e in all_entities if 'alice' in e['canonical_name'].lower()), None)
-        high_mention = [e for e in all_entities if e['canonical_name'].lower() in ('bruno', 'carlos', 'diana')]
+        alice = next((e for e in all_entities if "alice" in e["canonical_name"].lower()), None)
+        high_mention = [e for e in all_entities if e["canonical_name"].lower() in ("bruno", "carlos", "diana")]
 
         assert alice is not None, "Alice entity should exist"
         assert len(high_mention) > 0, "High-mention entities should exist"
 
         # Entities with 10 mentions each should rank higher than Alice (6 mentions)
         for entity in high_mention:
-            assert entity['mention_count'] > alice['mention_count'], (
+            assert entity["mention_count"] > alice["mention_count"], (
                 f"{entity['canonical_name']} ({entity['mention_count']} mentions) "
                 f"should rank higher than Alice ({alice['mention_count']} mentions)"
             )
@@ -407,7 +409,7 @@ async def test_user_entity_extraction(memory_real_llm, request_context):
                   AND LOWER(e.canonical_name) LIKE '%user%'
                 LIMIT 1
                 """,
-                bank_id
+                bank_id,
             )
 
             # Get all entities with their fact counts
@@ -421,7 +423,7 @@ async def test_user_entity_extraction(memory_real_llm, request_context):
                 WHERE e.bank_id = $1
                 ORDER BY fact_count DESC
                 """,
-                bank_id
+                bank_id,
             )
 
         print(f"\n=== Entities by Mention Count ===")

@@ -1,10 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useTranslations } from "next-intl";
-import { client } from "@/lib/api";
+import { toast } from "sonner";
+import { client, LLMRequestEntry } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
+import { useFeatures } from "@/lib/features-context";
 import { DataView } from "./data-view";
+import { TraceDialog } from "./llm-requests-view";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -15,7 +18,23 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DropdownMenu,
@@ -51,6 +70,11 @@ import {
   ChevronDown,
   Network,
   Eye,
+  Activity,
+  Download,
+  Upload,
+  Lock,
+  RotateCcw,
 } from "lucide-react";
 
 const ITEMS_PER_PAGE = 50;
@@ -127,11 +151,131 @@ function InfoCard({
   );
 }
 
+interface RetainRun {
+  traceId: string;
+  entry: LLMRequestEntry;
+  calls: number;
+  tokens: number;
+  status: string;
+  start: string | null;
+}
+
+// Lists the retain traces that processed this document (one per retain/
+// re-retain run) and opens the trace dialog. Renders nothing when tracing was
+// off at retain time (no rows) — so it's invisible unless there's data.
+function DocumentRetainTraces({ bankId, documentId }: { bankId: string; documentId: string }) {
+  const t = useTranslations("documentsView");
+  const [runs, setRuns] = useState<RetainRun[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [dialogEntry, setDialogEntry] = useState<LLMRequestEntry | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const data = await client.listLLMRequests(bankId, {
+          document_id: documentId,
+          group: true,
+          limit: 50,
+        });
+        if (cancelled) return;
+        const byTrace = new Map<string, LLMRequestEntry[]>();
+        for (const it of data.items || []) {
+          const key = it.trace_id || it.id;
+          if (!byTrace.has(key)) byTrace.set(key, []);
+          byTrace.get(key)!.push(it);
+        }
+        const list: RetainRun[] = [...byTrace.entries()].map(([traceId, rows]) => ({
+          traceId,
+          entry: rows[0],
+          calls: rows.length,
+          tokens: rows.reduce((s, r) => s + (r.total_tokens ?? 0), 0),
+          status: rows.some((r) => r.status === "error") ? "error" : "success",
+          start:
+            rows
+              .map((r) => r.started_at)
+              .filter(Boolean)
+              .sort()[0] ?? null,
+        }));
+        list.sort((a, b) => (b.start || "").localeCompare(a.start || ""));
+        setRuns(list);
+      } catch {
+        // Tracing may be disabled or the endpoint unavailable — stay hidden.
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [bankId, documentId]);
+
+  if (!loaded || runs.length === 0) return null;
+
+  return (
+    <InfoCard title={t("retainTracesTitle")} icon={<Activity className="w-3.5 h-3.5" />}>
+      <div className="space-y-1">
+        {runs.map((run) => (
+          <button
+            key={run.traceId}
+            type="button"
+            onClick={() => setDialogEntry(run.entry)}
+            className="w-full flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm text-left hover:bg-muted/50"
+          >
+            <span className="inline-flex items-center gap-2 min-w-0">
+              <span
+                className={`w-1.5 h-1.5 rounded-full shrink-0 ${run.status === "error" ? "bg-red-500" : "bg-green-500"}`}
+              />
+              <span className="font-mono text-xs">{run.entry.operation || "retain"}</span>
+              <span className="text-muted-foreground text-xs truncate">
+                {run.start ? new Date(run.start).toLocaleString() : ""}
+              </span>
+            </span>
+            <span className="text-muted-foreground text-xs font-mono shrink-0">
+              {t("retainTracesSummary", { calls: run.calls, tokens: run.tokens.toLocaleString() })}
+            </span>
+          </button>
+        ))}
+      </div>
+      <TraceDialog
+        bankId={bankId}
+        entry={dialogEntry}
+        open={!!dialogEntry}
+        onOpenChange={(o) => !o && setDialogEntry(null)}
+      />
+    </InfoCard>
+  );
+}
+
 function MetadataRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
       <SectionLabel>{label}</SectionLabel>
       <div className="text-sm text-foreground">{value}</div>
+    </div>
+  );
+}
+
+// Renders the observation_scopes spec a document was retained with: a mode
+// keyword ("per_tag" / "combined" / "all_combinations") shown as a mono badge,
+// or explicit tag-set lists shown as scope chips. Surfacing this lets you see
+// which scoping was requested (e.g. all_combinations on 2 tags → 3 scopes),
+// which otherwise only becomes visible once async consolidation finishes.
+function ObservationScopesValue({ spec }: { spec: string | string[][] }) {
+  if (typeof spec === "string") {
+    return <span className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded w-fit">{spec}</span>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {spec.map((scope, j) => (
+        <span
+          key={j}
+          className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 font-medium"
+        >
+          {scope.length === 0 ? "—" : scope.map((tag) => `#${tag}`).join(" ")}
+        </span>
+      ))}
     </div>
   );
 }
@@ -234,6 +378,115 @@ function ChunkMemoriesHeader({
   );
 }
 
+// Document-level audit: facts extracted from this document that were later
+// invalidated (moved to the curation archive, so they no longer appear in the
+// chunk memory views). Each can be restored in place.
+function InvalidatedFactsSection({ bankId, documentId }: { bankId: string; documentId: string }) {
+  const t = useTranslations("documentsView");
+  const tCuration = useTranslations("memoryDetailPanel");
+  const [rows, setRows] = useState<any[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!bankId || !documentId) return;
+    try {
+      const resp: any = await client.listMemories(bankId, {
+        state: "invalidated",
+        documentId,
+        limit: 200,
+      });
+      setRows(resp?.items ?? []);
+    } catch {
+      setRows([]);
+    } finally {
+      setLoaded(true);
+    }
+  }, [bankId, documentId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const restore = async (id: string) => {
+    setRestoringId(id);
+    try {
+      await client.updateMemory(id, bankId, { state: "valid" });
+      await load();
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
+  if (!loaded || rows.length === 0) return null;
+
+  return (
+    <InfoCard title={`${t("invalidatedFactsTitle")} (${rows.length})`}>
+      <div className="space-y-2">
+        {rows.map((row) => (
+          <div key={row.id} className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                {row.fact_type && (
+                  <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium capitalize">
+                    {row.fact_type}
+                  </span>
+                )}
+                <div className="text-sm text-foreground line-clamp-2">{row.text}</div>
+              </div>
+              {row.entities && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {row.entities
+                    .split(", ")
+                    .filter(Boolean)
+                    .slice(0, 6)
+                    .map((e: string, i: number) => (
+                      <span
+                        key={i}
+                        className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground"
+                      >
+                        {e}
+                      </span>
+                    ))}
+                </div>
+              )}
+              {row.occurred_start && (
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  {new Date(row.occurred_start).toLocaleDateString()}
+                  {row.occurred_end && row.occurred_end !== row.occurred_start && (
+                    <> → {new Date(row.occurred_end).toLocaleDateString()}</>
+                  )}
+                </div>
+              )}
+              {(row.invalidation_reason || row.invalidated_at) && (
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  {row.invalidation_reason && (
+                    <>
+                      {tCuration("curationReasonLabel")}: {row.invalidation_reason}
+                    </>
+                  )}
+                  {row.invalidation_reason && row.invalidated_at && " · "}
+                  {row.invalidated_at && new Date(row.invalidated_at).toLocaleString()}
+                </div>
+              )}
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={restoringId === row.id}
+              onClick={() => restore(row.id)}
+              className="shrink-0 h-7 px-2 text-xs gap-1"
+            >
+              <RotateCcw className="w-3 h-3" />
+              {tCuration("curationRevert")}
+            </Button>
+          </div>
+        ))}
+      </div>
+    </InfoCard>
+  );
+}
+
 function ChunkRow({ chunk }: { chunk: any }) {
   const [expanded, setExpanded] = useState(false);
   const [memoriesExpanded, setMemoriesExpanded] = useState(false);
@@ -319,11 +572,22 @@ function ChunkRow({ chunk }: { chunk: any }) {
 export function DocumentsView() {
   const t = useTranslations("documentsView");
   const tCommon = useTranslations("common");
+  const tBank = useTranslations("bank");
   const { currentBank } = useBank();
+  const { features } = useFeatures();
   const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [total, setTotal] = useState(0);
+
+  // Document transfer (export/import) state
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportIncludeObservations, setExportIncludeObservations] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importOnConflict, setImportOnConflict] = useState<"skip" | "replace" | "new-id">("skip");
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -599,8 +863,225 @@ export function DocumentsView() {
     return () => clearTimeout(timeoutId);
   }, [searchQuery]);
 
+  const triggerDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportDocuments = async (documentIds?: string[], includeObservations = false) => {
+    if (!currentBank || exporting) return;
+    setExporting(true);
+    try {
+      const blob = await client.exportDocuments(currentBank, documentIds, includeObservations);
+      const suffix = documentIds && documentIds.length === 1 ? `-${documentIds[0]}` : "-documents";
+      triggerDownload(blob, `${currentBank}${suffix}.zip`);
+      toast.success(t("exportSuccess"));
+      setExportDialogOpen(false);
+    } catch {
+      // Errors surface via the API client / route; nothing extra to do here.
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const runImport = async (file: File) => {
+    if (!file || !currentBank) return;
+    setImporting(true);
+    try {
+      // Import is an async operation: submit, then poll until it completes.
+      const { operation_id } = await client.importDocuments(currentBank, file, importOnConflict);
+      const deadline = Date.now() + 5 * 60 * 1000; // give large imports up to 5 min
+      let meta: Record<string, any> | null = null;
+      while (Date.now() < deadline) {
+        const op = await client.getOperationStatus(currentBank, operation_id);
+        if (op.status === "completed") {
+          meta = op.result_metadata ?? {};
+          break;
+        }
+        if (op.status === "failed") {
+          toast.error(op.error_message || t("importFailed"));
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      if (meta === null) {
+        toast.error(t("importTimeout"));
+        return;
+      }
+      toast.success(
+        t("importSuccess", {
+          imported: meta.documents_imported ?? 0,
+          facts: meta.facts_imported ?? 0,
+          skipped: meta.documents_skipped ?? 0,
+        })
+      );
+      loadDocuments(currentPage);
+      setImportDialogOpen(false);
+      setImportFile(null);
+    } catch {
+      // Error toast handled by the API client.
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const canExport = features?.document_export_api ?? false;
+  const canImport = features?.document_import_api ?? false;
+
   return (
     <div>
+      {/* Page header: the bank-page title for the Documents tab, with the
+          Export/Import Actions menu on the same row (right-aligned). */}
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold mb-2 text-foreground">{tBank("documents")}</h1>
+          <p className="text-muted-foreground">{tBank("documentsDescription")}</p>
+        </div>
+        {(canExport || canImport) && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 shrink-0"
+                disabled={!currentBank || exporting || importing}
+              >
+                {exporting ? t("exporting") : importing ? t("importing") : t("actionsButton")}
+                <ChevronDown className="w-4 h-4 ml-1" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {canExport && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    setExportIncludeObservations(false);
+                    setExportDialogOpen(true);
+                  }}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  {t("exportButton")}
+                </DropdownMenuItem>
+              )}
+              {canImport && (
+                <DropdownMenuItem onClick={() => setImportDialogOpen(true)}>
+                  <Upload className="h-4 w-4 mr-2" />
+                  {t("importButton")}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+
+      {/* Export dialog: explains the action and offers the observations choice. */}
+      <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("exportDialogTitle")}</DialogTitle>
+            <DialogDescription>{t("exportDialogDescription")}</DialogDescription>
+          </DialogHeader>
+          <div className="flex items-start gap-2 py-2">
+            <Checkbox
+              id="export-include-observations"
+              checked={exportIncludeObservations}
+              onCheckedChange={(v) => setExportIncludeObservations(v === true)}
+            />
+            <div className="grid gap-1 leading-none">
+              <Label htmlFor="export-include-observations">
+                {t("exportIncludeObservationsLabel")}
+              </Label>
+              <p className="text-xs text-muted-foreground">{t("exportIncludeObservationsHint")}</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setExportDialogOpen(false)}
+              disabled={exporting}
+            >
+              {tCommon("cancel")}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => exportDocuments(undefined, exportIncludeObservations)}
+              disabled={exporting}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              {exporting ? t("exporting") : t("exportButton")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import dialog: explains the action and only accepts .zip archives. */}
+      <Dialog
+        open={importDialogOpen}
+        onOpenChange={(open) => {
+          setImportDialogOpen(open);
+          if (!open) setImportFile(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("importDialogTitle")}</DialogTitle>
+            <DialogDescription>{t("importDialogDescription")}</DialogDescription>
+          </DialogHeader>
+          <div className="py-2 space-y-4">
+            <input
+              type="file"
+              accept=".zip,application/zip"
+              disabled={importing}
+              onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+              className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-muted/80"
+            />
+            <div className="grid gap-1.5">
+              <Label htmlFor="import-on-conflict">{t("importConflictLabel")}</Label>
+              <Select
+                value={importOnConflict}
+                onValueChange={(v) => setImportOnConflict(v as "skip" | "replace" | "new-id")}
+                disabled={importing}
+              >
+                <SelectTrigger id="import-on-conflict" className="h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="skip">{t("importConflictSkip")}</SelectItem>
+                  <SelectItem value="replace">{t("importConflictReplace")}</SelectItem>
+                  <SelectItem value="new-id">{t("importConflictNewId")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setImportDialogOpen(false);
+                setImportFile(null);
+              }}
+              disabled={importing}
+            >
+              {tCommon("cancel")}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => importFile && runImport(importFile)}
+              disabled={!importFile || importing}
+            >
+              <Upload className="h-4 w-4 mr-2" />
+              {importing ? t("importing") : t("importButton")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {/* Documents List Section */}
       {loading ? (
         <div className="flex items-center justify-center py-20">
@@ -794,9 +1275,9 @@ export function DocumentsView() {
                     <Settings className="w-3.5 h-3.5" />
                     General
                   </TabsTrigger>
-                  <TabsTrigger value="content" className="flex items-center gap-1.5">
-                    <FileText className="w-3.5 h-3.5" />
-                    Content
+                  <TabsTrigger value="memories" className="flex items-center gap-1.5">
+                    <Network className="w-3.5 h-3.5" />
+                    Memories
                   </TabsTrigger>
                   <TabsTrigger
                     value="chunks"
@@ -828,6 +1309,15 @@ export function DocumentsView() {
                       <RefreshCw className="h-4 w-4 mr-2" />
                       Reprocess
                     </DropdownMenuItem>
+                    {canExport && (
+                      <DropdownMenuItem
+                        onClick={() => exportDocuments([selectedDocument.id])}
+                        disabled={exporting}
+                      >
+                        <Download className="h-4 w-4 mr-2" />
+                        {t("exportButton")}
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onClick={() =>
@@ -846,80 +1336,9 @@ export function DocumentsView() {
               </div>
 
               <div className="flex-1 overflow-y-auto mt-4">
-                {/* Content Tab */}
-                <TabsContent value="content" className="mt-0">
-                  {selectedDocument.original_text !== undefined &&
-                    (editingContent ? (
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-end mb-2">
-                          <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              onClick={saveDocumentContent}
-                              disabled={savingContent || !contentInput.trim()}
-                              className="h-7 px-3 gap-1 text-xs"
-                            >
-                              {savingContent ? (
-                                <span className="animate-spin">⏳</span>
-                              ) : (
-                                <Check className="h-3 w-3" />
-                              )}
-                              {t("saveButton")}
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={cancelEditContent}
-                              disabled={savingContent}
-                              className="h-7 px-3 gap-1 text-xs"
-                            >
-                              <X className="h-3 w-3" />
-                              {t("cancelButton")}
-                            </Button>
-                          </div>
-                        </div>
-                        <textarea
-                          value={contentInput}
-                          onChange={(e) => setContentInput(e.target.value)}
-                          className="w-full min-h-[400px] max-h-[600px] p-4 bg-muted/50 rounded-lg border border-border text-sm font-mono leading-relaxed text-card-foreground resize-y"
-                          autoFocus
-                        />
-                        <p className="text-xs text-muted-foreground">{t("saveHint")}</p>
-                      </div>
-                    ) : (
-                      <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
-                        <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-border bg-muted/50 text-xs text-muted-foreground">
-                          <div className="flex items-center gap-1.5">
-                            <FileText className="w-3.5 h-3.5" />
-                            <span className="font-semibold uppercase tracking-wide">
-                              {t("storedContent")}
-                            </span>
-                            <span className="text-muted-foreground/70">
-                              &middot;{" "}
-                              {selectedDocument.original_text?.length?.toLocaleString() ?? 0} chars
-                            </span>
-                          </div>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={startEditContent}
-                            className="h-6 px-2 gap-1 text-xs"
-                          >
-                            <Pencil className="h-3 w-3" />
-                            {t("editButton")}
-                          </Button>
-                        </div>
-                        <pre className="p-4 text-[11px] leading-5 text-foreground/80 whitespace-pre-wrap font-mono">
-                          {selectedDocument.original_text}
-                        </pre>
-                      </div>
-                    ))}
-                </TabsContent>
-
-                {/* General Tab */}
-                <TabsContent value="general" className="mt-0">
+                {/* Memories Tab — constellation/graph + invalidated facts */}
+                <TabsContent value="memories" className="mt-0">
                   <div className="space-y-4">
-                    {/* Memories constellation — first */}
                     <Tabs defaultValue="world" className="flex flex-col">
                       <TabsList className="w-fit">
                         <TabsTrigger value="world">World</TabsTrigger>
@@ -946,7 +1365,18 @@ export function DocumentsView() {
                         </TabsContent>
                       </div>
                     </Tabs>
+                    {currentBank && selectedDocument?.id && (
+                      <InvalidatedFactsSection
+                        bankId={currentBank}
+                        documentId={selectedDocument.id}
+                      />
+                    )}
+                  </div>
+                </TabsContent>
 
+                {/* General Tab */}
+                <TabsContent value="general" className="mt-0">
+                  <div className="space-y-4">
                     {/* Info cards */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <InfoCard title="Document" icon={<FileText className="w-3.5 h-3.5" />}>
@@ -1059,6 +1489,14 @@ export function DocumentsView() {
                               }
                             />
                           )}
+                        {selectedDocument.observation_scopes && (
+                          <MetadataRow
+                            label={t("labelObservationScopes")}
+                            value={
+                              <ObservationScopesValue spec={selectedDocument.observation_scopes} />
+                            }
+                          />
+                        )}
                       </InfoCard>
 
                       <InfoCard
@@ -1067,12 +1505,98 @@ export function DocumentsView() {
                       >
                         <MemoryComposition nodesByFactType={selectedDocument.nodes_by_fact_type} />
                       </InfoCard>
+
+                      {currentBank && selectedDocument?.id && (
+                        <DocumentRetainTraces
+                          bankId={currentBank}
+                          documentId={selectedDocument.id}
+                        />
+                      )}
                     </div>
+
+                    {/* Content — stored document text (last) */}
+                    {!features?.store_document_text && !selectedDocument.original_text ? (
+                      <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-700 dark:text-amber-400">
+                        <Lock className="h-4 w-4 mt-0.5 shrink-0" />
+                        <span>{t("textNotStoredWarning")}</span>
+                      </div>
+                    ) : selectedDocument.original_text !== undefined ? (
+                      editingContent ? (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-end mb-2">
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                onClick={saveDocumentContent}
+                                disabled={savingContent || !contentInput.trim()}
+                                className="h-7 px-3 gap-1 text-xs"
+                              >
+                                {savingContent ? (
+                                  <span className="animate-spin">⏳</span>
+                                ) : (
+                                  <Check className="h-3 w-3" />
+                                )}
+                                {t("saveButton")}
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={cancelEditContent}
+                                disabled={savingContent}
+                                className="h-7 px-3 gap-1 text-xs"
+                              >
+                                <X className="h-3 w-3" />
+                                {t("cancelButton")}
+                              </Button>
+                            </div>
+                          </div>
+                          <textarea
+                            value={contentInput}
+                            onChange={(e) => setContentInput(e.target.value)}
+                            className="w-full min-h-[400px] max-h-[600px] p-4 bg-muted/50 rounded-lg border border-border text-sm font-mono leading-relaxed text-card-foreground resize-y"
+                            autoFocus
+                          />
+                          <p className="text-xs text-muted-foreground">{t("saveHint")}</p>
+                        </div>
+                      ) : (
+                        <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
+                          <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-border bg-muted/50 text-xs text-muted-foreground">
+                            <div className="flex items-center gap-1.5">
+                              <FileText className="w-3.5 h-3.5" />
+                              <span className="font-semibold uppercase tracking-wide">Content</span>
+                              <span className="text-muted-foreground/70">
+                                &middot;{" "}
+                                {selectedDocument.original_text?.length?.toLocaleString() ?? 0}{" "}
+                                chars
+                              </span>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={startEditContent}
+                              className="h-6 px-2 gap-1 text-xs"
+                            >
+                              <Pencil className="h-3 w-3" />
+                              {t("editButton")}
+                            </Button>
+                          </div>
+                          <pre className="p-4 text-[11px] leading-5 text-foreground/80 whitespace-pre-wrap font-mono">
+                            {selectedDocument.original_text}
+                          </pre>
+                        </div>
+                      )
+                    ) : null}
                   </div>
                 </TabsContent>
 
                 {/* Chunks Tab */}
                 <TabsContent value="chunks" className="mt-0">
+                  {!features?.store_document_text && (
+                    <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 mb-3 text-xs text-amber-700 dark:text-amber-400">
+                      <Lock className="h-4 w-4 mt-0.5 shrink-0" />
+                      <span>{t("textNotStoredWarning")}</span>
+                    </div>
+                  )}
                   {loadingChunks ? (
                     <div className="flex items-center justify-center py-20">
                       <div className="text-center">

@@ -171,7 +171,7 @@ hindsight_litellm.set_defaults(
 
     # Optional - Memory retrieval
     budget="mid",                  # Budget level: "low", "mid", "high"
-    fact_types=["world", "opinion"],  # Filter fact types to retrieve
+    fact_types=["world", "observation"],  # Filter fact types to retrieve
     max_memories=10,               # Maximum memories to inject (None = unlimited)
     max_memory_tokens=4096,        # Maximum tokens for memory context
     include_entities=True,         # Include entity observations in recall
@@ -287,7 +287,7 @@ for m in memories:
 
 # Output:
 # - [world] User is building a FastAPI project
-# - [opinion] User prefers Python over JavaScript
+# - [observation] User prefers Python over JavaScript
 ```
 
 ### Reflect - Get synthesized context

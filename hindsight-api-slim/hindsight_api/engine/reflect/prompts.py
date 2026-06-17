@@ -604,16 +604,44 @@ Just provide the direct answer with proper markdown formatting.
 CRITICAL: This is a NON-CONVERSATIONAL system. NEVER ask follow-up questions, offer to search again, suggest alternatives, or end with anything like "Would you like me to..." or "Let me know if...". The user cannot reply. Your answer must be complete and self-contained."""
 
 
-def build_final_system_prompt(mission: str | None = None, llm_output_language: str | None = None) -> str:
+# The final synthesis is a SEPARATE LLM call with its own system prompt — the
+# agent/reasoning system prompt (which carries directives and the language rule)
+# is NOT in scope here. So this default language rule, and the directives, must
+# be repeated for the answer-writing model. Without it, weaker models drift to
+# English even when the question/facts are in another language or a directive
+# demands a specific one (the cause of flaky multilingual reflect tests).
+_FINAL_LANGUAGE_RULE = (
+    "## LANGUAGE\n"
+    "- Respond in the SAME language as the user's question "
+    "(e.g. a question in Chinese gets a Chinese answer; Japanese → Japanese).\n"
+    "- If a directive above specifies a response language, follow the directive — "
+    "it takes precedence over this default."
+)
+
+
+def build_final_system_prompt(
+    mission: str | None = None,
+    llm_output_language: str | None = None,
+    directives: list[dict[str, Any]] | None = None,
+) -> str:
     """Build the final synthesis system prompt, using mission as role when set.
 
-    When ``llm_output_language`` is set, the response is forced into that
-    language regardless of the query/source language.
+    ``directives`` are re-injected here (they live in the agent/reasoning prompt,
+    but the final answer is a separate call) so output-constraining rules — most
+    visibly response language — are honoured by the model that actually writes
+    the answer. When ``llm_output_language`` is set it forces that language
+    regardless of the query/source/directive language (config override wins).
     """
     from hindsight_api.engine.prompt_utils import escape_for_prompt, output_language_directive
 
     role_section = escape_for_prompt(mission.strip()) if mission else _DEFAULT_FINAL_ROLE
-    return _FINAL_SYSTEM_PROMPT_BASE.format(role_section=role_section) + output_language_directive(llm_output_language)
+
+    parts = [build_directives_section(directives) if directives else ""]
+    parts.append(_FINAL_SYSTEM_PROMPT_BASE.format(role_section=role_section))
+    parts.append(_FINAL_LANGUAGE_RULE)
+    parts.append(build_directives_reminder(directives) if directives else "")
+
+    return "\n\n".join(p.strip() for p in parts if p.strip()) + output_language_directive(llm_output_language)
 
 
 # Backward-compatible constant for non-identity missions
@@ -706,7 +734,65 @@ Examples
   ``{"operations": [{"op": "replace_block", "section_id": "overview",
   "index": 0, "block": {"type": "paragraph", "text": "Updated summary."}}]}``
 - Remove an obsolete block →
-  ``{"operations": [{"op": "remove_block", "section_id": "status", "index": 2}]}``"""
+  ``{"operations": [{"op": "remove_block", "section_id": "status", "index": 2}]}``
+
+JSON STRING RULES (critical)
+- Every ``text`` and ``items`` string must be valid JSON: escape ``"`` as ``\\"``,
+  backslashes as ``\\\\``, and newlines as ``\\n``. Do not use raw backticks inside
+  strings unless needed; prefer plain quotes for file paths.
+- ``replace_block``, ``insert_block``, and ``remove_block`` MUST include ``index`` (0-based block position in that section). Use ``replace_section_blocks`` only when replacing every block in a section.
+
+- Do not append extra ``]`` or ``}`` after the closing ``}`` of the root object."""
+
+_STRUCTURED_DELTA_DEFAULT_MAX_INPUT_TOKENS = 24_000
+
+
+def _truncate_cl100k(text: str, max_tokens: int) -> str:
+    """Truncate text to at most max_tokens using cl100k_base."""
+    if max_tokens <= 0:
+        return ""
+    from .tokenization import count_cl100k_tokens
+
+    if count_cl100k_tokens(text) <= max_tokens:
+        return text
+    enc = __import__("tiktoken").get_encoding("cl100k_base")
+    return enc.decode(enc.encode(text)[:max_tokens])
+
+
+def _fit_structured_delta_prompt_parts(
+    *,
+    source_query: str,
+    current_document_json: str,
+    candidate_markdown: str,
+    facts_block: str,
+    budget_hint: str,
+    task_footer: str,
+    max_input_tokens: int,
+) -> tuple[str, str, str, bool]:
+    """Shrink large prompt sections to fit within max_input_tokens (cl100k estimate)."""
+    from .tokenization import count_cl100k_tokens
+
+    fixed = (
+        f"## Topic\n{source_query}\n\n"
+        f"## CURRENT DOCUMENT (apply ops to this; reference section ids as listed)\n"
+        f"```json\n\n```\n\n"
+        f"## NEW INFORMATION SYNTHESIS (context for how new facts relate to the topic)\n"
+        f"```markdown\n\n```\n\n"
+        f"## SUPPORTING FACTS (new since last refresh — integrate these)\n"
+        f"{budget_hint}\n\n"
+        f"{task_footer}"
+    )
+    facts_header = "## SUPPORTING FACTS (new since last refresh — integrate these)\n"
+    facts_prefix_tokens = count_cl100k_tokens(facts_header)
+    reserved_facts = min(4096, max(512, max_input_tokens // 8))
+    doc_budget = max(1024, (max_input_tokens - count_cl100k_tokens(fixed) - reserved_facts) * 55 // 100)
+    cand_budget = max(512, (max_input_tokens - count_cl100k_tokens(fixed) - reserved_facts) * 30 // 100)
+    facts_budget = max(256, reserved_facts - facts_prefix_tokens)
+    doc_json = _truncate_cl100k(current_document_json, doc_budget)
+    candidate = _truncate_cl100k(candidate_markdown, cand_budget)
+    facts_body = _truncate_cl100k(facts_block, facts_budget)
+    truncated = doc_json != current_document_json or candidate != candidate_markdown or facts_body != facts_block
+    return doc_json, candidate, facts_body, truncated
 
 
 def build_structured_delta_prompt(
@@ -716,6 +802,7 @@ def build_structured_delta_prompt(
     supporting_facts: list[dict[str, Any]],
     source_query: str,
     max_output_tokens: int | None = None,
+    max_input_tokens: int | None = None,
 ) -> str:
     """Build the user prompt for a structured-delta mental model refresh.
 
@@ -746,18 +833,38 @@ def build_structured_delta_prompt(
             "block-level ops) so the response always parses as valid JSON."
         )
 
-    return (
-        f"## Topic\n{source_query}\n\n"
-        f"## CURRENT DOCUMENT (apply ops to this; reference section ids as listed)\n"
-        f"```json\n{current_document_json}\n```\n\n"
-        f"## NEW INFORMATION SYNTHESIS (context for how new facts relate to the topic)\n"
-        f"```markdown\n{candidate_markdown}\n```\n\n"
-        f"## SUPPORTING FACTS (new since last refresh — integrate these)\n{facts_block}"
-        f"{budget_hint}\n\n"
+    task_footer = (
         "## Task\n"
         "Output a JSON object matching the operations schema. Integrate the new "
         "supporting facts into CURRENT DOCUMENT. Add, update, or remove content "
         "as needed. Preserve unchanged sections and blocks by not mentioning them."
+    )
+    input_cap = max_input_tokens if max_input_tokens is not None else _STRUCTURED_DELTA_DEFAULT_MAX_INPUT_TOKENS
+    doc_json, candidate, facts_body, input_truncated = _fit_structured_delta_prompt_parts(
+        source_query=source_query,
+        current_document_json=current_document_json,
+        candidate_markdown=candidate_markdown,
+        facts_block=facts_block,
+        budget_hint=budget_hint,
+        task_footer=task_footer,
+        max_input_tokens=input_cap,
+    )
+    truncation_note = ""
+    if input_truncated:
+        truncation_note = (
+            "\n\n*Note: Document, synthesis, or facts were truncated to fit the model "
+            "context window. Prefer minimal, high-leverage operations.*"
+        )
+
+    return (
+        f"## Topic\n{source_query}\n\n"
+        f"## CURRENT DOCUMENT (apply ops to this; reference section ids as listed)\n"
+        f"```json\n{doc_json}\n```\n\n"
+        f"## NEW INFORMATION SYNTHESIS (context for how new facts relate to the topic)\n"
+        f"```markdown\n{candidate}\n```\n\n"
+        f"## SUPPORTING FACTS (new since last refresh — integrate these)\n{facts_body}"
+        f"{budget_hint}{truncation_note}\n\n"
+        f"{task_footer}"
     )
 
 

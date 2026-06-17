@@ -1,6 +1,7 @@
 """
 Pytest configuration and shared fixtures.
 """
+
 import asyncio
 import os
 from pathlib import Path
@@ -15,10 +16,41 @@ from hindsight_api.engine.cross_encoder import LocalSTCrossEncoder
 from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
 from hindsight_api.engine.task_backend import SyncTaskBackend
 from hindsight_api.pg0 import EmbeddedPostgres
+from hindsight_api.tracing import unregister_span_recorder
+
+
+async def _teardown_memory_engine(mem: MemoryEngine) -> None:
+    """Tear down a test MemoryEngine, guaranteeing its span recorder is unregistered.
+
+    LLM-trace recorders live in a process-global registry; ``MemoryEngine.close()`` is
+    the only thing that removes the engine's recorder from it. If close() is skipped
+    (pool already closing) or raises before that step, the recorder leaks and a later
+    test's LLM calls get recorded into the shared DB — the flaky
+    test_llm_trace::test_disabled_writes_no_rows (#2229). Unregister unconditionally;
+    it's a no-op when close() already did it.
+    """
+    try:
+        if mem._pool and not mem._pool._closing:
+            await mem.close()
+    except Exception:
+        pass
+    finally:
+        unregister_span_recorder(mem._llm_recorder)
+
 
 # Default pg0 instance configuration for tests
 DEFAULT_PG0_INSTANCE_NAME = "hindsight-test"
 DEFAULT_PG0_PORT = int(os.environ.get("HINDSIGHT_TEST_PG_PORT", "5556"))
+
+# Keep the background MaintenanceLoop from auto-starting during tests. In
+# production it sweeps retention and re-schedules consolidation, but its timers
+# would race shared-pg0 test data (e.g. delete llm_requests/audit_log rows a test
+# just inserted). Disabling the reconcile interval and llm-trace retention — with
+# audit retention already off by default — leaves no job enabled, so the loop
+# never starts. Tests that exercise it call MaintenanceLoop methods
+# (_run_reconcile / _purge_expired) directly.
+os.environ.setdefault("HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS", "0")
+os.environ.setdefault("HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS", "-1")
 
 
 # Load environment variables from .env at the start of test session
@@ -66,6 +98,7 @@ def pg0_db_url(db_url, tmp_path_factory, worker_id):
     if db_url and not _parse_pg0_url(db_url)[0]:
         # Plain postgresql:// URL - use it directly but still run migrations
         from hindsight_api.migrations import run_migrations
+
         run_migrations(db_url)
         return db_url
 
@@ -117,6 +150,7 @@ def pg0_db_url(db_url, tmp_path_factory, worker_id):
     # Run migrations - uses PostgreSQL advisory lock internally,
     # so safe to call from multiple workers (only one will actually run migrations)
     from hindsight_api.migrations import run_migrations
+
     run_migrations(url)
 
     # Clean up stale test data from previous sessions. Per-bank vector indexes
@@ -147,8 +181,7 @@ def _cleanup_stale_test_data(db_url: str) -> None:
         conn = await asyncpg.connect(db_url)
         try:
             idx_rows = await conn.fetch(
-                "SELECT indexname FROM pg_indexes "
-                "WHERE schemaname = 'public' AND indexname LIKE 'idx_mu_emb_%'"
+                "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname LIKE 'idx_mu_emb_%'"
             )
             if idx_rows:
                 for row in idx_rows:
@@ -156,10 +189,20 @@ def _cleanup_stale_test_data(db_url: str) -> None:
 
             # Truncate test data in dependency order
             for table in [
-                "entity_cooccurrences", "unit_entities", "memory_links",
-                "entities", "memory_units", "chunks", "documents",
-                "mental_models", "directives", "async_operations",
-                "audit_log", "webhooks", "file_storage", "banks",
+                "entity_cooccurrences",
+                "unit_entities",
+                "memory_links",
+                "entities",
+                "memory_units",
+                "chunks",
+                "documents",
+                "mental_models",
+                "directives",
+                "async_operations",
+                "audit_log",
+                "webhooks",
+                "file_storage",
+                "banks",
             ]:
                 try:
                     await conn.execute(f"TRUNCATE {table} CASCADE")
@@ -242,8 +285,7 @@ def oracle_db_url(_oracle_admin_dsn):
         # Create test user (idempotent — skip if already exists)
         try:
             cursor.execute(
-                f'CREATE USER {test_user} IDENTIFIED BY "{test_pass}" '
-                f"DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS"
+                f'CREATE USER {test_user} IDENTIFIED BY "{test_pass}" DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS'
             )
         except oracledb.DatabaseError as e:
             if hasattr(e.args[0], "code") and e.args[0].code == 1920:
@@ -321,10 +363,7 @@ async def oracle_memory(oracle_db_url, embeddings, cross_encoder, query_analyzer
         )
         await mem.initialize()
         yield mem
-        try:
-            await mem.close()
-        except Exception:
-            pass
+        await _teardown_memory_engine(mem)
     finally:
         # Restore original env var and clear config cache
         if old_backend is None:
@@ -410,11 +449,10 @@ def cross_encoder(tmp_path_factory, worker_id):
 
     return ce
 
+
 @pytest.fixture(scope="session")
 def query_analyzer():
     return DateparserQueryAnalyzer()
-
-
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -443,11 +481,7 @@ async def memory(pg0_db_url, embeddings, cross_encoder, query_analyzer):
     )
     await mem.initialize()
     yield mem
-    try:
-        if mem._pool and not mem._pool._closing:
-            await mem.close()
-    except Exception:
-        pass
+    await _teardown_memory_engine(mem)
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -476,11 +510,7 @@ async def memory_real_llm(pg0_db_url, embeddings, cross_encoder, query_analyzer)
     )
     await mem.initialize()
     yield mem
-    try:
-        if mem._pool and not mem._pool._closing:
-            await mem.close()
-    except Exception:
-        pass
+    await _teardown_memory_engine(mem)
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -507,8 +537,22 @@ async def memory_no_llm_verify(pg0_db_url, embeddings, cross_encoder, query_anal
     )
     await mem.initialize()
     yield mem
-    try:
-        if mem._pool and not mem._pool._closing:
-            await mem.close()
-    except Exception:
-        pass
+    await _teardown_memory_engine(mem)
+
+
+@pytest_asyncio.fixture
+async def api_client(memory):
+    """General-purpose HTTP test client over the `memory` fixture's app.
+
+    Use for any integration test that exercises the FastAPI surface without
+    needing audit-logging side effects. See `audit_api_client` for the
+    audit-enabled variant.
+    """
+    import httpx
+
+    from hindsight_api.api import create_app
+
+    app = create_app(memory, initialize_memory=False)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client

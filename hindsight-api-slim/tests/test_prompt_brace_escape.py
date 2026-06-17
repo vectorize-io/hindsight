@@ -8,7 +8,6 @@ import pytest
 
 from hindsight_api.engine.prompt_utils import escape_for_prompt
 
-
 # ---------------------------------------------------------------------------
 # Unit tests for the shared escape helper
 # ---------------------------------------------------------------------------
@@ -64,9 +63,7 @@ class TestConsolidationBraceSafety:
         )
 
         note = "Use shape {limit, used}"
-        prompt = build_batch_consolidation_prompt(
-            observations_mission="m", observation_capacity_note=note
-        )
+        prompt = build_batch_consolidation_prompt(observations_mission="m", observation_capacity_note=note)
         rendered = prompt.format(facts_text="<facts>", observations_text="<obs>")
         assert "{limit, used}" in rendered
 
@@ -117,12 +114,16 @@ class TestRetainBraceSafety:
     def test_retain_mission_with_json(self):
         from hindsight_api.engine.retain.fact_extraction import (
             _build_extraction_prompt_and_schema,
+            _retain_mission_preamble,
         )
 
         config = self._make_config(retain_mission='{"focus": "compliance"}')
         prompt, _ = _build_extraction_prompt_and_schema(config)
-        # prompt is already fully rendered (no remaining placeholders)
-        assert '{"focus": "compliance"}' in prompt
+        # The mission no longer lives in the (cached, bank-agnostic) system prompt;
+        # it rides in the per-request user-message preamble, verbatim and unescaped
+        # (the preamble is not passed through str.format(), so braces are safe).
+        assert '{"focus": "compliance"}' not in prompt
+        assert '{"focus": "compliance"}' in _retain_mission_preamble(config)
 
     def test_custom_instructions_with_braces(self):
         from hindsight_api.engine.retain.fact_extraction import (
@@ -139,6 +140,7 @@ class TestRetainBraceSafety:
     def test_both_mission_and_custom_with_braces(self):
         from hindsight_api.engine.retain.fact_extraction import (
             _build_extraction_prompt_and_schema,
+            _retain_mission_preamble,
         )
 
         config = self._make_config(
@@ -147,5 +149,6 @@ class TestRetainBraceSafety:
             retain_custom_instructions="Format: {k: v}",
         )
         prompt, _ = _build_extraction_prompt_and_schema(config)
-        assert '{"scope": "all"}' in prompt
+        # Mission → user-message preamble; custom instructions stay in the system prompt.
+        assert '{"scope": "all"}' in _retain_mission_preamble(config)
         assert "{k: v}" in prompt

@@ -23,6 +23,7 @@ from hindsight_api.engine.search.types import MergedCandidate, RetrievalResult
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_candidates(n: int) -> list[MergedCandidate]:
     """Create *n* minimal MergedCandidate objects."""
     candidates = []
@@ -34,9 +35,7 @@ def _make_candidates(n: int) -> list[MergedCandidate]:
             occurred_start=None,
             occurred_end=None,
         )
-        candidates.append(
-            MergedCandidate(retrieval=retrieval, rrf_score=1.0 / (i + 1))
-        )
+        candidates.append(MergedCandidate(retrieval=retrieval, rrf_score=1.0 / (i + 1)))
     return candidates
 
 
@@ -52,6 +51,7 @@ def _make_cross_encoder(predict_return: list[float]):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_passthrough_for_0_1_scores():

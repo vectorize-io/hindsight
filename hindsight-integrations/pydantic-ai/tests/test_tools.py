@@ -127,9 +127,7 @@ class TestCreateHindsightTools:
         configure(hindsight_api_url="http://config:8888")
         with patch("hindsight_pydantic_ai.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
-            create_hindsight_tools(
-                bank_id="test", hindsight_api_url="http://explicit:9999"
-            )
+            create_hindsight_tools(bank_id="test", hindsight_api_url="http://explicit:9999")
             mock_cls.assert_called_once()
             assert mock_cls.call_args.kwargs["base_url"] == "http://explicit:9999"
             assert mock_cls.call_args.kwargs["timeout"] == 30.0
@@ -191,9 +189,7 @@ class TestRecallTool:
     @pytest.mark.asyncio
     async def test_recall_returns_numbered_results(self):
         client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(
-            ["User likes Python", "User is in NYC"]
-        )
+        client.arecall.return_value = _mock_recall_response(["User likes Python", "User is in NYC"])
         tools = create_hindsight_tools(
             bank_id="test-bank",
             client=client,
@@ -354,12 +350,8 @@ class TestMemoryInstructions:
     @pytest.mark.asyncio
     async def test_returns_formatted_memories(self):
         client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(
-            ["Likes Python", "Lives in NYC", "Prefers dark mode"]
-        )
-        instructions_fn = memory_instructions(
-            bank_id="test-bank", client=client
-        )
+        client.arecall.return_value = _mock_recall_response(["Likes Python", "Lives in NYC", "Prefers dark mode"])
+        instructions_fn = memory_instructions(bank_id="test-bank", client=client)
 
         # Instructions functions receive RunContext — mock it
         mock_ctx = MagicMock()
@@ -373,12 +365,8 @@ class TestMemoryInstructions:
     @pytest.mark.asyncio
     async def test_respects_max_results(self):
         client = _mock_client()
-        client.arecall.return_value = _mock_recall_response(
-            ["fact1", "fact2", "fact3", "fact4", "fact5"]
-        )
-        instructions_fn = memory_instructions(
-            bank_id="test", client=client, max_results=2
-        )
+        client.arecall.return_value = _mock_recall_response(["fact1", "fact2", "fact3", "fact4", "fact5"])
+        instructions_fn = memory_instructions(bank_id="test", client=client, max_results=2)
 
         mock_ctx = MagicMock()
         result = await instructions_fn(mock_ctx)
@@ -391,9 +379,7 @@ class TestMemoryInstructions:
     async def test_custom_prefix(self):
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response(["fact"])
-        instructions_fn = memory_instructions(
-            bank_id="test", client=client, prefix="Memory context:\n"
-        )
+        instructions_fn = memory_instructions(bank_id="test", client=client, prefix="Memory context:\n")
 
         mock_ctx = MagicMock()
         result = await instructions_fn(mock_ctx)
@@ -404,9 +390,7 @@ class TestMemoryInstructions:
     async def test_empty_results_returns_empty_string(self):
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response([])
-        instructions_fn = memory_instructions(
-            bank_id="test", client=client
-        )
+        instructions_fn = memory_instructions(bank_id="test", client=client)
 
         mock_ctx = MagicMock()
         result = await instructions_fn(mock_ctx)
@@ -417,9 +401,7 @@ class TestMemoryInstructions:
     async def test_error_returns_empty_string(self):
         client = _mock_client()
         client.arecall.side_effect = RuntimeError("connection error")
-        instructions_fn = memory_instructions(
-            bank_id="test", client=client
-        )
+        instructions_fn = memory_instructions(bank_id="test", client=client)
 
         mock_ctx = MagicMock()
         result = await instructions_fn(mock_ctx)

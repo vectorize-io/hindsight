@@ -22,6 +22,8 @@ from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.webhooks.manager import MAX_ATTEMPTS, RETRY_DELAYS, WebhookManager
 from hindsight_api.webhooks.models import (
     ConsolidationEventData,
+    MemoryDefenseEventData,
+    MemoryDefenseHit,
     RetainEventData,
     WebhookConfig,
     WebhookEvent,
@@ -81,7 +83,7 @@ class TestHmacSigning:
         manager = self._make_manager()
         sig = manager._sign_payload("my-secret", b"hello world")
         assert sig.startswith("sha256="), f"Expected 'sha256=' prefix, got: {sig!r}"
-        hex_part = sig[len("sha256="):]
+        hex_part = sig[len("sha256=") :]
         # SHA-256 hex digest is always 64 characters
         assert len(hex_part) == 64
         # Hex characters only
@@ -148,9 +150,7 @@ class TestFireEvent:
     """Integration tests for WebhookManager.fire_event()."""
 
     @pytest.mark.asyncio
-    async def test_fire_event_creates_delivery(
-        self, memory: MemoryEngine, webhook_manager: WebhookManager
-    ):
+    async def test_fire_event_creates_delivery(self, memory: MemoryEngine, webhook_manager: WebhookManager):
         """fire_event() inserts a pending webhook_delivery task in async_operations."""
         bank_id = f"wh-test-{uuid.uuid4().hex[:8]}"
         webhook_id = uuid.uuid4()
@@ -200,9 +200,7 @@ class TestFireEvent:
                 await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
 
     @pytest.mark.asyncio
-    async def test_fire_event_global_webhook(
-        self, memory: MemoryEngine
-    ):
+    async def test_fire_event_global_webhook(self, memory: MemoryEngine):
         """fire_event() also queues delivery tasks for global webhooks (not stored in DB)."""
         bank_id = f"wh-global-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory._pool, bank_id)
@@ -229,8 +227,7 @@ class TestFireEvent:
                   AND task_payload->>'url' = 'https://global.example.com/hook'
                 ORDER BY created_at DESC
                 LIMIT 1
-                """
-                ,
+                """,
                 bank_id,
             )
 
@@ -292,9 +289,7 @@ class TestFireEventWithConn:
     """Integration tests for WebhookManager.fire_event_with_conn()."""
 
     @pytest.mark.asyncio
-    async def test_fire_event_with_conn_queues_delivery(
-        self, memory: MemoryEngine, webhook_manager: WebhookManager
-    ):
+    async def test_fire_event_with_conn_queues_delivery(self, memory: MemoryEngine, webhook_manager: WebhookManager):
         """fire_event_with_conn() inserts a delivery task using the provided connection."""
         bank_id = f"wh-conn-{uuid.uuid4().hex[:8]}"
         webhook_id = uuid.uuid4()
@@ -417,9 +412,7 @@ class TestHandleWebhookDelivery:
         """A failed HTTP POST raises RetryTaskAt when retries remain."""
         task_dict = _make_delivery_task(retry_count=0)
 
-        with patch.object(
-            memory._http_client, "post", new=AsyncMock(side_effect=Exception("connection refused"))
-        ):
+        with patch.object(memory._http_client, "post", new=AsyncMock(side_effect=Exception("connection refused"))):
             with pytest.raises(RetryTaskAt):
                 await memory._handle_webhook_delivery(task_dict)
 
@@ -428,9 +421,7 @@ class TestHandleWebhookDelivery:
         """When retry_count reaches MAX_ATTEMPTS-1, a failure raises the original exception."""
         task_dict = _make_delivery_task(retry_count=MAX_ATTEMPTS - 1)
 
-        with patch.object(
-            memory._http_client, "post", new=AsyncMock(side_effect=Exception("server error"))
-        ):
+        with patch.object(memory._http_client, "post", new=AsyncMock(side_effect=Exception("server error"))):
             with pytest.raises(Exception, match="server error"):
                 await memory._handle_webhook_delivery(task_dict)
 
@@ -441,9 +432,7 @@ class TestHandleWebhookDelivery:
 
         task_dict = _make_delivery_task(retry_count=1)
 
-        with patch.object(
-            memory._http_client, "post", new=AsyncMock(side_effect=Exception("fail"))
-        ):
+        with patch.object(memory._http_client, "post", new=AsyncMock(side_effect=Exception("fail"))):
             before = datetime.now(timezone.utc)
             with pytest.raises(RetryTaskAt) as exc_info:
                 await memory._handle_webhook_delivery(task_dict)
@@ -537,9 +526,32 @@ class TestWebhookHttpApi:
         assert data["secret"] is None  # secrets are never echoed back
 
         # Cleanup
-        await api_client.delete(
-            f"/v1/default/banks/{bank_id}/webhooks/{data['id']}"
+        await api_client.delete(f"/v1/default/banks/{bank_id}/webhooks/{data['id']}")
+
+    @pytest.mark.asyncio
+    async def test_http_create_webhook_creates_missing_bank(self, api_client: httpx.AsyncClient):
+        """Creating the first webhook for a bank should lazily create the bank
+        (webhooks.bank_id has an FK), not raise a constraint error."""
+        bank_id = f"http-wh-newbank-{uuid.uuid4().hex[:8]}"
+
+        response = await api_client.post(
+            f"/v1/default/banks/{bank_id}/webhooks",
+            json={
+                "url": "https://example.com/new-bank",
+                "event_types": ["consolidation.completed"],
+            },
         )
+        assert response.status_code == 201, response.text
+        webhook_id = response.json()["id"]
+
+        banks_resp = await api_client.get("/v1/default/banks")
+        assert banks_resp.status_code == 200
+        bank_ids = {bank["bank_id"] for bank in banks_resp.json()["banks"]}
+        assert bank_id in bank_ids
+
+        # Cleanup
+        await api_client.delete(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}")
+        await api_client.delete(f"/v1/default/banks/{bank_id}")
 
     @pytest.mark.asyncio
     async def test_http_list_webhooks(self, api_client: httpx.AsyncClient):
@@ -573,9 +585,7 @@ class TestWebhookHttpApi:
         assert create_resp.status_code == 201
         webhook_id = create_resp.json()["id"]
 
-        delete_resp = await api_client.delete(
-            f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}"
-        )
+        delete_resp = await api_client.delete(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}")
         assert delete_resp.status_code == 200
         assert delete_resp.json()["success"] is True
 
@@ -589,15 +599,11 @@ class TestWebhookHttpApi:
         """DELETE with a non-existent webhook id returns 404."""
         bank_id = f"http-wh-{uuid.uuid4().hex[:8]}"
         missing_id = str(uuid.uuid4())
-        response = await api_client.delete(
-            f"/v1/default/banks/{bank_id}/webhooks/{missing_id}"
-        )
+        response = await api_client.delete(f"/v1/default/banks/{bank_id}/webhooks/{missing_id}")
         assert response.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_http_list_deliveries(
-        self, memory: MemoryEngine, api_client: httpx.AsyncClient
-    ):
+    async def test_http_list_deliveries(self, memory: MemoryEngine, api_client: httpx.AsyncClient):
         """GET /webhooks/{id}/deliveries returns delivery records for a webhook."""
         bank_id = f"http-wh-{uuid.uuid4().hex[:8]}"
 
@@ -640,9 +646,7 @@ class TestWebhookHttpApi:
             )
 
         try:
-            deliveries_resp = await api_client.get(
-                f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries"
-            )
+            deliveries_resp = await api_client.get(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries")
             assert deliveries_resp.status_code == 200
             items = deliveries_resp.json()["items"]
             ids = [item["id"] for item in items]
@@ -655,21 +659,15 @@ class TestWebhookHttpApi:
             assert delivery["attempts"] == 1
         finally:
             async with memory._pool.acquire() as conn:
-                await conn.execute(
-                    "DELETE FROM async_operations WHERE operation_id = $1", delivery_id
-                )
-            await api_client.delete(
-                f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}"
-            )
+                await conn.execute("DELETE FROM async_operations WHERE operation_id = $1", delivery_id)
+            await api_client.delete(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}")
 
     @pytest.mark.asyncio
     async def test_http_list_deliveries_webhook_not_found(self, api_client: httpx.AsyncClient):
         """GET /webhooks/{id}/deliveries for a non-existent webhook returns 404."""
         bank_id = f"http-wh-{uuid.uuid4().hex[:8]}"
         missing_id = str(uuid.uuid4())
-        response = await api_client.get(
-            f"/v1/default/banks/{bank_id}/webhooks/{missing_id}/deliveries"
-        )
+        response = await api_client.get(f"/v1/default/banks/{bank_id}/webhooks/{missing_id}/deliveries")
         assert response.status_code == 404
 
     @pytest.mark.asyncio
@@ -830,9 +828,7 @@ class TestRetainCompletedWebhook:
         assert WebhookEventType.RETAIN_COMPLETED == "retain.completed"
 
     @pytest.mark.asyncio
-    async def test_fire_retain_webhook_queues_per_document(
-        self, memory: MemoryEngine, webhook_manager: WebhookManager
-    ):
+    async def test_fire_retain_webhook_queues_per_document(self, memory: MemoryEngine, webhook_manager: WebhookManager):
         """_fire_retain_webhook queues one delivery task per content item."""
         bank_id = f"wh-retain-{uuid.uuid4().hex[:8]}"
         webhook_id = uuid.uuid4()
@@ -1082,14 +1078,11 @@ class TestWebhookSchemaIsolation:
                 uuid.UUID(webhook_id),
             )
 
-        assert row_in_target is not None, (
-            "Webhook row should be inserted into the resolved schema"
-        )
+        assert row_in_target is not None, "Webhook row should be inserted into the resolved schema"
         assert row_in_target["bank_id"] == bank_id
         assert row_in_target["url"] == "https://example.com/iso"
         assert row_in_public is None, (
-            "Webhook row must NOT be written to public when a non-default "
-            "schema is resolved by the tenant extension"
+            "Webhook row must NOT be written to public when a non-default schema is resolved by the tenant extension"
         )
 
     @pytest.mark.asyncio
@@ -1137,18 +1130,13 @@ class TestWebhookSchemaIsolation:
             assert list_resp.status_code == 200
             ids = {item["id"] for item in list_resp.json()["items"]}
 
-            assert target_webhook_id in ids, (
-                "list_webhooks should return rows from the resolved schema"
-            )
+            assert target_webhook_id in ids, "list_webhooks should return rows from the resolved schema"
             assert str(public_webhook_id) not in ids, (
-                "list_webhooks must NOT leak rows from public when a non-default "
-                "schema is resolved"
+                "list_webhooks must NOT leak rows from public when a non-default schema is resolved"
             )
         finally:
             async with memory._pool.acquire() as conn:
-                await conn.execute(
-                    "DELETE FROM public.webhooks WHERE id = $1", public_webhook_id
-                )
+                await conn.execute("DELETE FROM public.webhooks WHERE id = $1", public_webhook_id)
 
     @pytest.mark.asyncio
     async def test_update_webhook_targets_resolved_schema(
@@ -1207,9 +1195,7 @@ class TestWebhookSchemaIsolation:
             assert public_url == "https://example.com/public-stale"
         finally:
             async with memory._pool.acquire() as conn:
-                await conn.execute(
-                    "DELETE FROM public.webhooks WHERE id = $1", uuid.UUID(webhook_id)
-                )
+                await conn.execute("DELETE FROM public.webhooks WHERE id = $1", uuid.UUID(webhook_id))
 
     @pytest.mark.asyncio
     async def test_delete_webhook_targets_resolved_schema(
@@ -1245,9 +1231,7 @@ class TestWebhookSchemaIsolation:
             )
 
         try:
-            del_resp = await api_client.delete(
-                f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}"
-            )
+            del_resp = await api_client.delete(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}")
             assert del_resp.status_code == 200
             assert del_resp.json()["success"] is True
 
@@ -1262,14 +1246,10 @@ class TestWebhookSchemaIsolation:
                 )
 
             assert target_row is None, "row in resolved schema should have been deleted"
-            assert public_row is not None, (
-                "row in public must NOT be deleted when delete targets a non-default schema"
-            )
+            assert public_row is not None, "row in public must NOT be deleted when delete targets a non-default schema"
         finally:
             async with memory._pool.acquire() as conn:
-                await conn.execute(
-                    "DELETE FROM public.webhooks WHERE id = $1", uuid.UUID(webhook_id)
-                )
+                await conn.execute("DELETE FROM public.webhooks WHERE id = $1", uuid.UUID(webhook_id))
 
     @pytest.mark.asyncio
     async def test_list_deliveries_targets_resolved_schema(
@@ -1303,17 +1283,13 @@ class TestWebhookSchemaIsolation:
             )
 
         try:
-            resp = await api_client.get(
-                f"/v1/default/banks/{bank_id}/webhooks/{orphan_webhook_id}/deliveries"
-            )
+            resp = await api_client.get(f"/v1/default/banks/{bank_id}/webhooks/{orphan_webhook_id}/deliveries")
             # The webhook does not exist in the resolved schema, so this must 404
             # — not silently fall through to public.
             assert resp.status_code == 404, resp.text
         finally:
             async with memory._pool.acquire() as conn:
-                await conn.execute(
-                    "DELETE FROM public.webhooks WHERE id = $1", orphan_webhook_id
-                )
+                await conn.execute("DELETE FROM public.webhooks WHERE id = $1", orphan_webhook_id)
 
     @pytest.mark.asyncio
     async def test_list_deliveries_returns_rows_from_resolved_schema(
@@ -1391,14 +1367,10 @@ class TestWebhookSchemaIsolation:
             )
 
         try:
-            resp = await api_client.get(
-                f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries"
-            )
+            resp = await api_client.get(f"/v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries")
             assert resp.status_code == 200
             ids = {item["id"] for item in resp.json()["items"]}
-            assert str(target_delivery_id) in ids, (
-                "deliveries from the resolved schema should be returned"
-            )
+            assert str(target_delivery_id) in ids, "deliveries from the resolved schema should be returned"
             assert str(public_delivery_id) not in ids, (
                 "deliveries from public must NOT leak when a non-default schema is resolved"
             )
@@ -1408,3 +1380,109 @@ class TestWebhookSchemaIsolation:
                     "DELETE FROM public.async_operations WHERE operation_id = $1",
                     public_delivery_id,
                 )
+
+
+# ─── MemoryDefenseEventData SIEM enrichment fields ──────────────────────────────
+#
+# OSS only populates action / detector / document_id / matched_types / message.
+# The remaining fields are optional SIEM enrichment that downstream extensions
+# (e.g. hindsight-cloud) populate when they have richer per-decision context.
+# These tests pin the wire contract so OSS evolution doesn't break extensions
+# that depend on the optional fields being present and JSON-serialisable.
+
+
+def test_memory_defense_event_data_base_shape() -> None:
+    """The five base fields populated by every implementation round-trip cleanly
+    and the optional SIEM-enrichment fields default to None when omitted."""
+    data = MemoryDefenseEventData(
+        action="redact",
+        detector="sensitive_data",
+        document_id="doc-1",
+        matched_types=["github_token"],
+        message="Secrets redacted by policy-driven pre-screen",
+    )
+
+    # Base fields populated.
+    assert data.action == "redact"
+    assert data.detector == "sensitive_data"
+    assert data.document_id == "doc-1"
+    assert data.matched_types == ["github_token"]
+    assert data.message == "Secrets redacted by policy-driven pre-screen"
+
+    # Optional enrichment fields default to None — OSS receivers must see no
+    # change vs. before this commit.
+    assert data.severity is None
+    assert data.api_key_name is None
+    assert data.hits is None
+    assert data.memory_unit_id is None
+    assert data.receipt_uri is None
+
+    # JSON shape: explicit None for absent fields, no extra keys.
+    dumped = data.model_dump()
+    assert dumped["severity"] is None
+    assert dumped["hits"] is None
+    assert set(dumped.keys()) == {
+        "action",
+        "detector",
+        "document_id",
+        "matched_types",
+        "message",
+        "severity",
+        "api_key_name",
+        "hits",
+        "memory_unit_id",
+        "receipt_uri",
+    }
+
+
+def test_memory_defense_event_data_with_siem_enrichment() -> None:
+    """When an extension populates the enrichment fields, they round-trip via
+    the model and through WebhookEvent JSON serialisation."""
+    hit = MemoryDefenseHit(detector="GitHub Token", preview="ghp_AAAA...BBBB")
+    data = MemoryDefenseEventData(
+        action="redact",
+        detector="sensitive_data",
+        document_id="doc-42",
+        matched_types=["github_token"],
+        message="rotate immediately",
+        severity="high",
+        api_key_name="Connect Key",
+        hits=[hit],
+        memory_unit_id="mu-123",
+        receipt_uri="memdef://bank/abc/receipt/xyz",
+    )
+
+    assert data.severity == "high"
+    assert data.api_key_name == "Connect Key"
+    assert data.hits == [hit]
+    assert data.hits[0].detector == "GitHub Token"
+    assert data.hits[0].preview == "ghp_AAAA...BBBB"
+    assert data.memory_unit_id == "mu-123"
+    assert data.receipt_uri == "memdef://bank/abc/receipt/xyz"
+
+    # Nested-event round trip via JSON (this is what the webhook manager
+    # serialises before queuing the delivery).
+    event = WebhookEvent(
+        event=WebhookEventType.MEMORY_DEFENSE_TRIGGERED,
+        bank_id="bank-1",
+        operation_id="",
+        status="redact",
+        timestamp=datetime(2026, 6, 12, 0, 0, tzinfo=timezone.utc),
+        data=data,
+    )
+    payload = json.loads(event.model_dump_json())
+    assert payload["data"]["severity"] == "high"
+    assert payload["data"]["api_key_name"] == "Connect Key"
+    assert payload["data"]["hits"] == [{"detector": "GitHub Token", "preview": "ghp_AAAA...BBBB"}]
+    assert payload["data"]["memory_unit_id"] == "mu-123"
+    assert payload["data"]["receipt_uri"] == "memdef://bank/abc/receipt/xyz"
+
+
+def test_memory_defense_hit_rejects_missing_preview() -> None:
+    """MemoryDefenseHit requires both fields — guards against extensions
+    accidentally posting raw secrets as the only payload (preview must be
+    explicit) or omitting the inner detector label."""
+    with pytest.raises(Exception):  # pydantic ValidationError
+        MemoryDefenseHit(detector="GitHub Token")  # type: ignore[call-arg]
+    with pytest.raises(Exception):
+        MemoryDefenseHit(preview="ghp_AAAA...BBBB")  # type: ignore[call-arg]

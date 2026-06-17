@@ -216,7 +216,9 @@ async def test_file_retain_validation_errors(memory_no_llm_verify):
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # Create bank
-        bank_response = await client.put("/v1/default/banks/test-validation-bank", json={"name": "Test Validation Bank"})
+        bank_response = await client.put(
+            "/v1/default/banks/test-validation-bank", json={"name": "Test Validation Bank"}
+        )
         assert bank_response.status_code in (200, 201)
 
         # Test: metadata count mismatch

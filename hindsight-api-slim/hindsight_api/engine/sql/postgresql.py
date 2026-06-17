@@ -148,6 +148,7 @@ class PostgreSQLDialect(SQLDialect):
         embedding_param: str,
         bank_id_param: str,
         fetch_limit: int,
+        min_similarity: float,
         tags_clause: str = "",
         groups_clause: str = "",
         extra_where: str = "",
@@ -161,7 +162,7 @@ class PostgreSQLDialect(SQLDialect):
             f" WHERE bank_id = {bank_id_param}"
             f"   AND fact_type = '{fact_type}'"
             f"   AND embedding IS NOT NULL"
-            f"   AND (1 - (embedding <=> {embedding_param}::vector)) >= 0.3"
+            f"   AND (1 - (embedding <=> {embedding_param}::vector)) >= {min_similarity}"
             f"   {tags_clause}"
             f"   {groups_clause}"
             f"   {extra_where}"
@@ -183,25 +184,32 @@ class PostgreSQLDialect(SQLDialect):
         arm_index: int = 0,
         text_search_extension: str = "native",
         bm25_language: str = "english",
+        bm25_min_score: float = 0.0,
         extra_where: str = "",
     ) -> str:
         if text_search_extension == "vchord":
-            # <&> returns a distance (lower = more relevant), negate for score
+            # <&> returns the NEGATIVE BM25 score (lower = more relevant), negate
+            # for a positive score where higher = more relevant.
             bm25_score_expr = f"-(search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize({text_param}, 'llmlingua2')))"
             bm25_order_by = f"{bm25_score_expr} DESC"
-            bm25_where_filter = ""
+            # Unlike native tsvector (which has a boolean `@@` match gate), the
+            # VectorChord operator ranks *every* document, so a bare ORDER BY ...
+            # LIMIT pads the result with zero-score, non-matching rows. Gate on the
+            # score so only genuine term matches survive into fusion/reranking.
+            bm25_where_filter = f"AND -(search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize({text_param}, 'llmlingua2'))) > {bm25_min_score:g}"
         elif text_search_extension == "pg_textsearch":
             bm25_score_expr = f"-({text_param} <@> to_bm25query({text_param}, 'idx_memory_units_text_search'))"
             bm25_order_by = f"text <@> to_bm25query({text_param}, 'idx_memory_units_text_search') ASC"
             bm25_where_filter = ""
         elif text_search_extension == "pgroonga":
-            # &@~ accepts pgroonga's query syntax (raw query text). pgroonga_score
-            # returns a non-negative relevance score (higher = better).
+            # &@~ accepts pgroonga's query syntax. Escape the bind parameter so
+            # literal memory text containing operators like ">" or "(" is not
+            # parsed as a malformed query expression.
             bm25_score_expr = "pgroonga_score(tableoid, ctid)"
             bm25_order_by = f"{bm25_score_expr} DESC"
             bm25_where_filter = (
                 f"AND (COALESCE(text, '') || ' ' || COALESCE(context, '') || ' ' || COALESCE(text_signals, '')) "
-                f"&@~ {text_param}"
+                f"&@~ pgroonga_query_escape({text_param})"
             )
         elif text_search_extension == "pg_search":
             # ParadeDB pg_search: BM25 index over (id, text, context, text_signals)

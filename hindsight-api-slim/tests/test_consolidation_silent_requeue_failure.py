@@ -71,9 +71,7 @@ async def _count_unconsolidated(memory, bank_id: str) -> int:
 
 
 @pytest.mark.asyncio
-async def test_requeue_failure_propagates_to_worker_retry(
-    memory: MemoryEngine, request_context
-):
+async def test_requeue_failure_propagates_to_worker_retry(memory: MemoryEngine, request_context):
     """When the in-task ``submit_async_consolidation`` call raises, the op
     must NOT be silently completed. The consolidator's work for this round
     is durably committed (memories marked consolidated_at in their own
@@ -183,8 +181,6 @@ async def test_requeue_failure_propagates_to_worker_retry(
         f"unconsolidated_remaining={unconsolidated_after}"
     )
 
-    assert call_count["n"] == 1, (
-        f"only one in-task submit_async_consolidation call expected, got {call_count['n']}"
-    )
+    assert call_count["n"] == 1, f"only one in-task submit_async_consolidation call expected, got {call_count['n']}"
 
     await memory.delete_bank(bank_id, request_context=request_context)

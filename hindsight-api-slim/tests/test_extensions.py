@@ -101,25 +101,19 @@ class RateLimitingValidator(OperationValidatorExtension):
     async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
         self.retain_counts[ctx.bank_id] += 1
         if self.retain_counts[ctx.bank_id] > self.max_attempts:
-            return ValidationResult.reject(
-                f"Retain limit exceeded for bank {ctx.bank_id}"
-            )
+            return ValidationResult.reject(f"Retain limit exceeded for bank {ctx.bank_id}")
         return ValidationResult.accept()
 
     async def validate_recall(self, ctx: RecallContext) -> ValidationResult:
         self.recall_counts[ctx.bank_id] += 1
         if self.recall_counts[ctx.bank_id] > self.max_attempts:
-            return ValidationResult.reject(
-                f"Recall limit exceeded for bank {ctx.bank_id}"
-            )
+            return ValidationResult.reject(f"Recall limit exceeded for bank {ctx.bank_id}")
         return ValidationResult.accept()
 
     async def validate_reflect(self, ctx: ReflectContext) -> ValidationResult:
         self.reflect_counts[ctx.bank_id] += 1
         if self.reflect_counts[ctx.bank_id] > self.max_attempts:
-            return ValidationResult.reject(
-                f"Reflect limit exceeded for bank {ctx.bank_id}"
-            )
+            return ValidationResult.reject(f"Reflect limit exceeded for bank {ctx.bank_id}")
         return ValidationResult.accept()
 
 
@@ -579,9 +573,7 @@ class TestMemoryEngineTenantAuth:
     """Tests for tenant authentication in MemoryEngine."""
 
     @pytest.mark.asyncio
-    async def test_retain_requires_tenant_request_when_extension_configured(
-        self, memory_with_tenant
-    ):
+    async def test_retain_requires_tenant_request_when_extension_configured(self, memory_with_tenant):
         """Retain fails without RequestContext when tenant extension is configured."""
         memory = memory_with_tenant
 
@@ -621,9 +613,7 @@ class TestMemoryEngineTenantAuth:
         assert "Invalid API key" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_recall_requires_tenant_request_when_extension_configured(
-        self, memory_with_tenant
-    ):
+    async def test_recall_requires_tenant_request_when_extension_configured(self, memory_with_tenant):
         """Recall fails without RequestContext when tenant extension is configured."""
         memory = memory_with_tenant
 
@@ -633,6 +623,30 @@ class TestMemoryEngineTenantAuth:
                 query="test query",
                 fact_type=["world"],
                 request_context=None,
+            )
+
+    @pytest.mark.asyncio
+    async def test_list_audit_logs_fails_with_invalid_api_key(self, memory_with_tenant):
+        """Audit log listing goes through tenant auth like other ops."""
+        memory = memory_with_tenant
+
+        with pytest.raises(AuthenticationError) as exc_info:
+            await memory.list_audit_logs(
+                "test-bank",
+                request_context=RequestContext(api_key="wrong-key"),
+            )
+
+        assert "Invalid API key" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_audit_log_stats_fails_with_invalid_api_key(self, memory_with_tenant):
+        """Audit log stats goes through tenant auth like other ops."""
+        memory = memory_with_tenant
+
+        with pytest.raises(AuthenticationError):
+            await memory.audit_log_stats(
+                "test-bank",
+                request_context=RequestContext(api_key="wrong-key"),
             )
 
     @pytest.mark.asyncio
@@ -837,8 +851,7 @@ class RecordingPrecheckValidator(OperationValidatorExtension):
     instantiable; the tests here only exercise precheck.
     """
 
-    def __init__(self, *, reject: bool = False, status_code: int = 402,
-                 reason: str = "rejected by precheck") -> None:
+    def __init__(self, *, reject: bool = False, status_code: int = 402, reason: str = "rejected by precheck") -> None:
         super().__init__(config={})
         self.reject = reject
         self.status_code = status_code
@@ -1003,9 +1016,7 @@ class TestPrecheckHttpWiring:
         assert body_parses == ["retain"]
 
     def test_precheck_rejection_returns_status_and_reason(self):
-        validator = RecordingPrecheckValidator(
-            reject=True, status_code=402, reason="Insufficient credits"
-        )
+        validator = RecordingPrecheckValidator(reject=True, status_code=402, reason="Insufficient credits")
         app, _ = self._build_app(validator)
         client = TestClient(app)
 
@@ -1021,9 +1032,7 @@ class TestPrecheckHttpWiring:
         deserialises the body. We send an oversized body and verify the
         body-parse counter never incremented.
         """
-        validator = RecordingPrecheckValidator(
-            reject=True, status_code=402, reason="rejected by precheck"
-        )
+        validator = RecordingPrecheckValidator(reject=True, status_code=402, reason="rejected by precheck")
         app, body_parses = self._build_app(validator)
         client = TestClient(app)
 
@@ -1039,9 +1048,7 @@ class TestPrecheckHttpWiring:
         )
 
     def test_precheck_rejection_skips_body_parse_for_recall(self):
-        validator = RecordingPrecheckValidator(
-            reject=True, status_code=402, reason="rejected"
-        )
+        validator = RecordingPrecheckValidator(reject=True, status_code=402, reason="rejected")
         app, body_parses = self._build_app(validator)
         client = TestClient(app)
 
@@ -1054,9 +1061,7 @@ class TestPrecheckHttpWiring:
         assert body_parses == []
 
     def test_precheck_rejection_skips_body_parse_for_reflect(self):
-        validator = RecordingPrecheckValidator(
-            reject=True, status_code=402, reason="rejected"
-        )
+        validator = RecordingPrecheckValidator(reject=True, status_code=402, reason="rejected")
         app, body_parses = self._build_app(validator)
         client = TestClient(app)
 

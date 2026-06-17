@@ -41,6 +41,7 @@ def _downgrade(db_url: str, revision: str) -> None:
 # Fixture: fresh database at the revision just before the backsweep
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def pre_backsweep_db_url():
     """
@@ -73,6 +74,7 @@ def pre_backsweep_db_url():
 # The test
 # ---------------------------------------------------------------------------
 
+
 def test_backsweep_removes_orphans_and_preserves_legit_rows(pre_backsweep_db_url):
     """
     Seed four kinds of rows then apply the backsweep migration and verify:
@@ -100,12 +102,12 @@ def test_backsweep_removes_orphans_and_preserves_legit_rows(pre_backsweep_db_url
     ghost_bank = f"bank_{uuid.uuid4().hex[:8]}"  # never inserted into banks
 
     # UUIDs for memory units
-    id_pass1_world = uuid.uuid4()       # A: world unit, ghost bank
-    id_pass1_obs = uuid.uuid4()         # A: observation, ghost bank
-    id_pass2_obs = uuid.uuid4()         # B: observation, all sources gone
-    id_keep_obs = uuid.uuid4()          # C: observation with one live source
-    id_keep_world = uuid.uuid4()        # D: world unit, alive bank
-    id_live_source = uuid.uuid4()       # live source for C
+    id_pass1_world = uuid.uuid4()  # A: world unit, ghost bank
+    id_pass1_obs = uuid.uuid4()  # A: observation, ghost bank
+    id_pass2_obs = uuid.uuid4()  # B: observation, all sources gone
+    id_keep_obs = uuid.uuid4()  # C: observation with one live source
+    id_keep_world = uuid.uuid4()  # D: world unit, alive bank
+    id_live_source = uuid.uuid4()  # live source for C
 
     with engine.connect() as conn:
         # --- banks ---
@@ -147,10 +149,9 @@ def test_backsweep_removes_orphans_and_preserves_legit_rows(pre_backsweep_db_url
 
     # --- verify ---
     with engine.connect() as conn:
+
         def exists(uid):
-            return conn.execute(
-                text("SELECT 1 FROM memory_units WHERE id = :id"), {"id": uid}
-            ).fetchone() is not None
+            return conn.execute(text("SELECT 1 FROM memory_units WHERE id = :id"), {"id": uid}).fetchone() is not None
 
         # Must be gone
         assert not exists(id_pass1_world), "Pass 1: world unit with ghost bank should be deleted"

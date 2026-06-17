@@ -54,10 +54,75 @@ def test_migration_uses_dialect_dispatcher(path: Path) -> None:
 
 def _calls_run_for_dialect(fn: ast.FunctionDef) -> bool:
     for node in ast.walk(fn):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "run_for_dialect"
-        ):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "run_for_dialect":
             return True
     return False
+
+
+def _is_manual_commit(node: ast.AST) -> bool:
+    """True if ``node`` is ``op.execute("COMMIT")`` (any casing/whitespace)."""
+    if not (isinstance(node, ast.Call) and node.args):
+        return False
+    func = node.func
+    if not (isinstance(func, ast.Attribute) and func.attr == "execute"):
+        return False
+    if not (isinstance(func.value, ast.Name) and func.value.id == "op"):
+        return False
+    first = node.args[0]
+    return isinstance(first, ast.Constant) and isinstance(first.value, str) and first.value.strip().upper() == "COMMIT"
+
+
+@pytest.mark.parametrize("path", _migration_files(), ids=lambda p: p.name)
+def test_migration_uses_autocommit_block_not_manual_commit(path: Path) -> None:
+    """Ban the ``op.execute("COMMIT")`` trick for escaping the migration transaction.
+
+    ``CREATE/DROP INDEX CONCURRENTLY`` (and procedural ``COMMIT`` in ``DO`` blocks)
+    must run outside Alembic's migration transaction. The manual-COMMIT trick
+    happens to work on psycopg2 but breaks on psycopg/SQLAlchemy 2.1, where the
+    next statement re-opens a transaction and PostgreSQL rejects CONCURRENTLY.
+    Use ``with op.get_context().autocommit_block():`` instead.
+    """
+    tree = ast.parse(path.read_text(), filename=str(path))
+    offenders = [node.lineno for node in ast.walk(tree) if _is_manual_commit(node)]
+    assert not offenders, (
+        f'{path.name}: op.execute("COMMIT") at line(s) {offenders}. '
+        "Wrap CONCURRENTLY DDL in `with op.get_context().autocommit_block():` instead "
+        "of manually committing — the COMMIT trick fails on psycopg/SQLAlchemy 2.1."
+    )
+
+
+def _executes_concurrently_ddl(tree: ast.AST) -> bool:
+    """True if any string passed to ``op.execute(...)`` contains CONCURRENTLY."""
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and node.args):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "execute"):
+            continue
+        arg = node.args[0]
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and "CONCURRENTLY" in arg.value.upper():
+            return True
+    return False
+
+
+def _uses_autocommit_block(tree: ast.AST) -> bool:
+    return any(isinstance(node, ast.Attribute) and node.attr == "autocommit_block" for node in ast.walk(tree))
+
+
+@pytest.mark.parametrize("path", _migration_files(), ids=lambda p: p.name)
+def test_migration_concurrently_ddl_runs_in_autocommit_block(path: Path) -> None:
+    """``CONCURRENTLY`` DDL must run inside an ``autocommit_block()``.
+
+    PostgreSQL rejects ``CREATE/DROP INDEX CONCURRENTLY`` inside a transaction
+    block, and Alembic wraps every migration in one. The only safe escape is
+    ``with op.get_context().autocommit_block():``. This guards both the
+    manual-COMMIT trick and a CONCURRENTLY statement with no escape at all.
+    """
+    tree = ast.parse(path.read_text(), filename=str(path))
+    if not _executes_concurrently_ddl(tree):
+        pytest.skip("no CONCURRENTLY DDL")
+    assert _uses_autocommit_block(tree), (
+        f"{path.name}: runs CONCURRENTLY DDL but never opens an autocommit_block(). "
+        "Wrap it in `with op.get_context().autocommit_block():` — CONCURRENTLY cannot "
+        "run inside Alembic's migration transaction."
+    )

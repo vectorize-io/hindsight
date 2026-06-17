@@ -37,37 +37,35 @@ def _get_schema_prefix() -> str:
 
 def _pg_upgrade() -> None:
     schema = _get_schema_prefix()
-    # Partial index on occurred_start (covers "occurred_start BETWEEN $4 AND $5")
-    op.execute("COMMIT")
-    op.execute(
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_units_bank_occurred_start "
-        f"ON {schema}memory_units(bank_id, fact_type, occurred_start) "
-        f"WHERE occurred_start IS NOT NULL"
-    )
-    # Partial index on occurred_end (covers "occurred_end BETWEEN $4 AND $5")
-    op.execute("COMMIT")
-    op.execute(
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_units_bank_occurred_end "
-        f"ON {schema}memory_units(bank_id, fact_type, occurred_end) "
-        f"WHERE occurred_end IS NOT NULL"
-    )
-    # Partial index on mentioned_at (covers "mentioned_at BETWEEN $4 AND $5")
-    op.execute("COMMIT")
-    op.execute(
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_units_bank_mentioned_at "
-        f"ON {schema}memory_units(bank_id, fact_type, mentioned_at) "
-        f"WHERE mentioned_at IS NOT NULL"
-    )
+    # CREATE INDEX CONCURRENTLY cannot run inside a transaction block; an
+    # autocommit_block runs each statement outside Alembic's migration transaction.
+    with op.get_context().autocommit_block():
+        # Partial index on occurred_start (covers "occurred_start BETWEEN $4 AND $5")
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_units_bank_occurred_start "
+            f"ON {schema}memory_units(bank_id, fact_type, occurred_start) "
+            f"WHERE occurred_start IS NOT NULL"
+        )
+        # Partial index on occurred_end (covers "occurred_end BETWEEN $4 AND $5")
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_units_bank_occurred_end "
+            f"ON {schema}memory_units(bank_id, fact_type, occurred_end) "
+            f"WHERE occurred_end IS NOT NULL"
+        )
+        # Partial index on mentioned_at (covers "mentioned_at BETWEEN $4 AND $5")
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_units_bank_mentioned_at "
+            f"ON {schema}memory_units(bank_id, fact_type, mentioned_at) "
+            f"WHERE mentioned_at IS NOT NULL"
+        )
 
 
 def _pg_downgrade() -> None:
     schema = _get_schema_prefix()
-    op.execute("COMMIT")
-    op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}idx_memory_units_bank_mentioned_at")
-    op.execute("COMMIT")
-    op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}idx_memory_units_bank_occurred_end")
-    op.execute("COMMIT")
-    op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}idx_memory_units_bank_occurred_start")
+    with op.get_context().autocommit_block():
+        op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}idx_memory_units_bank_mentioned_at")
+        op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}idx_memory_units_bank_occurred_end")
+        op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}idx_memory_units_bank_occurred_start")
 
 
 def upgrade() -> None:

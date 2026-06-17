@@ -190,9 +190,7 @@ class TestMarkOperationGracefulOnMissingRow:
         await memory._mark_operation_failed(missing_id, "some error", "traceback here")  # no exception
 
     @pytest.mark.asyncio
-    async def test_mark_completed_and_fire_webhook_does_not_raise_when_row_missing(
-        self, memory: MemoryEngine
-    ):
+    async def test_mark_completed_and_fire_webhook_does_not_raise_when_row_missing(self, memory: MemoryEngine):
         missing_id = str(uuid.uuid4())
         await memory._mark_operation_completed_and_fire_webhook(
             operation_id=missing_id,
@@ -265,9 +263,7 @@ class TestConsolidationCheckpoint:
 
 class TestRetainCheckpoint:
     @pytest.mark.asyncio
-    async def test_retain_stops_between_sub_batches_when_cancelled(
-        self, memory: MemoryEngine, request_context
-    ):
+    async def test_retain_stops_between_sub_batches_when_cancelled(self, memory: MemoryEngine, request_context):
         """retain_batch_async returns partial results if _check_op_alive is False between sub-batches."""
         from hindsight_api.config import _get_raw_config
 
@@ -290,9 +286,7 @@ class TestRetainCheckpoint:
                 # Cancel after the first sub-batch completes
                 return check_calls <= 1
 
-            contents = [
-                {"content": f"Memory item {i} about something interesting."} for i in range(4)
-            ]
+            contents = [{"content": f"Memory item {i} about something interesting."} for i in range(4)]
 
             with patch.object(memory, "_check_op_alive", side_effect=_fake_check):
                 result = await memory.retain_batch_async(

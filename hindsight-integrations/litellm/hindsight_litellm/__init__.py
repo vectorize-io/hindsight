@@ -107,6 +107,7 @@ from typing import List, Optional
 
 import litellm
 
+from ._async import ensure_loop, run_sync
 from .callbacks import (
     HindsightCallback,
     HindsightError,
@@ -118,11 +119,13 @@ from .config import (
     HindsightConfig,
     HindsightDefaults,
     MemoryInjectionMode,
+    _restore_config,
     configure,
     get_config,
     get_defaults,
     is_configured,
     reset_config,
+    set_bank_mission,
     set_defaults,
 )
 from .wrappers import (
@@ -152,6 +155,7 @@ __version__ = "0.1.0"
 
 # Track whether we've registered with LiteLLM
 _enabled = False
+_enabled_lock = threading.Lock()
 
 # Store original functions for restoration
 _original_completion = None
@@ -226,6 +230,7 @@ def _inject_memories(
     messages: List[dict],
     custom_query: Optional[str] = None,
     custom_reflect_context: Optional[str] = None,
+    bank_id_override: Optional[str] = None,
 ) -> List[dict]:
     """Inject memories into messages list.
 
@@ -238,6 +243,7 @@ def _inject_memories(
         messages: List of message dicts to inject memories into
         custom_query: Optional custom query to use for memory lookup instead of user message
         custom_reflect_context: Optional context to pass to reflect API (overrides defaults.reflect_context)
+        bank_id_override: Optional bank_id that overrides the default for this call
     """
     global _last_injection_debug
     import logging
@@ -251,8 +257,8 @@ def _inject_memories(
     if not config or not config.inject_memories:
         return messages
 
-    if not defaults or not defaults.bank_id:
-        raise ValueError(
+    if not bank_id_override and (not defaults or not defaults.bank_id):
+        raise HindsightError(
             "No bank_id configured. Either call set_defaults(bank_id=...) "
             "or pass hindsight_bank_id=... to the completion call."
         )
@@ -260,9 +266,11 @@ def _inject_memories(
     if not messages:
         return messages
 
-    # Use custom_query if provided, otherwise fall back to the last user message
+    # Resolve query: custom_query arg > defaults.query > last user message
     if custom_query:
         user_query = custom_query
+    elif defaults and defaults.query:
+        user_query = defaults.query
     else:
         user_query = None
         for msg in reversed(messages):
@@ -283,8 +291,8 @@ def _inject_memories(
         if not user_query:
             return messages
 
-    # Use bank_id from defaults
-    bank_id = defaults.bank_id
+    # Use bank_id_override if provided, otherwise fall back to defaults
+    bank_id = bank_id_override or (defaults.bank_id if defaults else None)
 
     # Track debug info
     mode = "reflect" if defaults.use_reflect else "recall"
@@ -294,10 +302,13 @@ def _inject_memories(
     results_count = 0
     memory_context = ""
 
-    # Create fresh client for this operation (closed in finally block)
+    # Create fresh client for this operation (closed in finally block).
+    # Thread api_key explicitly — the hosted backend rejects un-keyed
+    # recall/reflect with 401 even when the retain path of the same package
+    # authenticates fine.
     client = None
     try:
-        client = _get_client(config.hindsight_api_url)
+        client = _get_client(config.hindsight_api_url, config.api_key)
 
         # Use reflect API if use_reflect is enabled
         if defaults.use_reflect:
@@ -331,14 +342,7 @@ def _inject_memories(
                     include=reflect_include_options.ReflectIncludeOptions(facts={}),
                     **reflect_kwargs,
                 )
-                import asyncio
-
-                try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                result = loop.run_until_complete(client._api.reflect(bank_id, request_obj))
+                result = run_sync(client._api.reflect(bank_id, request_obj))
                 # Extract facts from based_on
                 if hasattr(result, "based_on") and result.based_on:
                     reflect_facts = [
@@ -445,23 +449,41 @@ def _inject_memories(
                 "The following information from memory may be relevant:\n\n" + "\n".join(memory_lines)
             )
 
-        # Inject into messages
+        # Inject into messages based on injection_mode
         updated_messages = list(messages)
+        injection_mode = defaults.injection_mode if defaults else MemoryInjectionMode.SYSTEM_MESSAGE
 
-        # Find existing system message or create new one
-        found_system = False
-        for i, msg in enumerate(updated_messages):
-            if msg.get("role") == "system":
-                existing_content = msg.get("content", "")
-                updated_messages[i] = {
-                    **msg,
-                    "content": f"{existing_content}\n\n{memory_context}",
-                }
-                found_system = True
-                break
+        if injection_mode == MemoryInjectionMode.PREPEND_USER:
+            # Prepend memory context to the last user message
+            for i in range(len(updated_messages) - 1, -1, -1):
+                if updated_messages[i].get("role") == "user":
+                    existing_content = updated_messages[i].get("content", "")
+                    if isinstance(existing_content, str):
+                        updated_messages[i] = {
+                            **updated_messages[i],
+                            "content": f"{memory_context}\n\n{existing_content}",
+                        }
+                    elif isinstance(existing_content, list):
+                        updated_messages[i] = {
+                            **updated_messages[i],
+                            "content": [{"type": "text", "text": memory_context}] + existing_content,
+                        }
+                    break
+        else:
+            # SYSTEM_MESSAGE mode (default): add to/create system message
+            found_system = False
+            for i, msg in enumerate(updated_messages):
+                if msg.get("role") == "system":
+                    existing_content = msg.get("content", "")
+                    updated_messages[i] = {
+                        **msg,
+                        "content": f"{existing_content}\n\n{memory_context}",
+                    }
+                    found_system = True
+                    break
 
-        if not found_system:
-            updated_messages.insert(0, {"role": "system", "content": memory_context})
+            if not found_system:
+                updated_messages.insert(0, {"role": "system", "content": memory_context})
 
         # Store debug info when verbose
         if config.verbose:
@@ -519,6 +541,19 @@ def _inject_memories(
                 pass
 
 
+def _is_model_excluded(model: Optional[str], config) -> bool:
+    """Return True if the model matches any configured excluded_models glob."""
+    if not model or not config or not config.excluded_models:
+        return False
+    import fnmatch as _fnmatch
+
+    model_lower = model.lower()
+    for pattern in config.excluded_models:
+        if _fnmatch.fnmatch(model_lower, pattern.lower()):
+            return True
+    return False
+
+
 def _wrapped_completion(*args, **kwargs):
     """Wrapper for litellm.completion that handles memory injection and storage.
 
@@ -529,9 +564,10 @@ def _wrapped_completion(*args, **kwargs):
     """
     config = get_config()
 
-    # Extract hindsight-specific kwargs
+    # Extract hindsight-specific kwargs (must be popped before calling LiteLLM)
     custom_query = kwargs.pop("hindsight_query", None)
     custom_reflect_context = kwargs.pop("hindsight_reflect_context", None)
+    bank_id_override = kwargs.pop("hindsight_bank_id", None)
 
     # Extract messages from kwargs or args
     messages = kwargs.get("messages")
@@ -542,6 +578,9 @@ def _wrapped_completion(*args, **kwargs):
     if model is None and len(args) > 0:
         model = args[0]
 
+    if _is_model_excluded(model, config):
+        return _original_completion(*args, **kwargs)
+
     # Step 1: Inject memories (raises HindsightError on failure)
     if config and config.inject_memories and messages:
         try:
@@ -549,6 +588,7 @@ def _wrapped_completion(*args, **kwargs):
                 messages,
                 custom_query=custom_query,
                 custom_reflect_context=custom_reflect_context,
+                bank_id_override=bank_id_override,
             )
             kwargs["messages"] = injected_messages
         except Exception as e:
@@ -562,8 +602,10 @@ def _wrapped_completion(*args, **kwargs):
         final_messages = kwargs.get("messages", messages)
         if final_messages:
             if _is_streaming_response(response):
-                return _LiteLLMStreamWrapper(response, final_messages, model or "unknown")
-            _store_conversation(final_messages, response, model or "unknown")
+                return _LiteLLMStreamWrapper(
+                    response, final_messages, model or "unknown", bank_id_override=bank_id_override
+                )
+            _store_conversation(final_messages, response, model or "unknown", bank_id_override=bank_id_override)
 
     return response
 
@@ -578,9 +620,10 @@ async def _wrapped_acompletion(*args, **kwargs):
     """
     config = get_config()
 
-    # Extract hindsight-specific kwargs
+    # Extract hindsight-specific kwargs (must be popped before calling LiteLLM)
     custom_query = kwargs.pop("hindsight_query", None)
     custom_reflect_context = kwargs.pop("hindsight_reflect_context", None)
+    bank_id_override = kwargs.pop("hindsight_bank_id", None)
 
     # Extract messages from kwargs or args
     messages = kwargs.get("messages")
@@ -591,6 +634,9 @@ async def _wrapped_acompletion(*args, **kwargs):
     if model is None and len(args) > 0:
         model = args[0]
 
+    if _is_model_excluded(model, config):
+        return await _original_acompletion(*args, **kwargs)
+
     # Step 1: Inject memories (raises HindsightError on failure)
     if config and config.inject_memories and messages:
         try:
@@ -598,6 +644,7 @@ async def _wrapped_acompletion(*args, **kwargs):
                 messages,
                 custom_query=custom_query,
                 custom_reflect_context=custom_reflect_context,
+                bank_id_override=bank_id_override,
             )
             kwargs["messages"] = injected_messages
         except Exception as e:
@@ -611,8 +658,10 @@ async def _wrapped_acompletion(*args, **kwargs):
         final_messages = kwargs.get("messages", messages)
         if final_messages:
             if _is_streaming_response(response):
-                return _LiteLLMAsyncStreamWrapper(response, final_messages, model or "unknown")
-            _store_conversation(final_messages, response, model or "unknown")
+                return _LiteLLMAsyncStreamWrapper(
+                    response, final_messages, model or "unknown", bank_id_override=bank_id_override
+                )
+            _store_conversation(final_messages, response, model or "unknown", bank_id_override=bank_id_override)
 
     return response
 
@@ -629,13 +678,18 @@ def enable() -> None:
     memory injection fails (when inject_memories=True) or storage fails
     (when store_conversations=True), the error will propagate to your code.
 
+    NOTE: enable() and HindsightCallback are mutually exclusive injection paths.
+    Do not register HindsightCallback in litellm.callbacks while enable() is
+    active — memories will be injected twice (once by the monkeypatch, once by
+    the callback running inside the original litellm.completion).
+
     Must be called after configure() and set_defaults(bank_id=...).
 
     Example:
         >>> from hindsight_litellm import configure, set_defaults, enable, HindsightError
         >>> import litellm
         >>>
-        >>> configure(hindsight_api_url="http://localhost:8888")
+        >>> configure()
         >>> set_defaults(bank_id="my-agent")
         >>> enable()
         >>>
@@ -653,28 +707,56 @@ def enable() -> None:
     """
     global _enabled, _original_completion, _original_acompletion
 
-    if _enabled:
-        return  # Already enabled
+    with _enabled_lock:
+        if _enabled:
+            return  # Already enabled
 
-    config = get_config()
-    defaults = get_defaults()
+        config = get_config()
+        defaults = get_defaults()
 
-    if not config:
-        raise RuntimeError("Hindsight not configured. Call configure() before enable().")
+        if not config:
+            raise RuntimeError("Hindsight not configured. Call configure() before enable().")
 
-    if not defaults or not defaults.bank_id:
-        raise RuntimeError("Hindsight bank_id not set. Call set_defaults(bank_id=...) before enable().")
+        if not defaults or not defaults.bank_id:
+            raise RuntimeError("Hindsight bank_id not set. Call set_defaults(bank_id=...) before enable().")
 
-    # Store original functions and monkeypatch for memory injection + storage
-    _original_completion = litellm.completion
-    _original_acompletion = litellm.acompletion
-    litellm.completion = _wrapped_completion
-    litellm.acompletion = _wrapped_acompletion
+        # Own this thread's event loop now, before the first patched
+        # completion drives the client, so the client's internal
+        # get_event_loop() reuses our managed loop instead of auto-creating one.
+        ensure_loop()
 
-    _enabled = True
+        # Guard against the double-injection footgun: if any HindsightCallback
+        # is already registered in litellm.callbacks, the request would flow
+        # through both the monkeypatch AND the callback, injecting memories
+        # twice.  Warn loudly so the user fixes their setup.
+        try:
+            registered = [cb for cb in (getattr(litellm, "callbacks", []) or []) if isinstance(cb, HindsightCallback)]
+            if registered:
+                import warnings as _warnings
 
-    if config.verbose:
-        print(f"Hindsight memory enabled for bank: {defaults.bank_id}")
+                _warnings.warn(
+                    "enable() detected an existing HindsightCallback in "
+                    "litellm.callbacks. enable() and HindsightCallback are "
+                    "mutually exclusive — memories will be injected twice. "
+                    "Remove the callback from litellm.callbacks before "
+                    "calling enable().",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+        except Exception:
+            pass
+
+        # Store original functions and monkeypatch for memory injection + storage
+        _original_completion = litellm.completion
+        _original_acompletion = litellm.acompletion
+        litellm.completion = _wrapped_completion
+        litellm.acompletion = _wrapped_acompletion
+
+        _enabled = True
+
+    if get_config() and get_config().verbose:
+        defaults = get_defaults()
+        print(f"Hindsight memory enabled for bank: {defaults.bank_id if defaults else 'unknown'}")
 
 
 def disable() -> None:
@@ -689,21 +771,22 @@ def disable() -> None:
     """
     global _enabled, _original_completion, _original_acompletion
 
-    if not _enabled:
-        return  # Already disabled
+    with _enabled_lock:
+        if not _enabled:
+            return  # Already disabled
 
-    # Restore original functions
-    if _original_completion is not None:
-        litellm.completion = _original_completion
-        _original_completion = None
-    if _original_acompletion is not None:
-        litellm.acompletion = _original_acompletion
-        _original_acompletion = None
+        # Restore original functions
+        if _original_completion is not None:
+            litellm.completion = _original_completion
+            _original_completion = None
+        if _original_acompletion is not None:
+            litellm.acompletion = _original_acompletion
+            _original_acompletion = None
 
-    # Close cached HTTP client to avoid "Unclosed client session" warnings
-    _close_client()
+        # Close cached HTTP client to avoid "Unclosed client session" warnings
+        _close_client()
 
-    _enabled = False
+        _enabled = False
 
     config = get_config()
     if config and config.verbose:
@@ -794,10 +877,11 @@ def _format_messages_for_storage(messages: List[dict]) -> List[str]:
 class _LiteLLMStreamWrapper:
     """Wraps a LiteLLM sync streaming response to collect chunks and store conversation on completion."""
 
-    def __init__(self, stream, messages: List[dict], model: str):
+    def __init__(self, stream, messages: List[dict], model: str, bank_id_override: Optional[str] = None):
         self._stream = stream
         self._messages = messages
         self._model = model
+        self._bank_id_override = bank_id_override
         self._collected_content: List[str] = []
         self._finished = False
 
@@ -839,7 +923,7 @@ class _LiteLLMStreamWrapper:
         items.append(f"ASSISTANT: {assistant_output}")
         conversation_text = "\n\n".join(items)
         if conversation_text:
-            _store_conversation_from_text(conversation_text, self._model)
+            _store_conversation_from_text(conversation_text, self._model, bank_id_override=self._bank_id_override)
 
     def close(self):
         self._store_if_needed()
@@ -853,10 +937,11 @@ class _LiteLLMStreamWrapper:
 class _LiteLLMAsyncStreamWrapper:
     """Wraps a LiteLLM async streaming response to collect chunks and store conversation on completion."""
 
-    def __init__(self, stream, messages: List[dict], model: str):
+    def __init__(self, stream, messages: List[dict], model: str, bank_id_override: Optional[str] = None):
         self._stream = stream
         self._messages = messages
         self._model = model
+        self._bank_id_override = bank_id_override
         self._collected_content: List[str] = []
         self._finished = False
 
@@ -898,7 +983,7 @@ class _LiteLLMAsyncStreamWrapper:
         items.append(f"ASSISTANT: {assistant_output}")
         conversation_text = "\n\n".join(items)
         if conversation_text:
-            _store_conversation_from_text(conversation_text, self._model)
+            _store_conversation_from_text(conversation_text, self._model, bank_id_override=self._bank_id_override)
 
     async def aclose(self):
         self._store_if_needed()
@@ -956,8 +1041,6 @@ def _get_existing_document_content(bank_id: str, document_id: str, verbose: bool
     Returns:
         The existing document's original_text, or None if not found.
     """
-    import asyncio
-
     config = get_config()
     if not config:
         return None
@@ -984,13 +1067,7 @@ def _get_existing_document_content(bank_id: str, document_id: str, verbose: bool
             finally:
                 await api_client.close()
 
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        original_text = loop.run_until_complete(_fetch())
+        original_text = run_sync(_fetch())
         if original_text and verbose:
             _storage_logger.debug(f"Fetched existing document: {document_id}")
         return original_text
@@ -1068,7 +1145,7 @@ def get_pending_storage_errors() -> List[Exception]:
         return errors
 
 
-def _store_conversation_from_text(conversation_text: str, model: str) -> None:
+def _store_conversation_from_text(conversation_text: str, model: str, bank_id_override: Optional[str] = None) -> None:
     """Store pre-formatted conversation text to Hindsight.
 
     Used by stream wrappers which collect chunks and format the conversation themselves.
@@ -1079,7 +1156,8 @@ def _store_conversation_from_text(conversation_text: str, model: str) -> None:
 
     if not config or not config.store_conversations:
         return
-    if not defaults or not defaults.bank_id:
+    effective_bank_id = bank_id_override or (defaults.bank_id if defaults else None)
+    if not effective_bank_id:
         _storage_logger.warning("No bank_id configured for storage. Call set_defaults(bank_id=...).")
         return
     if not conversation_text:
@@ -1088,23 +1166,23 @@ def _store_conversation_from_text(conversation_text: str, model: str) -> None:
     if config.sync_storage:
         try:
             content_to_store = conversation_text
-            if defaults.effective_document_id:
-                existing_content = _get_existing_document_content(
-                    defaults.bank_id, defaults.effective_document_id, config.verbose
-                )
+            effective_doc_id = defaults.effective_document_id if defaults else None
+            if effective_doc_id:
+                existing_content = _get_existing_document_content(effective_bank_id, effective_doc_id, config.verbose)
                 if existing_content:
                     content_to_store = f"{existing_content}\n\n{conversation_text}"
 
             retain(
                 content=content_to_store,
-                bank_id=defaults.bank_id,
+                bank_id=effective_bank_id,
                 context=f"conversation:litellm:{model}",
-                document_id=defaults.effective_document_id,
-                tags=defaults.tags,
+                document_id=effective_doc_id,
+                tags=defaults.tags if defaults else None,
                 metadata={"source": "litellm", "model": model},
+                sync=True,
             )
             if config.verbose:
-                _storage_logger.info(f"Stored streamed conversation to bank: {defaults.bank_id}")
+                _storage_logger.info(f"Stored streamed conversation to bank: {effective_bank_id}")
         except Exception as e:
             raise HindsightError(f"Failed to store conversation: {e}") from e
         return
@@ -1113,9 +1191,9 @@ def _store_conversation_from_text(conversation_text: str, model: str) -> None:
         target=_store_conversation_sync,
         args=(
             conversation_text,
-            defaults.bank_id,
-            defaults.effective_document_id,
-            defaults.tags,
+            effective_bank_id,
+            defaults.effective_document_id if defaults else None,
+            defaults.tags if defaults else None,
             model,
             config.verbose,
         ),
@@ -1128,6 +1206,7 @@ def _store_conversation(
     messages: List[dict],
     response,
     model: str,
+    bank_id_override: Optional[str] = None,
 ) -> None:
     """Store conversation to Hindsight.
 
@@ -1141,7 +1220,8 @@ def _store_conversation(
     if not config or not config.store_conversations:
         return
 
-    if not defaults or not defaults.bank_id:
+    effective_bank_id = bank_id_override or (defaults.bank_id if defaults else None)
+    if not effective_bank_id:
         _storage_logger.warning("No bank_id configured for storage. Call set_defaults(bank_id=...).")
         return
 
@@ -1151,30 +1231,30 @@ def _store_conversation(
     if not conversation_text:
         return
 
+    effective_doc_id = defaults.effective_document_id if defaults else None
+
     # Sync mode: run directly and raise errors
     if config.sync_storage:
         try:
-            # If document_id is set, fetch existing content and append
             content_to_store = conversation_text
-            if defaults.effective_document_id:
-                existing_content = _get_existing_document_content(
-                    defaults.bank_id, defaults.effective_document_id, config.verbose
-                )
+            if effective_doc_id:
+                existing_content = _get_existing_document_content(effective_bank_id, effective_doc_id, config.verbose)
                 if existing_content:
                     content_to_store = f"{existing_content}\n\n{conversation_text}"
                     if config.verbose:
-                        _storage_logger.debug(f"Appending to existing document: {defaults.effective_document_id}")
+                        _storage_logger.debug(f"Appending to existing document: {effective_doc_id}")
 
             retain(
                 content=content_to_store,
-                bank_id=defaults.bank_id,
+                bank_id=effective_bank_id,
                 context=f"conversation:litellm:{model}",
-                document_id=defaults.effective_document_id,
-                tags=defaults.tags,
+                document_id=effective_doc_id,
+                tags=defaults.tags if defaults else None,
                 metadata={"source": "litellm", "model": model},
+                sync=True,
             )
             if config.verbose:
-                _storage_logger.info(f"Stored conversation to bank: {defaults.bank_id}")
+                _storage_logger.info(f"Stored conversation to bank: {effective_bank_id}")
         except Exception as e:
             raise HindsightError(f"Failed to store conversation: {e}") from e
         return
@@ -1184,9 +1264,9 @@ def _store_conversation(
         target=_store_conversation_sync,
         args=(
             conversation_text,
-            defaults.bank_id,
-            defaults.effective_document_id,
-            defaults.tags,
+            effective_bank_id,
+            effective_doc_id,
+            defaults.tags if defaults else None,
             model,
             config.verbose,
         ),
@@ -1245,9 +1325,10 @@ def completion(*args, **kwargs):
     """
     config = get_config()
 
-    # Extract hindsight-specific kwargs
+    # Extract hindsight-specific kwargs (must be popped before calling LiteLLM)
     custom_query = kwargs.pop("hindsight_query", None)
     custom_reflect_context = kwargs.pop("hindsight_reflect_context", None)
+    bank_id_override = kwargs.pop("hindsight_bank_id", None)
 
     # Extract messages from kwargs or args
     messages = kwargs.get("messages")
@@ -1265,6 +1346,7 @@ def completion(*args, **kwargs):
                 messages,
                 custom_query=custom_query,
                 custom_reflect_context=custom_reflect_context,
+                bank_id_override=bank_id_override,
             )
             kwargs["messages"] = injected_messages
         except Exception as e:
@@ -1278,8 +1360,10 @@ def completion(*args, **kwargs):
         final_messages = kwargs.get("messages", messages)
         if final_messages:
             if _is_streaming_response(response):
-                return _LiteLLMStreamWrapper(response, final_messages, model or "unknown")
-            _store_conversation(final_messages, response, model or "unknown")
+                return _LiteLLMStreamWrapper(
+                    response, final_messages, model or "unknown", bank_id_override=bank_id_override
+                )
+            _store_conversation(final_messages, response, model or "unknown", bank_id_override=bank_id_override)
 
     return response
 
@@ -1323,9 +1407,10 @@ async def acompletion(*args, **kwargs):
     """
     config = get_config()
 
-    # Extract hindsight-specific kwargs
+    # Extract hindsight-specific kwargs (must be popped before calling LiteLLM)
     custom_query = kwargs.pop("hindsight_query", None)
     custom_reflect_context = kwargs.pop("hindsight_reflect_context", None)
+    bank_id_override = kwargs.pop("hindsight_bank_id", None)
 
     # Extract messages from kwargs or args
     messages = kwargs.get("messages")
@@ -1343,6 +1428,7 @@ async def acompletion(*args, **kwargs):
                 messages,
                 custom_query=custom_query,
                 custom_reflect_context=custom_reflect_context,
+                bank_id_override=bank_id_override,
             )
             kwargs["messages"] = injected_messages
         except Exception as e:
@@ -1356,15 +1442,17 @@ async def acompletion(*args, **kwargs):
         final_messages = kwargs.get("messages", messages)
         if final_messages:
             if _is_streaming_response(response):
-                return _LiteLLMAsyncStreamWrapper(response, final_messages, model or "unknown")
-            _store_conversation(final_messages, response, model or "unknown")
+                return _LiteLLMAsyncStreamWrapper(
+                    response, final_messages, model or "unknown", bank_id_override=bank_id_override
+                )
+            _store_conversation(final_messages, response, model or "unknown", bank_id_override=bank_id_override)
 
     return response
 
 
 @contextmanager
 def hindsight_memory(
-    hindsight_api_url: str = "http://localhost:8888",
+    hindsight_api_url: Optional[str] = None,
     bank_id: Optional[str] = None,
     api_key: Optional[str] = None,
     store_conversations: bool = True,
@@ -1375,10 +1463,16 @@ def hindsight_memory(
     budget: str = "mid",
     fact_types: Optional[List[str]] = None,
     document_id: Optional[str] = None,
+    session_id: Optional[str] = None,
     excluded_models: Optional[List[str]] = None,
     verbose: bool = False,
     include_entities: bool = True,
     trace: bool = False,
+    use_reflect: bool = False,
+    reflect_context: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    recall_tags: Optional[List[str]] = None,
+    recall_tags_match: str = "any",
 ):
     """Context manager for temporary Hindsight memory integration.
 
@@ -1387,6 +1481,7 @@ def hindsight_memory(
 
     Args:
         hindsight_api_url: URL of the Hindsight API server
+            (default: https://api.hindsight.vectorize.io)
         bank_id: Memory bank ID for memory operations (required). For multi-user
             support, use different bank_ids per user (e.g., f"user-{user_id}")
         api_key: Optional API key for Hindsight authentication
@@ -1397,11 +1492,17 @@ def hindsight_memory(
         max_memory_tokens: Maximum tokens for memory context
         budget: Budget for memory recall (low, mid, high)
         fact_types: List of fact types to filter (world, experience, opinion, observation)
-        document_id: Optional document ID for grouping conversations
+        document_id: Document ID for grouping conversations (deprecated, use session_id)
+        session_id: Session ID for grouping conversations (upsert behavior)
         excluded_models: List of model patterns to exclude
         verbose: Enable verbose logging
         include_entities: Include entity observations in recall (default True)
         trace: Enable trace info for debugging (default False)
+        use_reflect: Use reflect API instead of recall (default False)
+        reflect_context: Context for reflect reasoning
+        tags: Tags to apply when storing conversations
+        recall_tags: Tags to filter by when recalling memories
+        recall_tags_match: Tag matching mode - any/all/any_strict/all_strict (default "any")
 
     Example:
         >>> from hindsight_litellm import hindsight_memory
@@ -1410,11 +1511,14 @@ def hindsight_memory(
         >>> with hindsight_memory(bank_id="user-123"):
         ...     response = litellm.completion(model="gpt-4", messages=[...])
         >>> # Memory integration automatically disabled after context
+        >>>
+        >>> # With tag scoping
+        >>> with hindsight_memory(bank_id="user-123", tags=["session:abc"], recall_tags=["session:abc"]):
+        ...     response = litellm.completion(model="gpt-4", messages=[...])
     """
     # Save previous state
     was_enabled = is_enabled()
     previous_config = get_config()
-    previous_defaults = get_defaults()
 
     try:
         # Configure and enable
@@ -1430,52 +1534,35 @@ def hindsight_memory(
         set_defaults(
             bank_id=bank_id,
             document_id=document_id,
+            session_id=session_id,
             budget=budget,
             fact_types=fact_types,
             max_memories=max_memories,
             max_memory_tokens=max_memory_tokens,
             include_entities=include_entities,
             trace=trace,
+            use_reflect=use_reflect,
+            reflect_context=reflect_context,
+            tags=tags,
+            recall_tags=recall_tags,
+            recall_tags_match=recall_tags_match,
         )
         enable()
         yield
     finally:
-        # Restore previous state
+        # Atomically restore previous state, bypassing all side effects (warnings,
+        # bank creation, validation) that configure/set_defaults would trigger.
         disable()
-        if previous_config:
-            configure(
-                hindsight_api_url=previous_config.hindsight_api_url,
-                api_key=previous_config.api_key,
-                store_conversations=previous_config.store_conversations,
-                inject_memories=previous_config.inject_memories,
-                injection_mode=previous_config.injection_mode,
-                excluded_models=previous_config.excluded_models,
-                verbose=previous_config.verbose,
-            )
-        if previous_defaults:
-            set_defaults(
-                bank_id=previous_defaults.bank_id,
-                session_id=previous_defaults.session_id,
-                document_id=previous_defaults.document_id,
-                budget=previous_defaults.budget,
-                fact_types=previous_defaults.fact_types,
-                max_memories=previous_defaults.max_memories,
-                max_memory_tokens=previous_defaults.max_memory_tokens,
-                use_reflect=previous_defaults.use_reflect,
-                reflect_include_facts=previous_defaults.reflect_include_facts,
-                include_entities=previous_defaults.include_entities,
-                trace=previous_defaults.trace,
-            )
-            if was_enabled:
-                enable()
-        else:
-            reset_config()
+        _restore_config(previous_config)
+        if was_enabled and previous_config is not None:
+            enable()
 
 
 __all__ = [
     # Main API
     "configure",
     "set_defaults",
+    "set_bank_mission",
     "enable",
     "disable",
     "is_enabled",

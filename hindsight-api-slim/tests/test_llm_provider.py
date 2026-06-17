@@ -26,6 +26,7 @@ pytestmark = pytest.mark.hs_llm_mat
 _PROVIDER = os.environ.get("HINDSIGHT_API_LLM_PROVIDER", "")
 _MODEL = os.environ.get("HINDSIGHT_API_LLM_MODEL", "")
 
+
 def _get_api_key() -> str:
     """Get API key from HINDSIGHT_API_LLM_API_KEY (CI) or provider-specific env var."""
     key = os.environ.get("HINDSIGHT_API_LLM_API_KEY", "")

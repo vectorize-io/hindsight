@@ -8,7 +8,13 @@ interface Features {
   mcp: boolean;
   worker: boolean;
   bank_config_api: boolean;
+  bank_llm_health: boolean;
   access_key_auth: boolean;
+  document_export_api: boolean;
+  document_import_api: boolean;
+  audit_log: boolean;
+  llm_trace: boolean;
+  store_document_text: boolean;
 }
 
 interface FeaturesContextType {
@@ -22,7 +28,15 @@ const defaultFeatures: Features = {
   mcp: false,
   worker: false,
   bank_config_api: false,
+  bank_llm_health: false,
   access_key_auth: false,
+  document_export_api: false,
+  document_import_api: false,
+  audit_log: false,
+  llm_trace: false,
+  // Default to true so the "text not stored" warning only appears when the
+  // server explicitly reports text storage is disabled (and not on fetch errors).
+  store_document_text: true,
 };
 
 const FeaturesContext = createContext<FeaturesContextType | undefined>(undefined);

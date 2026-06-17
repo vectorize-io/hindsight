@@ -8,8 +8,6 @@ columns can't appear in GROUP BY).
 import json
 import uuid as uuid_mod
 from datetime import UTC, datetime
-from typing import Any
-from uuid import UUID
 
 from .base import DatabaseConnection
 from .ops import DataAccessOps, TagListingParts
@@ -45,6 +43,37 @@ class OracleOps(DataAccessOps):
                 content_hashes,
             ],
             column_types=["text[]", "text[]", "text[]", "text[]", "integer[]", "text[]"],
+        )
+
+    async def lock_document_for_write(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        doc_id: str,
+        bank_id: str,
+    ) -> str | None:
+        # Oracle can't express the PG "INSERT ... ON CONFLICT DO UPDATE ...
+        # RETURNING" upsert in one statement — MERGE doesn't support RETURNING,
+        # so the single-statement form rewrites to a MERGE that returns no rows
+        # (DPY-1003). Split it into two statements instead:
+        #   1. Idempotent insert that silently skips an existing row. The
+        #      IGNORE_ROW_ON_DUPKEY_INDEX hint suppresses ORA-00001 server-side;
+        #      a concurrent uncommitted insert of the same key blocks here until
+        #      the other writer commits, so writers still serialize.
+        #   2. SELECT ... FOR UPDATE to take the row lock and read the hash
+        #      ('__pending__' for a row we just inserted, the stored hash for an
+        #      existing one).
+        await conn.execute(
+            f"INSERT /*+ IGNORE_ROW_ON_DUPKEY_INDEX({table}, pk_documents) */ "
+            f"INTO {table} (id, bank_id, original_text, content_hash) "
+            f"VALUES ($1, $2, '', '__pending__')",
+            doc_id,
+            bank_id,
+        )
+        return await conn.fetchval(
+            f"SELECT content_hash FROM {table} WHERE id = $1 AND bank_id = $2 FOR UPDATE",
+            doc_id,
+            bank_id,
         )
 
     async def insert_facts_batch(

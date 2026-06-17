@@ -50,7 +50,10 @@ def _make_config(**overrides) -> HindsightConfig:
         ),
         (
             "openrouter",
-            {"reranker_openrouter_api_key": "k"},
+            {
+                "reranker_openrouter_api_key": "k",
+                "reranker_openrouter_base_url": "https://openrouter.ai/api/v1/rerank",
+            },
             "reranker_openrouter_timeout",
             ("_http_client", "timeout"),
         ),

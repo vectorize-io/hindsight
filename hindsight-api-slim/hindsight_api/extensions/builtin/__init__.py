@@ -13,10 +13,12 @@ Example usage:
     HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.supabase_tenant:SupabaseTenantExtension
 """
 
+from hindsight_api.extensions.builtin.memory_defense_regex import MemoryDefenseRegexExtension
 from hindsight_api.extensions.builtin.supabase_tenant import SupabaseTenantExtension
 from hindsight_api.extensions.builtin.tenant import ApiKeyTenantExtension
 
 __all__ = [
     "ApiKeyTenantExtension",
+    "MemoryDefenseRegexExtension",
     "SupabaseTenantExtension",
 ]

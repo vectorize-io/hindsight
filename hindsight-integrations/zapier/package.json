@@ -1,0 +1,37 @@
+{
+  "name": "@vectorize-io/zapier-hindsight",
+  "version": "1.0.0",
+  "description": "Hindsight long-term memory for Zapier — retain, recall, reflect, and memory-event triggers",
+  "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vectorize-io/hindsight.git",
+    "directory": "hindsight-integrations/zapier"
+  },
+  "homepage": "https://hindsight.vectorize.io",
+  "author": {
+    "name": "Vectorize",
+    "email": "support@vectorize.io"
+  },
+  "main": "index.js",
+  "scripts": {
+    "test": "mocha --recursive -t 10000 test",
+    "validate": "zapier-platform validate",
+    "build": "zapier-platform build",
+    "push": "zapier-platform push"
+  },
+  "dependencies": {
+    "zapier-platform-core": "19.0.0"
+  },
+  "devDependencies": {
+    "mocha": "^10.7.0",
+    "nock": "^13.5.0",
+    "should": "^13.2.3",
+    "zapier-platform-cli": "^19.0.0"
+  },
+  "engines": {
+    "node": ">=20",
+    "npm": ">=9"
+  }
+}

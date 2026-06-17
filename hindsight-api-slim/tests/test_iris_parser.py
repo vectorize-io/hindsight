@@ -68,5 +68,3 @@ async def test_iris_parser_converts_pdf(iris_parser: IrisParser):
 async def test_iris_parser_name(iris_parser: IrisParser):
     """IrisParser.name() should return 'iris'."""
     assert iris_parser.name() == "iris"
-
-

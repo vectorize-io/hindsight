@@ -37,33 +37,35 @@ def _pg_upgrade() -> None:
     schema = _pg_schema_prefix()
 
     # Drop the partial covering index first so the bulk DELETE doesn't churn it.
-    # CREATE/DROP INDEX CONCURRENTLY must run outside a transaction block.
-    op.execute("COMMIT")
-    op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}idx_memory_links_entity_covering")
+    # DROP INDEX CONCURRENTLY, and the DO block's per-batch COMMIT, both require
+    # running outside Alembic's migration transaction — an autocommit_block
+    # commits it and switches the connection to autocommit for the duration.
+    with op.get_context().autocommit_block():
+        op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}idx_memory_links_entity_covering")
 
-    # Delete entity rows. Chunked to keep individual transactions small on
-    # large banks (the perf-medium bench had ~345k entity rows; production
-    # banks can be much larger).
-    op.execute(
-        f"""
-        DO $$
-        DECLARE
-            deleted INTEGER;
-        BEGIN
-            LOOP
-                DELETE FROM {schema}memory_links
-                WHERE ctid IN (
-                    SELECT ctid FROM {schema}memory_links
-                    WHERE link_type = 'entity'
-                    LIMIT 50000
-                );
-                GET DIAGNOSTICS deleted = ROW_COUNT;
-                EXIT WHEN deleted = 0;
-                COMMIT;
-            END LOOP;
-        END$$;
-        """
-    )
+        # Delete entity rows. Chunked to keep individual transactions small on
+        # large banks (the perf-medium bench had ~345k entity rows; production
+        # banks can be much larger).
+        op.execute(
+            f"""
+            DO $$
+            DECLARE
+                deleted INTEGER;
+            BEGIN
+                LOOP
+                    DELETE FROM {schema}memory_links
+                    WHERE ctid IN (
+                        SELECT ctid FROM {schema}memory_links
+                        WHERE link_type = 'entity'
+                        LIMIT 50000
+                    );
+                    GET DIAGNOSTICS deleted = ROW_COUNT;
+                    EXIT WHEN deleted = 0;
+                    COMMIT;
+                END LOOP;
+            END$$;
+            """
+        )
 
 
 def _pg_downgrade() -> None:

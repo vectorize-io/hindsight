@@ -155,6 +155,24 @@ def render_llm_providers_grid(_match):
 
 content = re.sub(r'<LLMProvidersGrid\s*/>', render_llm_providers_grid, content)
 
+# Render <LLMProviderCapabilities /> as a markdown capability table, sourced from
+# the same single-source-of-truth provider list (batchApi / promptCaching flags).
+def render_llm_capabilities_table(_match):
+    providers = json.loads(llm_providers_json.read_text())
+    rows = [
+        "| Provider | Batch API | Explicit prompt caching |",
+        "|----------|:---------:|:-----------------------:|",
+    ]
+    for p in providers:
+        if not p.get("id"):
+            continue
+        batch = "✅" if p.get("batchApi") else "—"
+        cache = "✅" if p.get("promptCaching") else "—"
+        rows.append(f"| {p['label']} (`{p['id']}`) | {batch} | {cache} |")
+    return "\n".join(rows)
+
+content = re.sub(r'<LLMProviderCapabilities\s*/>', render_llm_capabilities_table, content)
+
 # Convert <Tabs> to markdown sections
 # Replace <Tabs> ... </Tabs> with markdown headers
 content = re.sub(r'<Tabs>\s*', '', content)
@@ -164,10 +182,24 @@ content = re.sub(r'</Tabs>\s*', '', content)
 content = re.sub(r'<TabItem value="[^"]*" label="([^"]+)">', r'### \1\n', content)
 content = re.sub(r'</TabItem>', '', content)
 
-# Convert :::tip, :::warning, :::note to markdown blockquotes
-content = re.sub(r':::tip (.+?)\n', r'> **💡 \1**\n> \n', content)
-content = re.sub(r':::warning (.+?)\n', r'> **⚠️ \1**\n> \n', content)
-content = re.sub(r':::note (.+?)\n', r'> **📝 \1**\n> \n', content)
+# Convert Docusaurus admonitions (:::tip/:::note/:::warning/:::info/:::caution,
+# with or without an inline title) to markdown blockquotes. The title is
+# optional so title-less openers like a bare ':::note' are handled too, and
+# every supported keyword is covered so none leaks through as raw markdown.
+_ADMONITION_EMOJI = {
+    'tip': '💡',
+    'note': '📝',
+    'info': 'ℹ️',
+    'warning': '⚠️',
+    'caution': '🚨',
+}
+def _convert_admonition(m):
+    kind = m.group(1)
+    title = m.group(2)
+    emoji = _ADMONITION_EMOJI[kind]
+    heading = f'{emoji} {title}' if title else f'{emoji} {kind.capitalize()}'
+    return f'> **{heading}**\n> \n'
+content = re.sub(r':::(tip|note|warning|info|caution)(?: (.+?))?\n', _convert_admonition, content)
 content = re.sub(r':::\s*\n', '', content)
 
 # Clean up extra blank lines

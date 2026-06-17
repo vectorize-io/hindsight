@@ -1,0 +1,19 @@
+name: Hindsight
+version: 0.0.1
+schema: v1
+mcpServers:
+  # Hindsight Cloud (remote HTTP MCP). The bank is the last path segment;
+  # change `my-project` to your bank, and replace the token with your API key.
+  - name: Hindsight
+    type: streamable-http
+    url: https://api.hindsight.vectorize.io/mcp/my-project/
+    requestOptions:
+      headers:
+        Authorization: "Bearer YOUR_HINDSIGHT_API_KEY"
+
+  # Self-hosted / local alternative. Start a local Hindsight first:
+  #   HINDSIGHT_API_LLM_API_KEY=sk-... uvx --from hindsight-api hindsight-local-mcp
+  # then point Continue at its open MCP endpoint (no auth needed by default):
+  # - name: Hindsight (local)
+  #   type: streamable-http
+  #   url: http://localhost:8888/mcp/my-project/

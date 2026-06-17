@@ -18,10 +18,14 @@ def setup_test_env():
     # Save original environment values
     env_vars_to_save = [
         "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS",
+        "HINDSIGHT_API_CONSOLIDATION_MAX_COMPLETION_TOKENS",
         "HINDSIGHT_API_RETAIN_CHUNK_SIZE",
+        "HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE",
         "HINDSIGHT_API_LLM_PROVIDER",
         "HINDSIGHT_API_LLM_MODEL",
         "HINDSIGHT_API_LLM_REASONING_EFFORT",
+        "HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER",
+        "HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY",
         "HINDSIGHT_API_DATABASE_URL",
         "HINDSIGHT_API_MIGRATION_DATABASE_URL",
     ]
@@ -101,6 +105,96 @@ def test_valid_retain_config_succeeds():
     config = HindsightConfig.from_env()
     assert config.retain_max_completion_tokens == 64000
     assert config.retain_chunk_size == 3000
+    assert config.retain_structured_chunk_size is None
+
+
+def test_retain_structured_chunk_size_reads_from_env():
+    """Structured JSONL/conversation units can have an explicit character cap."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"] = "64000"
+    os.environ["HINDSIGHT_API_RETAIN_CHUNK_SIZE"] = "3000"
+    os.environ["HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE"] = "9000"
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+
+    config = HindsightConfig.from_env()
+    assert config.retain_structured_chunk_size == 9000
+
+
+def test_retain_structured_chunk_size_can_be_less_than_chunk_size():
+    """Structured-chunk cap can be smaller than the retain chunk target."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"] = "64000"
+    os.environ["HINDSIGHT_API_RETAIN_CHUNK_SIZE"] = "3000"
+    os.environ["HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE"] = "2000"
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+
+    config = HindsightConfig.from_env()
+    assert config.retain_chunk_size == 3000
+    assert config.retain_structured_chunk_size == 2000
+
+
+def test_retain_strategy_structured_chunk_size_validation():
+    """Retain strategies allow structured-chunk caps below chunk size."""
+    from hindsight_api.config import HindsightConfig
+    from hindsight_api.config_resolver import apply_strategy
+
+    os.environ["HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"] = "64000"
+    os.environ["HINDSIGHT_API_RETAIN_CHUNK_SIZE"] = "3000"
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+
+    config = HindsightConfig.from_env()
+    config.retain_strategies = {
+        "jsonl": {
+            "retain_structured_chunk_size": 2000,
+        }
+    }
+
+    resolved = apply_strategy(config, "jsonl")
+    assert resolved.retain_structured_chunk_size == 2000
+
+
+def test_semantic_min_similarity_reads_from_env():
+    """Semantic retrieval min similarity can be configured at the server level."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY"] = "0.58"
+
+    config = HindsightConfig.from_env()
+    assert config.semantic_min_similarity == 0.58
+
+
+def test_semantic_min_similarity_must_be_between_zero_and_one():
+    """Invalid semantic min similarity fails fast during configuration loading."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY"] = "1.5"
+
+    with pytest.raises(ValueError, match="semantic_min_similarity"):
+        HindsightConfig.from_env()
+
+
+def test_consolidation_max_completion_tokens_defaults_to_unset():
+    """By default consolidation sends no explicit output budget (backwards compatible)."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+    os.environ.pop("HINDSIGHT_API_CONSOLIDATION_MAX_COMPLETION_TOKENS", None)
+
+    config = HindsightConfig.from_env()
+    assert config.consolidation_max_completion_tokens is None
+
+
+def test_consolidation_max_completion_tokens_env_override():
+    """HINDSIGHT_API_CONSOLIDATION_MAX_COMPLETION_TOKENS controls consolidation LLM output budget."""
+    from hindsight_api.config import HindsightConfig
+
+    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
+    os.environ["HINDSIGHT_API_CONSOLIDATION_MAX_COMPLETION_TOKENS"] = "8192"
+
+    config = HindsightConfig.from_env()
+    assert config.consolidation_max_completion_tokens == 8192
 
 
 def test_log_config_masks_database_urls(caplog):
@@ -376,3 +470,113 @@ def test_llm_reasoning_effort_loaded_from_env(monkeypatch):
 
     config = HindsightConfig.from_env()
     assert config.llm_reasoning_effort == "xhigh"
+
+
+# ---------------------------------------------------------------------------
+# Recall candidate gating (BM25 score floor + per-source cap) — issue #1707
+# ---------------------------------------------------------------------------
+
+
+def test_bm25_min_score_defaults_to_zero(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.delenv("HINDSIGHT_API_BM25_MIN_SCORE", raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.bm25_min_score == 0.0
+
+
+def test_bm25_min_score_loaded_from_env(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_BM25_MIN_SCORE", "1.5")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.bm25_min_score == 1.5
+
+
+def test_recall_max_candidates_per_source_defaults_to_disabled(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.delenv("HINDSIGHT_API_RECALL_MAX_CANDIDATES_PER_SOURCE", raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.recall_max_candidates_per_source == 0
+
+
+def test_recall_max_candidates_per_source_loaded_from_env(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_RECALL_MAX_CANDIDATES_PER_SOURCE", "150")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.recall_max_candidates_per_source == 150
+
+
+# ---------------------------------------------------------------------------
+# Bedrock service tier (HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER)
+# ---------------------------------------------------------------------------
+
+
+def test_bedrock_service_tier_defaults_to_none(monkeypatch):
+    """Bedrock service tier defaults to None (standard tier) when unset."""
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.delenv("HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER", raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.llm_bedrock_service_tier is None
+
+
+def test_bedrock_service_tier_flex(monkeypatch):
+    """Flex tier (50% cost savings) is accepted."""
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER", "flex")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.llm_bedrock_service_tier == "flex"
+
+
+def test_bedrock_service_tier_priority(monkeypatch):
+    """Priority tier (guaranteed throughput) is accepted."""
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER", "priority")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.llm_bedrock_service_tier == "priority"
+
+
+def test_bedrock_service_tier_reserved(monkeypatch):
+    """Reserved tier (provisioned capacity) is accepted."""
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER", "reserved")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.llm_bedrock_service_tier == "reserved"
+
+
+def test_bedrock_service_tier_rejects_invalid_value(monkeypatch):
+    """ "standard" is not a valid Bedrock service tier and must be rejected."""
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER", "standard")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    with pytest.raises(ValueError) as exc_info:
+        HindsightConfig.from_env()
+
+    error_message = str(exc_info.value)
+    assert "HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER" in error_message
+    assert "standard" in error_message
+    assert "'standard' is not a valid Bedrock service tier" in error_message

@@ -1,14 +1,14 @@
 [
-  {"id": "openai",        "label": "OpenAI",            "iconKey": "openai",             "defaultModel": "gpt-4o-mini"},
+  {"id": "openai",        "label": "OpenAI",            "iconKey": "openai",             "defaultModel": "gpt-4o-mini", "batchApi": true},
   {"id": "anthropic",     "label": "Anthropic",         "iconKey": "anthropic",          "defaultModel": "claude-haiku-4-5-20251001"},
-  {"id": "gemini",        "label": "Google Gemini",     "iconKey": "gemini",             "defaultModel": "gemini-2.5-flash"},
-  {"id": "vertexai",      "label": "Vertex AI",         "iconKey": "gemini",             "defaultModel": "gemini-2.0-flash-001"},
-  {"id": "groq",          "label": "Groq",              "iconKey": "zap",                "defaultModel": "openai/gpt-oss-120b"},
+  {"id": "gemini",        "label": "Google Gemini",     "iconKey": "gemini",             "defaultModel": "gemini-3.5-flash", "batchApi": true, "promptCaching": true},
+  {"id": "vertexai",      "label": "Vertex AI",         "iconKey": "gemini",             "defaultModel": "google/gemini-3.1-flash-lite", "promptCaching": true},
+  {"id": "groq",          "label": "Groq",              "iconKey": "zap",                "defaultModel": "openai/gpt-oss-120b", "batchApi": true},
   {"id": "ollama",        "label": "Ollama",            "iconKey": "ollama",             "defaultModel": "gemma3:12b"},
   {"id": "ollama-cloud",  "label": "Ollama Cloud",      "iconKey": "ollama",             "defaultModel": "gemma3:12b"},
   {"id": "lmstudio",      "label": "LM Studio",         "iconKey": "brain",              "defaultModel": "local-model"},
   {"id": "llamacpp",      "label": "llama.cpp",         "iconKey": "terminal",           "defaultModel": "gemma-4-e2b-it", "defaultModelNote": "auto-downloaded GGUF"},
-  {"id": "minimax",       "label": "MiniMax",           "iconKey": "sparkles",           "defaultModel": "MiniMax-M2.7"},
+  {"id": "minimax",       "label": "MiniMax",           "iconKey": "sparkles",           "defaultModel": "MiniMax-M3"},
   {"id": "deepseek",      "label": "DeepSeek",          "iconKey": "brain",              "defaultModel": "deepseek-v4-flash"},
   {"id": "zai",           "label": "z.ai",              "iconKey": "sparkles",           "defaultModel": "glm-4.5-flash"},
   {"id": "opencode-go",   "label": "opencode-go",       "iconKey": "openai-compatible",  "defaultModel": "deepseek-v4-flash"},
@@ -17,6 +17,8 @@
   {"id": "openai-codex",  "label": "OpenAI Codex",      "iconKey": "openai",             "defaultModel": "gpt-5.4-mini"},
   {"id": "claude-code",   "label": "Claude Code",       "iconKey": "anthropic",          "defaultModel": "claude-sonnet-4-5-20250929"},
   {"id": "bedrock",       "label": "AWS Bedrock",       "iconKey": "cloud",              "defaultModel": "us.amazon.nova-2-lite-v1:0"},
+  {"id": "fireworks",     "label": "Fireworks AI",      "iconKey": "zap",                "defaultModel": "accounts/fireworks/models/llama-v3p1-8b-instruct", "batchApi": true},
+  {"id": "nous",          "label": "Nous Portal",       "iconKey": "openai-compatible",  "defaultModel": "deepseek/deepseek-v4-flash"},
   {"id": "",              "label": "OpenAI Compatible", "iconKey": "openai-compatible"},
   {"id": "litellm",       "label": "LiteLLM (100+)",    "iconKey": "layers",             "defaultModel": "gpt-4o-mini"}
 ]

@@ -25,7 +25,9 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 from alembic.script.revision import ResolutionError
+from alembic.util.exc import CommandError
 from sqlalchemy import Connection, create_engine, text
+from sqlalchemy.pool import NullPool
 
 from ._pg_search import normalize_pg_search_tokenizer, pg_search_bm25_columns
 from ._vector_index import (
@@ -131,7 +133,12 @@ def _run_migrations_internal(database_url: str, script_location: str, schema: st
     try:
         with _alembic_lock:
             command.upgrade(alembic_cfg, "heads")
-    except ResolutionError as e:
+    except (ResolutionError, CommandError) as e:
+        # command.upgrade() wraps ResolutionError in CommandError via
+        # ScriptDirectory._catch_revision_errors, so the wrapped form is what
+        # actually reaches us; re-raise CommandErrors with any other cause.
+        if isinstance(e, CommandError) and not isinstance(e.__cause__, ResolutionError):
+            raise
         # This happens during rolling deployments when a newer version of the code
         # has already run migrations, and this older replica doesn't have the new
         # migration files. The database is already at a newer revision than we know.
@@ -241,7 +248,14 @@ def run_migrations(
         #   2. After acquiring the lock, COMMIT the transaction on the advisory-lock
         #      connection itself before running migrations.  pg_advisory_lock is
         #      session-level, so the lock survives the COMMIT.
-        engine = create_engine(migration_url)
+        # NullPool: do not retain the connection in a pool after the migration.
+        # Each schema migration opens a few short-lived engines (here plus the
+        # ensure_* steps); with the default QueuePool those connections linger
+        # until GC, and running many schemas in parallel (migration_concurrency)
+        # multiplies that footprint and exhausts max_connections — observed as
+        # "FATAL: sorry, too many clients already" sweeping 20k schemas at
+        # concurrency 12. NullPool closes the connection on return.
+        engine = create_engine(migration_url, poolclass=NullPool)
         with engine.connect() as conn:
             logger.debug(f"Acquiring migration advisory lock for schema '{schema_name}' (id={lock_id})...")
             while True:
@@ -394,7 +408,7 @@ def check_migration_status(
             return None, None
 
         # Get current revision from database
-        engine = create_engine(to_libpq_url(database_url))
+        engine = create_engine(to_libpq_url(database_url), poolclass=NullPool)
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
             current_rev = context.get_current_revision()
@@ -567,7 +581,7 @@ def ensure_embedding_dimension(
     """
     schema_name = schema or "public"
 
-    engine = create_engine(to_libpq_url(database_url))
+    engine = create_engine(to_libpq_url(database_url), poolclass=NullPool)
     with engine.connect() as conn:
         # Check if memory_units table exists (proxy for schema being initialized)
         table_exists = conn.execute(
@@ -590,6 +604,10 @@ def ensure_embedding_dimension(
 
         _migrate_table_embedding_dimension(conn, schema_name, "memory_units", required_dimension, vector_ext)
         _migrate_table_embedding_dimension(conn, schema_name, "mental_models", required_dimension, vector_ext)
+        # NOTE: invalidated_memory_units is deliberately omitted. The curation archive has no
+        # embedding column at all (dropped in migration d4f6a8c2e1b3) — invalidate stores no
+        # embedding and revert recomputes one — so there is no archive vector to re-dimension
+        # and a model switch can't trip a dimension mismatch there (#2209).
 
 
 def ensure_vector_extension(
@@ -616,7 +634,7 @@ def ensure_vector_extension(
     """
     schema_name = schema or "public"
 
-    engine = create_engine(to_libpq_url(database_url))
+    engine = create_engine(to_libpq_url(database_url), poolclass=NullPool)
     with engine.connect() as conn:
         # Detect which vector extension should be used
         target_ext = _detect_vector_extension(conn, vector_extension)
@@ -830,7 +848,7 @@ def ensure_text_search_extension(
     schema_name = schema or "public"
     pg_search_tokenizer = normalize_pg_search_tokenizer(pg_search_tokenizer)
 
-    engine = create_engine(to_libpq_url(database_url))
+    engine = create_engine(to_libpq_url(database_url), poolclass=NullPool)
     with engine.connect() as conn:
         # Tables with search_vector columns to check
         tables_to_check = [
@@ -1123,3 +1141,129 @@ def ensure_text_search_extension(
 
         conn.commit()
         logger.info(f"Successfully migrated text search to {text_search_extension}")
+
+
+def _migrate_one_schema_pg(
+    database_url: str,
+    schema: str,
+    *,
+    migration_database_url: str | None,
+    embedding_dimension: int | None,
+    vector_extension: str,
+    text_search_extension: str,
+    pg_search_tokenizer: str | None,
+    ensure_extensions: bool,
+) -> str:
+    """Run migrations + post-migration extension setup for a SINGLE PG schema.
+
+    Module-level (not a closure) so it is picklable and can run inside a
+    ``ProcessPoolExecutor`` worker. The steps run strictly in order — this is
+    the per-tenant sequential unit; parallelism happens only *across* schemas.
+    Returns the schema name on success; raises on the first failing step so the
+    caller can attribute the failure back to this schema.
+    """
+    run_migrations(database_url, schema=schema, migration_database_url=migration_database_url)
+    if embedding_dimension is not None:
+        ensure_embedding_dimension(
+            database_url,
+            embedding_dimension,
+            schema=schema,
+            vector_extension=vector_extension,
+        )
+    if ensure_extensions:
+        ensure_vector_extension(database_url, vector_extension=vector_extension, schema=schema)
+        ensure_text_search_extension(
+            database_url,
+            text_search_extension=text_search_extension,
+            schema=schema,
+            pg_search_tokenizer=pg_search_tokenizer,
+        )
+    return schema
+
+
+def _make_migration_executor(max_workers: int):
+    """Build the executor that runs per-schema migrations in parallel.
+
+    Each schema must run in its OWN process — Alembic's ``command.upgrade()``
+    uses non-thread-safe module globals (serialized in-process by
+    ``_alembic_lock``), so a thread pool would not actually run two upgrades at
+    once. ``spawn`` gives every worker a clean interpreter on all platforms,
+    avoiding the fork-of-a-multithreaded-process deadlock hazard (the API server
+    holds threads/pools when migrations run on startup).
+
+    Factored out so tests can substitute an in-process executor.
+    """
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+
+    return ProcessPoolExecutor(max_workers=max_workers, mp_context=multiprocessing.get_context("spawn"))
+
+
+def run_migrations_for_schemas(
+    database_url: str,
+    schemas: list[str],
+    *,
+    concurrency: int = 1,
+    migration_database_url: str | None = None,
+    embedding_dimension: int | None = None,
+    vector_extension: str = "pgvector",
+    text_search_extension: str = "native",
+    pg_search_tokenizer: str | None = None,
+    ensure_extensions: bool = True,
+) -> None:
+    """Run PostgreSQL migrations for many schemas, up to ``concurrency`` at once.
+
+    Within a schema the work is always sequential (migrate → embedding dim →
+    vector ext → text-search ext). Across schemas, when ``concurrency > 1`` each
+    schema is migrated in its OWN process: Alembic's ``command.upgrade()`` relies
+    on non-thread-safe module-level globals (serialized in-process by
+    ``_alembic_lock``), so threads would gain nothing — separate interpreters
+    each get a clean Alembic context. Per-schema advisory locks
+    (``_get_schema_lock_id``) keep concurrent processes from colliding on the
+    same schema across replicas.
+
+    ``database_url`` must already be resolved (e.g. an embedded ``pg0`` instance
+    started in the parent) — workers receive it verbatim and only connect.
+
+    Failures are collected per schema and re-raised together so one bad tenant
+    does not hide the status of the others.
+    """
+    if not schemas:
+        return
+
+    worker_kwargs = dict(
+        migration_database_url=migration_database_url,
+        embedding_dimension=embedding_dimension,
+        vector_extension=vector_extension,
+        text_search_extension=text_search_extension,
+        pg_search_tokenizer=pg_search_tokenizer,
+        ensure_extensions=ensure_extensions,
+    )
+
+    effective = max(1, min(concurrency, len(schemas)))
+    if effective == 1:
+        # Inline, in-process — no subprocess overhead for the common single
+        # tenant / sequential case (and keeps embedded pg0 dev simple).
+        for schema in schemas:
+            _migrate_one_schema_pg(database_url, schema, **worker_kwargs)
+        return
+
+    logger.info("Migrating %d schema(s) with concurrency=%d", len(schemas), effective)
+    errors: dict[str, BaseException] = {}
+    with _make_migration_executor(effective) as executor:
+        futures = {
+            executor.submit(_migrate_one_schema_pg, database_url, schema, **worker_kwargs): schema for schema in schemas
+        }
+        for future in futures:
+            schema = futures[future]
+            try:
+                future.result()
+            except Exception as exc:  # noqa: BLE001 — aggregate per-schema, re-raise below
+                errors[schema] = exc
+                logger.error("Migration failed for schema '%s': %s", schema, exc)
+
+    if errors:
+        failed = ", ".join(sorted(errors))
+        raise RuntimeError(
+            f"Database migrations failed for {len(errors)} of {len(schemas)} schema(s): {failed}"
+        ) from next(iter(errors.values()))

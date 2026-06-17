@@ -289,6 +289,28 @@ export type BankListResponse = {
 };
 
 /**
+ * BankLlmHealthResponse
+ *
+ * Per-bank LLM connectivity probe across retain/consolidation/reflect. Operations
+ * that share a configuration are probed once. Discloses status only — never the
+ * provider, model, endpoint, API key, or raw error.
+ */
+export type BankLlmHealthResponse = {
+  /**
+   * Bank Id
+   *
+   * Bank identifier
+   */
+  bank_id: string;
+  /**
+   * Operations
+   *
+   * Connectivity status per operation (retain, consolidation, reflect)
+   */
+  operations: Array<LlmOperationHealth>;
+};
+
+/**
  * BankProfileResponse
  *
  * Response model for bank profile.
@@ -443,9 +465,15 @@ export type BankTemplateConfig = {
   /**
    * Retain Chunk Size
    *
-   * Max token size for each content chunk
+   * Target max characters for each content chunk
    */
   retain_chunk_size?: number | null;
+  /**
+   * Retain Structured Chunk Size
+   *
+   * Max characters for a single JSONL line or conversation turn to keep whole; defaults to retain_chunk_size when unset
+   */
+  retain_structured_chunk_size?: number | null;
   /**
    * Enable Observations
    *
@@ -540,6 +568,14 @@ export type BankTemplateConfig = {
    * Max observations to retain per consolidation scope
    */
   max_observations_per_scope?: number | null;
+  /**
+   * Observation Scope Limits
+   *
+   * Per-scope overrides of max_observations_per_scope: [{"scope": ["run_*", "shared"], "limit": 1}]. Each scope is a list of fnmatch tag-globs; a consolidation scope matches under exact cover (every tag matched by a glob and every glob matched by a tag). The first matching rule wins; unmatched scopes fall back to max_observations_per_scope.
+   */
+  observation_scope_limits?: Array<{
+    [key: string]: unknown;
+  }> | null;
   /**
    * Reflect Source Facts Max Tokens
    *
@@ -799,6 +835,18 @@ export type BodyFileRetain = {
 };
 
 /**
+ * Body_import_documents
+ */
+export type BodyImportDocuments = {
+  /**
+   * File
+   *
+   * Transfer ZIP archive
+   */
+  file: Blob | File;
+};
+
+/**
  * Budget
  *
  * Budget levels for recall/reflect operations.
@@ -1044,9 +1092,15 @@ export type CreateBankRequest = {
   /**
    * Retain Chunk Size
    *
-   * Maximum token size for each content chunk during retain.
+   * Target maximum characters for each content chunk during retain.
    */
   retain_chunk_size?: number | null;
+  /**
+   * Retain Structured Chunk Size
+   *
+   * Maximum characters for a single JSONL line or conversation turn to keep whole during retain. Defaults to retain_chunk_size when unset.
+   */
+  retain_structured_chunk_size?: number | null;
   /**
    * Enable Observations
    *
@@ -1182,7 +1236,7 @@ export type CreateWebhookRequest = {
   /**
    * Event Types
    *
-   * List of event types to deliver. Currently supported: 'consolidation.completed'
+   * List of event types to deliver. Supported: 'retain.completed', 'consolidation.completed', 'memory_defense.triggered'.
    */
   event_types?: Array<string>;
   /**
@@ -1324,6 +1378,26 @@ export type DispositionTraits = {
 };
 
 /**
+ * DocumentImportSubmitResponse
+ *
+ * Response for the async document-import endpoint (202).
+ *
+ * The import runs in the background; poll the operations endpoint for status.
+ * The imported/skipped counts (documents_imported, facts_imported,
+ * observations_imported, etc.) are written to the operation's result_metadata.
+ */
+export type DocumentImportSubmitResponse = {
+  /**
+   * Operation Id
+   */
+  operation_id: string;
+  /**
+   * Status
+   */
+  status?: string;
+};
+
+/**
  * DocumentResponse
  *
  * Response model for get document endpoint.
@@ -1340,7 +1414,7 @@ export type DocumentResponse = {
   /**
    * Original Text
    */
-  original_text: string;
+  original_text: string | null;
   /**
    * Content Hash
    */
@@ -1387,6 +1461,98 @@ export type DocumentResponse = {
   retain_params?: {
     [key: string]: unknown;
   } | null;
+  /**
+   * Observation Scopes
+   *
+   * The observation_scopes spec configured at retain time (e.g. 'all_combinations', 'per_tag', or explicit tag-set lists), captured into retain_params. None when none was set (default 'combined' scoping) or for documents retained before this was captured.
+   */
+  observation_scopes?: string | Array<Array<string>> | null;
+};
+
+/**
+ * DryRunExtractRequest
+ *
+ * Request to run fact extraction ONLY (no resolution/links/embeddings/persistence).
+ *
+ * Every field below the content/context/date is a prompt-affecting override applied just for this
+ * call — used to preview what a candidate retain mission (or any extraction setting) would extract,
+ * without changing the bank. Unset (null) fields fall back to the bank's resolved config.
+ */
+export type DryRunExtractRequest = {
+  /**
+   * Content
+   *
+   * Text to extract facts from (e.g. a document or a single chunk).
+   */
+  content: string;
+  /**
+   * Context
+   *
+   * Optional context about the content.
+   */
+  context?: string;
+  /**
+   * Timestamp
+   *
+   * Reference timestamp for resolving relative times (ISO 8601).
+   */
+  timestamp?: string | null;
+  /**
+   * Agent Name
+   *
+   * Narrator override (memory owner) primed in the prompt.
+   */
+  agent_name?: string | null;
+  /**
+   * Retain Mission
+   */
+  retain_mission?: string | null;
+  /**
+   * Retain Extraction Mode
+   */
+  retain_extraction_mode?: string | null;
+  /**
+   * Retain Custom Instructions
+   */
+  retain_custom_instructions?: string | null;
+  /**
+   * Retain Extract Causal Links
+   */
+  retain_extract_causal_links?: boolean | null;
+  /**
+   * Retain Chunk Size
+   */
+  retain_chunk_size?: number | null;
+  /**
+   * Entity Labels
+   */
+  entity_labels?: Array<unknown> | null;
+  /**
+   * Entities Allow Free Form
+   */
+  entities_allow_free_form?: boolean | null;
+  /**
+   * Llm Output Language
+   */
+  llm_output_language?: string | null;
+};
+
+/**
+ * DryRunExtractionResult
+ *
+ * Result of dry-run fact extraction: candidate facts plus aggregated LLM token usage.
+ */
+export type DryRunExtractionResult = {
+  /**
+   * Facts
+   *
+   * Candidate facts the retain step would extract.
+   */
+  facts?: Array<ExtractedFact>;
+  /**
+   * Aggregated token usage across the extraction LLM calls.
+   */
+  usage?: TokenUsage;
 };
 
 /**
@@ -1588,6 +1754,48 @@ export type EntityStateResponse = {
 };
 
 /**
+ * ExtractedFact
+ *
+ * A single candidate fact produced by dry-run extraction (no resolution/links/persistence).
+ *
+ * A deliberate subset of the persisted memory-unit shape — only the fields a fresh extraction
+ * yields. Storage/consolidation/curation fields (id, document_id, chunk_id, proof_count, state, …)
+ * are omitted because nothing is stored. Entities are raw, unresolved names.
+ */
+export type ExtractedFact = {
+  /**
+   * Text
+   *
+   * The extracted fact text.
+   */
+  text: string;
+  /**
+   * Fact Type
+   *
+   * Perspective classification: 'world' or 'experience'.
+   */
+  fact_type: string;
+  /**
+   * Occurred Start
+   *
+   * ISO timestamp the fact's event started, if dated.
+   */
+  occurred_start?: string | null;
+  /**
+   * Occurred End
+   *
+   * ISO timestamp the fact's event ended, if dated.
+   */
+  occurred_end?: string | null;
+  /**
+   * Entities
+   *
+   * Raw (unresolved) entity names mentioned in the fact.
+   */
+  entities?: Array<string>;
+};
+
+/**
  * FactsIncludeOptions
  *
  * Options for including facts (based_on) in reflect results.
@@ -1627,11 +1835,47 @@ export type FeaturesInfo = {
    */
   bank_config_api: boolean;
   /**
+   * Bank Llm Health
+   *
+   * Whether the per-bank LLM connectivity probe is enabled
+   */
+  bank_llm_health: boolean;
+  /**
    * File Upload Api
    *
    * Whether file upload/conversion API is enabled
    */
   file_upload_api: boolean;
+  /**
+   * Document Export Api
+   *
+   * Whether the document export endpoint is enabled
+   */
+  document_export_api: boolean;
+  /**
+   * Document Import Api
+   *
+   * Whether the document import endpoint is enabled
+   */
+  document_import_api: boolean;
+  /**
+   * Audit Log
+   *
+   * Whether audit logging is enabled
+   */
+  audit_log: boolean;
+  /**
+   * Llm Trace
+   *
+   * Whether per-bank LLM request tracing is enabled
+   */
+  llm_trace: boolean;
+  /**
+   * Store Document Text
+   *
+   * Whether raw source text is persisted. When false, document/chunk source text is not stored.
+   */
+  store_document_text: boolean;
 };
 
 /**
@@ -1710,6 +1954,209 @@ export type IncludeOptions = {
    * Include source facts for observation-type results. Set to {} to enable, null to disable (default: disabled).
    */
   source_facts?: SourceFactsIncludeOptions | null;
+};
+
+/**
+ * LLMRequestEntry
+ *
+ * A single LLM request trace row, as returned by the read API.
+ */
+export type LlmRequestEntry = {
+  /**
+   * Id
+   */
+  id: string;
+  /**
+   * Bank Id
+   */
+  bank_id: string | null;
+  /**
+   * Operation
+   */
+  operation: string | null;
+  /**
+   * Scope
+   */
+  scope: string | null;
+  /**
+   * Trace Id
+   */
+  trace_id: string | null;
+  /**
+   * Span Id
+   */
+  span_id: string | null;
+  /**
+   * Parent Span Id
+   */
+  parent_span_id: string | null;
+  /**
+   * Provider
+   */
+  provider: string | null;
+  /**
+   * Model
+   */
+  model: string | null;
+  /**
+   * Status
+   */
+  status: string;
+  /**
+   * Started At
+   */
+  started_at: string | null;
+  /**
+   * Ended At
+   */
+  ended_at: string | null;
+  /**
+   * Duration Ms
+   */
+  duration_ms: number | null;
+  /**
+   * Input Tokens
+   */
+  input_tokens: number | null;
+  /**
+   * Output Tokens
+   */
+  output_tokens: number | null;
+  /**
+   * Cached Tokens
+   */
+  cached_tokens: number | null;
+  /**
+   * Total Tokens
+   */
+  total_tokens: number | null;
+  /**
+   * Input
+   */
+  input?: unknown;
+  /**
+   * Output
+   */
+  output?: unknown;
+  /**
+   * Error
+   */
+  error: string | null;
+  /**
+   * Llm Info
+   */
+  llm_info: {
+    [key: string]: unknown;
+  };
+  /**
+   * Metadata
+   */
+  metadata: {
+    [key: string]: unknown;
+  };
+};
+
+/**
+ * LLMRequestListResponse
+ *
+ * Paginated list of LLM request traces for a bank.
+ */
+export type LlmRequestListResponse = {
+  /**
+   * Bank Id
+   */
+  bank_id: string;
+  /**
+   * Total
+   */
+  total: number;
+  /**
+   * Limit
+   */
+  limit: number;
+  /**
+   * Offset
+   */
+  offset: number;
+  /**
+   * Items
+   */
+  items: Array<LlmRequestEntry>;
+};
+
+/**
+ * LLMRequestStatsBucket
+ *
+ * A single time bucket in LLM request stats.
+ */
+export type LlmRequestStatsBucket = {
+  /**
+   * Time
+   */
+  time: string;
+  /**
+   * Statuses
+   */
+  statuses: {
+    [key: string]: number;
+  };
+  /**
+   * Total
+   */
+  total: number;
+  tokens: LlmRequestTokenSums;
+};
+
+/**
+ * LLMRequestStatsResponse
+ *
+ * LLM request counts and token sums grouped by time bucket.
+ */
+export type LlmRequestStatsResponse = {
+  /**
+   * Bank Id
+   */
+  bank_id: string;
+  /**
+   * Period
+   */
+  period: string;
+  /**
+   * Trunc
+   */
+  trunc: string;
+  /**
+   * Start
+   */
+  start: string;
+  /**
+   * Buckets
+   */
+  buckets: Array<LlmRequestStatsBucket>;
+};
+
+/**
+ * LLMRequestTokenSums
+ *
+ * Token totals for a time bucket.
+ */
+export type LlmRequestTokenSums = {
+  /**
+   * Input
+   */
+  input: number;
+  /**
+   * Output
+   */
+  output: number;
+  /**
+   * Cached
+   */
+  cached: number;
+  /**
+   * Total
+   */
+  total: number;
 };
 
 /**
@@ -1813,6 +2260,39 @@ export type ListTagsResponse = {
 };
 
 /**
+ * LlmOperationHealth
+ *
+ * LLM connectivity status for a single operation. Status only — no provider/model/
+ * endpoint/error, so the probe never discloses the LLM configuration.
+ */
+export type LlmOperationHealth = {
+  /**
+   * LlmHealthOperation
+   *
+   * Operation whose LLM was probed
+   */
+  operation: "retain" | "consolidation" | "reflect";
+  /**
+   * Ok
+   *
+   * True only when the probe connected successfully
+   */
+  ok: boolean;
+  /**
+   * LlmHealthStatus
+   *
+   * 'connected'; 'not_configured' (provider is 'none'); 'auth_failed' (rejected — usually a wrong/expired API key); 'unreachable' (call failed); 'timeout'
+   */
+  status: "connected" | "not_configured" | "auth_failed" | "unreachable" | "timeout";
+  /**
+   * Latency Ms
+   *
+   * Round-trip latency of the probe call
+   */
+  latency_ms?: number | null;
+};
+
+/**
  * MemoriesTimeseriesResponse
  *
  * Time-series of memory ingestion bucketed by time and fact type.
@@ -1895,9 +2375,15 @@ export type MemoryItem = {
   /**
    * ObservationScopes
    *
-   * How to scope observations during consolidation. 'per_tag' runs one consolidation pass per individual tag, creating separate observations for each tag. 'combined' (default) runs a single pass with all tags together. A list of tag lists runs one pass per inner list, giving full control over which combinations to use.
+   * How to scope observations during consolidation. 'per_tag' runs one consolidation pass per individual tag, creating separate observations for each tag. 'combined' (default) runs a single pass with all tags together. 'shared' runs a single pass over one global, untagged scope, so memories consolidate together regardless of their tags — useful for deduplicating across volatile per-call provenance tags (e.g. per-session ids) while keeping those tags on the source facts. A list of tag lists runs one pass per inner list, giving full control over which combinations to use.
    */
-  observation_scopes?: "per_tag" | "combined" | "all_combinations" | Array<Array<string>> | null;
+  observation_scopes?:
+    | "per_tag"
+    | "combined"
+    | "all_combinations"
+    | "shared"
+    | Array<Array<string>>
+    | null;
   /**
    * Strategy
    *
@@ -2058,7 +2544,7 @@ export type MentalModelTriggerInput = {
    *
    * Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Set to 'any' to include untagged memories alongside tagged ones during refresh.
    */
-  tags_match?: "any" | "all" | "any_strict" | "all_strict" | null;
+  tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact" | null;
   /**
    * Tag Groups
    *
@@ -2126,7 +2612,7 @@ export type MentalModelTriggerOutput = {
    *
    * Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Set to 'any' to include untagged memories alongside tagged ones during refresh.
    */
-  tags_match?: "any" | "all" | "any_strict" | "all_strict" | null;
+  tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact" | null;
   /**
    * Tag Groups
    *
@@ -2156,6 +2642,86 @@ export type MentalModelTriggerOutput = {
 };
 
 /**
+ * ObservationScope
+ *
+ * A distinct observation scope: an exact tag set plus its observation count.
+ */
+export type ObservationScope = {
+  /**
+   * Tags
+   *
+   * The exact tag set defining this scope (normalized order). Empty list is the global/untagged scope.
+   */
+  tags: Array<string>;
+  /**
+   * Count
+   *
+   * Number of observations that live under this scope
+   */
+  count: number;
+};
+
+/**
+ * ObservationScopesResponse
+ *
+ * Response model for the observation scopes enumeration endpoint.
+ */
+export type ObservationScopesResponse = {
+  /**
+   * Scopes
+   *
+   * Distinct observation scopes, most populous first
+   */
+  scopes: Array<ObservationScope>;
+};
+
+/**
+ * OperationProgress
+ *
+ * Last-known progress snapshot for a long-running async operation.
+ *
+ * Written at coarse phase/batch boundaries by the worker (consolidation, batch
+ * retain). Lets an operator polling the operation status API distinguish a healthy
+ * long-running job (``processed`` advancing across polls) from a frozen one (same
+ * numbers, no movement in ``at``). Absent (``null``) on operations that never
+ * reached a checkpoint — completed-instantly or pre-feature rows.
+ */
+export type OperationProgress = {
+  /**
+   * Stage
+   *
+   * Coarse phase the operation last reported (e.g. 'processing_batch').
+   */
+  stage: string;
+  /**
+   * At
+   *
+   * ISO-8601 timestamp when this snapshot was written.
+   */
+  at: string;
+  /**
+   * Processed
+   *
+   * Units of work finished so far (sub-batches, memories), when known.
+   */
+  processed?: number | null;
+  /**
+   * Total
+   *
+   * Total units of work for the operation, when known.
+   */
+  total?: number | null;
+  /**
+   * Detail
+   *
+   * Operation-specific counters (e.g. observations_created, round, items_in_sub_batch).
+   */
+  detail?: {
+    [key: string]: number;
+  } | null;
+};
+
+/**
  * OperationResponse
  *
  * Response model for a single async operation.
@@ -2182,6 +2748,12 @@ export type OperationResponse = {
    */
   created_at: string;
   /**
+   * Updated At
+   *
+   * When this operation's row last changed (claim, progress heartbeat, or completion).
+   */
+  updated_at?: string | null;
+  /**
    * Status
    */
   status: string;
@@ -2201,6 +2773,10 @@ export type OperationResponse = {
    * When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is waiting rather than available for immediate pickup — for example, an extension may have raised DeferOperation to park the task until some backpressure window opens. Always null for completed tasks.
    */
   next_retry_at?: string | null;
+  /**
+   * Last-known progress snapshot for a running operation; null if none was recorded.
+   */
+  progress?: OperationProgress | null;
 };
 
 /**
@@ -2249,6 +2825,10 @@ export type OperationStatusResponse = {
    * When the worker will next attempt this operation. For a pending operation, a value in the future indicates the task is parked (e.g. by an extension raising DeferOperation) rather than awaiting immediate pickup.
    */
   next_retry_at?: string | null;
+  /**
+   * Last-known progress snapshot for a running operation; null if none was recorded.
+   */
+  progress?: OperationProgress | null;
   /**
    * Result Metadata
    *
@@ -2347,7 +2927,7 @@ export type RecallRequest = {
    *
    * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
    */
-  tags_match?: "any" | "all" | "any_strict" | "all_strict";
+  tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
   /**
    * Tag Groups
    *
@@ -2668,7 +3248,7 @@ export type ReflectRequest = {
    *
    * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
    */
-  tags_match?: "any" | "all" | "any_strict" | "all_strict";
+  tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
   /**
    * Tag Groups
    *
@@ -2956,7 +3536,7 @@ export type TagGroupLeaf = {
   /**
    * Match
    */
-  match?: "any" | "all" | "any_strict" | "all_strict";
+  match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
 };
 
 /**
@@ -3054,6 +3634,12 @@ export type TokenUsage = {
    * Total tokens (input + output)
    */
   total_tokens?: number;
+  /**
+   * Cached Tokens
+   *
+   * Cached/cache-read prompt tokens, when reported by the provider
+   */
+  cached_tokens?: number;
 };
 
 /**
@@ -3141,6 +3727,67 @@ export type UpdateDocumentResponse = {
    * Success
    */
   success?: boolean;
+};
+
+/**
+ * UpdateMemoryRequest
+ *
+ * Request model for curating a single memory unit (edit / invalidate / revert).
+ *
+ * Provide ``text`` to correct the fact, and/or ``state`` to invalidate
+ * ('invalidated') or revert ('valid') it. ``reason`` is optional free text
+ * recorded on the memory. At least one of ``text`` or ``state`` must be set.
+ * Only world/experience facts can be curated; observations are derived.
+ */
+export type UpdateMemoryRequest = {
+  /**
+   * Text
+   *
+   * New fact text. Re-embeds the memory, drops its derived observations and links, and triggers re-consolidation.
+   */
+  text?: string | null;
+  /**
+   * Context
+   *
+   * New context for the fact. '' clears it; omit to leave unchanged.
+   */
+  context?: string | null;
+  /**
+   * Occurred Start
+   *
+   * New occurred-range start (ISO 8601). '' clears it; omit to leave unchanged.
+   */
+  occurred_start?: string | null;
+  /**
+   * Occurred End
+   *
+   * New occurred-range end (ISO 8601). '' clears it; omit to leave unchanged.
+   */
+  occurred_end?: string | null;
+  /**
+   * Fact Type
+   *
+   * Reclassify the fact: 'world' or 'experience'. Omit to leave unchanged.
+   */
+  fact_type?: string | null;
+  /**
+   * Entities
+   *
+   * Replace the fact's entities. Names are resolved/find-or-created the same way retain does; '[]' detaches all entities. Omit to leave unchanged.
+   */
+  entities?: Array<string> | null;
+  /**
+   * State
+   *
+   * Curation state: 'invalidated' to soft-retire the memory (excluded from recall/consolidation, links and derived observations pruned, moved to the archive) or 'valid' to revert. Reversible.
+   */
+  state?: string | null;
+  /**
+   * Reason
+   *
+   * Optional free-text reason recorded when invalidating.
+   */
+  reason?: string | null;
 };
 
 /**
@@ -3241,10 +3888,6 @@ export type ValidationError = {
   ctx?: {
     [key: string]: unknown;
   };
-  /**
-   * URL
-   */
-  url?: string;
 };
 
 /**
@@ -3569,6 +4212,14 @@ export type ListMemoriesData = {
      */
     consolidation_state?: string | null;
     /**
+     * State
+     */
+    state?: string | null;
+    /**
+     * Document Id
+     */
+    document_id?: string | null;
+    /**
      * Limit
      */
     limit?: number;
@@ -3597,6 +4248,44 @@ export type ListMemoriesResponses = {
 };
 
 export type ListMemoriesResponse = ListMemoriesResponses[keyof ListMemoriesResponses];
+
+export type DryRunExtractMemoriesData = {
+  body: DryRunExtractRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/memories/dry-run-extract";
+};
+
+export type DryRunExtractMemoriesErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DryRunExtractMemoriesError =
+  DryRunExtractMemoriesErrors[keyof DryRunExtractMemoriesErrors];
+
+export type DryRunExtractMemoriesResponses = {
+  /**
+   * Successful Response
+   */
+  200: DryRunExtractionResult;
+};
+
+export type DryRunExtractMemoriesResponse =
+  DryRunExtractMemoriesResponses[keyof DryRunExtractMemoriesResponses];
 
 export type GetMemoryData = {
   body?: never;
@@ -3630,6 +4319,44 @@ export type GetMemoryErrors = {
 export type GetMemoryError = GetMemoryErrors[keyof GetMemoryErrors];
 
 export type GetMemoryResponses = {
+  /**
+   * Successful Response
+   */
+  200: unknown;
+};
+
+export type UpdateMemoryData = {
+  body: UpdateMemoryRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Memory Id
+     */
+    memory_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/memories/{memory_id}";
+};
+
+export type UpdateMemoryErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type UpdateMemoryError = UpdateMemoryErrors[keyof UpdateMemoryErrors];
+
+export type UpdateMemoryResponses = {
   /**
    * Successful Response
    */
@@ -3813,6 +4540,42 @@ export type GetAgentStatsResponses = {
 };
 
 export type GetAgentStatsResponse = GetAgentStatsResponses[keyof GetAgentStatsResponses];
+
+export type TestBankLlmData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/health/llm";
+};
+
+export type TestBankLlmErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type TestBankLlmError = TestBankLlmErrors[keyof TestBankLlmErrors];
+
+export type TestBankLlmResponses = {
+  /**
+   * Successful Response
+   */
+  200: BankLlmHealthResponse;
+};
+
+export type TestBankLlmResponse = TestBankLlmResponses[keyof TestBankLlmResponses];
 
 export type GetMemoriesTimeseriesData = {
   body?: never;
@@ -5477,6 +6240,96 @@ export type ExportBankTemplateResponses = {
 export type ExportBankTemplateResponse =
   ExportBankTemplateResponses[keyof ExportBankTemplateResponses];
 
+export type ExportDocumentsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Document Id
+     *
+     * Document id(s) to export; omit for all
+     */
+    document_id?: Array<string> | null;
+    /**
+     * Include Observations
+     *
+     * Also export consolidated observations (restored on import)
+     */
+    include_observations?: boolean;
+  };
+  url: "/v1/default/banks/{bank_id}/document-transfer";
+};
+
+export type ExportDocumentsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ExportDocumentsError = ExportDocumentsErrors[keyof ExportDocumentsErrors];
+
+export type ExportDocumentsResponses = {
+  /**
+   * Transfer archive
+   */
+  200: unknown;
+};
+
+export type ImportDocumentsData = {
+  body: BodyImportDocuments;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * On Conflict
+     *
+     * skip | replace | new-id
+     */
+    on_conflict?: string;
+  };
+  url: "/v1/default/banks/{bank_id}/document-transfer";
+};
+
+export type ImportDocumentsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ImportDocumentsError = ImportDocumentsErrors[keyof ImportDocumentsErrors];
+
+export type ImportDocumentsResponses = {
+  /**
+   * Successful Response
+   */
+  202: DocumentImportSubmitResponse;
+};
+
+export type ImportDocumentsResponse = ImportDocumentsResponses[keyof ImportDocumentsResponses];
+
 export type GetBankTemplateSchemaData = {
   body?: never;
   path?: never;
@@ -5527,6 +6380,44 @@ export type ClearObservationsResponses = {
 
 export type ClearObservationsResponse =
   ClearObservationsResponses[keyof ClearObservationsResponses];
+
+export type ListObservationScopesData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/observations/scopes";
+};
+
+export type ListObservationScopesErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListObservationScopesError =
+  ListObservationScopesErrors[keyof ListObservationScopesErrors];
+
+export type ListObservationScopesResponses = {
+  /**
+   * Successful Response
+   */
+  200: ObservationScopesResponse;
+};
+
+export type ListObservationScopesResponse =
+  ListObservationScopesResponses[keyof ListObservationScopesResponses];
 
 export type RecoverConsolidationData = {
   body?: never;
@@ -5982,7 +6873,7 @@ export type ClearBankMemoriesData = {
     /**
      * Type
      *
-     * Optional fact type filter (world, experience, opinion)
+     * Optional fact type filter (world, experience, observation)
      */
     type?: string | null;
   };
@@ -6201,3 +7092,161 @@ export type AuditLogStatsResponses = {
 };
 
 export type AuditLogStatsResponse2 = AuditLogStatsResponses[keyof AuditLogStatsResponses];
+
+export type ListLlmRequestsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Status
+     *
+     * Filter by status (success, error)
+     */
+    status?: string | null;
+    /**
+     * Operation
+     *
+     * Filter by operation (retain, reflect, consolidation)
+     */
+    operation?: string | null;
+    /**
+     * Scope
+     *
+     * Filter by call scope
+     */
+    scope?: string | null;
+    /**
+     * Provider
+     *
+     * Filter by LLM provider
+     */
+    provider?: string | null;
+    /**
+     * Trace Id
+     *
+     * Filter to one operation run (all LLM calls sharing a trace)
+     */
+    trace_id?: string | null;
+    /**
+     * Document Id
+     *
+     * Filter to LLM calls that processed a given document
+     */
+    document_id?: string | null;
+    /**
+     * Memory Id
+     *
+     * Filter to the operation run(s) that produced or consumed a given memory_unit
+     */
+    memory_id?: string | null;
+    /**
+     * Group
+     *
+     * Paginate by operation run (trace) instead of by call; returns whole runs
+     */
+    group?: boolean;
+    /**
+     * Start Date
+     *
+     * Filter from this ISO datetime (inclusive)
+     */
+    start_date?: string | null;
+    /**
+     * End Date
+     *
+     * Filter until this ISO datetime (exclusive)
+     */
+    end_date?: string | null;
+    /**
+     * Limit
+     *
+     * Max items to return
+     */
+    limit?: number;
+    /**
+     * Offset
+     *
+     * Offset for pagination
+     */
+    offset?: number;
+  };
+  url: "/v1/default/banks/{bank_id}/llm-requests";
+};
+
+export type ListLlmRequestsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListLlmRequestsError = ListLlmRequestsErrors[keyof ListLlmRequestsErrors];
+
+export type ListLlmRequestsResponses = {
+  /**
+   * Successful Response
+   */
+  200: LlmRequestListResponse;
+};
+
+export type ListLlmRequestsResponse = ListLlmRequestsResponses[keyof ListLlmRequestsResponses];
+
+export type LlmRequestStatsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Operation
+     *
+     * Filter by operation
+     */
+    operation?: string | null;
+    /**
+     * Period
+     *
+     * Time period: 1d, 7d, or 30d
+     */
+    period?: string;
+  };
+  url: "/v1/default/banks/{bank_id}/llm-requests/stats";
+};
+
+export type LlmRequestStatsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type LlmRequestStatsError = LlmRequestStatsErrors[keyof LlmRequestStatsErrors];
+
+export type LlmRequestStatsResponses = {
+  /**
+   * Successful Response
+   */
+  200: LlmRequestStatsResponse;
+};
+
+export type LlmRequestStatsResponse2 = LlmRequestStatsResponses[keyof LlmRequestStatsResponses];

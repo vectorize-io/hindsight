@@ -45,11 +45,11 @@ class TestProfileIntegration:
                 "--profile",
                 "test-app",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=openai",
+                "HINDSIGHT_API_LLM_PROVIDER=openai",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=sk-test",
+                "HINDSIGHT_API_LLM_API_KEY=sk-test",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_MODEL=gpt-4o-mini",
+                "HINDSIGHT_API_LLM_MODEL=gpt-4o-mini",
             ],
             capture_output=True,
             text=True,
@@ -64,8 +64,8 @@ class TestProfileIntegration:
         assert profile_path.exists()
 
         config_content = profile_path.read_text()
-        assert "HINDSIGHT_EMBED_LLM_PROVIDER=openai" in config_content
-        assert "HINDSIGHT_EMBED_LLM_API_KEY=sk-test" in config_content
+        assert "HINDSIGHT_API_LLM_PROVIDER=openai" in config_content
+        assert "HINDSIGHT_API_LLM_API_KEY=sk-test" in config_content
 
         # List profiles
         result = subprocess.run(
@@ -109,9 +109,9 @@ class TestProfileIntegration:
                 "--profile",
                 "test-app",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=openai",
+                "HINDSIGHT_API_LLM_PROVIDER=openai",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=sk-test",
+                "HINDSIGHT_API_LLM_API_KEY=sk-test",
             ],
             capture_output=True,
             env={**os.environ, "HOME": str(temp_home)},
@@ -119,9 +119,7 @@ class TestProfileIntegration:
 
         # Show profile with env var
         env = {**os.environ, "HOME": str(temp_home), "HINDSIGHT_EMBED_PROFILE": "test-app"}
-        result = subprocess.run(
-            hindsight_embed_cmd + ["profile", "show"], capture_output=True, text=True, env=env
-        )
+        result = subprocess.run(hindsight_embed_cmd + ["profile", "show"], capture_output=True, text=True, env=env)
 
         assert result.returncode == 0
         output = strip_ansi(result.stdout)
@@ -138,9 +136,9 @@ class TestProfileIntegration:
                 "--profile",
                 "test-app",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=openai",
+                "HINDSIGHT_API_LLM_PROVIDER=openai",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=sk-test",
+                "HINDSIGHT_API_LLM_API_KEY=sk-test",
             ],
             capture_output=True,
             env={**os.environ, "HOME": str(temp_home)},
@@ -185,9 +183,9 @@ class TestProfileIntegration:
                 "--profile",
                 "test-app",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=openai",
+                "HINDSIGHT_API_LLM_PROVIDER=openai",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=sk-test",
+                "HINDSIGHT_API_LLM_API_KEY=sk-test",
             ],
             capture_output=True,
         )
@@ -216,9 +214,9 @@ class TestProfileIntegration:
                 "--profile",
                 "app1",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=openai",
+                "HINDSIGHT_API_LLM_PROVIDER=openai",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=sk-test",
+                "HINDSIGHT_API_LLM_API_KEY=sk-test",
             ],
             capture_output=True,
         )
@@ -231,20 +229,23 @@ class TestProfileIntegration:
                 "--profile",
                 "app2",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=openai",
+                "HINDSIGHT_API_LLM_PROVIDER=openai",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=sk-test",
+                "HINDSIGHT_API_LLM_API_KEY=sk-test",
             ],
             capture_output=True,
         )
 
-        # Read metadata
-        metadata_path = temp_home / ".hindsight" / "profiles" / "metadata.json"
-        assert metadata_path.exists()
+        # Ports now live in each profile's .env (HINDSIGHT_API_PORT)
+        def _env_port(name):
+            env = (temp_home / ".hindsight" / "profiles" / f"{name}.env").read_text()
+            for line in env.splitlines():
+                if line.startswith("HINDSIGHT_API_PORT="):
+                    return int(line.split("=", 1)[1])
+            raise AssertionError(f"no HINDSIGHT_API_PORT in {name}.env")
 
-        metadata = json.loads(metadata_path.read_text())
-        app1_port = metadata["profiles"]["app1"]["port"]
-        app2_port = metadata["profiles"]["app2"]["port"]
+        app1_port = _env_port("app1")
+        app2_port = _env_port("app2")
 
         # Ports should be different
         assert app1_port != app2_port
@@ -255,9 +256,7 @@ class TestProfileIntegration:
         """Test that using non-existent profile fails."""
         # Try to use non-existent profile
         env = {**os.environ, "HOME": str(temp_home), "HINDSIGHT_EMBED_PROFILE": "nonexistent"}
-        result = subprocess.run(
-            hindsight_embed_cmd + ["profile", "show"], capture_output=True, text=True, env=env
-        )
+        result = subprocess.run(hindsight_embed_cmd + ["profile", "show"], capture_output=True, text=True, env=env)
 
         assert result.returncode == 1
         assert "Profile 'nonexistent' not found" in result.stderr
@@ -268,9 +267,9 @@ class TestProfileIntegration:
         config_dir = temp_home / ".hindsight"
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "embed").write_text(
-            "HINDSIGHT_EMBED_LLM_PROVIDER=openai\n"
-            "HINDSIGHT_EMBED_LLM_API_KEY=sk-test\n"
-            "HINDSIGHT_EMBED_LLM_MODEL=gpt-4o-mini\n"
+            "HINDSIGHT_API_LLM_PROVIDER=openai\n"
+            "HINDSIGHT_API_LLM_API_KEY=sk-test\n"
+            "HINDSIGHT_API_LLM_MODEL=gpt-4o-mini\n"
         )
 
         # Show profile should work
@@ -293,14 +292,12 @@ class TestProfileIntegration:
         env = {
             **os.environ,
             "HOME": str(temp_home),
-            "HINDSIGHT_EMBED_LLM_PROVIDER": "openai",
-            "HINDSIGHT_EMBED_LLM_API_KEY": "sk-test",
-            "HINDSIGHT_EMBED_LLM_MODEL": "gpt-4o-mini",
+            "HINDSIGHT_API_LLM_PROVIDER": "openai",
+            "HINDSIGHT_API_LLM_API_KEY": "sk-test",
+            "HINDSIGHT_API_LLM_MODEL": "gpt-4o-mini",
         }
 
-        result = subprocess.run(
-            hindsight_embed_cmd + ["configure"], capture_output=True, text=True, env=env
-        )
+        result = subprocess.run(hindsight_embed_cmd + ["configure"], capture_output=True, text=True, env=env)
 
         # Should succeed
         assert result.returncode == 0
@@ -319,9 +316,9 @@ class TestProfileIntegration:
                 "--profile",
                 "test-app",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=openai",
+                "HINDSIGHT_API_LLM_PROVIDER=openai",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=sk-test",
+                "HINDSIGHT_API_LLM_API_KEY=sk-test",
             ],
             capture_output=True,
         )
@@ -355,17 +352,23 @@ class TestProfileIntegration:
                 "--profile",
                 "test-app",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=openai",
+                "HINDSIGHT_API_LLM_PROVIDER=openai",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=sk-test",
+                "HINDSIGHT_API_LLM_API_KEY=sk-test",
             ],
             capture_output=True,
         )
 
-        # Get port
-        metadata_path = temp_home / ".hindsight" / "profiles" / "metadata.json"
-        metadata1 = json.loads(metadata_path.read_text())
-        port1 = metadata1["profiles"]["test-app"]["port"]
+        # Port now lives in the profile's .env (HINDSIGHT_API_PORT)
+        env_path = temp_home / ".hindsight" / "profiles" / "test-app.env"
+
+        def _env_port():
+            for line in env_path.read_text().splitlines():
+                if line.startswith("HINDSIGHT_API_PORT="):
+                    return int(line.split("=", 1)[1])
+            raise AssertionError("no HINDSIGHT_API_PORT in test-app.env")
+
+        port1 = _env_port()
 
         # Update profile (recreate with different config)
         subprocess.run(
@@ -375,16 +378,15 @@ class TestProfileIntegration:
                 "--profile",
                 "test-app",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_PROVIDER=groq",
+                "HINDSIGHT_API_LLM_PROVIDER=groq",
                 "--env",
-                "HINDSIGHT_EMBED_LLM_API_KEY=gsk-test",
+                "HINDSIGHT_API_LLM_API_KEY=gsk-test",
             ],
             capture_output=True,
         )
 
         # Get port again
-        metadata2 = json.loads(metadata_path.read_text())
-        port2 = metadata2["profiles"]["test-app"]["port"]
+        port2 = _env_port()
 
         # Port should be the same
         assert port1 == port2

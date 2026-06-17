@@ -10,7 +10,7 @@ BLUE='\033[0;34m'
 DIM='\033[2m'
 NC='\033[0m'
 
-ALL_INTEGRATIONS=("litellm" "pydantic-ai" "crewai" "ag2" "ai-sdk" "chat" "openclaw" "langgraph" "llamaindex" "nemoclaw" "strands" "claude-code" "codex" "autogen" "paperclip" "opencode" "cloudflare-oauth-proxy")
+ALL_INTEGRATIONS=("ag2" "agentcore" "agno" "ai-sdk" "autogen" "chat" "claude-agent-sdk" "claude-code" "cline" "cloudflare-oauth-proxy" "codex" "crewai" "cursor" "cursor-cli" "dify" "flowise" "gemini-spark" "google-adk" "haystack" "langgraph" "litellm" "llamaindex" "n8n" "nemoclaw" "obsidian" "omo" "openai-agents" "openclaw" "opencode" "paperclip" "pipecat" "pydantic-ai" "roo-code" "smolagents" "strands" "superagent" "vapi")
 
 usage() {
     echo "Usage: $0 [integration]"

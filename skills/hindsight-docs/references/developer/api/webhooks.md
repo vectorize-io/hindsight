@@ -18,7 +18,8 @@ Webhooks are registered per memory bank and fire automatically when matching eve
 
 A delivery is considered failed if your endpoint returns a non-2xx status code or does not respond within the configured timeout (default 30 seconds). After 6 failed attempts, the delivery is marked as permanently failed and no further retries are made.
 
-:::info At-least-once delivery
+> **ℹ️ At-least-once delivery**
+> 
 Webhook delivery tasks are queued in the same database transaction as the primary operation (e.g. the retain or consolidation write). This means if the server crashes after committing but before sending, the delivery task survives and will be retried. As a result, **your endpoint may receive the same event more than once** — use the `operation_id` field to deduplicate if needed.
 ## Event Types
 
@@ -88,4 +89,44 @@ Fired once per document after a retain operation completes (both synchronous and
 - For async retain (`async: true`), `operation_id` matches the `operation_id` returned by the retain API.
 - For sync retain, `operation_id` is a generated identifier for tracing purposes.
 - One event is fired per content item in the retain request.
+
+---
+
+### `memory_defense.triggered`
+
+Fired when a bank's [Memory Defense](../memory-defense/index.md) policy acts on a retained item — once per item that is **redacted** or **blocked**. Items that pass cleanly do not fire an event. Requires a Memory Defense policy enabled on the bank and a webhook subscribed to this event type.
+
+**Payload:**
+
+```json
+{
+  "event": "memory_defense.triggered",
+  "bank_id": "my-bank",
+  "operation_id": "a1b2c3d4e5f6",
+  "status": "redact",
+  "timestamp": "2026-03-04T12:00:02Z",
+  "data": {
+    "action": "redact",
+    "detector": "sensitive_data",
+    "document_id": "doc-abc123",
+    "matched_types": ["github_token", "aws_access_key"],
+    "message": "Sensitive data pattern matched: github_token, aws_access_key"
+  }
+}
+```
+
+**`data` fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `action` | `string` | Action taken on the item: `"redact"` or `"block"` |
+| `detector` | `string \| null` | The detector that matched (`"sensitive_data"`) |
+| `document_id` | `string \| null` | The document ID if one was provided in the retain request |
+| `matched_types` | `string[] \| null` | Labels of the redaction patterns that fired (e.g. `github_token`, `ssn_us`) |
+| `message` | `string \| null` | Human-readable summary of what matched |
+
+**`status` values:** mirrors `data.action` — `"redact"` or `"block"`.
+
+**Notes:**
+- A `redact` event means the secret was scrubbed and the redacted memory was still stored. A `block` event means the item was dropped; if every item in the retain request is blocked, the retain call returns `422`.
 

@@ -5,6 +5,12 @@ import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
 import { useFeatures } from "@/lib/features-context";
 import { client } from "@/lib/api";
+import {
+  deserializeRetainStrategies,
+  serializeRetainStrategies,
+  type RetainStrategy,
+  type RetainStrategyValues,
+} from "@/lib/retain-strategy-config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -43,6 +49,7 @@ interface ProfileData {
 
 type RetainEdits = {
   retain_chunk_size: number | null;
+  retain_structured_chunk_size: number | null;
   retain_extraction_mode: string | null;
   retain_mission: string | null;
   retain_custom_instructions: string | null;
@@ -172,7 +179,11 @@ function getMcpToolGroups(t: (key: string) => string): McpToolGroup[] {
       label: t("mcpGroupDirectives"),
       tools: ["list_directives", "create_directive", "delete_directive"],
     },
-    { key: "memories", label: t("mcpGroupMemories"), tools: ["list_memories", "get_memory"] },
+    {
+      key: "memories",
+      label: t("mcpGroupMemories"),
+      tools: ["list_memories", "get_memory", "update_memory", "invalidate_memory"],
+    },
     {
       key: "documents",
       label: t("mcpGroupDocuments"),
@@ -211,6 +222,8 @@ const MCP_ALL_TOOLS: string[] = [
   "delete_directive",
   "list_memories",
   "get_memory",
+  "update_memory",
+  "invalidate_memory",
   "list_documents",
   "get_document",
   "delete_document",
@@ -233,6 +246,7 @@ function parseEntityLabels(raw: unknown): LabelGroup[] | null {
 function retainSlice(config: Record<string, any>): RetainEdits {
   return {
     retain_chunk_size: config.retain_chunk_size ?? null,
+    retain_structured_chunk_size: config.retain_structured_chunk_size ?? null,
     retain_extraction_mode: config.retain_extraction_mode ?? null,
     retain_mission: config.retain_mission ?? null,
     retain_custom_instructions: config.retain_custom_instructions ?? null,
@@ -337,7 +351,6 @@ export function BankConfigView() {
     () => JSON.stringify(geminiEdits) !== JSON.stringify(geminiSlice(baseConfig)),
     [geminiEdits, baseConfig]
   );
-
   useEffect(() => {
     if (bankId) loadAll();
   }, [bankId]);
@@ -770,14 +783,7 @@ export function BankConfigView() {
 
 // ─── Retain strategies panel ──────────────────────────────────────────────────
 
-type RetainFormValues = {
-  retain_extraction_mode: string | null;
-  retain_chunk_size: number | null;
-  retain_mission: string | null;
-  retain_custom_instructions: string | null;
-  entities_allow_free_form: boolean | null;
-  entity_labels: LabelGroup[] | null;
-};
+type RetainFormValues = RetainStrategyValues<LabelGroup[]>;
 
 const EXTRACTION_MODES = ["concise", "verbose", "verbatim", "chunks", "custom"];
 const INHERIT_SENTINEL = "__inherit__";
@@ -826,10 +832,28 @@ function RetainStrategyForm({
           type="number"
           min={500}
           max={8000}
+          step={1}
           value={values.retain_chunk_size ?? ""}
           onChange={(e) =>
-            onChange({ retain_chunk_size: e.target.value ? parseFloat(e.target.value) : null })
+            onChange({ retain_chunk_size: e.target.value ? parseInt(e.target.value, 10) : null })
           }
+          placeholder={isOverride ? t("inherited") : undefined}
+        />
+      </FieldRow>
+      <FieldRow
+        label={t("structuredChunkSizeLabel")}
+        description={t("structuredChunkSizeDescription")}
+      >
+        <Input
+          type="number"
+          min={1}
+          step={1}
+          value={values.retain_structured_chunk_size ?? ""}
+          onChange={(e) => {
+            onChange({
+              retain_structured_chunk_size: e.target.value ? parseInt(e.target.value, 10) : null,
+            });
+          }}
           placeholder={isOverride ? t("inherited") : undefined}
         />
       </FieldRow>
@@ -869,42 +893,14 @@ function RetainStrategyForm({
   );
 }
 
-type LocalStrategy = { id: number; name: string; values: RetainFormValues };
+type LocalStrategy = RetainStrategy<LabelGroup[]>;
 
 function fromStrategiesDict(dict: Record<string, Record<string, any>> | null): LocalStrategy[] {
-  if (!dict) return [];
-  return Object.entries(dict).map(([name, overrides], i) => ({
-    id: i,
-    name,
-    values: {
-      retain_extraction_mode: overrides.retain_extraction_mode ?? null,
-      retain_chunk_size: overrides.retain_chunk_size ?? null,
-      retain_mission: overrides.retain_mission ?? null,
-      retain_custom_instructions: overrides.retain_custom_instructions ?? null,
-      entities_allow_free_form: overrides.entities_allow_free_form ?? null,
-      entity_labels: parseEntityLabels(overrides.entity_labels),
-    },
-  }));
+  return deserializeRetainStrategies(dict, parseEntityLabels);
 }
 
 function toStrategiesDict(local: LocalStrategy[]): Record<string, Record<string, any>> | null {
-  const dict: Record<string, Record<string, any>> = {};
-  for (const s of local) {
-    if (!s.name.trim()) continue;
-    const overrides: Record<string, any> = {};
-    if (s.values.retain_extraction_mode !== null)
-      overrides.retain_extraction_mode = s.values.retain_extraction_mode;
-    if (s.values.retain_chunk_size !== null)
-      overrides.retain_chunk_size = s.values.retain_chunk_size;
-    if (s.values.retain_mission) overrides.retain_mission = s.values.retain_mission;
-    if (s.values.retain_custom_instructions)
-      overrides.retain_custom_instructions = s.values.retain_custom_instructions;
-    if (s.values.entities_allow_free_form !== null)
-      overrides.entities_allow_free_form = s.values.entities_allow_free_form;
-    if (s.values.entity_labels !== null) overrides.entity_labels = s.values.entity_labels;
-    dict[s.name.trim()] = overrides;
-  }
-  return Object.keys(dict).length > 0 ? dict : null;
+  return serializeRetainStrategies(local);
 }
 
 function RetainStrategiesPanel({
@@ -950,6 +946,7 @@ function RetainStrategiesPanel({
         values: {
           retain_extraction_mode: null,
           retain_chunk_size: null,
+          retain_structured_chunk_size: null,
           retain_mission: null,
           retain_custom_instructions: null,
           entities_allow_free_form: null,
@@ -1419,7 +1416,6 @@ function MapFieldsEditor({
   };
 
   const isRoot = depth === 0;
-  const indent = `${(depth + 1) * 12}px`;
 
   return (
     <div

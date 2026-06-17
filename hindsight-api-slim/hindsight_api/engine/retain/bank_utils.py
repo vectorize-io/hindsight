@@ -4,8 +4,8 @@ bank profile utilities for disposition and mission management.
 
 import json
 import logging
-import re
 import uuid
+from dataclasses import dataclass
 from typing import TypedDict
 
 from pydantic import BaseModel, Field
@@ -105,6 +105,18 @@ class BankProfile(TypedDict):
     mission: str
 
 
+@dataclass
+class BankProfileResult:
+    """Result of a get-or-create bank lookup.
+
+    ``created`` is True when the bank row was freshly inserted on this call,
+    which callers use to drive the one-time HINDSIGHT_API_DEFAULT_BANK_TEMPLATE hook.
+    """
+
+    profile: BankProfile
+    created: bool
+
+
 class MissionMergeResponse(BaseModel):
     """LLM response for mission merge."""
 
@@ -123,8 +135,8 @@ async def get_bank_profile(pool, bank_id: str) -> BankProfile:
     Returns:
         BankProfile with name, typed DispositionTraits, and mission
     """
-    profile, _ = await get_or_create_bank_profile(pool, bank_id)
-    return profile
+    result = await get_or_create_bank_profile(pool, bank_id)
+    return result.profile
 
 
 async def get_bank_profile_if_exists(pool, bank_id: str) -> BankProfile | None:
@@ -162,70 +174,89 @@ async def get_bank_profile_if_exists(pool, bank_id: str) -> BankProfile | None:
         )
 
 
-async def get_or_create_bank_profile(pool, bank_id: str) -> tuple[BankProfile, bool]:
+async def get_or_create_bank_profile(pool, bank_id: str) -> BankProfileResult:
     """
     Get bank profile, auto-creating with defaults if it doesn't exist.
 
-    Same as get_bank_profile, but also returns a flag indicating whether the
-    bank was freshly created on this call. Used by the memory engine to apply
-    the HINDSIGHT_API_DEFAULT_BANK_TEMPLATE hook on first bank creation.
+    Same as get_bank_profile, but also reports whether the bank was freshly
+    created on this call (``BankProfileResult.created``). Used by the memory
+    engine to apply the HINDSIGHT_API_DEFAULT_BANK_TEMPLATE hook on first bank
+    creation.
 
-    Returns:
-        Tuple of (BankProfile, created) where created is True if the bank
-        did not exist before this call.
+    Acquires its own connection. When the caller already holds a connection and
+    wants the bank row to share its transaction (so the lazy bank-create commits
+    or rolls back atomically with the caller's write), use
+    ``get_or_create_bank_profile_on_conn`` instead.
     """
     async with acquire_with_retry(pool) as conn:
-        # Try to get existing bank
-        row = await conn.fetchrow(
-            f"""
-            SELECT name, disposition, mission
-            FROM {fq_table("banks")} WHERE bank_id = $1
-            """,
-            bank_id,
+        return await get_or_create_bank_profile_on_conn(conn, bank_id, ops=pool.ops)
+
+
+async def get_or_create_bank_profile_on_conn(conn, bank_id: str, *, ops) -> BankProfileResult:
+    """
+    Connection-bound variant of ``get_or_create_bank_profile``.
+
+    Runs the SELECT, the ``INSERT ... ON CONFLICT DO NOTHING`` and the per-bank
+    vector index creation on the caller-supplied ``conn``. When ``conn`` is
+    inside an open transaction, the lazy bank-create therefore commits (or rolls
+    back) atomically with whatever bank-scoped write the caller performs on the
+    same connection — closing the window where a freshly-created bank could
+    outlive a write that ultimately failed.
+
+    ``ops`` is the backend's dialect ops object (``backend.ops``), needed for
+    per-bank vector index DDL.
+    """
+    # Try to get existing bank
+    row = await conn.fetchrow(
+        f"""
+        SELECT name, disposition, mission
+        FROM {fq_table("banks")} WHERE bank_id = $1
+        """,
+        bank_id,
+    )
+
+    if row:
+        # asyncpg returns JSONB as a string, so parse it
+        disposition_data = row["disposition"]
+        if isinstance(disposition_data, str):
+            disposition_data = json.loads(disposition_data)
+
+        return BankProfileResult(
+            profile=BankProfile(
+                name=row["name"],
+                disposition=DispositionTraits(**disposition_data),
+                mission=row["mission"] or "",
+            ),
+            created=False,
         )
 
-        if row:
-            # asyncpg returns JSONB as a string, so parse it
-            disposition_data = row["disposition"]
-            if isinstance(disposition_data, str):
-                disposition_data = json.loads(disposition_data)
+    # Bank doesn't exist, create with defaults.
+    # Generate internal_id here so we control the value and can use it
+    # immediately for vector index creation without a RETURNING round-trip.
+    internal_id = uuid.uuid4()
+    inserted = await conn.fetchval(
+        f"""
+        INSERT INTO {fq_table("banks")} (bank_id, name, disposition, mission, internal_id)
+        VALUES ($1, $2, $3::jsonb, $4, $5)
+        ON CONFLICT (bank_id) DO NOTHING
+        RETURNING bank_id
+        """,
+        bank_id,
+        bank_id,  # Default name is the bank_id
+        json.dumps(DEFAULT_DISPOSITION),
+        "",
+        internal_id,
+    )
 
-            return (
-                BankProfile(
-                    name=row["name"],
-                    disposition=DispositionTraits(**disposition_data),
-                    mission=row["mission"] or "",
-                ),
-                False,
-            )
+    created = inserted is not None
+    if created:
+        # Fresh insert — create per-bank vector indexes (instant on empty bank)
+        await create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
 
-        # Bank doesn't exist, create with defaults.
-        # Generate internal_id here so we control the value and can use it
-        # immediately for vector index creation without a RETURNING round-trip.
-        internal_id = uuid.uuid4()
-        inserted = await conn.fetchval(
-            f"""
-            INSERT INTO {fq_table("banks")} (bank_id, name, disposition, mission, internal_id)
-            VALUES ($1, $2, $3::jsonb, $4, $5)
-            ON CONFLICT (bank_id) DO NOTHING
-            RETURNING bank_id
-            """,
-            bank_id,
-            bank_id,  # Default name is the bank_id
-            json.dumps(DEFAULT_DISPOSITION),
-            "",
-            internal_id,
-        )
-
-        created = inserted is not None
-        if created:
-            # Fresh insert — create per-bank vector indexes (instant on empty bank)
-            await create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=pool.ops)
-
-        return (
-            BankProfile(name=bank_id, disposition=DispositionTraits(**DEFAULT_DISPOSITION), mission=""),
-            created,
-        )
+    return BankProfileResult(
+        profile=BankProfile(name=bank_id, disposition=DispositionTraits(**DEFAULT_DISPOSITION), mission=""),
+        created=created,
+    )
 
 
 async def update_bank_disposition(pool, bank_id: str, disposition: dict[str, int]) -> None:

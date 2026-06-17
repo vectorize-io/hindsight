@@ -133,7 +133,9 @@ async def test_link_expansion_observation_graph_retrieval(memory_real_llm, reque
 
         assert obs_result is not None and obs_result.results is not None, "Should have observations after consolidation"
         # We should have observations from consolidation
-        assert len(obs_result.results) >= 1, f"Should have at least 1 observation about Python, got {len(obs_result.results)}"
+        assert len(obs_result.results) >= 1, (
+            f"Should have at least 1 observation about Python, got {len(obs_result.results)}"
+        )
 
         # Now test graph retrieval specifically
         # Query for Alice - should find Bob via shared "Python" entity
@@ -175,9 +177,7 @@ async def test_link_expansion_observation_graph_retrieval(memory_real_llm, reque
 
         assert world_result.trace is not None, "Should have trace data for world facts"
         world_retrieval_results = world_result.trace.get("retrieval_results", [])
-        world_graph_results = [
-            r for r in world_retrieval_results if r.get("method_name") == "graph"
-        ]
+        world_graph_results = [r for r in world_retrieval_results if r.get("method_name") == "graph"]
 
         if world_graph_results:
             world_graph_result = [r for r in world_graph_results if r.get("fact_type") == "world"][0]
@@ -192,7 +192,9 @@ async def test_link_expansion_observation_graph_retrieval(memory_real_llm, reque
                     print("  Found Bob's world fact via shared 'Python' entity!")
 
         print("\n✓ Link expansion observation test passed!")
-        print("  Entity traversal path verified (observations -> sources -> entities -> connected sources -> observations)")
+        print(
+            "  Entity traversal path verified (observations -> sources -> entities -> connected sources -> observations)"
+        )
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -259,15 +261,11 @@ async def test_link_expansion_world_fact_graph_retrieval(memory, request_context
         # Verify graph retrieval ran (it may or may not find new results depending
         # on whether semantic search already found everything)
         retrieval_results = result.trace.get("retrieval_results", [])
-        graph_results = [
-            r for r in retrieval_results if r.get("method_name") == "graph"
-        ]
+        graph_results = [r for r in retrieval_results if r.get("method_name") == "graph"]
         assert len(graph_results) > 0, "Should have graph retrieval results in trace"
 
         # The important thing is that recall works and returns relevant results
-        assert result.results is not None and len(result.results) > 0, (
-            "Should return results for 'Alice' query"
-        )
+        assert result.results is not None and len(result.results) > 0, "Should return results for 'Alice' query"
 
         # Alice's result should be at or near the top
         result_texts = [r.text for r in result.results]

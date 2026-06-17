@@ -495,9 +495,10 @@ class TestExport:
         assert resp.status_code == 200
         data = resp.json()
         assert data["version"] == "1"
-        assert data["bank"] is None
-        assert data["mental_models"] is None
-        assert data["directives"] is None
+        # An empty bank has no overrides; these null fields are omitted from the response.
+        assert data.get("bank") is None
+        assert data.get("mental_models") is None
+        assert data.get("directives") is None
 
     @pytest.mark.asyncio
     async def test_export_after_import(self, api_client, bank_id):
@@ -643,9 +644,7 @@ class TestDefaultBankTemplateEnvVar:
         yield default_template
 
     @pytest.mark.asyncio
-    async def test_default_template_applied_on_new_bank(
-        self, api_client, bank_id, _patched_default_template
-    ):
+    async def test_default_template_applied_on_new_bank(self, api_client, bank_id, _patched_default_template):
         """Creating a new bank applies the default template (config + mental models + directives)."""
         # Trigger bank auto-creation via GET profile
         resp = await api_client.put(f"/v1/default/banks/{bank_id}", json={})
@@ -730,9 +729,7 @@ class TestDefaultBankTemplateEnvVar:
         assert config_resp.json()["overrides"] == {}
 
     @pytest.mark.asyncio
-    async def test_default_template_malformed_is_swallowed(
-        self, api_client, bank_id, monkeypatch
-    ):
+    async def test_default_template_malformed_is_swallowed(self, api_client, bank_id, monkeypatch):
         """A malformed default template is logged and ignored — bank creation still succeeds."""
         from hindsight_api.config import _get_raw_config
 

@@ -141,7 +141,8 @@ async def test_full_api_workflow(api_client, test_bank_id):
     reflect_result = response.json()
     assert "text" in reflect_result
     assert len(reflect_result["text"]) > 0
-    assert "based_on" in reflect_result
+    # based_on is only populated when facts are requested; it's null (and thus omitted) here.
+    assert reflect_result.get("based_on") is None
 
     # Verify the reflect endpoint returned a non-trivial response
     assert len(reflect_result["text"]) > 5, "Reflect should return a substantive response"
@@ -1104,6 +1105,8 @@ async def test_version_endpoint_returns_correct_version(api_client):
     assert isinstance(features["observations"], bool)
     assert isinstance(features["mcp"], bool)
     assert isinstance(features["worker"], bool)
+    assert isinstance(features["audit_log"], bool)
+    assert isinstance(features["llm_trace"], bool)
 
     print(f"Version endpoint returned: api_version={result['api_version']}, features={features}")
 
@@ -1313,6 +1316,42 @@ async def test_unknown_params_not_rejected(api_client):
     )
     assert response.status_code == 200
     assert "X-Ignored-Params" not in response.headers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["enable_observations", "enable_auto_consolidation"])
+async def test_patch_config_persists_override_for_uncreated_bank(api_client, field):
+    """PATCH config must persist the override even when the bank was never retained.
+
+    Banks are created lazily on first retain, so a PATCH that precedes any
+    ingestion previously UPDATE-d zero rows and silently no-op'd while returning
+    200 (issue #1940). The endpoint must auto-create the bank and round-trip the
+    override in the same response.
+    """
+    test_bank_id = f"patch_uncreated_{field}_{datetime.now().timestamp()}"
+
+    # PATCH config without ever creating the bank (no PUT, no retain).
+    response = await api_client.patch(
+        f"/v1/default/banks/{test_bank_id}/config",
+        json={"updates": {field: False}},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["config"][field] is False
+    assert body["overrides"].get(field) is False
+
+    # GET reads back the persisted override (proves it was written, not just echoed).
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/config")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["config"][field] is False
+    assert body["overrides"].get(field) is False
+
+    # The auto-created bank must have a name (defaults to bank_id). A NULL name
+    # would 500 the profile endpoint, whose response types name as a required str.
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == test_bank_id
 
 
 @pytest.mark.hs_llm_core

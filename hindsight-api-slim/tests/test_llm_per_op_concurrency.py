@@ -5,6 +5,7 @@ per-operation semaphores when `HINDSIGHT_API_{RETAIN,REFLECT,CONSOLIDATION}_LLM_
 is set. They patch the module-level semaphore registry so they can run without
 needing to re-import the module with custom env vars.
 """
+
 import asyncio
 from contextlib import AsyncExitStack
 from unittest.mock import patch
@@ -79,9 +80,7 @@ class TestSemaphoresForScope:
                 "consolidation": consolidation_sem,
             },
         ):
-            assert _semaphores_for_scope("mental_model_delta_ops") == [
-                llm_wrapper._global_llm_semaphore
-            ]
+            assert _semaphores_for_scope("mental_model_delta_ops") == [llm_wrapper._global_llm_semaphore]
             assert _semaphores_for_scope("memory_think") == [llm_wrapper._global_llm_semaphore]
             assert _semaphores_for_scope("verification") == [llm_wrapper._global_llm_semaphore]
 

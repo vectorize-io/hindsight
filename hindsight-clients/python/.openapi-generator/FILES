@@ -5,9 +5,11 @@ hindsight_client_api/api/audit_api.py
 hindsight_client_api/api/bank_templates_api.py
 hindsight_client_api/api/banks_api.py
 hindsight_client_api/api/directives_api.py
+hindsight_client_api/api/document_transfer_api.py
 hindsight_client_api/api/documents_api.py
 hindsight_client_api/api/entities_api.py
 hindsight_client_api/api/files_api.py
+hindsight_client_api/api/llm_traces_api.py
 hindsight_client_api/api/memory_api.py
 hindsight_client_api/api/mental_models_api.py
 hindsight_client_api/api/monitoring_api.py
@@ -29,6 +31,7 @@ hindsight_client_api/models/bank_config_response.py
 hindsight_client_api/models/bank_config_update.py
 hindsight_client_api/models/bank_list_item.py
 hindsight_client_api/models/bank_list_response.py
+hindsight_client_api/models/bank_llm_health_response.py
 hindsight_client_api/models/bank_profile_response.py
 hindsight_client_api/models/bank_stats_response.py
 hindsight_client_api/models/bank_template_config.py
@@ -55,7 +58,10 @@ hindsight_client_api/models/delete_response.py
 hindsight_client_api/models/directive_list_response.py
 hindsight_client_api/models/directive_response.py
 hindsight_client_api/models/disposition_traits.py
+hindsight_client_api/models/document_import_submit_response.py
 hindsight_client_api/models/document_response.py
+hindsight_client_api/models/dry_run_extract_request.py
+hindsight_client_api/models/dry_run_extraction_result.py
 hindsight_client_api/models/entity_detail_response.py
 hindsight_client_api/models/entity_graph_response.py
 hindsight_client_api/models/entity_include_options.py
@@ -64,6 +70,7 @@ hindsight_client_api/models/entity_list_item.py
 hindsight_client_api/models/entity_list_response.py
 hindsight_client_api/models/entity_observation_response.py
 hindsight_client_api/models/entity_state_response.py
+hindsight_client_api/models/extracted_fact.py
 hindsight_client_api/models/features_info.py
 hindsight_client_api/models/file_retain_response.py
 hindsight_client_api/models/graph_data_response.py
@@ -73,6 +80,12 @@ hindsight_client_api/models/list_chunks_response.py
 hindsight_client_api/models/list_documents_response.py
 hindsight_client_api/models/list_memory_units_response.py
 hindsight_client_api/models/list_tags_response.py
+hindsight_client_api/models/llm_operation_health.py
+hindsight_client_api/models/llm_request_entry.py
+hindsight_client_api/models/llm_request_list_response.py
+hindsight_client_api/models/llm_request_stats_bucket.py
+hindsight_client_api/models/llm_request_stats_response.py
+hindsight_client_api/models/llm_request_token_sums.py
 hindsight_client_api/models/memories_timeseries_response.py
 hindsight_client_api/models/memory_item.py
 hindsight_client_api/models/memory_timeseries_bucket.py
@@ -84,7 +97,10 @@ hindsight_client_api/models/mental_model_trigger_output.py
 hindsight_client_api/models/mental_model_trigger_output_tag_groups_inner.py
 hindsight_client_api/models/model_not.py
 hindsight_client_api/models/not1.py
+hindsight_client_api/models/observation_scope.py
 hindsight_client_api/models/observation_scopes.py
+hindsight_client_api/models/observation_scopes_response.py
+hindsight_client_api/models/operation_progress.py
 hindsight_client_api/models/operation_response.py
 hindsight_client_api/models/operation_status_response.py
 hindsight_client_api/models/operations_list_response.py
@@ -122,6 +138,7 @@ hindsight_client_api/models/update_directive_request.py
 hindsight_client_api/models/update_disposition_request.py
 hindsight_client_api/models/update_document_request.py
 hindsight_client_api/models/update_document_response.py
+hindsight_client_api/models/update_memory_request.py
 hindsight_client_api/models/update_mental_model_request.py
 hindsight_client_api/models/update_webhook_request.py
 hindsight_client_api/models/validation_error.py

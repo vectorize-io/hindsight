@@ -22,6 +22,7 @@ def config():
         "bank_id": "test-bank",
     }
 
+
 @pytest.fixture
 def mock_cli_binary(tmp_path):
     """Create a mock CLI binary."""
@@ -29,6 +30,7 @@ def mock_cli_binary(tmp_path):
     cli_path.write_text("#!/bin/bash\nexit 0")
     cli_path.chmod(0o755)
     return cli_path
+
 
 class TestRunCli:
     """Tests for run_cli function."""

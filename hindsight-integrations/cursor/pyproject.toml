@@ -1,0 +1,73 @@
+[project]
+name = "hindsight-cursor"
+version = "0.2.0"
+description = "Hindsight memory plugin for Cursor - persistent cross-session memory for coding agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Vectorize", email = "support@vectorize.io" }
+]
+keywords = [
+    "ai",
+    "memory",
+    "cursor",
+    "agents",
+    "hindsight",
+    "coding",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# No runtime dependencies — the plugin scripts use stdlib only.
+# The CLI itself also uses stdlib only.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.2",
+]
+
+[project.scripts]
+hindsight-cursor = "hindsight_cursor.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/vectorize-io/hindsight"
+Documentation = "https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/cursor"
+Repository = "https://github.com/vectorize-io/hindsight"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hindsight_cursor"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# Bundle plugin files as package data so the CLI can copy them on init.
+".cursor-plugin" = "hindsight_cursor/plugin_data/.cursor-plugin"
+"hooks" = "hindsight_cursor/plugin_data/hooks"
+"rules" = "hindsight_cursor/plugin_data/rules"
+"scripts" = "hindsight_cursor/plugin_data/scripts"
+"settings.json" = "hindsight_cursor/plugin_data/settings.json"
+"skills" = "hindsight_cursor/plugin_data/skills"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "requires_real_llm: tests that require a live Hindsight server (excluded from the deterministic PR-CI bucket; run via `pytest -m requires_real_llm`).",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "hindsight-client>=0.4.19,<1.0",
+]

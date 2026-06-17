@@ -1,6 +1,7 @@
 """
 Tests for document tracking and upsert functionality.
 """
+
 import logging
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -206,6 +207,58 @@ async def test_document_without_metadata(memory, request_context):
 
 
 @pytest.mark.asyncio
+async def test_document_observation_scopes_from_retain_params(memory, request_context):
+    """observation_scopes passed at retain time is captured into retain_params and surfaced by get_document."""
+    bank_id = f"test_doc_obs_scopes_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        document_id = "doc-with-scopes"
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "Alice and Bob are friends.",
+                    "tags": ["alice", "bob"],
+                    "observation_scopes": "all_combinations",
+                }
+            ],
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        assert doc is not None
+        # Surfaced as a top-level field and persisted in retain_params.
+        assert doc["observation_scopes"] == "all_combinations"
+        assert doc["retain_params"]["observation_scopes"] == "all_combinations"
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_document_observation_scopes_none_when_unset(memory, request_context):
+    """get_document returns observation_scopes None when none was configured at retain time."""
+    bank_id = f"test_doc_no_scopes_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        document_id = "doc-no-scopes"
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Bob works at Microsoft.",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        assert doc is not None
+        assert doc["observation_scopes"] is None
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 @pytest.mark.hs_llm_core
 async def test_document_persisted_with_zero_facts(memory_real_llm, request_context):
     """
@@ -357,9 +410,7 @@ async def test_document_persisted_with_zero_facts_async_submit(memory_real_llm, 
             elapsed += wait_interval
 
             # Check if document exists
-            doc = await memory.get_document(
-                "doc-async-zero-facts", bank_id, request_context=request_context
-            )
+            doc = await memory.get_document("doc-async-zero-facts", bank_id, request_context=request_context)
             if doc is not None:
                 break
 

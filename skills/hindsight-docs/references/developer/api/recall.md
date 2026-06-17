@@ -7,7 +7,8 @@ When you **recall**, Hindsight runs four retrieval strategies in parallel — se
 
 {/* Import raw source files */}
 
-:::info How Recall Works
+> **ℹ️ How Recall Works**
+> 
 Learn about the four retrieval strategies (semantic, keyword, graph, temporal) and RRF fusion in the [Recall Architecture](../retrieval.md) guide.
 > **💡 Prerequisites**
 > 
@@ -244,7 +245,8 @@ An optional object controlling supplementary data returned alongside the main fa
 
 When enabled, the response includes the raw source text chunks from which each fact was extracted. Chunks are fetched before the `max_tokens` filter, so setting `max_tokens=0` returns no facts but can still return chunks. The `max_tokens` sub-option (default `8192`) controls the total chunk token budget independently of the main fact budget. This is useful when agents need surrounding context beyond the extracted fact text.
 
-:::note
+> **📝 Note**
+> 
 When `include_chunks` is enabled, chunks are fetched based on the top-scored reranked results before token filtering. The last chunk is truncated (not dropped) to fit exactly within the budget, and each chunk carries a `truncated` flag indicating whether it was cut.
 #### source_facts
 
@@ -324,6 +326,7 @@ The `tags_match` parameter controls the filtering logic:
 | `any_strict` | Excluded | Memory has **at least one** of the specified tags |
 | `all` | Included | Memory has **all** of the specified tags |
 | `all_strict` | Excluded | Memory has **all** of the specified tags |
+| `exact` | Excluded | Memory has **exactly** the specified tag set |
 
 #### Scenario setup
 
@@ -515,6 +518,12 @@ Use this for strict scope enforcement where a memory must explicitly belong to *
 > **💡 Extra tags are fine**
 > 
 A memory with tags `["user:alice", "team", "project:x"]` will still match a filter of `["user:alice", "team"]` under `all_strict` — extra tags on the memory are not a problem. The filter only requires the memory to contain **at least** the specified tags.
+#### `exact` — set equality, excludes untagged
+
+Returns memories whose tag set is exactly equal to the specified tags, regardless of tag order. Unlike `all_strict`, memories with extra tags do not match.
+
+Use this when filtering a precise observation scope returned by `GET /v1/default/banks/{bank_id}/observations/scopes`, where `["user:alice"]` should not also match observations scoped to `["user:alice", "project:x"]`.
+
 ### tag_groups
 
 `tag_groups` is a list of compound boolean tag filters. The groups in the list are AND-ed together at the top level. Each group is a recursive boolean expression: a **leaf** node `{tags, match}`, or a **compound** node `{and: [...]}`, `{or: [...]}`, or `{not: ...}`.
@@ -527,7 +536,7 @@ A memory with tags `["user:alice", "team", "project:x"]` will still match a filt
 { "tags": ["step:5", "step:8"], "match": "any_strict" }
 ```
 
-`match` accepts the same values as `tags_match`: `any`, `all`, `any_strict`, `all_strict`. Defaults to `any_strict`.
+`match` accepts the same values as `tags_match`: `any`, `all`, `any_strict`, `all_strict`, `exact`. Defaults to `any_strict`.
 
 #### Compound nodes
 

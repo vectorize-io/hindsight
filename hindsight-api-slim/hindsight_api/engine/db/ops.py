@@ -19,7 +19,6 @@ and mirrors Django's ``DatabaseOperations`` architecture.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
-from uuid import UUID
 
 from .base import DatabaseConnection
 from .result import ResultRow
@@ -69,6 +68,30 @@ class DataAccessOps(ABC):
 
         PG uses INSERT ... SELECT FROM unnest() with ON CONFLICT DO UPDATE.
         Non-PG uses bulk_insert_from_arrays (executemany).
+        """
+        ...
+
+    @abstractmethod
+    async def lock_document_for_write(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        doc_id: str,
+        bank_id: str,
+    ) -> str | None:
+        """Ensure the document row exists, take a row lock on it, and return its
+        pre-existing ``content_hash``.
+
+        This serializes all concurrent writers for ``doc_id`` at the DB level
+        (so interleaved same-document retains can't corrupt each other), while
+        creating the row on first write. The returned hash is ``'__pending__'``
+        for a freshly inserted row, the stored hash for an existing one, or
+        ``None`` if the row could not be read back.
+
+        PG does this in a single statement (``INSERT ... ON CONFLICT DO UPDATE
+        ... RETURNING``), which always takes the row lock as part of the upsert.
+        Oracle can't (``MERGE`` doesn't support ``RETURNING``), so it splits the
+        work into an idempotent insert plus a ``SELECT ... FOR UPDATE``.
         """
         ...
 

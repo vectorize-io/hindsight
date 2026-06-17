@@ -103,6 +103,11 @@ async def test_small_async_batch_no_splitting(memory, request_context):
     assert status["result_metadata"]["num_sub_batches"] == 1  # Single sub-batch
     assert len(status["child_operations"]) == 1
     assert status["child_operations"][0]["status"] == "completed"
+    child_meta = await _child_metadata(memory, bank_id, operation_id, request_context)
+    assert child_meta["unit_ids_count"] > 0
+    assert child_meta["extraction_errors_count"] == 0
+    assert status["result_metadata"]["unit_ids_count"] == child_meta["unit_ids_count"]
+    assert status["result_metadata"]["extraction_errors_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -166,6 +171,19 @@ async def test_large_async_batch_auto_splits(memory, request_context):
 
     # Parent status should be aggregated as "completed"
     assert parent_status["status"] == "completed"
+    child_unit_counts = []
+    for child in child_ops:
+        child_status = await memory.get_operation_status(
+            bank_id=bank_id,
+            operation_id=child["operation_id"],
+            request_context=request_context,
+        )
+        child_meta = child_status["result_metadata"]
+        assert child_meta["unit_ids_count"] > 0
+        assert child_meta["extraction_errors_count"] == 0
+        child_unit_counts.append(child_meta["unit_ids_count"])
+    assert parent_status["result_metadata"]["unit_ids_count"] == sum(child_unit_counts)
+    assert parent_status["result_metadata"]["extraction_errors_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -459,6 +477,42 @@ async def _child_metadata(memory, bank_id: str, parent_operation_id: str, reques
         request_context=request_context,
     )
     return child["result_metadata"]
+
+
+@pytest.mark.asyncio
+async def test_retain_outcome_metadata_records_zero_counts(memory, request_context, monkeypatch):
+    """Completed retain operations expose explicit zero outcome counters."""
+    from hindsight_api.engine.response_models import TokenUsage
+    from hindsight_api.engine.retain import fact_extraction
+
+    async def empty_extract_facts_from_contents(
+        *args: object, **kwargs: object
+    ) -> tuple[list[object], list[object], TokenUsage]:
+        return [], [], TokenUsage()
+
+    monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", empty_extract_facts_from_contents)
+
+    bank_id = "test_retain_outcome_zero_counts"
+    result = await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=[{"content": "No extracted facts for this item."}],
+        request_context=request_context,
+    )
+    await asyncio.sleep(0.2)
+
+    parent = await memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=result["operation_id"],
+        request_context=request_context,
+    )
+    child_meta = await _child_metadata(memory, bank_id, result["operation_id"], request_context)
+
+    assert child_meta["unit_ids_count"] == 0
+    assert child_meta["extraction_errors_count"] == 0
+    assert "extraction_errors_sample" not in child_meta
+    assert parent["result_metadata"]["unit_ids_count"] == 0
+    assert parent["result_metadata"]["extraction_errors_count"] == 0
+    assert "extraction_errors_sample" not in parent["result_metadata"]
 
 
 @pytest.mark.asyncio
@@ -1060,3 +1114,67 @@ async def test_submit_async_batch_retain_rolls_back_parent_on_child_failure(
         f"{[(r['operation_type'], r['status'], r['task_payload'] is not None) for r in rows]}. "
         "The parent INSERT must be transactionally coupled to the child INSERTs."
     )
+
+
+@pytest.mark.asyncio
+async def test_submit_async_batch_retain_creates_missing_bank(memory, request_context, monkeypatch):
+    """First async retain to a new bank lazily creates the bank (async_operations
+    has an FK to banks) instead of raising a constraint error."""
+
+    async def noop_submit_task(_task_dict):
+        return None
+
+    monkeypatch.setattr(memory._task_backend, "submit_task", noop_submit_task)
+
+    bank_id = f"test_batch_newbank_{uuid.uuid4().hex[:8]}"
+    pool = await memory._get_pool()
+
+    await memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=[{"content": "Alice works at Google.", "document_id": "doc1"}],
+        request_context=request_context,
+    )
+
+    bank = await pool.fetchrow("SELECT bank_id FROM banks WHERE bank_id = $1", bank_id)
+    assert bank is not None, "submit_async_retain should have lazily created the bank"
+
+
+@pytest.mark.asyncio
+async def test_submit_async_batch_retain_rolls_back_missing_bank_on_child_failure(
+    memory_no_llm_verify, request_context, monkeypatch
+):
+    """The lazy bank-create shares the parent+child transaction. When the child
+    loop fails for a bank that did not previously exist, the freshly-created bank
+    must roll back together with the operation rows — no orphan bank."""
+    import hindsight_api.engine.memory_engine as me
+    from hindsight_api.engine.memory_engine import count_tokens
+
+    bank_id = f"test_batch_bank_rollback_{uuid.uuid4().hex[:8]}"
+    pool = await memory_no_llm_verify._get_pool()
+    # Intentionally do NOT pre-create the bank — it must be created (and then
+    # rolled back) inside submit_async_retain's transaction.
+
+    large_content = "The quick brown fox jumps over the lazy dog. " * 500
+    contents = [{"content": large_content + f" item {i}", "document_id": f"doc{i}"} for i in range(2)]
+    assert sum(count_tokens(item["content"]) for item in contents) > 10_000
+
+    real_class = me.BatchRetainChildMetadata
+    call_count = {"n": 0}
+
+    def failing_child_metadata(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise RuntimeError("Simulated child-step failure mid-batch")
+        return real_class(*args, **kwargs)
+
+    monkeypatch.setattr(me, "BatchRetainChildMetadata", failing_child_metadata)
+
+    with pytest.raises(RuntimeError, match="Simulated child-step failure"):
+        await memory_no_llm_verify.submit_async_retain(
+            bank_id=bank_id,
+            contents=contents,
+            request_context=request_context,
+        )
+
+    bank = await pool.fetchrow("SELECT bank_id FROM banks WHERE bank_id = $1", bank_id)
+    assert bank is None, "the lazily-created bank must roll back with the failed operation inserts"

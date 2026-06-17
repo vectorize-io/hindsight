@@ -23,7 +23,8 @@ async def test_startup_rejects_batch_enabled_with_non_batch_provider():
     mock_provider.supports_batch_api = AsyncMock(return_value=False)
 
     mock_llm_config = MagicMock()
-    mock_llm_config.provider = "gemini"
+    # anthropic has no batch API in the engine — a genuine non-batch provider.
+    mock_llm_config.provider = "anthropic"
     mock_llm_config._provider_impl = mock_provider
     mock_llm_config.verify_connection = AsyncMock()
 
@@ -40,7 +41,7 @@ async def test_startup_rejects_batch_enabled_with_non_batch_provider():
                     f"Configuration error: HINDSIGHT_API_RETAIN_BATCH_ENABLED=true "
                     f"but the retain LLM provider '{mock_llm_config.provider}' "
                     f"does not support the batch API. Either switch to a provider "
-                    f"that supports batch operations (e.g. 'openai', 'groq') or "
+                    f"that supports batch operations (e.g. 'openai', 'groq', 'gemini') or "
                     f"set HINDSIGHT_API_RETAIN_BATCH_ENABLED=false."
                 )
 
@@ -97,7 +98,7 @@ async def test_runtime_raises_if_batch_unsupported():
     with pytest.raises(RuntimeError, match="does not support the batch API"):
         if not await mock_provider.supports_batch_api():
             raise RuntimeError(
-                "retain_batch_enabled=True but provider 'gemini' does not "
+                "retain_batch_enabled=True but provider 'anthropic' does not "
                 "support the batch API. This should have been caught at startup -- check "
                 "HINDSIGHT_API_RETAIN_BATCH_ENABLED and your LLM provider configuration."
             )

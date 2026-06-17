@@ -7,7 +7,7 @@ This provider handles all OpenAI API-compatible models including:
 - Groq: Fast inference with seed control and service tiers
 - Ollama: Local models with native streaming API support
 - LMStudio: Local models with OpenAI-compatible API
-- MiniMax: MiniMax-M2.7 models with 1M context window
+- MiniMax: MiniMax-M3 / MiniMax-M2.7 models with 1M context window
 - DeepSeek: deepseek-v4-flash / deepseek-v4-pro / deepseek-chat / deepseek-reasoner via api.deepseek.com
 - Opencode Go: deepseek-v4-flash via https://opencode.ai/zen/go/v1
 
@@ -33,6 +33,7 @@ import httpx
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI, LengthFinishReasonError
 
 from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
+from hindsight_api.engine.bank_attribution import apply_bank_attribution
 from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
@@ -43,6 +44,16 @@ logger = logging.getLogger(__name__)
 # Seed applied to every Groq request for deterministic behavior
 DEFAULT_LLM_SEED = 4242
 JSON_MODE_USER_HINT = "Return valid json only."
+
+# Self-hosted OpenAI-compatible servers that advertise tool_choice="required"
+# but silently ignore it: instead of forcing a tool call they return
+# finish_reason "stop"/"tool_calls" with an EMPTY tool_calls array and no error.
+# Reflect's agent loop then sees no tool call, runs synthesis with no retrieval,
+# and answers "I don't have information" even when the bank holds the answer.
+# See issues #1563 (LM Studio), #1179 (LM Studio + Qwen), #1877 (vLLM with
+# --enable-auto-tool-choice). llama-server (the "llamacpp" provider) honors
+# "required" correctly and is intentionally excluded (#1179).
+_TOOL_CHOICE_REQUIRED_UNSUPPORTED_PROVIDERS = frozenset({"lmstudio", "ollama"})
 
 
 class ProviderResponseError(RuntimeError):
@@ -70,6 +81,49 @@ def _strip_code_fences(content: str) -> str:
         return content.split("```")[1].split("```")[0].strip()
     except (IndexError, ValueError):
         return content
+
+
+# Reasoning/thinking tags emitted by extended-thinking models. Some providers
+# (e.g. MiniMax-M3) leak the chain-of-thought wrapped in these tags into the
+# response body instead of a separate reasoning_content field. Each entry is
+# (open_tag, close_tag); the open tag also matches when the close tag is missing
+# (truncated output) so a dangling block is removed to end-of-string.
+_REASONING_TAG_PAIRS: tuple[tuple[str, str], ...] = (
+    ("<think>", "</think>"),
+    ("<thinking>", "</thinking>"),
+    ("<thought>", "</thought>"),
+    ("<reasoning>", "</reasoning>"),
+    ("|startthink|", "|endthink|"),
+)
+
+
+def _strip_reasoning_tags(text: str) -> str:
+    """Strip extended-thinking/reasoning blocks from an LLM response.
+
+    Removes the full set of tag styles emitted by reasoning models:
+    ``<think>``, ``<thinking>``, ``<thought>``, ``<reasoning>`` and the
+    ``|startthink|...|endthink|`` markers. Both the structured (JSON) path and
+    the free-form path must call this — otherwise a non-structured response
+    (e.g. a mental-model markdown blob from MiniMax-M3) leaks the raw
+    ``<think>...</think>`` verbatim into stored memories.
+
+    Handles two cases:
+    1. Closed blocks: ``<think>...</think>`` removed wherever they appear.
+    2. Unclosed blocks: a dangling ``<think>`` with no closing tag (model output
+       truncated mid-thought) is removed from the open tag to end-of-string.
+
+    Returns the input unchanged (modulo surrounding whitespace) when no tags are
+    present.
+    """
+    if not text:
+        return text
+    for open_tag, close_tag in _REASONING_TAG_PAIRS:
+        open_re = re.escape(open_tag)
+        close_re = re.escape(close_tag)
+        # Closed blocks first, then any remaining unclosed (truncated) block.
+        text = re.sub(rf"{open_re}.*?{close_re}", "", text, flags=re.DOTALL)
+        text = re.sub(rf"{open_re}.*", "", text, flags=re.DOTALL)
+    return text.strip()
 
 
 def _response_get(response: Any, key: str, default: Any = None) -> Any:
@@ -232,7 +286,7 @@ class OpenAICompatibleLLM(LLMInterface):
     - Groq: Fast inference with seed control and service tiers
     - Ollama: Local models with native streaming API for better structured output
     - LMStudio: Local models with OpenAI-compatible API
-    - MiniMax: MiniMax-M2.7 models via OpenAI-compatible API (https://api.minimax.io/v1)
+    - MiniMax: MiniMax-M3 / MiniMax-M2.7 models via OpenAI-compatible API (https://api.minimax.io/v1)
     - DeepSeek: deepseek-v4-flash / deepseek-v4-pro / deepseek-chat / deepseek-reasoner via https://api.deepseek.com
     - opencode-go: deepseek-v4-flash via https://opencode.ai/zen/go/v1
     """
@@ -279,6 +333,7 @@ class OpenAICompatibleLLM(LLMInterface):
             "openrouter",
             "zai",
             "opencode-go",
+            "fireworks",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"OpenAICompatibleLLM only supports: {', '.join(valid_providers)}. Got: {self.provider}")
@@ -303,6 +358,10 @@ class OpenAICompatibleLLM(LLMInterface):
                 self.base_url = "https://api.z.ai/api/coding/paas/v4"
             elif self.provider == "opencode-go":
                 self.base_url = "https://opencode.ai/zen/go/v1"
+            elif self.provider == "fireworks":
+                # OpenAI-compatible inference host (online path). The batch API
+                # lives on a separate control-plane host — see FireworksLLM.
+                self.base_url = "https://api.fireworks.ai/inference/v1"
 
         # For ollama/lmstudio, use dummy key if not provided
         if self.provider in ("ollama", "lmstudio") and not self.api_key:
@@ -354,6 +413,21 @@ class OpenAICompatibleLLM(LLMInterface):
             f"OpenAI-compatible client initialized: provider={self.provider}, model={self.model}, "
             f"base_url={self.base_url or 'default'}"
         )
+
+    def _drops_tool_choice_required(self) -> bool:
+        """Whether this endpoint silently ignores ``tool_choice="required"``.
+
+        True for self-hosted OpenAI-compatible servers known to return an empty
+        tool_calls array for "required" instead of forcing a call (#1563/#1179/
+        #1877). Covers LM Studio / Ollama directly, plus any server reached via
+        the generic "openai" provider with a custom ``base_url`` (e.g. a local
+        vLLM endpoint). The real OpenAI API (no base_url override) honors
+        "required", and cloud providers keep their own default base_urls, so both
+        are left untouched.
+        """
+        if self.provider in _TOOL_CHOICE_REQUIRED_UNSUPPORTED_PROVIDERS:
+            return True
+        return self.provider == "openai" and bool(self.base_url)
 
     async def verify_connection(self) -> None:
         """
@@ -455,7 +529,9 @@ class OpenAICompatibleLLM(LLMInterface):
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
             skip_validation: Return raw JSON without Pydantic validation.
-            strict_schema: Use strict JSON schema enforcement (OpenAI only).
+            strict_schema: Use strict json_schema (grammar-enforced) response_format instead of
+                the soft json_object path. Supported by OpenAI and schema-capable self-hosted
+                backends (llama.cpp, vLLM). Server-wide via HINDSIGHT_API_LLM_STRICT_SCHEMA.
             return_usage: If True, return tuple (result, TokenUsage) instead of just result.
 
         Returns:
@@ -563,6 +639,8 @@ class OpenAICompatibleLLM(LLMInterface):
                     call_params["messages"] = _ensure_json_word_in_user_message(call_params["messages"])
                     call_params["response_format"] = {"type": "json_object"}
 
+        apply_bank_attribution(call_params)
+
         last_exception = None
 
         for attempt in range(max_retries + 1):
@@ -582,15 +660,10 @@ class OpenAICompatibleLLM(LLMInterface):
                         scope=scope,
                     )
 
-                    # Strip reasoning model thinking tags
+                    # Strip reasoning model thinking tags (closed and unclosed).
                     # Supports: <think>, <thinking>, <thought>, <reasoning>, |startthink|/|endthink|
                     original_len = len(content)
-                    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
-                    content = re.sub(r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL)
-                    content = re.sub(r"<thought>.*?</thought>", "", content, flags=re.DOTALL)
-                    content = re.sub(r"<reasoning>.*?</reasoning>", "", content, flags=re.DOTALL)
-                    content = re.sub(r"\|startthink\|.*?\|endthink\|", "", content, flags=re.DOTALL)
-                    content = content.strip()
+                    content = _strip_reasoning_tags(content)
                     if len(content) < original_len:
                         logger.debug(f"Stripped {original_len - len(content)} chars of reasoning tokens")
 
@@ -639,12 +712,22 @@ class OpenAICompatibleLLM(LLMInterface):
                         scope=scope,
                     )
 
+                    # Free-form (non-structured) output also leaks reasoning tags:
+                    # reasoning models like MiniMax-M3 wrap their chain-of-thought
+                    # in <think>...</think> in the response body. Without this strip
+                    # a mental-model markdown blob is stored verbatim with the raw
+                    # thinking tags. Mirrors the structured-output path above.
+                    result = _strip_reasoning_tags(result)
+
                 # Record token usage metrics
                 duration = time.time() - start_time
                 usage = response.usage
                 input_tokens = usage.prompt_tokens or 0 if usage else 0
                 output_tokens = usage.completion_tokens or 0 if usage else 0
                 total_tokens = usage.total_tokens or 0 if usage else 0
+                cached_tokens = 0
+                if usage and getattr(usage, "prompt_tokens_details", None):
+                    cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
 
                 # Record LLM metrics
                 metrics = get_metrics_collector()
@@ -674,14 +757,12 @@ class OpenAICompatibleLLM(LLMInterface):
                     duration=duration,
                     finish_reason=finish_reason,
                     error=None,
+                    cached_tokens=cached_tokens,
                 )
 
                 # Log slow calls
                 if duration > 10.0 and usage:
                     ratio = max(1, output_tokens) / max(1, input_tokens)
-                    cached_tokens = 0
-                    if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
-                        cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
                     cache_info = f", cached_tokens={cached_tokens}" if cached_tokens > 0 else ""
                     logger.info(
                         f"slow llm call: scope={scope}, model={self.provider}/{self.model}, "
@@ -694,6 +775,7 @@ class OpenAICompatibleLLM(LLMInterface):
                         input_tokens=input_tokens,
                         output_tokens=output_tokens,
                         total_tokens=total_tokens,
+                        cached_tokens=cached_tokens,
                     )
                     return result, token_usage
                 return result
@@ -862,6 +944,16 @@ class OpenAICompatibleLLM(LLMInterface):
         if request_tool_choice == "auto":
             request_tool_choice = None
 
+        # vLLM (--enable-auto-tool-choice), LM Studio, Ollama and similar
+        # self-hosted servers silently drop tool_choice="required", returning an
+        # empty tool_calls array instead of forcing a call (#1563/#1179/#1877).
+        # Downgrade to auto (None) so the model still gets to call a tool. Named
+        # tool_choice dicts were already normalized to "required" + a single
+        # filtered tool above, so the call stays practically forced even under
+        # auto. The real OpenAI API honors "required" and is left untouched.
+        if request_tool_choice == "required" and self._drops_tool_choice_required():
+            request_tool_choice = None
+
         # DeepSeek tool-call replies can carry provider-specific reasoning_content.
         # The normalized tool result does not retain it, but replaying assistant
         # tool_calls without the field can trigger a 400. DeepSeek accepts an
@@ -900,6 +992,8 @@ class OpenAICompatibleLLM(LLMInterface):
             call_params["seed"] = DEFAULT_LLM_SEED
         if extra_body:
             call_params["extra_body"] = extra_body
+
+        apply_bank_attribution(call_params)
 
         last_exception = None
 

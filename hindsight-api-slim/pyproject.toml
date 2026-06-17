@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-api-slim"
-version = "0.7.1"
+version = "0.8.2"
 description = "Hindsight: Agent Memory That Works Like Human Memory"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,7 +18,11 @@ dependencies = [
     "fastapi[standard]>=0.120.3",
     "uvicorn>=0.38.0",
     "wsproto>=1.0.0",
-    "sqlalchemy>=2.0.44",
+    # Cap below 2.1: SQLAlchemy 2.1 switches the default `postgresql://` DBAPI
+    # from psycopg2 to psycopg (v3), which we don't ship — a bare install would
+    # fail migrations with "No module named 'psycopg'". Pin to the tested 2.0
+    # line (which keeps psycopg2 the default driver) until psycopg3 is adopted.
+    "sqlalchemy>=2.0.44,<2.1",
     "alembic>=1.17.1",
     "pgvector>=0.4.1",
     "greenlet>=3.2.4,<3.4.0", # 3.4.0 lacks arm64 wheels for manylinux_2_41
@@ -77,6 +81,10 @@ local-ml = [
     # Local ML models for embeddings/reranking
     "sentence-transformers>=3.3.0",
     "transformers>=4.53.0", # Security fixes for ReDoS vulnerabilities
+    # transformers (incl. latest 5.x) hard-requires tokenizers<=0.23.0 via a
+    # runtime check; without this cap an in-place upgrade can pull tokenizers
+    # 0.23.1 and break local embeddings/reranker startup. See issue #2055.
+    "tokenizers>=0.22.0,<=0.23.0",
     "torch>=2.6.0", # CVE fix for remote code execution
     "einops>=0.8.2",
     "flashrank>=0.2.0",
@@ -92,14 +100,22 @@ local-llm = [
     "llama-cpp-python[server]>=0.3.0",
     "huggingface-hub>=0.20.0",
 ]
+local-onnx = [
+    # In-process ONNX Runtime embeddings without an Ollama/TEI sidecar
+    "onnxruntime>=1.17.0",
+    "transformers>=4.53.0",
+    "tokenizers>=0.22.0,<=0.23.0", # See issue #2055 (transformers caps tokenizers<=0.23.0)
+    "huggingface-hub>=0.20.0",
+    "numpy>=1.26.0",
+]
 embedded-db = [
-    "pg0-embedded>=0.14.0",
+    "pg0-embedded>=0.14.2",
 ]
 oracle = [
     "oracledb>=2.5.0",
 ]
 all = [
-    "hindsight-api-slim[local-ml,embedded-db]",
+    "hindsight-api-slim[local-ml,local-onnx,embedded-db]",
 ]
 test = [
     "pytest>=7.0.0",
@@ -143,6 +159,8 @@ markers = [
     "oracle: Oracle 23ai integration tests (require ORACLE_TEST_DSN env var)",
     "hs_llm_mat: LLM minimum acceptance tests — run in CI matrix across multiple providers",
     "hs_llm_core: Core pipeline tests that need a real LLM but only one provider",
+    "integration: Live external-API integration tests (require provider credentials; skipped without)",
+    "slow: Slow tests (minutes); not run in fast CI",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -169,23 +187,24 @@ dev = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-exclude = [
-    "tests/",
-    "**/tests/",
-]
 
 [tool.ruff.lint]
+# Tests are formatted (via `ruff format`) but excluded from lint rules, which
+# are too noisy for test code (unused imports/vars, import ordering).
+exclude = [
+    "tests/**",
+    "**/tests/**",
+]
 select = [
     "E",      # pycodestyle errors
     "W",      # pycodestyle warnings
     "F",      # Pyflakes
     "I",      # isort
+    "B021",   # flake8-bugbear: f-string used as docstring (leaves __doc__ None)
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
     "E402",   # module import not at top of file
-    "F401",   # unused import (too noisy during development)
-    "F841",   # unused variable (too noisy during development)
     "F811",   # redefined while unused
     "F821",   # undefined name (forward references in type hints)
 ]

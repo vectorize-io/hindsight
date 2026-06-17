@@ -25,6 +25,10 @@
 # Zero-filled bucket arrays don't map to a useful CLI command.
 get_memories_timeseries = "UI-only endpoint for the control plane stats chart"
 
+# Per-bank LLM connectivity probe — a control-plane/diagnostics action (the "Health"
+# dialog). Makes a real provider call and is off by default; not an end-user CLI command.
+test_bank_llm = "Control-plane diagnostics action (Health dialog); not exposed in the CLI"
+
 # UI-only endpoint powering the control-plane entity constellation view.
 # Returns nodes/edges in cytoscape shape; not a useful CLI command.
 get_entity_graph = "UI-only endpoint for the control plane entity constellation"
@@ -32,11 +36,35 @@ get_entity_graph = "UI-only endpoint for the control plane entity constellation"
 # Document chunks listing is a UI-only endpoint for the document detail dialog.
 list_document_chunks = "UI-only endpoint for the control plane document detail dialog"
 
+# Observation scope enumeration powers the control-plane scope filter/clusters;
+# not a useful end-user CLI command.
+list_observation_scopes = "UI-only endpoint for the control plane observation scope filter"
+
 # Reprocess triggers an async retain re-run; exposed in the control plane UI only.
 reprocess_document = "UI-only endpoint for the control plane document detail dialog"
 
 # Clear mental model content is a new endpoint; CLI subcommand not yet implemented.
 clear_mental_model = "Not yet exposed in the CLI; use the HTTP API or SDK"
+
+# Dry-run extraction is a preview/diagnostics tool (control-plane "Dry-run extraction" dialog):
+# it runs extraction only, stores nothing, and previews what a candidate config would extract.
+# Not an end-user CLI command; available via the HTTP API and SDKs.
+dry_run_extract_memories = "Preview/diagnostics endpoint (control-plane dialog); not exposed in the CLI"
+
+# Memory curation (edit / invalidate / revert) is exposed via the HTTP API, SDKs,
+# and the control plane, not the end-user CLI. update_memory covers all three.
+update_memory = "Curation endpoint; exposed via the API, SDKs, and control plane, not the CLI"
+
+# UI-only endpoints powering the control-plane LLM Requests (per-bank tracing) tab.
+# The trace waterfall, token charts, and metadata viewers don't map to a useful
+# CLI command.
+list_llm_requests = "UI-only endpoint for the control plane LLM Requests tab"
+llm_request_stats = "UI-only endpoint for the control plane LLM Requests stats chart"
+
+# Document transfer (export/import) is an admin/ops operation used from the API
+# and the control plane, not the end-user Rust CLI.
+export_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
+import_documents = "Admin/ops operation, used via the API and control plane, not the end-user CLI"
 
 # ---------------------------------------------------------------------------
 # Per-operation parameter skips

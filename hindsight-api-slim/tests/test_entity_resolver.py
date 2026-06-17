@@ -305,9 +305,7 @@ class TestOracleFuzzyEntityResolution:
         conn = AsyncMock()
         conn.backend_type = "oracle"
         conn.fetch = AsyncMock(return_value=[])
-        entities_data = [
-            {"text": f"Entity {idx}", "nearby_entities": [], "event_date": None} for idx in range(5)
-        ]
+        entities_data = [{"text": f"Entity {idx}", "nearby_entities": [], "event_date": None} for idx in range(5)]
 
         with patch.object(resolver, "_resolve_from_candidates", new_callable=AsyncMock, return_value=[]):
             await resolver._resolve_entities_batch_oracle_fuzzy(

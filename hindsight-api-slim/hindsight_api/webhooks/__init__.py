@@ -1,7 +1,15 @@
 """Webhook system for Hindsight API event notifications."""
 
 from .manager import WebhookManager
-from .models import ConsolidationEventData, RetainEventData, WebhookConfig, WebhookEvent, WebhookEventType
+from .models import (
+    ConsolidationEventData,
+    MemoryDefenseEventData,
+    MemoryDefenseHit,
+    RetainEventData,
+    WebhookConfig,
+    WebhookEvent,
+    WebhookEventType,
+)
 
 __all__ = [
     "WebhookManager",
@@ -9,5 +17,7 @@ __all__ = [
     "WebhookEvent",
     "WebhookEventType",
     "ConsolidationEventData",
+    "MemoryDefenseEventData",
+    "MemoryDefenseHit",
     "RetainEventData",
 ]

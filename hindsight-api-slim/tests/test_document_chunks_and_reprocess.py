@@ -1,6 +1,7 @@
 """
 Tests for document chunks API, reprocess, nodes_by_fact_type, and graph document/chunk filtering.
 """
+
 from datetime import datetime, timezone
 
 import httpx
@@ -223,9 +224,7 @@ async def test_graph_chunk_id_filter(api_client, bank_id):
     await _retain(api_client, bank_id, "doc-chunk-test", "Alice works at Google. " * 20)
 
     # First get chunks to find a valid chunk_id
-    response = await api_client.get(
-        f"/v1/default/banks/{bank_id}/documents/doc-chunk-test/chunks"
-    )
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/documents/doc-chunk-test/chunks")
     assert response.status_code == 200
     chunks_data = response.json()
     if chunks_data["total"] == 0:
@@ -251,11 +250,14 @@ async def test_graph_chunk_id_filter(api_client, bank_id):
 @pytest.mark.asyncio
 async def test_http_list_document_chunks(api_client, bank_id):
     """HTTP GET .../documents/{id}/chunks returns chunks."""
-    await _retain(api_client, bank_id, "doc-http-chunks", "Alice works at Google on AI research. Bob works at Meta on VR systems. " * 20)
-
-    response = await api_client.get(
-        f"/v1/default/banks/{bank_id}/documents/doc-http-chunks/chunks"
+    await _retain(
+        api_client,
+        bank_id,
+        "doc-http-chunks",
+        "Alice works at Google on AI research. Bob works at Meta on VR systems. " * 20,
     )
+
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/documents/doc-http-chunks/chunks")
     assert response.status_code == 200
     data = response.json()
     assert "items" in data
@@ -266,9 +268,7 @@ async def test_http_list_document_chunks(api_client, bank_id):
 @pytest.mark.asyncio
 async def test_http_list_document_chunks_not_found(api_client, bank_id):
     """HTTP GET .../documents/{id}/chunks returns 404 for non-existent document."""
-    response = await api_client.get(
-        f"/v1/default/banks/{bank_id}/documents/nonexistent/chunks"
-    )
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/documents/nonexistent/chunks")
     assert response.status_code == 404
 
 
@@ -277,9 +277,7 @@ async def test_http_reprocess_document(api_client, bank_id):
     """HTTP POST .../documents/{id}/reprocess returns success with operation_id."""
     await _retain(api_client, bank_id, "doc-http-reprocess", "Alice works at Google.")
 
-    response = await api_client.post(
-        f"/v1/default/banks/{bank_id}/documents/doc-http-reprocess/reprocess"
-    )
+    response = await api_client.post(f"/v1/default/banks/{bank_id}/documents/doc-http-reprocess/reprocess")
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
@@ -289,9 +287,7 @@ async def test_http_reprocess_document(api_client, bank_id):
 @pytest.mark.asyncio
 async def test_http_reprocess_document_not_found(api_client, bank_id):
     """HTTP POST .../documents/{id}/reprocess returns 404 for non-existent document."""
-    response = await api_client.post(
-        f"/v1/default/banks/{bank_id}/documents/nonexistent/reprocess"
-    )
+    response = await api_client.post(f"/v1/default/banks/{bank_id}/documents/nonexistent/reprocess")
     assert response.status_code == 404
 
 
@@ -300,9 +296,7 @@ async def test_http_get_document_includes_nodes_by_fact_type(api_client, bank_id
     """HTTP GET .../documents/{id} includes nodes_by_fact_type."""
     await _retain(api_client, bank_id, "doc-http-comp", "Alice works at Google on AI research.")
 
-    response = await api_client.get(
-        f"/v1/default/banks/{bank_id}/documents/doc-http-comp"
-    )
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/documents/doc-http-comp")
     assert response.status_code == 200
     data = response.json()
     assert "nodes_by_fact_type" in data

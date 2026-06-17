@@ -13,7 +13,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ...config import get_config
 from ..db_utils import acquire_with_retry
@@ -23,6 +23,9 @@ from .graph_retrieval import GraphRetriever
 from .link_expansion_retrieval import LinkExpansionRetriever
 from .tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause_simple
 from .types import GraphRetrievalTimings, RetrievalResult
+
+if TYPE_CHECKING:
+    from ..query_analyzer import QueryAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +140,7 @@ async def retrieve_semantic_bm25_combined(
     """
     result_dict: dict[str, tuple[list[RetrievalResult], list[RetrievalResult]]] = {ft: ([], []) for ft in fact_types}
 
+    config = get_config()
     tokens = tokenize_query(query_text)
 
     # Over-fetch for HNSW approximation; semantic results trimmed to limit in Python.
@@ -147,8 +151,6 @@ async def retrieve_semantic_bm25_combined(
         "fact_type, document_id, chunk_id, tags, metadata, proof_count"
     )
     table = fq_table("memory_units")
-
-    config = get_config()
 
     # Use the SQL dialect to build backend-specific query arms, avoiding
     # inline if/else branches for each database.
@@ -201,6 +203,7 @@ async def retrieve_semantic_bm25_combined(
             embedding_param="$1",
             bank_id_param="$2",
             fetch_limit=hnsw_fetch,
+            min_similarity=config.semantic_min_similarity,
             tags_clause=tags_clause,
             groups_clause=groups_clause,
             extra_where=created_range_clause,
@@ -226,6 +229,7 @@ async def retrieve_semantic_bm25_combined(
                     arm_index=i,
                     text_search_extension=text_ext,
                     bm25_language=config.text_search_extension_native_language,
+                    bm25_min_score=config.bm25_min_score,
                     extra_where=created_range_clause,
                 )
             )
@@ -273,6 +277,7 @@ async def retrieve_semantic_bm25_combined(
                     embedding_param="$1",
                     bank_id_param="$2",
                     fetch_limit=hnsw_fetch,
+                    min_similarity=config.semantic_min_similarity,
                     tags_clause=fb_tags_clause,
                     groups_clause=fb_groups_clause,
                     extra_where=fb_created_clause,
@@ -305,6 +310,66 @@ async def retrieve_semantic_bm25_combined(
             result_dict[ft][1].append(RetrievalResult.from_db_row(row))
 
     return result_dict
+
+
+# Temporal entry-point selection tuning.
+_TEMPORAL_POOL_SIZE = 60  # ANN candidates fetched per fact_type before coverage selection
+_TEMPORAL_ENTRY_POINTS = 10  # entry points kept per fact_type after coverage selection
+_TEMPORAL_COVERAGE_BUCKETS = 8  # time-buckets the window is divided into for coverage
+
+
+def _coalesce_date(row: Any) -> datetime | None:
+    """The unit's effective time — matches COALESCE(occurred_start, mentioned_at, occurred_end)."""
+    return row["occurred_start"] or row["mentioned_at"] or row["occurred_end"]
+
+
+def _select_with_temporal_coverage(
+    pool: list,
+    start_date: datetime,
+    end_date: datetime,
+    limit: int,
+    n_buckets: int,
+) -> list:
+    """Pick `limit` entry points from a similarity-ranked pool, spread across the window.
+
+    The window [start_date, end_date] is split into `n_buckets` equal time-buckets.
+    Candidates are taken round-robin across the buckets that contain them — the
+    best-similarity item from each populated bucket first, then the second-best from each,
+    and so on — so every populated slice of the window is represented before any slice
+    contributes a second item. Within a tier, higher-similarity items lead. When the
+    in-window dates are degenerate (all in one bucket — e.g. a batch stamped with a single
+    date) this collapses to plain similarity order.
+    """
+    if len(pool) <= limit:
+        return list(pool)
+
+    ranked = sorted(pool, key=lambda r: r["similarity"], reverse=True)
+    span = (end_date - start_date).total_seconds()
+
+    def _bucket(row: Any) -> int:
+        d = _coalesce_date(row)
+        if d is None or span <= 0:
+            return 0
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=UTC)
+        frac = (d - start_date).total_seconds() / span
+        return max(0, min(int(frac * n_buckets), n_buckets - 1))
+
+    buckets: dict[int, list] = {}
+    for row in ranked:  # ranked is similarity-desc, so each bucket list inherits that order
+        buckets.setdefault(_bucket(row), []).append(row)
+
+    selected: list = []
+    tier = 0
+    while len(selected) < limit and any(len(b) > tier for b in buckets.values()):
+        # The tier-th best item from every bucket that still has one, strongest first.
+        tier_rows = [b[tier] for b in buckets.values() if len(b) > tier]
+        tier_rows.sort(key=lambda r: r["similarity"], reverse=True)
+        for row in tier_rows:
+            if len(selected) < limit:
+                selected.append(row)
+        tier += 1
+    return selected
 
 
 async def retrieve_temporal_combined(
@@ -350,9 +415,12 @@ async def retrieve_temporal_combined(
         end_date = end_date.replace(tzinfo=UTC)
 
     # Build tags clause
-    # Entry point query: fixed params are $1-$6, tags at $7
-    tags_clause = build_tags_where_clause_simple(tags, 7, match=tags_match)
-    tag_groups_param_start = 7 + (1 if tags else 0)
+    # Entry-point query: fixed params are $1-$5 (emb, bank, start, end, threshold), tags at $6.
+    # fact_type is inlined as a literal per UNION ALL arm (not a bind) — this avoids `unnest`,
+    # which has no Oracle equivalent (the `<=>` operator and LIMIT are translated to Oracle by
+    # the backend on execute, but `unnest` is not). Mirrors retrieve_semantic_bm25_combined.
+    tags_clause = build_tags_where_clause_simple(tags, 6, match=tags_match)
+    tag_groups_param_start = 6 + (1 if tags else 0)
     groups_clause, groups_params, _ = build_tag_groups_where_clause(tag_groups, tag_groups_param_start)
 
     # created_at time range filter (after tags/groups)
@@ -368,69 +436,88 @@ async def retrieve_temporal_combined(
         created_range_clause += f" AND updated_at < ${_next_idx}"
         _next_idx += 1
 
-    params: list = [query_emb_str, bank_id, fact_types, start_date, end_date, semantic_threshold]
+    params: list = [query_emb_str, bank_id, start_date, end_date, semantic_threshold]
     if tags:
         params.append(tags)
     params.extend(groups_params)
     params.extend(created_range_params)
 
-    # Two-phase entry point query:
-    # Phase 1 (date_ranked): rank by date only — no embedding computation — for all units in
-    #   the temporal window. This lets the planner use date indexes for filtering.
-    # Phase 2 (sim_ranked): join back to memory_units for only the top-50-per-type candidates
-    #   and compute embedding similarity for that small set (≤ 50 × len(fact_types) rows).
-    # This avoids computing embedding distances for potentially thousands of date-range rows.
-    entry_points = await conn.fetch(
-        f"""
-        WITH date_ranked AS MATERIALIZED (
-            SELECT id, fact_type,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY fact_type
-                       ORDER BY COALESCE(occurred_start, mentioned_at, occurred_end) DESC NULLS LAST
-                   ) AS rn
-            FROM {fq_table("memory_units")}
-            WHERE bank_id = $2
-              AND fact_type = ANY($3)
-              AND embedding IS NOT NULL
-              AND (
-                  (occurred_start IS NOT NULL AND occurred_end IS NOT NULL
-                   AND occurred_start <= $5 AND occurred_end >= $4)
-                  OR
-                  (mentioned_at IS NOT NULL AND mentioned_at BETWEEN $4 AND $5)
-                  OR
-                  (occurred_start IS NOT NULL AND occurred_start BETWEEN $4 AND $5)
-                  OR
-                  (occurred_end IS NOT NULL AND occurred_end BETWEEN $4 AND $5)
-              )
-              {tags_clause}
-              {groups_clause}
-              {created_range_clause}
-        ),
-        sim_ranked AS (
-            SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start, mu.occurred_end, mu.mentioned_at, mu.fact_type, mu.proof_count, mu.document_id, mu.chunk_id, mu.tags, mu.metadata,
-                   1 - (mu.embedding <=> $1::vector) AS similarity,
-                   ROW_NUMBER() OVER (PARTITION BY mu.fact_type ORDER BY mu.embedding <=> $1::vector) AS sim_rn
-            FROM date_ranked dr
-            JOIN {fq_table("memory_units")} mu ON mu.id = dr.id
-            WHERE dr.rn <= 50
-              AND (1 - (mu.embedding <=> $1::vector)) >= $6
-        )
-        SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at, fact_type, proof_count, document_id, chunk_id, tags, metadata, similarity
-        FROM sim_ranked
-        WHERE sim_rn <= 10
-        """,
-        *params,
-    )
+    # Entry-point selection: similarity-gated, window-filtered, then narrowed for coverage.
+    #
+    # For each fact_type, ANN-rank the units whose time overlaps the window
+    # (ORDER BY embedding <=> query) and keep a pool of the most relevant
+    # (_TEMPORAL_POOL_SIZE). The planner serves this from the per-(bank, fact_type) vector
+    # index when the window is broad — the dense-metadata case, where the window matches
+    # most rows — and from the partial date indexes plus an exact sort when the window is
+    # narrow. Either way the work is bounded; neither path is a scan-and-sort of the whole
+    # match set.
+    #
+    # Selecting by *similarity* (not recency) is deliberate. The earlier form ranked the
+    # entire match set by COALESCE(occurred_start, mentioned_at, occurred_end) and kept the
+    # 50 most recent: that biased results toward the end of the window and, on banks with
+    # dense/near-uniform dates (e.g. a retain batch stamped with one date), the date key was
+    # degenerate so the "50 most recent" became a near-random sample that could drop the
+    # single most relevant in-window memory — and it degraded to a full scan + disk-spilling
+    # sort (30s+ on a 660k-row bank). The pool is then narrowed to _TEMPORAL_ENTRY_POINTS per
+    # fact_type by _select_with_temporal_coverage so the entry points span the window's range
+    # rather than clustering in one slice.
+    if not fact_types:
+        return {}
 
-    if not entry_points:
+    # One similarity-ranked, window-filtered arm per fact_type, UNION ALL'd — each arm has its
+    # own ORDER BY ... LIMIT so the per-(bank, fact_type) vector index can serve it. fact_type
+    # is inlined as a literal (controlled internal enum, never user input), matching
+    # retrieve_semantic_bm25_combined; this keeps the query free of `unnest`/LATERAL, which the
+    # Oracle backend cannot translate.
+    pool_cols = (
+        "id, text, context, event_date, occurred_start, occurred_end, mentioned_at, "
+        "fact_type, proof_count, document_id, chunk_id, tags, metadata"
+    )
+    table = fq_table("memory_units")
+    arms = [
+        f"""(
+        SELECT {pool_cols}, 1 - (embedding <=> $1::vector) AS similarity
+        FROM {table}
+        WHERE bank_id = $2
+          AND fact_type = '{ft}'
+          AND embedding IS NOT NULL
+          AND (
+              (occurred_start IS NOT NULL AND occurred_end IS NOT NULL
+               AND occurred_start <= $4 AND occurred_end >= $3)
+              OR
+              (mentioned_at IS NOT NULL AND mentioned_at BETWEEN $3 AND $4)
+              OR
+              (occurred_start IS NOT NULL AND occurred_start BETWEEN $3 AND $4)
+              OR
+              (occurred_end IS NOT NULL AND occurred_end BETWEEN $3 AND $4)
+          )
+          AND (1 - (embedding <=> $1::vector)) >= $5
+          {tags_clause}
+          {groups_clause}
+          {created_range_clause}
+        ORDER BY embedding <=> $1::vector
+        LIMIT {_TEMPORAL_POOL_SIZE}
+        )"""
+        for ft in fact_types
+    ]
+    pool_rows = await conn.fetch("\nUNION ALL\n".join(arms), *params)
+
+    if not pool_rows:
         return {ft: [] for ft in fact_types}
 
-    # Group entry points by fact type
-    entries_by_ft: dict[str, list] = {ft: [] for ft in fact_types}
-    for ep in entry_points:
-        ft = ep["fact_type"]
-        if ft in entries_by_ft:
-            entries_by_ft[ft].append(ep)
+    # Group the ANN pool by fact type, then narrow each to coverage-spread entry points.
+    pool_by_ft: dict[str, list] = {ft: [] for ft in fact_types}
+    for row in pool_rows:
+        ft = row["fact_type"]
+        if ft in pool_by_ft:
+            pool_by_ft[ft].append(row)
+
+    entries_by_ft: dict[str, list] = {
+        ft: _select_with_temporal_coverage(
+            rows, start_date, end_date, _TEMPORAL_ENTRY_POINTS, _TEMPORAL_COVERAGE_BUCKETS
+        )
+        for ft, rows in pool_by_ft.items()
+    }
 
     # Calculate shared temporal parameters
     total_days = (end_date - start_date).total_seconds() / 86400
@@ -498,7 +585,13 @@ async def retrieve_temporal_combined(
             tag_groups, spreading_groups_param_start, table_alias="mu."
         )
 
-        while frontier and budget_remaining > 0 and iteration < max_iterations:
+        # Multi-hop temporal spreading expands a batch of seed ids with
+        # ``FROM unnest($2::uuid[])``, which has no Oracle equivalent. On backends
+        # without unnest, skip the spread: the temporal entry points are still
+        # returned above, and the semantic/keyword/graph retrievers cover the rest.
+        supports_unnest = getattr(conn, "backend_type", "postgresql") != "oracle"
+
+        while frontier and budget_remaining > 0 and iteration < max_iterations and supports_unnest:
             iteration += 1
             batch_ids = frontier[:batch_size]
             frontier = frontier[batch_size:]

@@ -50,39 +50,35 @@ def _get_schema_prefix() -> str:
 def _pg_upgrade() -> None:
     schema = _get_schema_prefix()
 
-    # CREATE INDEX CONCURRENTLY cannot run inside a transaction block.
-    # Commit the current Alembic transaction, then issue each CONCURRENTLY
-    # statement in its own implicit autocommit transaction.
-    # IF NOT EXISTS makes each statement idempotent if the migration is retried.
+    # CREATE INDEX CONCURRENTLY cannot run inside a transaction block; an
+    # autocommit_block runs each statement outside Alembic's migration
+    # transaction.  IF NOT EXISTS makes each statement idempotent on retry.
+    with op.get_context().autocommit_block():
+        # Index for the semantic *incoming* direction in link_expansion_retrieval.py.
+        # Replaces the BitmapAnd of idx_memory_links_to_unit ∩ idx_memory_links_link_type
+        # with a single composite index scan.
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_links_to_type_weight "
+            f"ON {schema}memory_links(to_unit_id, link_type, weight DESC)"
+        )
 
-    # Index for the semantic *incoming* direction in link_expansion_retrieval.py.
-    # Replaces the BitmapAnd of idx_memory_links_to_unit ∩ idx_memory_links_link_type
-    # with a single composite index scan.
-    op.execute("COMMIT")
-    op.execute(
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_links_to_type_weight "
-        f"ON {schema}memory_links(to_unit_id, link_type, weight DESC)"
-    )
-
-    # Covering index for entity co-occurrence expansion.
-    # Enables an index-only scan: entity_id and to_unit_id are read from the
-    # index leaf pages instead of the heap, eliminating ~2 500 random heap-page
-    # reads per expansion query.
-    op.execute("COMMIT")
-    op.execute(
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_links_entity_covering "
-        f"ON {schema}memory_links(from_unit_id) "
-        f"INCLUDE (to_unit_id, entity_id) "
-        f"WHERE link_type = 'entity'"
-    )
+        # Covering index for entity co-occurrence expansion.
+        # Enables an index-only scan: entity_id and to_unit_id are read from the
+        # index leaf pages instead of the heap, eliminating ~2 500 random heap-page
+        # reads per expansion query.
+        op.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_links_entity_covering "
+            f"ON {schema}memory_links(from_unit_id) "
+            f"INCLUDE (to_unit_id, entity_id) "
+            f"WHERE link_type = 'entity'"
+        )
 
 
 def _pg_downgrade() -> None:
     schema = _get_schema_prefix()
-    op.execute("COMMIT")
-    op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}idx_memory_links_entity_covering")
-    op.execute("COMMIT")
-    op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}idx_memory_links_to_type_weight")
+    with op.get_context().autocommit_block():
+        op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}idx_memory_links_entity_covering")
+        op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}idx_memory_links_to_type_weight")
 
 
 def upgrade() -> None:

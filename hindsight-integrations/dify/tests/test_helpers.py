@@ -30,16 +30,12 @@ class TestBuildClient:
     def test_with_api_key(self):
         with patch("tools._client.Hindsight") as mock_h:
             build_client({"api_url": "https://api.example.com", "api_key": "hsk_x"})
-            mock_h.assert_called_once_with(
-                base_url="https://api.example.com", timeout=30.0, api_key="hsk_x"
-            )
+            mock_h.assert_called_once_with(base_url="https://api.example.com", timeout=30.0, api_key="hsk_x")
 
     def test_without_api_key(self):
         with patch("tools._client.Hindsight") as mock_h:
             build_client({"api_url": "http://localhost:8888"})
-            mock_h.assert_called_once_with(
-                base_url="http://localhost:8888", timeout=30.0
-            )
+            mock_h.assert_called_once_with(base_url="http://localhost:8888", timeout=30.0)
 
     def test_strips_trailing_slash(self):
         with patch("tools._client.Hindsight") as mock_h:

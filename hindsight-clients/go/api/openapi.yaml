@@ -7,7 +7,7 @@ info:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
   title: Hindsight HTTP API
-  version: 0.7.1
+  version: 0.8.2
 servers:
 - url: /
 paths:
@@ -55,7 +55,7 @@ paths:
   /v1/default/banks/{bank_id}/graph:
     get:
       description: "Retrieve graph data for visualization, optionally filtered by\
-        \ type (world/experience/opinion)."
+        \ type (world/experience/observation)."
       operationId: get_graph
       parameters:
       - explode: false
@@ -192,6 +192,22 @@ paths:
         style: form
       - explode: true
         in: query
+        name: state
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - explode: true
+        in: query
+        name: document_id
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - explode: true
+        in: query
         name: limit
         required: false
         schema:
@@ -230,6 +246,54 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: List memory units
+      tags:
+      - Memory
+  /v1/default/banks/{bank_id}/memories/dry-run-extract:
+    post:
+      description: "Preview what the retain step would extract from text WITHOUT changing\
+        \ the bank — no entity resolution, links, embeddings, or persistence. Returns\
+        \ the candidate facts and the LLM token usage. Every prompt-affecting setting\
+        \ (retain mission, extraction mode, chunk size, …) is overridable in the body\
+        \ to A/B a candidate config against the bank's current one. This is a read-only\
+        \ tool: nothing is stored."
+      operationId: dry_run_extract_memories
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DryRunExtractRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DryRunExtractionResult'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: "Dry-run fact extraction (preview, no persistence)"
       tags:
       - Memory
   /v1/default/banks/{bank_id}/memories/{memory_id}:
@@ -276,6 +340,58 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: Get memory unit
+      tags:
+      - Memory
+    patch:
+      description: "Edit a memory's text and/or change its curation state (invalidate\
+        \ / revert). Invalidated memories are excluded from recall, consolidation,\
+        \ and graph maintenance but kept for audit (reversible). Only world/experience\
+        \ facts can be curated; observations are derived."
+      operationId: update_memory
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: memory_id
+        required: true
+        schema:
+          title: Memory Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMemoryRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Curate memory unit
       tags:
       - Memory
   /v1/default/banks/{bank_id}/memories/{memory_id}/history:
@@ -374,12 +490,12 @@ paths:
   /v1/default/banks/{bank_id}/reflect:
     post:
       description: |-
-        Reflect and formulate an answer using bank identity, world facts, and opinions.
+        Reflect and formulate an answer using bank identity, world facts, observations, and mental models.
 
         This endpoint:
         1. Retrieves experience (conversations and events)
         2. Retrieves world facts relevant to the query
-        3. Retrieves existing opinions (bank's perspectives)
+        3. Retrieves observations and mental models (bank's synthesized perspectives)
         4. Uses LLM to formulate a contextual answer
         5. Returns plain text answer and the facts used
       operationId: reflect
@@ -486,6 +602,48 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: Get statistics for memory bank
+      tags:
+      - Banks
+  /v1/default/banks/{bank_id}/health/llm:
+    post:
+      description: "Probe the LLMs this bank would use for retain / consolidation\
+        \ / reflect with one minimal call each (configs shared across operations are\
+        \ probed once), so you can discover 'not configured / unreachable' instead\
+        \ of a silent stall. Deliberate action (makes a real provider call); not for\
+        \ polling. Returns status only — never the provider, model, endpoint, API\
+        \ key, or raw error. Disable with HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH=false."
+      operationId: test_bank_llm
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BankLlmHealthResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Test the bank's LLM connectivity
       tags:
       - Banks
   /v1/default/banks/{bank_id}/stats/memories-timeseries:
@@ -2550,6 +2708,128 @@ paths:
       summary: Export bank template
       tags:
       - Bank Templates
+  /v1/default/banks/{bank_id}/document-transfer:
+    get:
+      description: "Export documents (extracted facts, entity names, causal links,\
+        \ chunks) from a bank as a transfer ZIP archive. Embeddings and database ids\
+        \ are not included — importing re-embeds with the target bank's model and\
+        \ re-resolves entities. Consolidated observations are excluded unless include_observations=true.\
+        \ Pass document_id query params to export specific documents, or omit to export\
+        \ the whole bank."
+      operationId: export_documents
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: Document id(s) to export; omit for all
+        explode: true
+        in: query
+        name: document_id
+        required: false
+        schema:
+          items:
+            type: string
+          nullable: true
+          type: array
+        style: form
+      - description: Also export consolidated observations (restored on import)
+        explode: true
+        in: query
+        name: include_observations
+        required: false
+        schema:
+          default: false
+          description: Also export consolidated observations (restored on import)
+          title: Include Observations
+          type: boolean
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: {}
+            application/zip: {}
+          description: Transfer archive
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Export documents
+      tags:
+      - Document Transfer
+    post:
+      description: "Submit a transfer archive (produced by the export endpoint) for\
+        \ import into a bank. Runs as a background operation: facts are re-embedded\
+        \ with the target bank's embedding model and entities are re-resolved — no\
+        \ LLM extraction. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}\
+        \ for status and the imported/skipped counts in result_metadata. Use on_conflict\
+        \ to control existing document ids: skip (default), replace, or new-id."
+      operationId: import_documents
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: skip | replace | new-id
+        explode: true
+        in: query
+        name: on_conflict
+        required: false
+        schema:
+          default: skip
+          description: skip | replace | new-id
+          title: On Conflict
+          type: string
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_import_documents'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentImportSubmitResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Import documents (async)
+      tags:
+      - Document Transfer
   /v1/bank-template-schema:
     get:
       description: Returns the JSON Schema for the bank template manifest format.
@@ -2602,6 +2882,48 @@ paths:
       summary: Clear all observations
       tags:
       - Banks
+  /v1/default/banks/{bank_id}/observations/scopes:
+    get:
+      description: "Enumerate the distinct scopes across a bank's observations. Each\
+        \ observation lives under a scope: the exact set of tags it was consolidated\
+        \ with. Returns every distinct scope (tag order normalized) with the number\
+        \ of observations in it; the empty tag list is the global/untagged scope.\
+        \ Use a returned scope with the graph endpoint (tags=<scope> & tags_match=exact)\
+        \ to filter observations to exactly that scope."
+      operationId: list_observation_scopes
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservationScopesResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: List observation scopes
+      tags:
+      - Memory
   /v1/default/banks/{bank_id}/consolidation/recover:
     post:
       description: Reset all memories that were permanently marked as failed during
@@ -3099,9 +3421,9 @@ paths:
   /v1/default/banks/{bank_id}/memories:
     delete:
       description: "Delete memory units for a memory bank. Optionally filter by type\
-        \ (world, experience, opinion) to delete only specific types. This is a destructive\
-        \ operation that cannot be undone. The bank profile (disposition and background)\
-        \ will be preserved."
+        \ (world, experience, observation) to delete only specific types. This is\
+        \ a destructive operation that cannot be undone. The bank profile (disposition\
+        \ and background) will be preserved."
       operationId: clear_bank_memories
       parameters:
       - explode: false
@@ -3112,7 +3434,7 @@ paths:
           title: Bank Id
           type: string
         style: simple
-      - description: "Optional fact type filter (world, experience, opinion)"
+      - description: "Optional fact type filter (world, experience, observation)"
         explode: true
         in: query
         name: type
@@ -3438,6 +3760,221 @@ paths:
       summary: Audit log statistics
       tags:
       - Audit
+  /v1/default/banks/{bank_id}/llm-requests:
+    get:
+      description: "List traced LLM requests for a bank, ordered by most recent first.\
+        \ Requires LLM request tracing to be enabled (HINDSIGHT_API_LLM_TRACE_ENABLED)."
+      operationId: list_llm_requests
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: "Filter by status (success, error)"
+        explode: true
+        in: query
+        name: status
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: "Filter by operation (retain, reflect, consolidation)"
+        explode: true
+        in: query
+        name: operation
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: Filter by call scope
+        explode: true
+        in: query
+        name: scope
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: Filter by LLM provider
+        explode: true
+        in: query
+        name: provider
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: Filter to one operation run (all LLM calls sharing a trace)
+        explode: true
+        in: query
+        name: trace_id
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: Filter to LLM calls that processed a given document
+        explode: true
+        in: query
+        name: document_id
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: Filter to the operation run(s) that produced or consumed a given
+          memory_unit
+        explode: true
+        in: query
+        name: memory_id
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: Paginate by operation run (trace) instead of by call; returns
+          whole runs
+        explode: true
+        in: query
+        name: group
+        required: false
+        schema:
+          default: false
+          description: Paginate by operation run (trace) instead of by call; returns
+            whole runs
+          title: Group
+          type: boolean
+        style: form
+      - description: Filter from this ISO datetime (inclusive)
+        explode: true
+        in: query
+        name: start_date
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: Filter until this ISO datetime (exclusive)
+        explode: true
+        in: query
+        name: end_date
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: Max items to return
+        explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          description: Max items to return
+          maximum: 500
+          minimum: 1
+          title: Limit
+          type: integer
+        style: form
+      - description: Offset for pagination
+        explode: true
+        in: query
+        name: offset
+        required: false
+        schema:
+          default: 0
+          description: Offset for pagination
+          minimum: 0
+          title: Offset
+          type: integer
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMRequestListResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: List LLM request traces
+      tags:
+      - LLM Traces
+  /v1/default/banks/{bank_id}/llm-requests/stats:
+    get:
+      description: Get LLM request counts grouped by time bucket and status for charting.
+      operationId: llm_request_stats
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: Filter by operation
+        explode: true
+        in: query
+        name: operation
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: "Time period: 1d, 7d, or 30d"
+        explode: true
+        in: query
+        name: period
+        required: false
+        schema:
+          default: 7d
+          description: "Time period: 1d, 7d, or 30d"
+          title: Period
+          type: string
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMRequestStatsResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: LLM request statistics
+      tags:
+      - LLM Traces
 components:
   schemas:
     AddBackgroundRequest:
@@ -3772,6 +4309,40 @@ components:
       required:
       - banks
       title: BankListResponse
+    BankLlmHealthResponse:
+      description: |-
+        Per-bank LLM connectivity probe across retain/consolidation/reflect. Operations
+        that share a configuration are probed once. Discloses status only — never the
+        provider, model, endpoint, API key, or raw error.
+      example:
+        bank_id: user123
+        operations:
+        - latency_ms: 412.0
+          ok: true
+          operation: retain
+          status: connected
+        - latency_ms: 412.0
+          ok: true
+          operation: consolidation
+          status: connected
+        - ok: false
+          operation: reflect
+          status: not_configured
+      properties:
+        bank_id:
+          description: Bank identifier
+          title: Bank Id
+          type: string
+        operations:
+          description: "Connectivity status per operation (retain, consolidation,\
+            \ reflect)"
+          items:
+            $ref: '#/components/schemas/LlmOperationHealth'
+          type: array
+      required:
+      - bank_id
+      - operations
+      title: BankLlmHealthResponse
     BankProfileResponse:
       description: Response model for bank profile.
       example:
@@ -3931,6 +4502,9 @@ components:
         retain_chunk_size:
           nullable: true
           type: integer
+        retain_structured_chunk_size:
+          nullable: true
+          type: integer
         enable_observations:
           nullable: true
           type: boolean
@@ -3986,6 +4560,11 @@ components:
         max_observations_per_scope:
           nullable: true
           type: integer
+        observation_scope_limits:
+          items:
+            additionalProperties: {}
+          nullable: true
+          type: array
         reflect_source_facts_max_tokens:
           nullable: true
           type: integer
@@ -4221,6 +4800,16 @@ components:
       - files
       - request
       title: Body_file_retain
+    Body_import_documents:
+      properties:
+        file:
+          description: Transfer ZIP archive
+          format: binary
+          title: File
+          type: string
+      required:
+      - file
+      title: Body_import_documents
     Budget:
       description: Budget levels for recall/reflect operations.
       enum:
@@ -4434,6 +5023,9 @@ components:
         retain_chunk_size:
           nullable: true
           type: integer
+        retain_structured_chunk_size:
+          nullable: true
+          type: integer
         enable_observations:
           nullable: true
           type: boolean
@@ -4565,7 +5157,8 @@ components:
         event_types:
           default:
           - consolidation.completed
-          description: "List of event types to deliver. Currently supported: 'consolidation.completed'"
+          description: "List of event types to deliver. Supported: 'retain.completed',\
+            \ 'consolidation.completed', 'memory_defense.triggered'."
           items:
             type: string
           type: array
@@ -4740,6 +5333,27 @@ components:
       - literalism
       - skepticism
       title: DispositionTraits
+    DocumentImportSubmitResponse:
+      description: |-
+        Response for the async document-import endpoint (202).
+
+        The import runs in the background; poll the operations endpoint for status.
+        The imported/skipped counts (documents_imported, facts_imported,
+        observations_imported, etc.) are written to the operation's result_metadata.
+      example:
+        operation_id: operation_id
+        status: pending
+      properties:
+        operation_id:
+          title: Operation Id
+          type: string
+        status:
+          default: pending
+          title: Status
+          type: string
+      required:
+      - operation_id
+      title: DocumentImportSubmitResponse
     DocumentResponse:
       description: Response model for get document endpoint.
       example:
@@ -4767,7 +5381,7 @@ components:
           title: Bank Id
           type: string
         original_text:
-          title: Original Text
+          nullable: true
           type: string
         content_hash:
           nullable: true
@@ -4797,6 +5411,8 @@ components:
         retain_params:
           additionalProperties: {}
           nullable: true
+        observation_scopes:
+          $ref: '#/components/schemas/Observation_Scopes'
       required:
       - bank_id
       - content_hash
@@ -4806,6 +5422,105 @@ components:
       - original_text
       - updated_at
       title: DocumentResponse
+    DryRunExtractRequest:
+      description: |-
+        Request to run fact extraction ONLY (no resolution/links/embeddings/persistence).
+
+        Every field below the content/context/date is a prompt-affecting override applied just for this
+        call — used to preview what a candidate retain mission (or any extraction setting) would extract,
+        without changing the bank. Unset (null) fields fall back to the bank's resolved config.
+      example:
+        retain_extraction_mode: retain_extraction_mode
+        retain_mission: retain_mission
+        agent_name: agent_name
+        retain_chunk_size: 0
+        context: ""
+        llm_output_language: llm_output_language
+        retain_extract_causal_links: true
+        entity_labels:
+        - ""
+        - ""
+        retain_custom_instructions: retain_custom_instructions
+        content: content
+        entities_allow_free_form: true
+        timestamp: 2000-01-23T04:56:07.000+00:00
+      properties:
+        content:
+          description: Text to extract facts from (e.g. a document or a single chunk).
+          title: Content
+          type: string
+        context:
+          default: ""
+          description: Optional context about the content.
+          title: Context
+          type: string
+        timestamp:
+          format: date-time
+          nullable: true
+          type: string
+        agent_name:
+          nullable: true
+          type: string
+        retain_mission:
+          nullable: true
+          type: string
+        retain_extraction_mode:
+          nullable: true
+          type: string
+        retain_custom_instructions:
+          nullable: true
+          type: string
+        retain_extract_causal_links:
+          nullable: true
+          type: boolean
+        retain_chunk_size:
+          nullable: true
+          type: integer
+        entity_labels:
+          items: {}
+          nullable: true
+          type: array
+        entities_allow_free_form:
+          nullable: true
+          type: boolean
+        llm_output_language:
+          nullable: true
+          type: string
+      required:
+      - content
+      title: DryRunExtractRequest
+    DryRunExtractionResult:
+      description: "Result of dry-run fact extraction: candidate facts plus aggregated\
+        \ LLM token usage."
+      example:
+        usage:
+          input_tokens: 1500
+          output_tokens: 500
+          total_tokens: 2000
+        facts:
+        - occurred_start: occurred_start
+          entities:
+          - entities
+          - entities
+          occurred_end: occurred_end
+          text: text
+          fact_type: fact_type
+        - occurred_start: occurred_start
+          entities:
+          - entities
+          - entities
+          occurred_end: occurred_end
+          text: text
+          fact_type: fact_type
+      properties:
+        facts:
+          description: Candidate facts the retain step would extract.
+          items:
+            $ref: '#/components/schemas/ExtractedFact'
+          type: array
+        usage:
+          $ref: '#/components/schemas/TokenUsage'
+      title: DryRunExtractionResult
     EntityDetailResponse:
       description: Response model for entity detail endpoint.
       example:
@@ -5014,6 +5729,45 @@ components:
       - entity_id
       - observations
       title: EntityStateResponse
+    ExtractedFact:
+      description: |-
+        A single candidate fact produced by dry-run extraction (no resolution/links/persistence).
+
+        A deliberate subset of the persisted memory-unit shape — only the fields a fresh extraction
+        yields. Storage/consolidation/curation fields (id, document_id, chunk_id, proof_count, state, …)
+        are omitted because nothing is stored. Entities are raw, unresolved names.
+      example:
+        occurred_start: occurred_start
+        entities:
+        - entities
+        - entities
+        occurred_end: occurred_end
+        text: text
+        fact_type: fact_type
+      properties:
+        text:
+          description: The extracted fact text.
+          title: Text
+          type: string
+        fact_type:
+          description: "Perspective classification: 'world' or 'experience'."
+          title: Fact Type
+          type: string
+        occurred_start:
+          nullable: true
+          type: string
+        occurred_end:
+          nullable: true
+          type: string
+        entities:
+          description: Raw (unresolved) entity names mentioned in the fact.
+          items:
+            type: string
+          type: array
+      required:
+      - fact_type
+      - text
+      title: ExtractedFact
     FactsIncludeOptions:
       description: Options for including facts (based_on) in reflect results.
       properties: {}
@@ -5038,15 +5792,46 @@ components:
           description: Whether per-bank configuration API is enabled
           title: Bank Config Api
           type: boolean
+        bank_llm_health:
+          description: Whether the per-bank LLM connectivity probe is enabled
+          title: Bank Llm Health
+          type: boolean
         file_upload_api:
           description: Whether file upload/conversion API is enabled
           title: File Upload Api
           type: boolean
+        document_export_api:
+          description: Whether the document export endpoint is enabled
+          title: Document Export Api
+          type: boolean
+        document_import_api:
+          description: Whether the document import endpoint is enabled
+          title: Document Import Api
+          type: boolean
+        audit_log:
+          description: Whether audit logging is enabled
+          title: Audit Log
+          type: boolean
+        llm_trace:
+          description: Whether per-bank LLM request tracing is enabled
+          title: Llm Trace
+          type: boolean
+        store_document_text:
+          description: "Whether raw source text is persisted. When false, document/chunk\
+            \ source text is not stored."
+          title: Store Document Text
+          type: boolean
       required:
+      - audit_log
       - bank_config_api
+      - bank_llm_health
+      - document_export_api
+      - document_import_api
       - file_upload_api
+      - llm_trace
       - mcp
       - observations
+      - store_document_text
       - worker
       title: FeaturesInfo
     FileRetainResponse:
@@ -5125,7 +5910,6 @@ components:
           input: ""
           ctx: "{}"
           type: type
-          url: url
         - msg: msg
           loc:
           - ValidationError_loc_inner
@@ -5133,7 +5917,6 @@ components:
           input: ""
           ctx: "{}"
           type: type
-          url: url
       properties:
         detail:
           items:
@@ -5150,6 +5933,305 @@ components:
         source_facts:
           $ref: '#/components/schemas/SourceFactsIncludeOptions'
       title: IncludeOptions
+    LLMRequestEntry:
+      description: "A single LLM request trace row, as returned by the read API."
+      example:
+        parent_span_id: parent_span_id
+        trace_id: trace_id
+        metadata:
+          key: ""
+        span_id: span_id
+        error: error
+        llm_info:
+          key: ""
+        input_tokens: 5
+        duration_ms: 5
+        output: ""
+        input: ""
+        provider: provider
+        bank_id: bank_id
+        scope: scope
+        total_tokens: 9
+        started_at: started_at
+        model: model
+        output_tokens: 2
+        id: id
+        operation: operation
+        ended_at: ended_at
+        status: status
+        cached_tokens: 7
+      properties:
+        id:
+          title: Id
+          type: string
+        bank_id:
+          nullable: true
+          type: string
+        operation:
+          nullable: true
+          type: string
+        scope:
+          nullable: true
+          type: string
+        trace_id:
+          nullable: true
+          type: string
+        span_id:
+          nullable: true
+          type: string
+        parent_span_id:
+          nullable: true
+          type: string
+        provider:
+          nullable: true
+          type: string
+        model:
+          nullable: true
+          type: string
+        status:
+          title: Status
+          type: string
+        started_at:
+          nullable: true
+          type: string
+        ended_at:
+          nullable: true
+          type: string
+        duration_ms:
+          nullable: true
+          type: integer
+        input_tokens:
+          nullable: true
+          type: integer
+        output_tokens:
+          nullable: true
+          type: integer
+        cached_tokens:
+          nullable: true
+          type: integer
+        total_tokens:
+          nullable: true
+          type: integer
+        input: {}
+        output: {}
+        error:
+          nullable: true
+          type: string
+        llm_info:
+          additionalProperties: {}
+          title: Llm Info
+        metadata:
+          additionalProperties: {}
+          title: Metadata
+      required:
+      - bank_id
+      - cached_tokens
+      - duration_ms
+      - ended_at
+      - error
+      - id
+      - input_tokens
+      - llm_info
+      - metadata
+      - model
+      - operation
+      - output_tokens
+      - parent_span_id
+      - provider
+      - scope
+      - span_id
+      - started_at
+      - status
+      - total_tokens
+      - trace_id
+      title: LLMRequestEntry
+    LLMRequestListResponse:
+      description: Paginated list of LLM request traces for a bank.
+      example:
+        total: 0
+        offset: 1
+        bank_id: bank_id
+        limit: 6
+        items:
+        - parent_span_id: parent_span_id
+          trace_id: trace_id
+          metadata:
+            key: ""
+          span_id: span_id
+          error: error
+          llm_info:
+            key: ""
+          input_tokens: 5
+          duration_ms: 5
+          output: ""
+          input: ""
+          provider: provider
+          bank_id: bank_id
+          scope: scope
+          total_tokens: 9
+          started_at: started_at
+          model: model
+          output_tokens: 2
+          id: id
+          operation: operation
+          ended_at: ended_at
+          status: status
+          cached_tokens: 7
+        - parent_span_id: parent_span_id
+          trace_id: trace_id
+          metadata:
+            key: ""
+          span_id: span_id
+          error: error
+          llm_info:
+            key: ""
+          input_tokens: 5
+          duration_ms: 5
+          output: ""
+          input: ""
+          provider: provider
+          bank_id: bank_id
+          scope: scope
+          total_tokens: 9
+          started_at: started_at
+          model: model
+          output_tokens: 2
+          id: id
+          operation: operation
+          ended_at: ended_at
+          status: status
+          cached_tokens: 7
+      properties:
+        bank_id:
+          title: Bank Id
+          type: string
+        total:
+          title: Total
+          type: integer
+        limit:
+          title: Limit
+          type: integer
+        offset:
+          title: Offset
+          type: integer
+        items:
+          items:
+            $ref: '#/components/schemas/LLMRequestEntry'
+          type: array
+      required:
+      - bank_id
+      - items
+      - limit
+      - offset
+      - total
+      title: LLMRequestListResponse
+    LLMRequestStatsBucket:
+      description: A single time bucket in LLM request stats.
+      example:
+        total: 6
+        statuses:
+          key: 0
+        tokens:
+          output: 5
+          input: 1
+          total: 2
+          cached: 5
+        time: time
+      properties:
+        time:
+          title: Time
+          type: string
+        statuses:
+          additionalProperties:
+            type: integer
+          title: Statuses
+        total:
+          title: Total
+          type: integer
+        tokens:
+          $ref: '#/components/schemas/LLMRequestTokenSums'
+      required:
+      - statuses
+      - time
+      - tokens
+      - total
+      title: LLMRequestStatsBucket
+    LLMRequestStatsResponse:
+      description: LLM request counts and token sums grouped by time bucket.
+      example:
+        period: period
+        trunc: trunc
+        bank_id: bank_id
+        buckets:
+        - total: 6
+          statuses:
+            key: 0
+          tokens:
+            output: 5
+            input: 1
+            total: 2
+            cached: 5
+          time: time
+        - total: 6
+          statuses:
+            key: 0
+          tokens:
+            output: 5
+            input: 1
+            total: 2
+            cached: 5
+          time: time
+        start: start
+      properties:
+        bank_id:
+          title: Bank Id
+          type: string
+        period:
+          title: Period
+          type: string
+        trunc:
+          title: Trunc
+          type: string
+        start:
+          title: Start
+          type: string
+        buckets:
+          items:
+            $ref: '#/components/schemas/LLMRequestStatsBucket'
+          type: array
+      required:
+      - bank_id
+      - buckets
+      - period
+      - start
+      - trunc
+      title: LLMRequestStatsResponse
+    LLMRequestTokenSums:
+      description: Token totals for a time bucket.
+      example:
+        output: 5
+        input: 1
+        total: 2
+        cached: 5
+      properties:
+        input:
+          title: Input
+          type: integer
+        output:
+          title: Output
+          type: integer
+        cached:
+          title: Cached
+          type: integer
+        total:
+          title: Total
+          type: integer
+      required:
+      - cached
+      - input
+      - output
+      - total
+      title: LLMRequestTokenSums
     ListChunksResponse:
       description: Response model for listing chunks of a document.
       example:
@@ -5292,6 +6374,43 @@ components:
       - offset
       - total
       title: ListTagsResponse
+    LlmOperationHealth:
+      description: |-
+        LLM connectivity status for a single operation. Status only — no provider/model/
+        endpoint/error, so the probe never discloses the LLM configuration.
+      properties:
+        operation:
+          description: Operation whose LLM was probed
+          enum:
+          - retain
+          - consolidation
+          - reflect
+          title: LlmHealthOperation
+          type: string
+        ok:
+          description: True only when the probe connected successfully
+          title: Ok
+          type: boolean
+        status:
+          description: '''connected''; ''not_configured'' (provider is ''none'');
+            ''auth_failed'' (rejected — usually a wrong/expired API key); ''unreachable''
+            (call failed); ''timeout'''
+          enum:
+          - connected
+          - not_configured
+          - auth_failed
+          - unreachable
+          - timeout
+          title: LlmHealthStatus
+          type: string
+        latency_ms:
+          nullable: true
+          type: number
+      required:
+      - ok
+      - operation
+      - status
+      title: LlmOperationHealth
     MemoriesTimeseriesResponse:
       description: Time-series of memory ingestion bucketed by time and fact type.
       example:
@@ -5642,6 +6761,7 @@ components:
           - all
           - any_strict
           - all_strict
+          - exact
           nullable: true
           type: string
         tag_groups:
@@ -5730,6 +6850,7 @@ components:
           - all
           - any_strict
           - all_strict
+          - exact
           nullable: true
           type: string
         tag_groups:
@@ -5747,6 +6868,78 @@ components:
           nullable: true
           type: integer
       title: MentalModelTrigger
+    ObservationScope:
+      description: "A distinct observation scope: an exact tag set plus its observation\
+        \ count."
+      properties:
+        tags:
+          description: The exact tag set defining this scope (normalized order). Empty
+            list is the global/untagged scope.
+          items:
+            type: string
+          type: array
+        count:
+          description: Number of observations that live under this scope
+          title: Count
+          type: integer
+      required:
+      - count
+      - tags
+      title: ObservationScope
+    ObservationScopesResponse:
+      description: Response model for the observation scopes enumeration endpoint.
+      example:
+        scopes:
+        - count: 12
+          tags:
+          - user:alice
+        - count: 4
+          tags:
+          - user:alice
+          - project:apollo
+        - count: 2
+          tags: []
+      properties:
+        scopes:
+          description: "Distinct observation scopes, most populous first"
+          items:
+            $ref: '#/components/schemas/ObservationScope'
+          type: array
+      required:
+      - scopes
+      title: ObservationScopesResponse
+    OperationProgress:
+      description: |-
+        Last-known progress snapshot for a long-running async operation.
+
+        Written at coarse phase/batch boundaries by the worker (consolidation, batch
+        retain). Lets an operator polling the operation status API distinguish a healthy
+        long-running job (``processed`` advancing across polls) from a frozen one (same
+        numbers, no movement in ``at``). Absent (``null``) on operations that never
+        reached a checkpoint — completed-instantly or pre-feature rows.
+      properties:
+        stage:
+          description: Coarse phase the operation last reported (e.g. 'processing_batch').
+          title: Stage
+          type: string
+        at:
+          description: ISO-8601 timestamp when this snapshot was written.
+          title: At
+          type: string
+        processed:
+          nullable: true
+          type: integer
+        total:
+          nullable: true
+          type: integer
+        detail:
+          additionalProperties:
+            type: integer
+          nullable: true
+      required:
+      - at
+      - stage
+      title: OperationProgress
     OperationResponse:
       description: Response model for a single async operation.
       example:
@@ -5772,6 +6965,9 @@ components:
         created_at:
           title: Created At
           type: string
+        updated_at:
+          nullable: true
+          type: string
         status:
           title: Status
           type: string
@@ -5784,6 +6980,8 @@ components:
         next_retry_at:
           nullable: true
           type: string
+        progress:
+          $ref: '#/components/schemas/OperationProgress'
       required:
       - created_at
       - error_message
@@ -5836,6 +7034,8 @@ components:
         next_retry_at:
           nullable: true
           type: string
+        progress:
+          $ref: '#/components/schemas/OperationProgress'
         result_metadata:
           additionalProperties: {}
           nullable: true
@@ -5943,6 +7143,7 @@ components:
           - all
           - any_strict
           - all_strict
+          - exact
           title: Tags Match
           type: string
         tag_groups:
@@ -6265,6 +7466,7 @@ components:
           - all
           - any_strict
           - all_strict
+          - exact
           title: Tags Match
           type: string
         tag_groups:
@@ -6566,6 +7768,7 @@ components:
           - all
           - any_strict
           - all_strict
+          - exact
           title: Match
           type: string
       required:
@@ -6648,6 +7851,11 @@ components:
           description: Total tokens (input + output)
           title: Total Tokens
           type: integer
+        cached_tokens:
+          default: 0
+          description: "Cached/cache-read prompt tokens, when reported by the provider"
+          title: Cached Tokens
+          type: integer
       title: TokenUsage
     ToolCallsIncludeOptions:
       description: Options for including tool calls in reflect results.
@@ -6724,6 +7932,45 @@ components:
           title: Success
           type: boolean
       title: UpdateDocumentResponse
+    UpdateMemoryRequest:
+      description: |-
+        Request model for curating a single memory unit (edit / invalidate / revert).
+
+        Provide ``text`` to correct the fact, and/or ``state`` to invalidate
+        ('invalidated') or revert ('valid') it. ``reason`` is optional free text
+        recorded on the memory. At least one of ``text`` or ``state`` must be set.
+        Only world/experience facts can be curated; observations are derived.
+      example:
+        reason: "superseded: server decommissioned 2026-06-01"
+        state: invalidated
+      properties:
+        text:
+          nullable: true
+          type: string
+        context:
+          nullable: true
+          type: string
+        occurred_start:
+          nullable: true
+          type: string
+        occurred_end:
+          nullable: true
+          type: string
+        fact_type:
+          nullable: true
+          type: string
+        entities:
+          items:
+            type: string
+          nullable: true
+          type: array
+        state:
+          nullable: true
+          type: string
+        reason:
+          nullable: true
+          type: string
+      title: UpdateMemoryRequest
     UpdateMentalModelRequest:
       description: Request model for updating a mental model.
       example:
@@ -6799,7 +8046,6 @@ components:
         input: ""
         ctx: "{}"
         type: type
-        url: url
       properties:
         loc:
           items:
@@ -6815,9 +8061,6 @@ components:
         ctx:
           title: Context
           type: object
-        url:
-          title: URL
-          type: string
       required:
       - loc
       - msg
@@ -6829,6 +8072,8 @@ components:
         api_version: 0.4.0
         features:
           bank_config_api: false
+          document_export_api: true
+          document_import_api: true
           file_upload_api: true
           mcp: true
           observations: false
@@ -7082,6 +8327,20 @@ components:
       - id
       - url
       title: WebhookResponse
+    Observation_Scopes:
+      anyOf:
+      - type: string
+      - items:
+          items:
+            type: string
+          type: array
+        type: array
+      description: "The observation_scopes spec configured at retain time (e.g. 'all_combinations',\
+        \ 'per_tag', or explicit tag-set lists), captured into retain_params. None\
+        \ when none was set (default 'combined' scoping) or for documents retained\
+        \ before this was captured."
+      nullable: true
+      title: Observation Scopes
     Timestamp:
       anyOf:
       - format: date-time
@@ -7099,6 +8358,7 @@ components:
         - per_tag
         - combined
         - all_combinations
+        - shared
         type: string
       - items:
           items:
@@ -7108,8 +8368,11 @@ components:
       description: "How to scope observations during consolidation. 'per_tag' runs\
         \ one consolidation pass per individual tag, creating separate observations\
         \ for each tag. 'combined' (default) runs a single pass with all tags together.\
-        \ A list of tag lists runs one pass per inner list, giving full control over\
-        \ which combinations to use."
+        \ 'shared' runs a single pass over one global, untagged scope, so memories\
+        \ consolidate together regardless of their tags — useful for deduplicating\
+        \ across volatile per-call provenance tags (e.g. per-session ids) while keeping\
+        \ those tags on the source facts. A list of tag lists runs one pass per inner\
+        \ list, giving full control over which combinations to use."
       nullable: true
       title: ObservationScopes
     MentalModelTrigger_Input_tag_groups_inner:

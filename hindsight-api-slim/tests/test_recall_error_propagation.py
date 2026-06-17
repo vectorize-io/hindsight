@@ -45,9 +45,7 @@ async def test_recall_async_error_preserves_original(memory_no_llm_verify: Memor
         # the symptom in #1384 was an empty trailer like "Failed to search memories: ".
         message = str(excinfo.value)
         assert "Failed to search memories" in message
-        assert "_SilentError" in message, (
-            f"wrapper message dropped the original exception class: {message!r}"
-        )
+        assert "_SilentError" in message, f"wrapper message dropped the original exception class: {message!r}"
 
         # `from e` chain must be preserved so worker logs / debuggers can walk
         # back to the real cause.

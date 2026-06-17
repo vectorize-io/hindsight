@@ -43,11 +43,56 @@ check_pg0_data_integrity() {
     return 0
 }
 
+# =============================================================================
+# Embedded pg0 writability pre-check (#1483)
+#
+# The container runs as the unprivileged `hindsight` user (UID 1000). When the
+# pg0 data directory is a host bind mount (e.g. `-v $HOME/dir:/home/hindsight/.pg0`)
+# that is not owned by UID 1000 — the default on macOS Docker Desktop and most
+# non-1000 Linux hosts — pg0 fails with the opaque "Permission denied (os error
+# 13)". We cannot chown it ourselves without root (and the image is deliberately
+# rootless), so we surface an actionable message up front instead.
+#
+# Docker *named* volumes are seeded with the image directory's ownership (UID
+# 1000) on first use, so they avoid this entirely — hence the named-volume
+# recommendation below and in the README.
+# =============================================================================
+check_pg0_writable() {
+    local pg0_data_dir="$1"
+
+    # Only relevant for embedded pg0; an external database doesn't use this dir.
+    if [ -n "${HINDSIGHT_API_DATABASE_URL:-}" ]; then
+        return 0
+    fi
+
+    mkdir -p "$pg0_data_dir" 2>/dev/null || true
+    if touch "$pg0_data_dir/.hindsight-write-test" 2>/dev/null; then
+        rm -f "$pg0_data_dir/.hindsight-write-test" 2>/dev/null || true
+        return 0
+    fi
+
+    echo "❌ The embedded database directory $pg0_data_dir is not writable by this container (UID $(id -u))."
+    echo ""
+    echo "   A host directory was bind-mounted but is not owned by the container user (UID 1000)."
+    echo "   Hindsight runs rootless and cannot fix this for you. Choose one:"
+    echo ""
+    echo "   • Recommended — use a Docker named volume (auto-owned by the container):"
+    echo "       -v hindsight-data:/home/hindsight/.pg0"
+    echo ""
+    echo "   • Or keep the host path and run as your host user, chowning it to match:"
+    echo "       sudo chown -R \$(id -u):\$(id -g) <host-directory>"
+    echo "       docker run --user \$(id -u):\$(id -g) -e HOME=/home/hindsight ..."
+    echo ""
+    echo "   See https://github.com/vectorize-io/hindsight/issues/1483"
+    return 1
+}
+
 if [ "${HINDSIGHT_START_ALL_SOURCE_ONLY:-false}" = "true" ]; then
     return 0 2>/dev/null || exit 0
 fi
 
 check_pg0_data_integrity "${HOME}/.pg0"
+check_pg0_writable "${HOME}/.pg0" || exit 1
 
 # Service flags (default to true if not set)
 ENABLE_API="${HINDSIGHT_ENABLE_API:-true}"

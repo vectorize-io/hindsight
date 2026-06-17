@@ -574,12 +574,10 @@ async def compute_semantic_links_ann(
     # the transaction end handles both.
     rows: list = []
     async with conn.transaction():
-        # Transaction-local ANN tuning. Each supported backend exposes its own
-        # GUC (hnsw.ef_search on pgvector, vchordrq.probes on vchord); the
-        # dispatcher returns the right knob for the configured backend with a
-        # value tuned for top-50 semantic link creation (lower recall but much
-        # lower latency than the recall-side default). SET LOCAL auto-reverts
-        # at commit, so we don't pollute the pool for subsequent queries.
+        # Transaction-local ANN tuning. The dispatcher only returns GUCs that
+        # are safe to apply at session/transaction scope for the configured
+        # backend. VectorChord probe values are index-shaped, so vchordrq uses
+        # index storage fallback parameters instead of a blanket SET LOCAL.
         for guc, value in ann_search_tuning_settings(configured_vector_extension(), kind="low_latency"):
             await conn.execute(f"SET LOCAL {guc} = {value}")
 
@@ -599,23 +597,35 @@ async def compute_semantic_links_ann(
             t_query = time_mod.time()
             seed_count = sum(1 for ft in fact_types if ft == fact_type)
             logger.debug(f"[ANN] Querying fact_type={fact_type}: {seed_count} seeds")
+            # Cast each seed's text embedding to `vector` exactly once in a
+            # MATERIALIZED CTE. Casting inside the LATERAL (s.emb_text::vector)
+            # re-parses the ~5KB embedding string for every candidate row the
+            # probe touches — seeds × bank_units text-parses per batch, which
+            # dominated the whole job on small banks (see #1919: ~50 seeds over
+            # ~1k units took 1.5-3.7s, ~25-48x slower than casting once). The
+            # stable `vector` column also lets the planner consider an HNSW
+            # index scan, which a cast expression inhibits.
             ft_rows = await conn.fetch(
                 f"""
+                WITH seeds AS MATERIALIZED (
+                    SELECT unit_id, emb_text::vector AS emb
+                    FROM _ann_seeds
+                    WHERE fact_type = $2
+                )
                 SELECT s.unit_id       AS from_id,
                        n.id::text      AS to_id,
                        n.similarity
-                FROM _ann_seeds s
+                FROM seeds s
                 CROSS JOIN LATERAL (
                     SELECT mu.id,
-                           1 - (mu.embedding <=> s.emb_text::vector) AS similarity
+                           1 - (mu.embedding <=> s.emb) AS similarity
                     FROM {fq_table("memory_units")} mu
                     WHERE mu.bank_id = $1
                       AND mu.fact_type = $2
                       AND mu.embedding IS NOT NULL
-                    ORDER BY mu.embedding <=> s.emb_text::vector
+                    ORDER BY mu.embedding <=> s.emb
                     LIMIT $3
                 ) n
-                WHERE s.fact_type = $2
                 """,
                 bank_id,
                 fact_type,
@@ -624,7 +634,7 @@ async def compute_semantic_links_ann(
             logger.debug(f"[ANN] fact_type={fact_type}: {len(ft_rows)} rows in {time_mod.time() - t_query:.3f}s")
             rows.extend(ft_rows)
     # Transaction commits here. _ann_seeds is dropped (ON COMMIT DROP).
-    # hnsw.ef_search reverts (SET LOCAL).
+    # Transaction-local ANN tuning reverts (SET LOCAL).
 
     for row in rows:
         sim = float(min(1.0, max(0.0, row["similarity"])))
@@ -789,8 +799,6 @@ async def create_causal_links_batch(
 
     try:
         import time as time_mod
-
-        create_start = time_mod.time()
 
         # Build links list
         links = []

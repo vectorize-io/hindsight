@@ -2770,30 +2770,93 @@ async def test_retain_batch_with_per_item_tags_on_document(memory, request_conte
         print(f"\n=== Cleaned up bank: {bank_id} ===")
 
 
-def test_retain_mission_injected_into_prompt():
-    """Test that retain_mission is injected as a FOCUS section into any extraction mode."""
+def test_retain_mission_in_user_preamble_not_cached_prefix():
+    """retain_mission rides in the per-request user-message preamble, NOT the
+    system prompt — so the cached system prefix stays bank-agnostic and a single
+    Gemini context cache can serve every bank. Independent of extraction mode."""
     from unittest.mock import MagicMock
 
-    from hindsight_api.engine.retain.fact_extraction import _build_extraction_prompt_and_schema
+    from hindsight_api.engine.retain.fact_extraction import (
+        _build_extraction_prompt_and_schema,
+        _retain_mission_preamble,
+    )
 
     spec = "Focus on technical decisions and architecture choices only."
 
-    # Test with concise mode
     config = MagicMock()
     config.retain_extraction_mode = "concise"
     config.retain_mission = spec
     config.retain_custom_instructions = None
     config.retain_extract_causal_links = False
 
+    # The mission is absent from the (cacheable, bank-agnostic) system prompt...
     prompt, _ = _build_extraction_prompt_and_schema(config)
-    assert spec in prompt
-    assert "FOCUS" in prompt
+    assert spec not in prompt
+    assert "FOCUS" not in prompt
+    # ...and present in the per-request user-message preamble instead.
+    preamble = _retain_mission_preamble(config)
+    assert spec in preamble
+    assert "FOCUS" in preamble
 
-    # retain_mission is injected into verbose mode as well
+    # Mode-independent: verbose mode → same mission-free prompt, same preamble.
     config.retain_extraction_mode = "verbose"
     prompt_verbose, _ = _build_extraction_prompt_and_schema(config)
-    assert spec in prompt_verbose
-    assert "FOCUS" in prompt_verbose
+    assert spec not in prompt_verbose
+    assert spec in _retain_mission_preamble(config)
+
+    # The payoff: two banks with DIFFERENT missions produce the IDENTICAL system
+    # prompt → the same cache fingerprint → one shared CachedContent for both,
+    # instead of one cache per mission.
+    config.retain_extraction_mode = "concise"
+    config.retain_mission = "Track project A architecture decisions."
+    prompt_a, _ = _build_extraction_prompt_and_schema(config)
+    config.retain_mission = "Track customer B support incidents."
+    prompt_b, _ = _build_extraction_prompt_and_schema(config)
+    assert prompt_a == prompt_b
+
+
+@pytest.mark.parametrize("mode", ["concise", "verbose"])
+def test_retain_cacheable_prefix_invariant_to_per_bank_freetext(mode):
+    """The cacheable system prompt must NOT depend on per-bank free-text settings.
+
+    For the concise and verbose modes (the ones we cache), the system prefix has
+    to be byte-identical across banks so a single Gemini CachedContent serves all
+    of them. The high-cardinality, user-supplied free-text fields — the retain
+    mission, and custom instructions (which only apply to custom mode anyway) —
+    must never leak into it; if they did, every bank would fragment the cache.
+
+    Structural toggles (causal links, entity labels, output language) MAY change
+    the prefix — they are low-cardinality and correctly keyed by the cache
+    fingerprint — so they are deliberately NOT exercised here.
+    """
+    from types import SimpleNamespace
+
+    from hindsight_api.engine.retain.fact_extraction import _build_extraction_prompt_and_schema
+
+    def make(**overrides):
+        defaults = {
+            "retain_extraction_mode": mode,
+            "retain_extract_causal_links": False,
+            "retain_mission": None,
+            "retain_custom_instructions": None,
+            "retain_taxonomy": None,
+            "entity_labels": None,
+            "entities_allow_free_form": True,
+            "llm_output_language": None,
+        }
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    baseline, _ = _build_extraction_prompt_and_schema(make())
+
+    # The mission must not change the cacheable prefix, whatever its value.
+    for mission in ["Track A decisions.", '{"focus": "compliance"}', "Ünïcödé brief", "x" * 600]:
+        prompt, _ = _build_extraction_prompt_and_schema(make(retain_mission=mission))
+        assert prompt == baseline, f"retain_mission leaked into the cacheable {mode} prefix"
+
+    # Custom instructions are a custom-mode field; they must not touch concise/verbose.
+    prompt, _ = _build_extraction_prompt_and_schema(make(retain_custom_instructions="Do X with {braces}"))
+    assert prompt == baseline, f"retain_custom_instructions leaked into the cacheable {mode} prefix"
 
 
 def test_retain_mission_absent_when_not_set():
@@ -3142,7 +3205,7 @@ from unittest.mock import patch
 
 import pytest_asyncio
 
-from hindsight_api.engine.llm_wrapper import TokenUsage
+from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.task_backend import SyncTaskBackend
 

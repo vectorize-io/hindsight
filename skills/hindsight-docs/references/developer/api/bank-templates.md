@@ -28,12 +28,13 @@ Browse the Bank Templates Hub for ready-to-use templates.
     "retain_extraction_mode": "concise | verbose | custom | chunks",
     "retain_custom_instructions": "...",
     "retain_chunk_size": 2048,
+    "retain_structured_chunk_size": 8192,
     "disposition_skepticism": 3,
     "disposition_literalism": 3,
     "disposition_empathy": 3,
     "enable_observations": true,
     "observations_mission": "...",
-    "entity_labels": ["PERSON", "ORGANIZATION"],
+    "entity_labels": [{ "key": "sentiment", "type": "value", "values": [{ "value": "positive" }, { "value": "negative" }] }],
     "entities_allow_free_form": true
   },
   "mental_models": [
@@ -84,13 +85,14 @@ All fields in `bank` are optional. Only the fields you include will be set as pe
 | `retain_mission` | string | Steers what gets extracted during retain |
 | `retain_extraction_mode` | string | `concise`, `verbose`, `custom`, or `chunks` |
 | `retain_custom_instructions` | string | Custom extraction prompt (requires `mode=custom`) |
-| `retain_chunk_size` | integer | Max token size per content chunk |
+| `retain_chunk_size` | integer | Target max characters per content chunk |
+| `retain_structured_chunk_size` | integer | Max characters for a single JSONL line or conversation turn to keep whole; defaults to `retain_chunk_size` when unset |
 | `disposition_skepticism` | integer (1-5) | How skeptical the disposition is |
 | `disposition_literalism` | integer (1-5) | How literal the disposition is |
 | `disposition_empathy` | integer (1-5) | How empathetic the disposition is |
 | `enable_observations` | boolean | Toggle observation consolidation |
 | `observations_mission` | string | Controls what gets synthesised into observations |
-| `entity_labels` | string[] | Controlled vocabulary for entity labels |
+| `entity_labels` | object[] | Controlled vocabulary as label groups — see [Memory Banks → entity_labels](./memory-banks#entity-labels) |
 | `entities_allow_free_form` | boolean | Allow entities outside the label vocabulary |
 
 ### Mental Model Fields

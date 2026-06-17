@@ -39,6 +39,32 @@ def _get_tenant() -> str:
     return get_current_schema()
 
 
+def _is_client_cancellation(exc: BaseException) -> bool:
+    """Whether *exc* is a client-disconnect cancellation rather than a failure.
+
+    An abandoned recall/reflect raises OperationCancelledError (issue #2122);
+    the HTTP layer re-raises it as ``HTTPException(499) from exc`` (see
+    api/http.py run_cancellable_on_disconnect). The exception itself, or any
+    link in its ``__cause__`` chain, being an OperationCancelledError marks it
+    as a cancellation. Matching on the cause chain rather than a bare status
+    code avoids misclassifying an unrelated 499 as a cancellation. Per the
+    engine contract a cancellation is "not a failure to retry or report"
+    (cancellation.OperationCancelledError), so it must not be counted against
+    ``hindsight.operation.total``.
+    """
+    # Imported lazily to avoid import-time coupling (cf. _get_tenant above).
+    from hindsight_api.cancellation import OperationCancelledError
+
+    cause: BaseException | None = exc
+    seen: set[int] = set()  # guard against a cyclic __cause__ chain
+    while cause is not None and id(cause) not in seen:
+        if isinstance(cause, OperationCancelledError):
+            return True
+        seen.add(id(cause))
+        cause = cause.__cause__
+    return False
+
+
 # Custom bucket boundaries for operation duration (in seconds)
 # Fine granularity in 0-30s range where most operations complete
 DURATION_BUCKETS = (0.1, 0.25, 0.5, 0.75, 1.0, 2.0, 3.0, 5.0, 7.5, 10.0, 15.0, 20.0, 30.0, 60.0, 120.0)
@@ -184,6 +210,8 @@ class MetricsCollectorBase:
         input_tokens: int = 0,
         output_tokens: int = 0,
         success: bool = True,
+        cached_input_tokens: int = 0,
+        thoughts_tokens: int = 0,
     ):
         """
         Record metrics for an LLM call.
@@ -193,9 +221,11 @@ class MetricsCollectorBase:
             model: Model name
             scope: Scope identifier (e.g., "memory", "reflect", "consolidation")
             duration: Call duration in seconds
-            input_tokens: Number of input/prompt tokens
-            output_tokens: Number of output/completion tokens
+            input_tokens: Number of input/prompt tokens (total)
+            output_tokens: Number of output/completion tokens visible in candidates
             success: Whether the call was successful
+            cached_input_tokens: Subset of input_tokens billed at the cached rate
+            thoughts_tokens: Reasoning tokens (billed as output, hidden from candidates)
         """
         raise NotImplementedError
 
@@ -233,6 +263,8 @@ class NoOpMetricsCollector(MetricsCollectorBase):
         input_tokens: int = 0,
         output_tokens: int = 0,
         success: bool = True,
+        cached_input_tokens: int = 0,
+        thoughts_tokens: int = 0,
     ):
         """No-op LLM call recording."""
         pass
@@ -285,6 +317,27 @@ class MetricsCollector(MetricsCollectorBase):
         # LLM call counter (success/failure)
         self.llm_calls_total = self.meter.create_counter(
             name="hindsight.llm.calls.total", description="Total number of LLM API calls", unit="calls"
+        )
+
+        # Cached input tokens (subset of input_tokens billed at the cached rate).
+        # Useful for tracking prompt-cache hit-rate independently of total
+        # input volume. provider.scope.model labels matche llm_tokens_input.
+        self.llm_tokens_cached_input = self.meter.create_counter(
+            name="hindsight.llm.tokens.cached_input",
+            description="Number of cached input tokens (billed at cached rate) for LLM calls",
+            unit="tokens",
+        )
+
+        # Thinking / reasoning tokens (Gemini 2.5+ family). Billed at the
+        # output rate by the provider but invisible to candidates_token_count.
+        # Surfacing them as a distinct counter is required for honest cost
+        # attribution: a workload that "looks cheap" by output volume can be
+        # silently expensive if the model is doing long reasoning chains.
+        self.llm_tokens_thoughts = self.meter.create_counter(
+            name="hindsight.llm.tokens.thoughts",
+            description="Number of reasoning/thinking tokens emitted by the model "
+            "(billed as output but not surfaced in candidates)",
+            unit="tokens",
         )
 
         # HTTP request metrics
@@ -346,20 +399,31 @@ class MetricsCollector(MetricsCollectorBase):
             attributes["max_tokens"] = str(max_tokens)
 
         success = True
+        cancelled = False
         try:
             yield
-        except Exception:
-            success = False
+        except Exception as exc:
+            # A client disconnect cancels the operation cooperatively (#2122),
+            # raised as OperationCancelledError and re-raised by the HTTP layer
+            # as HTTPException(499) from it. An abandoned request is neither a
+            # success nor a failure, so it is excluded from the metric entirely
+            # rather than inflating either the failure or the success rate on
+            # hindsight.operation.total.
+            if _is_client_cancellation(exc):
+                cancelled = True
+            else:
+                success = False
             raise
         finally:
-            duration = time.time() - start_time
-            attributes["success"] = str(success).lower()
+            if not cancelled:
+                duration = time.time() - start_time
+                attributes["success"] = str(success).lower()
 
-            # Record duration
-            self.operation_duration.record(duration, attributes)
+                # Record duration
+                self.operation_duration.record(duration, attributes)
 
-            # Record operation count
-            self.operation_total.add(1, attributes)
+                # Record operation count
+                self.operation_total.add(1, attributes)
 
     def record_llm_call(
         self,
@@ -370,6 +434,8 @@ class MetricsCollector(MetricsCollectorBase):
         input_tokens: int = 0,
         output_tokens: int = 0,
         success: bool = True,
+        cached_input_tokens: int = 0,
+        thoughts_tokens: int = 0,
     ):
         """
         Record metrics for an LLM call.
@@ -379,9 +445,15 @@ class MetricsCollector(MetricsCollectorBase):
             model: Model name
             scope: Scope identifier (e.g., "memory", "reflect", "consolidation")
             duration: Call duration in seconds
-            input_tokens: Number of input/prompt tokens
-            output_tokens: Number of output/completion tokens
+            input_tokens: Number of input/prompt tokens (total, including cached portion)
+            output_tokens: Number of output/completion tokens visible in candidates
             success: Whether the call was successful
+            cached_input_tokens: Subset of input_tokens billed at the cached
+                rate (Gemini context caching). Defaults to 0 when caching is
+                disabled or the provider doesn't surface this field.
+            thoughts_tokens: Reasoning/thinking tokens (Gemini 2.5+ family).
+                Billed at the output rate but not counted in candidates.
+                Defaults to 0 for providers that don't emit thoughts.
         """
         # Base attributes for all metrics
         base_attributes = {
@@ -412,6 +484,18 @@ class MetricsCollector(MetricsCollectorBase):
                 "token_bucket": get_token_bucket(output_tokens),
             }
             self.llm_tokens_output.add(output_tokens, output_attributes)
+
+        if cached_input_tokens > 0:
+            self.llm_tokens_cached_input.add(
+                cached_input_tokens,
+                {**base_attributes, "token_bucket": get_token_bucket(cached_input_tokens)},
+            )
+
+        if thoughts_tokens > 0:
+            self.llm_tokens_thoughts.add(
+                thoughts_tokens,
+                {**base_attributes, "token_bucket": get_token_bucket(thoughts_tokens)},
+            )
 
     @contextmanager
     def record_http_request(self, method: str, endpoint: str, status_code_getter: Callable[[], int]):

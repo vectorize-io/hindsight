@@ -2,7 +2,7 @@
 import { existsSync, realpathSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { createRequire } from "module";
-import { fileURLToPath, pathToFileURL } from "url";
+import { fileURLToPath } from "url";
 import { HindsightServer } from "@vectorize-io/hindsight-all";
 import { HindsightClient } from "@vectorize-io/hindsight-client";
 

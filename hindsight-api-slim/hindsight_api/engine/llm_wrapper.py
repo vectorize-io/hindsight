@@ -10,14 +10,10 @@ import re
 import time
 import uuid
 from contextlib import AsyncExitStack
-from typing import Any
-
-import httpx
-from openai import APIConnectionError, APIStatusError, AsyncOpenAI, LengthFinishReasonError
+from typing import TYPE_CHECKING, Any
 
 # Vertex AI imports (conditional - for LLMProvider to pass credentials to GeminiLLM)
 try:
-    import google.auth
     from google.oauth2 import service_account
 
     VERTEXAI_AVAILABLE = True
@@ -26,16 +22,14 @@ except ImportError:
 
 from ..config import (
     DEFAULT_LLM_MAX_CONCURRENT,
-    DEFAULT_LLM_TIMEOUT,
     ENV_CONSOLIDATION_LLM_MAX_CONCURRENT,
-    ENV_LLM_GROQ_SERVICE_TIER,
     ENV_LLM_MAX_CONCURRENT,
-    ENV_LLM_TIMEOUT,
     ENV_REFLECT_LLM_MAX_CONCURRENT,
     ENV_RETAIN_LLM_MAX_CONCURRENT,
 )
-from ..metrics import get_metrics_collector
-from .response_models import TokenUsage
+
+if TYPE_CHECKING:
+    from .response_models import LLMToolCallResult
 
 # Seed applied to every Groq request for deterministic behavior.
 DEFAULT_LLM_SEED = 4242
@@ -113,7 +107,33 @@ def _semaphores_for_scope(scope: str) -> list[asyncio.Semaphore]:
     return [per_op, _global_llm_semaphore]
 
 
-def sanitize_llm_output(text: str | None) -> str | None:
+def _request_params(
+    *,
+    max_completion_tokens: int | None = None,
+    temperature: float | None = None,
+    scope: str | None = None,
+    response_format: Any | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Build the requested-params bag for tracing — only values the caller set.
+
+    Omitting unset values avoids the misleading nulls we used to record (e.g.
+    consolidation, which passes no token cap), while surfacing the real cap for
+    callers that do set one (e.g. retain's ``retain_max_completion_tokens``).
+    """
+    params: dict[str, Any] = {}
+    if max_completion_tokens is not None:
+        params["max_completion_tokens"] = max_completion_tokens
+    if temperature is not None:
+        params["temperature"] = temperature
+    if response_format is not None:
+        params["response_schema"] = getattr(response_format, "__name__", None) or "structured"
+    if tool_choice is not None and tool_choice != "auto":
+        params["tool_choice"] = tool_choice if isinstance(tool_choice, str) else "named"
+    return params or None
+
+
+def sanitize_text(text: str | None) -> str | None:
     """
     Sanitize text by removing characters that break downstream systems.
 
@@ -125,14 +145,23 @@ def sanitize_llm_output(text: str | None) -> str | None:
 
     Surrogate characters are used in UTF-16 encoding but cannot be encoded
     in UTF-8. They can appear in Python strings from improperly decoded data
-    (e.g., from JavaScript or broken files). Control characters commonly appear
-    in LLM output embedded inside JSON string values.
+    (e.g., from JavaScript or broken files): a client may serialize a half-emoji
+    split at a boundary as a lone ``\\udXXX`` escape. Such input crashes the
+    SentenceTransformers/cross-encoder Rust tokenizers and stdout logging, so
+    user content is sanitized at the retain/recall/reflect ingress (see issue
+    #1875). Control characters commonly appear in LLM output embedded inside
+    JSON string values.
     """
     if text is None:
         return None
     if not text:
         return text
     return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ud800-\udfff]", "", text)
+
+
+# Back-compat alias: this helper was originally introduced to scrub LLM *output*;
+# it now also scrubs user *input* at ingress, hence the broader name.
+sanitize_llm_output = sanitize_text
 
 
 class OutputTooLongError(Exception):
@@ -196,6 +225,7 @@ _PROVIDERS_WITHOUT_API_KEY = frozenset(
         "litellm",
         "litellmrouter",
         "bedrock",
+        "nous",
     }
 )
 
@@ -213,12 +243,14 @@ def create_llm_provider(
     reasoning_effort: str,
     groq_service_tier: str | None = None,
     openai_service_tier: str | None = None,
+    bedrock_service_tier: str | None = None,
     extra_body: dict[str, Any] | None = None,
     default_headers: dict[str, str] | None = None,
     vertexai_project_id: str | None = None,
     vertexai_region: str | None = None,
     vertexai_credentials: Any = None,
     gemini_safety_settings: list | None = None,
+    prompt_cache_enabled: bool = False,
     litellmrouter_config: dict[str, Any] | None = None,
 ) -> Any:  # Returns LLMInterface
     """
@@ -232,7 +264,12 @@ def create_llm_provider(
         reasoning_effort: Reasoning effort level for supported providers.
         groq_service_tier: Groq service tier (for Groq provider) - "on_demand", "flex", or "auto".
         openai_service_tier: OpenAI service tier (for OpenAI provider) - None (default) or "flex" (50% cheaper).
-        extra_body: Extra body params merged into OpenAI-compatible API calls.
+        bedrock_service_tier: Bedrock service tier (for Bedrock provider) - None (default), "flex", "priority", or "reserved".
+        extra_body: Extra request-body params merged into the provider's native
+            call. Threaded into OpenAI-compatible, Fireworks, Anthropic, Gemini/
+            VertexAI and LiteLLM providers (each merges them in its own parameter
+            space). Keys must use each provider's native names (e.g. ``max_tokens``
+            for OpenAI/Anthropic vs ``max_output_tokens`` for Gemini).
         default_headers: Custom headers passed as ``default_headers`` to provider SDK clients
             (used by operators routing through proxies / request-tracing middleware). Currently
             wired into the Anthropic provider; other providers may opt in as needed.
@@ -243,11 +280,11 @@ def create_llm_provider(
     Returns:
         LLMInterface implementation for the specified provider.
     """
-    from .llm_interface import LLMInterface
     from .providers import (
         AnthropicLLM,
         ClaudeCodeLLM,
         CodexLLM,
+        FireworksLLM,
         GeminiLLM,
         LiteLLMLLM,
         LiteLLMRouterLLM,
@@ -306,6 +343,8 @@ def create_llm_provider(
             vertexai_region=vertexai_region,
             vertexai_credentials=vertexai_credentials,
             gemini_safety_settings=gemini_safety_settings,
+            prompt_cache_enabled=prompt_cache_enabled,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "anthropic":
@@ -316,6 +355,7 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             default_headers=default_headers,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "litellm":
@@ -325,6 +365,7 @@ def create_llm_provider(
             base_url=base_url,
             model=model,
             reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "litellmrouter":
@@ -342,6 +383,7 @@ def create_llm_provider(
             model=model,
             config=litellmrouter_config,
             reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
         )
 
     elif provider_lower == "bedrock":
@@ -353,6 +395,8 @@ def create_llm_provider(
             base_url=base_url,
             model=bedrock_model,
             reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
+            bedrock_service_tier=bedrock_service_tier,
         )
 
     elif provider_lower == "llamacpp":
@@ -371,6 +415,34 @@ def create_llm_provider(
             chat_format=config.llamacpp_chat_format,
             no_grammar=config.llamacpp_no_grammar,
             extra_args=config.llamacpp_extra_args,
+        )
+
+    elif provider_lower == "fireworks":
+        # Fireworks online inference is OpenAI-compatible; FireworksLLM adds the
+        # native (non-OpenAI) batch API on top. The existing LiteLLM
+        # ``fireworks_ai/...`` online path (provider="litellm") is untouched.
+        return FireworksLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
+        )
+
+    elif provider_lower == "nous":
+        # Nous Portal is OpenAI-compatible on the wire; NousLLM adds rotating
+        # inference:invoke JWT auth read natively from ~/.hermes/auth.json
+        # (no static api_key, no hermes_cli dependency — same shape as Codex).
+        from hindsight_api.engine.providers.nous_llm import NousLLM
+
+        return NousLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            extra_body=extra_body,
         )
 
     elif provider_lower in (
@@ -417,7 +489,9 @@ class LLMProvider:
         reasoning_effort: str = "low",
         groq_service_tier: str | None = None,
         openai_service_tier: str | None = None,
+        bedrock_service_tier: str | None = None,
         gemini_safety_settings: list | None = None,
+        prompt_cache_enabled: bool = False,
         extra_body: dict[str, Any] | None = None,
         default_headers: dict[str, str] | None = None,
         litellmrouter_config: dict[str, Any] | None = None,
@@ -433,8 +507,10 @@ class LLMProvider:
             reasoning_effort: Reasoning effort level for supported providers.
             groq_service_tier: Groq service tier ("on_demand", "flex", "auto") - from config.
             openai_service_tier: OpenAI service tier (None or "flex") - from config.
+            bedrock_service_tier: Bedrock service tier (None, "flex", "priority", "reserved") - from config.
             gemini_safety_settings: Safety settings for Gemini/VertexAI providers.
-            extra_body: Extra body params merged into OpenAI-compatible API calls.
+            extra_body: Extra request-body params merged into the provider's native call
+                (OpenAI-compatible, Fireworks, Anthropic, Gemini/VertexAI, LiteLLM).
             default_headers: Custom headers passed as ``default_headers`` to provider SDK clients.
                 Used by operators routing through proxies / request-tracing middleware. Falls
                 back to ``HindsightConfig.llm_default_headers`` (env: ``HINDSIGHT_API_LLM_DEFAULT_HEADERS``)
@@ -454,8 +530,14 @@ class LLMProvider:
         # Service tiers from hierarchical config (not env vars)
         self.groq_service_tier = groq_service_tier
         self.openai_service_tier = openai_service_tier
+        self.bedrock_service_tier = bedrock_service_tier
         # Gemini safety settings (instance default; can be overridden per-request via context var)
         self.gemini_safety_settings = gemini_safety_settings
+        # Gemini prompt caching: when True, retain extraction (and any future
+        # caller that opts in) will reuse a CachedContent prefix to cut
+        # input-token cost. Off by default so the change is observable behind
+        # a flip rather than a silent behaviour change on upgrade.
+        self.prompt_cache_enabled = prompt_cache_enabled
         # Extra body params for OpenAI-compatible providers (e.g. chat_template_kwargs)
         self.extra_body = extra_body
         # Default headers passed to provider SDK clients (e.g. proxy auth, request tracing).
@@ -494,6 +576,8 @@ class LLMProvider:
             "openrouter",
             "zai",
             "opencode-go",
+            "fireworks",
+            "nous",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")
@@ -518,6 +602,8 @@ class LLMProvider:
                 self.base_url = "https://api.z.ai/api/coding/paas/v4"
             elif self.provider == "opencode-go":
                 self.base_url = "https://opencode.ai/zen/go/v1"
+            elif self.provider == "nous":
+                self.base_url = "https://inference-api.nousresearch.com/v1"
 
         # Prepare Vertex AI config (if applicable)
         vertexai_project_id = None
@@ -573,6 +659,21 @@ class LLMProvider:
             except Exception:
                 pass  # Config may not be initialized in test environments
 
+        # Prompt-prefix caching is a provider-agnostic toggle (default on): resolve
+        # it from the static server config for every provider when the caller didn't
+        # pass an explicit override. Providers that don't support caching ignore the
+        # value; only those that implement get_or_create_cached_prefix act on it.
+        if not self.prompt_cache_enabled:
+            from ..config import DEFAULT_LLM_PROMPT_CACHE_ENABLED, _get_raw_config
+
+            try:
+                raw_config = _get_raw_config()
+                self.prompt_cache_enabled = bool(
+                    getattr(raw_config, "llm_prompt_cache_enabled", DEFAULT_LLM_PROMPT_CACHE_ENABLED)
+                )
+            except Exception:
+                pass  # Config may not be initialized in test environments
+
         # For litellmrouter: prefer an explicit chain from the caller (per-op
         # construction in MemoryEngine threads the right chain through). If the caller
         # didn't supply one, fall back to the global ``llm_litellmrouter_config`` so
@@ -595,12 +696,14 @@ class LLMProvider:
             reasoning_effort=self.reasoning_effort,
             groq_service_tier=self.groq_service_tier,
             openai_service_tier=self.openai_service_tier,
+            bedrock_service_tier=self.bedrock_service_tier,
             extra_body=self.extra_body,
             default_headers=self.default_headers,
             vertexai_project_id=vertexai_project_id,
             vertexai_region=vertexai_region,
             vertexai_credentials=vertexai_credentials,
             gemini_safety_settings=self.gemini_safety_settings,
+            prompt_cache_enabled=self.prompt_cache_enabled,
             litellmrouter_config=router_config,
         )
 
@@ -664,6 +767,7 @@ class LLMProvider:
         skip_validation: bool = False,
         strict_schema: bool = False,
         return_usage: bool = False,
+        cached_prefix: str | None = None,
     ) -> Any:
         """
         Make an LLM API call with retry logic.
@@ -678,7 +782,10 @@ class LLMProvider:
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
             skip_validation: Return raw JSON without Pydantic validation.
-            strict_schema: Use strict JSON schema enforcement (OpenAI only). Guarantees all required fields.
+            strict_schema: Per-call override requesting grammar-enforced (json_schema strict)
+                structured output instead of the soft json_object path. The server-level
+                HINDSIGHT_API_LLM_STRICT_SCHEMA flag is OR-ed in here so it applies to every call;
+                providers without a strict mode ignore it.
             return_usage: If True, return tuple (result, TokenUsage) instead of just result.
 
         Returns:
@@ -698,33 +805,83 @@ class LLMProvider:
         structured = "+structured" if response_format is not None else ""
         set_stage(f"llm.{self.provider}.{scope}{structured}")
 
-        async with AsyncExitStack() as stack:
-            for sem in _semaphores_for_scope(scope):
-                await stack.enter_async_context(sem)
+        # Resolve strict-schema once, here, rather than in each provider: the
+        # per-call argument OR the server-level HINDSIGHT_API_LLM_STRICT_SCHEMA
+        # flag. Providers with a json_schema response_format (OpenAI-compatible,
+        # LiteLLM) then grammar-enforce structured output instead of the fragile
+        # soft json_object path; Gemini already enforces its native response_schema,
+        # and providers without a strict mode simply ignore the flag.
+        from ..config import get_config
 
-            # Delegate to provider implementation
-            result = await self._provider_impl.call(
-                messages=messages,
-                response_format=response_format,
+        strict_schema = strict_schema or get_config().llm_strict_schema
+
+        # LLM call observability flows through the OTel GenAI recorder
+        # (tracing.get_span_recorder().record_llm_call). Provider implementations
+        # record successful calls; we forward failures here since they don't.
+        # The requested params are stashed in a contextvar (only what the caller
+        # actually set) so the recorder can attach them to either path.
+        from ..tracing import get_span_recorder
+        from .llm_trace import reset_request_context, set_request_context
+
+        call_start = time.monotonic()
+        request_token = set_request_context(
+            _request_params(
                 max_completion_tokens=max_completion_tokens,
                 temperature=temperature,
                 scope=scope,
-                max_retries=max_retries,
-                initial_backoff=initial_backoff,
-                max_backoff=max_backoff,
-                skip_validation=skip_validation,
-                strict_schema=strict_schema,
-                return_usage=return_usage,
+                response_format=response_format,
             )
+        )
+        try:
+            async with AsyncExitStack() as stack:
+                for sem in _semaphores_for_scope(scope):
+                    await stack.enter_async_context(sem)
 
-            # Backward compatibility: Update mock call tracking for mock provider
-            # This allows existing tests using LLMProvider._mock_calls to continue working
-            if self.provider == "mock":
-                from .providers.mock_llm import MockLLM
+                # cached_prefix is only set for providers that returned a handle
+                # from get_or_create_cached_prefix() (e.g. Gemini); it's None for
+                # the rest. Forward it only when present so providers that don't
+                # implement caching keep their call() signature untouched.
+                cache_kwarg = {"cached_prefix": cached_prefix} if cached_prefix is not None else {}
+                try:
+                    # Delegate to provider implementation
+                    result = await self._provider_impl.call(
+                        messages=messages,
+                        response_format=response_format,
+                        max_completion_tokens=max_completion_tokens,
+                        temperature=temperature,
+                        scope=scope,
+                        max_retries=max_retries,
+                        initial_backoff=initial_backoff,
+                        max_backoff=max_backoff,
+                        skip_validation=skip_validation,
+                        strict_schema=strict_schema,
+                        return_usage=return_usage,
+                        **cache_kwarg,
+                    )
+                except Exception as e:
+                    get_span_recorder().record_llm_call(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        response_content=None,
+                        input_tokens=0,
+                        output_tokens=0,
+                        duration=time.monotonic() - call_start,
+                        error=e,
+                    )
+                    raise
 
-                if isinstance(self._provider_impl, MockLLM):
-                    # Sync the mock calls from provider implementation to wrapper
-                    self._mock_calls = self._provider_impl.get_mock_calls()
+                # Backward compatibility: Update mock call tracking for mock provider
+                # This allows existing tests using LLMProvider._mock_calls to continue working
+                if self.provider == "mock":
+                    from .providers.mock_llm import MockLLM
+
+                    if isinstance(self._provider_impl, MockLLM):
+                        # Sync the mock calls from provider implementation to wrapper
+                        self._mock_calls = self._provider_impl.get_mock_calls()
+        finally:
+            reset_request_context(request_token)
 
         return result
 
@@ -739,6 +896,7 @@ class LLMProvider:
         initial_backoff: float = 1.0,
         max_backoff: float = 30.0,
         tool_choice: str | dict[str, Any] = "auto",
+        cached_prefix: str | None = None,
     ) -> "LLMToolCallResult":
         """
         Make an LLM API call with tool/function calling support.
@@ -761,31 +919,66 @@ class LLMProvider:
 
         set_stage(f"llm.{self.provider}.{scope}+tools")
 
-        async with AsyncExitStack() as stack:
-            for sem in _semaphores_for_scope(scope):
-                await stack.enter_async_context(sem)
+        # Failures forwarded to the GenAI recorder; successes recorded by providers.
+        from ..tracing import get_span_recorder
+        from .llm_trace import reset_request_context, set_request_context
 
-            # Delegate to provider implementation
-            result = await self._provider_impl.call_with_tools(
-                messages=messages,
-                tools=tools,
+        call_start = time.monotonic()
+        request_token = set_request_context(
+            _request_params(
                 max_completion_tokens=max_completion_tokens,
                 temperature=temperature,
                 scope=scope,
-                max_retries=max_retries,
-                initial_backoff=initial_backoff,
-                max_backoff=max_backoff,
                 tool_choice=tool_choice,
             )
+        )
+        try:
+            async with AsyncExitStack() as stack:
+                for sem in _semaphores_for_scope(scope):
+                    await stack.enter_async_context(sem)
 
-            # Backward compatibility: Update mock call tracking for mock provider
-            # This allows existing tests using LLMProvider._mock_calls to continue working
-            if self.provider == "mock":
-                from .providers.mock_llm import MockLLM
+                # cached_prefix is only set for providers that returned a handle
+                # from get_or_create_cached_prefix(); forward it only when present
+                # so non-caching providers keep their signature (same as call()).
+                cache_kwarg = {"cached_prefix": cached_prefix} if cached_prefix is not None else {}
+                try:
+                    # Delegate to provider implementation
+                    result = await self._provider_impl.call_with_tools(
+                        messages=messages,
+                        tools=tools,
+                        max_completion_tokens=max_completion_tokens,
+                        temperature=temperature,
+                        scope=scope,
+                        max_retries=max_retries,
+                        initial_backoff=initial_backoff,
+                        max_backoff=max_backoff,
+                        tool_choice=tool_choice,
+                        **cache_kwarg,
+                    )
+                except Exception as e:
+                    get_span_recorder().record_llm_call(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        response_content=None,
+                        input_tokens=0,
+                        output_tokens=0,
+                        duration=time.monotonic() - call_start,
+                        error=e,
+                    )
+                    raise
 
-                if isinstance(self._provider_impl, MockLLM):
-                    # Sync the mock calls from provider implementation to wrapper
-                    self._mock_calls = self._provider_impl.get_mock_calls()
+                # Backward compatibility: Update mock call tracking for mock provider
+                # This allows existing tests using LLMProvider._mock_calls to continue working
+                if self.provider == "mock":
+                    from .providers.mock_llm import MockLLM
+
+                    if isinstance(self._provider_impl, MockLLM):
+                        # Sync the mock calls from provider implementation to wrapper
+                        self._mock_calls = self._provider_impl.get_mock_calls()
+        finally:
+            reset_request_context(request_token)
 
         return result
 
@@ -893,7 +1086,14 @@ class LLMProvider:
         # SDK will automatically check for authentication when first used
         # No need to verify here - let it fail gracefully on first call with helpful error
 
-    def with_config(self, config: Any) -> "ConfiguredLLMProvider":
+    def with_config(
+        self,
+        config: Any,
+        *,
+        bank_id: str | None = None,
+        operation: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> "ConfiguredLLMProvider":
         """
         Return a configured wrapper for a specific bank operation.
 
@@ -903,12 +1103,31 @@ class LLMProvider:
 
         Args:
             config: Resolved ``HindsightConfig`` for the current bank/request.
+            bank_id: Bank the operation runs for; attributed to LLM trace rows.
+            operation: Logical operation label ("retain", "reflect", ...) for
+                LLM trace rows.
+            metadata: Optional extra caller metadata stored on trace rows.
 
         Returns:
             A ``ConfiguredLLMProvider`` that delegates to this provider with
             the supplied config applied.
         """
-        return ConfiguredLLMProvider(self, config.llm_gemini_safety_settings)
+        trace_ctx = None
+        if bank_id is not None or operation is not None or metadata:
+            from .llm_trace import LLMTraceContext
+
+            # One trace + operation span per with_config() call — i.e. per
+            # operation invocation. Every LLM call made through this wrapper
+            # shares them, so a reflect/retain/consolidation run groups its
+            # calls as parent (operation) → children (LLM calls).
+            trace_ctx = LLMTraceContext(
+                bank_id=bank_id,
+                operation=operation,
+                metadata=dict(metadata or {}),
+                trace_id=str(uuid.uuid4()),
+                operation_span_id=str(uuid.uuid4()),
+            )
+        return ConfiguredLLMProvider(self, config.llm_gemini_safety_settings, trace_ctx)
 
     async def cleanup(self) -> None:
         """Clean up resources (e.g. stop llamacpp subprocess)."""
@@ -923,6 +1142,7 @@ class LLMProvider:
             DEFAULT_LLM_REASONING_EFFORT,
             ENV_LLM_API_KEY,
             ENV_LLM_BASE_URL,
+            ENV_LLM_BEDROCK_SERVICE_TIER,
             ENV_LLM_DEFAULT_HEADERS,
             ENV_LLM_EXTRA_BODY,
             ENV_LLM_MODEL,
@@ -954,6 +1174,7 @@ class LLMProvider:
             reasoning_effort=os.getenv(ENV_LLM_REASONING_EFFORT, DEFAULT_LLM_REASONING_EFFORT),
             extra_body=extra_body,
             default_headers=default_headers,
+            bedrock_service_tier=os.getenv(ENV_LLM_BEDROCK_SERVICE_TIER) or None,
         )
 
 
@@ -972,10 +1193,16 @@ class ConfiguredLLMProvider:
     any changes.
     """
 
-    def __init__(self, provider: "LLMProvider", gemini_safety_settings: list | None) -> None:
+    def __init__(
+        self,
+        provider: "LLMProvider",
+        gemini_safety_settings: list | None,
+        trace_ctx: Any | None = None,
+    ) -> None:
         # Use object.__setattr__ to avoid triggering __getattr__
         object.__setattr__(self, "_provider", provider)
         object.__setattr__(self, "_gemini_safety_settings", gemini_safety_settings)
+        object.__setattr__(self, "_trace_ctx", trace_ctx)
 
     # ── attribute passthrough ──────────────────────────────────────────────────
 
@@ -988,10 +1215,12 @@ class ConfiguredLLMProvider:
         from .providers.gemini_llm import _safety_settings_ctx
 
         token = _safety_settings_ctx.set(object.__getattribute__(self, "_gemini_safety_settings"))
+        trace_token = self._bind_trace_context()
         try:
             return await object.__getattribute__(self, "_provider").call(messages=messages, **kwargs)
         finally:
             _safety_settings_ctx.reset(token)
+            self._reset_trace_context(trace_token)
 
     async def call_with_tools(
         self,
@@ -1002,12 +1231,38 @@ class ConfiguredLLMProvider:
         from .providers.gemini_llm import _safety_settings_ctx
 
         token = _safety_settings_ctx.set(object.__getattribute__(self, "_gemini_safety_settings"))
+        trace_token = self._bind_trace_context()
         try:
             return await object.__getattribute__(self, "_provider").call_with_tools(
                 messages=messages, tools=tools, **kwargs
             )
         finally:
             _safety_settings_ctx.reset(token)
+            self._reset_trace_context(trace_token)
+
+    def trace_context(self) -> Any | None:
+        """The operation-level LLM trace context (or None when untraced).
+
+        Lets the engine attach the operation's produced/consumed memory_ids to
+        this run's trace rows once they're known (after the LLM calls).
+        """
+        return object.__getattribute__(self, "_trace_ctx")
+
+    def _bind_trace_context(self) -> Any | None:
+        """Bind bank/operation attribution for the duration of one call."""
+        trace_ctx = object.__getattribute__(self, "_trace_ctx")
+        if trace_ctx is None:
+            return None
+        from .llm_trace import set_trace_context
+
+        return set_trace_context(trace_ctx)
+
+    def _reset_trace_context(self, trace_token: Any | None) -> None:
+        if trace_token is None:
+            return
+        from .llm_trace import reset_trace_context
+
+        reset_trace_context(trace_token)
 
 
 # Backwards compatibility alias
