@@ -42,6 +42,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "pydantic-ai": IntegrationMeta("hindsight-pydantic-ai", "Pydantic AI"),
     "crewai": IntegrationMeta("hindsight-crewai", "CrewAI"),
     "agent-framework": IntegrationMeta("hindsight-agent-framework", "Microsoft Agent Framework"),
+    "agno": IntegrationMeta("hindsight-agno", "Agno"),
     "ag2": IntegrationMeta("hindsight-ag2"),
     "ai-sdk": IntegrationMeta("@vectorize-io/hindsight-ai-sdk", "AI SDK"),
     "chat": IntegrationMeta("@vectorize-io/hindsight-chat", "Chat SDK"),
@@ -76,6 +77,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "roo-code": IntegrationMeta("hindsight-roo-code", "Roo Code"),
     "omo": IntegrationMeta("hindsight-omo", "OMO"),
     "composio": IntegrationMeta("hindsight-composio", "Composio"),
+    "continue": IntegrationMeta("hindsight-continue", "Continue"),
 }
 
 VALID_INTEGRATIONS = list(INTEGRATIONS.keys())
