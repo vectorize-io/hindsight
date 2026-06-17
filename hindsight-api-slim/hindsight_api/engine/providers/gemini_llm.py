@@ -76,6 +76,7 @@ class GeminiLLM(LLMInterface):
 
         # Safety settings: None means use Gemini's defaults
         self._safety_settings: list | None = kwargs.get("gemini_safety_settings")
+        self._service_tier: str | None = kwargs.get("gemini_service_tier")
 
         # User-configured extra params merged into the GenerateContentConfig of
         # every call. Gemini's request body nests generation params, so we expose
@@ -105,6 +106,16 @@ class GeminiLLM(LLMInterface):
 
         self._client = genai.Client(api_key=self.api_key)
         logger.info(f"Gemini API: model={self.model}")
+
+    def _apply_service_tier(self, config_kwargs: dict[str, Any]) -> None:
+        if not self._service_tier:
+            return
+
+        http_options = dict(config_kwargs.get("http_options") or {})
+        extra_body = dict(http_options.get("extra_body") or {})
+        extra_body.setdefault("service_tier", self._service_tier)
+        http_options["extra_body"] = extra_body
+        config_kwargs["http_options"] = http_options
 
     def _init_vertexai(self, **kwargs: Any) -> None:
         """Initialize Vertex AI client with project, region, and credentials."""
@@ -273,6 +284,7 @@ class GeminiLLM(LLMInterface):
         def _build_generation_config(use_cache: bool) -> "genai_types.GenerateContentConfig | None":
             # Seed with user-configured extra params; explicit settings below win.
             config_kwargs: dict[str, Any] = dict(self._extra_body)
+            self._apply_service_tier(config_kwargs)
             if use_cache:
                 config_kwargs["cached_content"] = cached_prefix
             elif system_instruction:
@@ -604,6 +616,7 @@ class GeminiLLM(LLMInterface):
         def _build_tools_config(use_cache: bool) -> "genai_types.GenerateContentConfig":
             # Seed with user-configured extra params; explicit settings below win.
             config_kwargs: dict[str, Any] = dict(self._extra_body)
+            self._apply_service_tier(config_kwargs)
             if use_cache:
                 config_kwargs["cached_content"] = cached_prefix
             else:

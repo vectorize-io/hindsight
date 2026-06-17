@@ -933,6 +933,7 @@ class MemoryEngine(MemoryEngineInterface):
             default_headers=config.llm_default_headers,
             litellmrouter_config=config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
+            gemini_service_tier=config.llm_gemini_service_tier,
         )
 
         # Store client and model for convenience (deprecated: use _llm_config.call() instead)
@@ -966,6 +967,7 @@ class MemoryEngine(MemoryEngineInterface):
             default_headers=config.llm_default_headers,
             litellmrouter_config=config.retain_llm_litellmrouter_config or config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
+            gemini_service_tier=config.llm_gemini_service_tier,
         )
 
         # Reflect LLM config - for think/observe operations (can use lighter models)
@@ -994,6 +996,7 @@ class MemoryEngine(MemoryEngineInterface):
             default_headers=config.llm_default_headers,
             litellmrouter_config=config.reflect_llm_litellmrouter_config or config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
+            gemini_service_tier=config.llm_gemini_service_tier,
         )
 
         # Consolidation LLM config - for mental model consolidation (can use efficient models)
@@ -1022,6 +1025,7 @@ class MemoryEngine(MemoryEngineInterface):
             default_headers=config.llm_default_headers,
             litellmrouter_config=config.consolidation_llm_litellmrouter_config or config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
+            gemini_service_tier=config.llm_gemini_service_tier,
         )
 
         # Initialize cross-encoder reranker (cached for performance)

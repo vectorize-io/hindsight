@@ -25,6 +25,7 @@ def setup_test_env():
         "HINDSIGHT_API_LLM_MODEL",
         "HINDSIGHT_API_LLM_REASONING_EFFORT",
         "HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER",
+        "HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER",
         "HINDSIGHT_API_SEMANTIC_MIN_SIMILARITY",
         "HINDSIGHT_API_DATABASE_URL",
         "HINDSIGHT_API_MIGRATION_DATABASE_URL",
@@ -580,3 +581,81 @@ def test_bedrock_service_tier_rejects_invalid_value(monkeypatch):
     assert "HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER" in error_message
     assert "standard" in error_message
     assert "'standard' is not a valid Bedrock service tier" in error_message
+
+
+# ---------------------------------------------------------------------------
+# Gemini service tier (HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER)
+# ---------------------------------------------------------------------------
+
+
+def test_gemini_service_tier_defaults_to_none(monkeypatch):
+    """Gemini service tier defaults to None (standard tier) when unset."""
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.delenv("HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER", raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.llm_gemini_service_tier is None
+
+
+def test_gemini_service_tier_flex(monkeypatch):
+    """Flex tier is accepted for Gemini."""
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER", "flex")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_API_KEY", "fake-key")
+
+    config = HindsightConfig.from_env()
+    assert config.llm_gemini_service_tier == "flex"
+
+
+def test_gemini_service_tier_accepts_mixed_case_provider(monkeypatch):
+    """Gemini tier parsing follows provider's case-insensitive handling."""
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER", "flex")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "Gemini")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_API_KEY", "fake-key")
+
+    config = HindsightConfig.from_env()
+    assert config.llm_gemini_service_tier == "flex"
+
+
+def test_gemini_service_tier_rejects_invalid_value(monkeypatch):
+    """Unknown Gemini service tiers are rejected early."""
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER", "standard")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_API_KEY", "fake-key")
+
+    with pytest.raises(ValueError) as exc_info:
+        HindsightConfig.from_env()
+
+    error_message = str(exc_info.value)
+    assert "HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER" in error_message
+    assert "standard" in error_message
+
+
+def test_gemini_service_tier_ignored_for_non_gemini_provider(monkeypatch):
+    """Invalid Gemini-only tiers do not break unrelated providers."""
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER", "standard")
+
+    config = HindsightConfig.from_env()
+    assert config.llm_gemini_service_tier is None
+
+
+def test_gemini_service_tier_empty_env_is_unset(monkeypatch):
+    """Empty env values are treated as unset for templated deployments."""
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER", "")
+    monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+
+    config = HindsightConfig.from_env()
+    assert config.llm_gemini_service_tier is None
