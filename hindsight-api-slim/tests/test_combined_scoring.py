@@ -21,12 +21,16 @@ def _make_result(
     ce_norm: float,
     occurred_start: datetime | None = None,
     temporal_proximity: float | None = None,
+    mentioned_at: datetime | None = None,
+    occurred_end: datetime | None = None,
 ) -> ScoredResult:
     retrieval = RetrievalResult(
         id="test",
         text="test",
         fact_type="world",
         occurred_start=occurred_start,
+        occurred_end=occurred_end,
+        mentioned_at=mentioned_at,
         temporal_proximity=temporal_proximity,
     )
 
@@ -141,12 +145,35 @@ class TestBoostFormula:
         apply_combined_scoring([l_relevant, l_recent], now=NOW)
         assert l_relevant.weight > l_recent.weight, "Low-CE model: relevance should still win"
 
-    def test_no_occurred_start_defaults_recency_neutral(self):
-        """Missing occurred_start → recency=0.5 → no boost/penalty."""
-        sr = _make_result(ce_norm=0.5, occurred_start=None)
+    def test_no_effective_time_defaults_recency_neutral(self):
+        """No effective time at all (occurred_start/mentioned_at/occurred_end) → recency=0.5."""
+        sr = _make_result(ce_norm=0.5)
         apply_combined_scoring([sr], now=NOW)
         assert sr.recency == 0.5
         assert abs(sr.weight - 0.5) < 1e-9
+
+    def test_mentioned_at_drives_recency_when_no_occurred_start(self):
+        """A memory with only mentioned_at must derive recency from it, not stay neutral."""
+        sr = _make_result(ce_norm=0.5, mentioned_at=NOW)
+        apply_combined_scoring([sr], now=NOW)
+        assert sr.recency == 1.0
+        assert sr.weight > 0.5
+
+    def test_occurred_end_is_last_recency_fallback(self):
+        """occurred_end feeds recency when neither occurred_start nor mentioned_at is set."""
+        old = NOW - timedelta(days=400)
+        sr = _make_result(ce_norm=0.5, occurred_end=old)
+        apply_combined_scoring([sr], now=NOW)
+        assert sr.recency == 0.1
+        assert sr.weight < 0.5
+
+    def test_occurred_start_takes_precedence_over_mentioned_at(self):
+        """occurred_start wins over mentioned_at (matches _coalesce_date COALESCE order)."""
+        recent = NOW - timedelta(days=10)
+        old = NOW - timedelta(days=400)
+        sr = _make_result(ce_norm=0.5, occurred_start=recent, mentioned_at=old)
+        apply_combined_scoring([sr], now=NOW)
+        assert sr.recency > 0.9
 
     def test_timezone_naive_occurred_start_handled(self):
         """Naive datetimes in occurred_start should not raise."""

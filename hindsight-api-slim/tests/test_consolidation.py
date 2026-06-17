@@ -3115,6 +3115,59 @@ async def test_max_observations_per_scope_limits_creates(memory: MemoryEngine, r
 
 
 @pytest.mark.asyncio
+async def test_max_observations_per_scope_zero_forbids_all_creates(memory: MemoryEngine, request_context):
+    """limit=0 means "no new observations": consolidation must create none.
+
+    Regression for the ``> 0`` call-site guards that excluded 0, leaving
+    ``remaining_observation_slots=None`` (unconstrained) so a limit of 0 behaved
+    like unlimited — the inverse of the documented ``0 = no new observations``.
+    """
+    bank_id = f"test-max-obs-zero-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    raw = _get_raw_config()
+    fake_config = type(raw)(
+        **{
+            **{f: getattr(raw, f) for f in raw.__dataclass_fields__},
+            "max_observations_per_scope": 0,
+        }
+    )
+
+    try:
+        original_global_config = memory._config_resolver._global_config
+        memory._config_resolver._global_config = fake_config
+        wrapper, mock_llm = _make_mock_llm_one_obs_per_fact()
+        original_llm = memory._consolidation_llm_config
+        memory._consolidation_llm_config = wrapper
+
+        try:
+            # Insert tagged memories; the mock LLM will try to create 1 obs per
+            # fact, but limit=0 must block every create.
+            async with memory._pool.acquire() as conn:
+                await _insert_memories_with_tags(
+                    conn,
+                    bank_id,
+                    ["Alice loves hiking.", "Bob swims daily.", "Charlie does yoga."],
+                    tags=["scope:test"],
+                )
+
+            for _ in range(3):
+                await run_consolidation_job(memory_engine=memory, bank_id=bank_id, request_context=request_context)
+
+            async with memory._pool.acquire() as conn:
+                count = await _count_observations_for_scope(conn, bank_id, ["scope:test"])
+                assert count == 0, f"Expected 0 observations (limit=0), got {count}"
+
+                consolidation_calls = [c for c in mock_llm.get_mock_calls() if c["scope"] == "consolidation"]
+                assert len(consolidation_calls) >= 1, "LLM should have been called at least once"
+        finally:
+            memory._config_resolver._global_config = original_global_config
+            memory._consolidation_llm_config = original_llm
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_max_observations_per_scope_allows_updates_at_capacity(memory: MemoryEngine, request_context):
     """At capacity, the LLM can still update existing observations."""
     from hindsight_api.engine.consolidation.consolidator import (

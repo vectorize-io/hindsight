@@ -465,9 +465,15 @@ export type BankTemplateConfig = {
   /**
    * Retain Chunk Size
    *
-   * Max token size for each content chunk
+   * Target max characters for each content chunk
    */
   retain_chunk_size?: number | null;
+  /**
+   * Retain Structured Chunk Size
+   *
+   * Max characters for a single JSONL line or conversation turn to keep whole; defaults to retain_chunk_size when unset
+   */
+  retain_structured_chunk_size?: number | null;
   /**
    * Enable Observations
    *
@@ -1086,9 +1092,15 @@ export type CreateBankRequest = {
   /**
    * Retain Chunk Size
    *
-   * Maximum token size for each content chunk during retain.
+   * Target maximum characters for each content chunk during retain.
    */
   retain_chunk_size?: number | null;
+  /**
+   * Retain Structured Chunk Size
+   *
+   * Maximum characters for a single JSONL line or conversation turn to keep whole during retain. Defaults to retain_chunk_size when unset.
+   */
+  retain_structured_chunk_size?: number | null;
   /**
    * Enable Observations
    *
@@ -1224,7 +1236,7 @@ export type CreateWebhookRequest = {
   /**
    * Event Types
    *
-   * List of event types to deliver. Currently supported: 'consolidation.completed'
+   * List of event types to deliver. Supported: 'retain.completed', 'consolidation.completed', 'memory_defense.triggered'.
    */
   event_types?: Array<string>;
   /**
@@ -1458,6 +1470,92 @@ export type DocumentResponse = {
 };
 
 /**
+ * DryRunExtractRequest
+ *
+ * Request to run fact extraction ONLY (no resolution/links/embeddings/persistence).
+ *
+ * Every field below the content/context/date is a prompt-affecting override applied just for this
+ * call — used to preview what a candidate retain mission (or any extraction setting) would extract,
+ * without changing the bank. Unset (null) fields fall back to the bank's resolved config.
+ */
+export type DryRunExtractRequest = {
+  /**
+   * Content
+   *
+   * Text to extract facts from (e.g. a document or a single chunk).
+   */
+  content: string;
+  /**
+   * Context
+   *
+   * Optional context about the content.
+   */
+  context?: string;
+  /**
+   * Timestamp
+   *
+   * Reference timestamp for resolving relative times (ISO 8601).
+   */
+  timestamp?: string | null;
+  /**
+   * Agent Name
+   *
+   * Narrator override (memory owner) primed in the prompt.
+   */
+  agent_name?: string | null;
+  /**
+   * Retain Mission
+   */
+  retain_mission?: string | null;
+  /**
+   * Retain Extraction Mode
+   */
+  retain_extraction_mode?: string | null;
+  /**
+   * Retain Custom Instructions
+   */
+  retain_custom_instructions?: string | null;
+  /**
+   * Retain Extract Causal Links
+   */
+  retain_extract_causal_links?: boolean | null;
+  /**
+   * Retain Chunk Size
+   */
+  retain_chunk_size?: number | null;
+  /**
+   * Entity Labels
+   */
+  entity_labels?: Array<unknown> | null;
+  /**
+   * Entities Allow Free Form
+   */
+  entities_allow_free_form?: boolean | null;
+  /**
+   * Llm Output Language
+   */
+  llm_output_language?: string | null;
+};
+
+/**
+ * DryRunExtractionResult
+ *
+ * Result of dry-run fact extraction: candidate facts plus aggregated LLM token usage.
+ */
+export type DryRunExtractionResult = {
+  /**
+   * Facts
+   *
+   * Candidate facts the retain step would extract.
+   */
+  facts?: Array<ExtractedFact>;
+  /**
+   * Aggregated token usage across the extraction LLM calls.
+   */
+  usage?: TokenUsage;
+};
+
+/**
  * EntityDetailResponse
  *
  * Response model for entity detail endpoint.
@@ -1653,6 +1751,48 @@ export type EntityStateResponse = {
    * Observations
    */
   observations: Array<EntityObservationResponse>;
+};
+
+/**
+ * ExtractedFact
+ *
+ * A single candidate fact produced by dry-run extraction (no resolution/links/persistence).
+ *
+ * A deliberate subset of the persisted memory-unit shape — only the fields a fresh extraction
+ * yields. Storage/consolidation/curation fields (id, document_id, chunk_id, proof_count, state, …)
+ * are omitted because nothing is stored. Entities are raw, unresolved names.
+ */
+export type ExtractedFact = {
+  /**
+   * Text
+   *
+   * The extracted fact text.
+   */
+  text: string;
+  /**
+   * Fact Type
+   *
+   * Perspective classification: 'world' or 'experience'.
+   */
+  fact_type: string;
+  /**
+   * Occurred Start
+   *
+   * ISO timestamp the fact's event started, if dated.
+   */
+  occurred_start?: string | null;
+  /**
+   * Occurred End
+   *
+   * ISO timestamp the fact's event ended, if dated.
+   */
+  occurred_end?: string | null;
+  /**
+   * Entities
+   *
+   * Raw (unresolved) entity names mentioned in the fact.
+   */
+  entities?: Array<string>;
 };
 
 /**
@@ -2235,9 +2375,15 @@ export type MemoryItem = {
   /**
    * ObservationScopes
    *
-   * How to scope observations during consolidation. 'per_tag' runs one consolidation pass per individual tag, creating separate observations for each tag. 'combined' (default) runs a single pass with all tags together. A list of tag lists runs one pass per inner list, giving full control over which combinations to use.
+   * How to scope observations during consolidation. 'per_tag' runs one consolidation pass per individual tag, creating separate observations for each tag. 'combined' (default) runs a single pass with all tags together. 'shared' runs a single pass over one global, untagged scope, so memories consolidate together regardless of their tags — useful for deduplicating across volatile per-call provenance tags (e.g. per-session ids) while keeping those tags on the source facts. A list of tag lists runs one pass per inner list, giving full control over which combinations to use.
    */
-  observation_scopes?: "per_tag" | "combined" | "all_combinations" | Array<Array<string>> | null;
+  observation_scopes?:
+    | "per_tag"
+    | "combined"
+    | "all_combinations"
+    | "shared"
+    | Array<Array<string>>
+    | null;
   /**
    * Strategy
    *
@@ -4102,6 +4248,44 @@ export type ListMemoriesResponses = {
 };
 
 export type ListMemoriesResponse = ListMemoriesResponses[keyof ListMemoriesResponses];
+
+export type DryRunExtractMemoriesData = {
+  body: DryRunExtractRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/memories/dry-run-extract";
+};
+
+export type DryRunExtractMemoriesErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DryRunExtractMemoriesError =
+  DryRunExtractMemoriesErrors[keyof DryRunExtractMemoriesErrors];
+
+export type DryRunExtractMemoriesResponses = {
+  /**
+   * Successful Response
+   */
+  200: DryRunExtractionResult;
+};
+
+export type DryRunExtractMemoriesResponse =
+  DryRunExtractMemoriesResponses[keyof DryRunExtractMemoriesResponses];
 
 export type GetMemoryData = {
   body?: never;

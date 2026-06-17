@@ -52,4 +52,5 @@ class MemoryDefenseRegexExtension(MemoryDefenseExtension):
             message=f"Sensitive data pattern matched: {', '.join(result.matched_types)}",
             redacted_content=result.content if rule.action is DefenseAction.REDACT else None,
             matched_types=result.matched_types,
+            hits=result.hits,
         )

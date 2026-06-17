@@ -59,6 +59,13 @@
     "viewOnGitHub": "View on GitHub"
   },
   "bank": {
+    "dryRunExtraction": "Dry-run extraction",
+    "dryRunExtractionDescription": "Preview what this bank's current configuration (retain mission, extraction mode, chunk size) extracts from text — no ingestion, nothing stored.",
+    "dryRunExtractionTextLabel": "Text",
+    "dryRunExtractionPlaceholder": "Paste a document or chunk to extract facts from…",
+    "dryRunExtractionResponseLabel": "Response",
+    "dryRunExtractionEmptyState": "Run extraction to see the JSON response.",
+    "dryRunExtractionRun": "Extract (dry-run)",
     "bankConfiguration": "Bank Configuration",
     "bankConfigurationDescription": "Manage bank settings, profile, and operations.",
     "actions": "Actions",
@@ -317,6 +324,8 @@
     "retainFailedToSave": "Failed to save retain settings",
     "chunkSizeLabel": "Chunk Size",
     "chunkSizeDescription": "Size of text chunks for processing (characters)",
+    "structuredChunkSizeLabel": "Structured Chunk Size",
+    "structuredChunkSizeDescription": "Maximum characters for one JSONL line or conversation turn to keep whole. Leave blank to use the chunk size.",
     "missionLabel": "Mission",
     "retainMissionDescription": "What this bank should pay attention to during extraction. Steers the LLM without replacing the extraction rules — works alongside any extraction mode.",
     "retainMissionPlaceholder": "e.g. Always include technical decisions, API design choices, and architectural trade-offs. Ignore meeting logistics, greetings, and social exchanges.",
@@ -594,7 +603,10 @@
     "scopeGlobal": "Global (no tags)",
     "groupByScope": "Group by scope",
     "scopeSearch": "Search scopes…",
-    "scopeNoResults": "No scopes found"
+    "scopeNoResults": "No scopes found",
+    "filterActive": "Active",
+    "filterInvalidated": "Invalidated",
+    "invalidatedHint": "Invalidated memories are archived — hidden from recall and reflect, but kept for audit."
   },
   "documentsView": {
     "loadingDocuments": "Loading documents...",
@@ -683,7 +695,8 @@
     "importConflictReplace": "Replace — overwrite with the imported one",
     "importConflictNewId": "Keep both — import under a new id",
     "textNotStoredWarning": "Source text isn't stored on this server — only the extracted memories are kept.",
-    "labelObservationScopes": "Observation scopes"
+    "labelObservationScopes": "Observation scopes",
+    "invalidatedFactsTitle": "Invalidated facts"
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -781,6 +794,7 @@
     "optionsTagsMatchAll": "all — AND matching, includes untagged",
     "optionsTagsMatchAnyStrict": "any_strict — OR matching, excludes untagged",
     "optionsTagsMatchAllStrict": "all_strict — AND matching, excludes untagged",
+    "optionsTagsMatchExact": "exact — set equality, excludes untagged",
     "optionsTagsMatchDescription": "Controls how the model's tags filter memories during refresh.",
     "optionsTagGroupsLabel": "Tag Groups (JSON)",
     "optionsTagGroupsDescription": "Compound boolean tag expressions for refresh filtering. Overrides flat tags when set.",
@@ -830,6 +844,7 @@
     "tagsMatchAll": "All (incl. untagged)",
     "tagsMatchAnyStrict": "Any (strict)",
     "tagsMatchAllStrict": "All (strict)",
+    "tagsMatchExact": "Exact (set match)",
     "excludeMentalModels": "Exclude mental models",
     "excludeIdsLabel": "Exclude IDs:",
     "excludeIdsPlaceholder": "model-a, model-b",
@@ -906,6 +921,7 @@
     "tagsMatchAll": "All (incl. untagged)",
     "tagsMatchAnyStrict": "Any (strict)",
     "tagsMatchAllStrict": "All (strict)",
+    "tagsMatchExact": "Exact (set match)",
     "budgetLow": "Low",
     "budgetMid": "Mid",
     "budgetHigh": "High",
@@ -1290,7 +1306,17 @@
     "curationInvalidateExplain": "This moves the memory to the invalidated archive. It will no longer surface in recall or reflect, but is kept for audit and can be restored later.",
     "curationReasonPlaceholder": "Reason (optional)",
     "curationCancel": "Cancel",
-    "curationInvalidate": "Invalidate"
+    "curationInvalidate": "Invalidate",
+    "curationActions": "Curation",
+    "curationEdit": "Edit",
+    "curationReasonLabel": "Reason",
+    "curationRevert": "Restore",
+    "curationSave": "Save",
+    "curationStateInvalidated": "Invalidated",
+    "editFieldContext": "Context",
+    "editFieldOccurredEnd": "End date",
+    "editFieldOccurredStart": "Start date",
+    "editFieldType": "Type"
   },
   "documentChunkModal": {
     "documentTitle": "Document Details",
@@ -1497,6 +1523,9 @@
     "strategyHelpText": "Override the bank's default extraction strategy for this document.",
     "observationScopePerTag": "Per tag",
     "observationScopeAllCombinations": "All combinations",
+    "observationScopeShared": "Shared",
+    "observationScopeSharedHelp": "All observations are stored in one shared, untagged scope (tags are ignored).",
+    "observationScopeCustom": "Custom",
     "observationScopesEmpty": "Add tags above to preview observation scopes",
     "metadataHelpText": "One <code>key: value</code> per line",
     "entitiesHelpText": "Comma-separated hints merged with auto-extracted entities",

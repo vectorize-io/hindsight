@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-embed"
-version = "0.8.1"
+version = "0.8.2"
 description = "Hindsight embedded CLI - local memory operations without a server"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -47,8 +47,6 @@ select = [
 ignore = [
     "E501",   # line too long (handled by formatter)
     "E402",   # module import not at top of file
-    "F401",   # unused import (too noisy during development)
-    "F841",   # unused variable (too noisy during development)
 ]
 
 [tool.ruff.format]

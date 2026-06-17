@@ -114,7 +114,7 @@ export interface MemoryItemInput {
   document_id?: string;
   entities?: EntityInput[];
   tags?: string[];
-  observation_scopes?: "per_tag" | "combined" | "all_combinations" | string[][];
+  observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
   strategy?: string;
   update_mode?: "replace" | "append";
 }
@@ -180,8 +180,8 @@ export class HindsightClient {
       tags?: string[];
       /** How to handle existing documents: 'replace' (default) or 'append' */
       updateMode?: "replace" | "append";
-      /** Observation scoping strategy: 'per_tag', 'combined', 'all_combinations', or explicit scope groups */
-      observationScopes?: "per_tag" | "combined" | "all_combinations" | string[][];
+      /** Observation scoping strategy: 'per_tag', 'combined', 'all_combinations', 'shared', or explicit scope groups */
+      observationScopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
       /** Extraction strategy override */
       strategy?: string;
       signal?: AbortSignal;
@@ -318,8 +318,8 @@ export class HindsightClient {
       maxSourceFactsTokens?: number;
       /** Optional list of tags to filter memories by */
       tags?: string[];
-      /** How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged). Default: 'any' */
-      tagsMatch?: "any" | "all" | "any_strict" | "all_strict";
+      /** How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set equality, excludes untagged). Default: 'any' */
+      tagsMatch?: "any" | "all" | "any_strict" | "all_strict" | "exact";
       /** Compound tag filter using boolean groups. Groups are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. Mutually exclusive with tags/tagsMatch. */
       tagGroups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput>;
       signal?: AbortSignal;
@@ -370,8 +370,8 @@ export class HindsightClient {
       budget?: Budget;
       /** Optional list of tags to filter memories by */
       tags?: string[];
-      /** How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged). Default: 'any' */
-      tagsMatch?: "any" | "all" | "any_strict" | "all_strict";
+      /** How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set equality, excludes untagged). Default: 'any' */
+      tagsMatch?: "any" | "all" | "any_strict" | "all_strict" | "exact";
       /** Compound tag filter using boolean groups. Groups are AND-ed. Mutually exclusive with tags/tagsMatch. */
       tagGroups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput>;
       /** Optional JSON Schema for structured output. When provided, the response includes a 'structured_output' field. */
@@ -484,8 +484,10 @@ export class HindsightClient {
       retainExtractionMode?: string;
       /** Custom extraction prompt (only active when retainExtractionMode is 'custom'). */
       retainCustomInstructions?: string;
-      /** Maximum token size for each content chunk during retain. */
+      /** Target maximum characters for each content chunk during retain. */
       retainChunkSize?: number;
+      /** Maximum characters for a single JSONL line or conversation turn to keep whole during retain. */
+      retainStructuredChunkSize?: number;
       /** Toggle automatic observation consolidation after retain(). */
       enableObservations?: boolean;
       /** Controls what gets synthesised into observations. Replaces built-in rules. */
@@ -509,6 +511,7 @@ export class HindsightClient {
         retain_extraction_mode: options.retainExtractionMode,
         retain_custom_instructions: options.retainCustomInstructions,
         retain_chunk_size: options.retainChunkSize,
+        retain_structured_chunk_size: options.retainStructuredChunkSize,
         enable_observations: options.enableObservations,
         observations_mission: options.observationsMission,
       },
@@ -580,6 +583,7 @@ export class HindsightClient {
       retainExtractionMode?: string;
       retainCustomInstructions?: string;
       retainChunkSize?: number;
+      retainStructuredChunkSize?: number;
       enableObservations?: boolean;
       observationsMission?: string;
       /** How skeptical vs trusting (1=trusting, 5=skeptical). */
@@ -599,6 +603,8 @@ export class HindsightClient {
     if (options.retainCustomInstructions !== undefined)
       updates.retain_custom_instructions = options.retainCustomInstructions;
     if (options.retainChunkSize !== undefined) updates.retain_chunk_size = options.retainChunkSize;
+    if (options.retainStructuredChunkSize !== undefined)
+      updates.retain_structured_chunk_size = options.retainStructuredChunkSize;
     if (options.enableObservations !== undefined)
       updates.enable_observations = options.enableObservations;
     if (options.observationsMission !== undefined)

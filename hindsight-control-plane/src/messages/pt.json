@@ -59,6 +59,13 @@
     "viewOnGitHub": "Ver no GitHub"
   },
   "bank": {
+    "dryRunExtraction": "Extração de teste",
+    "dryRunExtractionDescription": "Visualize o que a configuração atual deste banco (missão de retenção, modo de extração, tamanho do fragmento) extrai do texto — sem ingestão, nada é armazenado.",
+    "dryRunExtractionTextLabel": "Texto",
+    "dryRunExtractionPlaceholder": "Cole um documento ou fragmento para extrair fatos…",
+    "dryRunExtractionResponseLabel": "Resposta",
+    "dryRunExtractionEmptyState": "Execute a extração para ver a resposta JSON.",
+    "dryRunExtractionRun": "Extrair (teste)",
     "bankConfiguration": "Configuração do banco",
     "bankConfigurationDescription": "Gerencie configurações, perfil e operações do banco.",
     "actions": "Ações",
@@ -317,6 +324,8 @@
     "retainFailedToSave": "Falha ao salvar configurações de Retain",
     "chunkSizeLabel": "Tamanho do Chunk",
     "chunkSizeDescription": "Tamanho dos chunks de texto para processamento (caracteres)",
+    "structuredChunkSizeLabel": "Tamanho de chunk estruturado",
+    "structuredChunkSizeDescription": "Máximo de caracteres para manter inteira uma linha JSONL ou turno de conversa. Deixe em branco para usar o tamanho do chunk.",
     "missionLabel": "Missão",
     "retainMissionDescription": "O que este banco deve observar durante a extração. Direciona o LLM sem substituir as regras de extração — funciona junto a qualquer modo de extração.",
     "retainMissionPlaceholder": "ex.: Sempre incluir decisões técnicas, escolhas de design de API e trade-offs arquiteturais. Ignorar logística de reuniões, cumprimentos e trocas sociais.",
@@ -594,7 +603,10 @@
     "scopeGlobal": "Global (sem tags)",
     "groupByScope": "Agrupar por escopo",
     "scopeSearch": "Pesquisar escopos…",
-    "scopeNoResults": "Nenhum escopo encontrado"
+    "scopeNoResults": "Nenhum escopo encontrado",
+    "filterActive": "Ativas",
+    "filterInvalidated": "Invalidadas",
+    "invalidatedHint": "As memórias invalidadas são arquivadas — ocultas de recall e reflect, mas mantidas para auditoria."
   },
   "documentsView": {
     "loadingDocuments": "Carregando documentos...",
@@ -683,7 +695,8 @@
     "importConflictReplace": "Substituir — sobrescrever pelo importado",
     "importConflictNewId": "Manter ambos — importar com novo id",
     "textNotStoredWarning": "O texto de origem não é armazenado neste servidor — apenas as memórias extraídas são mantidas.",
-    "labelObservationScopes": "Escopos de observação"
+    "labelObservationScopes": "Escopos de observação",
+    "invalidatedFactsTitle": "Fatos invalidados"
   },
   "entitiesView": {
     "viewRelations": "Relações",
@@ -781,6 +794,7 @@
     "optionsTagsMatchAll": "all — correspondência E, inclui sem tag",
     "optionsTagsMatchAnyStrict": "any_strict — correspondência OU, exclui sem tag",
     "optionsTagsMatchAllStrict": "all_strict — correspondência E, exclui sem tag",
+    "optionsTagsMatchExact": "exact — igualdade de conjuntos, exclui sem tag",
     "optionsTagsMatchDescription": "Controla como as tags do modelo filtram as memórias durante a atualização.",
     "optionsTagGroupsLabel": "Grupos de Tags (JSON)",
     "optionsTagGroupsDescription": "Expressões booleanas compostas de tags para filtragem na atualização. Substitui as tags simples quando definido.",
@@ -830,6 +844,7 @@
     "tagsMatchAll": "Todos (incl. sem tag)",
     "tagsMatchAnyStrict": "Qualquer (estrito)",
     "tagsMatchAllStrict": "Todos (estrito)",
+    "tagsMatchExact": "Exato (conjunto)",
     "excludeMentalModels": "Excluir modelos mentais",
     "excludeIdsLabel": "Excluir IDs:",
     "excludeIdsPlaceholder": "modelo-a, modelo-b",
@@ -906,6 +921,7 @@
     "tagsMatchAll": "Todos (incl. sem tag)",
     "tagsMatchAnyStrict": "Qualquer (estrito)",
     "tagsMatchAllStrict": "Todos (estrito)",
+    "tagsMatchExact": "Exato (conjunto)",
     "budgetLow": "Baixo",
     "budgetMid": "Médio",
     "budgetHigh": "Alto",
@@ -1290,7 +1306,17 @@
     "curationInvalidateExplain": "Isto move a memória para o arquivo de itens invalidados. Ela não aparecerá mais em Recall ou Reflect, mas é mantida para auditoria e pode ser restaurada depois.",
     "curationReasonPlaceholder": "Motivo (opcional)",
     "curationCancel": "Cancelar",
-    "curationInvalidate": "Invalidar"
+    "curationInvalidate": "Invalidar",
+    "curationActions": "Curadoria",
+    "curationEdit": "Editar",
+    "curationReasonLabel": "Motivo",
+    "curationRevert": "Restaurar",
+    "curationSave": "Salvar",
+    "curationStateInvalidated": "Invalidada",
+    "editFieldContext": "Contexto",
+    "editFieldOccurredEnd": "Data de término",
+    "editFieldOccurredStart": "Data de início",
+    "editFieldType": "Tipo"
   },
   "documentChunkModal": {
     "documentTitle": "Detalhes do Documento",
@@ -1497,6 +1523,9 @@
     "strategyHelpText": "Substitui a estratégia de extração padrão do banco para este documento.",
     "observationScopePerTag": "Por tag",
     "observationScopeAllCombinations": "Todas as combinações",
+    "observationScopeShared": "Compartilhado",
+    "observationScopeSharedHelp": "Todas as observações são armazenadas em um escopo compartilhado e sem tags (as tags são ignoradas).",
+    "observationScopeCustom": "Personalizado",
     "observationScopesEmpty": "Adicione tags acima para visualizar os escopos de observação",
     "metadataHelpText": "Um <code>key: value</code> por linha",
     "entitiesHelpText": "Sugestões separadas por vírgula mescladas com entidades extraídas automaticamente",

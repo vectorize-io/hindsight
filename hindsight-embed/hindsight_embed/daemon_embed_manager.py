@@ -24,7 +24,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from .embed_manager import EmbedManager
-from .profile_manager import UI_PORT_OFFSET, ProfileManager, lock_file, unlock_file
+from .profile_manager import ProfileManager, lock_file, unlock_file
 
 logger = logging.getLogger(__name__)
 console = Console(stderr=True)

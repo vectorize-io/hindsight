@@ -24,6 +24,7 @@ The API service handles all memory operations (retain, recall, reflect).
 | `HINDSIGHT_API_MIGRATION_DATABASE_URL` | Direct PostgreSQL URL for running migrations, bypassing connection poolers (e.g. PgBouncer). When set, advisory locks and Alembic migrations use this URL instead of `DATABASE_URL`. | Falls back to `DATABASE_URL` |
 | `HINDSIGHT_API_DATABASE_SCHEMA` | PostgreSQL schema name for tables | `public` |
 | `HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP` | Run database migrations on API startup | `true` |
+| `HINDSIGHT_API_MIGRATION_CONCURRENCY` | Number of tenant schemas to migrate concurrently (PostgreSQL only). Each schema runs in its own process; within a schema migrations are always sequential. Each worker has a fixed startup cost (~1–2s to boot a fresh interpreter), so this only pays off with **many** schemas (roughly tens or more) or slow/high-latency migrations — for a handful of schemas it is slower than sequential. Each worker uses ~3 database connections, so keep `concurrency × 3` within your database's spare `max_connections` (and any PgBouncer pool limit). `1` = fully sequential. Measured at 20k schemas: the per-restart no-op resweep dropped from ~60min to ~11min (≈5×) at `concurrency=12`. | `1` |
 | `HINDSIGHT_API_DATABASE_BACKEND` | Database engine backend: `postgresql` or `oracle` (Oracle 23ai) | `postgresql` |
 
 If not provided, the server uses embedded `pg0` — convenient for development but not recommended for production.
@@ -1017,6 +1018,7 @@ Controls the retain (memory ingestion) pipeline.
 |----------|-------------|---------|
 | `HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS` | Max completion tokens for fact extraction LLM calls | `64000` |
 | `HINDSIGHT_API_RETAIN_CHUNK_SIZE` | Max characters per chunk for fact extraction. Larger chunks extract fewer LLM calls but may lose context. | `3000` |
+| `HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE` | Max characters for a single JSONL line or conversation turn to keep whole. Unset uses `HINDSIGHT_API_RETAIN_CHUNK_SIZE`. Must be a positive integer when set. | - |
 | `HINDSIGHT_API_RETAIN_EXTRACTION_MODE` | Fact extraction mode: `concise`, `verbose`, `verbatim`, `chunks`, or `custom` | `concise` |
 | `HINDSIGHT_API_RETAIN_MISSION` | What this bank should pay attention to during extraction. Steers the LLM without replacing the extraction rules — works alongside any extraction mode. | - |
 | `HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS` | Full prompt override for fact extraction (only used when mode is `custom`). Replaces built-in extraction rules entirely. | - |
@@ -1117,7 +1119,7 @@ export HINDSIGHT_API_RETAIN_EXTRACTION_MODE=verbatim
 
 Named strategies let you ingest different content types into the same bank using different extraction settings. A strategy is a set of hierarchical field overrides applied on top of the resolved bank config.
 
-Any field in the hierarchical config can be overridden per strategy, including `retain_extraction_mode`, `retain_chunk_size`, `entity_labels`, `entities_allow_free_form`, `retain_mission`, etc.
+Any field in the hierarchical config can be overridden per strategy, including `retain_extraction_mode`, `retain_chunk_size`, `retain_structured_chunk_size`, `entity_labels`, `entities_allow_free_form`, `retain_mission`, etc.
 
 Configure strategies via the bank config API:
 
@@ -1127,7 +1129,8 @@ Configure strategies via the bank config API:
   "retain_strategies": {
     "conversations": {
       "retain_extraction_mode": "concise",
-      "retain_chunk_size": 3000
+      "retain_chunk_size": 3000,
+      "retain_structured_chunk_size": 12000
     },
     "documents": {
       "retain_extraction_mode": "chunks",
@@ -1777,7 +1780,7 @@ This design prevents bugs where global defaults are used instead of bank overrid
 Configuration fields are categorized for security:
 
 1. **Configurable Fields** - Safe behavioral settings that can be customized per-bank:
-   - Retention: `retain_chunk_size`, `retain_extraction_mode`, `retain_mission`, `retain_custom_instructions`
+   - Retention: `retain_chunk_size`, `retain_structured_chunk_size`, `retain_extraction_mode`, `retain_mission`, `retain_custom_instructions`
    - Observations: `enable_observations`, `enable_auto_consolidation`, `observations_mission`, `max_observations_per_scope`
    - MCP access control: `mcp_enabled_tools`
 
@@ -1796,6 +1799,7 @@ Configuration fields are categorized for security:
 |----------|-------------|---------|
 | `HINDSIGHT_API_ENABLE_BANK_CONFIG_API` | Enable per-bank config API | `true` |
 | `HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH` | Enable the per-bank LLM connectivity probe (`POST /v1/default/banks/{bank_id}/health/llm`). It makes a real provider call, so it is **off by default** — enable it to expose the endpoint. Returns status only — never the provider/model/endpoint. | `false` |
+| `HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT` | Enable the dry-run extraction preview endpoint (`POST /v1/default/banks/{bank_id}/memories/dry-run-extract`). Runs extraction only — makes a real LLM call but stores nothing. Set to `false` to remove the endpoint (returns `404`). | `true` |
 | `HINDSIGHT_API_DEFAULT_BANK_TEMPLATE` | Bank template manifest (JSON) applied automatically to every newly-created bank. See below. | _(unset)_ |
 
 ##### `HINDSIGHT_API_DEFAULT_BANK_TEMPLATE`

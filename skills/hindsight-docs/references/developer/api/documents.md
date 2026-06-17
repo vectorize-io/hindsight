@@ -249,7 +249,8 @@ hindsight document update-tags my-bank meeting-2024-03-15
 # Section 'document-update' not found in api/documents.go
 ```
 
-:::info Observations are re-consolidated
+> **ℹ️ Observations are re-consolidated**
+> 
 When tags change, any consolidated observations derived from the document's memories are invalidated and queued for re-consolidation under the new tags. Co-source memories from other documents that shared those observations are also reset.
 ## Delete Document
 
@@ -301,7 +302,8 @@ hindsight document delete my-bank meeting-2024-03-15
 # Section 'document-delete' not found in api/documents.go
 ```
 
-:::warning
+> **⚠️ Warning**
+> 
 Deleting a document permanently removes all memories extracted from it. This action cannot be undone.
 ## List Documents
 

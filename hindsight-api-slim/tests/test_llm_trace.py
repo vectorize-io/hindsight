@@ -222,6 +222,41 @@ async def test_configured_provider_binds_bank_context(registered_recorder):
     assert current_trace_context() is None  # unwound after the call
 
 
+@pytest.mark.asyncio
+async def test_engine_teardown_unregisters_recorder_even_when_close_skipped():
+    """Regression for #2229.
+
+    Span recorders live in a process-global registry, and providers fan every call
+    out to ALL registered recorders. The engine fixtures must remove their recorder
+    on teardown even when ``close()`` is skipped (pool already closing/absent) or
+    raises before the unregister step — otherwise a leaked, still-enabled recorder
+    from an earlier test records a later test's LLM calls into the shared DB, which
+    is what made ``test_disabled_writes_no_rows`` flaky. The teardown helper must
+    leave the registry exactly as it found it.
+    """
+    from hindsight_api import tracing
+
+    from tests.conftest import _teardown_memory_engine
+
+    sentinel = object()
+    tracing.register_span_recorder(sentinel)
+    try:
+        assert sentinel in tracing.get_span_recorder()._recorders
+
+        # _pool=None makes the helper's gated close() a no-op, exercising the exact
+        # leak path; the finally must still unregister the recorder.
+        class _FakeEngine:
+            _pool = None
+            _llm_recorder = sentinel
+
+        await _teardown_memory_engine(_FakeEngine())
+        assert sentinel not in tracing.get_span_recorder()._recorders
+    finally:
+        # Belt-and-suspenders: don't leave the sentinel in the global registry if an
+        # assertion above fails (idempotent — the helper normally already removed it).
+        tracing.unregister_span_recorder(sentinel)
+
+
 # ── HTTP read API (integration) ───────────────────────────────────────────────
 
 

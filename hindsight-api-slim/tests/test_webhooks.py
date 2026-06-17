@@ -22,6 +22,8 @@ from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.webhooks.manager import MAX_ATTEMPTS, RETRY_DELAYS, WebhookManager
 from hindsight_api.webhooks.models import (
     ConsolidationEventData,
+    MemoryDefenseEventData,
+    MemoryDefenseHit,
     RetainEventData,
     WebhookConfig,
     WebhookEvent,
@@ -1378,3 +1380,109 @@ class TestWebhookSchemaIsolation:
                     "DELETE FROM public.async_operations WHERE operation_id = $1",
                     public_delivery_id,
                 )
+
+
+# ─── MemoryDefenseEventData SIEM enrichment fields ──────────────────────────────
+#
+# OSS only populates action / detector / document_id / matched_types / message.
+# The remaining fields are optional SIEM enrichment that downstream extensions
+# (e.g. hindsight-cloud) populate when they have richer per-decision context.
+# These tests pin the wire contract so OSS evolution doesn't break extensions
+# that depend on the optional fields being present and JSON-serialisable.
+
+
+def test_memory_defense_event_data_base_shape() -> None:
+    """The five base fields populated by every implementation round-trip cleanly
+    and the optional SIEM-enrichment fields default to None when omitted."""
+    data = MemoryDefenseEventData(
+        action="redact",
+        detector="sensitive_data",
+        document_id="doc-1",
+        matched_types=["github_token"],
+        message="Secrets redacted by policy-driven pre-screen",
+    )
+
+    # Base fields populated.
+    assert data.action == "redact"
+    assert data.detector == "sensitive_data"
+    assert data.document_id == "doc-1"
+    assert data.matched_types == ["github_token"]
+    assert data.message == "Secrets redacted by policy-driven pre-screen"
+
+    # Optional enrichment fields default to None — OSS receivers must see no
+    # change vs. before this commit.
+    assert data.severity is None
+    assert data.api_key_name is None
+    assert data.hits is None
+    assert data.memory_unit_id is None
+    assert data.receipt_uri is None
+
+    # JSON shape: explicit None for absent fields, no extra keys.
+    dumped = data.model_dump()
+    assert dumped["severity"] is None
+    assert dumped["hits"] is None
+    assert set(dumped.keys()) == {
+        "action",
+        "detector",
+        "document_id",
+        "matched_types",
+        "message",
+        "severity",
+        "api_key_name",
+        "hits",
+        "memory_unit_id",
+        "receipt_uri",
+    }
+
+
+def test_memory_defense_event_data_with_siem_enrichment() -> None:
+    """When an extension populates the enrichment fields, they round-trip via
+    the model and through WebhookEvent JSON serialisation."""
+    hit = MemoryDefenseHit(detector="GitHub Token", preview="ghp_AAAA...BBBB")
+    data = MemoryDefenseEventData(
+        action="redact",
+        detector="sensitive_data",
+        document_id="doc-42",
+        matched_types=["github_token"],
+        message="rotate immediately",
+        severity="high",
+        api_key_name="Connect Key",
+        hits=[hit],
+        memory_unit_id="mu-123",
+        receipt_uri="memdef://bank/abc/receipt/xyz",
+    )
+
+    assert data.severity == "high"
+    assert data.api_key_name == "Connect Key"
+    assert data.hits == [hit]
+    assert data.hits[0].detector == "GitHub Token"
+    assert data.hits[0].preview == "ghp_AAAA...BBBB"
+    assert data.memory_unit_id == "mu-123"
+    assert data.receipt_uri == "memdef://bank/abc/receipt/xyz"
+
+    # Nested-event round trip via JSON (this is what the webhook manager
+    # serialises before queuing the delivery).
+    event = WebhookEvent(
+        event=WebhookEventType.MEMORY_DEFENSE_TRIGGERED,
+        bank_id="bank-1",
+        operation_id="",
+        status="redact",
+        timestamp=datetime(2026, 6, 12, 0, 0, tzinfo=timezone.utc),
+        data=data,
+    )
+    payload = json.loads(event.model_dump_json())
+    assert payload["data"]["severity"] == "high"
+    assert payload["data"]["api_key_name"] == "Connect Key"
+    assert payload["data"]["hits"] == [{"detector": "GitHub Token", "preview": "ghp_AAAA...BBBB"}]
+    assert payload["data"]["memory_unit_id"] == "mu-123"
+    assert payload["data"]["receipt_uri"] == "memdef://bank/abc/receipt/xyz"
+
+
+def test_memory_defense_hit_rejects_missing_preview() -> None:
+    """MemoryDefenseHit requires both fields — guards against extensions
+    accidentally posting raw secrets as the only payload (preview must be
+    explicit) or omitting the inner detector label."""
+    with pytest.raises(Exception):  # pydantic ValidationError
+        MemoryDefenseHit(detector="GitHub Token")  # type: ignore[call-arg]
+    with pytest.raises(Exception):
+        MemoryDefenseHit(preview="ghp_AAAA...BBBB")  # type: ignore[call-arg]

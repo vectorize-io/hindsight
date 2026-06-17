@@ -60,6 +60,8 @@ hindsight_client_api/models/directive_response.py
 hindsight_client_api/models/disposition_traits.py
 hindsight_client_api/models/document_import_submit_response.py
 hindsight_client_api/models/document_response.py
+hindsight_client_api/models/dry_run_extract_request.py
+hindsight_client_api/models/dry_run_extraction_result.py
 hindsight_client_api/models/entity_detail_response.py
 hindsight_client_api/models/entity_graph_response.py
 hindsight_client_api/models/entity_include_options.py
@@ -68,6 +70,7 @@ hindsight_client_api/models/entity_list_item.py
 hindsight_client_api/models/entity_list_response.py
 hindsight_client_api/models/entity_observation_response.py
 hindsight_client_api/models/entity_state_response.py
+hindsight_client_api/models/extracted_fact.py
 hindsight_client_api/models/features_info.py
 hindsight_client_api/models/file_retain_response.py
 hindsight_client_api/models/graph_data_response.py

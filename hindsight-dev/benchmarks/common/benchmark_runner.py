@@ -22,7 +22,7 @@ import json
 import logging
 import os
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
@@ -34,7 +34,6 @@ from hindsight_api.config import get_config
 get_config().configure_logging()
 from hindsight_api.engine.memory_engine import Budget
 from hindsight_api.models import RequestContext
-from openai import AsyncOpenAI
 from rich import box
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
@@ -596,9 +595,6 @@ class BenchmarkRunner:
             # Map thinking_budget to budget level
             budget = Budget.LOW if thinking_budget <= 30 else Budget.MID if thinking_budget <= 70 else Budget.HIGH
 
-            import time
-
-            recall_start_time = time.time()
             # Use default fact types (no filtering)
             search_result = await self.memory.recall_async(
                 bank_id=agent_id,
@@ -611,12 +607,6 @@ class BenchmarkRunner:
                 include_chunks=True,
                 request_context=RequestContext(),
             )
-            recall_time = time.time() - recall_start_time
-
-            # Log recall stats
-            num_results = len(search_result.results) if search_result.results else 0
-            num_chunks = len(search_result.chunks) if search_result.chunks else 0
-            num_entities = len(search_result.entities) if search_result.entities else 0
 
             # Convert entire RecallResult to dictionary for answer generation
             recall_result_dict = search_result.model_dump()

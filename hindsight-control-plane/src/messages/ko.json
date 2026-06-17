@@ -59,6 +59,13 @@
     "viewOnGitHub": "GitHub에서 보기"
   },
   "bank": {
+    "dryRunExtraction": "드라이런 추출",
+    "dryRunExtractionDescription": "이 뱅크의 현재 구성(보존 미션, 추출 모드, 청크 크기)이 텍스트에서 무엇을 추출하는지 미리 봅니다. 수집하지 않으며 아무것도 저장되지 않습니다.",
+    "dryRunExtractionTextLabel": "텍스트",
+    "dryRunExtractionPlaceholder": "사실을 추출할 문서나 청크를 붙여넣으세요…",
+    "dryRunExtractionResponseLabel": "응답",
+    "dryRunExtractionEmptyState": "추출을 실행하면 JSON 응답이 표시됩니다.",
+    "dryRunExtractionRun": "추출(드라이런)",
     "bankConfiguration": "뱅크 구성",
     "bankConfigurationDescription": "뱅크 설정, 프로필 및 작업을 관리합니다.",
     "actions": "작업",
@@ -317,6 +324,8 @@
     "retainFailedToSave": "Retain 설정 저장에 실패했습니다",
     "chunkSizeLabel": "청크 크기",
     "chunkSizeDescription": "처리를 위한 텍스트 청크 크기 (문자 수)",
+    "structuredChunkSizeLabel": "구조화 청크 크기",
+    "structuredChunkSizeDescription": "하나의 JSONL 줄 또는 대화 턴을 통째로 유지할 최대 문자 수입니다. 비워 두면 청크 크기를 사용합니다.",
     "missionLabel": "미션",
     "retainMissionDescription": "추출 중에 이 뱅크가 주목해야 할 내용. 추출 규칙을 대체하지 않고 LLM을 유도합니다 — 모든 추출 모드와 함께 작동합니다.",
     "retainMissionPlaceholder": "예: 기술적 결정, API 설계 선택 및 아키텍처 트레이드오프를 항상 포함하세요. 회의 물류, 인사말 및 사교적 교환은 무시하세요.",
@@ -594,7 +603,10 @@
     "scopeGlobal": "전역(태그 없음)",
     "groupByScope": "범위별 그룹화",
     "scopeSearch": "범위 검색…",
-    "scopeNoResults": "범위를 찾을 수 없음"
+    "scopeNoResults": "범위를 찾을 수 없음",
+    "filterActive": "활성",
+    "filterInvalidated": "무효화됨",
+    "invalidatedHint": "무효화된 메모리는 보관되어 recall 및 reflect에 표시되지 않지만 감사를 위해 유지됩니다."
   },
   "documentsView": {
     "loadingDocuments": "문서 불러오는 중...",
@@ -683,7 +695,8 @@
     "importConflictReplace": "교체 — 가져온 것으로 덮어쓰기",
     "importConflictNewId": "둘 다 유지 — 새 id로 가져오기",
     "textNotStoredWarning": "이 서버에는 원본 텍스트가 저장되지 않습니다. 추출된 메모리만 보관됩니다.",
-    "labelObservationScopes": "관찰 범위"
+    "labelObservationScopes": "관찰 범위",
+    "invalidatedFactsTitle": "무효화된 사실"
   },
   "entitiesView": {
     "viewRelations": "관계",
@@ -781,6 +794,7 @@
     "optionsTagsMatchAll": "all — AND 일치, 태그 없는 항목 포함",
     "optionsTagsMatchAnyStrict": "any_strict — OR 일치, 태그 없는 항목 제외",
     "optionsTagsMatchAllStrict": "all_strict — AND 일치, 태그 없는 항목 제외",
+    "optionsTagsMatchExact": "exact — 집합 일치, 태그 없는 항목 제외",
     "optionsTagsMatchDescription": "새로고침 중에 모델의 태그가 메모리를 필터링하는 방식을 제어합니다.",
     "optionsTagGroupsLabel": "태그 그룹 (JSON)",
     "optionsTagGroupsDescription": "새로고침 필터링을 위한 복합 불리언 태그 표현식. 설정 시 단순 태그를 재정의합니다.",
@@ -830,6 +844,7 @@
     "tagsMatchAll": "전체 (태그 없는 항목 포함)",
     "tagsMatchAnyStrict": "모두 (엄격)",
     "tagsMatchAllStrict": "전체 (엄격)",
+    "tagsMatchExact": "정확 (집합 일치)",
     "excludeMentalModels": "멘탈 모델 제외",
     "excludeIdsLabel": "ID 제외:",
     "excludeIdsPlaceholder": "model-a, model-b",
@@ -906,6 +921,7 @@
     "tagsMatchAll": "전체 (태그 없는 항목 포함)",
     "tagsMatchAnyStrict": "모두 (엄격)",
     "tagsMatchAllStrict": "전체 (엄격)",
+    "tagsMatchExact": "정확 (집합 일치)",
     "budgetLow": "낮음",
     "budgetMid": "중간",
     "budgetHigh": "높음",
@@ -1290,7 +1306,17 @@
     "curationInvalidateExplain": "메모리를 무효화 보관소로 이동합니다. recall이나 reflect에 더 이상 표시되지 않지만 감사를 위해 보관되며 나중에 복원할 수 있습니다.",
     "curationReasonPlaceholder": "사유 (선택)",
     "curationCancel": "취소",
-    "curationInvalidate": "무효화"
+    "curationInvalidate": "무효화",
+    "curationActions": "큐레이션",
+    "curationEdit": "편집",
+    "curationReasonLabel": "사유",
+    "curationRevert": "복원",
+    "curationSave": "저장",
+    "curationStateInvalidated": "무효화됨",
+    "editFieldContext": "컨텍스트",
+    "editFieldOccurredEnd": "종료일",
+    "editFieldOccurredStart": "시작일",
+    "editFieldType": "유형"
   },
   "documentChunkModal": {
     "documentTitle": "문서 상세 정보",
@@ -1497,6 +1523,9 @@
     "strategyHelpText": "이 문서에 대해 뱅크의 기본 추출 전략을 재정의합니다.",
     "observationScopePerTag": "태그별",
     "observationScopeAllCombinations": "모든 조합",
+    "observationScopeShared": "공유",
+    "observationScopeSharedHelp": "모든 관찰은 하나의 공유된 태그 없는 범위에 저장됩니다(태그는 무시됩니다).",
+    "observationScopeCustom": "사용자 지정",
     "observationScopesEmpty": "관찰 범위를 미리 보려면 위에 태그를 추가하세요",
     "metadataHelpText": "한 줄에 하나의 <code>key: value</code>",
     "entitiesHelpText": "자동 추출된 엔터티와 병합되는 쉼표로 구분된 힌트",

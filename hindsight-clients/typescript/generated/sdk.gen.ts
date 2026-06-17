@@ -56,6 +56,9 @@ import type {
   DeleteWebhookData,
   DeleteWebhookErrors,
   DeleteWebhookResponses,
+  DryRunExtractMemoriesData,
+  DryRunExtractMemoriesErrors,
+  DryRunExtractMemoriesResponses,
   ExportBankTemplateData,
   ExportBankTemplateErrors,
   ExportBankTemplateResponses,
@@ -308,6 +311,27 @@ export const listMemories = <ThrowOnError extends boolean = false>(
   (options.client ?? client).get<ListMemoriesResponses, ListMemoriesErrors, ThrowOnError>({
     url: "/v1/default/banks/{bank_id}/memories/list",
     ...options,
+  });
+
+/**
+ * Dry-run fact extraction (preview, no persistence)
+ *
+ * Preview what the retain step would extract from text WITHOUT changing the bank — no entity resolution, links, embeddings, or persistence. Returns the candidate facts and the LLM token usage. Every prompt-affecting setting (retain mission, extraction mode, chunk size, …) is overridable in the body to A/B a candidate config against the bank's current one. This is a read-only tool: nothing is stored.
+ */
+export const dryRunExtractMemories = <ThrowOnError extends boolean = false>(
+  options: Options<DryRunExtractMemoriesData, ThrowOnError>
+) =>
+  (options.client ?? client).post<
+    DryRunExtractMemoriesResponses,
+    DryRunExtractMemoriesErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/memories/dry-run-extract",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   });
 
 /**

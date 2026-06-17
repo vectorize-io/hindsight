@@ -83,6 +83,12 @@ Maximum number of characters per chunk when splitting content for fact extractio
 
 Default: `3000`
 
+### retain_structured_chunk_size
+
+Maximum number of characters for a single JSONL line or conversation turn to keep whole when it exceeds `retain_chunk_size`. When unset, the limit is exactly `retain_chunk_size`; set a larger value for structured logs or chat transcripts where splitting a single record would lose useful context.
+
+Default: unset, which uses `retain_chunk_size`
+
 See [Retain configuration](../configuration.md#retain) for environment variable names and defaults.
 
 ### entity_labels {#entity-labels}
@@ -284,7 +290,8 @@ How much to weight emotional context when reasoning during `reflect`. Scale 1–
 | `3` *(default)* | Balanced |
 | `5` | Empathetic — considers emotional context |
 
-:::info
+> **ℹ️ Info**
+> 
 Disposition traits and `reflect_mission` only affect the `reflect` operation. `retain_mission` and `observations_mission` are separate per-operation settings.
 ### mcp_enabled_tools
 
@@ -366,7 +373,7 @@ Per-bank Memory Defense policy. Defaults to absent (Memory Defense disabled on t
 
 Invalid policies are rejected on PATCH with HTTP 422.
 
-See the [Memory Defense guide](../memory-defense.md) for usage examples.
+See the [Memory Defense guide](../memory-defense/index.md) for usage examples.
 
 ---
 
@@ -502,7 +509,8 @@ You can also update configuration directly from the Control Plane UI — navigat
 
 Directives are hard rules that the agent must follow during [reflect](./reflect) operations. Unlike disposition traits which influence *how* the agent reasons, directives are explicit instructions that are *always* enforced.
 
-:::info
+> **ℹ️ Info**
+> 
 Directives only affect the `reflect` operation. They are injected into prompts and the agent is required to comply with them in all responses.
 ### When to Use Directives
 

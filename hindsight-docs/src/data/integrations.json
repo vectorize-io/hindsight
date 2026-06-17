@@ -21,6 +21,16 @@
       "icon": "/img/icons/agent-framework.svg"
     },
     {
+      "id": "composio",
+      "name": "Composio",
+      "description": "Hindsight memory as Composio custom tools. Retain, recall, and reflect drop into any Composio agent — memory is isolated per session user automatically.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/composio",
+      "icon": "/img/icons/composio.png"
+    },
+    {
       "id": "crewai",
       "name": "CrewAI",
       "description": "Give CrewAI agents persistent, cross-session memory. Facts learned in one run are available in every future run.",
@@ -149,6 +159,16 @@
       "category": "tool",
       "link": "/sdks/integrations/codex",
       "icon": "/img/icons/codex.svg"
+    },
+    {
+      "id": "continue",
+      "name": "Continue",
+      "description": "Long-term memory for the Continue.dev coding assistant. Recall relevant project memory into chat with @hindsight, plus optional automatic recall/retain via the Hindsight MCP server.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/continue",
+      "icon": "/img/icons/continue.png"
     },
     {
       "id": "cursor",
@@ -329,6 +349,16 @@
       "category": "framework",
       "link": "/sdks/integrations/n8n",
       "icon": "/img/icons/n8n.png"
+    },
+    {
+      "id": "zapier",
+      "name": "Zapier",
+      "description": "Long-term memory for your Zaps. Retain, Recall, and Reflect actions plus instant memory-event triggers connect Hindsight to 7,000+ apps.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/zapier",
+      "icon": "/img/icons/zapier.png"
     },
     {
       "id": "openai-agents",

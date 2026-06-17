@@ -23,7 +23,6 @@ from hindsight_api.engine.consolidation.consolidator import run_consolidation_jo
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.models import RequestContext
 from rich.console import Console
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 console = Console()

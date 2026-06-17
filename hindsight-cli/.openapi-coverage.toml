@@ -46,6 +46,11 @@ reprocess_document = "UI-only endpoint for the control plane document detail dia
 # Clear mental model content is a new endpoint; CLI subcommand not yet implemented.
 clear_mental_model = "Not yet exposed in the CLI; use the HTTP API or SDK"
 
+# Dry-run extraction is a preview/diagnostics tool (control-plane "Dry-run extraction" dialog):
+# it runs extraction only, stores nothing, and previews what a candidate config would extract.
+# Not an end-user CLI command; available via the HTTP API and SDKs.
+dry_run_extract_memories = "Preview/diagnostics endpoint (control-plane dialog); not exposed in the CLI"
+
 # Memory curation (edit / invalidate / revert) is exposed via the HTTP API, SDKs,
 # and the control plane, not the end-user CLI. update_memory covers all three.
 update_memory = "Curation endpoint; exposed via the API, SDKs, and control plane, not the CLI"

@@ -258,12 +258,7 @@ async def _run_migration(
     embedding_dimension: int | None = None,
 ) -> list[str]:
     """Resolve database URL and run migrations for one schema or all discovered schemas."""
-    from ..migrations import (
-        ensure_embedding_dimension,
-        ensure_text_search_extension,
-        ensure_vector_extension,
-        run_migrations,
-    )
+    from ..migrations import run_migrations_for_schemas
 
     is_pg0, instance_name, _ = parse_pg0_url(db_url)
     if is_pg0:
@@ -284,32 +279,21 @@ async def _run_migration(
         # Preserve order while removing duplicates.
         schemas = list(dict.fromkeys(schemas))
 
-    for schema in schemas:
-        run_migrations(resolved_url, schema=schema, migration_database_url=config.migration_database_url)
-
-    if embedding_dimension is not None:
-        for schema in schemas:
-            ensure_embedding_dimension(
-                resolved_url,
-                embedding_dimension,
-                schema=schema,
-                vector_extension=config.vector_extension,
-            )
-
-    for schema in schemas:
-        ensure_vector_extension(
-            resolved_url,
-            vector_extension=config.vector_extension,
-            schema=schema,
-        )
-
-    for schema in schemas:
-        ensure_text_search_extension(
-            resolved_url,
-            text_search_extension=config.text_search_extension,
-            pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
-            schema=schema,
-        )
+    # Migrate up to `migration_concurrency` schemas at once (each in its own
+    # process); within a schema the work stays sequential. Run off the event
+    # loop so the process pool's blocking joins don't stall it.
+    await asyncio.to_thread(
+        run_migrations_for_schemas,
+        resolved_url,
+        schemas,
+        concurrency=config.migration_concurrency,
+        migration_database_url=config.migration_database_url,
+        embedding_dimension=embedding_dimension,
+        vector_extension=config.vector_extension,
+        text_search_extension=config.text_search_extension,
+        pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
+        ensure_extensions=True,
+    )
 
     return schemas
 

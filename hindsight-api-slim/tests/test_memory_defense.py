@@ -19,6 +19,8 @@ from hindsight_api.extensions.loader import ExtensionLoadError, load_extension
 from hindsight_api.extensions.memory_defense import (
     DefenseAction,
     MemoryDefenseExtension,
+    _fingerprint_value,
+    apply_redaction,
     parse_policy,
 )
 
@@ -93,6 +95,73 @@ def test_defense_action_string_round_trip() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Fingerprinting (unit)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        # Length > 15 → first-4 + ellipsis + last-4.
+        ("ghp_" + "A" * 36, "ghp_...AAAA"),
+        ("AKIA" + "B" * 16, "AKIA...BBBB"),
+        ("sk-ant-" + "Z" * 40, "sk-a...ZZZZ"),
+        # Length 6–15 → first-2 + ellipsis + last-2.
+        ("123-45-6789", "12...89"),
+        ("xoxb-12345", "xo...45"),
+        # Length < 6 → fully masked; we don't preview anything.
+        ("abcde", "[redacted]"),
+        ("", "[redacted]"),
+    ],
+)
+def test_fingerprint_value_shape(value: str, expected: str) -> None:
+    """_fingerprint_value never returns the raw value and uses length-aware
+    bracketing so short matches don't leak material."""
+    out = _fingerprint_value(value)
+    assert out == expected
+    if value:
+        assert value not in out, f"raw value leaked into fingerprint: {out!r}"
+
+
+def test_apply_redaction_hits_carry_fingerprinted_previews() -> None:
+    """apply_redaction returns per-match fingerprinted previews — one entry
+    per matched substring — with the raw secret nowhere present in the hits."""
+    s1 = "ghp_" + "A" * 36
+    s2 = "AKIA" + "B" * 16
+    s3 = "123-45-6789"
+    content = f"rotate {s1}, drop {s2}, also ssn {s3}"
+
+    result = apply_redaction(content)
+
+    # Same-shape labels still flow to matched_types (deduplicated).
+    assert set(result.matched_types) >= {"github_token", "aws_access_key", "ssn_us"}
+
+    # One hit per matched substring; raw secret never appears.
+    by_detector = {h["detector"]: h["preview"] for h in result.hits}
+    assert by_detector["github_token"] == "ghp_...AAAA"
+    assert by_detector["aws_access_key"] == "AKIA...BBBB"
+    assert by_detector["ssn_us"] == "12...89"
+    for h in result.hits:
+        assert s1 not in h["preview"]
+        assert s2 not in h["preview"]
+        assert s3 not in h["preview"]
+
+
+def test_apply_redaction_multiple_hits_per_pattern() -> None:
+    """Two matches of the same pattern produce two hits — receivers can count
+    occurrences, not just types."""
+    a = "ghp_" + "A" * 36
+    b = "ghp_" + "B" * 36
+    content = f"old {a} new {b}"
+    result = apply_redaction(content)
+
+    gh_hits = [h for h in result.hits if h["detector"] == "github_token"]
+    assert len(gh_hits) == 2
+    previews = {h["preview"] for h in gh_hits}
+    assert previews == {"ghp_...AAAA", "ghp_...BBBB"}
+
+
+# ---------------------------------------------------------------------------
 # Regex screening (unit)
 # ---------------------------------------------------------------------------
 
@@ -134,6 +203,14 @@ async def test_screen_redacts_secret(regex_defense, redact_policy) -> None:
     assert secret not in decision.redacted_content
     assert "[REDACTED:github_token]" in decision.redacted_content
     assert "github_token" in decision.matched_types
+    # The decision carries a per-match fingerprinted preview — never the raw
+    # value — so SIEM receivers can correlate without the secret crossing
+    # the wire.
+    assert decision.hits, "OSS should populate at least one hit"
+    hit = decision.hits[0]
+    assert hit["detector"] == "github_token"
+    assert hit["preview"] == "ghp_...AAAA"
+    assert secret not in hit["preview"]
 
 
 @pytest.mark.asyncio
@@ -417,8 +494,13 @@ async def _memory_defense_webhook_events(memory, bank: str) -> list[dict]:
     deliveries queued for ``bank``. The webhook_delivery task_payload nests the
     serialized event under ``payload`` (a JSON string)."""
     async with memory._pool.acquire() as conn:
+        # Order most-recent-first so callers using ``events[0]`` always see
+        # the latest queued delivery — otherwise pollution from earlier test
+        # runs against the same bank surfaces stale payloads.
         rows = await conn.fetch(
-            "SELECT task_payload FROM async_operations WHERE operation_type = 'webhook_delivery' AND bank_id = $1",
+            "SELECT task_payload FROM async_operations "
+            "WHERE operation_type = 'webhook_delivery' AND bank_id = $1 "
+            "ORDER BY created_at DESC",
             bank,
         )
     events: list[dict] = []
@@ -462,6 +544,14 @@ async def test_retain_fires_webhook_on_redact(api_client, memory) -> None:
     assert data["detector"] == "sensitive_data"
     assert "github_token" in data["matched_types"]
     assert data["message"]
+    # The webhook payload carries a per-match fingerprinted preview — the raw
+    # secret never crosses the wire, but a SIEM can still correlate against
+    # its credential inventory using the leading provider prefix + trailing
+    # discriminator (e.g. `ghp_...AAAA`). Populated by OSS as of #2157.
+    hits = data.get("hits") or []
+    assert any(h.get("detector") == "github_token" and h.get("preview") == "ghp_...AAAA" for h in hits), hits
+    for h in hits:
+        assert secret not in (h.get("preview") or ""), "raw secret leaked into preview"
 
 
 @pytest.mark.asyncio

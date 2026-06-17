@@ -33,10 +33,12 @@ jobs:
       integrations-openclaw: ${{ steps.filter.outputs.integrations-openclaw }}
       integrations-ai-sdk: ${{ steps.filter.outputs.integrations-ai-sdk }}
       integrations-agent-framework: ${{ steps.filter.outputs.integrations-agent-framework }}
+      integrations-composio: ${{ steps.filter.outputs.integrations-composio }}
       integrations-chat: ${{ steps.filter.outputs.integrations-chat }}
       integrations-claude-code: ${{ steps.filter.outputs.integrations-claude-code }}
       integrations-cline: ${{ steps.filter.outputs.integrations-cline }}
       integrations-codex: ${{ steps.filter.outputs.integrations-codex }}
+      integrations-continue: ${{ steps.filter.outputs.integrations-continue }}
       integrations-cursor-cli: ${{ steps.filter.outputs.integrations-cursor-cli }}
       integrations-crewai: ${{ steps.filter.outputs.integrations-crewai }}
       integrations-litellm: ${{ steps.filter.outputs.integrations-litellm }}
@@ -50,6 +52,7 @@ jobs:
       integrations-cursor: ${{ steps.filter.outputs.integrations-cursor }}
       integrations-zed: ${{ steps.filter.outputs.integrations-zed }}
       integrations-n8n: ${{ steps.filter.outputs.integrations-n8n }}
+      integrations-zapier: ${{ steps.filter.outputs.integrations-zapier }}
       integrations-cloudflare-oauth-proxy: ${{ steps.filter.outputs.integrations-cloudflare-oauth-proxy }}
       integrations-superagent: ${{ steps.filter.outputs.integrations-superagent }}
       integrations-lockfiles: ${{ steps.filter.outputs.integrations-lockfiles }}
@@ -128,6 +131,8 @@ jobs:
             - 'hindsight-integrations/ai-sdk/**'
           integrations-agent-framework:
             - 'hindsight-integrations/agent-framework/**'
+          integrations-composio:
+            - 'hindsight-integrations/composio/**'
           integrations-chat:
             - 'hindsight-integrations/chat/**'
           integrations-claude-code:
@@ -136,6 +141,8 @@ jobs:
             - 'hindsight-integrations/cline/**'
           integrations-codex:
             - 'hindsight-integrations/codex/**'
+          integrations-continue:
+            - 'hindsight-integrations/continue/**'
           integrations-cursor-cli:
             - 'hindsight-integrations/cursor-cli/**'
           integrations-crewai:
@@ -164,6 +171,8 @@ jobs:
             - 'hindsight-integrations/zed/**'
           integrations-n8n:
             - 'hindsight-integrations/n8n/**'
+          integrations-zapier:
+            - 'hindsight-integrations/zapier/**'
           integrations-cloudflare-oauth-proxy:
             - 'hindsight-integrations/cloudflare-oauth-proxy/**'
           integrations-superagent:
@@ -763,6 +772,37 @@ jobs:
     - name: Build
       working-directory: ./hindsight-integrations/n8n
       run: npm run build
+
+  test-zapier-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-zapier == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/zapier
+      run: npm install --no-fund --no-audit
+
+    - name: Validate app definition
+      working-directory: ./hindsight-integrations/zapier
+      run: npm run validate
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/zapier
+      run: npm test
 
   test-hindsight-agent-sdk:
     needs: [detect-changes]
@@ -3054,6 +3094,88 @@ jobs:
       # (requires_real_llm) needs a live Hindsight server and runs separately.
       run: uv run pytest tests -v -m "not requires_real_llm"
 
+  test-composio-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-composio == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build composio integration
+      working-directory: ./hindsight-integrations/composio
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/composio
+      run: uv sync --frozen
+
+    - name: Lint
+      working-directory: ./hindsight-integrations/composio
+      run: uv run ruff check .
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/composio
+      # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
+      # (requires_real_llm) needs a live Hindsight server and runs separately.
+      run: uv run pytest tests -v -m "not requires_real_llm"
+
+  test-continue-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-continue == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build continue integration
+      working-directory: ./hindsight-integrations/continue
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/continue
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/continue
+      # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
+      # (requires_real_llm) needs a live Hindsight server and runs separately.
+      run: uv run pytest tests -v -m "not requires_real_llm"
+
   test-smolagents-integration:
     needs: [detect-changes]
     if: >-
@@ -4345,6 +4467,60 @@ jobs:
           fi
         done
 
+  # Dead-code detection beyond what ruff's F401/F841 catch (those are already
+  # BLOCKING via the ruff config + the verify-generated-files job).
+  #
+  # - knip (control plane): BLOCKING on unused files / dependencies / unlisted
+  #   dependencies. These are unambiguous — an orphaned file or a dead
+  #   package.json entry — so they fail the build.
+  # - vulture (Python) + knip unused *exports*: ADVISORY only. vulture's
+  #   function/argument heuristics false-positive on FastAPI/SQLAlchemy/Pydantic
+  #   patterns, and the control plane intentionally keeps an unused shadcn/ui
+  #   component surface, so these are surfaced in the step summary, not gated.
+  check-unused-code:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.control-plane == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
+
+    - name: Install Control Plane dependencies
+      run: npm install --workspace=hindsight-control-plane
+
+    - name: knip — unused files / dependencies (blocking)
+      working-directory: hindsight-control-plane
+      run: npx --yes knip@5 --no-progress --include files,dependencies,unlisted
+
+    - name: Advisory scan — vulture + knip exports
+      continue-on-error: true
+      run: |
+        {
+          echo '## Dead-code scan (advisory)'
+          echo ''
+          echo '```'
+          ./scripts/hooks/check-unused.sh 2>&1 | sed 's/\x1b\[[0-9;]*m//g'
+          echo '```'
+        } | tee -a "$GITHUB_STEP_SUMMARY"
+
   verify-generated-files:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -4562,6 +4738,7 @@ jobs:
       - test-integration
       - test-ag2-integration
       - test-autogen-integration
+      - test-continue-integration
       - test-smolagents-integration
       - test-dify-integration
       - test-flowise-integration

@@ -59,6 +59,13 @@
     "viewOnGitHub": "Voir sur GitHub"
   },
   "bank": {
+    "dryRunExtraction": "Extraction à blanc",
+    "dryRunExtractionDescription": "Prévisualisez ce que la configuration actuelle de cette banque (mission de rétention, mode d'extraction, taille de segment) extrait du texte — sans ingestion, rien n'est stocké.",
+    "dryRunExtractionTextLabel": "Texte",
+    "dryRunExtractionPlaceholder": "Collez un document ou un fragment pour en extraire des faits…",
+    "dryRunExtractionResponseLabel": "Réponse",
+    "dryRunExtractionEmptyState": "Lancez l'extraction pour voir la réponse JSON.",
+    "dryRunExtractionRun": "Extraire (à blanc)",
     "bankConfiguration": "Configuration de la banque",
     "bankConfigurationDescription": "Gérez les paramètres, le profil et les opérations de la banque.",
     "actions": "Actions",
@@ -317,6 +324,8 @@
     "retainFailedToSave": "Échec de l'enregistrement des paramètres Retain",
     "chunkSizeLabel": "Taille des segments",
     "chunkSizeDescription": "Taille des segments de texte pour le traitement (caractères)",
+    "structuredChunkSizeLabel": "Taille de segment structuré",
+    "structuredChunkSizeDescription": "Nombre maximal de caractères pour une ligne JSONL ou un tour de conversation conservé entier. Laissez vide pour utiliser la taille de segment.",
     "missionLabel": "Mission",
     "retainMissionDescription": "Ce à quoi cette banque doit prêter attention lors de l'extraction. Oriente le LLM sans remplacer les règles d'extraction — fonctionne en complément du mode d'extraction.",
     "retainMissionPlaceholder": "ex. : Toujours inclure les décisions techniques, les choix de conception API et les compromis architecturaux. Ignorer la logistique des réunions, les salutations et les échanges sociaux.",
@@ -594,7 +603,10 @@
     "scopeGlobal": "Global (sans tags)",
     "groupByScope": "Grouper par portée",
     "scopeSearch": "Rechercher des portées…",
-    "scopeNoResults": "Aucune portée trouvée"
+    "scopeNoResults": "Aucune portée trouvée",
+    "filterActive": "Actives",
+    "filterInvalidated": "Invalidées",
+    "invalidatedHint": "Les mémoires invalidées sont archivées : masquées de recall et reflect, mais conservées pour audit."
   },
   "documentsView": {
     "loadingDocuments": "Chargement des documents...",
@@ -683,7 +695,8 @@
     "importConflictReplace": "Remplacer — écraser par celui importé",
     "importConflictNewId": "Conserver les deux — importer sous un nouvel id",
     "textNotStoredWarning": "Le texte source n'est pas conservé sur ce serveur — seules les mémoires extraites sont conservées.",
-    "labelObservationScopes": "Portées d'observation"
+    "labelObservationScopes": "Portées d'observation",
+    "invalidatedFactsTitle": "Faits invalidés"
   },
   "entitiesView": {
     "viewRelations": "Relations",
@@ -781,6 +794,7 @@
     "optionsTagsMatchAll": "all — correspondance ET, inclut non taggés",
     "optionsTagsMatchAnyStrict": "any_strict — correspondance OU, exclut non taggés",
     "optionsTagsMatchAllStrict": "all_strict — correspondance ET, exclut non taggés",
+    "optionsTagsMatchExact": "exact — égalité d'ensembles, exclut non taggés",
     "optionsTagsMatchDescription": "Contrôle la façon dont les tags du modèle filtrent les souvenirs lors de l'actualisation.",
     "optionsTagGroupsLabel": "Groupes de tags (JSON)",
     "optionsTagGroupsDescription": "Expressions booléennes composées de tags pour le filtrage lors de l'actualisation. Remplace les tags plats lorsque défini.",
@@ -830,6 +844,7 @@
     "tagsMatchAll": "Tous (incl. non taggés)",
     "tagsMatchAnyStrict": "N'importe lequel (strict)",
     "tagsMatchAllStrict": "Tous (strict)",
+    "tagsMatchExact": "Exact (ensemble)",
     "excludeMentalModels": "Exclure les modèles mentaux",
     "excludeIdsLabel": "Exclure les IDs :",
     "excludeIdsPlaceholder": "modèle-a, modèle-b",
@@ -906,6 +921,7 @@
     "tagsMatchAll": "Tous (incl. non taggés)",
     "tagsMatchAnyStrict": "N'importe lequel (strict)",
     "tagsMatchAllStrict": "Tous (strict)",
+    "tagsMatchExact": "Exact (ensemble)",
     "budgetLow": "Faible",
     "budgetMid": "Moyen",
     "budgetHigh": "Élevé",
@@ -1290,7 +1306,17 @@
     "curationInvalidateExplain": "Cela déplace la mémoire vers l'archive des éléments invalidés. Elle n'apparaîtra plus dans Recall ni Reflect, mais est conservée à des fins d'audit et peut être restaurée ultérieurement.",
     "curationReasonPlaceholder": "Raison (facultatif)",
     "curationCancel": "Annuler",
-    "curationInvalidate": "Invalider"
+    "curationInvalidate": "Invalider",
+    "curationActions": "Curation",
+    "curationEdit": "Modifier",
+    "curationReasonLabel": "Motif",
+    "curationRevert": "Restaurer",
+    "curationSave": "Enregistrer",
+    "curationStateInvalidated": "Invalidée",
+    "editFieldContext": "Contexte",
+    "editFieldOccurredEnd": "Date de fin",
+    "editFieldOccurredStart": "Date de début",
+    "editFieldType": "Type"
   },
   "documentChunkModal": {
     "documentTitle": "Détails du document",
@@ -1497,6 +1523,9 @@
     "strategyHelpText": "Remplace la stratégie d'extraction par défaut de la banque pour ce document.",
     "observationScopePerTag": "Par tag",
     "observationScopeAllCombinations": "Toutes les combinaisons",
+    "observationScopeShared": "Partagé",
+    "observationScopeSharedHelp": "Toutes les observations sont stockées dans une portée partagée et sans tags (les tags sont ignorés).",
+    "observationScopeCustom": "Personnalisé",
     "observationScopesEmpty": "Ajoutez des tags ci-dessus pour prévisualiser les portées d'observation",
     "metadataHelpText": "Un <code>key: value</code> par ligne",
     "entitiesHelpText": "Indications séparées par des virgules fusionnées avec les entités extraites automatiquement",

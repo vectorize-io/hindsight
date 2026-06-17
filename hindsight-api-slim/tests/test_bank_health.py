@@ -82,7 +82,8 @@ async def test_bank_llm_not_configured(api_client, memory, monkeypatch):
         monkeypatch.setattr(cfg, "provider", "none")
     body = (await api_client.post("/v1/default/banks/llm-none/health/llm")).json()
     assert all(op["status"] == "not_configured" and op["ok"] is False for op in body["operations"])
-    assert all(op["latency_ms"] is None for op in body["operations"])
+    # latency_ms is null when not configured; responses omit null fields, so use .get().
+    assert all(op.get("latency_ms") is None for op in body["operations"])
 
 
 @pytest.mark.asyncio

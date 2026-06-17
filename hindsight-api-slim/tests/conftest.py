@@ -16,6 +16,27 @@ from hindsight_api.engine.cross_encoder import LocalSTCrossEncoder
 from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
 from hindsight_api.engine.task_backend import SyncTaskBackend
 from hindsight_api.pg0 import EmbeddedPostgres
+from hindsight_api.tracing import unregister_span_recorder
+
+
+async def _teardown_memory_engine(mem: MemoryEngine) -> None:
+    """Tear down a test MemoryEngine, guaranteeing its span recorder is unregistered.
+
+    LLM-trace recorders live in a process-global registry; ``MemoryEngine.close()`` is
+    the only thing that removes the engine's recorder from it. If close() is skipped
+    (pool already closing) or raises before that step, the recorder leaks and a later
+    test's LLM calls get recorded into the shared DB — the flaky
+    test_llm_trace::test_disabled_writes_no_rows (#2229). Unregister unconditionally;
+    it's a no-op when close() already did it.
+    """
+    try:
+        if mem._pool and not mem._pool._closing:
+            await mem.close()
+    except Exception:
+        pass
+    finally:
+        unregister_span_recorder(mem._llm_recorder)
+
 
 # Default pg0 instance configuration for tests
 DEFAULT_PG0_INSTANCE_NAME = "hindsight-test"
@@ -342,10 +363,7 @@ async def oracle_memory(oracle_db_url, embeddings, cross_encoder, query_analyzer
         )
         await mem.initialize()
         yield mem
-        try:
-            await mem.close()
-        except Exception:
-            pass
+        await _teardown_memory_engine(mem)
     finally:
         # Restore original env var and clear config cache
         if old_backend is None:
@@ -463,11 +481,7 @@ async def memory(pg0_db_url, embeddings, cross_encoder, query_analyzer):
     )
     await mem.initialize()
     yield mem
-    try:
-        if mem._pool and not mem._pool._closing:
-            await mem.close()
-    except Exception:
-        pass
+    await _teardown_memory_engine(mem)
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -496,11 +510,7 @@ async def memory_real_llm(pg0_db_url, embeddings, cross_encoder, query_analyzer)
     )
     await mem.initialize()
     yield mem
-    try:
-        if mem._pool and not mem._pool._closing:
-            await mem.close()
-    except Exception:
-        pass
+    await _teardown_memory_engine(mem)
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -527,11 +537,7 @@ async def memory_no_llm_verify(pg0_db_url, embeddings, cross_encoder, query_anal
     )
     await mem.initialize()
     yield mem
-    try:
-        if mem._pool and not mem._pool._closing:
-            await mem.close()
-    except Exception:
-        pass
+    await _teardown_memory_engine(mem)
 
 
 @pytest_asyncio.fixture

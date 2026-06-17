@@ -36,7 +36,7 @@ import "react18-json-view/src/style.css";
 import { MemoryDetailPanel } from "./memory-detail-panel";
 
 type Budget = "low" | "mid" | "high";
-type TagsMatch = "any" | "all" | "any_strict" | "all_strict";
+type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
 type ViewMode = "results" | "trace" | "json";
 
 export function SearchDebugView() {
@@ -277,6 +277,7 @@ export function SearchDebugView() {
                 <SelectItem value="all">{t("tagsMatchAll")}</SelectItem>
                 <SelectItem value="any_strict">{t("tagsMatchAnyStrict")}</SelectItem>
                 <SelectItem value="all_strict">{t("tagsMatchAllStrict")}</SelectItem>
+                <SelectItem value="exact">{t("tagsMatchExact")}</SelectItem>
               </SelectContent>
             </Select>
           </div>

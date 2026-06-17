@@ -96,20 +96,31 @@ describe("respondWithSdk", () => {
       expect(response.status).toBe(HTTP_UPSTREAM_429);
     });
 
-    it("includes the upstream error detail in the response body", async () => {
-      const upstreamError = { detail: "DiskFullError on shared memory" };
+    it("includes upstream error detail in the response body for 4xx responses", async () => {
+      const upstreamError = { detail: "Invalid retain config" };
       const response = respondWithSdk(
-        fail(upstreamError, HTTP_UPSTREAM_500),
-        "Failed to fetch stats"
+        fail(upstreamError, HTTP_UPSTREAM_429),
+        "Failed to update bank config"
       );
       const body = await response.json();
       expect(body).toEqual({
-        error: "Failed to fetch stats",
+        error: "Failed to update bank config",
+        details: "Invalid retain config",
         upstream: {
-          status: HTTP_UPSTREAM_500,
+          status: HTTP_UPSTREAM_429,
           detail: upstreamError,
         },
       });
+    });
+
+    it("does not expose upstream error detail in the response body for 5xx responses", async () => {
+      const response = respondWithSdk(
+        fail(new Error("ECONNREFUSED"), HTTP_UPSTREAM_503),
+        "Failed to fetch stats"
+      );
+      const body = await response.json();
+      expect(body.details).toBeNull();
+      expect(body.upstream.detail).toBeNull();
     });
 
     it("logs the upstream status and error to console.error", () => {
@@ -148,6 +159,7 @@ describe("respondWithSdk", () => {
       expect(response.status).toBe(HTTP_UPSTREAM_503);
       const body = await response.json();
       expect(body.error).toBe("Failed to fetch");
+      expect(body.details).toBeNull();
       expect(body.upstream.detail).toBeNull();
     });
   });

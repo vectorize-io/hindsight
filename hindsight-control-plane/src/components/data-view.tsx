@@ -415,12 +415,16 @@ export function DataView({
   // A selected observation scope takes precedence and uses exact set-equality
   // matching (so scope [a] excludes [a, b]); otherwise the free-form tag filter
   // uses the default contains semantics. `null` scope means "no scope filter".
-  const resolveTagQuery = useCallback((): { tags?: string[]; match?: string } => {
-    if (selectedScope !== null) {
-      return { tags: selectedScope, match: "exact" };
-    }
-    return { tags: tagFilters.length > 0 ? tagFilters : undefined };
-  }, [selectedScope, tagFilters]);
+  const resolveTagQuery = useCallback(
+    (scopeOverride?: string[] | null): { tags?: string[]; match?: string } => {
+      const scope = scopeOverride === undefined ? selectedScope : scopeOverride;
+      if (scope !== null) {
+        return { tags: scope, match: "exact" };
+      }
+      return { tags: tagFilters.length > 0 ? tagFilters : undefined };
+    },
+    [selectedScope, tagFilters]
+  );
 
   // Trigger text search on Enter key
   const executeSearch = () => {
@@ -431,22 +435,44 @@ export function DataView({
     }
   };
 
-  // Trigger server-side reload immediately when the tag filter or scope changes
+  // Single auto-loader for the graph data. This deliberately replaces what used
+  // to be two effects (mount/context + filter change) that BOTH fired on mount,
+  // doubling the initial /api/graph request (see issue #2158). When the context
+  // (factType/bank/document/chunk) changes we drop the now-meaningless scope
+  // filter and feed the cleared value straight into the same reload, so the
+  // scope reset never triggers a second fetch.
+  const contextKeyRef = useRef<string | null>(null);
+  const skipScopeResetReload = useRef(false);
+  const lastAutoLoadSig = useRef<string | null>(null);
   useEffect(() => {
-    if (currentBank) {
-      const { tags, match } = resolveTagQuery();
-      loadData(undefined, searchQuery || undefined, tags, match);
+    if (!currentBank) return;
+    // The previous run already issued the reload with scope=null; this run is
+    // only the echo of our own setSelectedScope(null), so skip it.
+    if (skipScopeResetReload.current) {
+      skipScopeResetReload.current = false;
+      return;
     }
-  }, [tagFilters, selectedScope]);
+    const contextKey = `${factType} ${currentBank} ${documentId ?? ""} ${chunkId ?? ""}`;
+    const contextChanged = contextKeyRef.current !== contextKey;
+    contextKeyRef.current = contextKey;
 
-  // Auto-load data when component mounts or factType/currentBank changes.
-  // Clearing the scope here resets it before the filter effect above re-runs.
-  useEffect(() => {
-    setSelectedScope(null);
-    if (currentBank) {
-      loadData();
+    let scope = selectedScope;
+    if (contextChanged && selectedScope !== null) {
+      scope = null;
+      skipScopeResetReload.current = true;
+      setSelectedScope(null);
     }
-  }, [factType, currentBank, documentId, chunkId]);
+    const { tags, match } = resolveTagQuery(scope);
+    // Collapse identical consecutive auto-loads into a single request. This makes
+    // the effect idempotent, so React's mount-effect double-invoke (dev
+    // StrictMode, and any redundant re-render) can't re-issue the same /api/graph
+    // query. Manual reloads (search, load-more, consolidation poll) call loadData
+    // directly and intentionally bypass this guard.
+    const sig = JSON.stringify([contextKey, tags ?? null, match ?? null]);
+    if (sig === lastAutoLoadSig.current) return;
+    lastAutoLoadSig.current = sig;
+    loadData(undefined, searchQuery || undefined, tags, match);
+  }, [factType, currentBank, documentId, chunkId, tagFilters, selectedScope]);
 
   // Load the available observation scopes for the scope filter dropdown.
   const loadScopes = useCallback(async () => {

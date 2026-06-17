@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-api-slim"
-version = "0.8.1"
+version = "0.8.2"
 description = "Hindsight: Agent Memory That Works Like Human Memory"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -200,12 +200,11 @@ select = [
     "W",      # pycodestyle warnings
     "F",      # Pyflakes
     "I",      # isort
+    "B021",   # flake8-bugbear: f-string used as docstring (leaves __doc__ None)
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
     "E402",   # module import not at top of file
-    "F401",   # unused import (too noisy during development)
-    "F841",   # unused variable (too noisy during development)
     "F811",   # redefined while unused
     "F821",   # undefined name (forward references in type hints)
 ]
