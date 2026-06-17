@@ -61,6 +61,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "aider": IntegrationMeta("hindsight-aider", "Aider"),
     "paperclip": IntegrationMeta("@vectorize-io/hindsight-paperclip", "Paperclip"),
     "opencode": IntegrationMeta("@vectorize-io/opencode-hindsight", "OpenCode"),
+    "eve": IntegrationMeta("@vectorize-io/hindsight-eve", "Eve"),
     "cloudflare-oauth-proxy": IntegrationMeta("hindsight-cloudflare-oauth-proxy"),
     "openai-agents": IntegrationMeta("hindsight-openai-agents"),
     "pipecat": IntegrationMeta("hindsight-pipecat", "Pipecat"),

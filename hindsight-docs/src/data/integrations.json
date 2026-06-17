@@ -371,6 +371,16 @@
       "icon": "/img/icons/opencode.png"
     },
     {
+      "id": "eve",
+      "name": "Eve",
+      "description": "Long-term memory for Vercel Eve agents. A one-line MCP connection exposing retain, recall, and reflect.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/eve",
+      "icon": "/img/icons/eve.svg"
+    },
+    {
       "id": "n8n",
       "name": "n8n",
       "description": "Persistent memory community node for n8n workflows. Retain, recall, and reflect operations drop into any workflow alongside Slack, Sheets, OpenAI, and 400+ other integrations.",

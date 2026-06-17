@@ -51,6 +51,7 @@ jobs:
       integrations-llamaindex: ${{ steps.filter.outputs.integrations-llamaindex }}
       integrations-paperclip: ${{ steps.filter.outputs.integrations-paperclip }}
       integrations-opencode: ${{ steps.filter.outputs.integrations-opencode }}
+      integrations-eve: ${{ steps.filter.outputs.integrations-eve }}
       integrations-cursor: ${{ steps.filter.outputs.integrations-cursor }}
       integrations-zed: ${{ steps.filter.outputs.integrations-zed }}
       integrations-n8n: ${{ steps.filter.outputs.integrations-n8n }}
@@ -173,6 +174,8 @@ jobs:
             - 'hindsight-integrations/paperclip/**'
           integrations-opencode:
             - 'hindsight-integrations/opencode/**'
+          integrations-eve:
+            - 'hindsight-integrations/eve/**'
           integrations-cursor:
             - 'hindsight-integrations/cursor/**'
           integrations-zed:
@@ -791,6 +794,37 @@ jobs:
 
     - name: Build
       working-directory: ./hindsight-integrations/opencode
+      run: npm run build
+
+  test-eve-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-eve == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '24'
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/eve
+      run: npm ci
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/eve
+      run: npm test
+
+    - name: Build
+      working-directory: ./hindsight-integrations/eve
       run: npm run build
 
   test-n8n-integration:
@@ -4878,6 +4912,7 @@ jobs:
       - build-ai-sdk-integration
       - test-ai-sdk-integration-deno
       - test-opencode-integration
+      - test-eve-integration
       - test-omo-integration
       - test-cloudflare-oauth-proxy-integration
       - build-chat-integration
