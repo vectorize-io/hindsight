@@ -510,5 +510,15 @@
       "link": "https://github.com/yugandhar-maram/agrasandhany",
       "icon": "/img/icons/obsidian.svg"
     },
+    {
+      "id": "openhands",
+      "name": "OpenHands",
+      "description": "Long-term memory for OpenHands (formerly OpenDevin) via its native MCP support. One command wires the Hindsight MCP server into config.toml plus a recall/retain rule.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/openhands",
+      "icon": "/img/icons/openhands.png"
+    },
   ]
 }
