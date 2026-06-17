@@ -1,135 +1,103 @@
 ---
-title: "Freshness-Aware Memory: Knowing When a Belief Has Gone Stale"
+title: "Staleness-Aware Memory: When Your Agent Should Verify Before It Trusts"
 authors: [benfrank241]
 slug: "2026/06/17/freshness-aware-memory"
 date: 2026-06-17T12:00
-tags: [hindsight, memory, observations, freshness, reflect, agents]
-description: "Most agent memory treats every stored fact as equally true forever. Hindsight computes a freshness trend for each belief from its evidence timestamps, tracks how far consolidation lags behind new memories, and uses both to decide when to trust a belief and when to verify it."
+tags: [hindsight, memory, observations, mental-models, reflect, consolidation]
+description: "Hindsight's consolidated memory (observations and mental models) is derived from raw facts, so it can lag behind new writes. Instead of silently serving a stale snapshot, Hindsight flags how far behind each layer is, and the reflect agent verifies against raw facts before trusting it."
 image: /img/blog/freshness-aware-memory.png
 hide_table_of_contents: true
 ---
 
-![Freshness-Aware Memory in Hindsight](/img/blog/freshness-aware-memory.png)
+![Staleness-Aware Memory in Hindsight](/img/blog/freshness-aware-memory.png)
 
-Most agent memory has a silent failure mode: it treats everything it ever stored as equally true, forever. A preference the user stated once in February outranks nothing. A decision they reversed last week still surfaces with full confidence. The retrieval layer returns the closest match by similarity and says nothing about whether that match still reflects reality.
+Most agent memory has a silent failure mode: it serves whatever it has and never tells you whether that's current. The retrieval layer returns the closest match by similarity and stays quiet about whether the match still reflects reality. For a demo that's fine. In production, an agent that confidently answers from a stale snapshot isn't remembering, it's guessing with conviction.
 
-That's fine for a demo and dangerous in production. An agent that confidently recommends the framework you abandoned six months ago isn't remembering, it's quoting a corpse.
-
-This post is about how Hindsight addresses that: **freshness-aware memory**. Beliefs carry a computed sense of how current they are, and the reflect agent uses that signal to decide when to trust a belief outright and when to go verify it against the raw facts.
+Hindsight has a specific reason this risk is real, and a specific mechanism to handle it. Its fast, high-level memory is **derived** memory: observations and mental models are consolidated from raw facts in the background. Derived data can lag the source. So rather than pretend the consolidated layer is always current, Hindsight measures how far behind it is and lets the [reflect](/developer/reflect) agent decide when to verify against ground truth.
 
 ## TL;DR
 
 <!-- truncate -->
 
-- Hindsight consolidates raw facts into **observations**: deduplicated, evidence-grounded beliefs. Each observation knows which memories support it and when those memories were created.
-- Every observation carries a **freshness trend**, computed from its evidence timestamps (not guessed by an LLM): `new`, `strengthening`, `stable`, `weakening`, or `stale`.
-- Separately, the reflect agent gets a **consolidation-lag signal**: how many retained memories haven't been folded into observations yet, surfaced as `up_to_date`, `slightly_stale`, or `stale`.
-- The reflect loop uses both. A stale belief, or a bank whose observations lag reality, triggers a drop to raw-fact `recall()` to verify before answering.
-- The net effect: the agent trusts current beliefs directly and double-checks the ones that might be out of date, instead of treating all memory as equally reliable.
+- Hindsight has three retrieval layers: **mental models** (curated summaries), **observations** (consolidated beliefs), and **raw facts**. The first two are derived and refreshed asynchronously, so they can lag new writes.
+- When the reflect agent reads a consolidated layer, Hindsight attaches an **`is_stale`** signal so the agent knows whether that layer has caught up with recent memories.
+- For **observations**, staleness is graded by how many retained memories are still waiting to be consolidated: `up_to_date`, `slightly_stale`, or `stale`.
+- For **mental models**, `is_stale` is true when new in-scope memories have been ingested since the model was last refreshed.
+- The reflect loop uses this as a routing decision: if a layer is stale, it drops to `recall()` and verifies against raw facts before answering. Current layers are trusted directly.
 
-## Two Things "Stale" Can Mean
+## Why Consolidated Memory Lags
 
-There are two independent ways a belief can be out of date, and Hindsight tracks them separately because they have different fixes.
+The thing that makes Hindsight fast to write to is the same thing that creates the lag.
 
-1. **The belief itself is aging.** The evidence behind it is all old. Nobody has reinforced it lately. It might still be true, or the world might have moved on. This is a property of the observation, measured over time.
-2. **The bank hasn't caught up.** You've retained new memories, but consolidation hasn't folded them into observations yet, so the observations you'd recall right now are a slightly old snapshot of what the bank actually knows. This is a property of the bank at this moment.
+When you `retain()`, the raw facts land immediately. Consolidation, which folds those facts into deduplicated observations, runs in the **background** afterward. That keeps the retain call quick, but it means there's always a window where the observations in a bank are a slightly older view of what the bank has actually been told. Mental models are even further removed: they're refreshed periodically, so between refreshes new memories pile up underneath a summary that doesn't yet reflect them.
 
-The first is about the *content* of a belief. The second is about the *pipeline* behind it. Hindsight computes both.
+This isn't a bug, it's the cost of having a fast, synthesized layer at all. The question is what the system does about it. A flat store does nothing and serves the old view. Hindsight measures the gap and surfaces it.
 
-## Layer 1: The Per-Belief Freshness Trend
+## The Staleness Signal
 
-When Hindsight builds an observation, it attaches every supporting piece of evidence with the timestamp of the source memory. The trend is then computed directly from the distribution of those timestamps. It is not an LLM judgment call; it's arithmetic over the evidence dates, so it's deterministic and explainable.
+Hindsight's reflect agent works through a hierarchy, cheapest and most-synthesized first:
 
-There are five trends:
+1. **[Mental models](/developer/api/mental-models)**: curated, high-level summaries.
+2. **[Observations](/developer/observations)**: consolidated beliefs grounded in evidence.
+3. **[Raw facts](/developer/api/recall)**: ground truth, retrieved with `recall()`.
 
-| Trend | What it means |
-| --- | --- |
-| `new` | All the supporting evidence is recent. A freshly formed belief. |
-| `strengthening` | More, denser evidence lately than before. The belief is gaining support. |
-| `stable` | Evidence is spread across time and continues to the present. A durable belief. |
-| `weakening` | Evidence is mostly old and has gone sparse recently. Support is fading. |
-| `stale` | No recent evidence at all. The belief may no longer apply. |
+When the agent reads either of the derived layers, the result carries an `is_stale` flag. The two layers compute it differently, because "behind" means something slightly different for each.
 
-### How it's computed
+### Observations: graded by consolidation backlog
 
-The trend function splits an observation's evidence into time buckets relative to now, using two windows: a **recent** window (30 days by default) and an **old** boundary (90 days by default).
+When the agent searches observations, Hindsight reports how far consolidation has fallen behind, based on the number of retained memories still waiting to be consolidated:
 
-- Evidence newer than the recent cutoff is **recent**.
-- Evidence older than the old cutoff is **old**.
-- Everything in between is **middle**.
-
-From there the logic is simple:
-
-- **No recent evidence** → `stale`. Whatever this belief was built on, nothing has reinforced it lately.
-- **Only recent evidence** (nothing old or middle) → `new`. The belief just formed.
-- **Otherwise**, compare densities. Recent density is recent evidence per day in the recent window; older density is the rest of the evidence spread over the older period. The ratio decides it:
-  - ratio above 1.5 → `strengthening`
-  - ratio below 0.5 → `weakening`
-  - in between → `stable`
-
-Comparing *density* rather than raw counts matters: the recent window is short and the older period is long, so a belief with two mentions last week and three mentions over the prior two months reads as strengthening, not weakening, because the recent activity is denser.
-
-### A belief over time
-
-Picture a bank that's been learning about a user's stack. One observation: *"Prefers Postgres for primary storage."*
-
-- **Week 1:** three facts in a few days all point at Postgres. Trend: `new`.
-- **Month 2:** steady mentions keep arriving as they ship features on it. Trend: `stable`.
-- **Month 5:** the team migrates to a managed service and stops talking about Postgres internals. New evidence dries up. Trend drifts to `weakening`, then `stale`.
-
-Nobody wrote a rule that said "expire this after N days." The trend fell out of the evidence drying up. When the agent later recalls this belief, the `stale` marker is the cue that it should confirm against current facts before recommending a Postgres-specific approach.
-
-## Layer 2: Consolidation Lag
-
-Consolidation runs in the background after you retain. That's what keeps `retain()` fast: facts land immediately, and the engine folds them into observations shortly after. But it means there's a window where the observations in a bank are a slightly old view of what the bank has actually been told.
-
-When the reflect agent searches observations, Hindsight tells it how far behind consolidation is, based on how many retained memories are still waiting to be consolidated:
-
-| Pending memories | Signal |
+| Pending (unconsolidated) memories | Signal |
 | --- | --- |
 | 0 | `up_to_date` |
 | under 10 | `slightly_stale` |
 | 10 or more | `stale` |
 
-This is a different question from the per-belief trend. An observation can be perfectly `stable` on its own evidence while the bank as a whole is `stale` because a batch of fresh retains hasn't been processed yet. The agent needs both signals: one says "this belief is old," the other says "there may be newer information that hasn't become a belief yet."
+`is_stale` is simply true whenever anything is pending. The grade exists so the agent can treat "one memory behind" differently from "fifty memories behind."
 
-## How Reflect Uses Freshness
+### Mental models: behind since last refresh
 
-[Reflect](/developer/reflect) answers questions with a hierarchical retrieval strategy, cheapest and most-synthesized first:
+Mental models refresh on their own cadence, so their staleness is about that refresh boundary. A mental model is marked `is_stale` when **new in-scope memories have been ingested since it was last refreshed**, with that exact reason attached. It tells the agent: this summary was accurate as of its last refresh, but the world has moved since.
 
-1. **[Mental models](/developer/api/mental-models)**: curated, high-level summaries.
-2. **[Observations](/developer/observations)**: consolidated beliefs, with their freshness trend.
-3. **[Raw facts](/developer/api/recall)**: ground truth, retrieved with `recall()`.
+## How Reflect Uses It
 
-Freshness is what governs movement *down* that hierarchy. The agent's instructions are explicit about it: if the consolidated layer it's reading is marked stale, it does not stop there. It also calls `recall()` to verify against raw facts before committing to an answer. A fresh, relevant observation can answer a question directly. A stale one that's central to the answer gets checked against the underlying memories first.
+The signal isn't decorative. It's a routing decision baked into the agent's instructions: read the cheap layer first, and **if it's stale, don't stop there. Verify against a lower layer before committing to an answer.**
 
-That's the whole point of computing freshness: it's not a label for a dashboard, it's a routing decision. The agent spends its retrieval budget verifying exactly the beliefs that might be wrong, and trusts the ones that are clearly current.
+Concretely:
+
+- A fresh, relevant mental model can answer a question on its own.
+- A **stale** mental model gets cross-checked: the agent also searches observations, and if those are stale too, it calls `recall()` for raw facts.
+- Stale observations that are central to the answer get verified against the underlying memories the same way.
+
+So the agent spends its retrieval budget exactly where it's warranted. When the synthesized layers are current, it trusts them and answers cheaply. When they're behind, it pays the cost of going to ground truth instead of confidently serving a snapshot that consolidation hasn't caught up to yet.
+
+That's the whole idea: staleness is a signal to **verify, not to discard.** A stale observation isn't thrown away, it's confirmed against the raw facts before the agent relies on it.
 
 ## Why This Matters
 
-Without freshness, every memory system eventually does this:
+Without a staleness signal, a synthesized memory layer has no way to be honest about its own lag. You get failures like:
 
-- **Recommends the abandoned choice.** The user moved from React to Vue. A flat memory store still has "loves React" sitting there with high similarity, and the agent suggests a React library.
-- **Treats a one-off as a standing preference.** Something said once, months ago, never reinforced, surfaces with the same weight as a daily habit.
-- **Misses that the picture changed.** New facts contradict an old belief, but the old belief still gets retrieved because nothing downgraded it.
+- **Answering from a summary that's a week behind.** The user changed direction yesterday; the mental model still reflects last week, and nothing flags it.
+- **Trusting consolidated beliefs while a backlog sits unprocessed.** Fifty new memories were just retained, none consolidated yet, and the agent answers from observations as if they're complete.
+- **No way to tell "current" from "probably current."** Every consolidated answer carries the same implicit confidence regardless of how stale it is.
 
-Freshness-aware memory turns "what's the closest match?" into "what's the closest match, and should I still believe it?" The agent gets to reason about currency, not just relevance.
+Staleness-aware retrieval turns "here's the closest synthesized match" into "here's the closest match, and here's whether you should double-check it." The agent reasons about currency, not just relevance.
 
-It also pairs with how Hindsight handles contradictions during [consolidation](https://hindsight.vectorize.io/blog/2026/05/21/agent-memory-consolidation): when a new fact reverses an old one, the observation is rewritten to capture the change rather than overwritten. Freshness handles the quieter case where nothing contradicts the belief, it just stops being reinforced and slowly ages out of relevance.
+It complements how Hindsight handles contradictions during [consolidation](https://hindsight.vectorize.io/blog/2026/05/21/agent-memory-consolidation): when a new fact reverses an old one, the observation is rewritten to capture the change rather than overwritten. Staleness covers the gap *before* consolidation catches up: the moment when new memories exist but the synthesized layer hasn't folded them in yet.
 
 ## Recap
 
-| | Flat memory store | Freshness-aware memory |
+| | Flat memory store | Staleness-aware memory |
 | --- | --- | --- |
-| Treats old and new facts | Equally | Trend per belief, computed from evidence dates |
-| Knows a belief is fading | No | `weakening` / `stale` trend |
-| Knows the index lags new writes | No | Consolidation-lag signal |
-| Verifies before trusting | No | Reflect drops to raw facts when stale |
-| Trend source | n/a | Arithmetic over timestamps, not an LLM guess |
+| Synthesized/summary layer | Served as-is | Flagged with `is_stale` |
+| Knows it's behind on writes | No | Observations graded by consolidation backlog |
+| Knows a summary predates new facts | No | Mental model stale "since last refresh" |
+| Behavior when behind | Serves the stale view | Reflect verifies against raw facts |
+| Trust model | Uniform confidence | Trust when current, verify when stale |
 
 ## Next Steps
 
-- **Observations and trends:** [How consolidation works](/developer/observations)
+- **Observations:** [How consolidation works](/developer/observations)
 - **Reflect:** [The agentic retrieval loop](/developer/reflect)
 - **Recall:** [Retrieving raw facts](/developer/api/recall)
 - **Related reading:** [The Consolidation Problem in Agent Memory](https://hindsight.vectorize.io/blog/2026/05/21/agent-memory-consolidation)
