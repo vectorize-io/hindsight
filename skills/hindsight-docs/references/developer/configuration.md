@@ -1633,6 +1633,7 @@ Hindsight provides OpenTelemetry-based observability for LLM calls, conforming t
 | `HINDSIGHT_API_OTEL_SERVICE_NAME` | Service name for traces | `hindsight-api` |
 | `HINDSIGHT_API_OTEL_DEPLOYMENT_ENVIRONMENT` | Deployment environment name (e.g., development, staging, production) | `development` |
 | `HINDSIGHT_API_METRICS_INCLUDE_BANK_ID` | Include `bank_id` in OTel metric attributes. Enable only for deployments with few banks — high cardinality causes unbounded memory growth. | `false` |
+| `HINDSIGHT_API_METRICS_BACKLOG_ENABLED` | Expose async-operation queue depth and consolidation-backlog gauges (`hindsight_async_operations`, `hindsight_consolidation_backlog`, `hindsight_consolidation_failed`). Runs periodic per-schema `COUNT` queries on a background task. | `false` |
 
 **Features:**
 - Full prompts and completions recorded as events

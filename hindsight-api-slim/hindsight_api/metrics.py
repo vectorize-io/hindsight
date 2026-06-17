@@ -621,7 +621,10 @@ class MetricsCollector(MetricsCollectorBase):
         """
         self._db_pool = pool
         self._setup_db_pool_metrics()
-        self._setup_backlog_metrics()
+        from .config import get_config
+
+        if get_config().metrics_backlog_enabled:
+            self._setup_backlog_metrics()
 
     def _setup_db_pool_metrics(self):
         """Set up observable gauges for database pool metrics."""

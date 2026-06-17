@@ -73,6 +73,14 @@ def _collector(include_bank_id=False):
         return MetricsCollector()
 
 
+def _set_db_pool_with_backlog_enabled(collector, pool):
+    """Call set_db_pool with the backlog flag forced on (it's off by default)."""
+    mock_config = MagicMock()
+    mock_config.metrics_backlog_enabled = True
+    with patch("hindsight_api.config.get_config", return_value=mock_config):
+        collector.set_db_pool(pool)
+
+
 def _rows_for(sql):
     """Canned results, keyed off distinctive substrings of each query."""
     if "information_schema.tables" in sql:
@@ -176,7 +184,7 @@ async def test_refresh_backlog_per_bank_labels_and_group_by_when_enabled():
 def test_gauges_register_and_emit_cached_values_without_bank_id():
     collector = _collector(include_bank_id=False)
     # Sync call: no running loop, so gauges register but no background task spawns.
-    collector.set_db_pool(MagicMock())
+    _set_db_pool_with_backlog_enabled(collector, MagicMock())
 
     gauges = {
         c.kwargs["name"]: c.kwargs["callbacks"][0]
@@ -206,7 +214,7 @@ def test_gauges_register_and_emit_cached_values_without_bank_id():
 
 def test_gauge_emits_bank_id_attribute_when_present():
     collector = _collector(include_bank_id=True)
-    collector.set_db_pool(MagicMock())
+    _set_db_pool_with_backlog_enabled(collector, MagicMock())
     gauges = {
         c.kwargs["name"]: c.kwargs["callbacks"][0]
         for c in collector.meter.create_observable_gauge.call_args_list
@@ -216,3 +224,21 @@ def test_gauge_emits_bank_id_attribute_when_present():
     obs = list(gauges["hindsight.consolidation.backlog"](None))
     assert obs[0].value == 4
     assert obs[0].attributes["bank_id"] == "bankA"
+
+
+def test_backlog_gauges_not_registered_when_flag_disabled():
+    """Backlog metrics are off by default: set_db_pool must not register the
+    gauges unless metrics_backlog_enabled is set."""
+    collector = _collector()
+    mock_config = MagicMock()
+    mock_config.metrics_backlog_enabled = False
+    with patch("hindsight_api.config.get_config", return_value=mock_config):
+        collector.set_db_pool(MagicMock())
+
+    names = [
+        c.kwargs.get("name") for c in collector.meter.create_observable_gauge.call_args_list if "callbacks" in c.kwargs
+    ]
+    assert "hindsight.async_operations" not in names
+    assert "hindsight.consolidation.backlog" not in names
+    assert "hindsight.consolidation.failed" not in names
+    assert collector._backlog_task is None

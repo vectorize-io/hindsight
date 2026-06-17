@@ -369,6 +369,7 @@ ENV_OTEL_EXPORTER_OTLP_HEADERS = "HINDSIGHT_API_OTEL_EXPORTER_OTLP_HEADERS"
 ENV_OTEL_SERVICE_NAME = "HINDSIGHT_API_OTEL_SERVICE_NAME"
 ENV_OTEL_DEPLOYMENT_ENVIRONMENT = "HINDSIGHT_API_OTEL_DEPLOYMENT_ENVIRONMENT"
 ENV_METRICS_INCLUDE_BANK_ID = "HINDSIGHT_API_METRICS_INCLUDE_BANK_ID"
+ENV_METRICS_BACKLOG_ENABLED = "HINDSIGHT_API_METRICS_BACKLOG_ENABLED"
 
 # Vertex AI configuration
 ENV_LLM_VERTEXAI_PROJECT_ID = "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID"
@@ -939,6 +940,7 @@ DEFAULT_OTEL_TRACES_ENABLED = False  # Disabled by default for backward compatib
 DEFAULT_OTEL_SERVICE_NAME = "hindsight-api"
 DEFAULT_OTEL_DEPLOYMENT_ENVIRONMENT = "development"
 DEFAULT_METRICS_INCLUDE_BANK_ID = False  # Disabled by default to avoid high-cardinality OTel metric growth
+DEFAULT_METRICS_BACKLOG_ENABLED = False  # Disabled by default: runs periodic per-schema COUNT queries
 
 # Audit log defaults
 DEFAULT_AUDIT_LOG_ENABLED = False  # Disabled by default
@@ -1540,6 +1542,7 @@ class HindsightConfig:
     otel_service_name: str
     otel_deployment_environment: str
     metrics_include_bank_id: bool
+    metrics_backlog_enabled: bool
 
     # Audit log configuration (static - server-level only)
     audit_log_enabled: bool  # Master switch for audit logging
@@ -2475,6 +2478,8 @@ class HindsightConfig:
             otel_service_name=os.getenv(ENV_OTEL_SERVICE_NAME, DEFAULT_OTEL_SERVICE_NAME),
             otel_deployment_environment=os.getenv(ENV_OTEL_DEPLOYMENT_ENVIRONMENT, DEFAULT_OTEL_DEPLOYMENT_ENVIRONMENT),
             metrics_include_bank_id=os.getenv(ENV_METRICS_INCLUDE_BANK_ID, str(DEFAULT_METRICS_INCLUDE_BANK_ID)).lower()
+            in ("true", "1", "yes"),
+            metrics_backlog_enabled=os.getenv(ENV_METRICS_BACKLOG_ENABLED, str(DEFAULT_METRICS_BACKLOG_ENABLED)).lower()
             in ("true", "1", "yes"),
             # Audit log configuration (static, server-level only)
             audit_log_enabled=os.getenv(ENV_AUDIT_LOG_ENABLED, str(DEFAULT_AUDIT_LOG_ENABLED)).lower() == "true",
