@@ -499,6 +499,16 @@
       "category": "framework",
       "link": "https://www.outsystems.com/forge/component-overview/24766/hindsight-api-odc",
       "icon": "/img/icons/outsystems.png"
-    }
+    },
+    {
+      "id": "agrasandhany",
+      "name": "agrasandhany",
+      "description": "Turns your local notes into long-term memory any agent can recall over MCP — with automatic sync, folder-scoped recall, and living summaries.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "https://github.com/yugandhar-maram/agrasandhany",
+      "icon": "/img/icons/obsidian.svg"
+    },
   ]
 }
