@@ -60,6 +60,7 @@ import type {
   MentalModelListResponse,
   MentalModelResponse,
   UpdateDocumentResponse,
+  VersionResponse,
 } from "../generated/types.gen";
 
 // __CLIENT_VERSION__ is replaced by tsup's `define` with package.json's version
@@ -135,6 +136,18 @@ export class HindsightClient {
         headers,
       })
     );
+  }
+
+  /**
+   * Get API version and feature flags for the connected Hindsight deployment.
+   */
+  async getVersion(options?: { signal?: AbortSignal }): Promise<VersionResponse> {
+    const response = await sdk.getVersion({
+      client: this.client,
+      signal: options?.signal,
+    });
+
+    return this.validateResponse(response, "getVersion");
   }
 
   /**
@@ -1098,6 +1111,7 @@ export type {
   MentalModelListResponse,
   MentalModelResponse,
   UpdateDocumentResponse,
+  VersionResponse,
 };
 
 // Also export low-level SDK functions for advanced usage
