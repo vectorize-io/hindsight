@@ -176,12 +176,6 @@
         "minimum": 0,
         "default": 0
       },
-      "retainDocumentScope": {
-        "type": "string",
-        "description": "Granularity of the retained document_id. 'session' (default) groups all retains under a single document per OpenClaw session. 'turn' produces a new document per retain.",
-        "enum": ["session", "turn"],
-        "default": "session"
-      },
       "recallBudget": {
         "type": "string",
         "description": "Recall effort level. Higher budgets use more retrieval strategies for better results but take longer.",
@@ -422,10 +416,6 @@
     "retainOverlapTurns": {
       "label": "Retain Overlap Turns",
       "placeholder": "0 (no overlap, default)"
-    },
-    "retainDocumentScope": {
-      "label": "Retain Document Scope",
-      "placeholder": "session (default) or turn"
     },
     "recallBudget": {
       "label": "Recall Budget",
