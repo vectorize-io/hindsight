@@ -246,6 +246,19 @@ class MetricsCollectorBase:
         """Context manager to record operation duration and status."""
         raise NotImplementedError
 
+    def record_operation_result(
+        self,
+        operation: str,
+        bank_id: str,
+        success: bool,
+        duration: float,
+        source: str = "api",
+        budget: str | None = None,
+        max_tokens: int | None = None,
+    ):
+        """Record a single completed operation with an explicit success label."""
+        raise NotImplementedError
+
     def record_llm_call(
         self,
         provider: str,
@@ -298,6 +311,19 @@ class NoOpMetricsCollector(MetricsCollectorBase):
     ):
         """No-op context manager."""
         yield
+
+    def record_operation_result(
+        self,
+        operation: str,
+        bank_id: str,
+        success: bool,
+        duration: float,
+        source: str = "api",
+        budget: str | None = None,
+        max_tokens: int | None = None,
+    ):
+        """No-op operation result recording."""
+        pass
 
     def record_llm_call(
         self,
@@ -438,18 +464,6 @@ class MetricsCollector(MetricsCollectorBase):
             max_tokens: Optional max tokens for the operation
         """
         start_time = time.time()
-        attributes = {
-            "operation": operation,
-            "source": source,
-            "tenant": _get_tenant(),
-        }
-        if self._include_bank_id:
-            attributes["bank_id"] = bank_id
-        if budget:
-            attributes["budget"] = budget
-        if max_tokens:
-            attributes["max_tokens"] = str(max_tokens)
-
         success = True
         cancelled = False
         try:
@@ -468,14 +482,51 @@ class MetricsCollector(MetricsCollectorBase):
             raise
         finally:
             if not cancelled:
-                duration = time.time() - start_time
-                attributes["success"] = str(success).lower()
+                self.record_operation_result(
+                    operation,
+                    bank_id,
+                    success=success,
+                    duration=time.time() - start_time,
+                    source=source,
+                    budget=budget,
+                    max_tokens=max_tokens,
+                )
 
-                # Record duration
-                self.operation_duration.record(duration, attributes)
+    def record_operation_result(
+        self,
+        operation: str,
+        bank_id: str,
+        success: bool,
+        duration: float,
+        source: str = "api",
+        budget: str | None = None,
+        max_tokens: int | None = None,
+    ):
+        """Record a single completed operation (duration + count) with a success label.
 
-                # Record operation count
-                self.operation_total.add(1, attributes)
+        Direct (non-context-manager) recording for code paths that need explicit
+        success control rather than the exception-based ``record_operation`` — e.g.
+        the async worker, where deferrals/retries are not terminal outcomes and must
+        not be counted as completions.
+        """
+        attributes = {
+            "operation": operation,
+            "source": source,
+            "tenant": _get_tenant(),
+        }
+        if self._include_bank_id:
+            attributes["bank_id"] = bank_id
+        if budget:
+            attributes["budget"] = budget
+        if max_tokens:
+            attributes["max_tokens"] = str(max_tokens)
+        attributes["success"] = str(success).lower()
+
+        # Record duration
+        self.operation_duration.record(duration, attributes)
+
+        # Record operation count
+        self.operation_total.add(1, attributes)
 
     def record_llm_call(
         self,

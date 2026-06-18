@@ -13,6 +13,7 @@ Tests cover:
 import asyncio
 import json
 import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -68,6 +69,99 @@ async def clean_operations(pool):
     await pool.execute(
         "DELETE FROM async_operations WHERE bank_id LIKE 'test-worker-%' OR bank_id LIKE 'test_worker_%'"
     )
+
+
+def test_metric_operation_label_normalises_retain_variants():
+    """Worker completion metrics collapse retain variants onto operation="retain"
+    so they share the API path's series; other types pass through unchanged."""
+    from hindsight_api.worker.poller import _metric_operation_label
+
+    assert _metric_operation_label("retain") == "retain"
+    assert _metric_operation_label("batch_retain") == "retain"
+    assert _metric_operation_label("file_convert_retain") == "retain"
+    assert _metric_operation_label("consolidation") == "consolidation"
+    assert _metric_operation_label("reflect") == "reflect"
+    assert _metric_operation_label(None) == "unknown"
+
+
+class TestWorkerOperationMetrics:
+    """_execute_task_inner emits operation metrics on terminal outcomes only (no DB)."""
+
+    def _make_poller(self, executor):
+        from hindsight_api.worker import WorkerPoller
+
+        poller = WorkerPoller(backend=MagicMock(), worker_id="w-test", executor=executor)
+        # Stub terminal-state handlers so _execute_task_inner never touches the DB.
+        poller._mark_failed = AsyncMock()
+        poller._defer_operation = AsyncMock()
+        poller._schedule_retry = AsyncMock()
+        return poller
+
+    async def _run(self, executor, task_type="batch_retain"):
+        from hindsight_api.worker.poller import ClaimedTask
+
+        poller = self._make_poller(executor)
+        task = ClaimedTask(
+            operation_id=str(uuid.uuid4()),
+            task_dict={"type": task_type, "operation_type": task_type, "bank_id": "bank-1"},
+            schema=None,
+        )
+        collector = MagicMock()
+        with patch("hindsight_api.worker.poller.get_metrics_collector", return_value=collector):
+            await poller._execute_task_inner(task)
+        return collector
+
+    @pytest.mark.asyncio
+    async def test_executor_returning_normally_records_success(self):
+        """Success is inferred from the executor returning without raising to the
+        poller. This deliberately includes deterministic failures that
+        memory_engine.execute_task handles itself and returns from normally
+        (file_convert_retain, non-retryable errors) — at the poller boundary they
+        are indistinguishable from a clean completion, so they also record
+        success=true. The worker counter is therefore a completion-throughput
+        signal; authoritative failure visibility comes from the
+        hindsight_async_operations{status="failed"} gauge, which reads each
+        operation's final DB status.
+        """
+        collector = await self._run(AsyncMock())  # executor returns normally
+        collector.record_operation_result.assert_called_once()
+        call = collector.record_operation_result.call_args
+        assert call.args[0] == "retain"  # batch_retain normalised
+        assert call.kwargs["success"] is True
+        assert call.kwargs["source"] == "worker"
+
+    @pytest.mark.asyncio
+    async def test_failure_records_failure(self):
+        async def boom(_):
+            raise RuntimeError("kaboom")
+
+        collector = await self._run(boom)
+        collector.record_operation_result.assert_called_once()
+        assert collector.record_operation_result.call_args.kwargs["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_deferral_not_counted(self):
+        from datetime import datetime, timezone
+
+        from hindsight_api.worker.exceptions import DeferOperation
+
+        async def defer(_):
+            raise DeferOperation(exec_date=datetime.now(timezone.utc), reason="later")
+
+        collector = await self._run(defer)
+        collector.record_operation_result.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_retry_not_counted(self):
+        from datetime import datetime, timezone
+
+        from hindsight_api.worker.exceptions import RetryTaskAt
+
+        async def retry(_):
+            raise RetryTaskAt(retry_at=datetime.now(timezone.utc), message="transient")
+
+        collector = await self._run(retry)
+        collector.record_operation_result.assert_not_called()
 
 
 def test_all_operation_types_have_slot_reservation_config():

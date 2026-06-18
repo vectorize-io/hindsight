@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import httpx
 import pytest
@@ -21,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from testcontainers.core.container import DockerContainer
+    from testcontainers.core.docker_client import DockerClient as _DockerClient
 
     _has_testcontainers = True
 except ImportError:
@@ -38,6 +41,8 @@ SEAWEEDFS_S3_PORT = 8333
 TEST_BUCKET = "hindsight-test"
 ACCESS_KEY = "test_access_key"
 SECRET_KEY = "test_secret_key"
+_PORT_MAPPING_RETRY_TIMEOUT_SECONDS = 10.0
+_PORT_MAPPING_RETRY_INTERVAL_SECONDS = 0.1
 
 # SeaweedFS S3 IAM config granting full access to our test credentials
 _S3_CONFIG = {
@@ -62,6 +67,33 @@ def _docker_available() -> bool:
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
+
+
+if _has_testcontainers:
+
+    @contextmanager
+    def _retry_testcontainers_port_mapping() -> Iterator[None]:
+        original_port = _DockerClient.port
+
+        def port_with_retry(self: _DockerClient, container_id: str, port: int) -> str:
+            deadline = time.monotonic() + _PORT_MAPPING_RETRY_TIMEOUT_SECONDS
+            while True:
+                try:
+                    return original_port(self, container_id, port)
+                except ConnectionError:
+                    # Docker Desktop can report a container as running before its
+                    # published port appears in NetworkSettings.Ports. This affects
+                    # both Ryuk's 8080 lookup inside testcontainers and the
+                    # SeaweedFS S3 port lookup below.
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(_PORT_MAPPING_RETRY_INTERVAL_SECONDS)
+
+        _DockerClient.port = port_with_retry
+        try:
+            yield
+        finally:
+            _DockerClient.port = original_port
 
 
 def _wait_for_seaweedfs(endpoint: str, timeout: int = 30) -> None:
@@ -101,11 +133,11 @@ def seaweedfs_container():
         .with_command(f"server -s3 -s3.port={SEAWEEDFS_S3_PORT} -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0")
     )
 
-    container.start()
-
     try:
-        host = container.get_container_host_ip()
-        port = container.get_exposed_port(SEAWEEDFS_S3_PORT)
+        with _retry_testcontainers_port_mapping():
+            container.start()
+            host = container.get_container_host_ip()
+            port = container.get_exposed_port(SEAWEEDFS_S3_PORT)
         endpoint = f"http://{host}:{port}"
 
         _wait_for_seaweedfs(endpoint, timeout=240)

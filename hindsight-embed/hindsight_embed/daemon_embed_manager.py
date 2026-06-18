@@ -256,11 +256,13 @@ class DaemonEmbedManager(EmbedManager):
         try:
             if platform.system() == "Windows":
                 # Use netstat on Windows
+                create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
                 result = subprocess.run(
                     ["netstat", "-ano", "-p", "TCP"],
                     capture_output=True,
                     text=True,
                     timeout=5,
+                    creationflags=create_no_window,
                 )
                 if result.returncode == 0:
                     for line in result.stdout.splitlines():

@@ -9,7 +9,7 @@ from fastmcp import FastMCP
 
 from hindsight_api import MemoryEngine
 from hindsight_api import __version__ as HINDSIGHT_VERSION
-from hindsight_api.config import _get_raw_config
+from hindsight_api.config import DEFAULT_MCP_RECALL_DESCRIPTION, DEFAULT_MCP_RETAIN_DESCRIPTION, _get_raw_config
 from hindsight_api.engine.memory_engine import _current_schema
 from hindsight_api.extensions import MCPExtension, load_extension
 from hindsight_api.extensions.tenant import AuthenticationError
@@ -78,6 +78,19 @@ def get_current_mcp_authenticated() -> bool:
     return _current_mcp_authenticated.get()
 
 
+def _build_mcp_tool_descriptions(extra_instructions: str | None) -> tuple[str | None, str | None]:
+    """Return custom retain/recall descriptions when server-level MCP instructions are set."""
+    if not isinstance(extra_instructions, str):
+        return None, None
+
+    extra_instructions = extra_instructions.strip()
+    if not extra_instructions:
+        return None, None
+
+    suffix = f"\n\nAdditional instructions: {extra_instructions}"
+    return DEFAULT_MCP_RETAIN_DESCRIPTION + suffix, DEFAULT_MCP_RECALL_DESCRIPTION + suffix
+
+
 def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
     """
     Create and configure the Hindsight MCP server.
@@ -135,6 +148,10 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
         allowed = frozenset(global_config.mcp_enabled_tools)
         base_tools = (base_tools if base_tools is not None else _ALL_TOOLS) & allowed
 
+    retain_description, recall_description = _build_mcp_tool_descriptions(
+        getattr(global_config, "mcp_instructions", None)
+    )
+
     # Configure and register tools using shared module
     config = MCPToolsConfig(
         bank_id_resolver=get_current_bank_id,
@@ -144,6 +161,8 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
         mcp_authenticated_resolver=get_current_mcp_authenticated,  # Propagate MCP pre-auth flag
         include_bank_id_param=multi_bank,
         tools=base_tools,
+        retain_description=retain_description,
+        recall_description=recall_description,
     )
 
     register_mcp_tools(mcp, memory, config)

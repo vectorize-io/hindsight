@@ -222,6 +222,17 @@ class TestMetricsCollector:
         assert reflect_attrs["operation"] == "reflect"
         assert reflect_attrs["source"] == "api"
 
+    def test_record_operation_result_records_with_explicit_success(self, collector):
+        """Direct recording path used by the worker (source=worker, explicit success)."""
+        collector.record_operation_result("retain", bank_id="test_bank", success=False, duration=1.5, source="worker")
+
+        duration, attributes = collector.operation_duration.record.call_args[0]
+        assert duration == 1.5
+        assert attributes["operation"] == "retain"
+        assert attributes["source"] == "worker"
+        assert attributes["success"] == "false"
+        collector.operation_total.add.assert_called_once_with(1, attributes)
+
     def test_record_operation_includes_bank_id_when_enabled(self):
         """Test that bank_id is included in attributes when metrics_include_bank_id is enabled."""
         mock_config = MagicMock()
