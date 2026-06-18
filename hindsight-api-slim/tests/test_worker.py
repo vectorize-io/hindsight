@@ -975,9 +975,11 @@ class TestWorkerPoller:
 
         claimed = await poller.claim_batch()
 
-        # Should claim the retain task (non-consolidation tasks are unaffected)
-        assert len(claimed) == 1
-        assert claimed[0].operation_id == str(retain_op_id)
+        # Should claim the retain task (non-consolidation tasks are unaffected).
+        # Filter to our bank — parallel tests may contribute other claims.
+        my_claims = [c for c in claimed if c.task_dict.get("bank_id") == bank_id]
+        assert len(my_claims) == 1, f"Expected 1 claim for our bank, got {len(my_claims)}"
+        assert my_claims[0].operation_id == str(retain_op_id)
 
 
 class TestWorkerRecovery:
@@ -1614,7 +1616,9 @@ class TestDynamicTenantDiscovery:
         # First claim_batch should call list_tenants
         claimed1 = await poller.claim_batch()
         assert mock_extension.list_tenants_calls == 1
-        assert len(claimed1) == 2
+        # Filter to our bank — parallel tests may contribute other claims.
+        my_claims1 = [c for c in claimed1 if c.task_dict.get("bank_id") == bank_id]
+        assert len(my_claims1) == 2, f"Expected 2 claims for our bank, got {len(my_claims1)}"
 
         # Add more tasks
         for i in range(2):
@@ -1633,7 +1637,8 @@ class TestDynamicTenantDiscovery:
         # Second claim_batch should call list_tenants again
         claimed2 = await poller.claim_batch()
         assert mock_extension.list_tenants_calls == 2
-        assert len(claimed2) == 2
+        my_claims2 = [c for c in claimed2 if c.task_dict.get("bank_id") == bank_id]
+        assert len(my_claims2) == 2, f"Expected 2 claims for our bank, got {len(my_claims2)}"
 
     @pytest.mark.asyncio
     async def test_poller_picks_up_new_tenants_without_restart(self, pool, backend, clean_operations):
@@ -1678,10 +1683,12 @@ class TestDynamicTenantDiscovery:
             tenant_extension=dynamic_extension,
         )
 
-        # First poll - only public schema
+        # First poll - only public schema. Filter to our bank — parallel tests
+        # may contribute other claims.
         claimed1 = await poller.claim_batch()
-        assert len(claimed1) == 1
-        assert claimed1[0].schema is None  # public is represented as None
+        my_claims1 = [c for c in claimed1 if c.task_dict.get("bank_id") == bank_id]
+        assert len(my_claims1) == 1, f"Expected 1 claim for our bank, got {len(my_claims1)}"
+        assert my_claims1[0].schema is None  # public is represented as None
         assert dynamic_extension.list_tenants_calls == 1
 
         # Simulate tenant list changing (but we won't add a non-existent schema)
@@ -1703,12 +1710,14 @@ class TestDynamicTenantDiscovery:
 
         # Second poll - list_tenants should be called again
         claimed2 = await poller.claim_batch()
-        assert len(claimed2) == 1
+        my_claims2 = [c for c in claimed2 if c.task_dict.get("bank_id") == bank_id]
+        assert len(my_claims2) == 1, f"Expected 1 claim for our bank, got {len(my_claims2)}"
         assert dynamic_extension.list_tenants_calls == 2  # Called again on second poll
 
         # Third poll with no tasks - still calls list_tenants
         claimed3 = await poller.claim_batch()
-        assert len(claimed3) == 0
+        my_claims3 = [c for c in claimed3 if c.task_dict.get("bank_id") == bank_id]
+        assert len(my_claims3) == 0, f"Expected 0 claims for our bank, got {len(my_claims3)}"
         assert dynamic_extension.list_tenants_calls == 3  # Called again even with no tasks
 
     @pytest.mark.asyncio
