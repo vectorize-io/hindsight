@@ -34,6 +34,7 @@ Each integration lives in its own subdirectory with its own README, configuratio
 | [**AG2**](./ag2) | Cross-conversation memory tools. |
 | [**AutoGen**](./autogen) | `FunctionTool` instances for retain/recall/reflect. |
 | [**OpenAI Agents SDK**](./openai-agents) | `FunctionTool`-based memory. |
+| [**OpenHands**](./openhands) | Native MCP server config + recall/retain rule for OpenHands (formerly OpenDevin). |
 | [**NemoClaw**](./nemoclaw) | One-command setup for NemoClaw sandboxes. |
 | [**Right Agent**](./right-agent) | Native memory provider for Right Agent sandboxes. |
 | [**Pipecat**](./pipecat) | Memory nodes for Pipecat voice pipelines. |

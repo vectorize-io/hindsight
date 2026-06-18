@@ -494,8 +494,9 @@ describe("agent_end hook", () => {
     // Default retainFormat is 'json' with Anthropic-shaped typed blocks.
     const [, content] = retainSpy.mock.calls[0];
     const parsed = JSON.parse(content);
+    // Routing metadata is no longer prepended as a system message in the
+    // transcript — it now travels via the retain API `context` field (#1968).
     expect(parsed).toEqual([
-      { role: "system", content: "[context]\nsender: U013\nprovider: telegram\n[/context]" },
       { role: "user", content: [{ type: "text", text: "I love TypeScript." }] },
       { role: "assistant", content: [{ type: "text", text: "TypeScript is great!" }] },
     ]);
@@ -543,7 +544,7 @@ describe("agent_end hook", () => {
     expect(options?.metadata?.channel_id).toBe("chat-999");
     expect(options?.metadata?.sender_id).toBe("U015");
     expect(options?.metadata?.retained_at).toBeDefined();
-    expect(options?.metadata?.message_count).toBe("2");
+    expect(options?.metadata?.message_count).toBe("1");
   });
 
   it("uses identity cached in before_dispatch for retain metadata when agent_end ctx is sparse", async () => {
@@ -695,12 +696,11 @@ describe("agent_end hook", () => {
     // Default retainFormat is 'json' with Anthropic-shaped typed blocks.
     const parsed = JSON.parse(content);
     expect(parsed).toEqual([
-      { role: "system", content: "[context]\nsender: U019\nprovider: telegram\n[/context]" },
       { role: "user", content: [{ type: "text", text: "I work as a data scientist." }] },
       { role: "assistant", content: [{ type: "text", text: "That's a fascinating career!" }] },
     ]);
     expect(content).not.toContain("My name is Carol.");
-    expect(options?.metadata?.message_count).toBe("3");
+    expect(options?.metadata?.message_count).toBe("2");
   });
 });
 

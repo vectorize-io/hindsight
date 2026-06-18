@@ -88,10 +88,16 @@ def derive_bank_id(hook_input: dict, config: dict) -> str:
     cwd = hook_input.get("cwd", "")
     dir_map = config.get("directoryBankMap") or {}
     if cwd and dir_map:
-        # Normalize cwd for matching (resolve symlinks, trailing slashes)
-        normalized_cwd = os.path.normpath(cwd)
+        # Normalize cwd for matching (trailing slashes, separators, and —
+        # via normcase — drive-letter/path case on Windows, where launchers
+        # disagree: PowerShell and git-bash hand children an UPPERCASE drive
+        # while the VS Code extension spawn reports lowercase, so a
+        # case-sensitive compare silently misses the map and falls through
+        # to the default bank. normcase is a no-op on POSIX, preserving
+        # case-sensitive matching there.
+        normalized_cwd = os.path.normcase(os.path.normpath(cwd))
         for dir_path, bank_id in dir_map.items():
-            if os.path.normpath(dir_path) == normalized_cwd:
+            if os.path.normcase(os.path.normpath(dir_path)) == normalized_cwd:
                 return f"{prefix}-{bank_id}" if prefix else bank_id
 
     if not config.get("dynamicBankId", False):

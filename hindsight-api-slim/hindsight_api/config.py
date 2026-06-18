@@ -142,6 +142,7 @@ ENV_LLM_REASONING_EFFORT = "HINDSIGHT_API_LLM_REASONING_EFFORT"
 ENV_LLM_GROQ_SERVICE_TIER = "HINDSIGHT_API_LLM_GROQ_SERVICE_TIER"
 ENV_LLM_OPENAI_SERVICE_TIER = "HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER"
 ENV_LLM_BEDROCK_SERVICE_TIER = "HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER"
+ENV_LLM_GEMINI_SERVICE_TIER = "HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER"
 ENV_LLM_EXTRA_BODY = "HINDSIGHT_API_LLM_EXTRA_BODY"
 ENV_LLM_DEFAULT_HEADERS = "HINDSIGHT_API_LLM_DEFAULT_HEADERS"
 ENV_LLM_STRICT_SCHEMA = "HINDSIGHT_API_LLM_STRICT_SCHEMA"
@@ -159,10 +160,24 @@ ENV_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG"
 DEFAULT_LLM_GROQ_SERVICE_TIER = "auto"  # "on_demand", "flex", or "auto"
 DEFAULT_LLM_OPENAI_SERVICE_TIER = None  # None (default) or "flex" (50% cheaper)
 DEFAULT_LLM_BEDROCK_SERVICE_TIER = None  # None (default), "flex", "priority", or "reserved"
+DEFAULT_LLM_GEMINI_SERVICE_TIER = None  # None (default) or "flex" (50% cheaper best-effort tier)
 DEFAULT_LLM_EXTRA_BODY = None  # None = no extra body params; JSON dict merged into OpenAI extra_body
 DEFAULT_LLM_DEFAULT_HEADERS = (
     None  # None = no extra headers; JSON dict passed as default_headers to provider SDK clients
 )
+
+
+def parse_gemini_service_tier(value: str | None) -> str | None:
+    """Normalize and validate the Gemini service tier."""
+    tier = value or None
+    valid_tiers = (None, "flex")
+    if tier not in valid_tiers:
+        raise ValueError(
+            f"Invalid HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER: "
+            f"{tier!r}. Must be one of: {', '.join(t for t in valid_tiers if t is not None)}."
+        )
+    return tier
+
 
 # Per-operation LLM configuration (optional, falls back to global LLM config)
 ENV_RETAIN_LLM_PROVIDER = "HINDSIGHT_API_RETAIN_LLM_PROVIDER"
@@ -375,6 +390,7 @@ ENV_OTEL_EXPORTER_OTLP_HEADERS = "HINDSIGHT_API_OTEL_EXPORTER_OTLP_HEADERS"
 ENV_OTEL_SERVICE_NAME = "HINDSIGHT_API_OTEL_SERVICE_NAME"
 ENV_OTEL_DEPLOYMENT_ENVIRONMENT = "HINDSIGHT_API_OTEL_DEPLOYMENT_ENVIRONMENT"
 ENV_METRICS_INCLUDE_BANK_ID = "HINDSIGHT_API_METRICS_INCLUDE_BANK_ID"
+ENV_METRICS_BACKLOG_ENABLED = "HINDSIGHT_API_METRICS_BACKLOG_ENABLED"
 
 # Vertex AI configuration
 ENV_LLM_VERTEXAI_PROJECT_ID = "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID"
@@ -424,6 +440,11 @@ ENV_FILE_STORAGE_AZURE_ACCOUNT_NAME = "HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_
 ENV_FILE_STORAGE_AZURE_ACCOUNT_KEY = "HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_KEY"
 ENV_FILE_PARSER = "HINDSIGHT_API_FILE_PARSER"
 ENV_FILE_PARSER_ALLOWLIST = "HINDSIGHT_API_FILE_PARSER_ALLOWLIST"
+ENV_FILE_PARSER_MARKITDOWN_OCR_ENABLED = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_ENABLED"
+ENV_FILE_PARSER_MARKITDOWN_OCR_API_KEY = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_API_KEY"
+ENV_FILE_PARSER_MARKITDOWN_OCR_BASE_URL = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_BASE_URL"
+ENV_FILE_PARSER_MARKITDOWN_OCR_MODEL = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_MODEL"
+ENV_FILE_PARSER_MARKITDOWN_OCR_PROMPT = "HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_PROMPT"
 ENV_FILE_PARSER_IRIS_TOKEN = "HINDSIGHT_API_FILE_PARSER_IRIS_TOKEN"
 ENV_FILE_PARSER_IRIS_ORG_ID = "HINDSIGHT_API_FILE_PARSER_IRIS_ORG_ID"
 ENV_FILE_PARSER_LLAMA_PARSE_API_KEY = "HINDSIGHT_API_FILE_PARSER_LLAMA_PARSE_API_KEY"
@@ -847,6 +868,10 @@ DEFAULT_RETAIN_BATCH_POLL_INTERVAL_SECONDS = 60  # Batch API polling interval in
 DEFAULT_FILE_STORAGE_TYPE = "native"  # PostgreSQL BYTEA storage
 DEFAULT_FILE_PARSER = "markitdown"  # Default parser fallback chain (comma-separated, e.g. "iris,markitdown")
 DEFAULT_FILE_PARSER_ALLOWLIST = None  # Allowlist of parsers clients may request (None = all registered parsers)
+DEFAULT_FILE_PARSER_MARKITDOWN_OCR_ENABLED = False
+DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT = """You are a precise OCR transcription engine.
+
+Transcribe only the visible text in the image. Do not describe the image, summarize it, translate it, infer missing content, or add commentary. Preserve the original language, wording, numbers, punctuation, capitalization, and reading order. Reconstruct headings, lists, key-value fields, stamps, and tables as clean Markdown when the layout is clear. If text is unreadable or uncertain, write [unclear] for that span. Return only the extracted Markdown."""
 DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE_MB = 100  # Max total batch size in MB (all files combined)
 DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE = 10  # Max files per batch upload
 DEFAULT_ENABLE_FILE_UPLOAD_API = True  # Enable file upload endpoint
@@ -965,6 +990,7 @@ DEFAULT_OTEL_TRACES_ENABLED = False  # Disabled by default for backward compatib
 DEFAULT_OTEL_SERVICE_NAME = "hindsight-api"
 DEFAULT_OTEL_DEPLOYMENT_ENVIRONMENT = "development"
 DEFAULT_METRICS_INCLUDE_BANK_ID = False  # Disabled by default to avoid high-cardinality OTel metric growth
+DEFAULT_METRICS_BACKLOG_ENABLED = False  # Disabled by default: runs periodic per-schema COUNT queries
 
 # Audit log defaults
 DEFAULT_AUDIT_LOG_ENABLED = False  # Disabled by default
@@ -1298,6 +1324,7 @@ class HindsightConfig:
     llm_groq_service_tier: str  # Groq: "on_demand", "flex", or "auto"
     llm_openai_service_tier: str | None  # OpenAI: None (default) or "flex" (50% cheaper)
     llm_bedrock_service_tier: str | None  # Bedrock: None (default), "flex", "priority", or "reserved"
+    llm_gemini_service_tier: str | None  # Gemini: None (default) or "flex" (50% cheaper)
     llm_extra_body: (
         dict | None
     )  # Extra body params merged into OpenAI-compatible API calls (e.g. {"chat_template_kwargs": {"enable_thinking": true}})
@@ -1642,6 +1669,7 @@ class HindsightConfig:
     otel_service_name: str
     otel_deployment_environment: str
     metrics_include_bank_id: bool
+    metrics_backlog_enabled: bool
 
     # Audit log configuration (static - server-level only)
     audit_log_enabled: bool  # Master switch for audit logging
@@ -1676,6 +1704,11 @@ class HindsightConfig:
     embeddings_zeroentropy_encoding_format: str = DEFAULT_EMBEDDINGS_ZEROENTROPY_ENCODING_FORMAT
     embeddings_zeroentropy_batch_size: int = DEFAULT_EMBEDDINGS_ZEROENTROPY_BATCH_SIZE
     embeddings_zeroentropy_latency: str | None = DEFAULT_EMBEDDINGS_ZEROENTROPY_LATENCY
+    file_parser_markitdown_ocr_enabled: bool = DEFAULT_FILE_PARSER_MARKITDOWN_OCR_ENABLED
+    file_parser_markitdown_ocr_api_key: str | None = None
+    file_parser_markitdown_ocr_base_url: str | None = None
+    file_parser_markitdown_ocr_model: str | None = None
+    file_parser_markitdown_ocr_prompt: str = DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT
 
     # Class-level sets for configuration categorization
 
@@ -1716,6 +1749,8 @@ class HindsightConfig:
         "file_storage_gcs_service_account_key",
         "file_storage_azure_account_key",
         # File parser credentials
+        "file_parser_markitdown_ocr_api_key",
+        "file_parser_markitdown_ocr_base_url",
         "file_parser_iris_token",
         "file_parser_llama_parse_api_key",
     }
@@ -1879,6 +1914,9 @@ class HindsightConfig:
                 f"Note: 'standard' is not a valid Bedrock service tier -- use unset for default tier."
             )
 
+        # Validate gemini_service_tier
+        self.llm_gemini_service_tier = parse_gemini_service_tier(self.llm_gemini_service_tier)
+
         # When LLM provider is "none", force chunks-only mode and disable LLM-dependent features
         if self.llm_provider == "none":
             self.retain_extraction_mode = "chunks"
@@ -1996,6 +2034,11 @@ class HindsightConfig:
             llm_groq_service_tier=os.getenv(ENV_LLM_GROQ_SERVICE_TIER, DEFAULT_LLM_GROQ_SERVICE_TIER),
             llm_openai_service_tier=os.getenv(ENV_LLM_OPENAI_SERVICE_TIER, DEFAULT_LLM_OPENAI_SERVICE_TIER),
             llm_bedrock_service_tier=os.getenv(ENV_LLM_BEDROCK_SERVICE_TIER) or None,
+            llm_gemini_service_tier=(
+                parse_gemini_service_tier(os.getenv(ENV_LLM_GEMINI_SERVICE_TIER) or DEFAULT_LLM_GEMINI_SERVICE_TIER)
+                if llm_provider.lower() == "gemini"
+                else None
+            ),
             llm_extra_body=json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null")),
             llm_default_headers=json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null")),
             llm_strict_schema=os.getenv(ENV_LLM_STRICT_SCHEMA, str(DEFAULT_LLM_STRICT_SCHEMA)).lower() in ("true", "1"),
@@ -2424,6 +2467,18 @@ class HindsightConfig:
             file_parser_allowlist=_parse_str_list(os.getenv(ENV_FILE_PARSER_ALLOWLIST))
             if os.getenv(ENV_FILE_PARSER_ALLOWLIST)
             else None,
+            file_parser_markitdown_ocr_enabled=os.getenv(
+                ENV_FILE_PARSER_MARKITDOWN_OCR_ENABLED,
+                str(DEFAULT_FILE_PARSER_MARKITDOWN_OCR_ENABLED),
+            ).lower()
+            in ("1", "true", "yes", "on"),
+            file_parser_markitdown_ocr_api_key=os.getenv(ENV_FILE_PARSER_MARKITDOWN_OCR_API_KEY) or None,
+            file_parser_markitdown_ocr_base_url=os.getenv(ENV_FILE_PARSER_MARKITDOWN_OCR_BASE_URL) or None,
+            file_parser_markitdown_ocr_model=os.getenv(ENV_FILE_PARSER_MARKITDOWN_OCR_MODEL) or None,
+            file_parser_markitdown_ocr_prompt=os.getenv(
+                ENV_FILE_PARSER_MARKITDOWN_OCR_PROMPT,
+                DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT,
+            ),
             file_parser_iris_token=os.getenv(ENV_FILE_PARSER_IRIS_TOKEN) or None,
             file_parser_iris_org_id=os.getenv(ENV_FILE_PARSER_IRIS_ORG_ID) or None,
             file_parser_llama_parse_api_key=os.getenv(ENV_FILE_PARSER_LLAMA_PARSE_API_KEY) or None,
@@ -2613,6 +2668,8 @@ class HindsightConfig:
             otel_service_name=os.getenv(ENV_OTEL_SERVICE_NAME, DEFAULT_OTEL_SERVICE_NAME),
             otel_deployment_environment=os.getenv(ENV_OTEL_DEPLOYMENT_ENVIRONMENT, DEFAULT_OTEL_DEPLOYMENT_ENVIRONMENT),
             metrics_include_bank_id=os.getenv(ENV_METRICS_INCLUDE_BANK_ID, str(DEFAULT_METRICS_INCLUDE_BANK_ID)).lower()
+            in ("true", "1", "yes"),
+            metrics_backlog_enabled=os.getenv(ENV_METRICS_BACKLOG_ENABLED, str(DEFAULT_METRICS_BACKLOG_ENABLED)).lower()
             in ("true", "1", "yes"),
             # Audit log configuration (static, server-level only)
             audit_log_enabled=os.getenv(ENV_AUDIT_LOG_ENABLED, str(DEFAULT_AUDIT_LOG_ENABLED)).lower() == "true",

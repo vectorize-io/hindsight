@@ -911,7 +911,7 @@ class TestPrecheckHttpWiring:
     def _build_app(validator):
         """Mirror the precheck wiring from ``hindsight_api.api.http`` in a
         standalone FastAPI app."""
-        from fastapi import Depends, FastAPI, HTTPException
+        from fastapi import Depends, FastAPI, HTTPException, Request
         from pydantic import BaseModel, model_validator
 
         from hindsight_api.extensions import PrecheckContext
@@ -952,12 +952,23 @@ class TestPrecheckHttpWiring:
         def _precheck_for(operation: str):
             async def _dep(
                 bank_id: str,
+                request: Request,
                 request_context: RequestContext = Depends(_request_context),
             ) -> None:
+                cl_header = request.headers.get("content-length")
+                content_length: int | None = None
+                if cl_header is not None:
+                    try:
+                        parsed = int(cl_header)
+                    except ValueError:
+                        parsed = -1
+                    if parsed >= 0:
+                        content_length = parsed
                 ctx = PrecheckContext(
                     operation=operation,
                     bank_id=bank_id,
                     request_context=request_context,
+                    content_length=content_length,
                 )
                 result = await validator.precheck(ctx)
                 if not result.allowed:
@@ -1081,3 +1092,86 @@ class TestPrecheckHttpWiring:
         resp = client.get("/v1/default/banks/precheck-bank/memories/list")
         assert resp.status_code == 200
         assert len(validator.precheck_calls) == 0
+
+    def test_precheck_context_carries_content_length(self):
+        """Content-Length header is exposed to the precheck so a validator
+        can make size-aware decisions (e.g. upper-bound cost estimate)
+        before the body is deserialised."""
+        validator = RecordingPrecheckValidator(reject=False)
+        app, _ = self._build_app(validator)
+        client = TestClient(app)
+
+        # Body must contain at least 500 'x' bytes; check the surfaced
+        # Content-Length is within a tight band around that floor (allows
+        # for JSON envelope + httpx's serialisation choices without
+        # depending on exact byte counts).
+        payload = {"items": [{"content": "x" * 500}]}
+        resp = client.post(
+            "/v1/default/banks/precheck-bank/memories",
+            json=payload,
+        )
+        assert resp.status_code == 200
+        assert len(validator.precheck_calls) == 1
+        ctx = validator.precheck_calls[0]
+        assert ctx.content_length is not None
+        assert 500 <= ctx.content_length <= 600
+
+    def test_precheck_context_content_length_zero_is_not_none(self):
+        """An empty POST body has Content-Length: 0. That should surface
+        as the int 0, not None — None means 'unknown', 0 means 'known to
+        be empty'."""
+        validator = RecordingPrecheckValidator(reject=False)
+        app, _ = self._build_app(validator)
+        client = TestClient(app)
+
+        # Empty body fails Pydantic parse (422), but precheck runs first
+        # and records the Content-Length.
+        client.post(
+            "/v1/default/banks/precheck-bank/memories",
+            content=b"",
+            headers={"content-type": "application/json"},
+        )
+        assert len(validator.precheck_calls) >= 1
+        ctx = validator.precheck_calls[-1]
+        assert ctx.content_length == 0
+
+    @pytest.mark.asyncio
+    async def test_precheck_context_content_length_none_when_header_missing(self):
+        """When the Content-Length header isn't set (e.g. chunked transfer
+        encoding) the validator sees None, not a crash and not a default 0."""
+        from starlette.requests import Request as _StarletteRequest
+
+        from hindsight_api.extensions import PrecheckContext
+        from hindsight_api.models import RequestContext
+
+        validator = RecordingPrecheckValidator(reject=False)
+
+        # Replicate the wiring's parse step inline so the test exercises
+        # the same code-path semantics introduced in
+        # ``hindsight_api.api.http._precheck_dep``.
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/default/banks/bank-x/memories",
+            "headers": [],  # no content-length
+            "query_string": b"",
+        }
+        req = _StarletteRequest(scope)
+        cl_header = req.headers.get("content-length")
+        content_length: int | None = None
+        if cl_header is not None:
+            try:
+                parsed = int(cl_header)
+            except ValueError:
+                parsed = -1
+            if parsed >= 0:
+                content_length = parsed
+
+        ctx = PrecheckContext(
+            operation="retain",
+            bank_id="bank-x",
+            request_context=RequestContext(),
+            content_length=content_length,
+        )
+        await validator.precheck(ctx)
+        assert validator.precheck_calls[-1].content_length is None

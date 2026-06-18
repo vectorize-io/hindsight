@@ -14,6 +14,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
+from ..llm_interface import ProviderRateLimitResetError
 from ..llm_wrapper import LLMConfig, OutputTooLongError, sanitize_llm_output
 from ..operation_metadata import RetainExtractionErrors
 from ..response_models import TokenUsage
@@ -1792,10 +1793,21 @@ async def extract_facts_from_text(
         total_usage = total_usage + chunk_usage
 
     if failed_chunks:
+        failed_summary = ", ".join(f"chunk {idx}: {type(err).__name__}" for idx, err in failed_chunks[:5])
+        quota_errors = [err for _, err in failed_chunks if isinstance(err, ProviderRateLimitResetError)]
+        if quota_errors and len(quota_errors) == len(failed_chunks):
+            retry_at = max(err.retry_at for err in quota_errors)
+            raise ProviderRateLimitResetError(
+                retry_at=retry_at,
+                message=(
+                    f"Fact extraction deferred by provider quota: {len(failed_chunks)}/{len(chunks)} chunks failed. "
+                    f"First failures: {failed_summary}. Provider detail: {quota_errors[0]}"
+                ),
+            ) from quota_errors[0]
+
         # Fail the entire retain — partial extraction is not acceptable.
         # All successfully extracted facts are discarded because the transaction
         # hasn't committed yet. The worker poller will retry the entire task.
-        failed_summary = ", ".join(f"chunk {idx}: {type(err).__name__}" for idx, err in failed_chunks[:5])
         raise RuntimeError(
             f"Fact extraction failed: {len(failed_chunks)}/{len(chunks)} chunks failed. "
             f"First failures: {failed_summary}"

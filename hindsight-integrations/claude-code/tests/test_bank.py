@@ -177,6 +177,29 @@ class TestDirectoryBankMap:
         result = derive_bank_id(_hook(cwd="/home/user/myproject"), cfg)
         assert result == "custom-bank"
 
+    def test_windows_drive_letter_case_insensitive_match(self):
+        # On Windows, the cwd's drive-letter (and path) case depends on the
+        # launcher: PowerShell and git-bash hand children an UPPERCASE drive
+        # while the VS Code extension spawn reports lowercase. The map match
+        # must not depend on which launcher started the session. normcase is
+        # a no-op on POSIX, so this test only exercises the Windows behavior
+        # when run there; the POSIX-case-sensitivity test below pins the
+        # complementary guarantee.
+        import os as _os
+
+        if _os.path.normcase("A") == _os.path.normcase("a"):  # case-insensitive FS semantics
+            cfg = _cfg(directoryBankMap={r"c:\Users\dev\proj": "custom-bank"})
+            result = derive_bank_id(_hook(cwd=r"C:\Users\dev\proj"), cfg)
+            assert result == "custom-bank"
+
+    def test_posix_paths_stay_case_sensitive(self):
+        import os as _os
+
+        if _os.path.normcase("A") != _os.path.normcase("a"):  # POSIX semantics
+            cfg = _cfg(directoryBankMap={"/home/User/myproject": "custom-bank"}, bankId="default-bank")
+            result = derive_bank_id(_hook(cwd="/home/user/myproject"), cfg)
+            assert result == "default-bank"
+
     def test_no_match_falls_through_to_static(self):
         cfg = _cfg(directoryBankMap={"/home/user/other": "other-bank"}, bankId="default-bank")
         result = derive_bank_id(_hook(cwd="/home/user/myproject"), cfg)

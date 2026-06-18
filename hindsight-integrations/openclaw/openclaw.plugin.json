@@ -5,8 +5,14 @@
   "configContracts": {
     "secretInputs": {
       "paths": [
-        { "path": "llmApiKey", "expected": "string" },
-        { "path": "hindsightApiToken", "expected": "string" }
+        {
+          "path": "llmApiKey",
+          "expected": "string"
+        },
+        {
+          "path": "hindsightApiToken",
+          "expected": "string"
+        }
       ]
     }
   },
@@ -112,6 +118,11 @@
         "description": "Source value written into retained document metadata. Defaults to 'openclaw'.",
         "default": "openclaw"
       },
+      "retainContext": {
+        "type": "string",
+        "description": "Interpretation guidance sent via the Hindsight retain API context field. It tells the extraction LLM that OpenClaw sender/channel/provider values, bank IDs, session keys, source systems, and tags are operational routing metadata, not human names, project names, or organizations.",
+        "default": "This content is an AI-assistant conversation transcript from OpenClaw. Retain request metadata may include routing identifiers such as 'sender_id' (an opaque user ID, not a human name), 'channel_id' (a chat identifier), and 'provider' (the messaging platform name). These are operational routing metadata, not semantic actors or people. Messages with role 'assistant' are from the AI assistant; first-person statements in assistant messages refer to the AI, not the human user. Messages with role 'user' are from the human user. Bank IDs, session keys, agent IDs, thread IDs, source systems, and tags in metadata are also operational routing identifiers, not human names, project names, or organizations."
+      },
       "autoRecall": {
         "type": "boolean",
         "description": "Automatically recall memories on every prompt and inject them as context. Set to false when agent has its own recall tool.",
@@ -159,11 +170,6 @@
         "description": "When true (default) and retainFormat is 'json', each message's content is an Anthropic-shaped array of typed blocks including tool_use (agent tool calls) and tool_result (truncated at 2000 chars). Operational MCP tools — Hindsight's own recall/retain/search — are filtered out to avoid feedback loops. Set to false to retain text-only content, one string per message.",
         "default": true
       },
-      "includeSenderContext": {
-        "type": "boolean",
-        "description": "When true (default), prepend a session context block (sender, channel, provider) to retained transcripts so similarity search can distinguish memories by speaker even when dynamicBankGranularity does not include 'user'. Set false to omit.",
-        "default": true
-      },
       "retainEveryNTurns": {
         "type": "integer",
         "description": "Retain every Nth turn instead of every turn. 1 = every turn (default). Values > 1 enable chunked retention with a sliding window.",
@@ -175,12 +181,6 @@
         "description": "Extra prior turns to include when chunked retention fires. Window = retainEveryNTurns + retainOverlapTurns. Only applies when retainEveryNTurns > 1.",
         "minimum": 0,
         "default": 0
-      },
-      "retainDocumentScope": {
-        "type": "string",
-        "description": "Granularity of the retained document_id. 'session' (default) groups all retains under a single document per OpenClaw session. 'turn' produces a new document per retain.",
-        "enum": ["session", "turn"],
-        "default": "session"
       },
       "recallBudget": {
         "type": "string",
@@ -283,12 +283,16 @@
       },
       "ignoreSessionPatterns": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Session key glob patterns to skip entirely (no recall, no retain). E.g. [\"agent:main:**\", \"agent:*:cron:**\"]. * matches non-colon chars, ** matches anything."
       },
       "statelessSessionPatterns": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Session key glob patterns for read-only sessions: retain is always skipped, recall is skipped when skipStatelessSessions is true. E.g. [\"agent:*:subagent:**\", \"agent:*:heartbeat:**\"]."
       },
       "skipStatelessSessions": {
@@ -383,6 +387,10 @@
       "label": "Retain Source",
       "placeholder": "openclaw"
     },
+    "retainContext": {
+      "label": "Retain Context",
+      "placeholder": "Guidance for interpreting retained OpenClaw transcripts"
+    },
     "autoRecall": {
       "label": "Auto-Recall",
       "placeholder": "true (inject memories on every prompt)"
@@ -411,10 +419,6 @@
       "label": "Retain Tool Calls",
       "placeholder": "true (default) — include tool_use / tool_result blocks in retained JSON"
     },
-    "includeSenderContext": {
-      "label": "Include Sender Context",
-      "placeholder": "true (default) — prepend sender/channel/provider context to retained content"
-    },
     "retainEveryNTurns": {
       "label": "Retain Every N Turns",
       "placeholder": "1 (every turn, default)"
@@ -422,10 +426,6 @@
     "retainOverlapTurns": {
       "label": "Retain Overlap Turns",
       "placeholder": "0 (no overlap, default)"
-    },
-    "retainDocumentScope": {
-      "label": "Retain Document Scope",
-      "placeholder": "session (default) or turn"
     },
     "recallBudget": {
       "label": "Recall Budget",

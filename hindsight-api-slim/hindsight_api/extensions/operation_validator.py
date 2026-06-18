@@ -97,6 +97,10 @@ class PrecheckContext:
     - ``bank_id``: parsed from the URL path.
     - ``request_context``: the authenticated :class:`RequestContext` (tenant
       already resolved by the tenant extension).
+    - ``content_length``: value of the ``Content-Length`` request header as an
+      int, or ``None`` when the header is absent or unparseable (e.g. chunked
+      transfer encoding). Lets a precheck make size-aware decisions — such as
+      an upper-bound cost estimate — without reading or deserialising the body.
 
     Implementations should keep precheck cheap and side-effect-free. The
     full per-request validators (``validate_retain`` / ``validate_recall``
@@ -107,6 +111,7 @@ class PrecheckContext:
     operation: str
     bank_id: str
     request_context: "RequestContext"
+    content_length: int | None = None
 
 
 @dataclass

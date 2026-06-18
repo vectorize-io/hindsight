@@ -120,7 +120,7 @@ async def test_anthropic_no_extra_body_omits_key():
 # ─── Gemini ───────────────────────────────────────────────────────────────────
 
 
-def _make_gemini_provider(extra_body=None):
+def _make_gemini_provider(extra_body=None, gemini_service_tier=None):
     pytest.importorskip("google.genai")
     with patch("google.genai.Client") as mock_client_cls:
         mock_client_cls.return_value = MagicMock()
@@ -132,6 +132,7 @@ def _make_gemini_provider(extra_body=None):
             base_url="",
             model="gemini-2.5-flash",
             extra_body=extra_body,
+            gemini_service_tier=gemini_service_tier,
         )
     provider._client = MagicMock()
     return provider
@@ -174,6 +175,34 @@ async def test_gemini_explicit_temperature_overrides_extra_body():
 
     config_arg = provider._client.aio.models.generate_content.call_args.kwargs.get("config")
     assert config_arg.temperature == 0.9
+
+
+@pytest.mark.asyncio
+async def test_gemini_service_tier_applies_to_http_options_extra_body():
+    """The native Gemini service tier flag reaches GenerateContentConfig."""
+    provider = _make_gemini_provider(gemini_service_tier="flex")
+    provider._client.aio.models.generate_content = AsyncMock(return_value=_fake_gemini_response())
+
+    await provider.call(messages=[{"role": "user", "content": "hi"}], scope="test")
+
+    config_arg = provider._client.aio.models.generate_content.call_args.kwargs.get("config")
+    assert config_arg.http_options.extra_body["service_tier"] == "flex"
+
+
+@pytest.mark.asyncio
+async def test_gemini_extra_body_service_tier_takes_precedence():
+    """The explicit extra_body escape hatch wins over the native flag."""
+    provider = _make_gemini_provider(
+        extra_body={"http_options": {"extra_body": {"service_tier": "standard"}}},
+        gemini_service_tier="flex",
+    )
+    provider._client.aio.models.generate_content = AsyncMock(return_value=_fake_gemini_response())
+
+    await provider.call(messages=[{"role": "user", "content": "hi"}], scope="test")
+
+    config_arg = provider._client.aio.models.generate_content.call_args.kwargs.get("config")
+    assert config_arg.http_options.extra_body["service_tier"] == "standard"
+    assert provider._extra_body["http_options"]["extra_body"]["service_tier"] == "standard"
 
 
 # ─── LiteLLM ──────────────────────────────────────────────────────────────────

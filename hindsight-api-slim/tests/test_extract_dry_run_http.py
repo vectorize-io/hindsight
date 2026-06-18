@@ -78,6 +78,27 @@ async def test_dry_run_extracts_without_persisting(api_client, memory):
 
 
 @pytest.mark.asyncio
+async def test_dry_run_rejects_empty_content(api_client, memory):
+    """Empty/whitespace-only content is rejected by request validation (422) before the
+    billable LLM extraction call runs — matching retain (RetainItem.content) and recall
+    (RecallRequest.query), which already reject empty input."""
+    bank_id = f"dryrun-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
+
+    before = await memory.list_memory_units(bank_id=bank_id, request_context=RequestContext())
+    for content in ("", "   ", "\n\t "):
+        resp = await api_client.post(
+            f"/v1/default/banks/{bank_id}/memories/dry-run-extract",
+            json={"content": content},
+        )
+        assert resp.status_code == 422, resp.text
+
+    # Rejected before extraction: nothing was persisted.
+    after = await memory.list_memory_units(bank_id=bank_id, request_context=RequestContext())
+    assert after["total"] == before["total"]
+
+
+@pytest.mark.asyncio
 async def test_dry_run_disabled_returns_404(api_client, memory):
     """With HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT=false the endpoint is removed (returns 404)."""
     bank_id = f"dryrun-{uuid.uuid4().hex[:8]}"

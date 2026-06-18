@@ -96,6 +96,7 @@ export interface PluginConfig {
   bankIdPrefix?: string; // Prefix for bank IDs (e.g. 'prod' -> 'prod-slack-C123')
   retainTags?: string[]; // Tags applied to all retained documents after trimming and deduplication; auto-retain merges these with inline per-message retain-tag directives (e.g. ['source_system:openclaw', 'agent:agentname'])
   retainSource?: string; // Source written into retained document metadata (default: 'openclaw')
+  retainContext?: string; // Interpretation guidance sent via the retain API context field. Defaults to built-in OpenClaw transcript/routing metadata guidance.
   excludeProviders?: string[]; // Message providers to exclude from recall/retain (e.g. ['telegram', 'discord'])
   autoRecall?: boolean; // Auto-recall memories on every prompt (default: true). Set to false when agent has its own recall tool.
   dynamicBankGranularity?: Array<"agent" | "provider" | "channel" | "user">; // Fields for bank ID derivation. Default: ['agent', 'channel', 'user']
@@ -107,8 +108,6 @@ export interface PluginConfig {
   recallMaxTokens?: number; // Max tokens for recall response. Default: 1024
   recallTypes?: Array<"world" | "experience" | "observation">; // Memory types to recall. Default: ['observation'] — surfaces only the consolidated, deduplicated view (raw world/experience facts can drive the same answer multiple times when many memories say the same thing).
   recallRoles?: Array<"user" | "assistant" | "system" | "tool">; // Roles to include when composing contextual recall query. Default: ['user', 'assistant']
-  includeSenderContext?: boolean; // When true (default), prepend a session context block (sender, channel, provider) to retained transcripts so similarity search can distinguish memories by speaker even when dynamicBankGranularity does not include 'user'. Set false to omit.
-  retainDocumentScope?: "session" | "turn"; // Granularity of the retained document_id. 'session' (default) groups all retains under a single document per OpenClaw session (`openclaw:{sessionKey}`). 'turn' produces a new document per retain (`openclaw:{sessionKey}:turn:NNNNNN` / `:window:NNNNNN`).
   retainEveryNTurns?: number; // Retain every Nth turn (1 = every turn, default: 1). Values > 1 enable chunked retention.
   retainOverlapTurns?: number; // Extra prior turns included when chunked retention fires (default: 0). Window = retainEveryNTurns + retainOverlapTurns.
   recallTopK?: number; // Max number of memories to inject. Default: unlimited
@@ -165,6 +164,7 @@ export type {
 export interface RetainRequest {
   content: string;
   documentId?: string;
+  context?: string;
   metadata?: Record<string, unknown>;
   tags?: string[];
   /**

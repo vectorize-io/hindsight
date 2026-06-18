@@ -186,6 +186,7 @@ Routes from `get_root_router` are mounted at the app root (e.g., `/.well-known/m
 from hindsight_api.extensions import (
     OperationValidatorExtension,
     ValidationResult,
+    PrecheckContext,
     RetainContext,
     RecallContext,
     ReflectContext,
@@ -193,6 +194,12 @@ from hindsight_api.extensions import (
 )
 
 class MyValidator(OperationValidatorExtension):
+    # Pre-body validation (optional)
+    async def precheck(self, ctx: PrecheckContext) -> ValidationResult:
+        if ctx.content_length is not None and ctx.content_length > 10_000_000:
+            return ValidationResult.reject("Payload is too large")
+        return ValidationResult.accept()
+
     # Pre-operation validation (required)
     async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
         # Implement your validation logic
@@ -210,6 +217,13 @@ class MyValidator(OperationValidatorExtension):
         # Log usage, update metrics, send notifications, etc.
         pass
 ```
+
+`precheck` runs before the request body is read or deserialized. Its
+`PrecheckContext.content_length` is the parsed `Content-Length` header as an
+integer, or `None` when the header is missing or cannot be parsed (for example,
+chunked transfer encoding). Use it for cheap size-aware quota or cost guards;
+the full `validate_*` hooks still run after parsing and should enforce precise
+per-operation limits.
 
 #### Deferring an operation
 

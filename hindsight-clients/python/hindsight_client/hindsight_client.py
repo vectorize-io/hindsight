@@ -46,6 +46,7 @@ from hindsight_client_api.models.list_memory_units_response import ListMemoryUni
 from hindsight_client_api.models.recall_response import RecallResponse
 from hindsight_client_api.models.reflect_response import ReflectResponse
 from hindsight_client_api.models.retain_response import RetainResponse
+from hindsight_client_api.models.version_response import VersionResponse
 
 
 def _run_async(coro):
@@ -244,6 +245,29 @@ class Hindsight:
         """Close the API client (async version)."""
         if self._api_client:
             await self._api_client.close()
+
+    def get_version(self) -> VersionResponse:
+        """
+        Read the connected Hindsight API version and feature flags
+        (sync wrapper — prefer :meth:`aget_version` in async code).
+
+        Useful for integrations that need to enforce a minimum server version
+        before enabling a workflow.
+
+        Returns:
+            VersionResponse with ``api_version`` and ``features``.
+        """
+        return _run_async(self._monitoring_api.get_version(_request_timeout=self._timeout))
+
+    async def aget_version(self) -> VersionResponse:
+        """
+        Read the connected Hindsight API version and feature flags
+        (async — preferred over :meth:`get_version`).
+
+        Returns:
+            VersionResponse with ``api_version`` and ``features``.
+        """
+        return await self._monitoring_api.get_version(_request_timeout=self._timeout)
 
     # Simplified methods for main operations
 

@@ -248,6 +248,25 @@ def test_find_api_command_windows_prefers_gui_interpreter(tmp_path, monkeypatch)
     assert manager._find_api_command("0.0.0") == [str(pythonw), "-m", "hindsight_api.main"]
 
 
+def test_find_pid_on_port_windows_hides_netstat_console(monkeypatch):
+    """Windows netstat probes must not flash a console window."""
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append((args, kwargs))
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = "  TCP    127.0.0.1:9177    0.0.0.0:0    LISTENING    4321\n"
+        return result
+
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.subprocess.CREATE_NO_WINDOW", 0x08000000, raising=False)
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.subprocess.run", fake_run)
+
+    assert DaemonEmbedManager._find_pid_on_port(9177) == 4321
+    assert calls[0][1]["creationflags"] == 0x08000000
+
+
 def test_stop_ui_kills_recorded_and_configured_ports(tmp_path, monkeypatch):
     """After a UI-port change, stop_ui must kill BOTH the recorded (old, actually
     running) port and the configured (new) port — otherwise the old UI orphans."""

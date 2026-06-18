@@ -178,6 +178,7 @@ For non-English banks (especially CJK) and the language/extraction-language trad
 | `HINDSIGHT_API_LLM_GROQ_SERVICE_TIER` | Groq service tier: `on_demand`, `flex`, `auto` | `auto` |
 | `HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER` | OpenAI service tier: `flex` for 50% cost savings (OpenAI Flex Processing) | None (default) |
 | `HINDSIGHT_API_LLM_BEDROCK_SERVICE_TIER` | Bedrock service tier: `flex` for 50% cost savings (best-effort inference), `priority` (guaranteed throughput), or `reserved` (provisioned capacity) | Unset (default tier) |
+| `HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER` | Gemini service tier: `flex` for 50% cost savings (best-effort inference) | Unset (default tier) |
 | `HINDSIGHT_API_LLM_EXTRA_BODY` | JSON dict of extra request-body params (e.g. `temperature`, `top_p`, `max_tokens`) merged into every LLM call. Applied across the OpenAI-compatible, Fireworks, Anthropic, Gemini/VertexAI and LiteLLM (incl. Bedrock/Router) providers. Each provider merges them in its own native parameter space, so use that provider's field names (e.g. `max_tokens` for OpenAI/Anthropic vs `max_output_tokens` for Gemini). Also useful for custom model servers (e.g. vLLM `chat_template_kwargs`). | `null` |
 | `HINDSIGHT_API_LLM_DEFAULT_HEADERS` | JSON dict passed as `default_headers` to provider SDK clients. Used by operators routing through proxies / request-tracing middleware (e.g. Cloudflare AI Gateway, Helicone, corporate proxies). Currently wired into the Anthropic provider; other providers can opt in. | `null` |
 | `HINDSIGHT_API_LLM_STRICT_SCHEMA` | Grammar-enforce structured output via `json_schema` `strict: true` instead of the soft "schema-in-prompt + `json_object`" path. Use it with weaker self-hosted models that return prose preambles, markdown ` ```json ` fences, or invalid JSON — which otherwise fail to parse and wedge retain/consolidation. Applies to OpenAI-compatible backends (OpenAI, llama.cpp, vLLM) and LiteLLM; Gemini already enforces its native `response_schema` regardless, and providers without a strict mode ignore it. | `false` |
@@ -205,6 +206,8 @@ export HINDSIGHT_API_LLM_MODEL=gpt-4o
 export HINDSIGHT_API_LLM_PROVIDER=gemini
 export HINDSIGHT_API_LLM_API_KEY=xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=gemini-2.0-flash
+# Optional: Use Gemini Flex for 50% cost savings (best-effort inference)
+# export HINDSIGHT_API_LLM_GEMINI_SERVICE_TIER=flex
 
 # Anthropic
 export HINDSIGHT_API_LLM_PROVIDER=anthropic
@@ -1223,9 +1226,30 @@ Clients that request a parser not in the allowlist receive HTTP 400.
 
 #### Parser: markitdown (default)
 
-Local file-to-markdown conversion using [Microsoft's markitdown](https://github.com/microsoft/markitdown). No external service required.
+Local file-to-markdown conversion using [Microsoft's markitdown](https://github.com/microsoft/markitdown). No external service is required by default.
 
-**Supported formats:** PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, images (JPG, PNG — OCR), audio (MP3, WAV — transcription), HTML, TXT, MD, CSV.
+**Supported formats:** PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, images (JPG, PNG — requires optional OCR for text extraction), audio (MP3, WAV — transcription), HTML, TXT, MD, CSV.
+
+For image workloads, MarkItDown can optionally use an OpenAI-compatible OCR/vision endpoint. This is disabled by default. Without it, image uploads fail with an actionable configuration error instead of low-level parser output. When enabled, configure the MarkItDown OCR API key, base URL, and model explicitly; they do not inherit from `HINDSIGHT_API_LLM_*` because MarkItDown uses the OpenAI SDK directly. The selected endpoint must implement OpenAI Chat Completions and the selected model must support image input.
+
+This OCR path uses MarkItDown's image converter hook. It applies to image inputs such as JPG and PNG (and image handling inside converters that consume MarkItDown's `llm_client`), but it does not rasterize scanned PDF pages into images. Scanned PDFs with no text layer may still extract poorly through the default PDF converter. For scanned PDFs or complex document layouts, use an OCR-capable document parser such as `iris` or `llama_parse`, or configure a parser fallback chain like `llama_parse,markitdown`.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_ENABLED` | Enable MarkItDown image OCR through an OpenAI-compatible OCR/vision endpoint | `false` |
+| `HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_API_KEY` | API key for MarkItDown OCR; required when OCR is enabled | — |
+| `HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_BASE_URL` | OpenAI-compatible Chat Completions base URL for MarkItDown OCR; required when OCR is enabled | — |
+| `HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_MODEL` | OCR/vision model with image-input support; required when OCR is enabled | — |
+| `HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_PROMPT` | OCR prompt passed to MarkItDown's image converter | Built-in OCR prompt |
+
+```bash
+# Configure a dedicated OpenAI-compatible OCR/vision endpoint for MarkItDown OCR
+export HINDSIGHT_API_FILE_PARSER=markitdown
+export HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_ENABLED=true
+export HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_API_KEY=your-vision-api-key
+export HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_BASE_URL=https://vision.example/v1
+export HINDSIGHT_API_FILE_PARSER_MARKITDOWN_OCR_MODEL=ocr-or-vision-model
+```
 
 #### Parser: iris
 
@@ -1374,7 +1398,7 @@ For production deployments, use `s3`, `gcs`, or `azure` to avoid storing large b
 
 ### Observations (Experimental) {#observations}
 
-Observations are deduplicated, evidence-grounded knowledge consolidated from multiple facts. Each observation tracks its supporting memories, a proof count, and a computed freshness trend, and is refined — not overwritten — when new evidence arrives.
+Observations are deduplicated, evidence-grounded knowledge consolidated from multiple facts. Each observation tracks its supporting memories and a proof count, and is refined — not overwritten — when new evidence arrives.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -1658,6 +1682,7 @@ Hindsight provides OpenTelemetry-based observability for LLM calls, conforming t
 | `HINDSIGHT_API_OTEL_SERVICE_NAME` | Service name for traces | `hindsight-api` |
 | `HINDSIGHT_API_OTEL_DEPLOYMENT_ENVIRONMENT` | Deployment environment name (e.g., development, staging, production) | `development` |
 | `HINDSIGHT_API_METRICS_INCLUDE_BANK_ID` | Include `bank_id` in OTel metric attributes. Enable only for deployments with few banks — high cardinality causes unbounded memory growth. | `false` |
+| `HINDSIGHT_API_METRICS_BACKLOG_ENABLED` | Expose async-operation queue depth and consolidation-backlog gauges (`hindsight_async_operations`, `hindsight_consolidation_backlog`, `hindsight_consolidation_failed`). Runs periodic per-schema `COUNT` queries on a background task. | `false` |
 
 **Features:**
 - Full prompts and completions recorded as events

@@ -31,6 +31,19 @@ function loadPackageVersion(): string {
 
 const USER_AGENT = `hindsight-openclaw/${loadPackageVersion()}`;
 
+export const DEFAULT_RETAIN_CONTEXT =
+  "This content is an AI-assistant conversation transcript from OpenClaw. " +
+  "Retain request metadata may include routing identifiers such as " +
+  "'sender_id' (an opaque user ID, not a human name), 'channel_id' (a chat identifier), " +
+  "and 'provider' (the messaging platform name). " +
+  "These are operational routing metadata, not semantic actors or people. " +
+  "Messages with role 'assistant' are from the AI assistant; first-person statements " +
+  "in assistant messages refer to the AI, not the human user. " +
+  "Messages with role 'user' are from the human user. " +
+  "Bank IDs, session keys, agent IDs, thread IDs, source systems, " +
+  "and tags in metadata are also operational routing identifiers, " +
+  "not human names, project names, or organizations.";
+
 // Logger adapter that routes the embed wrapper's output through openclaw's
 // batched structured logger so messages share the same prefix and respect
 // the configured log level.
@@ -113,6 +126,7 @@ function scopeClient(c: HindsightClient, bankId: string): BankScopedClient {
     async retain(req) {
       await c.retain(bankId, req.content, {
         documentId: req.documentId,
+        context: req.context,
         metadata: toStringMetadata(req.metadata),
         tags: req.tags,
         updateMode: req.updateMode,
@@ -283,6 +297,7 @@ async function flushRetainQueue(): Promise<void> {
       try {
         await client.retain(item.bankId, item.content, {
           documentId: item.documentId,
+          context: item.context,
           metadata: toStringMetadata(item.metadata),
           tags: item.tags,
           updateMode: item.updateMode,
@@ -593,7 +608,27 @@ export function stripMetadataEnvelopes(content: string): string {
     .replace(/\n---$/, "");
   // Strip: <Label> (untrusted metadata):\n```json\n{...}\n```  (without --- wrapper)
   content = content.replace(/[\w\s]+\(untrusted metadata\)[^\n]*\n```json[\s\S]*?```\n?/gim, "");
-  return content.trim();
+  return stripRuntimeEnvelope(content).trim();
+}
+
+const RUNTIME_MESSAGE_ID_LINE_RE = /^\[message_id:\s*(?:om|ou|oc)_[A-Za-z0-9_-]+\]$/i;
+const RUNTIME_OPAQUE_ID_LINE_RE = /^(?:om|ou|oc)_[A-Za-z0-9_-]+$/i;
+const RUNTIME_OPAQUE_SENDER_PREFIX_RE = /^\s*(?:om|ou|oc)_[A-Za-z0-9_-]+\s*:\s*/i;
+
+/**
+ * Strip inline OpenClaw/Feishu runtime headers that can appear before user text.
+ * These identifiers are routing/runtime metadata, not semantic conversation content.
+ */
+export function stripRuntimeEnvelope(content: string): string {
+  if (!content) return content;
+
+  const lines = content.split(/\r?\n/);
+  const kept = lines.filter((line) => {
+    const trimmed = line.trim();
+    return !RUNTIME_MESSAGE_ID_LINE_RE.test(trimmed) && !RUNTIME_OPAQUE_ID_LINE_RE.test(trimmed);
+  });
+
+  return kept.join("\n").replace(RUNTIME_OPAQUE_SENDER_PREFIX_RE, "");
 }
 
 /**
@@ -619,7 +654,9 @@ export function extractRecallQuery(
   let recallQuery = rawMessage;
   // Strip sender metadata envelope before any checks
   if (recallQuery) {
-    recallQuery = stripMetadataEnvelopes(recallQuery);
+    recallQuery = stripRuntimeEnvelope(
+      stripInlineTimestampPrefix(stripMetadataEnvelopes(recallQuery))
+    );
   }
   if (
     !recallQuery ||
@@ -630,7 +667,9 @@ export function extractRecallQuery(
     recallQuery = prompt;
     // Strip metadata envelopes from prompt too, then check if anything useful remains
     if (recallQuery) {
-      recallQuery = stripMetadataEnvelopes(recallQuery);
+      recallQuery = stripRuntimeEnvelope(
+        stripInlineTimestampPrefix(stripMetadataEnvelopes(recallQuery))
+      );
     }
     if (!recallQuery || recallQuery.length < 5) {
       return null;
@@ -656,7 +695,7 @@ export function extractRecallQuery(
 
     // Strip metadata envelopes again after channel envelope extraction, in case
     // the metadata block appeared after the [ChannelName] header
-    cleaned = stripMetadataEnvelopes(cleaned);
+    cleaned = stripRuntimeEnvelope(stripInlineTimestampPrefix(stripMetadataEnvelopes(cleaned)));
 
     recallQuery = cleaned.trim() || recallQuery;
   }
@@ -698,6 +737,7 @@ export function composeRecallQuery(
 
       content = stripMemoryTags(content).trim();
       content = stripMetadataEnvelopes(content);
+      content = stripRuntimeEnvelope(stripInlineTimestampPrefix(content));
       if (!content) {
         return null;
       }
@@ -1457,6 +1497,10 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
       typeof config.retainSource === "string" && config.retainSource.trim().length > 0
         ? config.retainSource.trim()
         : undefined,
+    retainContext:
+      typeof config.retainContext === "string" && config.retainContext.trim().length > 0
+        ? config.retainContext.trim()
+        : DEFAULT_RETAIN_CONTEXT,
     excludeProviders: Array.isArray(config.excludeProviders)
       ? Array.from(
           new Set([
@@ -2473,12 +2517,7 @@ ${memoriesFormatted}
         const retention = prepareRetentionTranscript(
           messagesToRetain,
           pluginConfig,
-          retainFullWindow,
-          {
-            senderId: resolvedCtxForRetain?.senderId,
-            channelId: effectiveCtxForRetain?.channelId,
-            provider: effectiveCtxForRetain?.messageProvider,
-          }
+          retainFullWindow
         );
         if (!retention) {
           debug("[Hindsight Hook] No messages to retain (filtered/short/no-user)");
@@ -2675,11 +2714,10 @@ export function buildRetainRequest(
     tags?: string[];
     /**
      * Whether the live Hindsight API supports `update_mode: 'append'`. When
-     * true with `retainDocumentScope: 'session'`, the request gets a stable
-     * per-session document id and `updateMode: 'append'` so each retain
-     * concatenates to the existing document. When false, falls back to a
-     * unique per-turn document id so prior turns aren't overwritten.
-     * Defaults to false (conservative).
+     * true, the request gets a stable per-session document id and
+     * `updateMode: 'append'` so each retain concatenates to the existing
+     * document. When false, falls back to a unique per-turn document id so
+     * prior turns aren't overwritten. Defaults to false (conservative).
      */
     appendSupported?: boolean;
   }
@@ -2689,12 +2727,12 @@ export function buildRetainRequest(
   const turnIndex = options?.turnIndex ?? nextDocumentSequence(resolvedCtx);
   const retentionScope = options?.retentionScope || "turn";
   const documentBase = getSessionDocumentBase(resolvedCtx);
-  const documentScope = pluginConfig.retainDocumentScope ?? "session";
   const documentKind = retentionScope === "window" ? "window" : "turn";
-  // Session-scope only stays session-scope when the API can append; otherwise
-  // every retain on the same id silently overwrites prior turns (behavior
-  // pre-#932). Force per-turn ids on legacy APIs.
-  const useSessionScopedDoc = documentScope === "session" && options?.appendSupported === true;
+  // Retains are session-scoped: all turns accumulate under one document id when
+  // the API can append. On legacy APIs without append support, every retain on
+  // the same id would silently overwrite prior turns (behavior pre-#932), so
+  // fall back to per-turn ids there.
+  const useSessionScopedDoc = options?.appendSupported === true;
   const documentId = useSessionScopedDoc
     ? documentBase
     : `${documentBase}:${documentKind}:${String(turnIndex).padStart(6, "0")}`;
@@ -2710,6 +2748,10 @@ export function buildRetainRequest(
   return {
     content: transcript,
     documentId: documentId,
+    context:
+      typeof pluginConfig.retainContext === "string" && pluginConfig.retainContext.trim().length > 0
+        ? pluginConfig.retainContext.trim()
+        : DEFAULT_RETAIN_CONTEXT,
     metadata: {
       retained_at: new Date(now).toISOString(),
       message_count: String(messageCount),
@@ -2730,36 +2772,10 @@ export function buildRetainRequest(
   };
 }
 
-export interface RetentionSessionContext {
-  senderId?: string;
-  channelId?: string;
-  provider?: string;
-}
-
-/**
- * Build a session-context block describing who is speaking, on which channel,
- * via which provider. Prepending this to retained transcripts lets similarity
- * search distinguish memories by speaker without requiring per-user banks
- * (`dynamicBankGranularity: ["agent", "user"]`). Returns null when no usable
- * fields are available.
- */
-export function formatRetentionSessionContext(
-  ctx: RetentionSessionContext | null | undefined
-): string | null {
-  if (!ctx) return null;
-  const lines: string[] = [];
-  if (ctx.senderId) lines.push(`sender: ${ctx.senderId}`);
-  if (ctx.channelId) lines.push(`channel: ${ctx.channelId}`);
-  if (ctx.provider) lines.push(`provider: ${ctx.provider}`);
-  if (lines.length === 0) return null;
-  return ["[context]", ...lines, "[/context]"].join("\n");
-}
-
 export function prepareRetentionTranscript(
   messages: any[],
   pluginConfig: PluginConfig,
-  retainFullWindow = false,
-  sessionContext?: RetentionSessionContext | null
+  retainFullWindow = false
 ): { transcript: string; messageCount: number } | null {
   if (!messages || messages.length === 0) {
     return null;
@@ -2786,22 +2802,13 @@ export function prepareRetentionTranscript(
 
   const format = pluginConfig.retainFormat ?? "json";
   const includeToolCalls = format === "json" && pluginConfig.retainToolCalls !== false;
-  const contextHeader =
-    pluginConfig.includeSenderContext === false
-      ? null
-      : formatRetentionSessionContext(sessionContext);
 
   if (includeToolCalls) {
     const structured = buildAnthropicStructuredMessages(targetMessages, pluginConfig);
     if (structured.length === 0) return null;
-    // Prepend session context as a system-role message so similarity search
-    // and downstream LLM consumers can attribute the conversation to a speaker.
-    const withContext = contextHeader
-      ? [{ role: "system", content: contextHeader }, ...structured]
-      : structured;
-    const transcript = JSON.stringify(withContext);
+    const transcript = JSON.stringify(structured);
     if (!transcript.trim() || transcript.length < 10) return null;
-    return { transcript, messageCount: withContext.length };
+    return { transcript, messageCount: structured.length };
   }
 
   // Role filtering (text-only path)
@@ -2830,6 +2837,7 @@ export function prepareRetentionTranscript(
     content = stripInlineRetainTags(content);
     content = stripMetadataEnvelopes(content);
     content = stripInlineTimestampPrefix(content);
+    content = stripRuntimeEnvelope(content).trim();
 
     if (content.trim()) {
       const timestamp = normalizeMessageTimestamp(msg);
@@ -2842,17 +2850,13 @@ export function prepareRetentionTranscript(
   let transcript: string;
   let messageCount: number;
   if (format === "text") {
-    const body = normalized
+    transcript = normalized
       .map(({ role, content }) => `[role: ${role}]\n${content}\n[${role}:end]`)
       .join("\n\n");
-    transcript = contextHeader ? `${contextHeader}\n\n${body}` : body;
     messageCount = normalized.length;
   } else {
-    const withContext = contextHeader
-      ? [{ role: "system", content: contextHeader }, ...normalized]
-      : normalized;
-    transcript = JSON.stringify(withContext);
-    messageCount = withContext.length;
+    transcript = JSON.stringify(normalized);
+    messageCount = normalized.length;
   }
 
   if (!transcript.trim() || transcript.length < 10) return null;
@@ -2934,8 +2938,10 @@ function normalizeMessageTimestamp(msg: any): string | undefined {
 
 function extractStructuredBlocks(content: any, role: string): any[] {
   if (typeof content === "string") {
-    const cleaned = stripInlineTimestampPrefix(
-      stripMetadataEnvelopes(stripInlineRetainTags(stripMemoryTags(content)))
+    const cleaned = stripRuntimeEnvelope(
+      stripInlineTimestampPrefix(
+        stripMetadataEnvelopes(stripInlineRetainTags(stripMemoryTags(content)))
+      )
     ).trim();
     return cleaned ? [{ type: "text", text: cleaned }] : [];
   }
@@ -2947,8 +2953,10 @@ function extractStructuredBlocks(content: any, role: string): any[] {
     const blockType = block.type;
 
     if (blockType === "text") {
-      const cleaned = stripInlineTimestampPrefix(
-        stripMetadataEnvelopes(stripInlineRetainTags(stripMemoryTags(block.text ?? "")))
+      const cleaned = stripRuntimeEnvelope(
+        stripInlineTimestampPrefix(
+          stripMetadataEnvelopes(stripInlineRetainTags(stripMemoryTags(block.text ?? "")))
+        )
       ).trim();
       if (cleaned) blocks.push({ type: "text", text: cleaned });
     } else if (blockType === "toolCall" && role === "assistant") {

@@ -223,6 +223,7 @@ Generate thoughtful analysis by synthesizing stored memories with the bank's per
 | `response_schema` | object | No | JSON Schema for structured output. When provided, the response includes a `structured_output` field |
 | `tags` | list[string] | No | Filter memories by tags before reflecting |
 | `tags_match` | string | No | Tag matching mode: `any` (default) or `all` |
+| `include_trace` | boolean | No | Include `tool_trace` and `llm_trace` debugging output. Defaults to `false` to keep responses small |
 
 **Example:**
 ```json

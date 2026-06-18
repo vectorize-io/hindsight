@@ -11,6 +11,7 @@ from hindsight_api.metrics import (
     get_token_bucket,
     create_metrics_collector,
     initialize_metrics,
+    normalize_http_endpoint,
 )
 
 
@@ -333,6 +334,24 @@ class TestGetTokenBucket:
         assert get_token_bucket(50000) == "50k+"
         assert get_token_bucket(100000) == "50k+"
         assert get_token_bucket(1000000) == "50k+"
+
+
+class TestNormalizeHttpEndpoint:
+    """Tests for normalize_http_endpoint (low-cardinality HTTP metric labels)."""
+
+    def test_templates_high_cardinality_segments(self):
+        """Bank ids (incl. non-numeric), UUIDs, and numeric ids collapse to placeholders."""
+        cases = [
+            ("/v1/default/banks/user-1680/memories/recall", "/v1/default/banks/{bank_id}/memories/recall"),
+            ("/v1/default/banks/tenant-acme/memories", "/v1/default/banks/{bank_id}/memories"),
+            ("/v1/default/banks/user-1680", "/v1/default/banks/{bank_id}"),
+            ("/v1/default/banks/3f8c1e2a-1111-2222-3333-444455556666/config", "/v1/default/banks/{bank_id}/config"),
+            ("/v1/default/banks/42/config", "/v1/default/banks/{bank_id}/config"),
+            ("/v1/default/banks", "/v1/default/banks"),
+            ("/health", "/health"),
+        ]
+        for raw, expected in cases:
+            assert normalize_http_endpoint(raw) == expected, raw
 
 
 class TestLLMMetrics:

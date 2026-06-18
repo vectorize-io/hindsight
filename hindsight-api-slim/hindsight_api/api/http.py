@@ -158,7 +158,12 @@ from hindsight_api.engine.response_models import (
 )
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.extensions import HttpExtension, OperationValidationError, load_extension
-from hindsight_api.metrics import create_metrics_collector, get_metrics_collector, initialize_metrics
+from hindsight_api.metrics import (
+    create_metrics_collector,
+    get_metrics_collector,
+    initialize_metrics,
+    normalize_http_endpoint,
+)
 from hindsight_api.models import RequestContext
 
 logger = logging.getLogger(__name__)
@@ -1441,6 +1446,13 @@ class DryRunExtractRequest(BaseModel):
     entity_labels: list | None = None
     entities_allow_free_form: bool | None = None
     llm_output_language: str | None = None
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("content cannot be empty")
+        return v
 
 
 class ListDocumentsResponse(BaseModel):
@@ -3237,15 +3249,9 @@ def create_app(
     @app.middleware("http")
     async def http_metrics_middleware(request, call_next):
         """Record HTTP request metrics."""
-        # Normalize endpoint path to reduce cardinality
-        # Replace UUIDs and numeric IDs with placeholders
-        import re
-
-        path = request.url.path
-        # Replace UUIDs
-        path = re.sub(r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "/{id}", path)
-        # Replace numeric IDs
-        path = re.sub(r"/\d+(?=/|$)", "/{id}", path)
+        # Template id segments (bank ids, UUIDs, numeric ids) so the endpoint
+        # metric label stays bounded-cardinality.
+        path = normalize_http_endpoint(request.url.path)
 
         status_code = [500]  # Default to 500, will be updated
         metrics_collector = get_metrics_collector()
@@ -3333,6 +3339,7 @@ def _register_routes(app: FastAPI):
 
         async def _precheck_dep(
             bank_id: str,
+            request: Request,
             request_context: RequestContext = Depends(get_request_context),
         ) -> None:
             validator = getattr(app.state.memory, "_operation_validator", None)
@@ -3341,10 +3348,20 @@ def _register_routes(app: FastAPI):
             from hindsight_api.extensions import PrecheckContext
 
             await app.state.memory._authenticate_tenant(request_context)
+            cl_header = request.headers.get("content-length")
+            content_length: int | None = None
+            if cl_header is not None:
+                try:
+                    parsed = int(cl_header)
+                except ValueError:
+                    parsed = -1
+                if parsed >= 0:
+                    content_length = parsed
             ctx = PrecheckContext(
                 operation=operation,
                 bank_id=bank_id,
                 request_context=request_context,
+                content_length=content_length,
             )
             result = await validator.precheck(ctx)
             if not result.allowed:
@@ -6749,7 +6766,7 @@ def _register_routes(app: FastAPI):
         description="Upload files (PDF, DOCX, etc.), convert them to markdown, and retain as memories.\n\n"
         "This endpoint handles file upload, conversion, and memory creation in a single operation.\n\n"
         "**Features:**\n"
-        "- Supports PDF, DOCX, PPTX, XLSX, images (with OCR), audio (with transcription)\n"
+        "- Supports PDF, DOCX, PPTX, XLSX, images (parser-dependent OCR), audio (with transcription)\n"
         "- Automatic file-to-markdown conversion using pluggable parsers\n"
         "- Files stored in object storage (PostgreSQL by default, S3 for production)\n"
         "- Each file becomes a separate document with optional metadata/tags\n"
