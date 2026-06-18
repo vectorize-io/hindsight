@@ -38,6 +38,7 @@ jobs:
       integrations-claude-code: ${{ steps.filter.outputs.integrations-claude-code }}
       integrations-cline: ${{ steps.filter.outputs.integrations-cline }}
       integrations-codex: ${{ steps.filter.outputs.integrations-codex }}
+      integrations-github-copilot: ${{ steps.filter.outputs.integrations-github-copilot }}
       integrations-continue: ${{ steps.filter.outputs.integrations-continue }}
       integrations-cursor-cli: ${{ steps.filter.outputs.integrations-cursor-cli }}
       integrations-crewai: ${{ steps.filter.outputs.integrations-crewai }}
@@ -142,6 +143,8 @@ jobs:
             - 'hindsight-integrations/cline/**'
           integrations-codex:
             - 'hindsight-integrations/codex/**'
+          integrations-github-copilot:
+            - 'hindsight-integrations/github-copilot/**'
           integrations-continue:
             - 'hindsight-integrations/continue/**'
           integrations-cursor-cli:
@@ -587,6 +590,45 @@ jobs:
     - name: Run tests
       working-directory: ./hindsight-integrations/cline
       run: uv run pytest tests -v
+
+  test-github-copilot-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-github-copilot == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build github-copilot integration
+      working-directory: ./hindsight-integrations/github-copilot
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/github-copilot
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/github-copilot
+      # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
+      # (requires_real_llm) needs a live Hindsight server and runs separately.
+      run: uv run pytest tests -v -m "not requires_real_llm"
 
   test-codex-integration:
     needs: [detect-changes]
@@ -4746,6 +4788,7 @@ jobs:
       - test-claude-code-integration
       - test-cursor-integration
       - test-cline-integration
+      - test-github-copilot-integration
       - test-codex-integration
       - test-cursor-cli-integration
       - build-ai-sdk-integration

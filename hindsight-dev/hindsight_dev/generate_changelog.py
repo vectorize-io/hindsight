@@ -53,6 +53,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "claude-agent-sdk": IntegrationMeta("hindsight-claude-agent-sdk", "Claude Agent SDK"),
     "llamaindex": IntegrationMeta("hindsight-llamaindex", "LlamaIndex"),
     "codex": IntegrationMeta("hindsight-codex", "Codex"),
+    "github-copilot": IntegrationMeta("hindsight-copilot", "GitHub Copilot"),
     "cline": IntegrationMeta("hindsight-cline", "Cline"),
     "cursor-cli": IntegrationMeta("hindsight-cursor-cli", "Cursor CLI"),
     "cursor": IntegrationMeta("hindsight-cursor", "Cursor"),

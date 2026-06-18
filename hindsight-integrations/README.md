@@ -13,6 +13,7 @@ Each integration lives in its own subdirectory with its own README, configuratio
 | [**Codex CLI**](./codex) | Python hook scripts for OpenAI's Codex CLI. Auto-recall on `UserPromptSubmit`, auto-retain on `Stop`. | `curl -fsSL https://hindsight.vectorize.io/get-codex \| bash` |
 | [**Cursor CLI**](./cursor-cli) | Python hook scripts for Cursor CLI. Auto-recall on `beforeSubmitPrompt`, auto-retain on `stop`, final flush on `sessionEnd`. | `./scripts/install.sh` |
 | [**Continue.dev**](./continue) | HTTP context provider for precise `@hindsight` recall in chat, plus optional MCP-server + rules for automatic recall/retain in agent mode. | `pip install hindsight-continue` |
+| [**GitHub Copilot**](./github-copilot) | MCP server config (`.vscode/mcp.json`) + a recall/retain rule for VS Code Copilot's agent mode. | `pip install hindsight-copilot` |
 | [**Roo Code**](./roo-code) | Persistent memory for Roo Code VS Code extension. | See README |
 | [**Hermes (OpenAI Agents SDK)**](./hermes) | Memory layer for OpenAI Agents SDK. | See README |
 | [**Grok Build**](./grok-build) | Hooks for Grok Build (xAI). | See README |
