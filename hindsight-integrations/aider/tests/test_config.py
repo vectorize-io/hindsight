@@ -31,6 +31,14 @@ def test_env_overrides_file(tmp_path):
     assert cfg.auto_recall is False
 
 
+def test_recall_preamble_overridable(tmp_path):
+    p = tmp_path / "aider.json"
+    p.write_text(json.dumps({"recallPreamble": "From file:"}))
+    assert load_config(config_file=p, env={}).recall_preamble == "From file:"
+    cfg = load_config(config_file=p, env={"HINDSIGHT_AIDER_RECALL_PREAMBLE": "From env:"})
+    assert cfg.recall_preamble == "From env:"
+
+
 def test_malformed_file_falls_back(tmp_path):
     p = tmp_path / "aider.json"
     p.write_text("{ broken")

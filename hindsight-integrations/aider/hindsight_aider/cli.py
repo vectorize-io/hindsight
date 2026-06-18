@@ -20,7 +20,7 @@ from typing import Optional
 from . import __version__, runner
 
 
-def main(argv: Optional[list] = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] in ("--hindsight-version",):
         print(f"hindsight-aider {__version__}")

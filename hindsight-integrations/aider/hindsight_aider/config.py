@@ -47,7 +47,7 @@ class AiderConfig:
 
     recall_budget: Budget = "mid"
     recall_max_tokens: int = 2048
-    recall_types: list = field(default_factory=lambda: ["world", "experience"])
+    recall_types: list[str] = field(default_factory=lambda: ["world", "experience"])
     recall_default_query: str = DEFAULT_RECALL_QUERY
     recall_preamble: str = DEFAULT_RECALL_PREAMBLE
 
@@ -66,6 +66,7 @@ _FILE_KEYS = {
     "recallMaxTokens": ("recall_max_tokens", int),
     "recallTypes": ("recall_types", list),
     "recallDefaultQuery": ("recall_default_query", str),
+    "recallPreamble": ("recall_preamble", str),
     "aiderCommand": ("aider_command", str),
     "memoryFilename": ("memory_filename", str),
     "chatHistoryFile": ("chat_history_file", str),
@@ -78,11 +79,12 @@ _ENV_KEYS = {
     "HINDSIGHT_AIDER_AUTO_RECALL": ("auto_recall", bool),
     "HINDSIGHT_AIDER_AUTO_RETAIN": ("auto_retain", bool),
     "HINDSIGHT_AIDER_RECALL_BUDGET": ("recall_budget", str),
+    "HINDSIGHT_AIDER_RECALL_PREAMBLE": ("recall_preamble", str),
     "HINDSIGHT_AIDER_COMMAND": ("aider_command", str),
 }
 
 
-def _cast(value, typ):
+def _cast(value: object, typ: type) -> object | None:
     try:
         if typ is bool:
             if isinstance(value, bool):
