@@ -98,12 +98,20 @@ def apply_combined_scoring(
             sr.cross_encoder_score_normalized = 1.0 - (0.9 * new_rank / denom)
 
     for sr in scored_results:
-        # Recency: linear decay over 365 days → [0.1, 1.0]; neutral 0.5 if no date.
+        # Recency: sigmoid decay (flat top ~6 weeks, neutral ~79 days, floor ~9 months).
         # Use the unit's effective time (occurred_start, then mentioned_at, then
         # occurred_end) — the same COALESCE order as retrieval._coalesce_date — so a
         # memory that carries only a mentioned_at / occurred_end (e.g. conversation
         # facts or ongoing states that intentionally lack occurred_start) still gets
         # correct recency ordering instead of a flat neutral 0.5.
+        #
+        # Sigmoid formula: floor + (ceiling - floor) / (1 + exp(-steepness * (midpoint - days_ago)))
+        # Defaults: floor=0.60, ceiling=1.10, midpoint=79, steepness=0.03
+        _SIGMOID_FLOOR = 0.60
+        _SIGMOID_CEILING = 1.10
+        _SIGMOID_MIDPOINT = 79.0
+        _SIGMOID_STEEPNESS = 0.03
+
         sr.recency = 0.5
         effective = sr.retrieval.occurred_start or sr.retrieval.mentioned_at or sr.retrieval.occurred_end
         if effective:
@@ -111,7 +119,10 @@ def apply_combined_scoring(
             if occurred.tzinfo is None:
                 occurred = occurred.replace(tzinfo=UTC)
             days_ago = (now - occurred).total_seconds() / 86400
-            sr.recency = max(0.1, min(1.0, 1.0 - (days_ago / 365)))
+            sr.recency = max(_SIGMOID_FLOOR, min(_SIGMOID_CEILING,
+                _SIGMOID_FLOOR + (_SIGMOID_CEILING - _SIGMOID_FLOOR) /
+                (1.0 + math.exp(-_SIGMOID_STEEPNESS * (_SIGMOID_MIDPOINT - days_ago)))
+            ))
 
         # Temporal proximity: meaningful only for temporal queries; neutral otherwise.
         sr.temporal = sr.retrieval.temporal_proximity if sr.retrieval.temporal_proximity is not None else 0.5
