@@ -1,5 +1,5 @@
 ---
-title: "Total Recall: Persistent Memory for Microsoft Agent Framework"
+title: "Stop Building Microsoft Agent Framework Agents That Forget"
 authors: [benfrank241]
 slug: "2026/06/18/microsoft-agent-framework-memory"
 date: 2026-06-18T12:00
@@ -13,7 +13,7 @@ hide_table_of_contents: true
 
 [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) is Microsoft's open-source successor to Semantic Kernel: a framework for building agents that plan, call tools, and hold a conversation. What it doesn't do out of the box is remember anything once a session ends. Start a new run and the agent is back to square one, with no recollection of who the user is or what was decided last time.
 
-This post is a walkthrough of the new Hindsight integration for Microsoft Agent Framework. It plugs in as a **context provider**, so every agent run automatically recalls the memories relevant to the user's message and retains the conversation afterward. There's no MCP server in the loop and no memory tool the model has to decide to call. Memory just happens.
+The new Hindsight integration fixes that. It plugs in as a **context provider**, so every agent run automatically recalls the memories relevant to the user's message and retains the conversation afterward. There's no MCP server in the loop and no memory tool the model has to decide to call. Memory just happens.
 
 ## TL;DR
 
@@ -141,7 +141,7 @@ You can also call `configure(...)` once to set process-wide defaults instead of 
 
 **It never blocks your agent.** Recall and retain are best-effort. If Hindsight is briefly unreachable, the failure is swallowed and logged, and the agent runs normally without memory for that turn. A memory hiccup never takes down the agent.
 
-**No feedback loop.** The memories injected at the start of a run are not retained back at the end of it. Only the genuine user input and agent response are stored, so recalled context doesn't get re-ingested and amplified over time. (There's a test that exists specifically to keep this true.)
+**No feedback loop.** The memories injected at the start of a run are not retained back at the end of it. Only the genuine user input and agent response are stored, so recalled context doesn't get re-ingested and amplified over time. (A regression test exists specifically to keep it that way.)
 
 ## Recap
 
