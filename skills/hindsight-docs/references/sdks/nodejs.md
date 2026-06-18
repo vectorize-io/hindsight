@@ -55,6 +55,18 @@ const client = new HindsightClient({
 
 ## Core Operations
 
+### Version and Feature Checks
+
+```typescript
+const version = await client.getVersion();
+
+console.log(version.api_version);
+
+if (!version.features.mcp) {
+    throw new Error('This server does not expose the MCP endpoint');
+}
+```
+
 ### Retain (Store Memory)
 
 ```typescript

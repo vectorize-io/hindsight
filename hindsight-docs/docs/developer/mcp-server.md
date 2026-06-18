@@ -107,6 +107,21 @@ The MCP server operates in two modes depending on the URL:
 
 **Multi-bank mode** exposes all tools with an optional `bank_id` parameter, plus bank management tools (`list_banks`, `create_bank`, `get_bank_stats`).
 
+## Tool Metadata and Instructions
+
+Hindsight can append deployment-specific guidance to the `retain` and `recall` MCP tool descriptions. Set `HINDSIGHT_API_MCP_INSTRUCTIONS` on the API server when clients should see local rules, such as which tags to use or which memories should be retained.
+
+```bash
+export HINDSIGHT_API_MCP_INSTRUCTIONS="Use project:<name> tags for project-specific memories."
+```
+
+MCP clients that read tool annotations also receive safety hints from the built-in tools:
+
+- Read-only operations such as `recall`, `reflect`, `list_*`, and `get_*` are marked with `readOnlyHint: true`.
+- Delete, clear, and invalidate operations are marked with `destructiveHint: true`.
+- `openWorldHint` is `false` for the built-in tools because Hindsight operates on its configured memory store rather than the open internet.
+- Write operations such as `retain`, `create_*`, `update_*`, `refresh_mental_model`, and `cancel_operation` are not marked destructive.
+
 ---
 
 ## Available Tools

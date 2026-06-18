@@ -58,6 +58,19 @@ memories = client.memories.list(bank_id="test")
 
 ## Core Operations
 
+### Version and Feature Checks
+
+```python
+version = client.get_version()
+
+print(version.api_version)
+
+if not version.features.mcp:
+    raise RuntimeError("This server does not expose the MCP endpoint")
+```
+
+The async client method is available as `await client.aget_version()`.
+
 ### Retain (Store Memory)
 
 ```python
