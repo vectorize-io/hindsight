@@ -3,7 +3,7 @@ title: "Staleness-Aware Memory: When Your Agent Should Verify Before It Trusts"
 authors: [benfrank241]
 slug: "2026/06/17/freshness-aware-memory"
 date: 2026-06-17T12:00
-tags: [hindsight, memory, observations, mental-models, reflect, consolidation]
+tags: [deep-dive, hindsight, memory, observations, mental-models, reflect, consolidation]
 description: "Hindsight's consolidated memory (observations and mental models) is derived from raw facts, so it can lag behind new writes. Instead of silently serving a stale snapshot, Hindsight flags how far behind each layer is, and the reflect agent verifies against raw facts before trusting it."
 image: /img/blog/freshness-aware-memory.png
 hide_table_of_contents: true
