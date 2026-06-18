@@ -716,8 +716,9 @@ class WorkerPoller:
         task_type = task.task_dict.get("type", "unknown")
         bank_id = task.task_dict.get("bank_id", "unknown")
         # Operation metric (source="worker"): record on terminal outcomes only, so
-        # async retain/reflect/consolidation throughput, latency and success/failure
-        # are visible in Prometheus. Prefer the DB-authoritative operation_type.
+        # async worker throughput, latency and success/failure (retain, consolidation
+        # and the other worker task types) are visible in Prometheus. Prefer the
+        # DB-authoritative operation_type.
         # Note: success here reflects whether _executor raised; executors that
         # mark themselves failed and return normally still count as success — fix by
         # threading the executor's own status back if that granularity is needed.
