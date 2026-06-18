@@ -13,6 +13,7 @@ Tests cover:
 import asyncio
 import json
 import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -87,8 +88,6 @@ class TestWorkerOperationMetrics:
     """_execute_task_inner emits operation metrics on terminal outcomes only (no DB)."""
 
     def _make_poller(self, executor):
-        from unittest.mock import AsyncMock, MagicMock
-
         from hindsight_api.worker import WorkerPoller
 
         poller = WorkerPoller(backend=MagicMock(), worker_id="w-test", executor=executor)
@@ -99,8 +98,6 @@ class TestWorkerOperationMetrics:
         return poller
 
     async def _run(self, executor, task_type="batch_retain"):
-        from unittest.mock import MagicMock, patch
-
         from hindsight_api.worker.poller import ClaimedTask
 
         poller = self._make_poller(executor)
@@ -116,8 +113,6 @@ class TestWorkerOperationMetrics:
 
     @pytest.mark.asyncio
     async def test_completion_records_success(self):
-        from unittest.mock import AsyncMock
-
         collector = await self._run(AsyncMock())  # executor returns normally
         collector.record_operation_result.assert_called_once()
         call = collector.record_operation_result.call_args
@@ -133,6 +128,24 @@ class TestWorkerOperationMetrics:
         collector = await self._run(boom)
         collector.record_operation_result.assert_called_once()
         assert collector.record_operation_result.call_args.kwargs["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_executor_self_handled_failure_records_success_by_design(self):
+        """Deterministic failures that the executor marks failed and returns from
+        normally (file_convert_retain, non-retryable errors) record success=true.
+
+        This is intentional and documented: the worker counter is a completion-
+        throughput signal, not a failure-rate one — its success label only reflects
+        whether the task raised out to the poller. Authoritative failure visibility
+        comes from the hindsight_async_operations{status="failed"} gauge, which reads
+        each operation's final DB status. Locking the behavior here so a
+        future change to the success inference is a conscious one.
+        """
+        # An executor that "failed" but handled it internally is, at the poller
+        # boundary, indistinguishable from a clean completion: it returns normally.
+        collector = await self._run(AsyncMock())
+        collector.record_operation_result.assert_called_once()
+        assert collector.record_operation_result.call_args.kwargs["success"] is True
 
     @pytest.mark.asyncio
     async def test_deferral_not_counted(self):

@@ -716,12 +716,18 @@ class WorkerPoller:
         task_type = task.task_dict.get("type", "unknown")
         bank_id = task.task_dict.get("bank_id", "unknown")
         # Operation metric (source="worker"): record on terminal outcomes only, so
-        # async worker throughput, latency and success/failure (retain, consolidation
-        # and the other worker task types) are visible in Prometheus. Prefer the
-        # DB-authoritative operation_type.
-        # Note: success here reflects whether _executor raised; executors that
-        # mark themselves failed and return normally still count as success — fix by
-        # threading the executor's own status back if that granularity is needed.
+        # async worker throughput and latency (retain, consolidation and the other
+        # worker task types) are visible in Prometheus. Prefer the DB-authoritative
+        # operation_type.
+        #
+        # success semantics are deliberately narrow: success=false means the task
+        # raised out to the poller (an unexpected error, or retry-exhausted). It does
+        # NOT capture deterministic failures that the executor handles itself and
+        # returns from normally (file_convert_retain, non-retryable errors via
+        # memory_engine.execute_task) — those record success=true here. Treat this as
+        # a completion-throughput signal, not a failure-rate one: for authoritative
+        # failure visibility use the hindsight_async_operations{status="failed"} gauge,
+        # which reads each operation's final DB status.
         op_label = _metric_operation_label(task.task_dict.get("operation_type") or task_type)
         op_start = time.time()
         metrics = get_metrics_collector()
