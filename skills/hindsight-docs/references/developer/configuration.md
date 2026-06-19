@@ -472,6 +472,41 @@ consolidation below the global value — e.g. global=4, retain=1, consolidation=
 two slots that retain/consolidation cannot consume.
 :::
 
+### Failover LLM Provider (optional)
+
+When the primary LLM provider fails after exhausting its retry budget (controlled by
+`HINDSIGHT_API_LLM_MAX_RETRIES` and the per-operation variants), Hindsight can
+automatically re-dispatch the same call to a different provider. The failover is a
+single server-level configuration that applies to all operations (retain, reflect,
+consolidation, default). When none of these variables are set, no failover happens
+and the behaviour is identical to releases prior to this feature.
+
+| Variable | Description | Default |
+|---|---|---|
+| `HINDSIGHT_API_LLM_FAILOVER_PROVIDER` | Provider name (`openai`, `anthropic`, `gemini`, `groq`, etc.). Unset disables failover. | unset |
+| `HINDSIGHT_API_LLM_FAILOVER_API_KEY` | API key for the failover provider. Required unless the provider is one of the no-auth providers (`openai-codex`, `claude-code`, etc.). | unset |
+| `HINDSIGHT_API_LLM_FAILOVER_MODEL` | Model name for the failover. Defaults to the provider's recommended default. | provider default |
+| `HINDSIGHT_API_LLM_FAILOVER_BASE_URL` | Base URL for the failover provider. Defaults vary by provider. | provider default |
+
+**Retry count.** The existing `HINDSIGHT_API_LLM_MAX_RETRIES` (and the per-operation variants
+`HINDSIGHT_API_RETAIN_LLM_MAX_RETRIES`, `HINDSIGHT_API_REFLECT_LLM_MAX_RETRIES`,
+`HINDSIGHT_API_CONSOLIDATION_LLM_MAX_RETRIES`) controls how many times the primary is
+retried before failover triggers. Once the primary raises after the configured retries,
+the failover provider is invoked with the same arguments.
+
+**When failover triggers.** Most provider errors (rate limits, 5xx, connection errors,
+schema-validation failures from soft JSON mode) trigger failover. Two errors do NOT:
+- `OutputTooLongError` — the request exceeds the model's output budget; failover cannot help.
+- `asyncio.CancelledError` — propagates to honour task cancellation.
+
+**Batch APIs.** The failover does NOT apply to batch-mode retain
+(`submit_batch` / `get_batch_status` / `retrieve_batch_results`). Batch jobs are
+long-lived and asynchronous; cross-provider batch failover is out of scope.
+
+**Connection verification.** On startup the failover's connection is verified soft —
+a verification failure logs a warning but does not block the server from starting.
+This prevents a misconfigured failover from breaking deployments.
+
 ### Embeddings
 
 | Variable | Description | Default |
