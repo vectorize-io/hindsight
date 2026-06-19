@@ -1041,6 +1041,45 @@ describe("sliceLastTurnsByUserBoundary", () => {
     const messages = [{ role: "user", content: "Hello" }];
     expect(sliceLastTurnsByUserBoundary(messages, 0)).toEqual([]);
   });
+
+  it("skips synthetic user messages that contain only tool_result blocks", () => {
+    const messages = [
+      { role: "user", content: [{ type: "text", text: "Real user input 1" }] },
+      { role: "assistant", content: [{ type: "text", text: "Assistant reply 1" }] },
+      {
+        role: "user",
+        content: [{ type: "tool_result", content: "Tool output for call 1" }],
+      },
+      {
+        role: "user",
+        content: [{ type: "tool_result", content: "Tool output for call 2" }],
+      },
+      { role: "assistant", content: [{ type: "text", text: "Assistant after tools" }] },
+      { role: "user", content: [{ type: "text", text: "Real user input 2" }] },
+      { role: "assistant", content: [{ type: "text", text: "Assistant reply 2" }] },
+    ];
+    // 3 user turns requested, but only 2 have real text content.
+    // Should fall back to returning all messages.
+    const result = sliceLastTurnsByUserBoundary(messages, 3);
+    expect(result).toEqual(messages);
+  });
+
+  it("uses real user turns when tool_result synthetic messages are present", () => {
+    const messages = [
+      { role: "user", content: [{ type: "text", text: "Real user input 1" }] },
+      { role: "assistant", content: [{ type: "text", text: "Assistant reply 1" }] },
+      {
+        role: "user",
+        content: [{ type: "tool_result", content: "Tool output 1" }],
+      },
+      { role: "assistant", content: [{ type: "text", text: "Assistant after tool 1" }] },
+      { role: "user", content: [{ type: "text", text: "Real user input 2" }] },
+      { role: "assistant", content: [{ type: "text", text: "Assistant reply 2" }] },
+    ];
+    // 2 real user turns. Should start at message 0 (first real user).
+    const result = sliceLastTurnsByUserBoundary(messages, 2);
+    expect(result).toEqual(messages);
+  });
 });
 
 // ---------------------------------------------------------------------------
