@@ -347,6 +347,7 @@ from enum import Enum
 
 from ..pg0 import EmbeddedPostgres, parse_pg0_url
 from .entity_resolver import EntityResolver
+from .failover_llm import FailoverLLMProvider
 from .llm_wrapper import LLMConfig, requires_api_key, sanitize_llm_output, sanitize_text
 from .query_analyzer import QueryAnalyzer
 from .reflect import run_reflect_agent
@@ -954,8 +955,54 @@ class MemoryEngine(MemoryEngineInterface):
 
             self.query_analyzer = DateparserQueryAnalyzer()
 
+        # Resolve failover settings once. When llm_failover_provider is unset,
+        # _maybe_wrap returns the primary unchanged so the hot path is identical
+        # to the pre-failover behaviour.
+        _failover_provider = config.llm_failover_provider
+        _failover_api_key = config.llm_failover_api_key
+        _failover_model = config.llm_failover_model
+        _failover_base_url = config.llm_failover_base_url or None
+
+        def _build_failover_instance() -> LLMConfig | None:
+            if not _failover_provider:
+                return None
+            if not _failover_api_key and requires_api_key(_failover_provider):
+                logger.warning(
+                    "Failover LLM provider '%s' is configured but no API key was provided "
+                    "(HINDSIGHT_API_LLM_FAILOVER_API_KEY). Failover will be disabled.",
+                    _failover_provider,
+                )
+                return None
+            model = _failover_model
+            if not model:
+                from ..config import _get_default_model_for_provider
+
+                model = _get_default_model_for_provider(_failover_provider)
+            return LLMConfig(
+                provider=_failover_provider,
+                api_key=_failover_api_key or "",
+                base_url=_failover_base_url or "",
+                model=model,
+                reasoning_effort=config.llm_reasoning_effort,
+                extra_body=config.llm_extra_body,
+                default_headers=config.llm_default_headers,
+                litellmrouter_config=config.llm_litellmrouter_config,
+                bedrock_service_tier=config.llm_bedrock_service_tier,
+                gemini_service_tier=config.llm_gemini_service_tier,
+            )
+
+        # Build ONE failover instance shared across all per-op composites — both
+        # to save provider-client setup cost and to keep operational telemetry
+        # focused on a single failover endpoint.
+        _shared_failover = _build_failover_instance()
+
+        def _maybe_wrap(primary: LLMConfig) -> "LLMConfig | FailoverLLMProvider":
+            if _shared_failover is None:
+                return primary
+            return FailoverLLMProvider(primary=primary, failover=_shared_failover)
+
         # Initialize LLM configuration (default, used as fallback)
-        self._llm_config = LLMConfig(
+        _default_llm = LLMConfig(
             provider=memory_llm_provider,
             api_key=memory_llm_api_key,
             base_url=memory_llm_base_url,
@@ -967,10 +1014,11 @@ class MemoryEngine(MemoryEngineInterface):
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
         )
+        self._llm_config = _maybe_wrap(_default_llm)
 
         # Store client and model for convenience (deprecated: use _llm_config.call() instead)
-        self._llm_client = self._llm_config._client
-        self._llm_model = self._llm_config.model
+        self._llm_client = _default_llm._client
+        self._llm_model = _default_llm.model
 
         # Initialize per-operation LLM configs (fall back to default if not specified)
         # Retain LLM config - for fact extraction (benefits from strong structured output)
@@ -989,7 +1037,7 @@ class MemoryEngine(MemoryEngineInterface):
             else:
                 retain_base_url = ""
 
-        self._retain_llm_config = LLMConfig(
+        _retain_llm = LLMConfig(
             provider=retain_provider,
             api_key=retain_api_key,
             base_url=retain_base_url,
@@ -1001,6 +1049,7 @@ class MemoryEngine(MemoryEngineInterface):
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
         )
+        self._retain_llm_config = _maybe_wrap(_retain_llm)
 
         # Reflect LLM config - for think/observe operations (can use lighter models)
         reflect_provider = reflect_llm_provider or config.reflect_llm_provider or memory_llm_provider
@@ -1018,7 +1067,7 @@ class MemoryEngine(MemoryEngineInterface):
             else:
                 reflect_base_url = ""
 
-        self._reflect_llm_config = LLMConfig(
+        _reflect_llm = LLMConfig(
             provider=reflect_provider,
             api_key=reflect_api_key,
             base_url=reflect_base_url,
@@ -1030,6 +1079,7 @@ class MemoryEngine(MemoryEngineInterface):
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
         )
+        self._reflect_llm_config = _maybe_wrap(_reflect_llm)
 
         # Consolidation LLM config - for mental model consolidation (can use efficient models)
         consolidation_provider = consolidation_llm_provider or config.consolidation_llm_provider or memory_llm_provider
@@ -1047,7 +1097,7 @@ class MemoryEngine(MemoryEngineInterface):
             else:
                 consolidation_base_url = ""
 
-        self._consolidation_llm_config = LLMConfig(
+        _consolidation_llm = LLMConfig(
             provider=consolidation_provider,
             api_key=consolidation_api_key,
             base_url=consolidation_base_url,
@@ -1059,6 +1109,7 @@ class MemoryEngine(MemoryEngineInterface):
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
         )
+        self._consolidation_llm_config = _maybe_wrap(_consolidation_llm)
 
         # Initialize cross-encoder reranker (cached for performance)
         self._cross_encoder_reranker = CrossEncoderReranker(cross_encoder=cross_encoder)
@@ -2515,7 +2566,9 @@ class MemoryEngine(MemoryEngineInterface):
             provider becomes available (e.g. after a quota reset).
             """
             if not self._skip_llm_verification:
-                configs_to_verify: list[tuple[str, LLMConfig]] = [("default", self._llm_config)]
+                # Each entry may be a bare LLMConfig or a FailoverLLMProvider composite;
+                # both expose verify_connection() and the .provider/.model passthrough.
+                configs_to_verify: list[tuple[str, LLMConfig | FailoverLLMProvider]] = [("default", self._llm_config)]
 
                 # Verify retain config if different from default
                 retain_is_different = (
