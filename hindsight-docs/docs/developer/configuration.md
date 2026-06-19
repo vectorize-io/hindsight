@@ -1747,6 +1747,7 @@ The Control Plane is the web UI for managing memory banks.
 | `HINDSIGHT_CP_DATAPLANE_API_URL` | URL of the API service | `http://localhost:8888` |
 | `HINDSIGHT_CP_DATAPLANE_API_KEY` | Bearer token the Control Plane sends as `Authorization: Bearer <key>` on every request to the API service. Required when the API service is auth-protected; omit for a public API. | *(none — no `Authorization` header sent)* |
 | `HINDSIGHT_CP_ACCESS_KEY` | Access key to protect the Control Plane UI. When set, users must enter this key to log in. | *(none — auth disabled)* |
+| `HINDSIGHT_CP_MAX_UPLOAD_SIZE` | Maximum size of a single file-upload request the Control Plane accepts before truncating it. Accepts a size string (`100mb`, `1gb`) or a number of bytes. Raise this to upload files larger than the default, and keep it in line with the API's `HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE_MB`. | `100mb` |
 | `NEXT_PUBLIC_BASE_PATH` | Base path for Control Plane UI when behind reverse proxy (e.g., `/hindsight`) | `""` (root) |
 
 ```bash
