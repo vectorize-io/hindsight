@@ -416,7 +416,7 @@ class Hindsight:
         Args:
             bank_id: The memory bank ID
             query: Search query
-            types: Optional list of fact types to filter (world, experience, opinion, observation)
+            types: Optional list of fact types to filter (world, experience, observation)
             max_tokens: Maximum tokens in results (default: 4096)
             budget: Budget level for recall - "low", "mid", or "high" (default: "mid")
             trace: Enable trace output (default: False)
@@ -890,7 +890,7 @@ class Hindsight:
         Args:
             bank_id: The memory bank ID
             query: Search query
-            types: Optional list of fact types to filter (world, experience, opinion, observation)
+            types: Optional list of fact types to filter (world, experience, observation)
             max_tokens: Maximum tokens in results (default: 4096)
             budget: Budget level for recall - "low", "mid", or "high" (default: "mid")
             trace: Enable trace output (default: False)
