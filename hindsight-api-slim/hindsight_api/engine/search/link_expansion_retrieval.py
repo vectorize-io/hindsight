@@ -251,7 +251,7 @@ class LinkExpansionRetriever(GraphRetriever):
             result.activation = row["score"]
             results.append(result)
 
-        if tags:
+        if tags or tags_match == "exact":
             results = filter_results_by_tags(results, tags, match=tags_match)
 
         if tag_groups:

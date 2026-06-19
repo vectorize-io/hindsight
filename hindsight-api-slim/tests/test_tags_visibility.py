@@ -23,6 +23,7 @@ from hindsight_api.engine.search.tags import (
     TagGroupNot,
     TagGroupOr,
     build_tag_groups_where_clause,
+    build_tags_where_clause,
     build_tags_where_clause_simple,
     filter_results_by_tag_groups,
     filter_results_by_tags,
@@ -135,6 +136,20 @@ class TestTagsWhereClauseBuilder:
         assert result.count("mu.tags") == 2
         assert "@>" in result
         assert "<@" in result
+
+    @pytest.mark.parametrize("tags", [None, []])
+    def test_tags_match_exact_empty_scope_selects_untagged(self, tags):
+        """An empty exact scope matches both NULL and empty-array tag storage."""
+        result = build_tags_where_clause_simple(tags, 3, table_alias="mu.", match="exact")
+        assert result == "AND (mu.tags IS NULL OR mu.tags = '{}')"
+        assert "$3" not in result
+
+    def test_tags_match_exact_empty_scope_does_not_consume_parameter(self):
+        """The parameterized builder must keep following bind indexes aligned."""
+        clause, params, next_offset = build_tags_where_clause([], param_offset=4, match="exact")
+        assert clause == "AND (tags IS NULL OR tags = '{}')"
+        assert params == []
+        assert next_offset == 4
 
     # ---- Test table alias with all modes ----
 
@@ -255,6 +270,13 @@ class TestFilterResultsByTags:
         assert len(filtered) == 1
         assert filtered[0].tags == ["a"]
 
+    @pytest.mark.parametrize("tags", [None, []])
+    def test_exact_empty_scope_matches_only_untagged(self, tags):
+        """An empty exact scope includes NULL/empty tags and excludes tagged rows."""
+        results = [MockResult(["a"]), MockResult(None), MockResult([])]
+        filtered = filter_results_by_tags(results, tags, match="exact")
+        assert [r.tags for r in filtered] == [None, []]
+
     def test_all_mode_includes_untagged(self):
         """'all' mode should include untagged results."""
         results = [MockResult(["a", "b"]), MockResult(None), MockResult([])]
@@ -366,6 +388,14 @@ class TestBuildTagGroupsWhereClause:
         assert "&&" in clause
         assert params == [["user:alice"]]
         assert next_offset == 2
+
+    def test_exact_empty_leaf_selects_untagged_without_parameter(self):
+        """An exact empty compound leaf represents the global scope."""
+        groups = [TagGroupLeaf(tags=[], match="exact")]
+        clause, params, next_offset = build_tag_groups_where_clause(groups, 3, table_alias="mu.")
+        assert clause == "AND (mu.tags IS NULL OR mu.tags = '{}')"
+        assert params == []
+        assert next_offset == 3
 
     def test_and_of_two_leaves(self):
         """AND of two leaves generates AND-joined clause."""
@@ -542,6 +572,13 @@ class TestFilterResultsByTagGroups:
         ]
         filtered = filter_results_by_tag_groups(results, groups)
         assert len(filtered) == 2
+
+    def test_exact_empty_leaf_matches_only_untagged(self):
+        """Python compound filtering uses the same global-scope semantics as SQL."""
+        groups = [TagGroupLeaf(tags=[], match="exact")]
+        results = [MockResult(["project"]), MockResult(None), MockResult([])]
+        filtered = filter_results_by_tag_groups(results, groups)
+        assert [r.tags for r in filtered] == [None, []]
 
     def test_and_both_conditions_must_match(self):
         """AND group: both leaf conditions must match."""
@@ -902,6 +939,35 @@ async def test_recall_with_empty_tags_returns_all(api_client, test_bank_id):
     texts = [r["text"] for r in results]
     assert any("Quinn" in t for t in texts), "Should find Quinn"
     assert any("Rachel" in t for t in texts), "Should find Rachel"
+
+
+@pytest.mark.asyncio
+async def test_recall_with_exact_empty_tags_returns_only_untagged(api_client, test_bank_id):
+    """Exact matching with an empty tag set recalls only the global scope."""
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={
+            "items": [
+                {"content": "The deployment region is Singapore."},
+                {"content": "The deployment region is Frankfurt.", "tags": ["project:eu"]},
+            ]
+        },
+    )
+    assert response.status_code == 200
+
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories/recall",
+        json={
+            "query": "What is the deployment region?",
+            "budget": "low",
+            "tags": [],
+            "tags_match": "exact",
+        },
+    )
+    assert response.status_code == 200
+    texts = [result["text"] for result in response.json()["results"]]
+    assert any("Singapore" in text for text in texts)
+    assert not any("Frankfurt" in text for text in texts)
 
 
 @pytest.mark.asyncio
