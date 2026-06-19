@@ -3843,6 +3843,10 @@ class MemoryEngine(MemoryEngineInterface):
         max_tokens: int = 4096,
         enable_trace: bool = False,
         fact_type: list[str] | None = None,
+        # Opt-in (default False). Internal callers that recall raw facts on purpose —
+        # notably consolidation, which needs the raw facts it folds into observations —
+        # must leave this off so they aren't silently deduped away.
+        prefer_observations: bool = False,
         question_date: datetime | None = None,
         include_entities: bool = False,
         max_entity_tokens: int = 500,
@@ -3875,6 +3879,10 @@ class MemoryEngine(MemoryEngineInterface):
             bank_id: bank ID to recall for
             query: Recall query
             fact_type: List of fact types to recall (e.g., ['world', 'experience'])
+            prefer_observations: When True and both 'observation' and a raw type ('world'/'experience')
+                       are requested, drop raw facts that a returned observation was consolidated from
+                       (deduplication by provenance). Freed slots backfill, keeping the result count at
+                       the budget. No-op unless both observation and raw types are requested.
             budget: Budget level for graph traversal (low=100, mid=300, high=600 units)
             max_tokens: Maximum tokens to return (counts only 'text' field, default 4096)
                        Results are returned until token budget is reached, stopping before
@@ -4012,6 +4020,7 @@ class MemoryEngine(MemoryEngineInterface):
                             max_chunk_tokens,
                             request_context,
                             semaphore_wait=semaphore_wait,
+                            prefer_observations=prefer_observations,
                             tags=tags,
                             tags_match=tags_match,
                             tag_groups=tag_groups,
@@ -4148,6 +4157,7 @@ class MemoryEngine(MemoryEngineInterface):
         max_chunk_tokens: int = 8192,
         request_context: "RequestContext" = None,
         semaphore_wait: float = 0.0,
+        prefer_observations: bool = False,
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
         tag_groups: list[TagGroup] | None = None,
@@ -4659,6 +4669,48 @@ class MemoryEngine(MemoryEngineInterface):
             # if the client disconnected while we were reranking (issue #2122).
             if request_context is not None:
                 request_context.raise_if_cancelled()
+
+            # Step 4.8: prefer-observations dedup. When the caller asked for observations
+            # alongside raw facts, an observation supersedes the raw facts it was
+            # consolidated from: drop those raw facts so the same content isn't returned
+            # twice. Runs BEFORE the Step 5 truncation so the freed slots backfill with
+            # the next-best results, keeping the result count at the budget. No-op unless
+            # 'observation' and at least one raw type were both requested.
+            raw_types_requested = {"world", "experience"} & set(fact_type)
+            if prefer_observations and "observation" in fact_type and raw_types_requested:
+                # "The observation list" = observations within the window we would return.
+                # Only those can supersede a raw fact; a far-down observation should not
+                # suppress a top raw fact it merely happens to reference.
+                observation_ids = [
+                    uuid.UUID(sr.id)
+                    for sr in scored_results[: thinking_budget * 2]
+                    if sr.retrieval.fact_type == "observation"
+                ]
+                if observation_ids:
+                    superseded_ids: set[str] = set()
+                    async with acquire_with_retry(backend) as dedup_conn:
+                        obs_rows = await dedup_conn.fetch(
+                            f"""
+                            SELECT source_memory_ids
+                            FROM {fq_table("memory_units")}
+                            WHERE id = ANY($1::uuid[]) AND fact_type = 'observation'
+                            """,
+                            observation_ids,
+                        )
+                    for obs_row in obs_rows:
+                        for sid in obs_row["source_memory_ids"] or []:
+                            superseded_ids.add(str(sid))
+                    if superseded_ids:
+                        before_count = len(scored_results)
+                        scored_results = [
+                            sr
+                            for sr in scored_results
+                            if not (sr.retrieval.fact_type in ("world", "experience") and sr.id in superseded_ids)
+                        ]
+                        log_buffer.append(
+                            f"  [4.8] prefer_observations: dropped {before_count - len(scored_results)} "
+                            f"raw fact(s) superseded by {len(observation_ids)} observation(s)"
+                        )
 
             # Step 5: Truncate to thinking_budget * 2 for token filtering
             rerank_limit = thinking_budget * 2

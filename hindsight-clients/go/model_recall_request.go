@@ -23,6 +23,8 @@ var _ MappedNullable = &RecallRequest{}
 type RecallRequest struct {
 	Query string `json:"query"`
 	Types []string `json:"types,omitempty"`
+	// When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. Disabled by default; set to true to enable. No effect unless 'observation' and at least one raw type are both requested.
+	PreferObservations *bool `json:"prefer_observations,omitempty"`
 	Budget *Budget `json:"budget,omitempty"`
 	MaxTokens *int32 `json:"max_tokens,omitempty"`
 	Trace *bool `json:"trace,omitempty"`
@@ -44,6 +46,8 @@ type _RecallRequest RecallRequest
 func NewRecallRequest(query string) *RecallRequest {
 	this := RecallRequest{}
 	this.Query = query
+	var preferObservations bool = false
+	this.PreferObservations = &preferObservations
 	var maxTokens int32 = 4096
 	this.MaxTokens = &maxTokens
 	var trace bool = false
@@ -58,6 +62,8 @@ func NewRecallRequest(query string) *RecallRequest {
 // but it doesn't guarantee that properties required by API are set
 func NewRecallRequestWithDefaults() *RecallRequest {
 	this := RecallRequest{}
+	var preferObservations bool = false
+	this.PreferObservations = &preferObservations
 	var maxTokens int32 = 4096
 	this.MaxTokens = &maxTokens
 	var trace bool = false
@@ -122,6 +128,38 @@ func (o *RecallRequest) HasTypes() bool {
 // SetTypes gets a reference to the given []string and assigns it to the Types field.
 func (o *RecallRequest) SetTypes(v []string) {
 	o.Types = v
+}
+
+// GetPreferObservations returns the PreferObservations field value if set, zero value otherwise.
+func (o *RecallRequest) GetPreferObservations() bool {
+	if o == nil || IsNil(o.PreferObservations) {
+		var ret bool
+		return ret
+	}
+	return *o.PreferObservations
+}
+
+// GetPreferObservationsOk returns a tuple with the PreferObservations field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *RecallRequest) GetPreferObservationsOk() (*bool, bool) {
+	if o == nil || IsNil(o.PreferObservations) {
+		return nil, false
+	}
+	return o.PreferObservations, true
+}
+
+// HasPreferObservations returns a boolean if a field has been set.
+func (o *RecallRequest) HasPreferObservations() bool {
+	if o != nil && !IsNil(o.PreferObservations) {
+		return true
+	}
+
+	return false
+}
+
+// SetPreferObservations gets a reference to the given bool and assigns it to the PreferObservations field.
+func (o *RecallRequest) SetPreferObservations(v bool) {
+	o.PreferObservations = &v
 }
 
 // GetBudget returns the Budget field value if set, zero value otherwise.
@@ -405,6 +443,9 @@ func (o RecallRequest) ToMap() (map[string]interface{}, error) {
 	toSerialize["query"] = o.Query
 	if o.Types != nil {
 		toSerialize["types"] = o.Types
+	}
+	if !IsNil(o.PreferObservations) {
+		toSerialize["prefer_observations"] = o.PreferObservations
 	}
 	if !IsNil(o.Budget) {
 		toSerialize["budget"] = o.Budget

@@ -7113,6 +7113,17 @@ components:
             type: string
           nullable: true
           type: array
+        prefer_observations:
+          default: false
+          description: "When recalling raw facts ('world'/'experience') together with\
+            \ 'observation', drop any raw fact that an observation in the results\
+            \ was consolidated from, so the observation supersedes it and you don't\
+            \ get duplicate content. The freed slots are backfilled with the next\
+            \ results, keeping the result count at the requested budget. Disabled\
+            \ by default; set to true to enable. No effect unless 'observation' and\
+            \ at least one raw type are both requested."
+          title: Prefer Observations
+          type: boolean
         budget:
           $ref: '#/components/schemas/Budget'
         max_tokens:

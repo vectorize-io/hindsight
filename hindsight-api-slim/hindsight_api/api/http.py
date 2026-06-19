@@ -270,6 +270,16 @@ class RecallRequest(BaseModel):
         default=None,
         description="List of fact types to recall: 'world', 'experience', 'observation'. Defaults to world and experience if not specified.",
     )
+    prefer_observations: bool = Field(
+        default=False,
+        description=(
+            "When recalling raw facts ('world'/'experience') together with 'observation', drop any raw "
+            "fact that an observation in the results was consolidated from, so the observation supersedes "
+            "it and you don't get duplicate content. The freed slots are backfilled with the next results, "
+            "keeping the result count at the requested budget. Disabled by default; set to true to enable. "
+            "No effect unless 'observation' and at least one raw type are both requested."
+        ),
+    )
     budget: Budget = Budget.MID
     max_tokens: int = 4096
     trace: bool = False
@@ -3826,6 +3836,7 @@ def _register_routes(app: FastAPI):
                         max_tokens=request.max_tokens,
                         enable_trace=request.trace,
                         fact_type=fact_types,
+                        prefer_observations=request.prefer_observations,
                         question_date=question_date,
                         include_entities=include_entities,
                         max_entity_tokens=max_entity_tokens,

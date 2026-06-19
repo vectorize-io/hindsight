@@ -409,6 +409,7 @@ class Hindsight:
         tags: list[str] | None = None,
         tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         tag_groups: list[dict[str, Any]] | None = None,
+        prefer_observations: bool = False,
     ) -> RecallResponse:
         """
         Recall memories using semantic similarity (sync wrapper — prefer :meth:`arecall` in async code).
@@ -433,6 +434,10 @@ class Hindsight:
                 "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged),
                 "exact" (set equality, excludes untagged). Default: "any"
             tag_groups: Optional list of tag group filters for advanced boolean tag matching.
+            prefer_observations: When recalling raw facts ("world"/"experience") together with
+                "observation", drop any raw fact a returned observation was consolidated from, so the
+                observation supersedes it (no duplicate content). Disabled by default; no effect unless
+                "observation" and at least one raw type are both in ``types``.
 
         Returns:
             RecallResponse with results, optional entities, optional chunks, optional source_facts, and optional trace
@@ -455,6 +460,7 @@ class Hindsight:
                 tags=tags,
                 tags_match=tags_match,
                 tag_groups=tag_groups,
+                prefer_observations=prefer_observations,
             )
         )
 
@@ -883,6 +889,7 @@ class Hindsight:
         tags: list[str] | None = None,
         tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         tag_groups: list[dict[str, Any]] | None = None,
+        prefer_observations: bool = False,
     ) -> RecallResponse:
         """
         Recall memories using semantic similarity (async — preferred over :meth:`recall`).
@@ -911,6 +918,11 @@ class Hindsight:
                 TagGroupOr, or TagGroupNot). Example::
 
                     [{"tags": ["customer"], "match": "all"}, {"not": {"tags": ["internal"]}}]
+
+            prefer_observations: When recalling raw facts ("world"/"experience") together with
+                "observation", drop any raw fact a returned observation was consolidated from, so the
+                observation supersedes it (no duplicate content). Disabled by default; no effect unless
+                "observation" and at least one raw type are both in ``types``.
 
         Returns:
             RecallResponse with results, optional entities, optional chunks, optional source_facts, and optional trace
@@ -941,6 +953,7 @@ class Hindsight:
         request_obj = recall_request.RecallRequest(
             query=query,
             types=types,
+            prefer_observations=prefer_observations,
             budget=budget,
             max_tokens=max_tokens,
             trace=trace,

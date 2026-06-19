@@ -833,6 +833,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             max_tokens: int = 4096,
             budget: str = "high",
             types: list[str] | None = None,
+            prefer_observations: bool = False,
             tags: list[str] | None = None,
             tags_match: str = "any",
             tag_groups: list[dict] | None = None,
@@ -845,6 +846,10 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 max_tokens: Maximum tokens to return in results (default: 4096)
                 budget: Search budget - 'low', 'mid', or 'high' (default: 'high'). Higher budgets search more thoroughly.
                 types: Fact types to include (e.g., ['world', 'experience']). Default: all types.
+                prefer_observations: When recalling raw facts together with 'observation', drop any raw fact
+                    that a returned observation was consolidated from, so the observation supersedes it (no
+                    duplicate content). Disabled by default; set true to enable. No effect unless
+                    'observation' and a raw type are both in types. Default: False.
                 tags: Optional tags to filter results by (e.g., ['project:alpha']). Mutually exclusive with tag_groups.
                 tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
                 tag_groups: Compound tag filter using boolean groups (AND-ed together). Each group is a leaf
@@ -873,6 +878,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     "bank_id": target_bank,
                     "query": query,
                     "fact_type": fact_types,
+                    "prefer_observations": prefer_observations,
                     "budget": budget_enum,
                     "max_tokens": max_tokens,
                     "request_context": _get_request_context(config),
@@ -905,6 +911,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             max_tokens: int = 4096,
             budget: str = "high",
             types: list[str] | None = None,
+            prefer_observations: bool = False,
             tags: list[str] | None = None,
             tags_match: str = "any",
             tag_groups: list[dict] | None = None,
@@ -916,6 +923,10 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 max_tokens: Maximum tokens to return in results (default: 4096)
                 budget: Search budget - 'low', 'mid', or 'high' (default: 'high'). Higher budgets search more thoroughly.
                 types: Fact types to include (e.g., ['world', 'experience']). Default: all types.
+                prefer_observations: When recalling raw facts together with 'observation', drop any raw fact
+                    that a returned observation was consolidated from, so the observation supersedes it (no
+                    duplicate content). Disabled by default; set true to enable. No effect unless
+                    'observation' and a raw type are both in types. Default: False.
                 tags: Optional tags to filter results by (e.g., ['project:alpha']). Mutually exclusive with tag_groups.
                 tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
                 tag_groups: Compound tag filter using boolean groups (AND-ed together). Each group is a leaf
@@ -943,6 +954,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     "bank_id": target_bank,
                     "query": query,
                     "fact_type": fact_types,
+                    "prefer_observations": prefer_observations,
                     "budget": budget_enum,
                     "max_tokens": max_tokens,
                     "request_context": _get_request_context(config),

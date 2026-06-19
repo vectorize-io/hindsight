@@ -31,6 +31,7 @@ class RecallRequest(BaseModel):
     """ # noqa: E501
     query: StrictStr
     types: Optional[List[StrictStr]] = None
+    prefer_observations: Optional[StrictBool] = Field(default=False, description="When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. Disabled by default; set to true to enable. No effect unless 'observation' and at least one raw type are both requested.")
     budget: Optional[Budget] = None
     max_tokens: Optional[StrictInt] = 4096
     trace: Optional[StrictBool] = False
@@ -39,7 +40,7 @@ class RecallRequest(BaseModel):
     tags: Optional[List[StrictStr]] = None
     tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).")
     tag_groups: Optional[List[MentalModelTriggerInputTagGroupsInner]] = None
-    __properties: ClassVar[List[str]] = ["query", "types", "budget", "max_tokens", "trace", "query_timestamp", "include", "tags", "tags_match", "tag_groups"]
+    __properties: ClassVar[List[str]] = ["query", "types", "prefer_observations", "budget", "max_tokens", "trace", "query_timestamp", "include", "tags", "tags_match", "tag_groups"]
 
     @field_validator('tags_match')
     def tags_match_validate_enum(cls, value):
@@ -134,6 +135,7 @@ class RecallRequest(BaseModel):
         _obj = cls.model_validate({
             "query": obj.get("query"),
             "types": obj.get("types"),
+            "prefer_observations": obj.get("prefer_observations") if obj.get("prefer_observations") is not None else False,
             "budget": obj.get("budget"),
             "max_tokens": obj.get("max_tokens") if obj.get("max_tokens") is not None else 4096,
             "trace": obj.get("trace") if obj.get("trace") is not None else False,
