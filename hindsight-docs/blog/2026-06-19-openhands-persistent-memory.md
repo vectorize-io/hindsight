@@ -1,5 +1,5 @@
 ---
-title: "OpenHands Forgets Every Task. Here's the One-Command Fix."
+title: "OpenHands (formerly OpenDevin) Forgets Every Task. Here's the One-Command Fix."
 authors: [benfrank241]
 slug: "2026/06/19/openhands-persistent-memory"
 date: 2026-06-19T12:00
