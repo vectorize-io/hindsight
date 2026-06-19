@@ -4622,10 +4622,14 @@ class MemoryEngine(MemoryEngineInterface):
                 ce = reranker_instance.cross_encoder
                 # "rrf" mode is passthrough by construction; so is a configured "rrf" CE.
                 is_passthrough = (reranking == "rrf") or (ce is not None and ce.provider_name == "rrf")
+                scoring_config = get_config()
                 apply_combined_scoring(
                     scored_results,
                     now=_recall_scoring_now(question_date),
                     is_passthrough_reranker=is_passthrough,
+                    recency_decay_function=scoring_config.recency_decay_function,
+                    recency_decay_linear_window_days=scoring_config.recency_decay_linear_window_days,
+                    recency_decay_halflife_days=scoring_config.recency_decay_halflife_days,
                 )
                 # Per-strategy additive boost: nudge candidates surfaced by a
                 # prioritised retrieval arm up the final ordering.

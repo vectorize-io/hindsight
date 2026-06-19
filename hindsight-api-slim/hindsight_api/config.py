@@ -575,6 +575,14 @@ ENV_RECALL_MAX_CANDIDATES_PER_SOURCE = "HINDSIGHT_API_RECALL_MAX_CANDIDATES_PER_
 # Empty disables the feature.
 ENV_RECALL_STRATEGY_BOOSTS = "HINDSIGHT_API_RECALL_STRATEGY_BOOSTS"
 
+# Recency decay used by recall reranking (engine/search/reranking.py). The decay
+# function maps a memory's age onto a freshness signal that nudges its final
+# ranking via a small multiplicative boost. "linear" (default) preserves the
+# historical behaviour; "exponential" decays by half-life; "none" disables it.
+ENV_RECENCY_DECAY_FUNCTION = "HINDSIGHT_API_RECENCY_DECAY_FUNCTION"
+ENV_RECENCY_DECAY_LINEAR_WINDOW_DAYS = "HINDSIGHT_API_RECENCY_DECAY_LINEAR_WINDOW_DAYS"
+ENV_RECENCY_DECAY_HALFLIFE_DAYS = "HINDSIGHT_API_RECENCY_DECAY_HALFLIFE_DAYS"
+
 # Audit log settings
 ENV_AUDIT_LOG_ENABLED = "HINDSIGHT_API_AUDIT_LOG_ENABLED"
 ENV_AUDIT_LOG_ACTIONS = "HINDSIGHT_API_AUDIT_LOG_ACTIONS"
@@ -713,6 +721,14 @@ DEFAULT_RECALL_MAX_CANDIDATES_PER_SOURCE = 0
 # "graph:high,semantic:low"). Empty disables the feature. See
 # ENV_RECALL_STRATEGY_BOOSTS for the full rationale.
 DEFAULT_RECALL_STRATEGY_BOOSTS = ""
+# Recency decay shape used by recall reranking. "linear" reproduces the
+# historical straight-line decay; defaults below keep behaviour unchanged.
+RECENCY_DECAY_FUNCTIONS = ("linear", "exponential", "none")
+DEFAULT_RECENCY_DECAY_FUNCTION = "linear"
+# Linear: days over which freshness decays from 1.0 to its 0.1 floor.
+DEFAULT_RECENCY_DECAY_LINEAR_WINDOW_DAYS = 365.0
+# Exponential: age (days) at which the recency signal is neutral (0.5).
+DEFAULT_RECENCY_DECAY_HALFLIFE_DAYS = 90.0
 # Retrieval arms that can be boosted; mirrors fusion.py source_names.
 RECALL_STRATEGY_NAMES = ("semantic", "bm25", "graph", "temporal")
 # User-facing priority levels. Kept in sync with recall_boost.BOOST_LEVELS by a
@@ -1208,6 +1224,18 @@ def _validate_recall_budget_function(function: str) -> str:
     return function_lower
 
 
+def _validate_recency_decay_function(function: str) -> str:
+    """Validate and normalize the recency decay function."""
+    function_lower = function.lower()
+    if function_lower not in RECENCY_DECAY_FUNCTIONS:
+        logger.warning(
+            f"Invalid recency decay function '{function}', must be one of {RECENCY_DECAY_FUNCTIONS}. "
+            f"Defaulting to '{DEFAULT_RECENCY_DECAY_FUNCTION}'."
+        )
+        return DEFAULT_RECENCY_DECAY_FUNCTION
+    return function_lower
+
+
 def _parse_bank_priority(raw: str) -> dict[str, int]:
     """Parse ``bank-pattern:priority,...`` into ``{pattern: priority}``.
 
@@ -1464,6 +1492,9 @@ class HindsightConfig:
     bm25_min_score: float
     recall_max_candidates_per_source: int
     recall_strategy_boosts: dict[str, str]
+    recency_decay_function: str
+    recency_decay_linear_window_days: float
+    recency_decay_halflife_days: float
     reranker_cohere_api_key: str | None
     reranker_cohere_model: str
     reranker_cohere_base_url: str | None
@@ -2315,6 +2346,15 @@ class HindsightConfig:
             ),
             recall_strategy_boosts=_parse_strategy_boosts(
                 os.getenv(ENV_RECALL_STRATEGY_BOOSTS, DEFAULT_RECALL_STRATEGY_BOOSTS)
+            ),
+            recency_decay_function=_validate_recency_decay_function(
+                os.getenv(ENV_RECENCY_DECAY_FUNCTION, DEFAULT_RECENCY_DECAY_FUNCTION)
+            ),
+            recency_decay_linear_window_days=float(
+                os.getenv(ENV_RECENCY_DECAY_LINEAR_WINDOW_DAYS, str(DEFAULT_RECENCY_DECAY_LINEAR_WINDOW_DAYS))
+            ),
+            recency_decay_halflife_days=float(
+                os.getenv(ENV_RECENCY_DECAY_HALFLIFE_DAYS, str(DEFAULT_RECENCY_DECAY_HALFLIFE_DAYS))
             ),
             # Cohere reranker (with backward-compatible fallback to shared API key)
             reranker_cohere_api_key=os.getenv(ENV_RERANKER_COHERE_API_KEY) or os.getenv(ENV_COHERE_API_KEY),
