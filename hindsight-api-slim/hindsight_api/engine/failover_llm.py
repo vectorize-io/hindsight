@@ -8,7 +8,6 @@ for the design.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -22,15 +21,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _should_failover(error: BaseException) -> bool:
+def _should_failover(error: Exception) -> bool:
     """True if the failover composite should re-dispatch to the failover provider.
 
     Re-dispatch on transient/provider errors; propagate deterministic failures
-    (output-too-long, cancellation) unchanged.
+    (output-too-long) unchanged. CancelledError, KeyboardInterrupt, and SystemExit
+    are not caught here at all (they inherit from BaseException, not Exception).
     """
     if isinstance(error, OutputTooLongError):
-        return False
-    if isinstance(error, asyncio.CancelledError):
         return False
     return True
 
@@ -64,7 +62,7 @@ class FailoverLLMProvider:
     async def call(self, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
         try:
             return await self._primary.call(messages=messages, **kwargs)
-        except BaseException as primary_error:
+        except Exception as primary_error:
             if self._failover is None or not _should_failover(primary_error):
                 raise
             logger.warning(
@@ -85,7 +83,7 @@ class FailoverLLMProvider:
     ) -> "LLMToolCallResult":
         try:
             return await self._primary.call_with_tools(messages=messages, tools=tools, **kwargs)
-        except BaseException as primary_error:
+        except Exception as primary_error:
             if self._failover is None or not _should_failover(primary_error):
                 raise
             logger.warning(
@@ -165,10 +163,17 @@ class ConfiguredFailoverLLMProvider:
     async def call(self, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
         try:
             return await self._primary.call(messages=messages, **kwargs)
-        except BaseException as primary_error:
+        except Exception as primary_error:
             if self._failover is None or not _should_failover(primary_error):
                 raise
-            logger.warning("Primary LLM failed (configured path); falling over: %s", primary_error)
+            logger.warning(
+                "Primary LLM %s/%s failed (configured path); falling over to %s/%s: %s",
+                self._primary.provider,
+                self._primary.model,
+                self._failover.provider,
+                self._failover.model,
+                primary_error,
+            )
             return await self._failover.call(messages=messages, **kwargs)
 
     async def call_with_tools(
@@ -179,11 +184,15 @@ class ConfiguredFailoverLLMProvider:
     ) -> "LLMToolCallResult":
         try:
             return await self._primary.call_with_tools(messages=messages, tools=tools, **kwargs)
-        except BaseException as primary_error:
+        except Exception as primary_error:
             if self._failover is None or not _should_failover(primary_error):
                 raise
             logger.warning(
-                "Primary LLM call_with_tools failed (configured path); falling over: %s",
+                "Primary LLM %s/%s call_with_tools failed (configured path); falling over to %s/%s: %s",
+                self._primary.provider,
+                self._primary.model,
+                self._failover.provider,
+                self._failover.model,
                 primary_error,
             )
             return await self._failover.call_with_tools(messages=messages, tools=tools, **kwargs)
