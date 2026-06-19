@@ -1299,7 +1299,11 @@ async def _extract_facts_from_chunk(
     last_error: Exception | None = None
 
     usage = TokenUsage()  # Track cumulative usage across retries
-    for attempt in range(llm_max_retries):
+    # Always make at least one attempt. `llm_max_retries=0` (a valid config for
+    # "no JSON-validation retries") must still execute the call once — otherwise
+    # the loop is skipped entirely and the function raises the line-below
+    # fallthrough RuntimeError before the LLM is ever called.
+    for attempt in range(max(1, llm_max_retries)):
         try:
             initial_backoff = (
                 config.retain_llm_initial_backoff
@@ -1814,7 +1818,11 @@ async def extract_facts_from_text(
         total_usage = total_usage + chunk_usage
 
     if failed_chunks:
-        failed_summary = ", ".join(f"chunk {idx}: {type(err).__name__}" for idx, err in failed_chunks[:5])
+        failed_summary = ", ".join(f"chunk {idx}: {type(err).__name__}: {err}" for idx, err in failed_chunks[:5])
+        # Also log the full inner tracebacks so the API log shows what actually failed,
+        # not just a wrapping RuntimeError that hides the cause.
+        for idx, err in failed_chunks[:5]:
+            logger.error("Fact extraction chunk %d failed", idx, exc_info=err)
         quota_errors = [err for _, err in failed_chunks if isinstance(err, ProviderRateLimitResetError)]
         if quota_errors and len(quota_errors) == len(failed_chunks):
             retry_at = max(err.retry_at for err in quota_errors)
