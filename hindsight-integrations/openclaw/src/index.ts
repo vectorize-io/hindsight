@@ -3032,31 +3032,11 @@ export function sliceLastTurnsByUserBoundary(messages: any[], turns: number): an
     return [];
   }
 
-  // Count only user messages that contain actual text content.
-  // OpenClaw normalizes tool_result blocks into role:"user" messages with a
-  // tool_result content block. Without this filter those synthetic messages
-  // would be counted as real user turns, causing the window to exclude actual
-  // user input from the retained transcript.
-  function hasRealTextContent(msg: any): boolean {
-    if (msg?.role !== "user") return false;
-    const content = msg.content;
-    if (typeof content === "string") return content.trim().length > 0;
-    if (Array.isArray(content)) {
-      return content.some(
-        (b: any) =>
-          b?.type === "text" &&
-          typeof b?.text === "string" &&
-          b.text.trim().length > 0,
-      );
-    }
-    return false;
-  }
-
   let userTurnsSeen = 0;
   let startIndex = -1;
 
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]?.role === "user" && hasRealTextContent(messages[i])) {
+    if (messages[i]?.role === "user") {
       userTurnsSeen += 1;
       if (userTurnsSeen >= turns) {
         startIndex = i;
