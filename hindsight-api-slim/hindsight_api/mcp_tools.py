@@ -2217,7 +2217,7 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             browse/search without relevance ranking.
 
             Args:
-                type: Filter by fact type: 'world', 'experience', or 'opinion'
+                type: Filter by fact type: 'world', 'experience', or 'observation'
                 q: Optional text search query to filter memories
                 limit: Maximum number of results (default: 100)
                 offset: Pagination offset (default: 0)
@@ -2260,7 +2260,7 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             browse/search without relevance ranking.
 
             Args:
-                type: Filter by fact type: 'world', 'experience', or 'opinion'
+                type: Filter by fact type: 'world', 'experience', or 'observation'
                 q: Optional text search query to filter memories
                 limit: Maximum number of results (default: 100)
                 offset: Pagination offset (default: 0)
@@ -3425,7 +3425,7 @@ def _register_clear_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
             Optionally filter by fact type to only clear specific kinds of memories.
 
             Args:
-                type: Optional fact type filter: 'world', 'experience', or 'opinion'. If not specified, clears all.
+                type: Optional fact type filter: 'world', 'experience', or 'observation'. If not specified, clears all.
                 bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -3459,7 +3459,7 @@ def _register_clear_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
             Optionally filter by fact type to only clear specific kinds of memories.
 
             Args:
-                type: Optional fact type filter: 'world', 'experience', or 'opinion'. If not specified, clears all.
+                type: Optional fact type filter: 'world', 'experience', or 'observation'. If not specified, clears all.
             """
             try:
                 target_bank = config.bank_id_resolver()
