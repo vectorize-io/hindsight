@@ -12,6 +12,7 @@ import io
 import json
 import logging
 import time
+import traceback
 from contextvars import ContextVar
 from typing import Any
 
@@ -26,6 +27,79 @@ from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
 logger = logging.getLogger(__name__)
+
+# Dedicated structured logger for per-call attribution. Operators can route
+# this to BigQuery / Loki for offline reconciliation against provider billing
+# without polluting the general application log. Each line is JSON.
+_call_audit_logger = logging.getLogger("hindsight.llm.gemini.calls")
+
+
+def _truncated_caller_stack(max_frames: int = 8) -> list[str]:
+    """Return up to ``max_frames`` of caller info, project files only.
+
+    Used by the per-call audit log to attribute LLM spend back to the source
+    code path. Stdlib + 3p frames are skipped so the output stays small and
+    actionable. Only file:lineno:func is captured — no locals, no source
+    lines, no message content — so this is safe to ship to long-term log
+    storage.
+    """
+    frames: list[str] = []
+    # ``[:-2]`` skips the helper itself and the immediate gemini-provider frame.
+    for frame in traceback.extract_stack(limit=64)[:-2]:
+        if "/site-packages/" in frame.filename:
+            continue
+        if "/lib/python" in frame.filename:
+            continue
+        # Trim absolute path to the last three path segments so the line
+        # stays short and the project structure is still recognisable.
+        segments = frame.filename.rsplit("/", 3)
+        path = "/".join(segments[-3:]) if len(segments) > 3 else frame.filename
+        frames.append(f"{path}:{frame.lineno}:{frame.name}")
+        if len(frames) >= max_frames:
+            break
+    return frames
+
+
+def _emit_call_audit(
+    *,
+    provider: str,
+    model: str,
+    scope: str | None,
+    input_tokens: int,
+    cached_input_tokens: int,
+    output_tokens: int,
+    thoughts_tokens: int,
+    duration_ms: int,
+    finish_reason: str | None,
+) -> None:
+    """Emit one JSON line per Gemini call for offline attribution analysis.
+
+    Goes to a dedicated logger so operators can route it independently of
+    the application log. The cost is ~400 bytes per call. At 200k
+    calls/day that's ~80 MB/day — well within any normal log retention
+    budget.
+    """
+    try:
+        _call_audit_logger.info(
+            json.dumps(
+                {
+                    "provider": provider,
+                    "model": model,
+                    "scope": scope,
+                    "input_tokens": input_tokens,
+                    "cached_input_tokens": cached_input_tokens,
+                    "output_tokens": output_tokens,
+                    "thoughts_tokens": thoughts_tokens,
+                    "duration_ms": duration_ms,
+                    "finish_reason": finish_reason,
+                    "caller_stack": _truncated_caller_stack(),
+                }
+            )
+        )
+    except Exception:
+        # Audit must never fail the request path. Swallow and move on; the
+        # Prometheus metrics path is the durable signal.
+        pass
 
 # Per-request Gemini safety settings override.
 # Set exclusively by ConfiguredLLMProvider.call() / call_with_tools() via token-based
@@ -406,12 +480,25 @@ class GeminiLLM(LLMInterface):
                         f"time={duration:.3f}s"
                     )
 
+                _emit_call_audit(
+                    provider=self.provider,
+                    model=self.model,
+                    scope=scope,
+                    input_tokens=input_tokens,
+                    cached_input_tokens=cached_input_tokens,
+                    output_tokens=output_tokens,
+                    thoughts_tokens=thoughts_tokens,
+                    duration_ms=int(duration * 1000),
+                    finish_reason=None,
+                )
+
                 if return_usage:
                     token_usage = TokenUsage(
                         input_tokens=input_tokens,
                         output_tokens=output_tokens,
                         total_tokens=input_tokens + output_tokens,
                         cached_tokens=cached_tokens,
+                        thoughts_tokens=thoughts_tokens,
                     )
                     return result, token_usage
                 return result
@@ -743,12 +830,26 @@ class GeminiLLM(LLMInterface):
                     cached_tokens=cached_input_tokens,
                 )
 
+                _emit_call_audit(
+                    provider=self.provider,
+                    model=self.model,
+                    scope=scope,
+                    input_tokens=input_tokens,
+                    cached_input_tokens=cached_input_tokens,
+                    output_tokens=output_tokens,
+                    thoughts_tokens=thoughts_tokens,
+                    duration_ms=int(duration * 1000),
+                    finish_reason=finish_reason,
+                )
+
                 return LLMToolCallResult(
                     content=content,
                     tool_calls=tool_calls,
                     finish_reason=finish_reason,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
+                    cached_tokens=cached_input_tokens,
+                    thoughts_tokens=thoughts_tokens,
                 )
 
             except genai_errors.APIError as e:
