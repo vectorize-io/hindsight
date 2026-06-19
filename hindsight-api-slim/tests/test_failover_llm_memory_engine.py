@@ -1,7 +1,5 @@
 """Integration: MemoryEngine constructs FailoverLLMProvider when configured."""
 
-import os
-
 import pytest
 
 
