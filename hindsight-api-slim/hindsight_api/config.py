@@ -156,6 +156,15 @@ ENV_LLM_SEND_BANK_AS_USER = "HINDSIGHT_API_LLM_SEND_BANK_AS_USER"
 # disambiguates from the embeddings/reranker LITELLM_* settings.
 ENV_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG"
 
+# Failover LLM provider (optional, server-level only). When set, calls that
+# raise after the primary's max_retries are re-dispatched to this provider.
+# Backwards compatible: when unset, the failover composite is bypassed
+# entirely — MemoryEngine wires the bare primary as before.
+ENV_LLM_FAILOVER_PROVIDER = "HINDSIGHT_API_LLM_FAILOVER_PROVIDER"
+ENV_LLM_FAILOVER_API_KEY = "HINDSIGHT_API_LLM_FAILOVER_API_KEY"
+ENV_LLM_FAILOVER_MODEL = "HINDSIGHT_API_LLM_FAILOVER_MODEL"
+ENV_LLM_FAILOVER_BASE_URL = "HINDSIGHT_API_LLM_FAILOVER_BASE_URL"
+
 # Defaults for service tiers
 DEFAULT_LLM_GROQ_SERVICE_TIER = "auto"  # "on_demand", "flex", or "auto"
 DEFAULT_LLM_OPENAI_SERVICE_TIER = None  # None (default) or "flex" (50% cheaper)
@@ -1358,6 +1367,16 @@ class HindsightConfig:
     # CachedContent prefix for its system prompt + response schema.
     llm_prompt_cache_enabled: bool
 
+    # Failover LLM provider (optional). None on all four = failover disabled.
+    # When llm_failover_provider is set, MemoryEngine wraps each LLM provider
+    # (default + per-op) in a FailoverLLMProvider composite that re-dispatches
+    # calls to this provider when the primary raises after its retries are
+    # exhausted. See engine/failover_llm.py.
+    llm_failover_provider: str | None
+    llm_failover_api_key: str | None
+    llm_failover_model: str | None
+    llm_failover_base_url: str | None
+
     # Built-in llama.cpp configuration (for provider=llamacpp)
     llamacpp_model_path: str | None  # Path to GGUF file (None = auto-download default)
     llamacpp_gpu_layers: int  # -1 = all layers on GPU, 0 = CPU only
@@ -1722,6 +1741,7 @@ class HindsightConfig:
         "retain_llm_api_key",
         "reflect_llm_api_key",
         "consolidation_llm_api_key",
+        "llm_failover_api_key",
         # LiteLLM Router chains — entries embed api_keys and base_urls
         "llm_litellmrouter_config",
         "retain_llm_litellmrouter_config",
@@ -1732,6 +1752,7 @@ class HindsightConfig:
         "retain_llm_base_url",
         "reflect_llm_base_url",
         "consolidation_llm_base_url",
+        "llm_failover_base_url",
         "embeddings_tei_base_url",
         "reranker_tei_base_url",
         "reranker_cohere_base_url",
@@ -2059,6 +2080,10 @@ class HindsightConfig:
                 ENV_LLM_PROMPT_CACHE_ENABLED, str(DEFAULT_LLM_PROMPT_CACHE_ENABLED)
             ).lower()
             in ("1", "true", "yes", "on"),
+            llm_failover_provider=os.getenv(ENV_LLM_FAILOVER_PROVIDER) or None,
+            llm_failover_api_key=os.getenv(ENV_LLM_FAILOVER_API_KEY) or None,
+            llm_failover_model=os.getenv(ENV_LLM_FAILOVER_MODEL) or None,
+            llm_failover_base_url=os.getenv(ENV_LLM_FAILOVER_BASE_URL) or None,
             # Built-in llama.cpp configuration
             llamacpp_model_path=os.getenv(ENV_LLAMACPP_MODEL_PATH) or None,
             llamacpp_gpu_layers=int(os.getenv(ENV_LLAMACPP_GPU_LAYERS, str(DEFAULT_LLAMACPP_GPU_LAYERS))),
