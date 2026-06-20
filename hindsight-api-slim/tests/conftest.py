@@ -2,6 +2,28 @@
 Pytest configuration and shared fixtures.
 """
 
+# Eagerly import torch.overrides and transformers in the xdist *controller*
+# process BEFORE any worker fork. Why this is the first thing in the file:
+#
+# CI runs `pytest -n 8 --dist loadgroup` (8 xdist workers) inside
+# `pytest-split --splits 3 --group N`. Without these imports here, the
+# controller forks workers with `torch` partially loaded in sys.modules but
+# `torch.overrides` not yet imported. Some tests later trigger a fresh
+# `import torch.overrides` in a worker (notably test_server_module.py, which
+# does `del sys.modules[...]; importlib.import_module(...)` and pulls
+# cross_encoder → transformers → torch.overrides through the engine chain).
+# At that point torch's `_add_docstr(_has_torch_function, ...)` at
+# overrides.py:1778 finds the docstring already attached on the C-level
+# function inherited from the parent fork and raises
+#   RuntimeError: function '_has_torch_function' already has a docstring
+# poisoning the worker for every subsequent test in shard 2.
+#
+# Forcing both imports here makes the controller's sys.modules complete
+# before any fork — workers inherit a fully-loaded torch.overrides and the
+# race window closes. Don't move these below other imports.
+import torch.overrides  # noqa: F401  # see comment above
+import transformers  # noqa: F401  # see comment above
+
 import asyncio
 import os
 from pathlib import Path
