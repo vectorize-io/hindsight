@@ -57,6 +57,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "cursor-cli": IntegrationMeta("hindsight-cursor-cli", "Cursor CLI"),
     "cursor": IntegrationMeta("hindsight-cursor", "Cursor"),
     "autogen": IntegrationMeta("hindsight-autogen", "AutoGen"),
+    "aider": IntegrationMeta("hindsight-aider", "Aider"),
     "paperclip": IntegrationMeta("@vectorize-io/hindsight-paperclip", "Paperclip"),
     "opencode": IntegrationMeta("@vectorize-io/opencode-hindsight", "OpenCode"),
     "cloudflare-oauth-proxy": IntegrationMeta("hindsight-cloudflare-oauth-proxy"),
@@ -76,6 +77,9 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "roo-code": IntegrationMeta("hindsight-roo-code", "Roo Code"),
     "omo": IntegrationMeta("hindsight-omo", "OMO"),
     "composio": IntegrationMeta("hindsight-composio", "Composio"),
+    "continue": IntegrationMeta("hindsight-continue", "Continue"),
+    "zed": IntegrationMeta("hindsight-zed", "Zed"),
+    "openhands": IntegrationMeta("hindsight-openhands", "OpenHands"),
 }
 
 VALID_INTEGRATIONS = list(INTEGRATIONS.keys())

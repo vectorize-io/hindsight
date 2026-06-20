@@ -8,7 +8,7 @@ import memoryBanksPy from '!!raw-loader!@site/examples/api/memory-banks.py';
 
 # Observations: Knowledge Consolidation
 
-After memories are retained, Hindsight automatically consolidates related facts into **observations** — deduplicated, evidence-grounded beliefs the bank has built up from multiple memories. Each observation tracks its supporting evidence (with exact quotes), a proof count, and a computed freshness trend, and is refined rather than overwritten when new evidence arrives.
+After memories are retained, Hindsight automatically consolidates related facts into **observations** — deduplicated, evidence-grounded beliefs the bank has built up from multiple memories. Each observation tracks its supporting evidence (with exact quotes) and a proof count, and is refined rather than overwritten when new evidence arrives.
 
 ```mermaid
 graph LR
@@ -36,7 +36,7 @@ Observations provide:
 - **Deduplication**: One durable belief instead of many overlapping facts
 - **Grounding**: Every observation references the specific memories (with quotes) that support it
 - **Evolution**: Refined as evidence strengthens, weakens, or contradicts it — history is preserved
-- **Freshness signal**: A computed trend (stable / strengthening / weakening / new / stale) tells you whether the belief still holds
+- **Freshness awareness**: when newer memories haven't been consolidated yet, `reflect` treats the affected observations as stale and verifies them against raw facts
 - **Efficiency**: Condensed knowledge for faster retrieval
 
 ---
@@ -176,6 +176,8 @@ This ensures responses stay accurate even as the underlying data changes.
 By default, observations are scoped to all of a memory's tags combined. The `observation_scopes` retain parameter lets you control this — building separate observations per tag, per combination, or with a custom list of scopes. This is key when a single memory carries multiple tags and you want each tag to accumulate its own observations independently.
 
 See [`observation_scopes` in the Retain API](./api/retain#observation_scopes) for the full explanation and options.
+
+To inspect the scopes that already exist in a bank, call `GET /v1/default/banks/{bank_id}/observations/scopes`. The response lists each exact tag set with its observation count; the empty tag list is the global scope. Use a returned scope as `tags` with `tags_match: "exact"` when you need to filter to that precise observation scope without also matching observations that carry extra tags.
 
 ---
 

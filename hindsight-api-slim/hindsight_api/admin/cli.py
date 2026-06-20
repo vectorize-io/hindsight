@@ -256,6 +256,7 @@ async def _run_migration(
     schema: str | None = None,
     base_schema: str = DEFAULT_DATABASE_SCHEMA,
     embedding_dimension: int | None = None,
+    ensure_extensions: bool = True,
 ) -> list[str]:
     """Resolve database URL and run migrations for one schema or all discovered schemas."""
     from ..migrations import run_migrations_for_schemas
@@ -292,7 +293,7 @@ async def _run_migration(
         vector_extension=config.vector_extension,
         text_search_extension=config.text_search_extension,
         pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
-        ensure_extensions=True,
+        ensure_extensions=ensure_extensions,
     )
 
     return schemas
@@ -311,6 +312,18 @@ def run_db_migration(
         "--embedding-dimension",
         help="Expected embedding dimension to enforce after migrations. Omit to skip dimension sync.",
     ),
+    skip_extension_reconcile: bool = typer.Option(
+        False,
+        "--skip-extension-reconcile",
+        help=(
+            "Skip the post-migration vector / text-search index reconcile. This step only does "
+            "work when the configured backend (HINDSIGHT_API_VECTOR_EXTENSION / "
+            "HINDSIGHT_API_TEXT_SEARCH_EXTENSION) differs from a schema's existing indexes — a "
+            "rare, operator-driven change. Skipping it makes a no-change re-migration over many "
+            "tenant schemas much faster. Only use when you have NOT changed the backend; a "
+            "backend change still needs a normal run to reshape the indexes."
+        ),
+    ),
 ):
     """Run database migrations to the latest version."""
     config = HindsightConfig.from_env()
@@ -324,6 +337,8 @@ def run_db_migration(
         typer.echo(f"Running database migrations for schema: {schema}...")
     else:
         typer.echo("Running database migrations for base schema and all discovered tenant schemas...")
+    if skip_extension_reconcile:
+        typer.echo("Skipping post-migration extension reconcile (--skip-extension-reconcile).")
 
     schemas = asyncio.run(
         _run_migration(
@@ -331,6 +346,7 @@ def run_db_migration(
             schema=schema,
             base_schema=config.database_schema,
             embedding_dimension=embedding_dimension,
+            ensure_extensions=not skip_extension_reconcile,
         )
     )
 

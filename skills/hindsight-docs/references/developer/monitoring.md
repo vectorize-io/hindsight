@@ -57,9 +57,9 @@ curl http://localhost:8888/metrics
 | `hindsight.operation.total` | Counter | operation, bank_id, source, budget, max_tokens, success | Total number of operations executed |
 
 **Labels:**
-- `operation`: Operation type (`retain`, `recall`, `reflect`)
+- `operation`: Operation type (`retain`, `recall`, `reflect`, plus async worker task types such as `consolidation`)
 - `bank_id`: Memory bank identifier
-- `source`: Where the operation was triggered from (`api`, `reflect`, `internal`)
+- `source`: Where the operation was triggered from (`api`, `reflect`, `internal`, `worker`)
 - `budget`: Budget level if specified (`low`, `mid`, `high`)
 - `max_tokens`: Max tokens if specified
 - `success`: Whether the operation succeeded (`true`, `false`)
@@ -68,6 +68,14 @@ The `source` label allows distinguishing between:
 - `api`: Direct API calls from clients
 - `reflect`: Internal recall calls made during reflect operations
 - `internal`: Other internal operations
+- `worker`: Async worker completions recorded when a claimed task reaches a terminal outcome
+
+For `source="worker"`, the `success` label is a completion-throughput signal:
+`false` means the task raised out to the poller after retries were exhausted or
+an unexpected error occurred. Failures handled inside the executor and returned
+normally still record `success="true"` here; use
+`hindsight_async_operations{status="failed"}` for authoritative async operation
+failure status.
 
 ### LLM Metrics
 

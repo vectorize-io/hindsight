@@ -223,6 +223,7 @@ Generate thoughtful analysis by synthesizing stored memories with the bank's per
 | `response_schema` | object | No | JSON Schema for structured output. When provided, the response includes a `structured_output` field |
 | `tags` | list[string] | No | Filter memories by tags before reflecting |
 | `tags_match` | string | No | Tag matching mode: `any` (default) or `all` |
+| `include_trace` | boolean | No | Include `tool_trace` and `llm_trace` debugging output. Defaults to `false` to keep responses small |
 
 **Example:**
 ```json
@@ -514,7 +515,8 @@ The `config_updates` object accepts any bank-configurable field by its Python fi
 - `retain_mission` — steers what gets extracted during `retain()`
 - `retain_extraction_mode` — `concise` (default), `verbose`, or `custom`
 - `retain_custom_instructions` — custom extraction prompt (active when mode is `custom`)
-- `retain_chunk_size` — maximum token size for each content chunk
+- `retain_chunk_size` — target maximum characters for each content chunk
+- `retain_structured_chunk_size` — maximum characters for a single JSONL line or conversation turn to keep whole
 - `retain_chunk_batch_size` — number of chunks to process in parallel
 - `enable_observations` — toggle observation consolidation after `retain()`
 - `observations_mission` — controls observation synthesis rules
