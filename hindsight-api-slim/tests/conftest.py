@@ -2,32 +2,41 @@
 Pytest configuration and shared fixtures.
 """
 
-# Eagerly import torch.overrides in the xdist *controller* process BEFORE
-# any worker fork. Why this is the first thing in the file:
+# Eagerly prime the torch → transformers → safetensors → sentence_transformers
+# import chain at conftest module-load time. conftest.py runs once per xdist
+# worker at startup, BEFORE any test code touches imports, so this primes each
+# worker's sys.modules with the full chain in a deterministic order.
+#
+# Why this matters:
 #
 # CI runs `pytest -n 8 --dist loadgroup` (8 xdist workers) inside
-# `pytest-split --splits 3 --group N`. Without this import here, the
-# controller forks workers with `torch` partially loaded in sys.modules but
-# `torch.overrides` not yet imported. Some tests later trigger a fresh
-# `import torch.overrides` in a worker (notably test_server_module.py, which
-# does `del sys.modules[...]; importlib.import_module(...)` and pulls
-# cross_encoder → transformers → torch.overrides through the engine chain).
-# At that point torch's `_add_docstr(_has_torch_function, ...)` at
-# overrides.py:1778 finds the docstring already attached on the C-level
-# function inherited from the parent fork and raises
-#   RuntimeError: function '_has_torch_function' already has a docstring
-# poisoning the worker for every subsequent test in shard 2.
+# `pytest-split --splits 3 --group N`. Shard 2 has hit several distinct
+# import-order races over recent CI history, all rooted in tests that
+# lazy-import sentence_transformers mid-suite after other code has already
+# touched torch internals:
 #
-# Forcing this import here makes the controller's sys.modules complete
-# before any fork — workers inherit a fully-loaded torch.overrides and the
-# race window closes. Don't move this below other imports.
+# 1. `RuntimeError: function '_has_torch_function' already has a docstring`
+#    at torch/overrides.py:1778 — torch.overrides loaded twice in the worker
+#    (test_server_module.py uses `del sys.modules[...]; importlib.import_module(...)`
+#    which transitively re-pulls the engine → cross_encoder → torch.overrides).
 #
-# Do NOT also eager-import `transformers` here — its lazy submodule system
-# (`transformers.generation.__getattr__`) breaks when partially loaded
-# pre-fork and surfaces as `GenerationMixin` lookup failures in workers,
-# which then bubble up as a misleading "sentence-transformers is required"
-# ImportError from LocalSTEmbeddings' wrapper try/except.
-import torch.overrides  # noqa: F401  # see comment above
+# 2. `PyO3 modules compiled for CPython 3.8 or older may only be initialized
+#    once per interpreter process` at safetensors/__init__.py:2 — the
+#    safetensors Rust extension is being initialized twice in the same
+#    interpreter.
+#
+# 3. `transformers.generation.__getattr__('GenerationMixin')` returning a
+#    Placeholder marked with `missing_backends` — transformers cached
+#    torch-availability state from an earlier partial load.
+#
+# Eagerly importing `sentence_transformers` here forces the full chain
+# (torch.overrides → transformers → safetensors → sentence_transformers) to
+# load in one deterministic pass in the worker's startup, before any test
+# code runs. Subsequent lazy `from sentence_transformers import ...` calls in
+# embeddings.py / cross_encoder.py become sys.modules cache hits, and the
+# `del sys.modules[hindsight_api.server.*]` pattern in test_server_module.py
+# doesn't pull anything new through. Don't move this below other imports.
+import sentence_transformers  # noqa: F401  # see comment above
 
 import asyncio
 import os
