@@ -527,9 +527,9 @@
       "type": "community",
       "by": "yugandhar-maram",
       "category": "tool",
-      "link": "https://github.com/yugandhar-maram/agrasandhany",
+      "link": "/sdks/integrations/agrasandhany",
       "icon": "/img/icons/github.png"
-    },
+    }
     {
       "id": "openhands",
       "name": "OpenHands",
