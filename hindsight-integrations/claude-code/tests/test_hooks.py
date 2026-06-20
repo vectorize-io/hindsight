@@ -16,9 +16,7 @@ import time
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from conftest import FakeHTTPResponse, make_hook_input, make_memory, make_transcript_file
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -170,6 +168,34 @@ class TestRecallHook:
         # The query should contain prior context from the transcript
         if "body" in captured_body:
             assert "Python" in captured_body["body"].get("query", "")
+
+    def test_passes_tag_filters_to_recall_api(self, monkeypatch, tmp_path):
+        captured = {}
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "recallTags": ["memory_type:rule"],
+                "tagsMatch": "any_strict",
+                "tagGroups": [{"op": "all", "tags": ["memory_type:rule", "tech_stack:supabase"]}],
+            },
+        )
+
+        assert captured["body"]["tags"] == ["memory_type:rule"]
+        assert captured["body"]["tags_match"] == "any_strict"
+        assert captured["body"]["tag_groups"] == [
+            {"op": "all", "tags": ["memory_type:rule", "tech_stack:supabase"]}
+        ]
 
     def test_disabled_auto_recall_produces_no_output(self, monkeypatch, tmp_path):
         (tmp_path / "plugin_root").mkdir(exist_ok=True)

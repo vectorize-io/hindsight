@@ -146,6 +146,10 @@ def main():
 
     debug_log(config, f"Recalling from bank '{bank_id}', query length: {len(query)}")
 
+    recall_tags = config.get("recallTags") or None
+    tags_match = config.get("tagsMatch") if recall_tags or config.get("tagGroups") else None
+    tag_groups = config.get("tagGroups") or None
+
     # Call Hindsight recall API
     try:
         response = client.recall(
@@ -154,6 +158,9 @@ def main():
             max_tokens=config.get("recallMaxTokens", 1024),
             budget=config.get("recallBudget", "mid"),
             types=config.get("recallTypes"),
+            tags=recall_tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
             timeout=10,
         )
     except Exception as e:
@@ -172,6 +179,9 @@ def main():
                 max_tokens=config.get("recallMaxTokens", 1024),
                 budget=config.get("recallBudget", "mid"),
                 types=config.get("recallTypes"),
+                tags=recall_tags,
+                tags_match=tags_match,
+                tag_groups=tag_groups,
                 timeout=10,
             )
             extra_results = extra_response.get("results", [])

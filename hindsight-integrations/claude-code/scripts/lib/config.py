@@ -17,6 +17,9 @@ DEFAULTS = {
     "recallContextTurns": 1,
     "recallMaxQueryChars": 800,
     "recallRoles": ["user", "assistant"],
+    "recallTags": [],
+    "tagsMatch": "any",
+    "tagGroups": None,
     "recallPromptPreamble": (
         "Relevant memories from past conversations (prioritize recent when "
         "conflicting). Only use memories that are directly useful to continue "
@@ -73,6 +76,9 @@ ENV_OVERRIDES = {
     "HINDSIGHT_RECALL_MAX_TOKENS": ("recallMaxTokens", int),
     "HINDSIGHT_RECALL_MAX_QUERY_CHARS": ("recallMaxQueryChars", int),
     "HINDSIGHT_RECALL_CONTEXT_TURNS": ("recallContextTurns", int),
+    "HINDSIGHT_RECALL_TAGS": ("recallTags", list),
+    "HINDSIGHT_TAGS_MATCH": ("tagsMatch", str),
+    "HINDSIGHT_TAG_GROUPS": ("tagGroups", dict),
     "HINDSIGHT_API_PORT": ("apiPort", int),
     "HINDSIGHT_DAEMON_IDLE_TIMEOUT": ("daemonIdleTimeout", int),
     "HINDSIGHT_REQUEST_TIMEOUT_SECONDS": ("requestTimeoutSeconds", int),
@@ -93,8 +99,20 @@ def _cast_env(value: str, typ):
             return value.lower() in ("true", "1", "yes")
         if typ is int:
             return int(value)
+        if typ is list:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return parsed
+            return None
+        if typ is dict:
+            parsed = json.loads(value)
+            if isinstance(parsed, (dict, list)):
+                return parsed
+            return None
         return value
     except (ValueError, AttributeError):
+        if typ is list:
+            return [part.strip() for part in value.split(",") if part.strip()]
         return None
 
 
