@@ -203,6 +203,13 @@ class RetainResult:
     llm_input_tokens: int | None = None
     llm_output_tokens: int | None = None
     llm_total_tokens: int | None = None
+    # Diagnostic token splits surfaced for COGS reconciliation. ``llm_cached_input_tokens``
+    # is the subset of llm_input_tokens that the provider served from a cache (e.g. Gemini's
+    # cached_content_token_count). ``llm_thoughts_tokens`` is reasoning/thinking tokens that
+    # are billed at the output rate by some providers (Gemini 2.5+) but not part of the visible
+    # response. Both default to None when the engine/provider didn't report them.
+    llm_cached_input_tokens: int | None = None
+    llm_thoughts_tokens: int | None = None
     # Content tokens the retain pipeline actually processed, after
     # chunk-level content-hash deduplication. Semantics:
     #   None — no dedup signal available (e.g. a first-time retain or a

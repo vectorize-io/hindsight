@@ -3383,6 +3383,8 @@ class MemoryEngine(MemoryEngineInterface):
                 llm_input_tokens=total_usage.input_tokens,
                 llm_output_tokens=total_usage.output_tokens,
                 llm_total_tokens=total_usage.total_tokens,
+                llm_cached_input_tokens=getattr(total_usage, "cached_tokens", 0) or 0,
+                llm_thoughts_tokens=getattr(total_usage, "thoughts_tokens", 0) or 0,
                 processed_content_tokens=total_processed_content_tokens,
             )
             try:
