@@ -2,11 +2,11 @@
 Pytest configuration and shared fixtures.
 """
 
-# Eagerly import torch.overrides and transformers in the xdist *controller*
-# process BEFORE any worker fork. Why this is the first thing in the file:
+# Eagerly import torch.overrides in the xdist *controller* process BEFORE
+# any worker fork. Why this is the first thing in the file:
 #
 # CI runs `pytest -n 8 --dist loadgroup` (8 xdist workers) inside
-# `pytest-split --splits 3 --group N`. Without these imports here, the
+# `pytest-split --splits 3 --group N`. Without this import here, the
 # controller forks workers with `torch` partially loaded in sys.modules but
 # `torch.overrides` not yet imported. Some tests later trigger a fresh
 # `import torch.overrides` in a worker (notably test_server_module.py, which
@@ -18,11 +18,16 @@ Pytest configuration and shared fixtures.
 #   RuntimeError: function '_has_torch_function' already has a docstring
 # poisoning the worker for every subsequent test in shard 2.
 #
-# Forcing both imports here makes the controller's sys.modules complete
+# Forcing this import here makes the controller's sys.modules complete
 # before any fork — workers inherit a fully-loaded torch.overrides and the
-# race window closes. Don't move these below other imports.
+# race window closes. Don't move this below other imports.
+#
+# Do NOT also eager-import `transformers` here — its lazy submodule system
+# (`transformers.generation.__getattr__`) breaks when partially loaded
+# pre-fork and surfaces as `GenerationMixin` lookup failures in workers,
+# which then bubble up as a misleading "sentence-transformers is required"
+# ImportError from LocalSTEmbeddings' wrapper try/except.
 import torch.overrides  # noqa: F401  # see comment above
-import transformers  # noqa: F401  # see comment above
 
 import asyncio
 import os
