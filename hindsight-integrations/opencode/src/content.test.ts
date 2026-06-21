@@ -152,8 +152,7 @@ describe("prepareRetentionTranscript", () => {
   ];
 
   it("retains last turn by default", () => {
-    const { transcript, messageCount } = prepareRetentionTranscript(messages);
-    expect(messageCount).toBe(2);
+    const transcript = prepareRetentionTranscript(messages);
     expect(transcript).toContain("[role: user]");
     expect(transcript).toContain("How are you?");
     expect(transcript).toContain("I am doing well");
@@ -161,16 +160,14 @@ describe("prepareRetentionTranscript", () => {
   });
 
   it("retains full window when requested", () => {
-    const { transcript, messageCount } = prepareRetentionTranscript(messages, true);
-    expect(messageCount).toBe(4);
+    const transcript = prepareRetentionTranscript(messages, true);
     expect(transcript).toContain("Hello");
     expect(transcript).toContain("How are you?");
   });
 
   it("returns null for empty messages", () => {
-    const { transcript, messageCount } = prepareRetentionTranscript([]);
+    const transcript = prepareRetentionTranscript([]);
     expect(transcript).toBeNull();
-    expect(messageCount).toBe(0);
   });
 
   it("strips memory tags from content", () => {
@@ -178,7 +175,7 @@ describe("prepareRetentionTranscript", () => {
       { role: "user", content: "Query <hindsight_memories>data</hindsight_memories>" },
       { role: "assistant", content: "Response" },
     ];
-    const { transcript } = prepareRetentionTranscript(msgs);
+    const transcript = prepareRetentionTranscript(msgs);
     expect(transcript).not.toContain("hindsight_memories");
     expect(transcript).toContain("Query");
   });
@@ -188,8 +185,7 @@ describe("prepareRetentionTranscript", () => {
       { role: "user", content: "<hindsight_memories>only tags</hindsight_memories>" },
       { role: "assistant", content: "Response" },
     ];
-    const { transcript, messageCount } = prepareRetentionTranscript(msgs, true);
-    expect(messageCount).toBe(1); // only assistant message
+    const transcript = prepareRetentionTranscript(msgs, true);
     expect(transcript).toContain("Response");
   });
 });

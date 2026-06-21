@@ -23,7 +23,6 @@ export interface HindsightConfig {
   recallTypes: string[];
   recallContextTurns: number;
   recallMaxQueryChars: number;
-  recallPromptPreamble: string;
   recallTags: string[];
   recallTagsMatch: "any" | "all" | "any_strict" | "all_strict";
 
@@ -57,23 +56,19 @@ const DEFAULTS: HindsightConfig = {
   // Recall
   autoRecall: true,
   recallBudget: "mid",
-  recallMaxTokens: 1024,
-  recallTypes: ["world", "experience"],
-  recallContextTurns: 1,
+  recallMaxTokens: 4096,
+  recallTypes: ["observation", "world", "experience"],
+  recallContextTurns: 3,
   recallMaxQueryChars: 800,
   recallTags: [],
   recallTagsMatch: "any",
-  recallPromptPreamble:
-    "Relevant memories from past conversations (prioritize recent when " +
-    "conflicting). Only use memories that are directly useful to continue " +
-    "this conversation; ignore the rest:",
 
   // Retain
   autoRetain: true,
   retainMode: "full-session",
-  retainEveryNTurns: 3,
+  retainEveryNTurns: 1,
   retainOverlapTurns: 2,
-  retainContext: "opencode",
+  retainContext: "conversation between OpenCode Agent and the User",
   retainTags: [],
   retainMetadata: {},
 

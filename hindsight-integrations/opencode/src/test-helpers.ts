@@ -8,7 +8,6 @@ export function makeConfig(overrides: Partial<HindsightConfig> = {}): HindsightC
     recallTypes: ["world", "experience"],
     recallContextTurns: 1,
     recallMaxQueryChars: 800,
-    recallPromptPreamble: "",
     recallTags: [],
     recallTagsMatch: "any",
     autoRetain: true,

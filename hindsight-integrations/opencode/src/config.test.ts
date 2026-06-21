@@ -22,8 +22,8 @@ describe("loadConfig", () => {
     expect(config.autoRecall).toBe(true);
     expect(config.autoRetain).toBe(true);
     expect(config.recallBudget).toBe("mid");
-    expect(config.recallMaxTokens).toBe(1024);
-    expect(config.retainContext).toBe("opencode");
+    expect(config.recallMaxTokens).toBe(4096);
+    expect(config.retainContext).toBe("conversation between OpenCode Agent and the User");
     expect(config.agentName).toBe("opencode");
     expect(config.dynamicBankId).toBe(false);
     expect(config.debug).toBe(false);
@@ -100,7 +100,7 @@ describe("loadConfig", () => {
 
     // Invalid integer keeps default
     process.env.HINDSIGHT_RECALL_MAX_TOKENS = "not-a-number";
-    expect(loadConfig().recallMaxTokens).toBe(1024);
+    expect(loadConfig().recallMaxTokens).toBe(4096);
   });
 
   it("HINDSIGHT_RETAIN_TAGS parses comma-separated tags", () => {
