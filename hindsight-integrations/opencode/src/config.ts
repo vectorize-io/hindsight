@@ -109,6 +109,7 @@ const ENV_OVERRIDES: Record<string, [keyof HindsightConfig, "string" | "bool" | 
   HINDSIGHT_RECALL_CONTEXT_TURNS: ["recallContextTurns", "int"],
   HINDSIGHT_DYNAMIC_BANK_ID: ["dynamicBankId", "bool"],
   HINDSIGHT_BANK_MISSION: ["bankMission", "string"],
+  HINDSIGHT_BANK_ID_PREFIX: ["bankIdPrefix", "string"],
   HINDSIGHT_RETAIN_EVERY_N_TURNS: ["retainEveryNTurns", "int"],
   HINDSIGHT_RETAIN_OVERLAP_TURNS: ["retainOverlapTurns", "int"],
   HINDSIGHT_RECALL_TAGS: ["recallTags", "string"],
