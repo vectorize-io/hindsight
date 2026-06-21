@@ -96,6 +96,17 @@ class TestLoadConfig:
         cfg = load_config()
         assert cfg["tagGroups"] == [{"op": "all", "tags": ["memory_type:rule", "tech_stack:supabase"]}]
 
+    def test_recall_additional_bank_filters_env_override_accepts_json(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        monkeypatch.setenv(
+            "HINDSIGHT_RECALL_ADDITIONAL_BANK_FILTERS",
+            '{"normative":{"recallTags":["memory_type:rule"],"tagsMatch":"all"}}',
+        )
+        cfg = load_config()
+        assert cfg["recallAdditionalBankFilters"] == {
+            "normative": {"recallTags": ["memory_type:rule"], "tagsMatch": "all"}
+        }
+
     def test_invalid_settings_json_falls_back_to_defaults(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
         (tmp_path / "settings.json").write_text("not valid json{{")

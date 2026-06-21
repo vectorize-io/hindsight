@@ -20,6 +20,7 @@ DEFAULTS = {
     "recallTags": [],
     "tagsMatch": "any",
     "tagGroups": None,
+    "recallAdditionalBankFilters": {},
     "recallPromptPreamble": (
         "Relevant memories from past conversations (prioritize recent when "
         "conflicting). Only use memories that are directly useful to continue "
@@ -79,6 +80,7 @@ ENV_OVERRIDES = {
     "HINDSIGHT_RECALL_TAGS": ("recallTags", list),
     "HINDSIGHT_TAGS_MATCH": ("tagsMatch", str),
     "HINDSIGHT_TAG_GROUPS": ("tagGroups", dict),
+    "HINDSIGHT_RECALL_ADDITIONAL_BANK_FILTERS": ("recallAdditionalBankFilters", dict),
     "HINDSIGHT_API_PORT": ("apiPort", int),
     "HINDSIGHT_DAEMON_IDLE_TIMEOUT": ("daemonIdleTimeout", int),
     "HINDSIGHT_REQUEST_TIMEOUT_SECONDS": ("requestTimeoutSeconds", int),

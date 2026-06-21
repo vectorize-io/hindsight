@@ -197,6 +197,40 @@ class TestRecallHook:
             {"op": "all", "tags": ["memory_type:rule", "tech_stack:supabase"]}
         ]
 
+    def test_additional_bank_filters_override_global_tags(self, monkeypatch, tmp_path):
+        captured = []
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                captured.append(json.loads(req.data.decode()))
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallAdditionalBanks": ["normative-bank"],
+                "recallTags": ["tech_stack:supabase"],
+                "tagsMatch": "any",
+                "recallAdditionalBankFilters": {
+                    "normative-bank": {
+                        "recallTags": ["memory_type:rule"],
+                        "tagsMatch": "all_strict",
+                    }
+                },
+            },
+        )
+
+        assert captured[0]["tags"] == ["tech_stack:supabase"]
+        assert captured[0]["tags_match"] == "any"
+        assert captured[1]["tags"] == ["memory_type:rule"]
+        assert captured[1]["tags_match"] == "all_strict"
+
     def test_disabled_auto_recall_produces_no_output(self, monkeypatch, tmp_path):
         (tmp_path / "plugin_root").mkdir(exist_ok=True)
         (tmp_path / "plugin_data").mkdir(exist_ok=True)

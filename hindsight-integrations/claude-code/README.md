@@ -230,6 +230,7 @@ Auto-recall runs on every user prompt. It queries Hindsight for relevant memorie
 | `recallTags` | `HINDSIGHT_RECALL_TAGS` | `[]` | Optional tags to pass to the recall API, such as `["memory_type:rule"]`. The env var accepts JSON or a comma-separated list. |
 | `tagsMatch` | `HINDSIGHT_TAGS_MATCH` | `"any"` | Tag matching mode used with `recallTags` or `tagGroups`: `"any"`, `"all"`, `"any_strict"`, or `"all_strict"`. |
 | `tagGroups` | `HINDSIGHT_TAG_GROUPS` | `null` | Optional compound tag filter passed through to the recall API. The env var must be JSON. |
+| `recallAdditionalBankFilters` | `HINDSIGHT_RECALL_ADDITIONAL_BANK_FILTERS` | `{}` | Optional per-bank tag filter overrides for banks listed in `recallAdditionalBanks`, keyed by bank ID. Each value may set `recallTags`, `tagsMatch`, and `tagGroups`. The env var must be JSON. |
 | `recallPromptPreamble` | — | built-in string | Text placed above the recalled memories in the injected context block. Customize this to change how Claude interprets the memories. |
 
 ---
