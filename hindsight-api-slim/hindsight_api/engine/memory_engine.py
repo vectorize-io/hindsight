@@ -5334,6 +5334,17 @@ class MemoryEngine(MemoryEngineInterface):
                     "memory_units_deleted": units_count if deleted else 0,
                 }
 
+        # Drop any cached stats for this bank — deleting the document changed
+        # the document count and (via cascade) the memory-unit/link counts
+        # get_bank_stats reports, which the TTL would otherwise serve at
+        # pre-delete values for up to a minute (mirrors delete_bank). Best-effort:
+        # a cache-eviction failure must not fail an already-committed delete.
+        if deleted:
+            try:
+                await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
+            except Exception as e:
+                logger.warning(f"Failed to invalidate bank stats cache after document deletion for bank {bank_id}: {e}")
+
         if invalidated_obs > 0:
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)
             if config.enable_auto_consolidation:
@@ -5501,6 +5512,14 @@ class MemoryEngine(MemoryEngineInterface):
                             )
 
         if invalidated_obs > 0:
+            # Observation units were deleted, changing the counts get_bank_stats
+            # reports — drop the cached stats so the TTL does not serve pre-update
+            # values for up to a minute (mirrors delete_bank). Best-effort: a
+            # cache-eviction failure must not fail an already-committed update.
+            try:
+                await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
+            except Exception as e:
+                logger.warning(f"Failed to invalidate bank stats cache after document update for bank {bank_id}: {e}")
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)
             if config.enable_auto_consolidation:
                 try:
@@ -5591,6 +5610,17 @@ class MemoryEngine(MemoryEngineInterface):
                     if deleted
                     else "Memory unit not found",
                 }
+
+        # Drop any cached stats for this bank — the deleted unit (and its
+        # cascaded links/entities) changed the counts get_bank_stats reports,
+        # which the TTL would otherwise serve at pre-delete values for up to a
+        # minute (mirrors delete_bank). Best-effort: a cache-eviction failure
+        # must not fail an already-committed delete.
+        if deleted and bank_id:
+            try:
+                await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
+            except Exception as e:
+                logger.warning(f"Failed to invalidate bank stats cache after memory unit deletion for bank {bank_id}: {e}")
 
         if bank_id_for_consolidation:
             config = await self._config_resolver.resolve_full_config(bank_id_for_consolidation, request_context)
@@ -5814,7 +5844,17 @@ class MemoryEngine(MemoryEngineInterface):
                     bank_id,
                 )
 
-                return {"deleted_count": count or 0}
+        # Drop any cached stats for this bank — clearing observations changed
+        # the memory-unit/observation counts and the consolidation timestamps
+        # get_bank_stats reports, which the TTL would otherwise serve at stale
+        # values for up to a minute (mirrors delete_bank). Best-effort: a
+        # cache-eviction failure must not fail an already-committed clear.
+        try:
+            await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
+        except Exception as e:
+            logger.warning(f"Failed to invalidate bank stats cache after clearing observations for bank {bank_id}: {e}")
+
+        return {"deleted_count": count or 0}
 
     async def list_observation_scopes(
         self,
