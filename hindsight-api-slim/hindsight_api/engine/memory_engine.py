@@ -5620,7 +5620,9 @@ class MemoryEngine(MemoryEngineInterface):
             try:
                 await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
             except Exception as e:
-                logger.warning(f"Failed to invalidate bank stats cache after memory unit deletion for bank {bank_id}: {e}")
+                logger.warning(
+                    f"Failed to invalidate bank stats cache after memory unit deletion for bank {bank_id}: {e}"
+                )
 
         if bank_id_for_consolidation:
             config = await self._config_resolver.resolve_full_config(bank_id_for_consolidation, request_context)

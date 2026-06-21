@@ -112,9 +112,7 @@ class TestBankStatsCacheInvalidation:
             await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
-    async def test_delete_document_invalidates_stats_cache(
-        self, memory: MemoryEngine, request_context: RequestContext
-    ):
+    async def test_delete_document_invalidates_stats_cache(self, memory: MemoryEngine, request_context: RequestContext):
         bank_id = f"test-stats-cache-deldoc-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
 
