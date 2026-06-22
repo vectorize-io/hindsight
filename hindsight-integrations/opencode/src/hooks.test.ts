@@ -278,7 +278,9 @@ describe("system transform hook — recalls every turn", () => {
     expect(output.system[0]).toContain("hindsight_memories");
     expect(output.system[0]).toContain("User is a developer");
     // Herms-agent style preamble
-    expect(output.system[0]).toContain("Do not call tools to look up information that is already present here");
+    expect(output.system[0]).toContain(
+      "Do not call tools to look up information that is already present here"
+    );
   });
 
   it("tracks turn count per session", async () => {
@@ -293,9 +295,18 @@ describe("system transform hook — recalls every turn", () => {
       makeOpencodeClient(CONVO_MESSAGES)
     );
 
-    await hooks["experimental.chat.system.transform"]({ sessionID: "sess-1", model: {} }, { system: [] });
-    await hooks["experimental.chat.system.transform"]({ sessionID: "sess-1", model: {} }, { system: [] });
-    await hooks["experimental.chat.system.transform"]({ sessionID: "sess-1", model: {} }, { system: [] });
+    await hooks["experimental.chat.system.transform"](
+      { sessionID: "sess-1", model: {} },
+      { system: [] }
+    );
+    await hooks["experimental.chat.system.transform"](
+      { sessionID: "sess-1", model: {} },
+      { system: [] }
+    );
+    await hooks["experimental.chat.system.transform"](
+      { sessionID: "sess-1", model: {} },
+      { system: [] }
+    );
 
     // Each system.transform increments once; retainTurn (disabled here) does not double-count
     expect(state.sessionTurnCount.get("sess-1")).toBe(3);

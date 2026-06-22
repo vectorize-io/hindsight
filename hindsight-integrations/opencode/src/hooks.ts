@@ -118,8 +118,8 @@ function buildMemoryInstructions(bankId: string): string {
     "Relevant memories are automatically injected into context.",
     "",
     "Save durable information to persistent memory that survives across sessions. " +
-    "Memory is injected into future turns, so keep it compact and focused on facts " +
-    "that will still matter later.",
+      "Memory is injected into future turns, so keep it compact and focused on facts " +
+      "that will still matter later.",
     "",
     "WHEN TO SAVE (do this proactively, don't wait to be asked):",
     "- User corrects you or says 'remember this' / 'don't do that again'",
@@ -130,10 +130,10 @@ function buildMemoryInstructions(bankId: string): string {
     "- After completing a task or making a decision",
     "",
     "PRIORITY: User preferences and corrections > environment facts > procedural knowledge. " +
-    "The most valuable memory prevents the user from having to repeat themselves.",
+      "The most valuable memory prevents the user from having to repeat themselves.",
     "",
     "Use hindsight_recall to search for relevant memories before answering questions about " +
-    "past work, user preferences, or project context. When in doubt, recall first.",
+      "past work, user preferences, or project context. When in doubt, recall first.",
     "Use hindsight_reflect to synthesize a reasoned answer from all stored memories.",
     "Use hindsight_retain to store facts, decisions, and preferences.",
   ].join("\n");
@@ -263,10 +263,14 @@ export function createHooks(
     if (!config.autoRetain) return;
 
     const now = new Date().toISOString();
-    const turn = JSON.stringify([
-      { role: "user", content: userContent, timestamp: now },
-      { role: "assistant", content: assistantContent, timestamp: now },
-    ], null, 0);
+    const turn = JSON.stringify(
+      [
+        { role: "user", content: userContent, timestamp: now },
+        { role: "assistant", content: assistantContent, timestamp: now },
+      ],
+      null,
+      0
+    );
 
     // Accumulate turns for this session
     const turns = state.sessionTurns.get(sessionId) || [];
@@ -322,9 +326,10 @@ export function createHooks(
     // Fire-and-forget background prefetch
     (async () => {
       try {
-        const truncated = query.length > config.recallMaxQueryChars
-          ? query.slice(0, config.recallMaxQueryChars)
-          : query;
+        const truncated =
+          query.length > config.recallMaxQueryChars
+            ? query.slice(0, config.recallMaxQueryChars)
+            : query;
         const response = await hindsightClient.recall(bankId, truncated, {
           budget: config.recallBudget as "low" | "mid" | "high",
           maxTokens: config.recallMaxTokens,
@@ -503,24 +508,14 @@ export function createHooks(
 
       // Strip injected memory tags from the query to avoid feedback loops
       const cleanUserMsg = stripMemoryTags(lastUserMsg.content);
-      const query = composeRecallQuery(
-        cleanUserMsg,
-        messages,
-        config.recallContextTurns
-      );
-      const truncated = truncateRecallQuery(
-        query,
-        cleanUserMsg,
-        config.recallMaxQueryChars
-      );
+      const query = composeRecallQuery(cleanUserMsg, messages, config.recallContextTurns);
+      const truncated = truncateRecallQuery(query, cleanUserMsg, config.recallMaxQueryChars);
 
       // Only do a live recall if we don't already have cached data
       if (!cachedContext) {
         const { context } = await recallForContext(truncated);
         if (context) {
-          output.system[0] = output.system[0]
-            ? `${output.system[0]}\n\n${context}`
-            : context;
+          output.system[0] = output.system[0] ? `${output.system[0]}\n\n${context}` : context;
           logger.debug(`Injected recall context for session ${sessionId} turn ${turnNum}`);
         }
       }
