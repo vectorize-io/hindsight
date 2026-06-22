@@ -331,6 +331,16 @@
       "icon": "/img/icons/autogen.png"
     },
     {
+      "id": "aider",
+      "name": "Aider",
+      "description": "Persistent long-term memory for the Aider pair-programming CLI. hindsight-aider recalls relevant project memory before each session and retains the transcript after.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/aider",
+      "icon": "/img/icons/aider.png"
+    },
+    {
       "id": "opencode",
       "name": "OpenCode",
       "description": "Persistent long-term memory plugin for OpenCode. Auto-retains conversations, recalls context on session start, and provides retain/recall/reflect tools.",
@@ -514,11 +524,11 @@
       "id": "agrasandhany",
       "name": "agrasandhany",
       "description": "Turns your local notes into long-term memory any agent can recall over MCP — with automatic sync, folder-scoped recall, and living summaries.",
-      "type": "official",
-      "by": "hindsight",
+      "type": "community",
+      "by": "yugandhar-maram",
       "category": "tool",
       "link": "https://github.com/yugandhar-maram/agrasandhany",
-      "icon": "/img/icons/obsidian.svg"
+      "icon": "/img/icons/github.png"
     },
     {
       "id": "openhands",

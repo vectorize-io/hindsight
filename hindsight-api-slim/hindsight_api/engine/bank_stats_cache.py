@@ -96,7 +96,10 @@ class BankStatsCache:
             value = await loader()
         except BaseException as exc:
             async with self._lock:
-                self._in_flight.pop(key, None)
+                # Invalidation may have detached this loader and allowed a new
+                # one to claim the key. Never remove that newer loader's slot.
+                if self._in_flight.get(key) is in_flight:
+                    self._in_flight.pop(key, None)
             if not in_flight.done():
                 in_flight.set_exception(exc)
             # Suppress "Future exception was never retrieved" when no other
@@ -106,8 +109,12 @@ class BankStatsCache:
             raise
 
         async with self._lock:
-            self._store_unlocked(key, value)
-            self._in_flight.pop(key, None)
+            # Only the loader that still owns the key may populate the cache.
+            # An invalidated loader can finish for its original callers, but its
+            # pre-invalidation result must not overwrite a newer load.
+            if self._in_flight.get(key) is in_flight:
+                self._store_unlocked(key, value)
+                self._in_flight.pop(key, None)
         if not in_flight.done():
             in_flight.set_result(value)
         return value
@@ -115,8 +122,13 @@ class BankStatsCache:
     async def invalidate(self, schema: str, bank_id: str) -> None:
         """Drop any cached stats for `(schema, bank_id)`."""
         async with self._lock:
-            self._entries.pop((schema, bank_id), None)
+            key = (schema, bank_id)
+            self._entries.pop(key, None)
+            # Detach rather than cancel: existing callers may finish with the
+            # snapshot they requested, while post-invalidation callers reload.
+            self._in_flight.pop(key, None)
 
     async def clear(self) -> None:
         async with self._lock:
             self._entries.clear()
+            self._in_flight.clear()

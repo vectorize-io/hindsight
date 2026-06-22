@@ -60,7 +60,7 @@ dependencies = [
     "pyasn1>=0.6.3", # DoS vulnerability fix
     "urllib3>=2.7.0", # Decompression-bomb safeguards bypass + sensitive header forwarding fixes
     "langchain-core>=1.2.22", # Path traversal in legacy load_prompt functions fix
-    "langsmith>=0.6.3", # SSRF via tracing header injection fix
+    "langsmith>=0.8.18", # GHSA-f4xh-w4cj-qxq8: arbitrary server-side file read in TracingMiddleware fix (supersedes >=0.6.3 SSRF tracing-header-injection floor)
     "protobuf>=6.33.5", # JSON recursion depth bypass fix
     "pillow>=12.1.1", # Out-of-bounds write in PSD image loading fix
     "cryptography>=48.0.1", # GHSA-537c-gmf6-5ccf: bundled-OpenSSL OOB read fix needs >=48.0.1. Prior <47 cap (47.0.0 SIGILL on ARM64 Docker/Podman, pyca/cryptography#14733) lifted — 47/48/49 verified importing + RSA sign/verify cleanly on linux/arm64 (Docker on Apple Silicon) and native arm64 macOS; upstream issue closed unconfirmed.

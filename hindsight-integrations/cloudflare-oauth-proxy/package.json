@@ -20,5 +20,9 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "overrides": {
+    "undici": "^7.28.0",
+    "esbuild": "^0.28.1"
   }
 }

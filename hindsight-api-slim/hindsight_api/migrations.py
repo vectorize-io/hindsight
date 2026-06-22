@@ -686,24 +686,20 @@ def ensure_vector_extension(
 
             if not current_index_info:
                 if table_name == "memory_units" and uses_per_bank_vector_indexes(target_ext):
-                    # Check whether per-bank partial vector indexes already cover this table
-                    # (created by the bank_utils lifecycle — no global index needed in that case)
-                    per_bank_index_count = conn.execute(
-                        text("""
-                            SELECT COUNT(*)
-                            FROM pg_indexes
-                            WHERE schemaname = :schema
-                              AND tablename = :table_name
-                              AND indexname LIKE 'idx_mu_emb_%'
-                        """),
-                        {"schema": schema_name, "table_name": table_name},
-                    ).scalar()
-                    if per_bank_index_count and per_bank_index_count > 0:
-                        logger.debug(
-                            f"No global embedding index on {table_name}, but {per_bank_index_count} "
-                            f"per-bank partial vector indexes exist — skipping global index creation"
-                        )
-                        continue
+                    # Per-bank backends never use a GLOBAL memory_units vector index.
+                    # Every vector search is bank + fact_type scoped and served by the
+                    # per-(bank, fact_type) partial indexes created at bank-creation time
+                    # (bank_utils.create_bank_vector_indexes); the planner never picks a
+                    # global index when bank_id is in the WHERE clause, which is exactly
+                    # why migration d5e6f7a8b9c0 drops it for these backends. So don't
+                    # create one here either — not even on an empty schema with no per-bank
+                    # indexes yet (those are built when the first bank is created). Verified
+                    # via EXPLAIN: the query uses idx_mu_emb_* whether or not the global
+                    # index exists, so creating it is dead weight.
+                    logger.debug(
+                        f"Per-bank vector backend ({target_ext}); skipping global {index_name} creation on {table_name}"
+                    )
+                    continue
                 logger.warning(f"No embedding index found for {table_name}, will create it if safe")
                 mismatched_tables.append((table_name, index_name, None, row_count))
                 continue
