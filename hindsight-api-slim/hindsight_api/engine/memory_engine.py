@@ -11755,6 +11755,8 @@ class MemoryEngine(MemoryEngineInterface):
             **task_payload,
         }
 
+        from hindsight_api.extensions.operation_validator import OperationValidationError
+
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
                 if dedupe_by_bank:
@@ -11776,10 +11778,20 @@ class MemoryEngine(MemoryEngineInterface):
                     # serialize) but not with FOR KEY SHARE (so those inserts proceed).
                     # On Oracle this rewrites to FOR UPDATE, which there does not block
                     # indexed-FK child inserts.
-                    await conn.execute(
+                    #
+                    # Use fetchval so we can also verify the bank actually exists.
+                    # Without this check, callers that race against bank deletion
+                    # or that derive bank IDs before creating the bank reach the
+                    # INSERT below and get an asyncpg.ForeignKeyViolationError, which
+                    # surfaces as an opaque 500 from the API. A clean
+                    # OperationValidationError(404) is the right shape — the FastAPI
+                    # handler already converts it via its existing except clause.
+                    bank_exists = await conn.fetchval(
                         f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1 FOR NO KEY UPDATE",
                         bank_id,
                     )
+                    if bank_exists is None:
+                        raise OperationValidationError(f"Bank '{bank_id}' not found", status_code=404)
                     # Only check 'pending', not 'processing': a processing task uses a
                     # watermark from when it started, so memories added after that need
                     # a fresh run regardless.
@@ -11809,6 +11821,16 @@ class MemoryEngine(MemoryEngineInterface):
                                 "operation_id": str(row["operation_id"]),
                                 "deduplicated": True,
                             }
+                else:
+                    # Scoped/non-dedupe submits skip the lock + dedup above.
+                    # Still verify the bank exists so an FK violation can't
+                    # escape as a 500.
+                    bank_exists = await conn.fetchval(
+                        f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1",
+                        bank_id,
+                    )
+                    if bank_exists is None:
+                        raise OperationValidationError(f"Bank '{bank_id}' not found", status_code=404)
 
                 await conn.execute(
                     f"""
