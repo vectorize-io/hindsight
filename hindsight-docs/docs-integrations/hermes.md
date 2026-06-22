@@ -8,6 +8,10 @@ description: "Add long-term memory to Hermes Agent with Hindsight. Automatically
 
 Persistent long-term memory for [Hermes Agent](https://github.com/NousResearch/hermes-agent) using [Hindsight](https://vectorize.io/hindsight). Automatically recalls relevant context before every LLM call and retains conversations for future sessions — plus explicit retain/recall/reflect tools.
 
+:::tip
+Using the **Hermes desktop app**? You can select and configure Hindsight entirely in Settings — no terminal required. See [Hermes Desktop](/sdks/integrations/hermes-desktop).
+:::
+
 ## Quick Start
 
 **1. Get an API key** at [ui.hindsight.vectorize.io/connect](https://ui.hindsight.vectorize.io/connect). The API endpoint is `https://api.hindsight.vectorize.io`.
