@@ -31,6 +31,8 @@ Hermes supports pluggable memory backends, and the desktop app already let you s
 
 Now, when you choose **Hindsight** in the desktop app, Hermes renders a dedicated settings form right there. You fill it in, hit save, and the agent has long-term memory. The values land in the right places automatically: your API key goes to the secret store (and is never read back into the form), and everything else is written to your profile config.
 
+![Selecting Hindsight as the memory provider in the Hermes desktop app's Settings → Memory & Context](/img/blog/hermes-desktop-provider-dropdown.png)
+
 It's the difference between "Hindsight is supported" and "Hindsight is two clicks away."
 
 ## What You Configure
@@ -44,6 +46,8 @@ The in-app panel exposes exactly the settings that matter:
 | **API URL**       | The Hindsight endpoint                                                                          | `https://api.hindsight.vectorize.io` |
 | **Bank ID**       | Which memory bank this Hermes profile reads and writes                                          | `hermes`                             |
 | **Recall budget** | How hard recall works each turn: `low` / `mid` / `high`                                         | `mid`                                |
+
+![The Hindsight memory provider configuration panel in the Hermes desktop app, showing the Mode, API key, API URL, Bank ID, and Recall budget fields](/img/blog/hermes-desktop-config-panel.png)
 
 Pick **Cloud**, paste a key from [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io), and you're done. Prefer to run your own backend? Switch the mode to **Local External** and point the API URL at your instance.
 
