@@ -3747,3 +3747,59 @@ class TestConsolidationBankPriority:
             high_pending_op,
         )
         assert row["status"] == "pending"
+
+
+class TestPendingBreakdownClaimable:
+    """_claimable_from_bucket must not report a bank-serialized consolidation op
+    as claimable — that phantom is exactly what made #2359 look like
+    'claimable=1 assigned=0' while the worker never claimed anything. No DB.
+    """
+
+    def test_bank_serialized_consolidation_is_not_claimable(self):
+        from hindsight_api.worker import WorkerPoller
+
+        # One stuck-bank pending op (bank_serialized), one payload_null parent,
+        # one genuinely free op -> only the free op is claimable.
+        bucket = {
+            "total": 3,
+            "payload_null": 1,
+            "retry_blocked": 0,
+            "assigned": 0,
+            "bank_serialized": 1,
+        }
+        assert WorkerPoller._claimable_from_bucket(bucket) == 1
+
+    def test_single_deadlocked_op_reports_zero_claimable(self):
+        from hindsight_api.worker import WorkerPoller
+
+        # The reporter's exact shape: a lone pending consolidation whose bank is
+        # serialized by a dead worker's 'processing' op. Old formula said
+        # claimable=1 (phantom); now it is correctly 0.
+        bucket = {
+            "total": 1,
+            "payload_null": 0,
+            "retry_blocked": 0,
+            "assigned": 0,
+            "bank_serialized": 1,
+        }
+        assert WorkerPoller._claimable_from_bucket(bucket) == 0
+
+    def test_no_bank_serialized_key_preserves_legacy_formula(self):
+        from hindsight_api.worker import WorkerPoller
+
+        # Buckets without the new key (e.g. non-consolidation op types) must
+        # behave exactly as before: total - payload_null - retry_blocked - assigned.
+        bucket = {"total": 5, "payload_null": 1, "retry_blocked": 1, "assigned": 1}
+        assert WorkerPoller._claimable_from_bucket(bucket) == 2
+
+    def test_claimable_is_floored_at_zero(self):
+        from hindsight_api.worker import WorkerPoller
+
+        bucket = {
+            "total": 1,
+            "payload_null": 1,
+            "retry_blocked": 0,
+            "assigned": 0,
+            "bank_serialized": 1,
+        }
+        assert WorkerPoller._claimable_from_bucket(bucket) == 0

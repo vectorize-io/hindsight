@@ -1090,7 +1090,21 @@ class WorkerPoller:
                                 SUM(CASE WHEN task_payload IS NULL THEN 1 ELSE 0 END) AS payload_null,
                                 SUM(CASE WHEN next_retry_at IS NOT NULL AND next_retry_at > now()
                                     THEN 1 ELSE 0 END) AS retry_blocked,
-                                SUM(CASE WHEN worker_id IS NOT NULL THEN 1 ELSE 0 END) AS assigned
+                                SUM(CASE WHEN worker_id IS NOT NULL THEN 1 ELSE 0 END) AS assigned,
+                                -- bank_id is NOT NULL (schema), so this IN-set
+                                -- test is the exact negation of the claim
+                                -- query's ``bank_id != ALL(busy_bank_ids)`` with
+                                -- busy_bank_ids = the same DISTINCT processing set.
+                                SUM(CASE WHEN operation_type = 'consolidation'
+                                         AND task_payload IS NOT NULL
+                                         AND worker_id IS NULL
+                                         AND (next_retry_at IS NULL OR next_retry_at <= now())
+                                         AND bank_id IN (
+                                             SELECT bank_id FROM {table} busy
+                                             WHERE busy.operation_type = 'consolidation'
+                                               AND busy.status = 'processing'
+                                         )
+                                    THEN 1 ELSE 0 END) AS bank_serialized
                             FROM {table}
                             WHERE status = 'pending'
                             GROUP BY operation_type
@@ -1102,12 +1116,14 @@ class WorkerPoller:
                     for br in breakdown_rows:
                         op_type = br["operation_type"] or "unknown"
                         bucket = pending_breakdown.setdefault(
-                            op_type, {"total": 0, "payload_null": 0, "retry_blocked": 0, "assigned": 0}
+                            op_type,
+                            {"total": 0, "payload_null": 0, "retry_blocked": 0, "assigned": 0, "bank_serialized": 0},
                         )
                         bucket["total"] += br["total"]
                         bucket["payload_null"] += br["payload_null"]
                         bucket["retry_blocked"] += br["retry_blocked"]
                         bucket["assigned"] += br["assigned"]
+                        bucket["bank_serialized"] += br["bank_serialized"]
                         global_pending += br["total"]
 
                     try:
@@ -1225,15 +1241,42 @@ class WorkerPoller:
             logger.debug(f"Pool stats unavailable: {e}")
             return "unavailable"
 
+    @staticmethod
+    def _claimable_from_bucket(b: dict[str, int]) -> int:
+        """Residual pending rows that pass *every* claim predicate.
+
+        ``bank_serialized`` is the consolidation-specific exclusion the other
+        buckets miss: a pending consolidation op whose bank already has a
+        ``status='processing'`` consolidation is filtered out by the claim
+        query (``bank_id != ALL(busy_bank_ids)``) and can never be picked up
+        until that bank frees. Counting it keeps ``claimable`` honest — without
+        it a permanently bank-serialized op shows up as a phantom
+        ``claimable=1`` while nothing is ever claimed (#2359). The bucket is
+        defined as a subset of the otherwise-claimable rows, so the
+        subtraction stays non-negative; ``max(0, ...)`` is a belt-and-braces
+        floor against schema/portability surprises.
+        """
+        return max(
+            0,
+            b["total"]
+            - b["payload_null"]
+            - b["retry_blocked"]
+            - b["assigned"]
+            - b.get("bank_serialized", 0),
+        )
+
     def _log_pending_breakdown(self, breakdown: dict[str, dict[str, int]]) -> None:
         """Emit one [PENDING_BREAKDOWN] line bucketing pending rows by claimability.
 
         Each bucket mirrors a predicate in the claim query:
-          * payload_null   - row has no task_payload (e.g. batch_retain parent
-                             whose reconciliation never fired); claim query
-                             skips it forever
-          * retry_blocked  - next_retry_at is still in the future
-          * assigned       - worker_id already set; another worker owns it
+          * payload_null     - row has no task_payload (e.g. batch_retain parent
+                               whose reconciliation never fired); claim query
+                               skips it forever
+          * retry_blocked    - next_retry_at is still in the future
+          * assigned         - worker_id already set; another worker owns it
+          * bank_serialized  - pending consolidation op whose bank already has a
+                               'processing' consolidation; the claim query
+                               serializes it out until that bank frees (#2359)
 
         ``claimable`` is the residual that *should* be picked up on the next
         poll. If ``claimable > 0`` while workers report free slots, the bug is
@@ -1246,11 +1289,11 @@ class WorkerPoller:
         parts = []
         for op_type in sorted(breakdown):
             b = breakdown[op_type]
-            claimable = b["total"] - b["payload_null"] - b["retry_blocked"] - b["assigned"]
+            claimable = self._claimable_from_bucket(b)
             parts.append(
                 f"{op_type}: total={b['total']} claimable={claimable} "
                 f"payload_null={b['payload_null']} retry_blocked={b['retry_blocked']} "
-                f"assigned={b['assigned']}"
+                f"assigned={b['assigned']} bank_serialized={b.get('bank_serialized', 0)}"
             )
         logger.info(f"[PENDING_BREAKDOWN] {' | '.join(parts)}")
 
