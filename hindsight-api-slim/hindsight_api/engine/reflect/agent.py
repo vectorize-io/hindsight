@@ -90,12 +90,86 @@ _LEAKED_JSON_SUFFIX = re.compile(
     r'\s*```(?:json)?\s*\{[^}]*(?:"(?:observation_ids|memory_ids|mental_model_ids)"|\})\s*```\s*$',
     re.DOTALL | re.IGNORECASE,
 )
-_LEAKED_JSON_OBJECT = re.compile(
-    r'\s*\{[^{]*"(?:observation_ids|memory_ids|mental_model_ids|answer)"[^}]*\}\s*$', re.DOTALL
-)
 _TRAILING_IDS_PATTERN = re.compile(
     r"\s*(?:observation_ids|memory_ids|mental_model_ids)\s*[=:]\s*\[.*?\]\s*$", re.DOTALL | re.IGNORECASE
 )
+_JSON_CODE_FENCE_PATTERN = re.compile(r"^\s*```(?:json)?\s*(\{.*\})\s*```\s*$", re.DOTALL | re.IGNORECASE)
+
+_REFLECT_ENVELOPE_KEYS = frozenset(
+    {
+        "answer",
+        "directive_compliance",
+        "memory_ids",
+        "mental_model_ids",
+        "observation_ids",
+        "model_ids",
+    }
+)
+_REFLECT_ENVELOPE_MARKER_KEYS = _REFLECT_ENVELOPE_KEYS - {"answer"}
+_LEAKED_JSON_ID_KEYS = frozenset({"memory_ids", "mental_model_ids", "observation_ids", "model_ids"})
+
+
+def _unwrap_reflect_answer_envelope(text: str) -> str | None:
+    """Return the answer from a model-invented reflect JSON envelope.
+
+    Some models return the done-tool argument shape as user-visible text, e.g.
+    {"answer": "...", "memory_ids": [...]}.  Only unwrap objects that look like
+    that reflect envelope so normal JSON answers stay intact.
+    """
+    candidate = text.strip()
+    if not candidate:
+        return None
+
+    fenced = _JSON_CODE_FENCE_PATTERN.match(candidate)
+    if fenced:
+        candidate = fenced.group(1).strip()
+
+    try:
+        payload = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    answer = payload.get("answer")
+    if not isinstance(answer, str) or not answer.strip():
+        return None
+
+    keys = set(payload)
+    if not keys.intersection(_REFLECT_ENVELOPE_MARKER_KEYS):
+        return None
+    if not keys.issubset(_REFLECT_ENVELOPE_KEYS):
+        return None
+
+    for key in ("memory_ids", "mental_model_ids", "observation_ids", "model_ids"):
+        value = payload.get(key)
+        if value is not None and not isinstance(value, list):
+            return None
+
+    return answer.strip()
+
+
+def _strip_trailing_id_json_object(text: str) -> str:
+    stripped = text.rstrip()
+    if not stripped.endswith("}"):
+        return text.strip()
+
+    start = stripped.rfind("{")
+    if start < 0:
+        return text.strip()
+
+    try:
+        payload = json.loads(stripped[start:])
+    except json.JSONDecodeError:
+        return text.strip()
+
+    if not isinstance(payload, dict) or not payload:
+        return text.strip()
+    keys = set(payload)
+    if not keys.issubset(_LEAKED_JSON_ID_KEYS):
+        return text.strip()
+
+    return stripped[:start].strip()
 
 
 def _clean_answer_text(text: str) -> str:
@@ -104,6 +178,10 @@ def _clean_answer_text(text: str) -> str:
     Some LLMs output the done() call as text instead of a proper tool call.
     This strips out patterns like: done({"answer": "...", ...})
     """
+    unwrapped = _unwrap_reflect_answer_envelope(text)
+    if unwrapped is not None:
+        return unwrapped
+
     # Remove done() call pattern from the end of the text
     cleaned = _DONE_CALL_PATTERN.sub("", text).strip()
     return cleaned if cleaned else text
@@ -122,13 +200,17 @@ def _clean_done_answer(text: str) -> str:
     if not text:
         return text
 
+    unwrapped = _unwrap_reflect_answer_envelope(text)
+    if unwrapped is not None:
+        return unwrapped
+
     cleaned = text
 
     # Remove leaked JSON in code blocks at the end
     cleaned = _LEAKED_JSON_SUFFIX.sub("", cleaned).strip()
 
     # Remove leaked raw JSON objects at the end
-    cleaned = _LEAKED_JSON_OBJECT.sub("", cleaned).strip()
+    cleaned = _strip_trailing_id_json_object(cleaned)
 
     # Remove trailing ID patterns
     cleaned = _TRAILING_IDS_PATTERN.sub("", cleaned).strip()

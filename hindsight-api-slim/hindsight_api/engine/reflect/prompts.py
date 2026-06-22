@@ -387,6 +387,7 @@ def build_system_prompt_for_tools(
             "- CRITICAL: Add blank lines before and after block elements (tables, code blocks, lists)",
             "- Format for clarity and readability with proper spacing and hierarchy",
             "- NEVER include memory IDs, UUIDs, or 'Memory references' in the answer text",
+            "- CRITICAL: Do NOT wrap the answer in a JSON object or include fields like `answer`, `directive_compliance`, `memory_ids`, `mental_model_ids`, or `observation_ids` in the answer text. The answer field must contain only the user-visible markdown response.",
             "- Put IDs ONLY in the memory_ids/mental_model_ids/observation_ids arrays, not in the answer",
             "- CRITICAL: This is a NON-CONVERSATIONAL system. NEVER ask follow-up questions, offer further assistance, or suggest next steps. Your answer must be complete and self-contained. The user cannot reply.",
         ]
