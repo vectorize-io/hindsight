@@ -424,9 +424,8 @@ class TestRetainHook:
         assert "first question" in item["content"]
         assert "second question" in item["content"]
 
-    def test_full_session_new_document_after_compaction(self, monkeypatch, tmp_path):
-        """After compaction shrinks the transcript, retain should use a new document_id
-        to avoid overwriting the pre-compaction document."""
+    def test_full_session_new_document_after_precompact_checkpoint(self, monkeypatch, tmp_path):
+        """PreCompact marks the append-only boundary for the next cN document."""
         # First retain: 4 messages
         messages_full = [
             {"role": "user", "content": "first question"},
@@ -449,8 +448,35 @@ class TestRetainHook:
         assert captured_calls[0]["items"][0]["document_id"] == "sess-compact-test"
         assert "first question" in captured_calls[0]["items"][0]["content"]
 
-        # Second retain: compaction happened — transcript now has only 2 messages
-        messages_compacted = [
+        # PreCompact fires before Claude Code appends compact_boundary and the
+        # compact summary to the same transcript file.
+        _run_hook(
+            "pre_compact",
+            {
+                "session_id": "sess-compact-test",
+                "transcript_path": transcript,
+                "trigger": "manual",
+            },
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture,
+        )
+
+        # Second retain: transcript is append-only. The c1 document should only
+        # include content appended after the PreCompact checkpoint.
+        messages_compacted = messages_full + [
+            {
+                "type": "system",
+                "subtype": "compact_boundary",
+                "content": "Conversation compacted",
+                "compactMetadata": {"trigger": "manual"},
+            },
+            {
+                "type": "user",
+                "isCompactSummary": True,
+                "isVisibleInTranscriptOnly": True,
+                "message": {"role": "user", "content": "Summary: earlier work focused on first and second questions."},
+            },
             {"role": "user", "content": "third question"},
             {"role": "assistant", "content": "third answer"},
         ]
@@ -459,10 +485,125 @@ class TestRetainHook:
 
         _run_hook("retain", hook_input, monkeypatch, tmp_path, urlopen_side_effect=capture)
 
-        assert len(captured_calls) == 2
+        assert len(captured_calls) == 3
+        # PreCompact forces one final pre-compact retain before marking c1.
+        assert captured_calls[1]["items"][0]["document_id"] == "sess-compact-test"
+        assert "second question" in captured_calls[1]["items"][0]["content"]
         # Should use a new document_id with chunk suffix
-        assert captured_calls[1]["items"][0]["document_id"] == "sess-compact-test-c1"
-        assert "third question" in captured_calls[1]["items"][0]["content"]
+        assert captured_calls[2]["items"][0]["document_id"] == "sess-compact-test-c1"
+        assert "first question" not in captured_calls[2]["items"][0]["content"]
+        assert "Summary: earlier work" in captured_calls[2]["items"][0]["content"]
+        assert "third question" in captured_calls[2]["items"][0]["content"]
+
+    def test_precompact_does_not_checkpoint_when_retain_fails(self, monkeypatch, tmp_path):
+        messages_full = [
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "first answer"},
+            {"role": "user", "content": "second question"},
+            {"role": "assistant", "content": "second answer"},
+        ]
+        transcript = make_transcript_file(tmp_path, messages_full)
+
+        def fail_retain(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                raise OSError("connection refused")
+            return FakeHTTPResponse({})
+
+        _run_hook(
+            "pre_compact",
+            {
+                "session_id": "sess-precompact-fail",
+                "transcript_path": transcript,
+                "trigger": "auto",
+            },
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=fail_retain,
+        )
+
+        messages_after = messages_full + [
+            {
+                "type": "user",
+                "isCompactSummary": True,
+                "message": {"role": "user", "content": "Summary: compact happened after failed retain."},
+            },
+            {"role": "user", "content": "third question"},
+            {"role": "assistant", "content": "third answer"},
+        ]
+        transcript = make_transcript_file(tmp_path, messages_after)
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({})
+
+        _run_hook(
+            "retain",
+            make_hook_input(transcript_path=transcript, session_id="sess-precompact-fail"),
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture,
+        )
+
+        assert "body" in captured, "retain API was not called"
+        item = captured["body"]["items"][0]
+        assert item["document_id"] == "sess-precompact-fail"
+        assert "first question" in item["content"]
+        assert "third question" in item["content"]
+
+    def test_precompact_chunked_mode_does_not_create_full_session_checkpoint(self, monkeypatch, tmp_path):
+        messages = [
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "first answer"},
+        ]
+        transcript = make_transcript_file(tmp_path, messages)
+        captured_calls = []
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured_calls.append(json.loads(req.data.decode()))
+            return FakeHTTPResponse({})
+
+        _run_hook(
+            "pre_compact",
+            {
+                "session_id": "sess-chunked-compact",
+                "transcript_path": transcript,
+                "trigger": "manual",
+            },
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture,
+            extra_settings={"retainMode": "chunked", "retainEveryNTurns": 2},
+        )
+
+        assert len(captured_calls) == 1
+        assert captured_calls[0]["items"][0]["document_id"].startswith("sess-chunked-compact-")
+
+        messages_after = messages + [
+            {
+                "type": "user",
+                "isCompactSummary": True,
+                "message": {"role": "user", "content": "Summary: prior chunked work."},
+            },
+            {"role": "user", "content": "after compact"},
+            {"role": "assistant", "content": "after answer"},
+        ]
+        transcript = make_transcript_file(tmp_path, messages_after)
+
+        _run_hook(
+            "retain",
+            make_hook_input(transcript_path=transcript, session_id="sess-chunked-compact"),
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture,
+            extra_settings={"retainMode": "full-session", "retainEveryNTurns": 1},
+        )
+
+        assert len(captured_calls) == 2
+        assert captured_calls[1]["items"][0]["document_id"] == "sess-chunked-compact"
+        assert "first question" in captured_calls[1]["items"][0]["content"]
 
     def test_full_session_same_document_when_growing(self, monkeypatch, tmp_path):
         """When transcript grows (no compaction), retain should keep the same document_id."""

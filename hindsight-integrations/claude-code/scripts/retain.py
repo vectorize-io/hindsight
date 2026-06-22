@@ -69,12 +69,12 @@ def read_transcript(transcript_path: str) -> list:
     return messages
 
 
-def run_retain(hook_input: dict, force: bool = False) -> None:
+def run_retain(hook_input: dict, force: bool = False) -> bool:
     config = load_config()
 
     if not config.get("autoRetain"):
         debug_log(config, "Auto-retain disabled, exiting")
-        return
+        return False
 
     debug_log(config, f"Retain hook_input keys: {list(hook_input.keys())} force={force}")
 
@@ -85,7 +85,7 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
     all_messages = read_transcript(transcript_path)
     if not all_messages:
         debug_log(config, "No messages in transcript, skipping retain")
-        return
+        return False
 
     debug_log(config, f"Read {len(all_messages)} messages from transcript")
 
@@ -94,6 +94,7 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
     retain_every_n = max(1, config.get("retainEveryNTurns", 1))
     retain_full_window = False
     messages_to_retain = all_messages
+    document_id = session_id
 
     # Respect retainEveryNTurns in both modes, unless force=True (SessionEnd final retain)
     if retain_every_n > 1 and not force:
@@ -101,7 +102,7 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
         if turn_count % retain_every_n != 0:
             next_at = ((turn_count // retain_every_n) + 1) * retain_every_n
             debug_log(config, f"Turn {turn_count}/{retain_every_n}, skipping retain (next at turn {next_at})")
-            return
+            return False
 
     if retain_mode == "chunked" and retain_every_n > 1:
         # Sliding window: N turns + configured overlap
@@ -109,14 +110,33 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
         window_turns = retain_every_n + overlap_turns
         messages_to_retain = slice_last_turns_by_user_boundary(all_messages, window_turns)
         retain_full_window = True
+        document_id = f"{session_id}-{int(time.time() * 1000)}"
         debug_log(
             config,
             f"Chunked retain firing (window: {window_turns} turns, {len(messages_to_retain)} messages)",
         )
     else:
-        # Full session mode: retain all messages, always as full window
+        # Full-session mode normally upserts the whole transcript into the
+        # session document. After PreCompact, Claude Code appends summary/tail
+        # records to the same JSONL file, so retain only the appended segment in
+        # a new cN document and keep the pre-compact document intact.
+        chunk_index, compact_start = track_retention(session_id, len(all_messages))
+        if compact_start > 0:
+            messages_to_retain = all_messages[compact_start:]
+            document_id = f"{session_id}-c{chunk_index}"
+            debug_log(
+                config,
+                f"Compact segment retain: doc '{document_id}', messages {compact_start}:{len(all_messages)}",
+            )
+        else:
+            document_id = session_id if chunk_index == 0 else f"{session_id}-c{chunk_index}"
+
+        if not messages_to_retain:
+            debug_log(config, "No new messages after compact checkpoint, skipping retain")
+            return False
+
         retain_full_window = True
-        debug_log(config, f"Full session retain: {len(all_messages)} messages")
+        debug_log(config, f"Full session retain: {len(messages_to_retain)} of {len(all_messages)} messages")
 
     # Format transcript
     retain_roles = config.get("retainRoles", ["user", "assistant"])
@@ -127,7 +147,7 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
 
     if not transcript:
         debug_log(config, "Empty transcript after formatting, skipping retain")
-        return
+        return False
 
     # Resolve API URL
     def _dbg(*a):
@@ -137,7 +157,7 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
         api_url = get_api_url(config, debug_fn=_dbg, allow_daemon_start=True)
     except RuntimeError as e:
         print(f"[Hindsight] {e}", file=sys.stderr)
-        return
+        return False
 
     api_token = config.get("hindsightApiToken")
     try:
@@ -148,31 +168,11 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
         )
     except ValueError as e:
         print(f"[Hindsight] Invalid API URL: {e}", file=sys.stderr)
-        return
+        return False
 
     # Derive bank ID and ensure mission
     bank_id = derive_bank_id(hook_input, config)
     ensure_bank_mission(client, bank_id, config, debug_fn=_dbg)
-
-    # Document ID strategy:
-    # - Chunked mode: each chunk gets a timestamped document_id.
-    # - Full-session mode: uses session_id as base, but tracks message count
-    #   to detect compaction.  When Claude Code compacts the conversation the
-    #   transcript shrinks — if we kept the same document_id we'd overwrite the
-    #   pre-compaction document with a shorter one, losing context.  Instead we
-    #   increment a chunk counter so the old document is preserved.
-    if retain_mode == "chunked" and retain_every_n > 1:
-        document_id = f"{session_id}-{int(time.time() * 1000)}"
-    else:
-        chunk_index, compacted = track_retention(session_id, len(all_messages))
-        if compacted:
-            debug_log(
-                config,
-                f"Compaction detected for session {session_id}: transcript shrank, "
-                f"advancing to chunk {chunk_index} to preserve prior document",
-            )
-        # chunk 0 → plain session_id (backwards compatible with existing docs)
-        document_id = session_id if chunk_index == 0 else f"{session_id}-c{chunk_index}"
 
     # Resolve template variables in tags and metadata.
     # Supported variables: {session_id}, {bank_id}, {timestamp}, {user_id}
@@ -232,8 +232,10 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
             timeout=15,
         )
         debug_log(config, f"Retain response: {json.dumps(response)[:200]}")
+        return True
     except Exception as e:
         print(f"[Hindsight] Retain failed: {e}", file=sys.stderr)
+        return False
 
 
 def main():

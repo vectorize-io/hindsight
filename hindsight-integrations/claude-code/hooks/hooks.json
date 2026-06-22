@@ -34,6 +34,18 @@
         ]
       }
     ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/pre_compact.py\" || python \"${CLAUDE_PLUGIN_ROOT}/scripts/pre_compact.py\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [

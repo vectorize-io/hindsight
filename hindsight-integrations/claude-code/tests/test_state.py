@@ -1,10 +1,10 @@
-"""Unit tests for lib/state.py — retention tracking and compaction detection."""
+"""Unit tests for lib/state.py — retention tracking and compact segmentation."""
 
 import json
 
 import pytest
 
-from lib.state import read_state, track_retention, write_state
+from lib.state import mark_precompact, read_state, track_retention, write_state
 
 
 @pytest.fixture(autouse=True)
@@ -14,69 +14,40 @@ def _isolated_state(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# track_retention — core compaction detection
+# track_retention / mark_precompact — retention document segmentation
 # ---------------------------------------------------------------------------
 
 
 class TestTrackRetention:
     def test_first_call_returns_chunk_zero(self):
-        chunk, compacted = track_retention("sess-1", 10)
+        chunk, start_index = track_retention("sess-1", 10)
         assert chunk == 0
-        assert compacted is False
+        assert start_index == 0
 
     def test_growing_transcript_keeps_same_chunk(self):
         track_retention("sess-1", 4)
-        chunk, compacted = track_retention("sess-1", 8)
+        chunk, start_index = track_retention("sess-1", 8)
         assert chunk == 0
-        assert compacted is False
+        assert start_index == 0
 
     def test_equal_count_keeps_same_chunk(self):
         track_retention("sess-1", 5)
-        chunk, compacted = track_retention("sess-1", 5)
+        chunk, start_index = track_retention("sess-1", 5)
         assert chunk == 0
-        assert compacted is False
-
-    def test_shrinking_transcript_triggers_compaction(self):
-        track_retention("sess-1", 10)
-        chunk, compacted = track_retention("sess-1", 3)
-        assert chunk == 1
-        assert compacted is True
-
-    def test_multiple_compactions_increment_chunk(self):
-        track_retention("sess-1", 10)
-
-        chunk, compacted = track_retention("sess-1", 3)
-        assert chunk == 1
-        assert compacted is True
-
-        # Grow again after compaction
-        track_retention("sess-1", 8)
-
-        # Second compaction
-        chunk, compacted = track_retention("sess-1", 2)
-        assert chunk == 2
-        assert compacted is True
-
-    def test_growth_after_compaction_stays_on_same_chunk(self):
-        track_retention("sess-1", 10)
-        track_retention("sess-1", 3)  # compaction → chunk 1
-
-        chunk, compacted = track_retention("sess-1", 6)
-        assert chunk == 1
-        assert compacted is False
+        assert start_index == 0
 
     def test_sessions_are_independent(self):
         track_retention("sess-a", 10)
         track_retention("sess-b", 20)
 
-        # Compaction on sess-a only
-        chunk_a, compacted_a = track_retention("sess-a", 3)
-        chunk_b, compacted_b = track_retention("sess-b", 25)
+        mark_precompact("sess-a", 10)
+        chunk_a, start_a = track_retention("sess-a", 12)
+        chunk_b, start_b = track_retention("sess-b", 25)
 
         assert chunk_a == 1
-        assert compacted_a is True
+        assert start_a == 10
         assert chunk_b == 0
-        assert compacted_b is False
+        assert start_b == 0
 
     def test_persists_across_calls(self, tmp_path):
         """State file is written to disk and survives between calls."""
@@ -90,19 +61,26 @@ class TestTrackRetention:
         assert data["sess-1"]["message_count"] == 10
         assert data["sess-1"]["chunk"] == 0
 
-    def test_compaction_from_one_message(self):
-        """Edge case: transcript shrinks to a single message."""
-        track_retention("sess-1", 50)
-        chunk, compacted = track_retention("sess-1", 1)
+    def test_precompact_marks_next_segment_start(self):
+        chunk, start_index = mark_precompact("sess-1", 10)
         assert chunk == 1
-        assert compacted is True
+        assert start_index == 10
 
-    def test_shrink_by_one_triggers_compaction(self):
-        """Even shrinking by a single message counts as compaction."""
-        track_retention("sess-1", 10)
-        chunk, compacted = track_retention("sess-1", 9)
+        chunk, start_index = track_retention("sess-1", 14)
         assert chunk == 1
-        assert compacted is True
+        assert start_index == 10
+
+    def test_multiple_precompacts_increment_chunks(self):
+        mark_precompact("sess-1", 10)
+        track_retention("sess-1", 14)
+
+        chunk, start_index = mark_precompact("sess-1", 14)
+        assert chunk == 2
+        assert start_index == 14
+
+        chunk, start_index = track_retention("sess-1", 17)
+        assert chunk == 2
+        assert start_index == 14
 
 
 # ---------------------------------------------------------------------------

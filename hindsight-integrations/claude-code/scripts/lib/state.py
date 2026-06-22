@@ -157,32 +157,25 @@ def _locked_read_modify_write(state_name: str, lock_name: str, modify_fn):
     return result
 
 
-def track_retention(session_id: str, message_count: int) -> tuple:
-    """Track retention state and detect compaction.
+def mark_precompact(session_id: str, message_count: int) -> tuple:
+    """Record the transcript position before Claude Code compacts a session.
 
-    Compares the current message count against the last retained count for this
-    session.  When the transcript shrinks (compaction), increments a chunk counter
-    so the caller can use a distinct document_id, preserving the pre-compaction
-    document.
+    Claude Code transcript files are append-only across compaction. PreCompact is
+    therefore the reliable signal for starting a new retained document segment:
+    everything appended after ``message_count`` becomes overlap/new context for
+    the next ``session_id-cN`` document.
 
     Returns:
-        (chunk_index, compacted) — chunk_index for building document_id,
-        compacted is True if compaction was detected this call.
+        (chunk_index, start_index) for the next compact segment.
     """
 
     def _update(data):
         entry = data.get(session_id, {"message_count": 0, "chunk": 0})
-        last_count = entry["message_count"]
-        chunk = entry["chunk"]
-        compacted = False
+        chunk = entry.get("chunk", 0) + 1
 
-        if message_count < last_count:
-            # Transcript shrank — compaction happened
-            chunk += 1
-            compacted = True
-
-        entry["message_count"] = message_count
+        entry["message_count"] = max(message_count, entry.get("message_count", 0))
         entry["chunk"] = chunk
+        entry["compact_start"] = message_count
         data[session_id] = entry
 
         # Cap tracked sessions
@@ -191,6 +184,42 @@ def track_retention(session_id: str, message_count: int) -> tuple:
             for k in sorted_keys[: len(sorted_keys) // 2]:
                 del data[k]
 
-        return data, (chunk, compacted)
+        return data, (chunk, message_count)
+
+    return _locked_read_modify_write("retention_tracking.json", "retention_tracking.lock", _update)
+
+
+def track_retention(session_id: str, message_count: int) -> tuple:
+    """Track retention state and return the active document segment.
+
+    Normal Claude Code transcripts only grow, including across compaction. Real
+    compaction segmentation is created by ``mark_precompact``; this function
+    does not infer compaction from transcript size changes.
+
+    Returns:
+        (chunk_index, start_index) — use ``start_index`` to slice the current
+        transcript before retaining and ``chunk_index`` for document_id.
+    """
+
+    def _update(data):
+        entry = data.get(session_id, {"message_count": 0, "chunk": 0})
+        chunk = entry.get("chunk", 0)
+        start_index = entry.get("compact_start", 0)
+
+        entry["message_count"] = message_count
+        entry["chunk"] = chunk
+        if start_index:
+            entry["compact_start"] = start_index
+        else:
+            entry.pop("compact_start", None)
+        data[session_id] = entry
+
+        # Cap tracked sessions
+        if len(data) > 10000:
+            sorted_keys = sorted(data.keys())
+            for k in sorted_keys[: len(sorted_keys) // 2]:
+                del data[k]
+
+        return data, (chunk, start_index)
 
     return _locked_read_modify_write("retention_tracking.json", "retention_tracking.lock", _update)

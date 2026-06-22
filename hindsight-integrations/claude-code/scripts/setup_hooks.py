@@ -66,6 +66,18 @@ def build_hooks(plugin_root: str) -> dict:
                 ]
             }
         ],
+        "PreCompact": [
+            {
+                "matcher": "*",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": f'python3 "{plugin_root}/scripts/pre_compact.py"',
+                        "timeout": 15,
+                    }
+                ],
+            }
+        ],
         "SessionEnd": [
             {
                 "hooks": [
