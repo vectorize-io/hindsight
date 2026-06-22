@@ -1,11 +1,18 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { client, LLMRequestEntry } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import { useFeatures } from "@/lib/features-context";
+import {
+  getPendingDocuments,
+  removePendingDocuments,
+  subscribePendingDocuments,
+  updatePendingDocumentStatus,
+  type PendingDocument,
+} from "@/lib/pending-documents";
 import { DataView } from "./data-view";
 import { TraceDialog } from "./llm-requests-view";
 import { Button } from "@/components/ui/button";
@@ -78,6 +85,19 @@ import {
 } from "lucide-react";
 
 const ITEMS_PER_PAGE = 50;
+
+type DocumentListItem = {
+  id: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  tags?: string[];
+  document_metadata?: Record<string, unknown> | null;
+  text_length?: number | null;
+  memory_unit_count?: number;
+  _pending?: false;
+};
+
+type DisplayDocument = (PendingDocument & { _pending: true }) | DocumentListItem;
 
 function formatRelativeTime(dateStr: string): string {
   const now = Date.now();
@@ -575,7 +595,8 @@ export function DocumentsView() {
   const tBank = useTranslations("bank");
   const { currentBank } = useBank();
   const { features } = useFeatures();
-  const [documents, setDocuments] = useState<any[]>([]);
+  const [documents, setDocuments] = useState<DocumentListItem[]>([]);
+  const [pendingDocuments, setPendingDocuments] = useState<PendingDocument[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [total, setTotal] = useState(0);
@@ -631,26 +652,53 @@ export function DocumentsView() {
     null
   );
 
-  const loadDocuments = async (page: number = 1) => {
-    if (!currentBank) return;
+  const loadDocuments = useCallback(
+    async (page: number = 1) => {
+      if (!currentBank) return;
 
-    setLoading(true);
-    try {
-      const pageOffset = (page - 1) * ITEMS_PER_PAGE;
-      const data: any = await client.listDocuments({
-        bank_id: currentBank,
-        q: searchQuery,
-        limit: ITEMS_PER_PAGE,
-        offset: pageOffset,
-      });
-      setDocuments(data.items || []);
-      setTotal(data.total || 0);
-    } catch (error) {
-      // Error toast is shown automatically by the API client interceptor
-    } finally {
-      setLoading(false);
-    }
-  };
+      setLoading(true);
+      try {
+        const pageOffset = (page - 1) * ITEMS_PER_PAGE;
+        const data = (await client.listDocuments({
+          bank_id: currentBank,
+          q: searchQuery,
+          limit: ITEMS_PER_PAGE,
+          offset: pageOffset,
+        })) as { items?: DocumentListItem[]; total?: number };
+        const items = data.items || [];
+        setDocuments(items);
+        setTotal(data.total || 0);
+        removePendingDocuments(currentBank, items.map((doc) => doc.id).filter(Boolean));
+      } catch (error) {
+        // Error toast is shown automatically by the API client interceptor
+      } finally {
+        setLoading(false);
+      }
+    },
+    [currentBank, searchQuery]
+  );
+
+  const pendingRows = useMemo<DisplayDocument[]>(() => {
+    const realDocumentIds = new Set(documents.map((doc) => doc.id));
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
+    return pendingDocuments
+      .filter((doc) => !realDocumentIds.has(doc.id))
+      .filter((doc) => {
+        if (!normalizedQuery) return true;
+        return (
+          doc.id.toLowerCase().includes(normalizedQuery) ||
+          doc.filename.toLowerCase().includes(normalizedQuery)
+        );
+      })
+      .map((doc) => ({ ...doc, _pending: true }));
+  }, [documents, pendingDocuments, searchQuery]);
+
+  const visibleDocuments = useMemo<DisplayDocument[]>(
+    () => [...pendingRows, ...documents],
+    [documents, pendingRows]
+  );
+  const displayTotal = total + pendingRows.length;
 
   // Handle page change
   const handlePageChange = (newPage: number) => {
@@ -851,6 +899,69 @@ export function DocumentsView() {
     }
   }, [currentBank]);
 
+  useEffect(() => {
+    if (!currentBank) {
+      setPendingDocuments([]);
+      return;
+    }
+
+    const syncPendingDocuments = () => {
+      setPendingDocuments(getPendingDocuments(currentBank));
+    };
+
+    syncPendingDocuments();
+    return subscribePendingDocuments(syncPendingDocuments);
+  }, [currentBank]);
+
+  useEffect(() => {
+    if (!currentBank) return;
+
+    const tracked = pendingDocuments.filter(
+      (doc) => doc.status === "processing" && doc.operationId
+    );
+    if (tracked.length === 0) return;
+
+    let cancelled = false;
+
+    const pollPendingOperations = async () => {
+      let shouldRefreshDocuments = false;
+
+      await Promise.all(
+        tracked.map(async (doc) => {
+          try {
+            const op = await client.getOperationStatus(currentBank, doc.operationId!);
+            if (cancelled) return;
+
+            if (op.status === "failed") {
+              updatePendingDocumentStatus(
+                currentBank,
+                doc.id,
+                "failed",
+                op.error_message || t("pendingUploadFailed")
+              );
+            } else if (op.status === "completed") {
+              shouldRefreshDocuments = true;
+            }
+          } catch {
+            // Keep the pending row; the operations page remains the detailed source of truth.
+          }
+        })
+      );
+
+      if (!cancelled && shouldRefreshDocuments) {
+        loadDocuments(currentPage);
+      }
+    };
+
+    pollPendingOperations();
+    const interval = window.setInterval(pollPendingOperations, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [currentBank, currentPage, loadDocuments, pendingDocuments, t]);
+
   // Reload when search query changes (with debounce)
   useEffect(() => {
     if (!currentBank) return;
@@ -861,7 +972,7 @@ export function DocumentsView() {
     }, 300); // 300ms debounce
 
     return () => clearTimeout(timeoutId);
-  }, [searchQuery]);
+  }, [currentBank, searchQuery]);
 
   const triggerDownload = (blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
@@ -1083,16 +1194,18 @@ export function DocumentsView() {
         </DialogContent>
       </Dialog>
       {/* Documents List Section */}
-      {loading ? (
+      {loading && visibleDocuments.length === 0 ? (
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <div className="text-4xl mb-2">⏳</div>
             <div className="text-sm text-muted-foreground">{t("loadingDocuments")}</div>
           </div>
         </div>
-      ) : documents.length > 0 ? (
+      ) : visibleDocuments.length > 0 ? (
         <>
-          <div className="mb-4 text-sm text-muted-foreground">{t("totalDocuments", { total })}</div>
+          <div className="mb-4 text-sm text-muted-foreground">
+            {t("totalDocuments", { total: displayTotal })}
+          </div>
           {/* Documents Table */}
           <div className="w-full">
             <div className="px-5 mb-4">
@@ -1119,27 +1232,51 @@ export function DocumentsView() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {documents.length > 0 ? (
-                    documents.map((doc) => (
+                  {visibleDocuments.map((doc) => {
+                    const isPending = doc._pending === true;
+                    return (
                       <TableRow
-                        key={doc.id}
-                        className={`cursor-pointer hover:bg-muted/50 ${selectedDocument?.id === doc.id ? "bg-primary/10" : ""}`}
-                        onClick={() => viewDocumentText(doc.id)}
+                        key={`${isPending ? "pending" : "document"}-${doc.id}`}
+                        className={
+                          isPending
+                            ? "bg-muted/30"
+                            : `cursor-pointer hover:bg-muted/50 ${selectedDocument?.id === doc.id ? "bg-primary/10" : ""}`
+                        }
+                        onClick={isPending ? undefined : () => viewDocumentText(doc.id)}
                       >
                         <TableCell className="text-card-foreground font-mono text-xs break-all">
-                          {doc.id}
+                          <div>{doc.id}</div>
+                          {isPending && (
+                            <div className="mt-1 font-sans text-[11px] text-muted-foreground">
+                              {doc.filename}
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell
                           className="text-card-foreground"
-                          title={doc.created_at ? new Date(doc.created_at).toLocaleString() : ""}
+                          title={
+                            isPending
+                              ? new Date(doc.createdAt).toLocaleString()
+                              : doc.created_at
+                                ? new Date(doc.created_at).toLocaleString()
+                                : ""
+                          }
                         >
-                          {doc.created_at ? formatRelativeTime(doc.created_at) : "N/A"}
+                          {isPending
+                            ? formatRelativeTime(doc.createdAt)
+                            : doc.created_at
+                              ? formatRelativeTime(doc.created_at)
+                              : "N/A"}
                         </TableCell>
                         <TableCell
                           className="text-card-foreground"
-                          title={doc.updated_at ? new Date(doc.updated_at).toLocaleString() : ""}
+                          title={
+                            !isPending && doc.updated_at
+                              ? new Date(doc.updated_at).toLocaleString()
+                              : ""
+                          }
                         >
-                          {doc.updated_at ? formatRelativeTime(doc.updated_at) : "N/A"}
+                          {!isPending && doc.updated_at ? formatRelativeTime(doc.updated_at) : "-"}
                         </TableCell>
                         <TableCell className="text-card-foreground">
                           {doc.tags && doc.tags.length > 0 ? (
@@ -1163,28 +1300,43 @@ export function DocumentsView() {
                           )}
                         </TableCell>
                         <TableCell className="text-card-foreground">
-                          {doc.document_metadata &&
-                          Object.keys(doc.document_metadata).length > 0 ? (
+                          {isPending ? (
+                            <span className="text-xs text-muted-foreground">
+                              {t("pendingUploadMetadata")}
+                            </span>
+                          ) : doc.document_metadata &&
+                            Object.keys(doc.document_metadata).length > 0 ? (
                             <MetadataBadges metadata={doc.document_metadata} />
                           ) : (
                             "-"
                           )}
                         </TableCell>
                         <TableCell className="text-card-foreground">
-                          {formatBytes(doc.text_length || 0)}
+                          {formatBytes(isPending ? doc.size : doc.text_length || 0)}
                         </TableCell>
                         <TableCell className="text-card-foreground">
-                          {doc.memory_unit_count}
+                          {isPending ? (
+                            doc.status === "failed" ? (
+                              <span
+                                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20"
+                                title={doc.error}
+                              >
+                                <X className="w-3 h-3" />
+                                {t("pendingUploadFailedStatus")}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                {t("pendingUploadProcessingStatus")}
+                              </span>
+                            )
+                          ) : (
+                            doc.memory_unit_count
+                          )}
                         </TableCell>
                       </TableRow>
-                    ))
-                  ) : (
-                    <TableRow>
-                      <TableCell colSpan={7} className="text-center">
-                        {t("clickLoadDocumentsToView")}
-                      </TableCell>
-                    </TableRow>
-                  )}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>

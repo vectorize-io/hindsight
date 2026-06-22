@@ -46,6 +46,7 @@ import {
 import { toast } from "sonner";
 import { useTheme } from "@/lib/theme-context";
 import { useFeatures } from "@/lib/features-context";
+import { upsertPendingDocuments } from "@/lib/pending-documents";
 import Image from "next/image";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -70,6 +71,13 @@ function formatCompact(n: number): string {
 // Pads date-only Event Date input ("YYYY-MM-DD") with midnight so the API never sees an ambiguous value.
 function toIsoTimestamp(value: string): string {
   return value.includes("T") ? value : `${value}T00:00:00`;
+}
+
+function createFileDocumentId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `file_${crypto.randomUUID()}`;
+  }
+  return `file_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
 
 function formatTimeAgo(isoDate: string): string {
@@ -347,26 +355,52 @@ function BankSelectorInner() {
     try {
       setUploadProgress(`Uploading ${selectedFiles.length} file(s)...`);
 
-      const perFileMeta = filesMetadata.map((meta) => ({
-        ...(meta.context && { context: meta.context }),
-        ...(meta.timestamp && { timestamp: toIsoTimestamp(meta.timestamp) }),
-        ...(meta.document_id && { document_id: meta.document_id }),
-        ...(meta.tags && {
-          tags: meta.tags
-            .split(",")
-            .map((t) => t.trim())
-            .filter(Boolean),
-        }),
-        ...(meta.metadata && { metadata: parseMetadata(meta.metadata) }),
-        ...(meta.strategy && { strategy: meta.strategy }),
-      }));
+      const filesToUpload = selectedFiles.map((file, index) => {
+        const meta = filesMetadata[index] ?? emptyFileMeta(file.name);
+        const documentId = meta.document_id.trim() || createFileDocumentId();
+        const tags = meta.tags
+          ? meta.tags
+              .split(",")
+              .map((t) => t.trim())
+              .filter(Boolean)
+          : [];
 
-      await client.uploadFiles({
-        bank_id: currentBank,
-        files: selectedFiles,
-        async: true,
-        files_metadata: perFileMeta,
+        return {
+          file,
+          documentId,
+          tags,
+          metadata: {
+            ...(meta.context && { context: meta.context }),
+            ...(meta.timestamp && { timestamp: toIsoTimestamp(meta.timestamp) }),
+            document_id: documentId,
+            ...(tags.length > 0 && { tags }),
+            ...(meta.metadata && { metadata: parseMetadata(meta.metadata) }),
+            ...(meta.strategy && { strategy: meta.strategy }),
+          },
+        };
       });
+
+      const response = await client.uploadFiles({
+        bank_id: currentBank,
+        files: filesToUpload.map((item) => item.file),
+        async: true,
+        files_metadata: filesToUpload.map((item) => item.metadata),
+      });
+
+      const operationIds = Array.isArray(response?.operation_ids) ? response.operation_ids : [];
+
+      upsertPendingDocuments(
+        filesToUpload.map((item, index) => ({
+          id: item.documentId,
+          bankId: currentBank,
+          filename: item.file.name,
+          size: item.file.size,
+          tags: item.tags,
+          operationId: operationIds[index],
+          createdAt: new Date().toISOString(),
+          status: "processing",
+        }))
+      );
 
       // Reset form and close dialog
       setDocDialogOpen(false);
