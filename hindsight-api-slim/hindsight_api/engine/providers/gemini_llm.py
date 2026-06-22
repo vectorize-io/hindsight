@@ -424,6 +424,7 @@ class GeminiLLM(LLMInterface):
                         output_tokens=output_tokens,
                         total_tokens=input_tokens + output_tokens,
                         cached_tokens=cached_tokens,
+                        thoughts_tokens=thoughts_tokens,
                     )
                     return result, token_usage
                 return result
@@ -762,6 +763,8 @@ class GeminiLLM(LLMInterface):
                     finish_reason=finish_reason,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
+                    cached_tokens=cached_input_tokens,
+                    thoughts_tokens=thoughts_tokens,
                 )
 
             except genai_errors.APIError as e:
