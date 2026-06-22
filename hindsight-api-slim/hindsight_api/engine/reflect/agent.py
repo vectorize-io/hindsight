@@ -554,9 +554,13 @@ async def run_reflect_agent(
             # Generate structured output if schema provided
             structured_output = None
             if response_schema and answer:
-                structured_output, struct_in, struct_out, struct_cached, struct_thoughts = await _generate_structured_output(
-                    answer, response_schema, llm_config, reflect_id
-                )
+                (
+                    structured_output,
+                    struct_in,
+                    struct_out,
+                    struct_cached,
+                    struct_thoughts,
+                ) = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
                 total_input_tokens += struct_in
                 total_output_tokens += struct_out
                 total_cached_tokens += struct_cached
@@ -619,9 +623,13 @@ async def run_reflect_agent(
 
             structured_output = None
             if response_schema and answer:
-                structured_output, struct_in, struct_out, struct_cached, struct_thoughts = await _generate_structured_output(
-                    answer, response_schema, llm_config, reflect_id
-                )
+                (
+                    structured_output,
+                    struct_in,
+                    struct_out,
+                    struct_cached,
+                    struct_thoughts,
+                ) = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
                 total_input_tokens += struct_in
                 total_output_tokens += struct_out
                 total_cached_tokens += struct_cached
@@ -747,9 +755,13 @@ async def run_reflect_agent(
             # Generate structured output if schema provided
             structured_output = None
             if response_schema and answer:
-                structured_output, struct_in, struct_out, struct_cached, struct_thoughts = await _generate_structured_output(
-                    answer, response_schema, llm_config, reflect_id
-                )
+                (
+                    structured_output,
+                    struct_in,
+                    struct_out,
+                    struct_cached,
+                    struct_thoughts,
+                ) = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
                 total_input_tokens += struct_in
                 total_output_tokens += struct_out
                 total_cached_tokens += struct_cached
@@ -825,9 +837,13 @@ async def run_reflect_agent(
                 # Generate structured output if schema provided
                 structured_output = None
                 if response_schema and answer:
-                    structured_output, struct_in, struct_out, struct_cached, struct_thoughts = await _generate_structured_output(
-                        answer, response_schema, llm_config, reflect_id
-                    )
+                    (
+                        structured_output,
+                        struct_in,
+                        struct_out,
+                        struct_cached,
+                        struct_thoughts,
+                    ) = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
                     total_input_tokens += struct_in
                     total_output_tokens += struct_out
                     total_cached_tokens += struct_cached
@@ -881,9 +897,13 @@ async def run_reflect_agent(
             # Generate structured output if schema provided
             structured_output = None
             if response_schema and answer:
-                structured_output, struct_in, struct_out, struct_cached, struct_thoughts = await _generate_structured_output(
-                    answer, response_schema, llm_config, reflect_id
-                )
+                (
+                    structured_output,
+                    struct_in,
+                    struct_out,
+                    struct_cached,
+                    struct_thoughts,
+                ) = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
                 total_input_tokens += struct_in
                 total_output_tokens += struct_out
                 total_cached_tokens += struct_cached

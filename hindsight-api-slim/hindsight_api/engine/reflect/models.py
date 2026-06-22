@@ -79,9 +79,7 @@ class TokenUsageSummary(BaseModel):
     """Total token usage across all LLM calls."""
 
     input_tokens: int = Field(default=0, description="Total input tokens used (includes any cached prefix tokens)")
-    output_tokens: int = Field(
-        default=0, description="Total visible output tokens used (excludes reasoning/thoughts)"
-    )
+    output_tokens: int = Field(default=0, description="Total visible output tokens used (excludes reasoning/thoughts)")
     total_tokens: int = Field(default=0, description="Total tokens (input + output, excludes thoughts)")
     cached_tokens: int = Field(
         default=0,
