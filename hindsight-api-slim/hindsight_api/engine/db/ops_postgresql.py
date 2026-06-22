@@ -348,6 +348,15 @@ class PostgreSQLOps(DataAccessOps):
     ) -> None:
         if not unit_ids:
             return
+        # Sort to enforce a global lock-acquisition order on the
+        # (bank_id, unit_id) unique-key. Without this, two concurrent
+        # transactions inserting overlapping unit_id sets in different
+        # orders can deadlock on the ON CONFLICT row locks — Postgres
+        # acquires a short-lived lock per row being checked, and cycle
+        # detection then aborts one transaction. Sorting gives every
+        # concurrent caller the same lock order, so conflicting inserts
+        # queue cleanly instead of cycling.
+        sorted_unit_ids = sorted(unit_ids)
         await conn.execute(
             f"""
             INSERT INTO {table} (bank_id, unit_id)
@@ -355,7 +364,7 @@ class PostgreSQLOps(DataAccessOps):
             ON CONFLICT (bank_id, unit_id) DO NOTHING
             """,
             bank_id,
-            unit_ids,
+            sorted_unit_ids,
         )
 
     async def claim_graph_maintenance_batch(
