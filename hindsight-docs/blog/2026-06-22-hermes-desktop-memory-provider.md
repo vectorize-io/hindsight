@@ -69,6 +69,7 @@ From that point on, Hermes remembers — preferences, decisions, project context
 
 ## Get Started
 
+- **Integration docs:** [Configure Hindsight in the Hermes Desktop app](https://hindsight.vectorize.io/sdks/integrations/hermes-desktop)
 - **Hermes Agent:** [github.com/NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)
 - **Hindsight Cloud (free):** [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)
 - **The native-provider story:** [Hindsight Is Now a Native Memory Provider in Hermes Agent](https://hindsight.vectorize.io/blog/2026/04/06/hermes-native-memory-provider)
