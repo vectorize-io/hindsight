@@ -80,6 +80,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "continue": IntegrationMeta("hindsight-continue", "Continue"),
     "zed": IntegrationMeta("hindsight-zed", "Zed"),
     "openhands": IntegrationMeta("hindsight-openhands", "OpenHands"),
+    "windsurf": IntegrationMeta("hindsight-windsurf", "Windsurf"),
 }
 
 VALID_INTEGRATIONS = list(INTEGRATIONS.keys())
