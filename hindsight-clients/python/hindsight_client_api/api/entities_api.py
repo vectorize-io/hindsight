@@ -338,7 +338,7 @@ class EntitiesApi:
     async def get_entity_graph(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[StrictInt], Field(description="Maximum number of co-occurrence edges to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of co-occurrence edges to return")] = None,
         min_count: Annotated[Optional[StrictInt], Field(description="Minimum cooccurrence_count to include an edge")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -418,7 +418,7 @@ class EntitiesApi:
     async def get_entity_graph_with_http_info(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[StrictInt], Field(description="Maximum number of co-occurrence edges to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of co-occurrence edges to return")] = None,
         min_count: Annotated[Optional[StrictInt], Field(description="Minimum cooccurrence_count to include an edge")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -498,7 +498,7 @@ class EntitiesApi:
     async def get_entity_graph_without_preload_content(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[StrictInt], Field(description="Maximum number of co-occurrence edges to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of co-occurrence edges to return")] = None,
         min_count: Annotated[Optional[StrictInt], Field(description="Minimum cooccurrence_count to include an edge")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -650,8 +650,8 @@ class EntitiesApi:
     async def list_entities(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[StrictInt], Field(description="Maximum number of entities to return")] = None,
-        offset: Annotated[Optional[StrictInt], Field(description="Offset for pagination")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of entities to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -730,8 +730,8 @@ class EntitiesApi:
     async def list_entities_with_http_info(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[StrictInt], Field(description="Maximum number of entities to return")] = None,
-        offset: Annotated[Optional[StrictInt], Field(description="Offset for pagination")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of entities to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -810,8 +810,8 @@ class EntitiesApi:
     async def list_entities_without_preload_content(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[StrictInt], Field(description="Maximum number of entities to return")] = None,
-        offset: Annotated[Optional[StrictInt], Field(description="Offset for pagination")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of entities to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,

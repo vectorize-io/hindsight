@@ -72,7 +72,7 @@ class HindsightCallSettings:
         injection_mode: How to inject memories (system_message or prepend_user)
 
         budget: Budget level for memory recall (low, mid, high)
-        fact_types: Filter by fact types (world, experience, opinion, observation)
+        fact_types: Filter by fact types (world, experience, observation)
         max_memories: Maximum memories to inject (None = no limit)
         max_memory_tokens: Maximum tokens for memory context
         include_entities: Include entity observations in recall results
@@ -109,7 +109,7 @@ class HindsightCallSettings:
 
     # Recall settings
     budget: str = "mid"  # low, mid, high
-    fact_types: Optional[List[str]] = None  # world, experience, opinion, observation
+    fact_types: Optional[List[str]] = None  # world, experience, observation
     max_memories: Optional[int] = None  # None = no limit
     max_memory_tokens: int = 4096
     include_entities: bool = True
@@ -282,7 +282,7 @@ def configure(
         inject_memories: Whether to inject memories (default: True)
         injection_mode: How to inject memories (system_message or prepend_user)
         budget: Recall budget level - low/mid/high (default: "mid")
-        fact_types: Filter by fact types (world/experience/opinion/observation)
+        fact_types: Filter by fact types (world/experience/observation)
         max_memories: Max memories to inject (None = no limit)
         max_memory_tokens: Max tokens for memory context (default: 4096)
         include_entities: Include entity observations in recall (default: True)
@@ -423,7 +423,7 @@ def set_defaults(
         inject_memories: Whether to inject memories
         injection_mode: How to inject memories (system_message or prepend_user)
         budget: Budget level for memory recall (low, mid, high)
-        fact_types: Fact types to filter (world, experience, opinion, observation)
+        fact_types: Fact types to filter (world, experience, observation)
         max_memories: Max number of memories to inject
         max_memory_tokens: Max tokens for memory context
         include_entities: Include entity observations in recall

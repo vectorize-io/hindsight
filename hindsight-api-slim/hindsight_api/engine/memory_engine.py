@@ -3442,6 +3442,8 @@ class MemoryEngine(MemoryEngineInterface):
                 llm_input_tokens=total_usage.input_tokens,
                 llm_output_tokens=total_usage.output_tokens,
                 llm_total_tokens=total_usage.total_tokens,
+                llm_cached_input_tokens=getattr(total_usage, "cached_tokens", 0) or 0,
+                llm_thoughts_tokens=getattr(total_usage, "thoughts_tokens", 0) or 0,
                 processed_content_tokens=total_processed_content_tokens,
             )
             try:
@@ -3843,6 +3845,10 @@ class MemoryEngine(MemoryEngineInterface):
         max_tokens: int = 4096,
         enable_trace: bool = False,
         fact_type: list[str] | None = None,
+        # Opt-in (default False). Internal callers that recall raw facts on purpose —
+        # notably consolidation, which needs the raw facts it folds into observations —
+        # must leave this off so they aren't silently deduped away.
+        prefer_observations: bool = False,
         question_date: datetime | None = None,
         include_entities: bool = False,
         max_entity_tokens: int = 500,
@@ -3875,6 +3881,10 @@ class MemoryEngine(MemoryEngineInterface):
             bank_id: bank ID to recall for
             query: Recall query
             fact_type: List of fact types to recall (e.g., ['world', 'experience'])
+            prefer_observations: When True and both 'observation' and a raw type ('world'/'experience')
+                       are requested, drop raw facts that a returned observation was consolidated from
+                       (deduplication by provenance). Freed slots backfill, keeping the result count at
+                       the budget. No-op unless both observation and raw types are requested.
             budget: Budget level for graph traversal (low=100, mid=300, high=600 units)
             max_tokens: Maximum tokens to return (counts only 'text' field, default 4096)
                        Results are returned until token budget is reached, stopping before
@@ -4012,6 +4022,7 @@ class MemoryEngine(MemoryEngineInterface):
                             max_chunk_tokens,
                             request_context,
                             semaphore_wait=semaphore_wait,
+                            prefer_observations=prefer_observations,
                             tags=tags,
                             tags_match=tags_match,
                             tag_groups=tag_groups,
@@ -4148,6 +4159,7 @@ class MemoryEngine(MemoryEngineInterface):
         max_chunk_tokens: int = 8192,
         request_context: "RequestContext" = None,
         semaphore_wait: float = 0.0,
+        prefer_observations: bool = False,
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
         tag_groups: list[TagGroup] | None = None,
@@ -4622,10 +4634,14 @@ class MemoryEngine(MemoryEngineInterface):
                 ce = reranker_instance.cross_encoder
                 # "rrf" mode is passthrough by construction; so is a configured "rrf" CE.
                 is_passthrough = (reranking == "rrf") or (ce is not None and ce.provider_name == "rrf")
+                scoring_config = get_config()
                 apply_combined_scoring(
                     scored_results,
                     now=_recall_scoring_now(question_date),
                     is_passthrough_reranker=is_passthrough,
+                    recency_decay_function=scoring_config.recency_decay_function,
+                    recency_decay_linear_window_days=scoring_config.recency_decay_linear_window_days,
+                    recency_decay_halflife_days=scoring_config.recency_decay_halflife_days,
                 )
                 # Per-strategy additive boost: nudge candidates surfaced by a
                 # prioritised retrieval arm up the final ordering.
@@ -4659,6 +4675,48 @@ class MemoryEngine(MemoryEngineInterface):
             # if the client disconnected while we were reranking (issue #2122).
             if request_context is not None:
                 request_context.raise_if_cancelled()
+
+            # Step 4.8: prefer-observations dedup. When the caller asked for observations
+            # alongside raw facts, an observation supersedes the raw facts it was
+            # consolidated from: drop those raw facts so the same content isn't returned
+            # twice. Runs BEFORE the Step 5 truncation so the freed slots backfill with
+            # the next-best results, keeping the result count at the budget. No-op unless
+            # 'observation' and at least one raw type were both requested.
+            raw_types_requested = {"world", "experience"} & set(fact_type)
+            if prefer_observations and "observation" in fact_type and raw_types_requested:
+                # "The observation list" = observations within the window we would return.
+                # Only those can supersede a raw fact; a far-down observation should not
+                # suppress a top raw fact it merely happens to reference.
+                observation_ids = [
+                    uuid.UUID(sr.id)
+                    for sr in scored_results[: thinking_budget * 2]
+                    if sr.retrieval.fact_type == "observation"
+                ]
+                if observation_ids:
+                    superseded_ids: set[str] = set()
+                    async with acquire_with_retry(backend) as dedup_conn:
+                        obs_rows = await dedup_conn.fetch(
+                            f"""
+                            SELECT source_memory_ids
+                            FROM {fq_table("memory_units")}
+                            WHERE id = ANY($1::uuid[]) AND fact_type = 'observation'
+                            """,
+                            observation_ids,
+                        )
+                    for obs_row in obs_rows:
+                        for sid in obs_row["source_memory_ids"] or []:
+                            superseded_ids.add(str(sid))
+                    if superseded_ids:
+                        before_count = len(scored_results)
+                        scored_results = [
+                            sr
+                            for sr in scored_results
+                            if not (sr.retrieval.fact_type in ("world", "experience") and sr.id in superseded_ids)
+                        ]
+                        log_buffer.append(
+                            f"  [4.8] prefer_observations: dropped {before_count - len(scored_results)} "
+                            f"raw fact(s) superseded by {len(observation_ids)} observation(s)"
+                        )
 
             # Step 5: Truncate to thinking_budget * 2 for token filtering
             rerank_limit = thinking_budget * 2
@@ -5334,6 +5392,17 @@ class MemoryEngine(MemoryEngineInterface):
                     "memory_units_deleted": units_count if deleted else 0,
                 }
 
+        # Drop any cached stats for this bank — deleting the document changed
+        # the document count and (via cascade) the memory-unit/link counts
+        # get_bank_stats reports, which the TTL would otherwise serve at
+        # pre-delete values for up to a minute (mirrors delete_bank). Best-effort:
+        # a cache-eviction failure must not fail an already-committed delete.
+        if deleted:
+            try:
+                await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
+            except Exception as e:
+                logger.warning(f"Failed to invalidate bank stats cache after document deletion for bank {bank_id}: {e}")
+
         if invalidated_obs > 0:
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)
             if config.enable_auto_consolidation:
@@ -5501,6 +5570,14 @@ class MemoryEngine(MemoryEngineInterface):
                             )
 
         if invalidated_obs > 0:
+            # Observation units were deleted, changing the counts get_bank_stats
+            # reports — drop the cached stats so the TTL does not serve pre-update
+            # values for up to a minute (mirrors delete_bank). Best-effort: a
+            # cache-eviction failure must not fail an already-committed update.
+            try:
+                await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
+            except Exception as e:
+                logger.warning(f"Failed to invalidate bank stats cache after document update for bank {bank_id}: {e}")
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)
             if config.enable_auto_consolidation:
                 try:
@@ -5591,6 +5668,19 @@ class MemoryEngine(MemoryEngineInterface):
                     if deleted
                     else "Memory unit not found",
                 }
+
+        # Drop any cached stats for this bank — the deleted unit (and its
+        # cascaded links/entities) changed the counts get_bank_stats reports,
+        # which the TTL would otherwise serve at pre-delete values for up to a
+        # minute (mirrors delete_bank). Best-effort: a cache-eviction failure
+        # must not fail an already-committed delete.
+        if deleted and bank_id:
+            try:
+                await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to invalidate bank stats cache after memory unit deletion for bank {bank_id}: {e}"
+                )
 
         if bank_id_for_consolidation:
             config = await self._config_resolver.resolve_full_config(bank_id_for_consolidation, request_context)
@@ -5814,7 +5904,17 @@ class MemoryEngine(MemoryEngineInterface):
                     bank_id,
                 )
 
-                return {"deleted_count": count or 0}
+        # Drop any cached stats for this bank — clearing observations changed
+        # the memory-unit/observation counts and the consolidation timestamps
+        # get_bank_stats reports, which the TTL would otherwise serve at stale
+        # values for up to a minute (mirrors delete_bank). Best-effort: a
+        # cache-eviction failure must not fail an already-committed clear.
+        try:
+            await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
+        except Exception as e:
+            logger.warning(f"Failed to invalidate bank stats cache after clearing observations for bank {bank_id}: {e}")
+
+        return {"deleted_count": count or 0}
 
     async def list_observation_scopes(
         self,
@@ -11755,6 +11855,8 @@ class MemoryEngine(MemoryEngineInterface):
             **task_payload,
         }
 
+        from hindsight_api.extensions.operation_validator import OperationValidationError
+
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
                 if dedupe_by_bank:
@@ -11776,10 +11878,20 @@ class MemoryEngine(MemoryEngineInterface):
                     # serialize) but not with FOR KEY SHARE (so those inserts proceed).
                     # On Oracle this rewrites to FOR UPDATE, which there does not block
                     # indexed-FK child inserts.
-                    await conn.execute(
+                    #
+                    # Use fetchval so we can also verify the bank actually exists.
+                    # Without this check, callers that race against bank deletion
+                    # or that derive bank IDs before creating the bank reach the
+                    # INSERT below and get an asyncpg.ForeignKeyViolationError, which
+                    # surfaces as an opaque 500 from the API. A clean
+                    # OperationValidationError(404) is the right shape — the FastAPI
+                    # handler already converts it via its existing except clause.
+                    bank_exists = await conn.fetchval(
                         f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1 FOR NO KEY UPDATE",
                         bank_id,
                     )
+                    if bank_exists is None:
+                        raise OperationValidationError(f"Bank '{bank_id}' not found", status_code=404)
                     # Only check 'pending', not 'processing': a processing task uses a
                     # watermark from when it started, so memories added after that need
                     # a fresh run regardless.
@@ -11809,6 +11921,16 @@ class MemoryEngine(MemoryEngineInterface):
                                 "operation_id": str(row["operation_id"]),
                                 "deduplicated": True,
                             }
+                else:
+                    # Scoped/non-dedupe submits skip the lock + dedup above.
+                    # Still verify the bank exists so an FK violation can't
+                    # escape as a 500.
+                    bank_exists = await conn.fetchval(
+                        f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1",
+                        bank_id,
+                    )
+                    if bank_exists is None:
+                        raise OperationValidationError(f"Bank '{bank_id}' not found", status_code=404)
 
                 await conn.execute(
                     f"""

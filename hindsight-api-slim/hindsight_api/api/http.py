@@ -270,6 +270,16 @@ class RecallRequest(BaseModel):
         default=None,
         description="List of fact types to recall: 'world', 'experience', 'observation'. Defaults to world and experience if not specified.",
     )
+    prefer_observations: bool = Field(
+        default=False,
+        description=(
+            "When recalling raw facts ('world'/'experience') together with 'observation', drop any raw "
+            "fact that an observation in the results was consolidated from, so the observation supersedes "
+            "it and you don't get duplicate content. The freed slots are backfilled with the next results, "
+            "keeping the result count at the requested budget. Disabled by default; set to true to enable. "
+            "No effect unless 'observation' and at least one raw type are both requested."
+        ),
+    )
     budget: Budget = Budget.MID
     max_tokens: int = 4096
     trace: bool = False
@@ -286,12 +296,16 @@ class RecallRequest(BaseModel):
     )
     tags: list[str] | None = Field(
         default=None,
-        description="Filter memories by tags. If not specified, all memories are returned.",
+        description="Filter memories by tags. If not specified, all memories are returned. "
+        "Omitting tags (or passing []) together with tags_match='exact' filters to "
+        "untagged/global observations only (the scope written by observation_scopes='shared').",
     )
     tags_match: TagsMatch = Field(
         default="any",
         description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), "
-        "'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
+        "'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), "
+        "'exact' (set-equality on the full scope, excludes untagged). With 'exact' and no tags "
+        "(or []), the empty global scope is selected and only untagged memories match.",
     )
     tag_groups: list[TagGroup] | None = Field(
         default=None,
@@ -3465,7 +3479,7 @@ def _register_routes(app: FastAPI):
     async def api_graph(
         bank_id: str,
         type: str | None = None,
-        limit: int = 1000,
+        limit: int = Query(default=1000, ge=0),
         q: str | None = None,
         tags: list[str] | None = Query(None),
         tags_match: str = "all_strict",
@@ -3513,8 +3527,8 @@ def _register_routes(app: FastAPI):
         consolidation_state: str | None = None,
         state: str | None = None,
         document_id: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
+        limit: int = Query(default=100, ge=0),
+        offset: int = Query(default=0, ge=0),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """
@@ -3826,6 +3840,7 @@ def _register_routes(app: FastAPI):
                         max_tokens=request.max_tokens,
                         enable_trace=request.trace,
                         fact_type=fact_types,
+                        prefer_observations=request.prefer_observations,
                         question_date=question_date,
                         include_entities=include_entities,
                         max_entity_tokens=max_entity_tokens,
@@ -4248,8 +4263,8 @@ def _register_routes(app: FastAPI):
     )
     async def api_list_entities(
         bank_id: str,
-        limit: int = Query(default=100, description="Maximum number of entities to return"),
-        offset: int = Query(default=0, description="Offset for pagination"),
+        limit: int = Query(default=100, ge=0, description="Maximum number of entities to return"),
+        offset: int = Query(default=0, ge=0, description="Offset for pagination"),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """List entities for a memory bank with pagination."""
@@ -4284,7 +4299,7 @@ def _register_routes(app: FastAPI):
     )
     async def api_entity_graph(
         bank_id: str,
-        limit: int = Query(default=1000, description="Maximum number of co-occurrence edges to return"),
+        limit: int = Query(default=1000, ge=0, description="Maximum number of co-occurrence edges to return"),
         min_count: int = Query(default=1, description="Minimum cooccurrence_count to include an edge"),
         request_context: RequestContext = Depends(get_request_context),
     ):
@@ -4911,8 +4926,8 @@ def _register_routes(app: FastAPI):
         tags_match: str = Query(
             "any_strict", description="How to match tags: 'any', 'all', 'any_strict', 'all_strict'"
         ),
-        limit: int = 100,
-        offset: int = 0,
+        limit: int = Query(default=100, ge=0),
+        offset: int = Query(default=0, ge=0),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """
@@ -5096,8 +5111,8 @@ def _register_routes(app: FastAPI):
             default="memories",
             description="Where to read tags from: 'memories' (memory_units, default) or 'mental_models'.",
         ),
-        limit: int = Query(default=100, description="Maximum number of tags to return"),
-        offset: int = Query(default=0, description="Offset for pagination"),
+        limit: int = Query(default=100, ge=0, description="Maximum number of tags to return"),
+        offset: int = Query(default=0, ge=0, description="Offset for pagination"),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """

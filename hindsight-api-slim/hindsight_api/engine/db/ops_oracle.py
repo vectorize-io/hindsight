@@ -256,13 +256,21 @@ class OracleOps(DataAccessOps):
         # Oracle doesn't support ON CONFLICT; rely on the PK and the
         # IGNORE_ROW_ON_DUPKEY_INDEX hint to skip duplicates server-side.
         # The hint name must match the PK constraint exactly.
+        #
+        # Sort to enforce a global lock-acquisition order on the
+        # (bank_id, unit_id) PK. Without this, two concurrent
+        # transactions inserting overlapping unit_id sets in different
+        # orders can deadlock on the unique-check row locks. Sorting
+        # gives every concurrent caller the same lock order, so
+        # conflicting inserts queue cleanly instead of cycling.
+        sorted_unit_ids = sorted(unit_ids)
         await conn.executemany(
             f"""
             INSERT /*+ IGNORE_ROW_ON_DUPKEY_INDEX({table}, pk_graph_maintenance_queue) */
             INTO {table} (bank_id, unit_id)
             VALUES ($1, $2)
             """,
-            [(bank_id, uid) for uid in unit_ids],
+            [(bank_id, uid) for uid in sorted_unit_ids],
         )
 
     async def claim_graph_maintenance_batch(

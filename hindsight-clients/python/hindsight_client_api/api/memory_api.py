@@ -16,7 +16,7 @@ from pydantic import validate_call, Field, StrictFloat, StrictStr, StrictInt
 from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Annotated
 
-from pydantic import Field, StrictInt, StrictStr, field_validator
+from pydantic import Field, StrictStr, field_validator
 from typing import Any, List, Optional
 from typing_extensions import Annotated
 from hindsight_client_api.models.clear_memory_observations_response import ClearMemoryObservationsResponse
@@ -952,7 +952,7 @@ class MemoryApi:
         self,
         bank_id: StrictStr,
         type: Optional[StrictStr] = None,
-        limit: Optional[StrictInt] = None,
+        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         q: Optional[StrictStr] = None,
         tags: Optional[List[Optional[StrictStr]]] = None,
         tags_match: Optional[StrictStr] = None,
@@ -1052,7 +1052,7 @@ class MemoryApi:
         self,
         bank_id: StrictStr,
         type: Optional[StrictStr] = None,
-        limit: Optional[StrictInt] = None,
+        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         q: Optional[StrictStr] = None,
         tags: Optional[List[Optional[StrictStr]]] = None,
         tags_match: Optional[StrictStr] = None,
@@ -1152,7 +1152,7 @@ class MemoryApi:
         self,
         bank_id: StrictStr,
         type: Optional[StrictStr] = None,
-        limit: Optional[StrictInt] = None,
+        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         q: Optional[StrictStr] = None,
         tags: Optional[List[Optional[StrictStr]]] = None,
         tags_match: Optional[StrictStr] = None,
@@ -1940,8 +1940,8 @@ class MemoryApi:
         consolidation_state: Optional[StrictStr] = None,
         state: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
-        limit: Optional[StrictInt] = None,
-        offset: Optional[StrictInt] = None,
+        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2040,8 +2040,8 @@ class MemoryApi:
         consolidation_state: Optional[StrictStr] = None,
         state: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
-        limit: Optional[StrictInt] = None,
-        offset: Optional[StrictInt] = None,
+        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2140,8 +2140,8 @@ class MemoryApi:
         consolidation_state: Optional[StrictStr] = None,
         state: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
-        limit: Optional[StrictInt] = None,
-        offset: Optional[StrictInt] = None,
+        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2612,8 +2612,8 @@ class MemoryApi:
         bank_id: StrictStr,
         q: Annotated[Optional[StrictStr], Field(description="Wildcard pattern to filter tags (e.g., 'user:*' for user:alice, '*-admin' for role-admin). Use '*' as wildcard. Case-insensitive.")] = None,
         source: Annotated[Optional[StrictStr], Field(description="Where to read tags from: 'memories' (memory_units, default) or 'mental_models'.")] = None,
-        limit: Annotated[Optional[StrictInt], Field(description="Maximum number of tags to return")] = None,
-        offset: Annotated[Optional[StrictInt], Field(description="Offset for pagination")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of tags to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2700,8 +2700,8 @@ class MemoryApi:
         bank_id: StrictStr,
         q: Annotated[Optional[StrictStr], Field(description="Wildcard pattern to filter tags (e.g., 'user:*' for user:alice, '*-admin' for role-admin). Use '*' as wildcard. Case-insensitive.")] = None,
         source: Annotated[Optional[StrictStr], Field(description="Where to read tags from: 'memories' (memory_units, default) or 'mental_models'.")] = None,
-        limit: Annotated[Optional[StrictInt], Field(description="Maximum number of tags to return")] = None,
-        offset: Annotated[Optional[StrictInt], Field(description="Offset for pagination")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of tags to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2788,8 +2788,8 @@ class MemoryApi:
         bank_id: StrictStr,
         q: Annotated[Optional[StrictStr], Field(description="Wildcard pattern to filter tags (e.g., 'user:*' for user:alice, '*-admin' for role-admin). Use '*' as wildcard. Case-insensitive.")] = None,
         source: Annotated[Optional[StrictStr], Field(description="Where to read tags from: 'memories' (memory_units, default) or 'mental_models'.")] = None,
-        limit: Annotated[Optional[StrictInt], Field(description="Maximum number of tags to return")] = None,
-        offset: Annotated[Optional[StrictInt], Field(description="Offset for pagination")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of tags to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,

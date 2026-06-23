@@ -63,7 +63,7 @@ def create_hindsight_tools(
         recall_tags_match: Tag matching mode (any/all/any_strict/all_strict).
         retain_metadata: Default metadata dict for retain operations.
         retain_document_id: Default document_id for retain (groups/upserts memories).
-        recall_types: Fact types to filter (world, experience, opinion, observation).
+        recall_types: Fact types to filter (world, experience, observation).
         recall_include_entities: Include entity information in recall results.
         reflect_context: Additional context for reflect operations.
         reflect_max_tokens: Max tokens for reflect results (defaults to max_tokens).

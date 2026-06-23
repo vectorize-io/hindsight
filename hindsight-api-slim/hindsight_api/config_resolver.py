@@ -402,6 +402,9 @@ class ConfigResolver:
         # Validate recall budget fields
         _validate_recall_budget_updates(normalized_updates)
 
+        # Validate disposition trait fields (1-5 integer scale)
+        _validate_disposition_updates(normalized_updates)
+
         chunking_fields_updated = (
             "retain_chunk_size" in normalized_updates
             or "retain_structured_chunk_size" in normalized_updates
@@ -514,6 +517,31 @@ def _validate_recall_budget_updates(updates: dict[str, Any]) -> None:
                 f"recall_budget_min ({updates['recall_budget_min']}) must be <= "
                 f"recall_budget_max ({updates['recall_budget_max']})"
             )
+
+
+_DISPOSITION_KEYS = (
+    "disposition_skepticism",
+    "disposition_literalism",
+    "disposition_empathy",
+)
+
+
+def _validate_disposition_updates(updates: dict[str, Any]) -> None:
+    """Validate disposition trait config updates. Raises ValueError on invalid input.
+
+    Each trait is an integer on a 1-5 scale (or None to clear the per-bank
+    override). The read overlay injects the stored value verbatim into a strict
+    ``DispositionTraits(int, ge=1, le=5)``; an out-of-contract value (a float, a
+    0-1 scale, or an int outside 1-5) accepted here would later 500 the whole
+    bank list when any bank profile is serialized (issue #2348).
+    """
+    for key in _DISPOSITION_KEYS:
+        if key in updates:
+            value = updates[key]
+            if value is None:
+                continue
+            if not isinstance(value, int) or isinstance(value, bool) or not (1 <= value <= 5):
+                raise ValueError(f"{key} must be an integer between 1 and 5, got {value!r}")
 
 
 def apply_strategy(config: HindsightConfig, strategy_name: str) -> HindsightConfig:

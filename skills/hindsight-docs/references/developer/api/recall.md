@@ -153,6 +153,12 @@ hindsight memory recall my-bank "query" --fact-type world,observation
 > **💡 About Observations**
 > 
 Observations are deduplicated, evidence-grounded beliefs consolidated from multiple facts — preferences, recurring patterns, and durable learnings the memory bank has built up. Each observation references its supporting memories (with exact quotes), and is refined rather than overwritten when new evidence arrives. They are created and maintained automatically in the background after retain operations.
+### prefer_observations
+
+Because observations are consolidated from raw facts, recalling `observation` alongside `world` and `experience` can return the same information twice — once as the raw fact and once folded into an observation. With `prefer_observations` you get the best of both: you still recall every type, but whenever an observation in the results was built from a raw fact, that raw fact is dropped so the observation supersedes it. The freed slots are backfilled with the next-best results, so you don't lose coverage.
+
+This lets you ask for everything without choosing between "raw facts only" (no consolidation) and "observations only" (which may lag behind the latest retains while consolidation catches up). **Disabled by default** — set it to `true` to opt in. It has no effect unless both `observation` and at least one of `world`/`experience` are included in `types`.
+
 ### budget
 
 Controls retrieval depth and breadth. Accepted values are `low`, `mid` (default), and `high`. Use `low` for fast simple lookups, `mid` for balanced everyday queries, and `high` when you need to find indirect connections or exhaustive coverage.
@@ -524,6 +530,15 @@ Returns memories whose tag set is exactly equal to the specified tags, regardles
 
 Use this when filtering a precise observation scope returned by `GET /v1/default/banks/{bank_id}/observations/scopes`, where `["user:alice"]` should not also match observations scoped to `["user:alice", "project:x"]`.
 
+> **💡 Filter to global (untagged) observations only**
+> 
+The empty scope is a real scope — it's where `observation_scopes: "shared"` consolidation writes. Set `tags_match: "exact"` with **no tags** (omit `tags`, or pass `[]`) to recall **only** untagged/global memories and exclude every tagged one:
+
+```json
+{ "query": "...", "tags": [], "tags_match": "exact" }
+```
+
+With any other `tags_match` mode, absent or empty `tags` means "no tag filter" (all memories are eligible). Only under `exact` do absent/empty tags select "the global scope". This is the way to read back just the global observations after you've started using more specific scopes.
 ### tag_groups
 
 `tag_groups` is a list of compound boolean tag filters. The groups in the list are AND-ed together at the top level. Each group is a recursive boolean expression: a **leaf** node `{tags, match}`, or a **compound** node `{and: [...]}`, `{or: [...]}`, or `{not: ...}`.

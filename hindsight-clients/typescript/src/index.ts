@@ -317,6 +317,8 @@ export class HindsightClient {
     query: string,
     options?: {
       types?: string[];
+      /** When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact a returned observation was consolidated from, so the observation supersedes it (no duplicate content). Disabled by default; no effect unless 'observation' and at least one raw type are both in types. */
+      preferObservations?: boolean;
       maxTokens?: number;
       budget?: Budget;
       trace?: boolean;
@@ -344,6 +346,7 @@ export class HindsightClient {
       body: {
         query,
         types: options?.types,
+        prefer_observations: options?.preferObservations,
         max_tokens: options?.maxTokens,
         budget: options?.budget || "mid",
         trace: options?.trace,

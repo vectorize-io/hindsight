@@ -205,6 +205,146 @@ async def test_gemini_extra_body_service_tier_takes_precedence():
     assert provider._extra_body["http_options"]["extra_body"]["service_tier"] == "standard"
 
 
+@pytest.mark.asyncio
+async def test_gemini_structured_call_uses_native_schema_without_prompt_duplicate():
+    """Structured Gemini calls send schema through response_schema only."""
+    from pydantic import BaseModel
+
+    class StructuredAnswer(BaseModel):
+        answer: str
+
+    provider = _make_gemini_provider()
+    response = _fake_gemini_response()
+    response.text = '{"answer": "ok"}'
+    provider._client.aio.models.generate_content = AsyncMock(return_value=response)
+
+    result = await provider.call(
+        messages=[
+            {"role": "system", "content": "Return concise JSON."},
+            {"role": "user", "content": "hello"},
+        ],
+        response_format=StructuredAnswer,
+        scope="test",
+    )
+
+    config_arg = provider._client.aio.models.generate_content.call_args.kwargs.get("config")
+    assert result.answer == "ok"
+    assert config_arg.response_mime_type == "application/json"
+    assert config_arg.response_schema is StructuredAnswer
+    assert config_arg.system_instruction == "Return concise JSON."
+    assert "valid JSON matching this schema" not in config_arg.system_instruction
+
+
+@pytest.mark.asyncio
+async def test_gemini_cached_structured_call_keeps_native_schema():
+    """Cached Gemini calls still send response_schema per request."""
+    from pydantic import BaseModel
+
+    class StructuredAnswer(BaseModel):
+        answer: str
+
+    provider = _make_gemini_provider()
+    response = _fake_gemini_response()
+    response.text = '{"answer": "ok"}'
+    provider._client.aio.models.generate_content = AsyncMock(return_value=response)
+
+    result = await provider.call(
+        messages=[
+            {"role": "system", "content": "Return concise JSON."},
+            {"role": "user", "content": "hello"},
+        ],
+        response_format=StructuredAnswer,
+        cached_prefix="cachedContents/test",
+        scope="test",
+    )
+
+    config_arg = provider._client.aio.models.generate_content.call_args.kwargs.get("config")
+    assert result.answer == "ok"
+    assert config_arg.cached_content == "cachedContents/test"
+    assert config_arg.system_instruction is None
+    assert config_arg.response_mime_type == "application/json"
+    assert config_arg.response_schema is StructuredAnswer
+
+
+@pytest.mark.asyncio
+async def test_gemini_structured_parse_failure_falls_back_to_prompt_schema():
+    """Malformed native-schema output gets one prompt-schema compatibility retry."""
+    from pydantic import BaseModel
+
+    class StructuredAnswer(BaseModel):
+        answer: str
+
+    provider = _make_gemini_provider()
+    invalid = _fake_gemini_response()
+    invalid.text = "not json"
+    valid = _fake_gemini_response()
+    valid.text = '{"answer": "ok"}'
+    provider._client.aio.models.generate_content = AsyncMock(side_effect=[invalid, valid])
+
+    result = await provider.call(
+        messages=[
+            {"role": "system", "content": "Return concise JSON."},
+            {"role": "user", "content": "hello"},
+        ],
+        response_format=StructuredAnswer,
+        scope="test",
+        max_retries=1,
+        initial_backoff=0,
+        max_backoff=0,
+    )
+
+    first_config = provider._client.aio.models.generate_content.call_args_list[0].kwargs["config"]
+    fallback_config = provider._client.aio.models.generate_content.call_args_list[1].kwargs["config"]
+
+    assert result.answer == "ok"
+    assert first_config.response_schema is StructuredAnswer
+    assert first_config.system_instruction == "Return concise JSON."
+    assert fallback_config.response_schema is None
+    assert fallback_config.response_mime_type is None
+    assert fallback_config.system_instruction.startswith("Return concise JSON.")
+    assert "valid JSON matching this schema" in fallback_config.system_instruction
+    assert '"answer"' in fallback_config.system_instruction
+
+
+@pytest.mark.asyncio
+async def test_gemini_cached_parse_retry_keeps_cached_native_schema():
+    """Cached structured retries keep cache context instead of switching prompts."""
+    from pydantic import BaseModel
+
+    class StructuredAnswer(BaseModel):
+        answer: str
+
+    provider = _make_gemini_provider()
+    invalid = _fake_gemini_response()
+    invalid.text = "not json"
+    valid = _fake_gemini_response()
+    valid.text = '{"answer": "ok"}'
+    provider._client.aio.models.generate_content = AsyncMock(side_effect=[invalid, valid])
+
+    result = await provider.call(
+        messages=[
+            {"role": "system", "content": "Return concise JSON."},
+            {"role": "user", "content": "hello"},
+        ],
+        response_format=StructuredAnswer,
+        cached_prefix="cachedContents/test",
+        scope="test",
+        max_retries=1,
+        initial_backoff=0,
+        max_backoff=0,
+    )
+
+    first_config = provider._client.aio.models.generate_content.call_args_list[0].kwargs["config"]
+    retry_config = provider._client.aio.models.generate_content.call_args_list[1].kwargs["config"]
+
+    assert result.answer == "ok"
+    assert first_config.cached_content == "cachedContents/test"
+    assert retry_config.cached_content == "cachedContents/test"
+    assert retry_config.response_schema is StructuredAnswer
+    assert retry_config.response_mime_type == "application/json"
+    assert retry_config.system_instruction is None
+
+
 # ─── LiteLLM ──────────────────────────────────────────────────────────────────
 
 

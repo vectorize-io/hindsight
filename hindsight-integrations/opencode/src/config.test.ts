@@ -103,6 +103,24 @@ describe("loadConfig", () => {
     expect(loadConfig().recallMaxTokens).toBe(1024);
   });
 
+  it("HINDSIGHT_RETAIN_TAGS parses comma-separated tags", () => {
+    process.env.HINDSIGHT_RETAIN_TAGS = "user:alice, shared , project-x";
+    const config = loadConfig();
+    expect(config.retainTags).toEqual(["user:alice", "shared", "project-x"]);
+  });
+
+  it("HINDSIGHT_RETAIN_TAGS env var overrides plugin option retainTags", () => {
+    process.env.HINDSIGHT_RETAIN_TAGS = "env-tag";
+    const config = loadConfig({ retainTags: ["plugin-tag"] });
+    expect(config.retainTags).toEqual(["env-tag"]);
+  });
+
+  it("HINDSIGHT_RETAIN_TAGS empty string yields empty array", () => {
+    process.env.HINDSIGHT_RETAIN_TAGS = "";
+    const config = loadConfig();
+    expect(config.retainTags).toEqual([]);
+  });
+
   it("null plugin options are ignored", () => {
     const config = loadConfig({ bankId: null, debug: undefined });
     expect(config.bankId).toBeNull(); // stays default null

@@ -140,6 +140,7 @@ mod tests {
             query: "Who is Alice?".to_string(),
             max_tokens: 4096,
             trace: false,
+            prefer_observations: false,
             budget: None,
             include: None,
             query_timestamp: None,

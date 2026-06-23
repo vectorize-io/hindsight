@@ -532,6 +532,10 @@ enum MemoryCommands {
         /// Reference timestamp for recall (ISO 8601, e.g. 2023-05-30T23:40:00)
         #[arg(long)]
         query_timestamp: Option<String>,
+
+        /// Prefer observations: drop raw facts a returned observation was consolidated from (no effect unless observation + a raw type are both recalled)
+        #[arg(long)]
+        prefer_observations: bool,
     },
 
     /// Generate answers using bank identity (reflect/reasoning)
@@ -1401,6 +1405,7 @@ fn run() -> Result<()> {
                 tags,
                 tags_match,
                 query_timestamp,
+                prefer_observations,
             } => commands::memory::recall(
                 &client,
                 &bank_id,
@@ -1414,6 +1419,7 @@ fn run() -> Result<()> {
                 tags,
                 tags_match,
                 query_timestamp,
+                prefer_observations,
                 verbose,
                 output_format,
             ),

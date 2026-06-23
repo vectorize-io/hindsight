@@ -343,6 +343,7 @@ export class ControlPlaneClient {
   async recall(params: {
     query: string;
     types?: string[];
+    prefer_observations?: boolean;
     bank_id: string;
     budget?: string;
     max_tokens?: number;
