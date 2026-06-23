@@ -1967,6 +1967,16 @@ class MentalModelTrigger(BaseModel):
         default=False,
         description="If true, refresh this mental model after observations consolidation (real-time mode)",
     )
+    refresh_cron: str | None = Field(
+        default=None,
+        description=(
+            "Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) "
+            "for refreshing this mental model on a fixed schedule, independent of consolidation. "
+            "A scheduled refresh only runs when the model is stale (new memories in its scope since the "
+            "last refresh); if nothing changed, the tick is skipped to avoid a wasted LLM call. "
+            "null = no schedule."
+        ),
+    )
     fact_types: list[Literal["world", "experience", "observation"]] | None = Field(
         default=None,
         description="Filter which fact types are retrieved during reflect. None means all types (world, experience, observation).",
@@ -2023,6 +2033,20 @@ class MentalModelTrigger(BaseModel):
     def validate_fact_types(cls, v: list[str] | None) -> list[str] | None:
         if v is not None and len(v) == 0:
             raise ValueError("fact_types must not be empty. Use null to include all fact types.")
+        return v
+
+    @field_validator("refresh_cron")
+    @classmethod
+    def validate_refresh_cron(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            return None
+        from croniter import croniter
+
+        if not croniter.is_valid(v):
+            raise ValueError(f"refresh_cron is not a valid cron expression: {v!r}")
         return v
 
 

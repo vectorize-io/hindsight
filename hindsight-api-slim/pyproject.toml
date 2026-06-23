@@ -74,6 +74,7 @@ dependencies = [
     "pygments>=2.20.0", # ReDoS via inefficient GUID regex fix
     "claude-agent-sdk>=0.2.82",
     "boto3>=1.42.74",
+    "croniter>=2.0.0", # Cron parsing for scheduled mental model refresh
 ]
 
 [project.optional-dependencies]
