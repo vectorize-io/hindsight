@@ -1,6 +1,6 @@
 ---
 title: "Structuring Chat Logs for Agent Memory"
-authors: [hindsight]
+authors: [dcbouius]
 slug: "2026/06/23/structuring-chat-logs"
 date: 2026-06-23T12:00
 tags: [hindsight, memory, retain, conversations, chat, best-practices]
