@@ -95,7 +95,7 @@ _TRAILING_IDS_PATTERN = re.compile(
 )
 _JSON_CODE_FENCE_PATTERN = re.compile(r"^\s*```(?:json)?\s*(\{.*\})\s*```\s*$", re.DOTALL | re.IGNORECASE)
 
-_REFLECT_ENVELOPE_KEYS = frozenset(
+_DONE_ARGUMENT_KEYS = frozenset(
     {
         "answer",
         "directive_compliance",
@@ -105,16 +105,17 @@ _REFLECT_ENVELOPE_KEYS = frozenset(
         "model_ids",
     }
 )
-_REFLECT_ENVELOPE_MARKER_KEYS = _REFLECT_ENVELOPE_KEYS - {"answer"}
+_DONE_ARGUMENT_MARKER_KEYS = _DONE_ARGUMENT_KEYS - {"answer"}
 _LEAKED_JSON_ID_KEYS = frozenset({"memory_ids", "mental_model_ids", "observation_ids", "model_ids"})
 
 
-def _unwrap_reflect_answer_envelope(text: str) -> str | None:
-    """Return the answer from a model-invented reflect JSON envelope.
+def _unwrap_leaked_done_arguments(text: str) -> str | None:
+    """Return the answer when a done tool call was rendered as JSON text.
 
-    Some models return the done-tool argument shape as user-visible text, e.g.
-    {"answer": "...", "memory_ids": [...]}.  Only unwrap objects that look like
-    that reflect envelope so normal JSON answers stay intact.
+    Some providers leak the done tool's argument object instead of surfacing it
+    as a native tool call, e.g. {"answer": "...", "memory_ids": [...]}. Only
+    unwrap objects that match the done argument shape so normal JSON answers
+    stay intact.
     """
     candidate = text.strip()
     if not candidate:
@@ -136,9 +137,9 @@ def _unwrap_reflect_answer_envelope(text: str) -> str | None:
         return None
 
     keys = set(payload)
-    if not keys.intersection(_REFLECT_ENVELOPE_MARKER_KEYS):
+    if not keys.intersection(_DONE_ARGUMENT_MARKER_KEYS):
         return None
-    if not keys.issubset(_REFLECT_ENVELOPE_KEYS):
+    if not keys.issubset(_DONE_ARGUMENT_KEYS):
         return None
 
     for key in ("memory_ids", "mental_model_ids", "observation_ids", "model_ids"):
@@ -178,7 +179,7 @@ def _clean_answer_text(text: str) -> str:
     Some LLMs output the done() call as text instead of a proper tool call.
     This strips out patterns like: done({"answer": "...", ...})
     """
-    unwrapped = _unwrap_reflect_answer_envelope(text)
+    unwrapped = _unwrap_leaked_done_arguments(text)
     if unwrapped is not None:
         return unwrapped
 
@@ -200,7 +201,7 @@ def _clean_done_answer(text: str) -> str:
     if not text:
         return text
 
-    unwrapped = _unwrap_reflect_answer_envelope(text)
+    unwrapped = _unwrap_leaked_done_arguments(text)
     if unwrapped is not None:
         return unwrapped
 

@@ -68,8 +68,8 @@ class TestCleanAnswerText:
         cleaned = _clean_answer_text(text)
         assert cleaned == "Summary of findings."
 
-    def test_clean_text_unwraps_reflect_json_envelope(self):
-        """A model-invented reflect envelope should unwrap to the answer text."""
+    def test_clean_text_recovers_leaked_done_arguments(self):
+        """A done tool-call argument object rendered as text should keep only answer."""
         text = """{
             "answer": "Use the inbound table for API consumers.",
             "directive_compliance": "Directive 1 followed.",
@@ -81,8 +81,8 @@ class TestCleanAnswerText:
         assert cleaned == "Use the inbound table for API consumers."
         assert "directive_compliance" not in cleaned
 
-    def test_clean_text_leaves_non_reflect_json_answer_unchanged(self):
-        """Plain JSON answers are valid user-visible content, not envelopes."""
+    def test_clean_text_leaves_non_done_json_answer_unchanged(self):
+        """Plain JSON answers are valid user-visible content."""
         text = '{"status": "ok", "items": [1, 2]}'
         cleaned = _clean_answer_text(text)
         assert cleaned == text
@@ -160,8 +160,8 @@ class TestCleanDoneAnswer:
         assert "Point 2" in cleaned
         assert "mental_model_ids" not in cleaned
 
-    def test_clean_answer_unwraps_reflect_json_envelope(self):
-        """A done answer that is itself an envelope should keep answer content."""
+    def test_clean_answer_recovers_leaked_done_arguments(self):
+        """A done answer that contains leaked done arguments should keep answer content."""
         text = """{
             "answer": "Render two markdown tables: inbound and outbound.",
             "directive_compliance": "All directives followed.",
@@ -172,8 +172,8 @@ class TestCleanDoneAnswer:
         cleaned = _clean_done_answer(text)
         assert cleaned == "Render two markdown tables: inbound and outbound."
 
-    def test_clean_answer_unwraps_fenced_reflect_json_envelope(self):
-        """Some models put the envelope in a JSON code fence."""
+    def test_clean_answer_recovers_fenced_leaked_done_arguments(self):
+        """Some providers put leaked done arguments in a JSON code fence."""
         text = """```json
 {
   "answer": "The current interface is HTTP only.",
@@ -185,7 +185,7 @@ class TestCleanDoneAnswer:
         cleaned = _clean_done_answer(text)
         assert cleaned == "The current interface is HTTP only."
 
-    def test_clean_answer_rejects_envelope_with_unexpected_keys(self):
+    def test_clean_answer_rejects_done_arguments_with_unexpected_keys(self):
         """Avoid rewriting user-requested JSON that happens to contain answer."""
         text = '{"answer": "yes", "payload": {"format": "json"}, "memory_ids": []}'
         cleaned = _clean_done_answer(text)
