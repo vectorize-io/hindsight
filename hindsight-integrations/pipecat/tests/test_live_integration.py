@@ -51,10 +51,10 @@ def _http_get(path: str) -> dict:
 
 
 def _make_frame(messages: list[dict[str, Any]]) -> MagicMock:
-    """Build a mock OpenAILLMContextFrame that the processor will recognize."""
-    from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContextFrame
+    """Build a mock LLMContextFrame that the processor will recognize."""
+    from pipecat.frames.frames import LLMContextFrame
 
-    frame = MagicMock(spec=OpenAILLMContextFrame)
+    frame = MagicMock(spec=LLMContextFrame)
     ctx = MagicMock()
     ctx.messages = messages
     frame.context = ctx
