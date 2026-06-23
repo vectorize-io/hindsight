@@ -58,6 +58,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "cursor-cli": IntegrationMeta("hindsight-cursor-cli", "Cursor CLI"),
     "cursor": IntegrationMeta("hindsight-cursor", "Cursor"),
     "autogen": IntegrationMeta("hindsight-autogen", "AutoGen"),
+    "aider": IntegrationMeta("hindsight-aider", "Aider"),
     "paperclip": IntegrationMeta("@vectorize-io/hindsight-paperclip", "Paperclip"),
     "opencode": IntegrationMeta("@vectorize-io/opencode-hindsight", "OpenCode"),
     "cloudflare-oauth-proxy": IntegrationMeta("hindsight-cloudflare-oauth-proxy"),

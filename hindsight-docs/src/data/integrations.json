@@ -91,6 +91,16 @@
       "icon": "/img/icons/hermes.png"
     },
     {
+      "id": "hermes-desktop",
+      "name": "Hermes Desktop",
+      "description": "Configure Hindsight as your memory provider directly in the Hermes desktop app — pick a mode, paste an API key, no config files.",
+      "type": "native",
+      "by": "hermes",
+      "category": "tool",
+      "link": "/sdks/integrations/hermes-desktop",
+      "icon": "/img/icons/hermes.png"
+    },
+    {
       "id": "local-mcp",
       "name": "MCP Server",
       "description": "Expose Hindsight memory as a Model Context Protocol server. Compatible with Claude, Cursor, and any MCP client.",
@@ -339,6 +349,16 @@
       "category": "framework",
       "link": "/sdks/integrations/autogen",
       "icon": "/img/icons/autogen.png"
+    },
+    {
+      "id": "aider",
+      "name": "Aider",
+      "description": "Persistent long-term memory for the Aider pair-programming CLI. hindsight-aider recalls relevant project memory before each session and retains the transcript after.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/aider",
+      "icon": "/img/icons/aider.png"
     },
     {
       "id": "opencode",

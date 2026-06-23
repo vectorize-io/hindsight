@@ -10,6 +10,7 @@ export async function POST(request: NextRequest) {
       query,
       types,
       fact_type,
+      prefer_observations,
       max_tokens,
       trace,
       budget,
@@ -25,6 +26,7 @@ export async function POST(request: NextRequest) {
       body: {
         query,
         types: types || fact_type,
+        prefer_observations,
         max_tokens,
         trace,
         budget: budget || "mid",

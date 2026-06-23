@@ -115,6 +115,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 1000,
               "title": "Limit"
             }
@@ -341,6 +342,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 100,
               "title": "Limit"
             }
@@ -351,6 +353,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 0,
               "title": "Offset"
             }
@@ -1082,6 +1085,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "description": "Maximum number of entities to return",
               "default": 100,
               "title": "Limit"
@@ -1094,6 +1098,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "description": "Offset for pagination",
               "default": 0,
               "title": "Offset"
@@ -1165,6 +1170,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "description": "Maximum number of co-occurrence edges to return",
               "default": 1000,
               "title": "Limit"
@@ -2474,6 +2480,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 100,
               "title": "Limit"
             }
@@ -2484,6 +2491,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 0,
               "title": "Offset"
             }
@@ -2960,6 +2968,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "description": "Maximum number of tags to return",
               "default": 100,
               "title": "Limit"
@@ -2972,6 +2981,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "description": "Offset for pagination",
               "default": 0,
               "title": "Offset"
@@ -10795,6 +10805,12 @@
             "title": "Types",
             "description": "List of fact types to recall: 'world', 'experience', 'observation'. Defaults to world and experience if not specified."
           },
+          "prefer_observations": {
+            "type": "boolean",
+            "title": "Prefer Observations",
+            "description": "When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. Disabled by default; set to true to enable. No effect unless 'observation' and at least one raw type are both requested.",
+            "default": false
+          },
           "budget": {
             "$ref": "#/components/schemas/Budget",
             "default": "mid"
@@ -10839,7 +10855,7 @@
               }
             ],
             "title": "Tags",
-            "description": "Filter memories by tags. If not specified, all memories are returned."
+            "description": "Filter memories by tags. If not specified, all memories are returned. Omitting tags (or passing []) together with tags_match='exact' filters to untagged/global observations only (the scope written by observation_scopes='shared')."
           },
           "tags_match": {
             "type": "string",
@@ -10851,7 +10867,7 @@
               "exact"
             ],
             "title": "Tags Match",
-            "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
+            "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set-equality on the full scope, excludes untagged). With 'exact' and no tags (or []), the empty global scope is selected and only untagged memories match.",
             "default": "any"
           },
           "tag_groups": {
@@ -12246,19 +12262,25 @@
           "output_tokens": {
             "type": "integer",
             "title": "Output Tokens",
-            "description": "Number of output/completion tokens generated",
+            "description": "Number of visible output/completion tokens generated (excludes reasoning/thoughts)",
             "default": 0
           },
           "total_tokens": {
             "type": "integer",
             "title": "Total Tokens",
-            "description": "Total tokens (input + output)",
+            "description": "Total tokens (input + output, excludes thoughts)",
             "default": 0
           },
           "cached_tokens": {
             "type": "integer",
             "title": "Cached Tokens",
             "description": "Cached/cache-read prompt tokens, when reported by the provider",
+            "default": 0
+          },
+          "thoughts_tokens": {
+            "type": "integer",
+            "title": "Thoughts Tokens",
+            "description": "Reasoning/thinking tokens generated by the model. Billed at the output rate by some providers (e.g. Gemini 2.5+ family) but not surfaced in the visible response.",
             "default": 0
           }
         },

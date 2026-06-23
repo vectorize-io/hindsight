@@ -501,6 +501,25 @@ const canSpyOnModules = typeof (globalThis as any).Deno === "undefined";
     spy.mockRestore();
   });
 
+  test("recall threads preferObservations into request body", async () => {
+    const bankId = randomBankId();
+    const spy = jest.spyOn(sdk, "recallMemories").mockResolvedValue({
+      data: { results: [] },
+    } as any);
+
+    await client.recall(bankId, "test", {
+      types: ["world", "experience", "observation"],
+      preferObservations: true,
+    });
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({ prefer_observations: true }),
+      })
+    );
+    spy.mockRestore();
+  });
+
   test("getBankProfile passes abort signal to SDK", async () => {
     const bankId = randomBankId();
     const controller = new AbortController();

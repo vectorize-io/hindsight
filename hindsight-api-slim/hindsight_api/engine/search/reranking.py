@@ -16,6 +16,44 @@ _RECENCY_ALPHA: float = 0.2
 _TEMPORAL_ALPHA: float = 0.2
 _PROOF_COUNT_ALPHA: float = 0.1  # Conservative: max ±5% for evidence strength
 
+# Recency decay: maps a memory's age (days) onto a freshness signal in [0, 1]
+# where 0.5 is neutral (no boost). The signal is then folded into the
+# multiplicative recency_boost via `1 + recency_alpha * (recency - 0.5)`.
+#
+#   "linear"      — straight line from 1.0 (today) to a floor of 0.1, reaching
+#                   the floor at `linear_window_days`. The historical default.
+#   "exponential" — 0.5 ** (days_ago / halflife_days). The half-life is the age
+#                   at which the signal is exactly neutral (0.5): younger
+#                   memories are boosted, older ones penalised, with a smooth
+#                   asymptote toward 0 (no hard cutoff).
+#   "none"        — always neutral (0.5), disabling the recency boost entirely.
+# The validated set of names lives in config.RECENCY_DECAY_FUNCTIONS.
+_RECENCY_DECAY_FUNCTION: str = "linear"
+_RECENCY_DECAY_LINEAR_WINDOW_DAYS: float = 365.0
+_RECENCY_DECAY_HALFLIFE_DAYS: float = 90.0
+
+
+def compute_recency_decay(
+    days_ago: float,
+    function: str = _RECENCY_DECAY_FUNCTION,
+    linear_window_days: float = _RECENCY_DECAY_LINEAR_WINDOW_DAYS,
+    halflife_days: float = _RECENCY_DECAY_HALFLIFE_DAYS,
+) -> float:
+    """Map a memory's age in days to a freshness signal in [0, 1] (neutral 0.5).
+
+    Future-dated memories (negative ``days_ago``) clamp to the maximum freshness
+    so they are never penalised. See ``RECENCY_DECAY_FUNCTIONS`` for the shapes.
+    """
+    if function == "none":
+        return 0.5
+    if function == "exponential":
+        if halflife_days <= 0:
+            return 0.5
+        return min(1.0, 0.5 ** (days_ago / halflife_days))
+    # "linear" (default): straight decay to a 0.1 floor over the window.
+    window = linear_window_days if linear_window_days > 0 else _RECENCY_DECAY_LINEAR_WINDOW_DAYS
+    return max(0.1, min(1.0, 1.0 - (days_ago / window)))
+
 
 def apply_combined_scoring(
     scored_results: list[ScoredResult],
@@ -24,6 +62,9 @@ def apply_combined_scoring(
     temporal_alpha: float = _TEMPORAL_ALPHA,
     proof_count_alpha: float = _PROOF_COUNT_ALPHA,
     is_passthrough_reranker: bool = False,
+    recency_decay_function: str = _RECENCY_DECAY_FUNCTION,
+    recency_decay_linear_window_days: float = _RECENCY_DECAY_LINEAR_WINDOW_DAYS,
+    recency_decay_halflife_days: float = _RECENCY_DECAY_HALFLIFE_DAYS,
 ) -> None:
     """Apply combined scoring to a list of ScoredResults in-place.
 
@@ -57,6 +98,12 @@ def apply_combined_scoring(
         recency_alpha: Max relative recency adjustment (default 0.2 → ±10%).
         temporal_alpha: Max relative temporal adjustment (default 0.2 → ±10%).
         proof_count_alpha: Max relative proof count adjustment (default 0.1 → ±5%).
+        recency_decay_function: Age→freshness curve — "linear" (default),
+            "exponential", or "none". See compute_recency_decay.
+        recency_decay_linear_window_days: Days over which the linear curve
+            decays to its floor (default 365).
+        recency_decay_halflife_days: For the exponential curve, the age at which
+            the recency signal is neutral (0.5) (default 90).
     """
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
@@ -98,7 +145,8 @@ def apply_combined_scoring(
             sr.cross_encoder_score_normalized = 1.0 - (0.9 * new_rank / denom)
 
     for sr in scored_results:
-        # Recency: linear decay over 365 days → [0.1, 1.0]; neutral 0.5 if no date.
+        # Recency: configurable decay (linear default; see compute_recency_decay)
+        # → [0.0, 1.0]; neutral 0.5 if no date.
         # Use the unit's effective time (occurred_start, then mentioned_at, then
         # occurred_end) — the same COALESCE order as retrieval._coalesce_date — so a
         # memory that carries only a mentioned_at / occurred_end (e.g. conversation
@@ -111,7 +159,12 @@ def apply_combined_scoring(
             if occurred.tzinfo is None:
                 occurred = occurred.replace(tzinfo=UTC)
             days_ago = (now - occurred).total_seconds() / 86400
-            sr.recency = max(0.1, min(1.0, 1.0 - (days_ago / 365)))
+            sr.recency = compute_recency_decay(
+                days_ago,
+                recency_decay_function,
+                recency_decay_linear_window_days,
+                recency_decay_halflife_days,
+            )
 
         # Temporal proximity: meaningful only for temporal queries; neutral otherwise.
         sr.temporal = sr.retrieval.temporal_proximity if sr.retrieval.temporal_proximity is not None else 0.5

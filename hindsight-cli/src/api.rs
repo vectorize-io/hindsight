@@ -425,8 +425,8 @@ impl ApiClient {
                 .client
                 .list_documents(
                     agent_id,
-                    limit.map(|l| l as i64),
-                    offset.map(|o| o as i64),
+                    limit.map(|l| l as u64),
+                    offset.map(|o| o as u64),
                     q,
                     None,
                     None,
@@ -524,8 +524,8 @@ impl ApiClient {
                     bank_id,
                     None, // consolidation_state
                     None, // document_id
-                    limit,
-                    offset,
+                    limit.map(|l| l as u64),
+                    offset.map(|o| o as u64),
                     q,
                     None, // state
                     type_filter,
@@ -546,7 +546,12 @@ impl ApiClient {
         self.runtime.block_on(async {
             let response = self
                 .client
-                .list_entities(bank_id, limit, offset, None)
+                .list_entities(
+                    bank_id,
+                    limit.map(|l| l as u64),
+                    offset.map(|o| o as u64),
+                    None,
+                )
                 .await?;
             Ok(response.into_inner())
         })
@@ -664,7 +669,17 @@ impl ApiClient {
         self.runtime.block_on(async {
             let response = self
                 .client
-                .get_graph(bank_id, None, None, limit, None, None, None, type_filter, None)
+                .get_graph(
+                    bank_id,
+                    None,
+                    None,
+                    limit.map(|l| l as u64),
+                    None,
+                    None,
+                    None,
+                    type_filter,
+                    None,
+                )
                 .await?;
             Ok(response.into_inner())
         })
@@ -726,7 +741,14 @@ impl ApiClient {
         self.runtime.block_on(async {
             let response = self
                 .client
-                .list_tags(bank_id, limit, offset, q, None, None)
+                .list_tags(
+                    bank_id,
+                    limit.map(|l| l as u64),
+                    offset.map(|o| o as u64),
+                    q,
+                    None,
+                    None,
+                )
                 .await?;
             Ok(response.into_inner())
         })

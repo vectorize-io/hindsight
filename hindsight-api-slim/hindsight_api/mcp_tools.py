@@ -833,6 +833,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             max_tokens: int = 4096,
             budget: str = "high",
             types: list[str] | None = None,
+            prefer_observations: bool = False,
             tags: list[str] | None = None,
             tags_match: str = "any",
             tag_groups: list[dict] | None = None,
@@ -845,6 +846,10 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 max_tokens: Maximum tokens to return in results (default: 4096)
                 budget: Search budget - 'low', 'mid', or 'high' (default: 'high'). Higher budgets search more thoroughly.
                 types: Fact types to include (e.g., ['world', 'experience']). Default: all types.
+                prefer_observations: When recalling raw facts together with 'observation', drop any raw fact
+                    that a returned observation was consolidated from, so the observation supersedes it (no
+                    duplicate content). Disabled by default; set true to enable. No effect unless
+                    'observation' and a raw type are both in types. Default: False.
                 tags: Optional tags to filter results by (e.g., ['project:alpha']). Mutually exclusive with tag_groups.
                 tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
                 tag_groups: Compound tag filter using boolean groups (AND-ed together). Each group is a leaf
@@ -873,6 +878,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     "bank_id": target_bank,
                     "query": query,
                     "fact_type": fact_types,
+                    "prefer_observations": prefer_observations,
                     "budget": budget_enum,
                     "max_tokens": max_tokens,
                     "request_context": _get_request_context(config),
@@ -905,6 +911,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             max_tokens: int = 4096,
             budget: str = "high",
             types: list[str] | None = None,
+            prefer_observations: bool = False,
             tags: list[str] | None = None,
             tags_match: str = "any",
             tag_groups: list[dict] | None = None,
@@ -916,6 +923,10 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 max_tokens: Maximum tokens to return in results (default: 4096)
                 budget: Search budget - 'low', 'mid', or 'high' (default: 'high'). Higher budgets search more thoroughly.
                 types: Fact types to include (e.g., ['world', 'experience']). Default: all types.
+                prefer_observations: When recalling raw facts together with 'observation', drop any raw fact
+                    that a returned observation was consolidated from, so the observation supersedes it (no
+                    duplicate content). Disabled by default; set true to enable. No effect unless
+                    'observation' and a raw type are both in types. Default: False.
                 tags: Optional tags to filter results by (e.g., ['project:alpha']). Mutually exclusive with tag_groups.
                 tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
                 tag_groups: Compound tag filter using boolean groups (AND-ed together). Each group is a leaf
@@ -943,6 +954,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     "bank_id": target_bank,
                     "query": query,
                     "fact_type": fact_types,
+                    "prefer_observations": prefer_observations,
                     "budget": budget_enum,
                     "max_tokens": max_tokens,
                     "request_context": _get_request_context(config),
@@ -1014,7 +1026,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 tags: Optional tags to filter memories by (e.g., ['project:alpha'])
                 tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
                 include_based_on: Include source facts used for synthesis. Defaults to false because broad reflections can exceed MCP client result limits.
-                include_trace: Include the reflection's internal tool_trace/llm_trace. Defaults to false because the trace can be tens of KB and overflow MCP client context; enable only for debugging.
+                include_trace: Include the reflection's internal trace fields (tool_trace/llm_trace and directives_applied). Defaults to false because the trace can be tens of KB and overflow MCP client context; enable only for debugging.
                 bank_id: Optional bank to reflect in (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -1045,11 +1057,14 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 if not include_based_on:
                     result_data.pop("based_on", None)
                 if not include_trace:
-                    # The agentic reflect loop's tool_trace/llm_trace can be tens of KB
-                    # (full mental-model text) and silently overflow MCP client context;
-                    # the REST API omits it by default too. Opt in via include_trace.
+                    # The agentic reflect loop's trace fields can be tens of KB (full
+                    # mental-model text) and silently overflow MCP client context; the
+                    # REST API omits them by default too. directives_applied is built by
+                    # the engine "for the trace" and carries full directive content, so it
+                    # belongs with tool_trace/llm_trace here. Opt in via include_trace.
                     result_data.pop("tool_trace", None)
                     result_data.pop("llm_trace", None)
+                    result_data.pop("directives_applied", None)
                 if response_schema is not None and hasattr(reflect_result, "structured_output"):
                     result_data["structured_output"] = reflect_result.structured_output
                 return json.dumps(result_data, indent=2)
@@ -1102,7 +1117,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 tags: Optional tags to filter memories by (e.g., ['project:alpha'])
                 tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
                 include_based_on: Include source facts used for synthesis. Defaults to false because broad reflections can exceed MCP client result limits.
-                include_trace: Include the reflection's internal tool_trace/llm_trace. Defaults to false because the trace can be tens of KB and overflow MCP client context; enable only for debugging.
+                include_trace: Include the reflection's internal trace fields (tool_trace/llm_trace and directives_applied). Defaults to false because the trace can be tens of KB and overflow MCP client context; enable only for debugging.
             """
             try:
                 target_bank = config.bank_id_resolver()
@@ -1132,11 +1147,14 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                 if not include_based_on:
                     result_data.pop("based_on", None)
                 if not include_trace:
-                    # The agentic reflect loop's tool_trace/llm_trace can be tens of KB
-                    # (full mental-model text) and silently overflow MCP client context;
-                    # the REST API omits it by default too. Opt in via include_trace.
+                    # The agentic reflect loop's trace fields can be tens of KB (full
+                    # mental-model text) and silently overflow MCP client context; the
+                    # REST API omits them by default too. directives_applied is built by
+                    # the engine "for the trace" and carries full directive content, so it
+                    # belongs with tool_trace/llm_trace here. Opt in via include_trace.
                     result_data.pop("tool_trace", None)
                     result_data.pop("llm_trace", None)
+                    result_data.pop("directives_applied", None)
                 if response_schema is not None and hasattr(reflect_result, "structured_output"):
                     result_data["structured_output"] = reflect_result.structured_output
                 return result_data
@@ -2217,7 +2235,7 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             browse/search without relevance ranking.
 
             Args:
-                type: Filter by fact type: 'world', 'experience', or 'opinion'
+                type: Filter by fact type: 'world', 'experience', or 'observation'
                 q: Optional text search query to filter memories
                 limit: Maximum number of results (default: 100)
                 offset: Pagination offset (default: 0)
@@ -2260,7 +2278,7 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
             browse/search without relevance ranking.
 
             Args:
-                type: Filter by fact type: 'world', 'experience', or 'opinion'
+                type: Filter by fact type: 'world', 'experience', or 'observation'
                 q: Optional text search query to filter memories
                 limit: Maximum number of results (default: 100)
                 offset: Pagination offset (default: 0)
@@ -3425,7 +3443,7 @@ def _register_clear_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
             Optionally filter by fact type to only clear specific kinds of memories.
 
             Args:
-                type: Optional fact type filter: 'world', 'experience', or 'opinion'. If not specified, clears all.
+                type: Optional fact type filter: 'world', 'experience', or 'observation'. If not specified, clears all.
                 bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -3459,7 +3477,7 @@ def _register_clear_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
             Optionally filter by fact type to only clear specific kinds of memories.
 
             Args:
-                type: Optional fact type filter: 'world', 'experience', or 'opinion'. If not specified, clears all.
+                type: Optional fact type filter: 'world', 'experience', or 'observation'. If not specified, clears all.
             """
             try:
                 target_bank = config.bank_id_resolver()

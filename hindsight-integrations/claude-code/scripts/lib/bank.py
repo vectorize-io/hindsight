@@ -95,9 +95,9 @@ def derive_bank_id(hook_input: dict, config: dict) -> str:
         # case-sensitive compare silently misses the map and falls through
         # to the default bank. normcase is a no-op on POSIX, preserving
         # case-sensitive matching there.
-        normalized_cwd = os.path.normcase(os.path.normpath(cwd))
+        normalized_cwd = os.path.normcase(os.path.realpath(cwd))
         for dir_path, bank_id in dir_map.items():
-            if os.path.normcase(os.path.normpath(dir_path)) == normalized_cwd:
+            if os.path.normcase(os.path.realpath(dir_path)) == normalized_cwd:
                 return f"{prefix}-{bank_id}" if prefix else bank_id
 
     if not config.get("dynamicBankId", False):

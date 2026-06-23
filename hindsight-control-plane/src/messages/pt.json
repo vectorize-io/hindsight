@@ -433,7 +433,7 @@
     "memoryDefenseAction_redact": "Redigir",
     "memoryDefenseAction_block": "Bloquear",
     "memoryDefenseSecretLeakTitle": "Prevenção de vazamento de segredos",
-    "memoryDefenseSecretLeakDescription": "Verifica o conteúdo retido em busca de segredos. 44 padrões cobrindo chaves comuns de provedores, AWS e informações pessoais.",
+    "memoryDefenseSecretLeakDescription": "Verifica o conteúdo retido em busca de segredos. 45 padrões cobrindo chaves comuns de provedores, AWS e informações pessoais.",
     "memoryDefenseEnterpriseTitle": "Memory Defense Enterprise",
     "memoryDefenseEnterpriseSubtitle": "Detecte mais, edite com mais inteligência e audite tudo: disponível no Hindsight Cloud.",
     "memoryDefenseEnterpriseFeatureDetectSecrets": "Detecção avançada de segredos: mais de 200 padrões cobrindo chaves de provedores, AWS, GitHub e tokens de CI",

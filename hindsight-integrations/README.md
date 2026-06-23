@@ -34,6 +34,7 @@ Each integration lives in its own subdirectory with its own README, configuratio
 | [**Strands Agents**](./strands) | Retain/recall/reflect tools for Strands. |
 | [**AG2**](./ag2) | Cross-conversation memory tools. |
 | [**AutoGen**](./autogen) | `FunctionTool` instances for retain/recall/reflect. |
+| [**Aider**](./aider) | `hindsight-aider` wraps the `aider` CLI — recalls project memory before each session, retains the transcript after. |
 | [**OpenAI Agents SDK**](./openai-agents) | `FunctionTool`-based memory. |
 | [**OpenHands**](./openhands) | Native MCP server config + recall/retain rule for OpenHands (formerly OpenDevin). |
 | [**NemoClaw**](./nemoclaw) | One-command setup for NemoClaw sandboxes. |

@@ -466,6 +466,7 @@ def create_llm_provider(
         "openrouter",
         "zai",
         "opencode-go",
+        "atlas",
     ):
         return OpenAICompatibleLLM(
             provider=provider,
@@ -588,6 +589,7 @@ class LLMProvider:
             "openrouter",
             "zai",
             "opencode-go",
+            "atlas",
             "fireworks",
             "nous",
         ]
@@ -614,6 +616,8 @@ class LLMProvider:
                 self.base_url = "https://api.z.ai/api/coding/paas/v4"
             elif self.provider == "opencode-go":
                 self.base_url = "https://opencode.ai/zen/go/v1"
+            elif self.provider == "atlas":
+                self.base_url = "https://api.atlascloud.ai/v1"
             elif self.provider == "nous":
                 self.base_url = "https://inference-api.nousresearch.com/v1"
 

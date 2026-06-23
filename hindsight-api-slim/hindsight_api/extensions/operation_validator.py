@@ -208,6 +208,16 @@ class RetainResult:
     llm_input_tokens: int | None = None
     llm_output_tokens: int | None = None
     llm_total_tokens: int | None = None
+    # Diagnostic token splits surfaced for cost attribution and prompt-cache
+    # tuning. ``llm_cached_input_tokens`` is the subset of llm_input_tokens
+    # served from the provider's prompt cache (e.g. Gemini's
+    # cached_content_token_count). ``llm_thoughts_tokens`` is reasoning tokens
+    # that are billed at the output rate by some providers (Gemini 2.5+) but
+    # are not part of the visible response. Both default to None when the
+    # engine/provider didn't report them; downstream metering extensions
+    # should treat None as 0.
+    llm_cached_input_tokens: int | None = None
+    llm_thoughts_tokens: int | None = None
     # Content tokens the retain pipeline actually processed, after
     # chunk-level content-hash deduplication. Semantics:
     #   None — no dedup signal available (e.g. a first-time retain or a
