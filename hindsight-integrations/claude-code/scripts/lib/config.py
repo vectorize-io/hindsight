@@ -18,8 +18,8 @@ DEFAULTS = {
     "recallMaxQueryChars": 800,
     "recallRoles": ["user", "assistant"],
     "recallTags": [],
-    "tagsMatch": "any",
-    "tagGroups": None,
+    "recallTagsMatch": "any",
+    "recallTagGroups": None,
     "recallAdditionalBankFilters": {},
     "recallPromptPreamble": (
         "Relevant memories from past conversations (prioritize recent when "
@@ -78,8 +78,8 @@ ENV_OVERRIDES = {
     "HINDSIGHT_RECALL_MAX_QUERY_CHARS": ("recallMaxQueryChars", int),
     "HINDSIGHT_RECALL_CONTEXT_TURNS": ("recallContextTurns", int),
     "HINDSIGHT_RECALL_TAGS": ("recallTags", list),
-    "HINDSIGHT_TAGS_MATCH": ("tagsMatch", str),
-    "HINDSIGHT_TAG_GROUPS": ("tagGroups", dict),
+    "HINDSIGHT_RECALL_TAGS_MATCH": ("recallTagsMatch", str),
+    "HINDSIGHT_RECALL_TAG_GROUPS": ("recallTagGroups", dict),
     "HINDSIGHT_RECALL_ADDITIONAL_BANK_FILTERS": ("recallAdditionalBankFilters", dict),
     "HINDSIGHT_API_PORT": ("apiPort", int),
     "HINDSIGHT_DAEMON_IDLE_TIMEOUT": ("daemonIdleTimeout", int),
