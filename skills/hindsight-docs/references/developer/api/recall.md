@@ -524,6 +524,15 @@ Returns memories whose tag set is exactly equal to the specified tags, regardles
 
 Use this when filtering a precise observation scope returned by `GET /v1/default/banks/{bank_id}/observations/scopes`, where `["user:alice"]` should not also match observations scoped to `["user:alice", "project:x"]`.
 
+> **💡 Filter to global (untagged) observations only**
+> 
+The empty scope is a real scope — it's where `observation_scopes: "shared"` consolidation writes. Set `tags_match: "exact"` with **no tags** (omit `tags`, or pass `[]`) to recall **only** untagged/global memories and exclude every tagged one:
+
+```json
+{ "query": "...", "tags": [], "tags_match": "exact" }
+```
+
+With any other `tags_match` mode, absent or empty `tags` means "no tag filter" (all memories are eligible). Only under `exact` do absent/empty tags select "the global scope". This is the way to read back just the global observations after you've started using more specific scopes.
 ### tag_groups
 
 `tag_groups` is a list of compound boolean tag filters. The groups in the list are AND-ed together at the top level. Each group is a recursive boolean expression: a **leaf** node `{tags, match}`, or a **compound** node `{and: [...]}`, `{or: [...]}`, or `{not: ...}`.

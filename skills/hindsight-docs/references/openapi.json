@@ -10839,7 +10839,7 @@
               }
             ],
             "title": "Tags",
-            "description": "Filter memories by tags. If not specified, all memories are returned."
+            "description": "Filter memories by tags. If not specified, all memories are returned. Omitting tags (or passing []) together with tags_match='exact' filters to untagged/global observations only (the scope written by observation_scopes='shared')."
           },
           "tags_match": {
             "type": "string",
@@ -10851,7 +10851,7 @@
               "exact"
             ],
             "title": "Tags Match",
-            "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
+            "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set-equality on the full scope, excludes untagged). With 'exact' and no tags (or []), the empty global scope is selected and only untagged memories match.",
             "default": "any"
           },
           "tag_groups": {
