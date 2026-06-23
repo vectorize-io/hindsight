@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { lowLevelClient, sdk } from "@/lib/hindsight-client";
+import { createDataplaneClientForRequest, sdk } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
 
 export async function POST(
@@ -8,7 +8,7 @@ export async function POST(
 ) {
   const { bankId } = await params;
   const response = await sdk.testBankLlm({
-    client: lowLevelClient,
+    client: createDataplaneClientForRequest(request),
     path: { bank_id: bankId },
   });
   return respondWithSdk(response, "Failed to test bank LLM connectivity", { request });

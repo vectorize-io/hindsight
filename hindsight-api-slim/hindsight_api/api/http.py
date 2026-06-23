@@ -2742,6 +2742,12 @@ class AsyncOperationSubmitResponse(BaseModel):
 class FeaturesInfo(BaseModel):
     """Feature flags indicating which capabilities are enabled."""
 
+    auth_profile: str = Field(default="disabled", description="Configured authn/authz deployment profile")
+    tenant_extension: str | None = Field(default=None, description="Loaded tenant extension class name")
+    operation_validator_extension: str | None = Field(
+        default=None, description="Loaded operation validator extension class name"
+    )
+    auth_profile_ready: bool = Field(default=True, description="Whether the configured auth profile is complete")
     observations: bool = Field(description="Whether observations (auto-consolidation) are enabled")
     mcp: bool = Field(description="Whether MCP (Model Context Protocol) server is enabled")
     worker: bool = Field(description="Whether the background worker is enabled")
@@ -3040,6 +3046,19 @@ def create_app(
                     logging.error(f"Failed to initialize tracing: {e}")
                     logging.warning("Continuing without tracing")
 
+        # Call tenant and validator startup hooks before memory.initialize().
+        # Startup migrations may call tenant_extension.list_tenants(), so
+        # external tenant resolvers must be connected before initialization.
+        tenant_extension = memory.tenant_extension
+        if tenant_extension:
+            await tenant_extension.on_startup()
+            logging.info("Tenant extension started")
+
+        operation_validator = getattr(memory, "_operation_validator", None)
+        if operation_validator:
+            await operation_validator.on_startup()
+            logging.info("Operation validator extension started")
+
         # Startup: Initialize database and memory system (migrations run inside initialize if enabled)
         if initialize_memory:
             await memory.initialize()
@@ -3078,12 +3097,6 @@ def create_app(
                 "Tasks (mental model refresh, consolidation) will run synchronously."
             )
 
-        # Call tenant extension startup hook (e.g. JWKS fetch for Supabase)
-        tenant_extension = memory.tenant_extension
-        if tenant_extension:
-            await tenant_extension.on_startup()
-            logging.info("Tenant extension started")
-
         # Call HTTP extension startup hook
         if http_extension:
             await http_extension.on_startup()
@@ -3106,6 +3119,10 @@ def create_app(
         if tenant_extension:
             await tenant_extension.on_shutdown()
             logging.info("Tenant extension stopped")
+
+        if operation_validator:
+            await operation_validator.on_shutdown()
+            logging.info("Operation validator extension stopped")
 
         # Call HTTP extension shutdown hook
         if http_extension:
@@ -3292,7 +3309,10 @@ def _register_routes(app: FastAPI):
     # Create audit decorator bound to this app's audit logger
     audited = _make_audited_http(lambda: getattr(app.state, "audit_logger", None))
 
-    def get_request_context(authorization: str | None = Header(default=None)) -> RequestContext:
+    def get_request_context(
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> RequestContext:
         """
         Extract request context from Authorization header.
 
@@ -3308,7 +3328,10 @@ def _register_routes(app: FastAPI):
                 api_key = authorization[7:].strip()
             else:
                 api_key = authorization.strip()
-        return RequestContext(api_key=api_key)
+        return RequestContext(
+            api_key=api_key,
+            selected_tenant_id=request.headers.get("x-hindsight-tenant-id"),
+        )
 
     def precheck_for(operation: str):
         """
@@ -3421,11 +3444,20 @@ def _register_routes(app: FastAPI):
         """
         from hindsight_api import __version__
         from hindsight_api.config import _get_raw_config
+        from hindsight_api.extensions.auth_profile import get_auth_profile_info
 
         config = _get_raw_config()
+        auth_profile_info = get_auth_profile_info(
+            app.state.memory.tenant_extension,
+            getattr(app.state.memory, "_operation_validator", None),
+        )
         return VersionResponse(
             api_version=__version__,
             features=FeaturesInfo(
+                auth_profile=auth_profile_info.auth_profile,
+                tenant_extension=auth_profile_info.tenant_extension,
+                operation_validator_extension=auth_profile_info.operation_validator_extension,
+                auth_profile_ready=auth_profile_info.auth_profile_ready,
                 observations=config.enable_observations,
                 mcp=config.mcp_enabled,
                 worker=config.worker_enabled,

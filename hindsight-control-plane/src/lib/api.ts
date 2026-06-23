@@ -1393,6 +1393,16 @@ export class ControlPlaneClient {
     return this.fetchApi<{
       api_version: string;
       features: {
+        auth_profile?: string;
+        tenant_extension?: string | null;
+        operation_validator_extension?: string | null;
+        auth_profile_ready?: boolean;
+        auth_provider?: "disabled" | "access_key" | string;
+        auth_settings_path?: string | null;
+        auth_settings_label?: string | null;
+        auth_logout_enabled?: boolean;
+        profile_match?: boolean;
+        access_key_auth?: boolean;
         observations: boolean;
         mcp: boolean;
         worker: boolean;

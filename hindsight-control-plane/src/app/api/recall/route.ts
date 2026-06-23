@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { lowLevelClient, sdk } from "@/lib/hindsight-client";
+import { createDataplaneClientForRequest, sdk } from "@/lib/hindsight-client";
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
     } = body;
 
     const response = await sdk.recallMemories({
-      client: lowLevelClient,
+      client: createDataplaneClientForRequest(request),
       path: { bank_id: bankId },
       body: {
         query,

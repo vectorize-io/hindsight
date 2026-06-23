@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { sdk, lowLevelClient } from "@/lib/hindsight-client";
+import { sdk, createDataplaneClientForRequest } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
 
 export async function PUT(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
@@ -29,7 +29,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ bank
   }
 
   const response = await sdk.createOrUpdateBank({
-    client: lowLevelClient,
+    client: createDataplaneClientForRequest(request),
     path: { bank_id: bankId },
     body: {
       name: body.name,
@@ -66,7 +66,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ba
   }
 
   const response = await sdk.updateBank({
-    client: lowLevelClient,
+    client: createDataplaneClientForRequest(request),
     path: { bank_id: bankId },
     body: {
       name: body.name,
@@ -94,7 +94,7 @@ export async function DELETE(
   }
 
   const response = await sdk.deleteBank({
-    client: lowLevelClient,
+    client: createDataplaneClientForRequest(request),
     path: { bank_id: bankId },
   });
   return respondWithSdk(response, "Failed to delete bank", { request });

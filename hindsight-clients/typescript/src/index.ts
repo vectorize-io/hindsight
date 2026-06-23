@@ -78,6 +78,10 @@ export interface HindsightClientOptions {
    */
   apiKey?: string;
   /**
+   * Optional default headers for every request.
+   */
+  headers?: Record<string, string>;
+  /**
    * Override the default `User-Agent` header. Integrations should set this to
    * identify themselves (e.g. `"hindsight-ai-sdk/1.2.0"`). Browsers ignore
    * attempts to set `User-Agent`; this only takes effect in Node.js / Bun /
@@ -125,6 +129,7 @@ export class HindsightClient {
 
   constructor(options: HindsightClientOptions) {
     const headers: Record<string, string> = {
+      ...options.headers,
       "User-Agent": options.userAgent ?? DEFAULT_USER_AGENT,
     };
     if (options.apiKey) {

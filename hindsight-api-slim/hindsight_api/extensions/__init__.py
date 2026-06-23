@@ -15,6 +15,12 @@ Extensions receive an ExtensionContext that provides a controlled API for intera
 with the system (e.g., running migrations for tenant schemas).
 """
 
+from hindsight_api.extensions.auth_profile import (
+    AuthProfileInfo,
+    get_auth_profile_info,
+    get_configured_auth_profile,
+    validate_auth_profile,
+)
 from hindsight_api.extensions.base import Extension
 from hindsight_api.extensions.builtin import (
     ApiKeyTenantExtension,
@@ -75,6 +81,10 @@ __all__ = [
     # Base
     "Extension",
     "load_extension",
+    "AuthProfileInfo",
+    "get_auth_profile_info",
+    "get_configured_auth_profile",
+    "validate_auth_profile",
     # Context
     "ExtensionContext",
     "DefaultExtensionContext",

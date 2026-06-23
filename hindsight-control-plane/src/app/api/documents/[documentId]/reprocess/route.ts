@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { DATAPLANE_URL, getDataplaneHeadersForRequest } from "@/lib/hindsight-client";
 
 export async function POST(
   request: NextRequest,
@@ -25,7 +25,7 @@ export async function POST(
       `${DATAPLANE_URL}/v1/default/banks/${bankId}/documents/${documentId}/reprocess`,
       {
         method: "POST",
-        headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+        headers: getDataplaneHeadersForRequest(request, { "Content-Type": "application/json" }),
       }
     );
 

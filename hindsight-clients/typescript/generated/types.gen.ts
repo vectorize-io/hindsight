@@ -1811,6 +1811,30 @@ export type FactsIncludeOptions = {
  */
 export type FeaturesInfo = {
   /**
+   * Auth Profile
+   *
+   * Configured authn/authz deployment profile
+   */
+  auth_profile?: string;
+  /**
+   * Tenant Extension
+   *
+   * Loaded tenant extension class name
+   */
+  tenant_extension?: string | null;
+  /**
+   * Operation Validator Extension
+   *
+   * Loaded operation validator extension class name
+   */
+  operation_validator_extension?: string | null;
+  /**
+   * Auth Profile Ready
+   *
+   * Whether the configured auth profile is complete
+   */
+  auth_profile_ready?: boolean;
+  /**
    * Observations
    *
    * Whether observations (auto-consolidation) are enabled

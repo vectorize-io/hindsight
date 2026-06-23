@@ -5776,6 +5776,22 @@ components:
     FeaturesInfo:
       description: Feature flags indicating which capabilities are enabled.
       properties:
+        auth_profile:
+          default: disabled
+          description: Configured authn/authz deployment profile
+          title: Auth Profile
+          type: string
+        tenant_extension:
+          nullable: true
+          type: string
+        operation_validator_extension:
+          nullable: true
+          type: string
+        auth_profile_ready:
+          default: true
+          description: Whether the configured auth profile is complete
+          title: Auth Profile Ready
+          type: boolean
         observations:
           description: Whether observations (auto-consolidation) are enabled
           title: Observations
