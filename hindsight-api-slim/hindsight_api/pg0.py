@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -27,7 +28,21 @@ class EmbeddedPostgres:
         config: dict[str, str] | None = None,
         **kwargs,
     ):
-        self.port = port  # None means pg0 will auto-assign
+        # Fall back to HINDSIGHT_EMBED_DB_PORT when no explicit port is given, so
+        # the embedded PostgreSQL can be pinned to a known port (e.g. to avoid a
+        # collision with another local Postgres on the default 5432). An explicit
+        # ``port=`` argument always takes precedence.
+        if port is None:
+            env_port = os.getenv("HINDSIGHT_EMBED_DB_PORT")
+            if env_port:
+                try:
+                    port = int(env_port)
+                except ValueError:
+                    logger.warning(
+                        "Ignoring invalid HINDSIGHT_EMBED_DB_PORT=%r (not an integer)",
+                        env_port,
+                    )
+        self.port = port  # None means pg0 will auto-assign a free port
         self.username = username
         self.password = password
         self.database = database
