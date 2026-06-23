@@ -131,9 +131,7 @@ def _add_overrides(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--mcp-path", default=None, help="mcp_config.json path (default: ~/.codeium/windsurf/mcp_config.json)"
     )
-    parser.add_argument(
-        "--rules-path", default=None, help="rule file path (default: ./.windsurf/rules/hindsight.md)"
-    )
+    parser.add_argument("--rules-path", default=None, help="rule file path (default: ./.windsurf/rules/hindsight.md)")
     parser.add_argument("--user-config-path", default=None, help=argparse.SUPPRESS)
 
 
