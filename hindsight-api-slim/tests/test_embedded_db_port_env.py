@@ -8,6 +8,8 @@ real PostgreSQL.
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 _PG0 = Path(__file__).resolve().parents[1] / "hindsight_api" / "pg0.py"
 _spec = importlib.util.spec_from_file_location("hindsight_api_pg0_under_test", _PG0)
 _mod = importlib.util.module_from_spec(_spec)
@@ -33,3 +35,15 @@ def test_invalid_env_is_ignored(monkeypatch):
 def test_unset_env_defaults_to_none(monkeypatch):
     monkeypatch.delenv("HINDSIGHT_EMBED_DB_PORT", raising=False)
     assert EmbeddedPostgres().port is None
+
+
+@pytest.mark.parametrize("bad_port", ["0", "-1", "70000", "99999"])
+def test_out_of_range_env_is_ignored(monkeypatch, bad_port):
+    monkeypatch.setenv("HINDSIGHT_EMBED_DB_PORT", bad_port)
+    assert EmbeddedPostgres().port is None
+
+
+@pytest.mark.parametrize("edge_port", ["1", "65535"])
+def test_valid_edge_ports_accepted(monkeypatch, edge_port):
+    monkeypatch.setenv("HINDSIGHT_EMBED_DB_PORT", edge_port)
+    assert EmbeddedPostgres().port == int(edge_port)

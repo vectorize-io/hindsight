@@ -36,13 +36,22 @@ class EmbeddedPostgres:
             env_port = os.getenv("HINDSIGHT_EMBED_DB_PORT")
             if env_port:
                 try:
-                    port = int(env_port)
+                    parsed = int(env_port)
                 except ValueError:
                     logger.warning(
                         "Ignoring invalid HINDSIGHT_EMBED_DB_PORT=%r (not an integer)",
                         env_port,
                     )
-        self.port = port  # None means pg0 will auto-assign a free port
+                else:
+                    if 1 <= parsed <= 65535:
+                        port = parsed
+                    else:
+                        logger.warning(
+                            "Ignoring out-of-range HINDSIGHT_EMBED_DB_PORT=%r "
+                            "(must be a TCP port 1-65535)",
+                            env_port,
+                        )
+        self.port = port  # None => port not passed to pg0 (it uses its own default)
         self.username = username
         self.password = password
         self.database = database
