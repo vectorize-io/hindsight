@@ -251,8 +251,10 @@ class LinkExpansionRetriever(GraphRetriever):
             result.activation = row["score"]
             results.append(result)
 
-        if tags:
-            results = filter_results_by_tags(results, tags, match=tags_match)
+        # filter_results_by_tags is a no-op when no filter applies (tags falsy and not
+        # the exact-empty/global scope), so call it unconditionally — gating on `if tags:`
+        # would skip the untagged-only filter for tags=[] + tags_match="exact".
+        results = filter_results_by_tags(results, tags, match=tags_match)
 
         if tag_groups:
             results = filter_results_by_tag_groups(results, tag_groups)

@@ -30,7 +30,7 @@ type RecallRequest struct {
 	// Options for including additional data (entities are included by default)
 	Include *IncludeOptions `json:"include,omitempty"`
 	Tags []string `json:"tags,omitempty"`
-	// How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
+	// How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set-equality on the full scope, excludes untagged). With 'exact' and no tags (or []), the empty global scope is selected and only untagged memories match.
 	TagsMatch *string `json:"tags_match,omitempty"`
 	TagGroups []MentalModelTriggerInputTagGroupsInner `json:"tag_groups,omitempty"`
 }

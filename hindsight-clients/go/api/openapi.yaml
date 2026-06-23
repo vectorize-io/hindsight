@@ -7137,7 +7137,9 @@ components:
           default: any
           description: "How to match tags: 'any' (OR, includes untagged), 'all' (AND,\
             \ includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict'\
-            \ (AND, excludes untagged)."
+            \ (AND, excludes untagged), 'exact' (set-equality on the full scope, excludes\
+            \ untagged). With 'exact' and no tags (or []), the empty global scope\
+            \ is selected and only untagged memories match."
           enum:
           - any
           - all

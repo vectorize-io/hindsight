@@ -37,7 +37,7 @@ class RecallRequest(BaseModel):
     query_timestamp: Optional[StrictStr] = None
     include: Optional[IncludeOptions] = Field(default=None, description="Options for including additional data (entities are included by default)")
     tags: Optional[List[StrictStr]] = None
-    tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).")
+    tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set-equality on the full scope, excludes untagged). With 'exact' and no tags (or []), the empty global scope is selected and only untagged memories match.")
     tag_groups: Optional[List[MentalModelTriggerInputTagGroupsInner]] = None
     __properties: ClassVar[List[str]] = ["query", "types", "budget", "max_tokens", "trace", "query_timestamp", "include", "tags", "tags_match", "tag_groups"]
 

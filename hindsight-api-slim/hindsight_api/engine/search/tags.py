@@ -14,6 +14,12 @@ AND matching (all/all_strict): Memory matches if ALL request tags are present in
 EXACT matching: Memory matches only if its tag set EQUALS the request tag set (order-
     independent). Used for observation "scope" filtering, where each observation lives
     under exactly one scope (its full tag set) and "scope [a]" must not match "[a, b]".
+    An EMPTY request scope (no tags — ``[]`` or ``None``) is the global/untagged scope and
+    matches only untagged memories — the scope that ``observation_scopes="shared"``
+    consolidation writes to. This is the one mode where absent tags filter rather than
+    meaning "no filter"; all other modes treat empty/absent tags as "no filtering". This
+    mirrors the ``GET .../graph`` endpoint, where ``tags_match="exact"`` with no tags also
+    selects the global scope.
 """
 
 from __future__ import annotations
@@ -82,10 +88,15 @@ def build_tags_where_clause(
         >>> clause, params, next_offset = build_tags_where_clause(['user_a'], 3, 'mu.', 'any_strict')
         >>> print(clause)  # "AND mu.tags IS NOT NULL AND mu.tags != '{}' AND mu.tags && $3"
     """
+    column = f"{table_alias}tags" if table_alias else "tags"
+
+    if match == "exact" and not tags:
+        # Empty/absent scope = global/untagged: match only untagged rows. No bind param
+        # needed (callers gate the param on truthy `tags`, so none is appended).
+        return f"AND ({column} IS NULL OR {column} = '{{}}')", [], param_offset
+
     if not tags:
         return "", [], param_offset
-
-    column = f"{table_alias}tags" if table_alias else "tags"
 
     if match == "exact":
         # Set equality (order-independent): superset AND subset. Untagged rows
@@ -126,10 +137,15 @@ def build_tags_where_clause_simple(
     Returns:
         SQL clause string or empty string.
     """
+    column = f"{table_alias}tags" if table_alias else "tags"
+
+    if match == "exact" and not tags:
+        # Empty/absent scope = global/untagged: match only untagged rows. No bind param
+        # needed (callers gate the param on truthy `tags`, so none is appended).
+        return f"AND ({column} IS NULL OR {column} = '{{}}')"
+
     if not tags:
         return ""
-
-    column = f"{table_alias}tags" if table_alias else "tags"
 
     if match == "exact":
         # Set equality (order-independent): superset AND subset. Untagged rows
@@ -164,6 +180,10 @@ def filter_results_by_tags(
     Returns:
         Filtered list of results.
     """
+    if match == "exact" and not tags:
+        # Empty/absent scope = global/untagged: keep only untagged results.
+        return [r for r in results if not getattr(r, "tags", None)]
+
     if not tags:
         return results
 
@@ -267,6 +287,9 @@ def _build_group_clause(
     if isinstance(group, TagGroupLeaf):
         column = f"{table_alias}tags" if table_alias else "tags"
         if group.match == "exact":
+            if len(group.tags) == 0:
+                # Empty scope = global/untagged: match only untagged rows (no bind param).
+                return f"({column} IS NULL OR {column} = '{{}}')", [], param_offset
             clause = f"({column} @> ${param_offset} AND {column} <@ ${param_offset})"
             return clause, [group.tags], param_offset + 1
         operator, include_untagged = _parse_tags_match(group.match)
@@ -369,6 +392,9 @@ def _match_group(result: object, group: TagGroup) -> bool:
     if isinstance(group, TagGroupLeaf):
         result_tags = getattr(result, "tags", None)
         is_untagged = result_tags is None or len(result_tags) == 0
+        if group.match == "exact" and len(group.tags) == 0:
+            # Empty scope = global/untagged: match only untagged results.
+            return is_untagged
         _, include_untagged = _parse_tags_match(group.match)
         is_any_match = group.match in ("any", "any_strict")
         tags_set = set(group.tags)

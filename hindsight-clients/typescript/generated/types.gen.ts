@@ -2919,13 +2919,13 @@ export type RecallRequest = {
   /**
    * Tags
    *
-   * Filter memories by tags. If not specified, all memories are returned.
+   * Filter memories by tags. If not specified, all memories are returned. Omitting tags (or passing []) together with tags_match='exact' filters to untagged/global observations only (the scope written by observation_scopes='shared').
    */
   tags?: Array<string> | null;
   /**
    * Tags Match
    *
-   * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
+   * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set-equality on the full scope, excludes untagged). With 'exact' and no tags (or []), the empty global scope is selected and only untagged memories match.
    */
   tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
   /**

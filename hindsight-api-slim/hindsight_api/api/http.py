@@ -286,12 +286,16 @@ class RecallRequest(BaseModel):
     )
     tags: list[str] | None = Field(
         default=None,
-        description="Filter memories by tags. If not specified, all memories are returned.",
+        description="Filter memories by tags. If not specified, all memories are returned. "
+        "Omitting tags (or passing []) together with tags_match='exact' filters to "
+        "untagged/global observations only (the scope written by observation_scopes='shared').",
     )
     tags_match: TagsMatch = Field(
         default="any",
         description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), "
-        "'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
+        "'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), "
+        "'exact' (set-equality on the full scope, excludes untagged). With 'exact' and no tags "
+        "(or []), the empty global scope is selected and only untagged memories match.",
     )
     tag_groups: list[TagGroup] | None = Field(
         default=None,
