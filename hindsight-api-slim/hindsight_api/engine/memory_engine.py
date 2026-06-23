@@ -4205,7 +4205,10 @@ class MemoryEngine(MemoryEngineInterface):
         if tracer:
             tracer.start()
 
+        backend_acquire_start = time.time()
         backend = await self._get_read_backend()
+        if tracer:
+            tracer.add_phase_metric("backend_acquisition", time.time() - backend_acquire_start)
         recall_start = time.time()
 
         # Buffer logs for clean output in concurrent scenarios.
@@ -4501,10 +4504,12 @@ class MemoryEngine(MemoryEngineInterface):
                     },
                 )
                 # Also expose each retrieval method as its own phase so
-                # benchmarks can pinpoint which sub-query drives latency.
+                # benchmarks can pinpoint which sub-query drives latency. These are
+                # children of parallel_retrieval (marked diagnostic so the phase-coverage
+                # check doesn't double-count them).
                 for _method, _dur in aggregated_timings.items():
                     if _dur > 0:
-                        tracer.add_phase_metric(f"retrieval_{_method}", _dur)
+                        tracer.add_phase_metric(f"retrieval_{_method}", _dur, {"diagnostic": True})
 
             # Step 3: Merge ranked lists. RRF by default; interleave (round-robin) when
             # requested by consolidation dedup recall — RRF averages a strong-in-one-arm
@@ -4620,6 +4625,12 @@ class MemoryEngine(MemoryEngineInterface):
             # is_passthrough_reranker tells the scoring code to seed CE scores
             # from RRF rank — only meaningful when the configured reranker is
             # the slim/passthrough one that returns a constant score per pair.
+            #
+            # Timed separately from "reranking": the cross-encoder duration above
+            # (step_duration) is captured before this block runs, so the scoring
+            # math, additive boosts and final sort would otherwise be invisible in
+            # the phase metrics (issue #2361).
+            scoring_start = time.time()
             if scored_results and reranking == "interleave":
                 # Interleave order is authoritative for dedup recall: do NOT re-sort by the
                 # recency/temporal boosts — that re-sort is precisely what buried the twin
@@ -4667,6 +4678,13 @@ class MemoryEngine(MemoryEngineInterface):
                     step_duration,
                     {"reranker_type": rerank_kind, "candidates_reranked": len(scored_results)},
                 )
+                # Combined scoring + additive boosts + final sort, plus the trace
+                # serialization of reranked entries done just above.
+                tracer.add_phase_metric(
+                    "combined_scoring",
+                    time.time() - scoring_start,
+                    {"candidates_scored": len(scored_results)},
+                )
 
             # Cancellation checkpoint: reranking is done; skip the remaining
             # enrichment (chunk/entity/source-fact fetches, each its own DB work)
@@ -4691,6 +4709,7 @@ class MemoryEngine(MemoryEngineInterface):
                     if sr.retrieval.fact_type == "observation"
                 ]
                 if observation_ids:
+                    dedup_start = time.time()
                     superseded_ids: set[str] = set()
                     async with acquire_with_retry(backend) as dedup_conn:
                         obs_rows = await dedup_conn.fetch(
@@ -4700,6 +4719,12 @@ class MemoryEngine(MemoryEngineInterface):
                             WHERE id = ANY($1::uuid[]) AND fact_type = 'observation'
                             """,
                             observation_ids,
+                        )
+                    if tracer:
+                        tracer.add_phase_metric(
+                            "prefer_observations_dedup",
+                            time.time() - dedup_start,
+                            {"observations_considered": len(observation_ids)},
                         )
                     for obs_row in obs_rows:
                         for sid in obs_row["source_memory_ids"] or []:
@@ -4725,6 +4750,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Chunks are fetched independently of max_tokens filtering
             chunks_dict = None
             total_chunk_tokens = 0
+            chunk_fetch_start = time.time()
             if include_chunks and top_scored:
                 from .response_models import ChunkInfo
 
@@ -4833,6 +4859,15 @@ class MemoryEngine(MemoryEngineInterface):
                             )
                             total_chunk_tokens += chunk_tokens
 
+            # Chunk fetch involves up to two SQL round-trips plus per-chunk tiktoken
+            # encoding; record it only when chunks were actually requested (issue #2361).
+            if tracer and include_chunks:
+                tracer.add_phase_metric(
+                    "chunk_fetch",
+                    time.time() - chunk_fetch_start,
+                    {"chunks_returned": len(chunks_dict or {}), "chunk_tokens": total_chunk_tokens},
+                )
+
             # Step 6: Token budget filtering
             step_start = time.time()
 
@@ -4855,6 +4890,10 @@ class MemoryEngine(MemoryEngineInterface):
                     step_duration,
                     {"results_selected": len(top_scored), "tokens_used": total_tokens, "max_tokens": max_tokens},
                 )
+
+            # Record visits + build the JSON-serializable result dicts. Timed as one
+            # phase: the visit loop alone walks every scored result (issue #2361).
+            assembly_start = time.time()
 
             # Record visits for all retrieved nodes
             if tracer:
@@ -4905,7 +4944,15 @@ class MemoryEngine(MemoryEngineInterface):
                     )
                 top_results_dicts.append(result_dict)
 
+            if tracer:
+                tracer.add_phase_metric(
+                    "result_serialization",
+                    time.time() - assembly_start,
+                    {"results_serialized": len(top_results_dicts)},
+                )
+
             # Fetch source facts for observation-type results (mirrors chunks pattern)
+            source_fact_start = time.time()
             source_fact_ids_by_obs: dict[str, list[str]] = {}  # obs_id -> [source_id, ...]
             source_facts_dict: dict[str, MemoryFact] | None = None
             if include_source_facts:
@@ -4998,6 +5045,18 @@ class MemoryEngine(MemoryEngineInterface):
                                     source_facts_dict[sid] = _make_source_fact(sid, r)
                                     total_source_tokens += fact_tokens
 
+            # Source-fact enrichment is two SQL passes + tiktoken encoding; record it
+            # only when requested (issue #2361).
+            if tracer and include_source_facts:
+                tracer.add_phase_metric(
+                    "source_fact_fetch",
+                    time.time() - source_fact_start,
+                    {"source_facts_returned": len(source_facts_dict or {})},
+                )
+
+            # entity fetch + MemoryFact construction + entity-state build, timed together.
+            entity_build_start = time.time()
+
             # Get entities for each fact if include_entities is requested.
             # _entity_rows_for_units_sql resolves both direct unit_entities rows
             # and observation-via-source-memory inheritance in a single query.
@@ -5070,11 +5129,41 @@ class MemoryEngine(MemoryEngineInterface):
                         observations=[],  # Mental models provide this now
                     )
 
-            # Finalize trace if enabled
+            if tracer:
+                tracer.add_phase_metric(
+                    "entity_build",
+                    time.time() - entity_build_start,
+                    {"entities_returned": len(entities_dict or {})},
+                )
+
+                # Diagnostic phases — these do NOT partition the timeline and are
+                # excluded from the phase-coverage check (see test_trace_phase_coverage):
+                # the pool waits overlap other phases (semaphore_wait precedes the
+                # tracer window; connection_wait is part of parallel_retrieval), and the
+                # per-method retrieval splits are children of parallel_retrieval.
+                if semaphore_wait > 0:
+                    tracer.add_phase_metric("semaphore_wait", semaphore_wait, {"diagnostic": True})
+                if max_conn_wait > 0:
+                    tracer.add_phase_metric("connection_wait", max_conn_wait, {"diagnostic": True})
+
+            # Finalize trace if enabled. finalize() snapshots total_duration_seconds at
+            # entry, so its own object construction + to_dict() serialization fall outside
+            # that total; we still surface the cost as a diagnostic phase (issue #2361).
             trace_dict = None
             if tracer:
+                from .search.trace import SearchPhaseMetrics
+
+                finalize_start = time.time()
                 trace = tracer.finalize(top_results_dicts)
                 trace_dict = trace.to_dict() if trace else None
+                if trace_dict is not None:
+                    trace_dict["summary"]["phase_metrics"].append(
+                        SearchPhaseMetrics(
+                            phase_name="trace_finalize",
+                            duration_seconds=time.time() - finalize_start,
+                            details={"diagnostic": True},
+                        ).model_dump()
+                    )
 
             # Log final recall stats
             total_time = time.time() - recall_start
