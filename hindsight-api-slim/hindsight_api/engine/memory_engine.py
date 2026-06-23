@@ -35,6 +35,8 @@ from ..config import (
     DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS,
     ENV_MODEL_INIT_TIMEOUT,
     HindsightConfig,
+    LLMMemberConfig,
+    LLMStrategyConfig,
     get_config,
 )
 from ..tracing import create_operation_span
@@ -348,6 +350,7 @@ from enum import Enum
 from ..pg0 import EmbeddedPostgres, parse_pg0_url
 from .entity_resolver import EntityResolver
 from .llm_wrapper import LLMConfig, requires_api_key, sanitize_llm_output, sanitize_text
+from .multi_llm import MultiLLMProvider
 from .query_analyzer import QueryAnalyzer
 from .reflect import run_reflect_agent
 from .reflect.tools import tool_expand, tool_recall, tool_search_mental_models, tool_search_observations
@@ -381,6 +384,52 @@ from .token_encoding import get_token_encoding
 
 RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
 RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
+
+
+def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig) -> LLMConfig:
+    """Build an LLMProvider from one indexed multi-LLM member.
+
+    Member fields are self-contained; reasoning_effort falls back to the global
+    setting and default_headers falls back inside ``LLMProvider`` when unset.
+    """
+    return LLMConfig(
+        provider=member.provider,
+        api_key=member.api_key or "",
+        base_url=member.base_url,
+        model=member.model,
+        reasoning_effort=member.reasoning_effort or config.llm_reasoning_effort,
+        extra_body=member.extra_body,
+        default_headers=member.default_headers,
+        bedrock_service_tier=member.bedrock_service_tier,
+        gemini_service_tier=member.gemini_service_tier,
+    )
+
+
+def _build_llm(
+    base: LLMConfig,
+    config: HindsightConfig,
+    prefix: str,
+) -> "LLMConfig | MultiLLMProvider":
+    """Resolve an operation's multi-LLM chain and wrap ``base`` (member 0) in it.
+
+    ``prefix`` is ``""`` (global) or ``"retain_"`` / ``"reflect_"`` /
+    ``"consolidation_"``. A per-op slot with no indexed members (or no strategy)
+    inherits the global chain, mirroring how per-op base config falls back to the
+    global LLM config. Returns ``base`` unchanged when no chain is configured
+    (byte-identical hot path).
+    """
+    members: list[LLMMemberConfig] = getattr(config, f"{prefix}llm_members")
+    strategy: LLMStrategyConfig | None = getattr(config, f"{prefix}llm_strategy")
+    if prefix:
+        if not members:
+            members = config.llm_members
+        if strategy is None:
+            strategy = config.llm_strategy
+
+    if not strategy or not members:
+        return base
+    extra = [_member_to_llm(m, config) for m in members]
+    return MultiLLMProvider([base, *extra], strategy)
 
 
 def _is_oracledb_connection_error(e: Exception) -> bool:
@@ -955,7 +1004,7 @@ class MemoryEngine(MemoryEngineInterface):
             self.query_analyzer = DateparserQueryAnalyzer()
 
         # Initialize LLM configuration (default, used as fallback)
-        self._llm_config = LLMConfig(
+        _default_base_llm = LLMConfig(
             provider=memory_llm_provider,
             api_key=memory_llm_api_key,
             base_url=memory_llm_base_url,
@@ -967,10 +1016,12 @@ class MemoryEngine(MemoryEngineInterface):
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
         )
+        self._llm_config = _build_llm(_default_base_llm, config, "")
 
-        # Store client and model for convenience (deprecated: use _llm_config.call() instead)
-        self._llm_client = self._llm_config._client
-        self._llm_model = self._llm_config.model
+        # Store client and model for convenience (deprecated: use _llm_config.call() instead).
+        # Read from the primary member so a multi-LLM chain behaves like the base config here.
+        self._llm_client = _default_base_llm._client
+        self._llm_model = _default_base_llm.model
 
         # Initialize per-operation LLM configs (fall back to default if not specified)
         # Retain LLM config - for fact extraction (benefits from strong structured output)
@@ -989,7 +1040,7 @@ class MemoryEngine(MemoryEngineInterface):
             else:
                 retain_base_url = ""
 
-        self._retain_llm_config = LLMConfig(
+        _retain_base_llm = LLMConfig(
             provider=retain_provider,
             api_key=retain_api_key,
             base_url=retain_base_url,
@@ -1001,6 +1052,7 @@ class MemoryEngine(MemoryEngineInterface):
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
         )
+        self._retain_llm_config = _build_llm(_retain_base_llm, config, "retain_")
 
         # Reflect LLM config - for think/observe operations (can use lighter models)
         reflect_provider = reflect_llm_provider or config.reflect_llm_provider or memory_llm_provider
@@ -1018,7 +1070,7 @@ class MemoryEngine(MemoryEngineInterface):
             else:
                 reflect_base_url = ""
 
-        self._reflect_llm_config = LLMConfig(
+        _reflect_base_llm = LLMConfig(
             provider=reflect_provider,
             api_key=reflect_api_key,
             base_url=reflect_base_url,
@@ -1030,6 +1082,7 @@ class MemoryEngine(MemoryEngineInterface):
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
         )
+        self._reflect_llm_config = _build_llm(_reflect_base_llm, config, "reflect_")
 
         # Consolidation LLM config - for mental model consolidation (can use efficient models)
         consolidation_provider = consolidation_llm_provider or config.consolidation_llm_provider or memory_llm_provider
@@ -1047,7 +1100,7 @@ class MemoryEngine(MemoryEngineInterface):
             else:
                 consolidation_base_url = ""
 
-        self._consolidation_llm_config = LLMConfig(
+        _consolidation_base_llm = LLMConfig(
             provider=consolidation_provider,
             api_key=consolidation_api_key,
             base_url=consolidation_base_url,
@@ -1059,6 +1112,7 @@ class MemoryEngine(MemoryEngineInterface):
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
         )
+        self._consolidation_llm_config = _build_llm(_consolidation_base_llm, config, "consolidation_")
 
         # Initialize cross-encoder reranker (cached for performance)
         self._cross_encoder_reranker = CrossEncoderReranker(cross_encoder=cross_encoder)
@@ -2515,7 +2569,7 @@ class MemoryEngine(MemoryEngineInterface):
             provider becomes available (e.g. after a quota reset).
             """
             if not self._skip_llm_verification:
-                configs_to_verify: list[tuple[str, LLMConfig]] = [("default", self._llm_config)]
+                configs_to_verify: list[tuple[str, LLMConfig | MultiLLMProvider]] = [("default", self._llm_config)]
 
                 # Verify retain config if different from default
                 retain_is_different = (
