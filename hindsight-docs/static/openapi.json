@@ -115,6 +115,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 1000,
               "title": "Limit"
             }
@@ -341,6 +342,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 100,
               "title": "Limit"
             }
@@ -351,6 +353,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 0,
               "title": "Offset"
             }
@@ -1082,6 +1085,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "description": "Maximum number of entities to return",
               "default": 100,
               "title": "Limit"
@@ -1094,6 +1098,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "description": "Offset for pagination",
               "default": 0,
               "title": "Offset"
@@ -1165,6 +1170,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "description": "Maximum number of co-occurrence edges to return",
               "default": 1000,
               "title": "Limit"
@@ -2474,6 +2480,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 100,
               "title": "Limit"
             }
@@ -2484,6 +2491,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 0,
               "title": "Offset"
             }
@@ -2960,6 +2968,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "description": "Maximum number of tags to return",
               "default": 100,
               "title": "Limit"
@@ -2972,6 +2981,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "description": "Offset for pagination",
               "default": 0,
               "title": "Offset"

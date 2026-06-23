@@ -76,7 +76,5 @@ async def test_valid_limit_is_accepted_including_zero(api_client, memory, limit)
     # so this fix does not change behavior for any previously-valid input.
     bank_id = f"pag-{uuid.uuid4().hex[:8]}"
     await memory.get_bank_profile(bank_id=bank_id, request_context=RequestContext())
-    resp = await api_client.get(
-        _url(bank_id, "memories/list"), params={"limit": limit, "offset": 0}
-    )
+    resp = await api_client.get(_url(bank_id, "memories/list"), params={"limit": limit, "offset": 0})
     assert resp.status_code == 200, resp.text

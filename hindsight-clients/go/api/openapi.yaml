@@ -80,6 +80,7 @@ paths:
         required: false
         schema:
           default: 1000
+          minimum: 0
           title: Limit
           type: integer
         style: form
@@ -212,6 +213,7 @@ paths:
         required: false
         schema:
           default: 100
+          minimum: 0
           title: Limit
           type: integer
         style: form
@@ -221,6 +223,7 @@ paths:
         required: false
         schema:
           default: 0
+          minimum: 0
           title: Offset
           type: integer
         style: form
@@ -732,6 +735,7 @@ paths:
         schema:
           default: 100
           description: Maximum number of entities to return
+          minimum: 0
           title: Limit
           type: integer
         style: form
@@ -743,6 +747,7 @@ paths:
         schema:
           default: 0
           description: Offset for pagination
+          minimum: 0
           title: Offset
           type: integer
         style: form
@@ -792,6 +797,7 @@ paths:
         schema:
           default: 1000
           description: Maximum number of co-occurrence edges to return
+          minimum: 0
           title: Limit
           type: integer
         style: form
@@ -1690,6 +1696,7 @@ paths:
         required: false
         schema:
           default: 100
+          minimum: 0
           title: Limit
           type: integer
         style: form
@@ -1699,6 +1706,7 @@ paths:
         required: false
         schema:
           default: 0
+          minimum: 0
           title: Offset
           type: integer
         style: form
@@ -2046,6 +2054,7 @@ paths:
         schema:
           default: 100
           description: Maximum number of tags to return
+          minimum: 0
           title: Limit
           type: integer
         style: form
@@ -2057,6 +2066,7 @@ paths:
         schema:
           default: 0
           description: Offset for pagination
+          minimum: 0
           title: Offset
           type: integer
         style: form
