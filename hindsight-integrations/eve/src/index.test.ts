@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { once } from "eve/tools/approval";
 import {
   resolveHindsightConnection,
   buildHindsightConnectionDefinition,
@@ -55,6 +56,28 @@ describe("resolveHindsightConnection", () => {
     expect(() => resolveHindsightConnection({}, EMPTY_ENV)).toThrow(/API key/);
   });
 
+  it("throws for a Cloud URL with a trailing slash and no key", () => {
+    expect(() =>
+      resolveHindsightConnection({ url: "https://api.hindsight.vectorize.io/mcp/" }, EMPTY_ENV)
+    ).toThrow(/API key/);
+  });
+
+  it("throws for a regional Cloud subdomain with no key", () => {
+    expect(() =>
+      resolveHindsightConnection({ url: "https://api.eu.hindsight.vectorize.io/mcp" }, EMPTY_ENV)
+    ).toThrow(/API key/);
+  });
+
+  it("does not treat a look-alike host as Cloud", () => {
+    // `nothindsight.vectorize.io` must not match the Cloud guard, so a no-auth
+    // self-hosted server on a similar domain is allowed.
+    const resolved = resolveHindsightConnection(
+      { url: "https://nothindsight.vectorize.io/mcp", apiKey: null },
+      EMPTY_ENV
+    );
+    expect(resolved.apiKey).toBeNull();
+  });
+
   it("allows a self-hosted url with no auth", () => {
     const resolved = resolveHindsightConnection(
       { url: "http://localhost:8000/mcp", apiKey: null },
@@ -102,6 +125,21 @@ describe("buildHindsightConnectionDefinition", () => {
       resolveHindsightConnection({ apiKey: "k", bankId: "project-x" }, EMPTY_ENV)
     );
     expect(definition.headers).toEqual({ "X-Bank-Id": "project-x" });
+  });
+
+  it("passes the approval policy through unchanged", () => {
+    const approval = once();
+    const definition = buildHindsightConnectionDefinition(
+      resolveHindsightConnection({ apiKey: "k", approval }, EMPTY_ENV)
+    );
+    expect(definition.approval).toBe(approval);
+  });
+
+  it("omits approval when none is configured", () => {
+    const definition = buildHindsightConnectionDefinition(
+      resolveHindsightConnection({ apiKey: "k" }, EMPTY_ENV)
+    );
+    expect(definition.approval).toBeUndefined();
   });
 });
 

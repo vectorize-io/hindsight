@@ -20,7 +20,11 @@ type McpConnectionInput = Parameters<typeof defineMcpClientConnection>[0];
 /** Hindsight Cloud MCP endpoint, used when no URL is configured. */
 export const HINDSIGHT_CLOUD_MCP_URL = "https://api.hindsight.vectorize.io/mcp";
 
-/** Default model-facing description surfaced to the agent via `connection__search`. */
+/**
+ * Default model-facing description written into the generated connection. Eve
+ * surfaces it when the agent discovers this connection's tools
+ * (`connection__hindsight__retain` / `recall` / `reflect`).
+ */
 export const DEFAULT_DESCRIPTION =
   "Hindsight long-term memory: retain facts from this session, recall relevant history " +
   "from past sessions, and reflect over consolidated mental models.";
@@ -62,6 +66,22 @@ function firstNonEmpty(...values: Array<string | null | undefined>): string | nu
 }
 
 /**
+ * Whether a URL points at Hindsight Cloud. Matched on host (not exact string)
+ * so a trailing slash, `http`/`https`, or a regional subdomain still triggers
+ * the missing-key guard below instead of letting the request fail with a raw
+ * 401. The dot boundary keeps it from matching look-alike hosts like
+ * `nothindsight.vectorize.io`.
+ */
+function isHindsightCloudUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host === "hindsight.vectorize.io" || host.endsWith(".hindsight.vectorize.io");
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Resolve options against environment defaults. Pure and side-effect free so the
  * precedence rules can be unit-tested without constructing a live connection.
  */
@@ -77,7 +97,7 @@ export function resolveHindsightConnection(
 
   const bankId = options.bankId ?? firstNonEmpty(env.HINDSIGHT_MCP_BANK_ID);
 
-  if (url === HINDSIGHT_CLOUD_MCP_URL && !apiKey) {
+  if (isHindsightCloudUrl(url) && !apiKey) {
     throw new Error(
       "Hindsight Cloud requires an API key. Set HINDSIGHT_API_KEY, pass `apiKey`, or point " +
         "`url`/HINDSIGHT_MCP_URL at a self-hosted server (use `apiKey: null` for a no-auth server)."
@@ -105,6 +125,8 @@ export function buildHindsightConnectionDefinition(
   return {
     url: resolved.url,
     description: resolved.description,
+    // `{ token }` is eve's TokenResult shape (sent as `Authorization: Bearer`).
+    // It rides on eve 0.11's auth contract, which the pinned peer/dev dep covers.
     ...(resolved.apiKey
       ? { auth: { getToken: async () => ({ token: resolved.apiKey as string }) } }
       : {}),
