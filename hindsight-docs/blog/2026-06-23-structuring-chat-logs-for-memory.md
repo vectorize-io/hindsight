@@ -1,12 +1,15 @@
 ---
-title: "Structuring Chat Logs for Memory: How to Feed Conversations to Hindsight"
+title: "Structuring Chat Logs for Agent Memory"
 authors: [hindsight]
 slug: "2026/06/23/structuring-chat-logs"
 date: 2026-06-23T12:00
 tags: [hindsight, memory, retain, conversations, chat, best-practices]
-description: "Hindsight extracts facts from whatever text you give it, so the shape of your chat logs decides the quality of the memories. The rules are simple: retain the whole conversation as one item, label who is speaking, tell Hindsight who that speaker is, and anchor it in time. Here's how, and why each one matters."
+description: "The shape of your chat logs decides your agent's memory quality. Retain whole conversations, label who is speaking, set context, and anchor in time."
+image: /img/blog/structuring-chat-logs.png
 hide_table_of_contents: true
 ---
+
+![Structuring Chat Logs for Agent Memory with Hindsight](/img/blog/structuring-chat-logs.png)
 
 Hindsight doesn't store your chat logs. When you [`retain`](/developer/api/retain) a conversation, it chunks the text, sends each chunk to an LLM for fact extraction, and stores the *facts* — not the original transcript. That single design choice is why the structure of what you send matters: the model can only extract what the text makes clear. A well-shaped transcript yields clean, correctly-attributed memories. A wall of unlabeled text yields guesses.
 
@@ -34,7 +37,7 @@ Alice (2024-03-15T09:02:00Z): Oh no — are you okay?
 Bob (2024-03-15T09:03:00Z): Yeah, nothing serious. Just carrying an antihistamine now.
 ```
 
-`Name (timestamp): text`, one line per turn. That's it. JSON works too if that's what you already have — the model parses it fine — but plain labeled text is the lowest-friction option and the easiest to eyeball when you're debugging what got extracted.
+`Name (timestamp): text`, one line per turn. That's it. JSON works too if that's what you already have, and the model parses it fine. But plain labeled text is the lowest-friction option, and the easiest to eyeball when you're debugging what got extracted.
 
 ## Retain the Whole Conversation, Not Each Message
 
@@ -49,7 +52,7 @@ So the pattern is: one `document_id` per conversation, re-`retain` (replace) whe
 
 ## How Long Is Too Long? Segment by Recall Latency, Not Size
 
-A frequent worry — and a real failure mode in other memory systems — is that the **tail of a long transcript gets missed**: stuff thousands of messages into a context window and the model quietly under-weights whatever's at the end.
+A frequent worry — and a real failure mode in other memory systems — is that the **tail of a long transcript gets missed**. Stuff thousands of messages into a context window and the model quietly under-weights whatever's at the end.
 
 Hindsight doesn't work that way, and this is the heart of what it does for you. It doesn't keep the raw transcript and hope the right part is in view at recall time. It chunks the whole document, extracts the facts from *every* chunk, then categorizes, links, and de-duplicates them into consolidated memory. No part of the conversation is privileged or dropped because of where it sits. **Document length, on its own, is not the thing to optimize.**
 
@@ -58,14 +61,14 @@ So the real question isn't "how big should a document be" — it's **how soon do
 - If an agent needs to act on something said earlier *today*, don't buffer a day (or a week) of logs into one giant document before retaining — you'd be unable to recall this morning's detail until tonight's flush. Retain in smaller, timelier units.
 - If the material is reference-grade and you won't query it until much later, batching more aggressively is fine.
 
-Segment for **freshness of recall**, not to stay under some length ceiling. The expensive, valuable work — splitting a conversation into facts and consolidating them so a recall returns the best answer instead of a pile of raw lines — is exactly what Hindsight is for, and it happens regardless of how long the document is.
+Segment for **freshness of recall**, not to stay under some length ceiling. The expensive, valuable work is splitting a conversation into facts and consolidating them, so a recall returns the best answer instead of a pile of raw lines. That's exactly what Hindsight is for, and it happens regardless of how long the document is.
 
 ### Streaming a live conversation
 
 If you're ingesting close to real time, two practical notes:
 
 - **Buffer a few messages together rather than firing one retain per line.** A batch of turns gives the extractor the context to produce good facts; a lone `"lol"` or `"um"` gives it nothing useful to remember. A small rolling buffer (a handful of turns, or a short time window) is the sweet spot.
-- **There's a modest per-user ingest rate limit** (on the order of a few writes per second on Hindsight Cloud), which buffering naturally keeps you under. If you need higher sustained throughput, batch related items into a single retain call.
+- **There's a modest per-user ingest rate limit on Hindsight Cloud**, which buffering naturally keeps you under. If you need higher sustained throughput, batch related items into a single retain call.
 
 ## Label the Speaker — and Tell Hindsight Who That Is
 
