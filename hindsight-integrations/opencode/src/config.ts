@@ -116,7 +116,7 @@ const ENV_OVERRIDES: Record<string, [keyof HindsightConfig, "string" | "bool" | 
   HINDSIGHT_RETAIN_TAGS: ["retainTags", "string"],
   HINDSIGHT_RECALL_TAGS_MATCH: ["recallTagsMatch", "string"],
   HINDSIGHT_RECALL_PROMPT_PREAMBLE: ["recallPromptPreamble", "string"],
-  HINDSIGHT_RECALL_CONTEXT: ["retainContext", "string"],
+  HINDSIGHT_RETAIN_CONTEXT: ["retainContext", "string"],
   // NOTE: `debug` is intentionally NOT an env override. It is a proper config
   // option set via opencode.json plugin options or ~/.hindsight/opencode.json,
   // because env vars are unreliable to set for OpenCode's plugin runtime
