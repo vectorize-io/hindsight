@@ -16,7 +16,10 @@ the value through unchanged.
 
 from __future__ import annotations
 
-from hindsight_api.engine.reflect.models import TokenUsageSummary
+import pytest
+
+from hindsight_api.engine.reflect.agent import _generate_structured_output
+from hindsight_api.engine.reflect.models import StructuredOutputResult, TokenUsageSummary
 from hindsight_api.engine.response_models import LLMToolCallResult, TokenUsage
 from hindsight_api.extensions.operation_validator import RetainResult
 
@@ -133,3 +136,27 @@ def test_retain_result_carries_cached_input_and_thoughts():
     )
     assert r2.llm_cached_input_tokens is None
     assert r2.llm_thoughts_tokens is None
+
+
+@pytest.mark.asyncio
+async def test_generate_structured_output_returns_dataclass_on_no_fields():
+    """_generate_structured_output returns a StructuredOutputResult, not a tuple.
+
+    Regression guard: the function and all six call sites must agree on a single
+    return type. A previous tuple-based contract drifted out of sync (the failure
+    branch returned 3 values while callers unpacked 5), which would crash reflect
+    with a ValueError on any structured-output failure. An empty schema exercises
+    the no-LLM-call branch deterministically.
+    """
+    result = await _generate_structured_output(
+        answer="anything",
+        response_schema={},
+        llm_config=None,
+        reflect_id="test",
+    )
+    assert isinstance(result, StructuredOutputResult)
+    assert result.structured_output is None
+    assert result.input_tokens == 0
+    assert result.output_tokens == 0
+    assert result.cached_tokens == 0
+    assert result.thoughts_tokens == 0

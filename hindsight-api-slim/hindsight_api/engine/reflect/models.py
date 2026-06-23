@@ -94,6 +94,18 @@ class TokenUsageSummary(BaseModel):
     )
 
 
+class StructuredOutputResult(BaseModel):
+    """Result of structured-output generation, including token usage for the call."""
+
+    structured_output: dict[str, Any] | None = Field(
+        default=None, description="Generated structured output, or None if generation failed"
+    )
+    input_tokens: int = Field(default=0, description="Input tokens used")
+    output_tokens: int = Field(default=0, description="Visible output tokens used")
+    cached_tokens: int = Field(default=0, description="Cached prefix tokens. Subset of input_tokens.")
+    thoughts_tokens: int = Field(default=0, description="Reasoning/thinking tokens, when reported by the provider")
+
+
 class ReflectAgentResult(BaseModel):
     """Result from the reflect agent."""
 
