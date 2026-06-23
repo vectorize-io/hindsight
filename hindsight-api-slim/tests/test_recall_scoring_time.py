@@ -100,7 +100,11 @@ async def test_recall_async_passes_question_date_to_combined_scoring(monkeypatch
         )
 
     def apply_combined_scoring(
-        scored_results: list[ScoredResult], *, now: datetime, is_passthrough_reranker: bool
+        scored_results: list[ScoredResult],
+        *,
+        now: datetime,
+        is_passthrough_reranker: bool,
+        **_kwargs: object,
     ) -> None:
         nonlocal captured_now
         assert is_passthrough_reranker is False
