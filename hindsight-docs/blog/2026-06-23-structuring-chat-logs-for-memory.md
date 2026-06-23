@@ -17,6 +17,7 @@ The good news is there's no schema to learn and no required format. Plain text, 
 <!-- truncate -->
 
 - **Retain the whole conversation as one item, not one item per message.** Facts get extracted and cross-referenced with full context, and a stable `document_id` makes re-ingestion idempotent.
+- **Document length isn't the constraint.** Hindsight decomposes the entire document into facts, so the tail of a long transcript isn't dropped or down-weighted the way it is in systems that stuff raw text into a context window. Segment by *how soon you need to recall it*, not by size.
 - **Label every line with a speaker.** The simplest reliable format is `Name (timestamp): text`. Hindsight uses *who is speaking* to decide whether a statement is a fact about the world or the agent's own experience.
 - **Tell Hindsight who the speaker is via `context`.** A context like `"Customer Maria is speaking"` keeps her "I bought a Tesla" stored as a fact about Maria — not mistaken for something the agent did.
 - **Anchor it in time.** Pass a real `timestamp` so the model can resolve "last Monday" and so temporal recall works later.
@@ -45,6 +46,26 @@ Two reasons. First, fact extraction is better with context: "Yeah, nothing serio
 - For transcripts that grow one message at a time, use **`update_mode: "append"`**. Instead of re-sending the entire history, send just the new turns; Hindsight concatenates them onto the existing document and skips re-extracting the unchanged chunks.
 
 So the pattern is: one `document_id` per conversation, re-`retain` (replace) when you have the whole thing, or `append` as messages stream in.
+
+## How Long Is Too Long? Segment by Recall Latency, Not Size
+
+A frequent worry — and a real failure mode in other memory systems — is that the **tail of a long transcript gets missed**: stuff thousands of messages into a context window and the model quietly under-weights whatever's at the end.
+
+Hindsight doesn't work that way, and this is the heart of what it does for you. It doesn't keep the raw transcript and hope the right part is in view at recall time. It chunks the whole document, extracts the facts from *every* chunk, then categorizes, links, and de-duplicates them into consolidated memory. No part of the conversation is privileged or dropped because of where it sits. **Document length, on its own, is not the thing to optimize.**
+
+So the real question isn't "how big should a document be" — it's **how soon do you need to recall what's in it?** That's the axis to segment on:
+
+- If an agent needs to act on something said earlier *today*, don't buffer a day (or a week) of logs into one giant document before retaining — you'd be unable to recall this morning's detail until tonight's flush. Retain in smaller, timelier units.
+- If the material is reference-grade and you won't query it until much later, batching more aggressively is fine.
+
+Segment for **freshness of recall**, not to stay under some length ceiling. The expensive, valuable work — splitting a conversation into facts and consolidating them so a recall returns the best answer instead of a pile of raw lines — is exactly what Hindsight is for, and it happens regardless of how long the document is.
+
+### Streaming a live conversation
+
+If you're ingesting close to real time, two practical notes:
+
+- **Buffer a few messages together rather than firing one retain per line.** A batch of turns gives the extractor the context to produce good facts; a lone `"lol"` or `"um"` gives it nothing useful to remember. A small rolling buffer (a handful of turns, or a short time window) is the sweet spot.
+- **There's a modest per-user ingest rate limit** (on the order of a few writes per second on Hindsight Cloud), which buffering naturally keeps you under. If you need higher sustained throughput, batch related items into a single retain call.
 
 ## Label the Speaker — and Tell Hindsight Who That Is
 
@@ -99,6 +120,15 @@ Two more parameters carry the structured context that doesn't belong in the pros
 - **`metadata`** — arbitrary string key-values like `{"source": "slack", "channel": "engineering", "thread_id": "T123"}`. It's fed into the extraction prompt *and* stored on every resulting memory, so you can filter or link memories back to their source later without a second lookup.
 - **`tags`** — visibility scoping. A memory is only returned at recall time if its tags intersect the recall filter, which is what keeps one bank safely serving many users or sessions. Use consistent patterns: `user:<id>`, `session:<id>`, `room:<id>`, `topic:<name>`.
 
+## Links and Attachments
+
+Conversations carry more than text — URLs, files, images. A couple of expectations to set:
+
+- **Links go in as text.** Drop a URL into the content and it's retained as part of the conversation, so the facts around it ("Maria shared the new pricing page") are remembered and the link comes back with the memory. Hindsight does **not** fetch or parse the linked page — the memory is about the link in context, not its contents.
+- **Attachments aren't ingested directly.** There's no file-upload interface today. The common pattern is to store the file (e.g. in an S3 bucket) and include the link as reference text alongside the message, plus any caption or description you have. That keeps the attachment discoverable from memory even though its bytes live elsewhere.
+
+If you need the *contents* of files and pages to become memory, that's retrieval-over-documents territory — a different pipeline from conversational memory.
+
 ## Putting It Together
 
 A single, well-formed retain for a support conversation:
@@ -129,6 +159,8 @@ From that one call, Hindsight extracts world facts about Maria (she was on Basic
 | Decision | Do this | Why |
 | --- | --- | --- |
 | Granularity | One item per **conversation**, not per message | Extraction needs surrounding context |
+| Length | Don't optimize for it — segment by **recall latency** | The whole doc is decomposed; the tail isn't dropped |
+| Streaming | Buffer a few turns per retain; mind the per-user rate limit | Context beats single noise-only lines |
 | Re-ingestion | Stable `document_id`; `replace` for rewrites, `append` for streams | Idempotent, no duplicates |
 | Speaker | Label every line: `Name (timestamp): text` | Drives the world vs. experience split |
 | Attribution | Set `context` to name the speaker | Keeps a user's "I…" a fact about the user |
