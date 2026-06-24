@@ -1320,6 +1320,8 @@ class LLMMemberConfig:
     default_headers: dict | None
     bedrock_service_tier: str | None
     gemini_service_tier: str | None
+    vertexai_project_id: str | None = None
+    vertexai_region: str | None = None
 
 
 # Valid multi-LLM strategy modes.
@@ -1413,6 +1415,8 @@ def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
                 gemini_service_tier=(
                     parse_gemini_service_tier(gemini_service_tier) if provider.lower() == "gemini" else None
                 ),
+                vertexai_project_id=os.getenv(base + "VERTEXAI_PROJECT_ID") or None,
+                vertexai_region=os.getenv(base + "VERTEXAI_REGION") or None,
             )
         )
         index += 1

@@ -402,6 +402,8 @@ def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig) -> LLMCon
         default_headers=member.default_headers,
         bedrock_service_tier=member.bedrock_service_tier,
         gemini_service_tier=member.gemini_service_tier,
+        vertexai_project_id=member.vertexai_project_id,
+        vertexai_region=member.vertexai_region,
     )
 
 

@@ -83,6 +83,38 @@ def test_parse_members_no_key_provider_ok(clean_llm_env):
     assert members[0].api_key is None
 
 
+def test_parse_members_vertexai_project_and_region(clean_llm_env):
+    # A vertexai member can carry its own project/region so it can be used as a
+    # member of a failover/round-robin chain.
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_PROVIDER", "vertexai")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_VERTEXAI_PROJECT_ID", "p")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_VERTEXAI_REGION", "us-central1")
+    members = _parse_llm_members("")
+    assert members[0].provider == "vertexai"
+    assert members[0].vertexai_project_id == "p"
+    assert members[0].vertexai_region == "us-central1"
+
+
+def test_parse_members_vertexai_per_op_prefix(clean_llm_env):
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_1_PROVIDER", "vertexai")
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_1_VERTEXAI_PROJECT_ID", "reflect-proj")
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_1_VERTEXAI_REGION", "europe-west1")
+    reflect = _parse_llm_members("REFLECT_")
+    assert reflect[0].vertexai_project_id == "reflect-proj"
+    assert reflect[0].vertexai_region == "europe-west1"
+    # The vertex fields are scoped to the prefix; the global chain is unaffected.
+    assert _parse_llm_members("") == []
+
+
+def test_parse_members_without_vertexai_fields_default_none(clean_llm_env):
+    # Non-vertex members (and members that omit the vars) leave the fields None —
+    # no regression for existing providers.
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_PROVIDER", "ollama")
+    members = _parse_llm_members("")
+    assert members[0].vertexai_project_id is None
+    assert members[0].vertexai_region is None
+
+
 # ── strategy parsing ───────────────────────────────────────────────────────────
 
 
@@ -220,3 +252,47 @@ def test_build_llm_members_without_strategy_stays_plain(clean_llm_env):
     config = _empty_config(llm_members=[_member("ollama")], llm_strategy=None)
     base = _base_llm()
     assert _build_llm(base, config, "") is base
+
+
+# ── vertexai member build path (_member_to_llm) ─────────────────────────────────
+
+
+def test_member_to_llm_passes_vertexai_project_and_region(clean_llm_env, monkeypatch):
+    """A vertexai member's own project/region reach the provider build.
+
+    The global config has no Vertex project, so this also proves the member's
+    values are used (no "VERTEXAI_PROJECT_ID is required") instead of the global
+    fallback. The Vertex SDK client is patched so no live LLM/network call runs.
+    """
+    import hindsight_api.engine.providers.gemini_llm as gemini_llm
+    from hindsight_api.config import clear_config_cache
+    from hindsight_api.engine.memory_engine import _member_to_llm
+
+    captured: dict = {}
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(gemini_llm.genai, "Client", _FakeClient)
+    clear_config_cache()  # rebuild from the (vertex-less) test env
+
+    member = LLMMemberConfig(
+        provider="vertexai",
+        api_key=None,
+        model="gemini-2.0-flash",
+        base_url=None,
+        reasoning_effort=None,
+        extra_body=None,
+        default_headers=None,
+        bedrock_service_tier=None,
+        gemini_service_tier=None,
+        vertexai_project_id="member-proj",
+        vertexai_region="europe-west1",
+    )
+    provider = _member_to_llm(member, _empty_config())
+
+    assert provider.provider == "vertexai"
+    # Project/region flowed all the way to the Vertex AI SDK client.
+    assert captured["project"] == "member-proj"
+    assert captured["location"] == "europe-west1"
