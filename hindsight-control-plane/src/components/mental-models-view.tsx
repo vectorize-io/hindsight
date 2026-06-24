@@ -89,6 +89,7 @@ interface MentalModel {
   trigger: {
     mode?: "full" | "delta";
     refresh_after_consolidation: boolean;
+    refresh_cron?: string | null;
     fact_types?: Array<"world" | "experience" | "observation">;
     exclude_mental_models?: boolean;
     exclude_mental_model_ids?: string[];
@@ -364,14 +365,18 @@ export function MentalModelsView() {
                                 </code>
                                 <span
                                   className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
-                                    m.trigger?.refresh_after_consolidation
-                                      ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                                      : "bg-slate-500/10 text-slate-600 dark:text-slate-400"
+                                    m.trigger?.refresh_cron
+                                      ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                                      : m.trigger?.refresh_after_consolidation
+                                        ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                                        : "bg-slate-500/10 text-slate-600 dark:text-slate-400"
                                   }`}
                                 >
-                                  {m.trigger?.refresh_after_consolidation
-                                    ? t("badgeAutoRefresh")
-                                    : t("badgeManual")}
+                                  {m.trigger?.refresh_cron
+                                    ? t("badgeScheduled")
+                                    : m.trigger?.refresh_after_consolidation
+                                      ? t("badgeAutoRefresh")
+                                      : t("badgeManual")}
                                 </span>
                               </div>
                             </div>
@@ -684,6 +689,7 @@ function CreateMentalModelDialog({
     tags: "",
     autoRefresh: false,
     mode: "full" as "full" | "delta",
+    refreshCron: "",
     factTypes: [] as Array<"world" | "experience" | "observation">,
     excludeMentalModels: false,
     excludeMentalModelIds: "",
@@ -741,6 +747,7 @@ function CreateMentalModelDialog({
         trigger: {
           mode: form.mode,
           refresh_after_consolidation: form.autoRefresh,
+          refresh_cron: form.refreshCron.trim() || undefined,
           fact_types: form.factTypes.length > 0 ? form.factTypes : undefined,
           exclude_mental_models: form.excludeMentalModels || undefined,
           exclude_mental_model_ids: excludeIds.length > 0 ? excludeIds : undefined,
@@ -760,6 +767,7 @@ function CreateMentalModelDialog({
         tags: "",
         autoRefresh: false,
         mode: "full",
+        refreshCron: "",
         factTypes: [],
         excludeMentalModels: false,
         excludeMentalModelIds: "",
@@ -790,6 +798,7 @@ function CreateMentalModelDialog({
             tags: "",
             autoRefresh: false,
             mode: "full",
+            refreshCron: "",
             factTypes: [],
             excludeMentalModels: false,
             excludeMentalModelIds: "",
@@ -900,6 +909,19 @@ function CreateMentalModelDialog({
                   </Select>
                   <p className="text-xs text-muted-foreground">
                     {t("optionsRefreshModeDeltaDescription")}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsRefreshCronLabel")}
+                  </label>
+                  <Input
+                    value={form.refreshCron}
+                    onChange={(e) => setForm({ ...form, refreshCron: e.target.value })}
+                    placeholder={t("optionsRefreshCronPlaceholder")}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t("optionsRefreshCronDescription")}
                   </p>
                 </div>
               </section>
@@ -1108,6 +1130,7 @@ function UpdateMentalModelDialog({
     tags: mentalModel.tags.join(", "),
     autoRefresh: mentalModel.trigger?.refresh_after_consolidation || false,
     mode: (mentalModel.trigger?.mode || "full") as "full" | "delta",
+    refreshCron: mentalModel.trigger?.refresh_cron || "",
     factTypes:
       (mentalModel.trigger?.fact_types as
         | Array<"world" | "experience" | "observation">
@@ -1185,6 +1208,7 @@ function UpdateMentalModelDialog({
         trigger: {
           mode: form.mode,
           refresh_after_consolidation: form.autoRefresh,
+          refresh_cron: form.refreshCron.trim() || undefined,
           fact_types: form.factTypes.length > 0 ? form.factTypes : undefined,
           exclude_mental_models: form.excludeMentalModels || undefined,
           exclude_mental_model_ids: excludeIds.length > 0 ? excludeIds : undefined,
@@ -1300,6 +1324,19 @@ function UpdateMentalModelDialog({
                   </Select>
                   <p className="text-xs text-muted-foreground">
                     {t("optionsRefreshModeDeltaDescription")}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsRefreshCronLabel")}
+                  </label>
+                  <Input
+                    value={form.refreshCron}
+                    onChange={(e) => setForm({ ...form, refreshCron: e.target.value })}
+                    placeholder={t("optionsRefreshCronPlaceholder")}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t("optionsRefreshCronDescription")}
                   </p>
                 </div>
               </section>

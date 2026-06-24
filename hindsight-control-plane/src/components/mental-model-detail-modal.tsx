@@ -1098,6 +1098,19 @@ function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
           }
         />
         <Metadata
+          label={t("labelRefreshCron")}
+          value={
+            trigger.refresh_cron ? (
+              <Pill
+                label={trigger.refresh_cron}
+                color="bg-blue-500/10 text-blue-600 dark:text-blue-400"
+              />
+            ) : (
+              <Pill label={t("pillDisabled")} />
+            )
+          }
+        />
+        <Metadata
           label={t("labelFactTypes")}
           value={
             factTypes.length > 0 ? (
