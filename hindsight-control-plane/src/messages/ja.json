@@ -433,7 +433,7 @@
     "memoryDefenseAction_redact": "マスク",
     "memoryDefenseAction_block": "ブロック",
     "memoryDefenseSecretLeakTitle": "シークレット漏洩防止",
-    "memoryDefenseSecretLeakDescription": "保持されたコンテンツのシークレットをスキャンします。一般的なプロバイダーキー、AWS、個人情報をカバーする44パターン。",
+    "memoryDefenseSecretLeakDescription": "保持されたコンテンツのシークレットをスキャンします。一般的なプロバイダーキー、AWS、個人情報をカバーする45パターン。",
     "memoryDefenseEnterpriseTitle": "Memory Defense Enterprise",
     "memoryDefenseEnterpriseSubtitle": "より多くを検出し、よりスマートに編集し、すべてを監査 — Hindsight Cloudで利用可能。",
     "memoryDefenseEnterpriseFeatureDetectSecrets": "高度なシークレット検出:プロバイダーキー、AWS、GitHub、CIトークンをカバーする200以上のパターン",

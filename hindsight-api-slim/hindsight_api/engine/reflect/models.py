@@ -78,9 +78,32 @@ class DirectiveInfo(BaseModel):
 class TokenUsageSummary(BaseModel):
     """Total token usage across all LLM calls."""
 
-    input_tokens: int = Field(default=0, description="Total input tokens used")
-    output_tokens: int = Field(default=0, description="Total output tokens used")
-    total_tokens: int = Field(default=0, description="Total tokens (input + output)")
+    input_tokens: int = Field(default=0, description="Total input tokens used (includes any cached prefix tokens)")
+    output_tokens: int = Field(default=0, description="Total visible output tokens used (excludes reasoning/thoughts)")
+    total_tokens: int = Field(default=0, description="Total tokens (input + output, excludes thoughts)")
+    cached_tokens: int = Field(
+        default=0,
+        description="Cached/cache-read prompt tokens summed across calls. Subset of input_tokens.",
+    )
+    thoughts_tokens: int = Field(
+        default=0,
+        description=(
+            "Reasoning/thinking tokens summed across calls. Billed at the output rate by some providers "
+            "but not part of visible output."
+        ),
+    )
+
+
+class StructuredOutputResult(BaseModel):
+    """Result of structured-output generation, including token usage for the call."""
+
+    structured_output: dict[str, Any] | None = Field(
+        default=None, description="Generated structured output, or None if generation failed"
+    )
+    input_tokens: int = Field(default=0, description="Input tokens used")
+    output_tokens: int = Field(default=0, description="Visible output tokens used")
+    cached_tokens: int = Field(default=0, description="Cached prefix tokens. Subset of input_tokens.")
+    thoughts_tokens: int = Field(default=0, description="Reasoning/thinking tokens, when reported by the provider")
 
 
 class ReflectAgentResult(BaseModel):

@@ -679,7 +679,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.3" },
     { name = "filelock", specifier = ">=3.20.3" },
     { name = "hindsight-client", specifier = ">=0.4.0" },
-    { name = "litellm", specifier = ">=1.83.0" },
+    { name = "litellm", specifier = ">=1.83.14" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.10.0" },

@@ -185,7 +185,7 @@ By default, observations are scoped to all of a memory's tags combined. The `obs
 
 See [`observation_scopes` in the Retain API](./api/retain#observation_scopes) for the full explanation and options.
 
-To inspect the scopes that already exist in a bank, call `GET /v1/default/banks/{bank_id}/observations/scopes`. The response lists each exact tag set with its observation count; the empty tag list is the global scope. Use a returned scope as `tags` with `tags_match: "exact"` when you need to filter to that precise observation scope without also matching observations that carry extra tags.
+To inspect the scopes that already exist in a bank, call `GET /v1/default/banks/{bank_id}/observations/scopes`. The response lists each exact tag set with its observation count; the empty tag list is the global scope. Use a returned scope as `tags` with `tags_match: "exact"` when you need to filter to that precise observation scope without also matching observations that carry extra tags. To recall **only** the global scope — the untagged observations written by `observation_scopes: "shared"` — pass an empty list with exact matching: `tags: []`, `tags_match: "exact"`.
 
 ---
 

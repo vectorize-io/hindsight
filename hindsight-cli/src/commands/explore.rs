@@ -340,6 +340,7 @@ impl App {
                             max_tokens: query_max_tokens,
                             trace: false,
                             query_timestamp: None,
+                            prefer_observations: false,
                             include: None,
                             tags: None,
                             tags_match: TagsMatch::Any,

@@ -171,6 +171,16 @@
       "icon": "/img/icons/codex.svg"
     },
     {
+      "id": "github-copilot",
+      "name": "GitHub Copilot",
+      "description": "Long-term memory for GitHub Copilot in VS Code. One command wires the Hindsight MCP server into .vscode/mcp.json plus a recall/retain rule in .github/copilot-instructions.md.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/github-copilot",
+      "icon": "/img/icons/github-copilot.svg"
+    },
+    {
       "id": "continue",
       "name": "Continue",
       "description": "Long-term memory for the Continue.dev coding assistant. Recall relevant project memory into chat with @hindsight, plus optional automatic recall/retain via the Hindsight MCP server.",

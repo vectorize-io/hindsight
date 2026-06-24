@@ -179,6 +179,14 @@ export function loadConfig(pluginOptions?: Record<string, unknown>): HindsightCo
     config["recallTagsMatch"] = recallTagsMatchEnv;
   }
 
+  const retainTagsEnv = process.env["HINDSIGHT_RETAIN_TAGS"];
+  if (retainTagsEnv !== undefined) {
+    config["retainTags"] = retainTagsEnv
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+  }
+
   const result = config as unknown as HindsightConfig;
 
   // Validate enum-like fields to catch typos early

@@ -23,6 +23,7 @@ from hindsight_api.engine.search.tags import (
     TagGroupNot,
     TagGroupOr,
     build_tag_groups_where_clause,
+    build_tags_where_clause,
     build_tags_where_clause_simple,
     filter_results_by_tag_groups,
     filter_results_by_tags,
@@ -135,6 +136,46 @@ class TestTagsWhereClauseBuilder:
         assert result.count("mu.tags") == 2
         assert "@>" in result
         assert "<@" in result
+
+    # ---- Test "exact" mode with the empty scope ([]) = untagged/global only ----
+
+    def test_tags_match_exact_empty_list_matches_untagged_only(self):
+        """match='exact' with [] filters to untagged rows only (no bind param)."""
+        result = build_tags_where_clause_simple([], 5, match="exact")
+        assert "IS NULL" in result
+        assert "= '{}'" in result
+        # Untagged-only is param-free: callers append no tags param for an empty list.
+        assert "$5" not in result
+        # Must not use set-equality operators (which would need a bound scope).
+        assert "@>" not in result
+        assert "<@" not in result
+
+    def test_tags_match_exact_empty_list_with_table_alias(self):
+        """Empty-scope exact clause respects the table alias."""
+        result = build_tags_where_clause_simple([], 5, table_alias="mu.", match="exact")
+        assert "mu.tags IS NULL" in result
+        assert "mu.tags = '{}'" in result
+
+    def test_tags_match_exact_none_matches_untagged_only(self):
+        """match='exact' with None (no tags) selects the global scope, like the graph endpoint."""
+        result = build_tags_where_clause_simple(None, 5, match="exact")
+        assert "IS NULL" in result
+        assert "= '{}'" in result
+        assert "$5" not in result
+
+    def test_tags_match_any_empty_list_still_no_filter(self):
+        """Empty list only filters under 'exact'; other modes treat [] as no filter."""
+        assert build_tags_where_clause_simple([], 5, match="any") == ""
+        assert build_tags_where_clause_simple([], 5, match="any_strict") == ""
+
+    @pytest.mark.parametrize("tags", [None, []])
+    def test_tags_where_clause_exact_empty_scope_keeps_param_offset(self, tags):
+        """The parameterized builder must not consume a bind index for the empty scope,
+        so following clauses stay aligned with their params."""
+        clause, params, next_offset = build_tags_where_clause(tags, param_offset=4, match="exact")
+        assert clause == "AND (tags IS NULL OR tags = '{}')"
+        assert params == []
+        assert next_offset == 4
 
     # ---- Test table alias with all modes ----
 
@@ -254,6 +295,20 @@ class TestFilterResultsByTags:
         filtered = filter_results_by_tags(results, ["a"], match="exact")
         assert len(filtered) == 1
         assert filtered[0].tags == ["a"]
+
+    def test_exact_mode_empty_scope_matches_untagged_only(self):
+        """'exact' mode with [] should keep only untagged results (NULL or empty)."""
+        results = [MockResult(["a"]), MockResult(["a", "b"]), MockResult(None), MockResult([])]
+        filtered = filter_results_by_tags(results, [], match="exact")
+        assert len(filtered) == 2
+        assert all(not r.tags for r in filtered)
+
+    def test_exact_mode_none_matches_untagged_only(self):
+        """'exact' mode with None (no tags) selects the global scope (untagged only)."""
+        results = [MockResult(["a"]), MockResult(None), MockResult([])]
+        filtered = filter_results_by_tags(results, None, match="exact")
+        assert len(filtered) == 2
+        assert all(not r.tags for r in filtered)
 
     def test_all_mode_includes_untagged(self):
         """'all' mode should include untagged results."""
@@ -502,6 +557,16 @@ class TestBuildTagGroupsWhereClause:
         assert len(params) == 2
         assert next_offset == 3
 
+    def test_exact_leaf_empty_scope_matches_untagged_only(self):
+        """An exact leaf with [] becomes an untagged-only clause with no bind param."""
+        groups = [TagGroupLeaf(tags=[], match="exact")]
+        clause, params, next_offset = build_tag_groups_where_clause(groups, 5)
+        assert "IS NULL" in clause
+        assert "= '{}'" in clause
+        assert "$5" not in clause  # param-free
+        assert params == []
+        assert next_offset == 5  # offset unchanged — no param consumed
+
 
 # ============================================================================
 # Unit Tests for filter_results_by_tag_groups (Python-side)
@@ -530,6 +595,14 @@ class TestFilterResultsByTagGroups:
         filtered = filter_results_by_tag_groups(results, groups)
         assert len(filtered) == 1
         assert filtered[0].tags == ["step:5"]
+
+    def test_exact_leaf_empty_scope_matches_untagged_only(self):
+        """An exact leaf with [] keeps only untagged results (matches SQL builder)."""
+        groups = [TagGroupLeaf(tags=[], match="exact")]
+        results = [MockResult(["a"]), MockResult(["a", "b"]), MockResult(None), MockResult([])]
+        filtered = filter_results_by_tag_groups(results, groups)
+        assert len(filtered) == 2
+        assert all(not r.tags for r in filtered)
 
     def test_single_leaf_all_strict_matches_superset(self):
         """Single all_strict leaf matches results that contain all tags."""
@@ -902,6 +975,37 @@ async def test_recall_with_empty_tags_returns_all(api_client, test_bank_id):
     texts = [r["text"] for r in results]
     assert any("Quinn" in t for t in texts), "Should find Quinn"
     assert any("Rachel" in t for t in texts), "Should find Rachel"
+
+
+@pytest.mark.asyncio
+async def test_recall_empty_tags_exact_returns_untagged_only(api_client, test_bank_id):
+    """tags=[] with tags_match='exact' returns only untagged/global memories."""
+    # One untagged (global) memory and one tagged memory.
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={
+            "items": [
+                {"content": "Sam studies astronomy."},  # no tags -> global scope
+                {"content": "Tina studies geology.", "tags": ["user_tina"]},
+            ]
+        },
+    )
+    assert response.status_code == 200
+
+    # exact match on the empty scope -> only the untagged memory.
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories/recall",
+        json={"query": "Who studies what?", "budget": "low", "tags": [], "tags_match": "exact"},
+    )
+    assert response.status_code == 200
+    results = response.json()["results"]
+
+    texts = [r["text"] for r in results]
+    assert any("Sam" in t for t in texts), "Should find the untagged memory"
+    assert not any("Tina" in t for t in texts), "Should NOT find the tagged memory"
+    # Every returned memory must be untagged.
+    for r in results:
+        assert not r.get("tags"), f"Expected untagged result, got tags={r.get('tags')}"
 
 
 @pytest.mark.asyncio

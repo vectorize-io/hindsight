@@ -49,6 +49,8 @@ hindsight-admin run-db-migration [OPTIONS]
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--schema`, `-s` | Database schema to run migrations on. If omitted, migrate the base schema plus all discovered tenant schemas. | All schemas |
+| `--embedding-dimension` | Expected embedding dimension to enforce after migrations. Omit to skip the post-migration dimension sync. | Skipped |
+| `--skip-extension-reconcile` | Skip the post-migration vector / text-search index reconcile (it only does work when `HINDSIGHT_API_VECTOR_EXTENSION` / `HINDSIGHT_API_TEXT_SEARCH_EXTENSION` differs from a schema's existing indexes). Makes a no-change re-migration across many tenant schemas much faster; only use when the backend is unchanged. | Reconcile runs |
 
 **Examples:**
 

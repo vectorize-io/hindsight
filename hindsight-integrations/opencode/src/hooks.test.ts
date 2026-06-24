@@ -74,6 +74,31 @@ describe("event hook — session.idle", () => {
     expect(opts.metadata.session_id).toBe("sess-1");
   });
 
+  it("passes retainTags from config to retain call", async () => {
+    const client = makeClient();
+    const messages = [
+      { info: { role: "user" }, parts: [{ type: "text", text: "Hello" }] },
+      { info: { role: "assistant" }, parts: [{ type: "text", text: "Hi there" }] },
+    ];
+    const opencodeClient = makeOpencodeClient(messages);
+    const state = makeState();
+    const hooks = createHooks(
+      client,
+      "bank",
+      makeConfig({ retainTags: ["user:alice", "shared"], retainEveryNTurns: 1 }),
+      state,
+      opencodeClient
+    );
+
+    await hooks.event({
+      event: { type: "session.idle", properties: { sessionID: "sess-1" } },
+    });
+
+    expect(client.retain).toHaveBeenCalledTimes(1);
+    const opts = client.retain.mock.calls[0][2];
+    expect(opts.tags).toEqual(["user:alice", "shared"]);
+  });
+
   it("skips retain when autoRetain is false", async () => {
     const client = makeClient();
     const messages = [
@@ -250,6 +275,29 @@ describe("compacting hook", () => {
     const opts = client.retain.mock.calls[0][2];
     expect(opts.documentId).toBe("sess-1");
     expect(opts.metadata.session_id).toBe("sess-1");
+  });
+
+  it("pre-compaction retain passes retainTags from config", async () => {
+    const client = makeClient();
+    client.recall.mockResolvedValue({ results: [] });
+    const messages = [
+      { info: { role: "user" }, parts: [{ type: "text", text: "Hello" }] },
+      { info: { role: "assistant" }, parts: [{ type: "text", text: "Hi" }] },
+    ];
+    const output = { context: [] as string[] };
+    const hooks = createHooks(
+      client,
+      "bank",
+      makeConfig({ retainTags: ["user:alice", "auto-tag"] }),
+      makeState(),
+      makeOpencodeClient(messages)
+    );
+
+    await hooks["experimental.session.compacting"]({ sessionID: "sess-1" }, output);
+
+    expect(client.retain).toHaveBeenCalledTimes(1);
+    const opts = client.retain.mock.calls[0][2];
+    expect(opts.tags).toEqual(["user:alice", "auto-tag"]);
   });
 
   it("pre-compaction retain uses chunked documentId in last-turn mode", async () => {

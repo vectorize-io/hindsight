@@ -451,6 +451,7 @@ class OpenAICompatibleLLM(LLMInterface):
             "openrouter",
             "zai",
             "opencode-go",
+            "atlas",
             "fireworks",
         ]
         if self.provider not in valid_providers:
@@ -476,6 +477,8 @@ class OpenAICompatibleLLM(LLMInterface):
                 self.base_url = "https://api.z.ai/api/coding/paas/v4"
             elif self.provider == "opencode-go":
                 self.base_url = "https://opencode.ai/zen/go/v1"
+            elif self.provider == "atlas":
+                self.base_url = "https://api.atlascloud.ai/v1"
             elif self.provider == "fireworks":
                 # OpenAI-compatible inference host (online path). The batch API
                 # lives on a separate control-plane host — see FireworksLLM.
@@ -496,6 +499,7 @@ class OpenAICompatibleLLM(LLMInterface):
                 "openrouter",
                 "zai",
                 "opencode-go",
+                "atlas",
                 "ollama-cloud",
             )
             and not self.api_key

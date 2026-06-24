@@ -212,7 +212,7 @@ class LocalSTCrossEncoder(CrossEncoderModel):
             device = "cpu"
             logger.info("Reranker: forcing CPU mode (HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU=1)")
         else:
-            # Check for GPU (CUDA) or Apple Silicon (MPS)
+            # Check for GPU (CUDA), Apple Silicon (MPS), or Intel XPU
             # Wrap in try-except to gracefully handle any device detection issues
             # (e.g., in CI environments or when PyTorch is built without GPU support)
             device = "cpu"  # Default to CPU
@@ -220,10 +220,13 @@ class LocalSTCrossEncoder(CrossEncoderModel):
                 has_gpu = torch.cuda.is_available() or (
                     hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
                 )
+                # Intel Arc XPU support — torch.xpu is available when the XPU build is loaded
+                if not has_gpu and hasattr(torch, "xpu"):
+                    has_gpu = torch.xpu.is_available()
                 if has_gpu:
-                    device = None  # Let sentence-transformers auto-detect GPU/MPS
+                    device = None  # Let sentence-transformers auto-detect GPU/MPS/XPU
             except Exception as e:
-                logger.warning(f"Failed to detect GPU/MPS, falling back to CPU: {e}")
+                logger.warning(f"Failed to detect GPU/MPS/XPU, falling back to CPU: {e}")
 
         # Patch transformers 5.x compatibility for models using XLM-RoBERTa
         # (e.g., jina-reranker-v2-base-multilingual). transformers 5.x removed

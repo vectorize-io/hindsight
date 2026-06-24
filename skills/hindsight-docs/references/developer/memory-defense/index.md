@@ -4,7 +4,7 @@ sidebar_position: 95
 
 # Memory Defense
 
-Hindsight scrubs secrets and PII from retain content using a 44-pattern regex set. Each match is replaced with a `[REDACTED:type]` marker before content reaches memory units or the document body. The feature is configured per bank and disabled by default.
+Hindsight scrubs secrets and PII from retain content using a 45-pattern regex set. Each match is replaced with a `[REDACTED:type]` marker before content reaches memory units or the document body. The feature is configured per bank and disabled by default.
 
 ## How it works
 
@@ -36,7 +36,7 @@ A minimal policy:
 }
 ```
 
-Once that policy is on a bank, every retain to that bank is screened with the 44 redaction patterns documented below.
+Once that policy is on a bank, every retain to that bank is screened with the 45 redaction patterns documented below.
 
 :::note Existing memories are not retroactively scanned
 Enabling Memory Defense on a bank only affects future retain calls. Memories already in the bank are not re-scanned or modified when you add or change a policy. If you need to scrub a bank that already contains unredacted content, you have to re-ingest the affected memories or remove them manually.
@@ -54,7 +54,7 @@ The same redact/block decisions are also recorded as `memory_defense` entries in
 
 ## Patterns covered
 
-The 44 bundled patterns cover the categories below.
+The 45 bundled patterns cover the categories below.
 
 ### AI and LLM providers
 

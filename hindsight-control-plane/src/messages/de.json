@@ -433,7 +433,7 @@
     "memoryDefenseAction_redact": "Schwärzen",
     "memoryDefenseAction_block": "Blockieren",
     "memoryDefenseSecretLeakTitle": "Geheimnislecks verhindern",
-    "memoryDefenseSecretLeakDescription": "Gespeicherte Inhalte auf Geheimnisse prüfen. 44 Muster für gängige Anbieter-Schlüssel, AWS und persönliche Daten.",
+    "memoryDefenseSecretLeakDescription": "Gespeicherte Inhalte auf Geheimnisse prüfen. 45 Muster für gängige Anbieter-Schlüssel, AWS und persönliche Daten.",
     "memoryDefenseEnterpriseTitle": "Memory Defense Enterprise",
     "memoryDefenseEnterpriseSubtitle": "Mehr erkennen, intelligenter redigieren, alles auditieren — verfügbar in Hindsight Cloud.",
     "memoryDefenseEnterpriseFeatureDetectSecrets": "Erweiterte Geheimnis-Erkennung: 200+ Muster für Anbieter-Schlüssel, AWS, GitHub und CI-Token",

@@ -433,7 +433,7 @@
     "memoryDefenseAction_redact": "Redact",
     "memoryDefenseAction_block": "Block",
     "memoryDefenseSecretLeakTitle": "Secret leak prevention",
-    "memoryDefenseSecretLeakDescription": "Scan retained content for secrets. 44 patterns covering common provider keys, AWS, and PII.",
+    "memoryDefenseSecretLeakDescription": "Scan retained content for secrets. 45 patterns covering common provider keys, AWS, and PII.",
     "memoryDefenseEnterpriseTitle": "Memory Defense Enterprise",
     "memoryDefenseEnterpriseSubtitle": "Detect more, redact smarter, and audit everything — available in Hindsight Cloud.",
     "memoryDefenseEnterpriseFeatureDetectSecrets": "Advanced secret detection: 200+ patterns covering provider keys, AWS, GitHub, and CI tokens",

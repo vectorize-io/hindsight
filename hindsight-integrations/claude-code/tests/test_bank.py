@@ -296,3 +296,14 @@ class TestEnsureBankMission:
         ensure_bank_mission(client, "bank-x", cfg)
         ensure_bank_mission(client, "bank-y", cfg)
         assert client.set_bank_mission.call_count == 2
+
+    @pytest.mark.skipif(not hasattr(__import__("os"), "symlink"), reason="symlinks not supported")
+    def test_directorybankmap_matches_symlinked_cwd(self, tmp_path):
+        import os
+        real = os.path.realpath(tmp_path / "proj")
+        os.makedirs(real)
+        link = str(tmp_path / "proj-link")
+        os.symlink(real, link)
+        cfg = _cfg(directoryBankMap={real: "myproj"}, bankId="fallback")
+        assert derive_bank_id({"cwd": real, "session_id": "s"}, cfg) == "myproj"
+        assert derive_bank_id({"cwd": link, "session_id": "s"}, cfg) == "myproj"
