@@ -1,6 +1,16 @@
 {
   "integrations": [
     {
+      "id": "eliza",
+      "name": "elizaOS",
+      "description": "Give elizaOS agents long-term memory. A plugin that recalls relevant memories into the prompt and retains conversations to Hindsight.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/eliza",
+      "icon": "/img/icons/eliza.png"
+    },
+    {
       "id": "litellm",
       "name": "LiteLLM",
       "description": "Add long-term memory to any LLM via LiteLLM proxy callbacks. Zero code changes — configure once and every model gets memory.",
