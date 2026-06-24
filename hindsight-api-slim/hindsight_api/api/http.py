@@ -1971,10 +1971,11 @@ class MentalModelTrigger(BaseModel):
         default=None,
         description=(
             "Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) "
-            "for refreshing this mental model on a fixed schedule, independent of consolidation. "
-            "A scheduled refresh only runs when the model is stale (new memories in its scope since the "
-            "last refresh); if nothing changed, the tick is skipped to avoid a wasted LLM call. "
-            "null = no schedule."
+            "for refreshing this mental model on a fixed schedule. Mutually exclusive with "
+            "refresh_after_consolidation — a model refreshes either after consolidation or on a cron "
+            "schedule, not both. A scheduled refresh only runs when the model is stale (new memories in "
+            "its scope since the last refresh); if nothing changed, the tick is skipped to avoid a "
+            "wasted LLM call. null = no schedule."
         ),
     )
     fact_types: list[Literal["world", "experience", "observation"]] | None = Field(
@@ -2048,6 +2049,17 @@ class MentalModelTrigger(BaseModel):
         if not croniter.is_valid(v):
             raise ValueError(f"refresh_cron is not a valid cron expression: {v!r}")
         return v
+
+    @model_validator(mode="after")
+    def validate_refresh_exclusivity(self) -> "MentalModelTrigger":
+        # A mental model refreshes either after consolidation (real-time) or on a
+        # cron schedule, never both — the two triggers would race and double-refresh.
+        if self.refresh_after_consolidation and self.refresh_cron:
+            raise ValueError(
+                "refresh_after_consolidation and refresh_cron are mutually exclusive: "
+                "a mental model refreshes either after consolidation or on a cron schedule, not both."
+            )
+        return self
 
 
 class MentalModelResponse(BaseModel):

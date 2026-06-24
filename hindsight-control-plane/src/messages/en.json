@@ -786,7 +786,7 @@
     "optionsRefreshModeDeltaDescription": "Delta mode applies minimal changes to the existing content. Falls back to a full rewrite on the first refresh and whenever the source query changes.",
     "optionsRefreshCronLabel": "Scheduled refresh (cron)",
     "optionsRefreshCronPlaceholder": "0 3 * * *",
-    "optionsRefreshCronDescription": "Refresh on a fixed UTC cron schedule, independent of consolidation. A scheduled refresh only runs when new memories changed this model's scope. Leave empty to disable.",
+    "optionsRefreshCronDescription": "Refresh on a fixed UTC cron schedule. Mutually exclusive with auto-refresh after consolidation. A scheduled refresh only runs when new memories changed this model's scope. Leave empty to disable.",
     "optionsSectionTags": "Tags",
     "optionsTagsLabel": "Tags",
     "optionsTagsPlaceholder": "e.g., project-x, team-alpha (comma-separated)",

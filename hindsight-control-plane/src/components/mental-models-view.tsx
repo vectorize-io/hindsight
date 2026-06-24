@@ -880,8 +880,15 @@ function CreateMentalModelDialog({
                   <Checkbox
                     id="auto-refresh"
                     checked={form.autoRefresh}
+                    // Mutually exclusive with a cron schedule: disabled while a
+                    // cron is set, and checking it clears any cron.
+                    disabled={form.refreshCron.trim().length > 0}
                     onCheckedChange={(checked) =>
-                      setForm({ ...form, autoRefresh: checked === true })
+                      setForm({
+                        ...form,
+                        autoRefresh: checked === true,
+                        refreshCron: checked === true ? "" : form.refreshCron,
+                      })
                     }
                   />
                   <label
@@ -917,7 +924,16 @@ function CreateMentalModelDialog({
                   </label>
                   <Input
                     value={form.refreshCron}
-                    onChange={(e) => setForm({ ...form, refreshCron: e.target.value })}
+                    // Mutually exclusive with auto-refresh: disabled while
+                    // auto-refresh is on, and entering a cron turns it off.
+                    disabled={form.autoRefresh}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        refreshCron: e.target.value,
+                        autoRefresh: e.target.value.trim() ? false : form.autoRefresh,
+                      })
+                    }
                     placeholder={t("optionsRefreshCronPlaceholder")}
                   />
                   <p className="text-xs text-muted-foreground">
@@ -1295,8 +1311,15 @@ function UpdateMentalModelDialog({
                   <Checkbox
                     id="update-auto-refresh"
                     checked={form.autoRefresh}
+                    // Mutually exclusive with a cron schedule: disabled while a
+                    // cron is set, and checking it clears any cron.
+                    disabled={form.refreshCron.trim().length > 0}
                     onCheckedChange={(checked) =>
-                      setForm({ ...form, autoRefresh: checked === true })
+                      setForm({
+                        ...form,
+                        autoRefresh: checked === true,
+                        refreshCron: checked === true ? "" : form.refreshCron,
+                      })
                     }
                   />
                   <label
@@ -1332,7 +1355,16 @@ function UpdateMentalModelDialog({
                   </label>
                   <Input
                     value={form.refreshCron}
-                    onChange={(e) => setForm({ ...form, refreshCron: e.target.value })}
+                    // Mutually exclusive with auto-refresh: disabled while
+                    // auto-refresh is on, and entering a cron turns it off.
+                    disabled={form.autoRefresh}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        refreshCron: e.target.value,
+                        autoRefresh: e.target.value.trim() ? false : form.autoRefresh,
+                      })
+                    }
                     placeholder={t("optionsRefreshCronPlaceholder")}
                   />
                   <p className="text-xs text-muted-foreground">

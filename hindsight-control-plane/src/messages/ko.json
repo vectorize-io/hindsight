@@ -786,7 +786,7 @@
     "optionsRefreshModeDeltaDescription": "델타 모드는 기존 내용에 최소한의 변경을 적용합니다. 첫 번째 새로고침과 소스 쿼리가 변경될 때마다 전체 재작성으로 대체됩니다.",
     "optionsRefreshCronLabel": "예약 새로고침 (cron)",
     "optionsRefreshCronPlaceholder": "0 3 * * *",
-    "optionsRefreshCronDescription": "통합과 별개로 고정된 UTC cron 일정에 따라 새로고침합니다. 예약된 새로고침은 새 메모리가 이 모델의 범위를 변경한 경우에만 실행됩니다. 비활성화하려면 비워 두세요.",
+    "optionsRefreshCronDescription": "고정된 UTC cron 일정에 따라 새로고침합니다. 통합 후 자동 새로고침과 상호 배타적입니다. 예약된 새로고침은 새 메모리가 이 모델의 범위를 변경한 경우에만 실행됩니다. 비활성화하려면 비워 두세요.",
     "optionsSectionTags": "태그",
     "optionsTagsLabel": "태그",
     "optionsTagsPlaceholder": "예: project-x, team-alpha (쉼표로 구분)",

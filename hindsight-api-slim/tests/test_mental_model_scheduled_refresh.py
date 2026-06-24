@@ -12,8 +12,19 @@ import uuid
 
 import pytest
 
+from hindsight_api.api.http import MentalModelTrigger
 from hindsight_api.engine.maintenance import MaintenanceLoop
 from hindsight_api.engine.memory_engine import MemoryEngine
+
+
+def test_refresh_cron_and_auto_refresh_are_mutually_exclusive():
+    """A trigger cannot set both refresh_after_consolidation and refresh_cron."""
+    # Either alone is fine.
+    MentalModelTrigger(refresh_after_consolidation=True)
+    MentalModelTrigger(refresh_cron="0 3 * * *")
+    # Both together is rejected.
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        MentalModelTrigger(refresh_after_consolidation=True, refresh_cron="0 3 * * *")
 
 
 async def _make_bank(memory: MemoryEngine, request_context) -> str:

@@ -786,7 +786,7 @@
     "optionsRefreshModeDeltaDescription": "O modo Delta aplica alterações mínimas ao conteúdo existente. Reverte para uma reescrita completa na primeira atualização e sempre que a consulta de origem mudar.",
     "optionsRefreshCronLabel": "Atualização agendada (cron)",
     "optionsRefreshCronPlaceholder": "0 3 * * *",
-    "optionsRefreshCronDescription": "Atualiza com base em um agendamento cron fixo em UTC, independente da consolidação. Uma atualização agendada só é executada quando novas memórias alteram o escopo deste modelo. Deixe vazio para desativar.",
+    "optionsRefreshCronDescription": "Atualiza com base em um agendamento cron fixo em UTC. Mutuamente exclusivo com a atualização automática após a consolidação. Uma atualização agendada só é executada quando novas memórias alteram o escopo deste modelo. Deixe vazio para desativar.",
     "optionsSectionTags": "Tags",
     "optionsTagsLabel": "Tags",
     "optionsTagsPlaceholder": "ex.: projeto-x, equipe-alpha (separadas por vírgula)",
