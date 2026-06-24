@@ -1,3 +1,4 @@
+import logging
 import os
 from urllib.parse import urlparse, urlunparse
 
@@ -23,6 +24,33 @@ def detect_container_runtime() -> str | None:
     except OSError:
         pass
     return None
+
+
+def warn_if_container_default_worker_id(worker_id: str | None) -> None:
+    """Warn when worker id will fall back to an unstable container hostname."""
+    if worker_id:
+        return
+
+    runtime = detect_container_runtime()
+    if not runtime:
+        return
+
+    logging.warning(
+        "\n"
+        "============================================================\n"
+        "  WARNING: HINDSIGHT_API_WORKER_ID is not set and Hindsight\n"
+        f"  appears to be running inside {runtime}.\n"
+        "\n"
+        "  The worker id is defaulting to the container hostname,\n"
+        "  which CHANGES every time the container is recreated.\n"
+        "  When that happens, tasks left in 'processing' under the\n"
+        "  old hostname are never recovered — consolidation and other\n"
+        "  async operations can get stuck indefinitely.\n"
+        "\n"
+        "  Set HINDSIGHT_API_WORKER_ID to a STABLE value (e.g. the\n"
+        "  compose service name or StatefulSet pod name) to avoid this.\n"
+        "============================================================"
+    )
 
 
 def mask_network_location(url):

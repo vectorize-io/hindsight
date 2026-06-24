@@ -3069,29 +3069,9 @@ def create_app(
         # All current backends (PostgreSQL, Oracle) support async worker/poller.
         if config.worker_enabled and memory._backend.supports_worker_poller:
             from ..config import DEFAULT_DATABASE_SCHEMA
+            from ..utils import warn_if_container_default_worker_id
 
-            if not config.worker_id:
-                from ..utils import detect_container_runtime
-
-                runtime = detect_container_runtime()
-                if runtime:
-                    logging.warning(
-                        "\n"
-                        "============================================================\n"
-                        "  WARNING: HINDSIGHT_API_WORKER_ID is not set and Hindsight\n"
-                        f"  appears to be running inside {runtime}.\n"
-                        "\n"
-                        "  The worker id is defaulting to the container hostname,\n"
-                        "  which CHANGES every time the container is recreated.\n"
-                        "  When that happens, tasks left in 'processing' under the\n"
-                        "  old hostname are never recovered — consolidation and other\n"
-                        "  async operations can get stuck indefinitely.\n"
-                        "\n"
-                        "  Set HINDSIGHT_API_WORKER_ID to a STABLE value (e.g. the\n"
-                        "  compose service name or StatefulSet pod name) to avoid this.\n"
-                        "============================================================"
-                    )
-
+            warn_if_container_default_worker_id(config.worker_id)
             worker_id = config.worker_id or socket.gethostname()
             worker_id_source = "HINDSIGHT_API_WORKER_ID" if config.worker_id else "hostname (default)"
             logging.info(f"Worker id: {worker_id} (source: {worker_id_source})")
