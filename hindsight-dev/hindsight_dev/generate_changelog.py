@@ -44,6 +44,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "agent-framework": IntegrationMeta("hindsight-agent-framework", "Microsoft Agent Framework"),
     "ag2": IntegrationMeta("hindsight-ag2"),
     "ai-sdk": IntegrationMeta("@vectorize-io/hindsight-ai-sdk", "AI SDK"),
+    "eliza": IntegrationMeta("@vectorize-io/hindsight-eliza", "elizaOS"),
     "chat": IntegrationMeta("@vectorize-io/hindsight-chat", "Chat SDK"),
     "openclaw": IntegrationMeta("@vectorize-io/hindsight-openclaw", "OpenClaw"),
     "langgraph": IntegrationMeta("hindsight-langgraph", "LangGraph"),
