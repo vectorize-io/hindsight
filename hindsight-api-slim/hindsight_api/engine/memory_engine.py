@@ -7106,10 +7106,11 @@ class MemoryEngine(MemoryEngineInterface):
             setattr(resolved_config, key, value)
 
         backend = await self._get_backend()
-        # Narrator primes the "Narrator:" line in the prompt — resolve it the same way retain does.
+        # Narrator primes the "Narrator:" line in the prompt. Dry-run must not
+        # create a bank just to resolve that optional display name.
         if agent_name is None:
-            profile = await bank_utils.get_bank_profile(backend, bank_id)
-            profile_name = profile["name"] if profile else bank_id
+            profile = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
+            profile_name = profile["name"] if profile is not None else bank_id
             agent_name = None if profile_name == bank_id else profile_name
 
         retain_llm = self._retain_llm_config.with_config(resolved_config, bank_id=bank_id, operation="retain")
