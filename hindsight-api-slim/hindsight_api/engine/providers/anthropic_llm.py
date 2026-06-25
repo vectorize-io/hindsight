@@ -15,10 +15,23 @@ import time
 from typing import Any
 
 from hindsight_api.engine.llm_interface import LLMInterface
+from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 
 logger = logging.getLogger(__name__)
+
+
+def _usage_from_anthropic_response(response: Any) -> LLMResponseUsage:
+    """Extract input/output/cached token counts from an Anthropic usage block."""
+    usage = getattr(response, "usage", None)
+    if not usage:
+        return LLMResponseUsage()
+    return LLMResponseUsage(
+        input_tokens=usage.input_tokens or 0,
+        output_tokens=usage.output_tokens or 0,
+        cached_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+    )
 
 
 class AnthropicLLM(LLMInterface):
@@ -211,6 +224,9 @@ class AnthropicLLM(LLMInterface):
         for attempt in range(max_retries + 1):
             try:
                 response = await self._client.messages.create(**call_params)
+                # Stash usage before parse/validate, which may raise locally
+                # even though the provider charged for these tokens (#2387).
+                stash_response_usage(_usage_from_anthropic_response(response))
 
                 if use_forced_tool:
                     # Forced tool_use → the validated args are already a dict; no parsing,
@@ -258,10 +274,11 @@ class AnthropicLLM(LLMInterface):
 
                 # Record metrics and log slow calls
                 duration = time.time() - start_time
-                input_tokens = response.usage.input_tokens or 0 if response.usage else 0
-                output_tokens = response.usage.output_tokens or 0 if response.usage else 0
+                response_usage = _usage_from_anthropic_response(response)
+                input_tokens = response_usage.input_tokens
+                output_tokens = response_usage.output_tokens
                 total_tokens = input_tokens + output_tokens
-                cached_tokens = getattr(response.usage, "cache_read_input_tokens", 0) or 0 if response.usage else 0
+                cached_tokens = response_usage.cached_tokens
 
                 # Record LLM metrics
                 metrics = get_metrics_collector()
@@ -449,6 +466,7 @@ class AnthropicLLM(LLMInterface):
         for attempt in range(max_retries + 1):
             try:
                 response = await self._client.messages.create(**call_params)
+                stash_response_usage(_usage_from_anthropic_response(response))
 
                 # Extract content and tool calls
                 content_parts = []

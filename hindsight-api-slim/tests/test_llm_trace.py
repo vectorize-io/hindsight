@@ -206,6 +206,87 @@ async def test_wrapper_error_forwarded_and_reraised(registered_recorder):
     assert "kaboom" in r.error
 
 
+class _StashThenRaiseProvider:
+    """Provider impl that mimics a successful call whose response carries usage,
+    then fails locally during parsing/validation (#2387)."""
+
+    def __init__(self, usage: llm_trace.LLMResponseUsage | None, exc: Exception):
+        self._usage = usage
+        self._exc = exc
+
+    async def call(self, **_kwargs):
+        if self._usage is not None:
+            llm_trace.stash_response_usage(self._usage)
+        raise self._exc
+
+    async def call_with_tools(self, **_kwargs):
+        if self._usage is not None:
+            llm_trace.stash_response_usage(self._usage)
+        raise self._exc
+
+
+@pytest.mark.asyncio
+async def test_wrapper_error_attaches_provider_usage_on_parse_failure(registered_recorder):
+    """When the provider call succeeds (and reports usage) but local parsing/
+    validation raises, the error trace keeps the provider-reported tokens."""
+    llm = LLMProvider(provider="mock", api_key="", base_url="", model="mock")
+    llm._provider_impl = _StashThenRaiseProvider(
+        usage=llm_trace.LLMResponseUsage(input_tokens=321, output_tokens=12, cached_tokens=64),
+        exc=ValueError("invalid structured output"),
+    )
+
+    with pytest.raises(ValueError, match="invalid structured output"):
+        await llm.call(messages=[{"role": "user", "content": "x"}], scope="memory")
+
+    assert len(registered_recorder.records) == 1
+    r = registered_recorder.records[0]
+    assert r.status == "error"
+    assert r.input_tokens == 321
+    assert r.output_tokens == 12
+    assert r.cached_tokens == 64
+    assert r.total_tokens == 333
+    # contextvar is unwound after the call so the next call starts clean
+    assert llm_trace.current_response_usage() is None
+
+
+@pytest.mark.asyncio
+async def test_wrapper_error_without_provider_usage_records_zero(registered_recorder):
+    """A failure before any response (no usage stashed) still records 0 tokens."""
+    llm = LLMProvider(provider="mock", api_key="", base_url="", model="mock")
+    llm._provider_impl = _StashThenRaiseProvider(usage=None, exc=RuntimeError("connection reset"))
+
+    with pytest.raises(RuntimeError, match="connection reset"):
+        await llm.call(messages=[{"role": "user", "content": "x"}], scope="memory")
+
+    r = registered_recorder.records[0]
+    assert r.status == "error"
+    assert r.input_tokens is None
+    assert r.output_tokens is None
+    assert r.cached_tokens is None
+
+
+@pytest.mark.asyncio
+async def test_wrapper_tools_error_attaches_provider_usage(registered_recorder):
+    """The tool-calling path forwards provider usage onto error traces too."""
+    llm = LLMProvider(provider="mock", api_key="", base_url="", model="mock")
+    llm._provider_impl = _StashThenRaiseProvider(
+        usage=llm_trace.LLMResponseUsage(input_tokens=50, output_tokens=5),
+        exc=ValueError("bad tool args"),
+    )
+
+    with pytest.raises(ValueError, match="bad tool args"):
+        await llm.call_with_tools(
+            messages=[{"role": "user", "content": "x"}],
+            tools=[],
+            scope="tools",
+        )
+
+    r = registered_recorder.records[0]
+    assert r.status == "error"
+    assert r.input_tokens == 50
+    assert r.output_tokens == 5
+
+
 @pytest.mark.asyncio
 async def test_configured_provider_binds_bank_context(registered_recorder):
     llm = LLMProvider(provider="mock", api_key="", base_url="", model="mock")
@@ -235,7 +316,6 @@ async def test_engine_teardown_unregisters_recorder_even_when_close_skipped():
     leave the registry exactly as it found it.
     """
     from hindsight_api import tracing
-
     from tests.conftest import _teardown_memory_engine
 
     sentinel = object()

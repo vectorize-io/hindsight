@@ -861,7 +861,13 @@ class LLMProvider:
         # The requested params are stashed in a contextvar (only what the caller
         # actually set) so the recorder can attach them to either path.
         from ..tracing import get_span_recorder
-        from .llm_trace import reset_request_context, set_request_context
+        from .llm_trace import (
+            current_response_usage,
+            reset_request_context,
+            reset_response_usage,
+            set_request_context,
+            set_response_usage,
+        )
 
         call_start = time.monotonic()
         request_token = set_request_context(
@@ -872,6 +878,9 @@ class LLMProvider:
                 response_format=response_format,
             )
         )
+        # Cleared per call; the provider stashes real usage once a response is in
+        # hand so the error path below can attach it if parsing/validation fails.
+        usage_token = set_response_usage(None)
         try:
             async with AsyncExitStack() as stack:
                 for sem in _semaphores_for_scope(scope):
@@ -899,14 +908,19 @@ class LLMProvider:
                         **cache_kwarg,
                     )
                 except Exception as e:
+                    # The provider call may have succeeded (and incurred token
+                    # cost) before local parsing/validation raised; attach the
+                    # provider-reported usage to the error trace when available.
+                    usage = current_response_usage()
                     get_span_recorder().record_llm_call(
                         provider=self.provider,
                         model=self.model,
                         scope=scope,
                         messages=messages,
                         response_content=None,
-                        input_tokens=0,
-                        output_tokens=0,
+                        input_tokens=usage.input_tokens if usage else 0,
+                        output_tokens=usage.output_tokens if usage else 0,
+                        cached_tokens=usage.cached_tokens if usage else 0,
                         duration=time.monotonic() - call_start,
                         error=e,
                     )
@@ -922,6 +936,7 @@ class LLMProvider:
                         self._mock_calls = self._provider_impl.get_mock_calls()
         finally:
             reset_request_context(request_token)
+            reset_response_usage(usage_token)
 
         return result
 
@@ -961,7 +976,13 @@ class LLMProvider:
 
         # Failures forwarded to the GenAI recorder; successes recorded by providers.
         from ..tracing import get_span_recorder
-        from .llm_trace import reset_request_context, set_request_context
+        from .llm_trace import (
+            current_response_usage,
+            reset_request_context,
+            reset_response_usage,
+            set_request_context,
+            set_response_usage,
+        )
 
         call_start = time.monotonic()
         request_token = set_request_context(
@@ -972,6 +993,9 @@ class LLMProvider:
                 tool_choice=tool_choice,
             )
         )
+        # Cleared per call; the provider stashes real usage once a response is in
+        # hand so the error path below can attach it if parsing/validation fails.
+        usage_token = set_response_usage(None)
         try:
             async with AsyncExitStack() as stack:
                 for sem in _semaphores_for_scope(scope):
@@ -996,14 +1020,19 @@ class LLMProvider:
                         **cache_kwarg,
                     )
                 except Exception as e:
+                    # The provider call may have succeeded (and incurred token
+                    # cost) before local parsing/validation raised; attach the
+                    # provider-reported usage to the error trace when available.
+                    usage = current_response_usage()
                     get_span_recorder().record_llm_call(
                         provider=self.provider,
                         model=self.model,
                         scope=scope,
                         messages=messages,
                         response_content=None,
-                        input_tokens=0,
-                        output_tokens=0,
+                        input_tokens=usage.input_tokens if usage else 0,
+                        output_tokens=usage.output_tokens if usage else 0,
+                        cached_tokens=usage.cached_tokens if usage else 0,
                         duration=time.monotonic() - call_start,
                         error=e,
                     )
@@ -1019,6 +1048,7 @@ class LLMProvider:
                         self._mock_calls = self._provider_impl.get_mock_calls()
         finally:
             reset_request_context(request_token)
+            reset_response_usage(usage_token)
 
         return result
 

@@ -76,6 +76,51 @@ _request_ctx: ContextVar[dict[str, Any] | None] = ContextVar("hindsight_llm_requ
 _call_metadata_ctx: ContextVar[dict[str, Any] | None] = ContextVar("hindsight_llm_call_metadata_ctx", default=None)
 
 
+@dataclass
+class LLMResponseUsage:
+    """Provider-reported token usage for the in-flight LLM call.
+
+    Stashed by provider implementations as soon as a response is received —
+    *before* local JSON parsing / schema validation, which may still fail. The
+    wrapper reads it to attach real token counts to an error trace when the
+    provider call itself succeeded but the structured output couldn't be parsed
+    or validated (providers charge for those tokens regardless). See #2387.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+
+
+# Per-call provider usage, set by providers right after a response is received.
+_response_usage_ctx: ContextVar[LLMResponseUsage | None] = ContextVar("hindsight_llm_response_usage_ctx", default=None)
+
+
+def set_response_usage(usage: LLMResponseUsage | None) -> Token:
+    """Bind provider-reported usage for the current call. Returns a reset token."""
+    return _response_usage_ctx.set(usage)
+
+
+def stash_response_usage(usage: LLMResponseUsage | None) -> None:
+    """Record provider-reported usage so an error trace can attach it later.
+
+    Called by provider implementations once a response (with usage) is in hand,
+    before parsing/validation that may raise. Overwrites any prior value from an
+    earlier retry attempt so the last attempt's usage wins.
+    """
+    _response_usage_ctx.set(usage)
+
+
+def reset_response_usage(token: Token) -> None:
+    """Unwind a binding made by :func:`set_response_usage`."""
+    _response_usage_ctx.reset(token)
+
+
+def current_response_usage() -> LLMResponseUsage | None:
+    """Return the active call's provider-reported usage, or None."""
+    return _response_usage_ctx.get()
+
+
 def set_trace_context(ctx: LLMTraceContext | None) -> Token:
     """Bind trace attribution to the current context. Returns a reset token."""
     return _trace_ctx.set(ctx)
