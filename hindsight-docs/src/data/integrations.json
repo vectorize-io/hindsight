@@ -579,6 +579,16 @@
       "category": "tool",
       "link": "/sdks/integrations/windsurf",
       "icon": "/img/icons/windsurf.svg"
-    }
+    },
+    {
+     "id": "epimetheus",
+     "name": "Epimetheus",
+     "description": "Memory for pi coding agent. Retain, recall, reflect, past-session ingestion, and much more, with a focus on flexibility and memory quality/best practices.",
+     "type": "community",
+     "by": "noctuid",
+     "category": "tool",
+     "link": "https://github.com/noctuid/epimetheus",
+     "icon": "/img/icons/epimetheus.png"
+   }
   ]
 }
