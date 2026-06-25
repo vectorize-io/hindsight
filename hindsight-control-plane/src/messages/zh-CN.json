@@ -792,7 +792,7 @@
     "optionsRefreshModeDelta": "增量 — 最小化编辑，保留未更改内容",
     "optionsRefreshModeDeltaDescription": "增量模式只对现有内容做最小化修改。首次刷新及源查询变更时将回退为完整重写。",
     "optionsRefreshCronLabel": "定时刷新 (cron)",
-    "optionsRefreshCronPlaceholder": "0 3 * * *",
+    "optionsRefreshCronPlaceholder": "分 时 日 月 周  ·  例如 0 3 * * *（每天 03:00 UTC）",
     "optionsRefreshCronDescription": "按固定的 UTC cron 计划刷新。与整合后自动刷新互斥。仅当新记忆改变了此模型的范围时，定时刷新才会运行。留空表示禁用。",
     "optionsSectionTags": "标签",
     "optionsTagsLabel": "标签",

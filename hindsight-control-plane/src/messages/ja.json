@@ -792,7 +792,7 @@
     "optionsRefreshModeDelta": "デルタ — 最小限の編集、変更のないコンテンツを保持",
     "optionsRefreshModeDeltaDescription": "デルタモードは既存のコンテンツに最小限の変更を適用します。最初の更新時およびソースクエリが変更されるたびにフル書き換えにフォールバックします。",
     "optionsRefreshCronLabel": "スケジュール更新 (cron)",
-    "optionsRefreshCronPlaceholder": "0 3 * * *",
+    "optionsRefreshCronPlaceholder": "分 時 日 月 曜日  ·  例: 0 3 * * *（毎日 03:00 UTC）",
     "optionsRefreshCronDescription": "固定の UTC cron スケジュールで更新します。統合後の自動更新とは相互に排他的です。スケジュールされた更新は、新しいメモリがこのモデルのスコープを変更した場合にのみ実行されます。無効にするには空のままにします。",
     "optionsSectionTags": "タグ",
     "optionsTagsLabel": "タグ",

@@ -792,7 +792,7 @@
     "optionsRefreshModeDelta": "增量 — 最小化編輯，保留未更改內容",
     "optionsRefreshModeDeltaDescription": "增量模式只會對現有內容做最小幅度修改。首次重新整理及來源查詢變更時，會改用完整重寫。",
     "optionsRefreshCronLabel": "定時重新整理 (cron)",
-    "optionsRefreshCronPlaceholder": "0 3 * * *",
+    "optionsRefreshCronPlaceholder": "分 時 日 月 週  ·  例如 0 3 * * *（每天 03:00 UTC）",
     "optionsRefreshCronDescription": "依固定的 UTC cron 排程重新整理。與整合後自動重新整理互斥。只有當新記憶改變此模型的範圍時，定時重新整理才會執行。留空即停用。",
     "optionsSectionTags": "標籤",
     "optionsTagsLabel": "標籤",

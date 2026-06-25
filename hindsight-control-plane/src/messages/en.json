@@ -792,7 +792,7 @@
     "optionsRefreshModeDelta": "Delta — surgical edits, preserve unchanged content",
     "optionsRefreshModeDeltaDescription": "Delta mode applies minimal changes to the existing content. Falls back to a full rewrite on the first refresh and whenever the source query changes.",
     "optionsRefreshCronLabel": "Scheduled refresh (cron)",
-    "optionsRefreshCronPlaceholder": "0 3 * * *",
+    "optionsRefreshCronPlaceholder": "min hour day month weekday  ·  e.g. 0 3 * * * (daily 03:00 UTC)",
     "optionsRefreshCronDescription": "Refresh on a fixed UTC cron schedule. Mutually exclusive with auto-refresh after consolidation. A scheduled refresh only runs when new memories changed this model's scope. Leave empty to disable.",
     "optionsSectionTags": "Tags",
     "optionsTagsLabel": "Tags",

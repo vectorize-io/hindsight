@@ -792,7 +792,7 @@
     "optionsRefreshModeDelta": "Delta — ediciones quirúrgicas, conserva el contenido sin cambios",
     "optionsRefreshModeDeltaDescription": "El modo delta aplica cambios mínimos al contenido existente. Recurre a una reescritura completa en la primera actualización y cuando cambia la consulta fuente.",
     "optionsRefreshCronLabel": "Actualización programada (cron)",
-    "optionsRefreshCronPlaceholder": "0 3 * * *",
+    "optionsRefreshCronPlaceholder": "min hora día mes díaSem  ·  ej. 0 3 * * * (diario 03:00 UTC)",
     "optionsRefreshCronDescription": "Actualiza según una programación cron fija en UTC. Mutuamente excluyente con la actualización automática tras la consolidación. Una actualización programada solo se ejecuta cuando nuevas memorias cambian el ámbito de este modelo. Déjalo vacío para desactivarlo.",
     "optionsSectionTags": "Etiquetas",
     "optionsTagsLabel": "Etiquetas",

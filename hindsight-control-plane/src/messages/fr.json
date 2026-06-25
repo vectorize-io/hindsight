@@ -792,7 +792,7 @@
     "optionsRefreshModeDelta": "Delta — modifications chirurgicales, préserver le contenu inchangé",
     "optionsRefreshModeDeltaDescription": "Le mode Delta applique des modifications minimales au contenu existant. Il effectue une réécriture complète lors de la première actualisation et chaque fois que la requête source change.",
     "optionsRefreshCronLabel": "Actualisation planifiée (cron)",
-    "optionsRefreshCronPlaceholder": "0 3 * * *",
+    "optionsRefreshCronPlaceholder": "min heure jour mois jourSem  ·  ex. 0 3 * * * (chaque jour 03:00 UTC)",
     "optionsRefreshCronDescription": "Actualise selon une planification cron fixe en UTC. Mutuellement exclusif avec l'actualisation automatique après consolidation. Une actualisation planifiée ne s'exécute que lorsque de nouvelles mémoires modifient la portée de ce modèle. Laissez vide pour désactiver.",
     "optionsSectionTags": "Tags",
     "optionsTagsLabel": "Tags",

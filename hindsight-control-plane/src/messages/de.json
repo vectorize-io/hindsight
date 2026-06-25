@@ -792,7 +792,7 @@
     "optionsRefreshModeDelta": "Delta — minimale Bearbeitungen, unveränderter Inhalt bleibt erhalten",
     "optionsRefreshModeDeltaDescription": "Der Delta-Modus nimmt minimale Änderungen am vorhandenen Inhalt vor. Greift bei der ersten Aktualisierung und bei jeder Änderung der Quellenabfrage auf eine vollständige Neugenerierung zurück.",
     "optionsRefreshCronLabel": "Geplante Aktualisierung (Cron)",
-    "optionsRefreshCronPlaceholder": "0 3 * * *",
+    "optionsRefreshCronPlaceholder": "Min Std Tag Monat Wochentag  ·  z. B. 0 3 * * * (täglich 03:00 UTC)",
     "optionsRefreshCronDescription": "Aktualisiert nach einem festen UTC-Cron-Zeitplan. Schließt sich mit der automatischen Aktualisierung nach der Konsolidierung gegenseitig aus. Eine geplante Aktualisierung wird nur ausgeführt, wenn neue Erinnerungen den Geltungsbereich dieses Modells geändert haben. Leer lassen, um zu deaktivieren.",
     "optionsSectionTags": "Tags",
     "optionsTagsLabel": "Tags",
