@@ -145,6 +145,17 @@ else
     print_warn "File $CONTROL_PLANE_PKG not found, skipping"
 fi
 
+# Update Claude Code plugin manifest. Claude Code's plugin manager uses this
+# manifest version to decide whether an installed plugin should refresh.
+CLAUDE_CODE_PLUGIN_MANIFEST="hindsight-integrations/claude-code/.claude-plugin/plugin.json"
+if [ -f "$CLAUDE_CODE_PLUGIN_MANIFEST" ]; then
+    print_info "Updating $CLAUDE_CODE_PLUGIN_MANIFEST"
+    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$CLAUDE_CODE_PLUGIN_MANIFEST"
+    rm "${CLAUDE_CODE_PLUGIN_MANIFEST}.bak"
+else
+    print_warn "File $CLAUDE_CODE_PLUGIN_MANIFEST not found, skipping"
+fi
+
 # Update hindsight-all npm wrapper package.json
 ALL_NPM_PKG="hindsight-all-npm/package.json"
 if [ -f "$ALL_NPM_PKG" ]; then
