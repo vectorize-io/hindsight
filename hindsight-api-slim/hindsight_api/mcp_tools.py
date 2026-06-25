@@ -3129,7 +3129,10 @@ def _register_get_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfi
                 profile = await memory.get_bank_profile(
                     target_bank,
                     request_context=_get_request_context(config),
+                    create_if_missing=False,
                 )
+                if profile is None:
+                    return json.dumps({"error": f"Bank '{target_bank}' not found"})
                 if "disposition" in profile and hasattr(profile["disposition"], "model_dump"):
                     profile["disposition"] = profile["disposition"].model_dump()
                 return json.dumps(profile, indent=2, default=str)
@@ -3157,7 +3160,10 @@ def _register_get_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfi
                 profile = await memory.get_bank_profile(
                     target_bank,
                     request_context=_get_request_context(config),
+                    create_if_missing=False,
                 )
+                if profile is None:
+                    return {"error": f"Bank '{target_bank}' not found"}
                 if "disposition" in profile and hasattr(profile["disposition"], "model_dump"):
                     profile["disposition"] = profile["disposition"].model_dump()
                 return profile

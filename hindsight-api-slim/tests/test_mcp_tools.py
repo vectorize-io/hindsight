@@ -1511,6 +1511,14 @@ class TestTagsAndBankTools:
         mcp = _make_mcp_server(mock_memory, {"get_bank"}, include_bank_id=True)
         result = await _tools(mcp)["get_bank"].fn()
         assert '"test-bank"' in result or "test-bank" in result
+        assert mock_memory.get_bank_profile.call_args.kwargs["create_if_missing"] is False
+
+    async def test_get_bank_missing_does_not_create(self, mock_memory):
+        mock_memory.get_bank_profile.return_value = None
+        mcp = _make_mcp_server(mock_memory, {"get_bank"}, include_bank_id=True)
+        result = await _tools(mcp)["get_bank"].fn(bank_id="missing-bank")
+        assert json.loads(result)["error"] == "Bank 'missing-bank' not found"
+        assert mock_memory.get_bank_profile.call_args.kwargs["create_if_missing"] is False
 
     async def test_get_bank_stats(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"get_bank_stats"}, include_bank_id=True)
@@ -1556,6 +1564,14 @@ class TestTagsAndBankTools:
         mcp = _make_mcp_server(mock_memory, {"get_bank"}, include_bank_id=False)
         result = await _tools(mcp)["get_bank"].fn()
         assert isinstance(result, dict)
+        assert mock_memory.get_bank_profile.call_args.kwargs["create_if_missing"] is False
+
+    async def test_get_bank_single_bank_missing_does_not_create(self, mock_memory):
+        mock_memory.get_bank_profile.return_value = None
+        mcp = _make_mcp_server(mock_memory, {"get_bank"}, include_bank_id=False)
+        result = await _tools(mcp)["get_bank"].fn()
+        assert result["error"] == "Bank 'test-bank' not found"
+        assert mock_memory.get_bank_profile.call_args.kwargs["create_if_missing"] is False
 
     async def test_delete_bank_single_bank(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"delete_bank"}, include_bank_id=False)
