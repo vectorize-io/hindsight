@@ -395,3 +395,64 @@ def test_rechunk_preserves_one_chunk_id_per_pre_chunk():
             chunk_ids.append(f"bank_doc_{global_idx}")
 
     assert len(chunk_ids) == len(set(chunk_ids)), f"duplicate chunk_ids in one batch: {chunk_ids}"
+
+
+# ---------------------------------------------------------------------------
+# Append-mode JSON array merge simulation (issue #2409)
+# ---------------------------------------------------------------------------
+
+
+def test_newline_joined_json_arrays_bypass_conversation_chunking():
+    """Newline-joined JSON arrays (the pre-fix append-mode storage format)
+    fail both the conversation and JSONL detection paths and fall through
+    to sentence-boundary text splitting.
+
+    This test documents the broken state that issue #2409 fixes at the
+    orchestrator level. chunk_text() itself is not changed; the fix
+    merges the arrays before they reach chunk_text().
+    """
+    turn1 = json.dumps([{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi there"}])
+    turn2 = json.dumps([{"role": "user", "content": "How are you"}, {"role": "assistant", "content": "Fine"}])
+    corrupted = turn1 + "\n" + turn2
+
+    chunks = chunk_text(corrupted, max_chars=80)
+
+    # The corrupted format does NOT route through _chunk_conversation.
+    # At least one chunk will not be a valid JSON array of dicts.
+    has_non_json_chunk = False
+    for chunk in chunks:
+        try:
+            parsed = json.loads(chunk)
+            if not (isinstance(parsed, list) and all(isinstance(e, dict) for e in parsed)):
+                has_non_json_chunk = True
+        except json.JSONDecodeError:
+            has_non_json_chunk = True
+    assert has_non_json_chunk, (
+        "Newline-joined JSON arrays should NOT produce valid conversation chunks. "
+        "If this fails, chunk_text() learned to handle the format and the "
+        "orchestrator-level merge in #2409 may be redundant."
+    )
+
+
+def test_merged_json_array_routes_to_conversation_chunking():
+    """A properly merged flat JSON array (the post-fix format) routes
+    through _chunk_conversation and produces chunks that are each valid
+    JSON arrays of complete message dicts.
+    """
+    messages = [
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there"},
+        {"role": "user", "content": "How are you"},
+        {"role": "assistant", "content": "Fine, thanks for asking"},
+    ]
+    text = json.dumps(messages)
+
+    chunks = chunk_text(text, max_chars=120)
+
+    assert len(chunks) > 1, "Should produce multiple chunks at this budget"
+    for chunk in chunks:
+        parsed = json.loads(chunk)
+        assert isinstance(parsed, list), f"Chunk must be a JSON array: {chunk[:60]}"
+        assert all(isinstance(e, dict) for e in parsed), f"Every element must be a dict: {chunk[:60]}"
+        assert all("role" in e for e in parsed), f"Every element must have a role key: {chunk[:60]}"
+        
