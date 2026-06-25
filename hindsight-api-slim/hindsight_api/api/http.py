@@ -5644,8 +5644,13 @@ def _register_routes(app: FastAPI):
     ):
         """Partially update an agent's profile (name, mission, disposition)."""
         try:
-            # Ensure bank exists
-            await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            # PATCH is update-only; missing banks must not be created as a
+            # side effect of reading the profile.
+            existing_profile = await app.state.memory.get_bank_profile(
+                bank_id, request_context=request_context, create_if_missing=False
+            )
+            if existing_profile is None:
+                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
 
             # Update name if provided (stored in DB for display only, deprecated)
             if request.name is not None:
@@ -5661,7 +5666,11 @@ def _register_routes(app: FastAPI):
                 await app.state.memory._config_resolver.update_bank_config(bank_id, config_updates, request_context)
 
             # Get final profile
-            final_profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            final_profile = await app.state.memory.get_bank_profile(
+                bank_id, request_context=request_context, create_if_missing=False
+            )
+            if final_profile is None:
+                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
             disposition_dict = (
                 final_profile["disposition"].model_dump()
                 if hasattr(final_profile["disposition"], "model_dump")
