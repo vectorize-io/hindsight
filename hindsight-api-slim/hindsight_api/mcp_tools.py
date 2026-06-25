@@ -1225,7 +1225,9 @@ def _register_create_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
         """
         try:
             request_context = _get_request_context(config)
-            # get_bank_profile auto-creates bank if it doesn't exist
+            # create_bank may auto-create the bank; validate that explicit
+            # creation permission before reading the resulting profile.
+            await memory._ensure_bank_exists(bank_id, request_context)
             profile = await memory.get_bank_profile(bank_id, request_context=request_context)
 
             # Update name/mission if provided
