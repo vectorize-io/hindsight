@@ -3,13 +3,18 @@ export function formatRelativeTime(dateStr: string): string {
   const diffSec = Math.round((Date.now() - then) / 1000);
   const abs = Math.abs(diffSec);
   if (abs < 60) return diffSec >= 0 ? "just now" : "in a moment";
+  // Each entry is [divisor, unit-after-dividing]: when the running value
+  // (still in the previous unit) is at least `divisor`, divide by it and the
+  // result is expressed in `nextUnit`. Labels must name the unit you convert
+  // INTO, not the one you came from — otherwise every duration renders one
+  // unit too small (e.g. 22 hours shown as "22 minutes ago").
   const units: [number, Intl.RelativeTimeFormatUnit][] = [
-    [60, "second"],
     [60, "minute"],
-    [24, "hour"],
-    [7, "day"],
-    [4.345, "week"],
-    [12, "month"],
+    [60, "hour"],
+    [24, "day"],
+    [7, "week"],
+    [4.345, "month"],
+    [12, "year"],
     [Number.POSITIVE_INFINITY, "year"],
   ];
   let value = diffSec;
