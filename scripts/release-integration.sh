@@ -13,7 +13,7 @@ print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-VALID_INTEGRATIONS=("ag2" "agent-framework" "agentcore" "agno" "aider" "ai-sdk" "autogen" "chat" "claude-agent-sdk" "claude-code" "cline" "cloudflare-oauth-proxy" "codex" "composio" "continue" "crewai" "cursor" "cursor-cli" "dify" "flowise" "gemini-spark" "google-adk" "haystack" "langgraph" "litellm" "llamaindex" "n8n" "nemoclaw" "obsidian" "omo" "openai-agents" "openclaw" "opencode" "openhands" "paperclip" "pipecat" "pydantic-ai" "roo-code" "smolagents" "strands" "superagent" "vapi" "zed")
+VALID_INTEGRATIONS=("ag2" "agent-framework" "agentcore" "agno" "aider" "ai-sdk" "autogen" "chat" "claude-agent-sdk" "claude-code" "cline" "cloudflare-oauth-proxy" "codex" "composio" "continue" "crewai" "cursor" "cursor-cli" "dify" "eve" "flowise" "gemini-spark" "github-copilot" "google-adk" "haystack" "langgraph" "litellm" "llamaindex" "n8n" "nemoclaw" "obsidian" "omo" "openai-agents" "openclaw" "opencode" "openhands" "paperclip" "pipecat" "pydantic-ai" "roo-code" "smolagents" "strands" "superagent" "vapi" "windsurf" "zed")
 
 usage() {
     print_error "Usage: $0 <integration> <version>"
@@ -164,6 +164,18 @@ else
     exit 1
 fi
 
+# The Claude Code plugin ships via the marketplace manifest (no package
+# registry). `claude plugin marketplace add vectorize-io/hindsight` only ever
+# reads the root .claude-plugin/marketplace.json, so its "version" must be
+# bumped in lockstep with the plugin so the published catalog reflects the new
+# release (see #2386).
+if [ "$INTEGRATION" = "claude-code" ]; then
+    MARKETPLACE_FILE=".claude-plugin/marketplace.json"
+    print_info "Updating marketplace version in $MARKETPLACE_FILE"
+    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$MARKETPLACE_FILE"
+    rm "$MARKETPLACE_FILE.bak"
+fi
+
 # Generate changelog entry using LLM
 print_info "Generating changelog entry..."
 if cd hindsight-dev && uv run generate-changelog "$VERSION" --integration "$INTEGRATION"; then
@@ -183,6 +195,8 @@ print_info "Regenerating docs skill..."
 # Commit version bump + changelog + regenerated skill together
 print_info "Committing changes..."
 git add "hindsight-integrations/$INTEGRATION/" "hindsight-docs/src/pages/changelog/integrations/$INTEGRATION.md" "skills/"
+# claude-code also bumps the root marketplace manifest (no-op stage for other integrations)
+git add ".claude-plugin/marketplace.json"
 git commit --no-verify -m "release($INTEGRATION): v$VERSION"
 
 # Create annotated tag

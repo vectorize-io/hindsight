@@ -433,7 +433,7 @@
     "memoryDefenseAction_redact": "마스킹",
     "memoryDefenseAction_block": "차단",
     "memoryDefenseSecretLeakTitle": "시크릿 유출 방지",
-    "memoryDefenseSecretLeakDescription": "보존된 콘텐츠에서 시크릿을 검사합니다. 일반적인 공급자 키, AWS, 개인 정보를 포함하는 44개 패턴.",
+    "memoryDefenseSecretLeakDescription": "보존된 콘텐츠에서 시크릿을 검사합니다. 일반적인 공급자 키, AWS, 개인 정보를 포함하는 45개 패턴.",
     "memoryDefenseEnterpriseTitle": "Memory Defense Enterprise",
     "memoryDefenseEnterpriseSubtitle": "더 많이 감지하고, 더 똑똑하게 편집하며, 모든 것을 감사하세요 — Hindsight Cloud에서 사용 가능.",
     "memoryDefenseEnterpriseFeatureDetectSecrets": "고급 시크릿 감지: 공급자 키, AWS, GitHub, CI 토큰을 포함하는 200개 이상의 패턴",

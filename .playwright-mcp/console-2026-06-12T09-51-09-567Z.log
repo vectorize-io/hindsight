@@ -1,0 +1,3 @@
+[     128ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[     143ms] [LOG] [HMR] connected @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[     290ms] [WARNING] Image with src "http://localhost:9999/logo.png" has either width or height modified, but not the other. If you use CSS to change the size of your image, also include the styles 'width: "auto"' or 'height: "auto"' to maintain the aspect ratio. @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477

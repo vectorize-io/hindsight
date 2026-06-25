@@ -433,7 +433,7 @@
     "memoryDefenseAction_redact": "Censurer",
     "memoryDefenseAction_block": "Bloquer",
     "memoryDefenseSecretLeakTitle": "Prévention des fuites de secrets",
-    "memoryDefenseSecretLeakDescription": "Analyse le contenu retenu à la recherche de secrets. 44 motifs couvrant les clés de fournisseurs courants, AWS et les informations personnelles.",
+    "memoryDefenseSecretLeakDescription": "Analyse le contenu retenu à la recherche de secrets. 45 motifs couvrant les clés de fournisseurs courants, AWS et les informations personnelles.",
     "memoryDefenseEnterpriseTitle": "Memory Defense Enterprise",
     "memoryDefenseEnterpriseSubtitle": "Détectez davantage, expurgez plus intelligemment et auditez tout — disponible dans Hindsight Cloud.",
     "memoryDefenseEnterpriseFeatureDetectSecrets": "Détection avancée de secrets : plus de 200 motifs couvrant les clés de fournisseurs, AWS, GitHub et tokens CI",

@@ -1,0 +1,2029 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e4]:
+      - img "Hindsight" [ref=e5]
+      - combobox [ref=e7]:
+        - generic [ref=e8]: cluster-demo
+        - img
+      - button "Add Document" [ref=e10]:
+        - img
+        - generic [ref=e11]: Add Document
+      - link "GitHub" [ref=e12] [cursor=pointer]:
+        - /url: https://github.com/vectorize-io/hindsight
+        - img [ref=e13]
+        - generic [ref=e16]: GitHub
+      - button "Switch to dark mode" [ref=e18]:
+        - img
+      - button "Change language" [ref=e19]:
+        - img
+    - generic [ref=e20]:
+      - complementary [ref=e21]:
+        - navigation [ref=e22]:
+          - list [ref=e23]:
+            - listitem [ref=e24]:
+              - link "Memories" [ref=e25] [cursor=pointer]:
+                - /url: /banks/cluster-demo?view=data
+                - img [ref=e26]
+            - listitem [ref=e30]:
+              - link "Recall" [ref=e31] [cursor=pointer]:
+                - /url: /banks/cluster-demo?view=recall
+                - img [ref=e32]
+            - listitem [ref=e35]:
+              - link "Reflect" [ref=e36] [cursor=pointer]:
+                - /url: /banks/cluster-demo?view=reflect
+                - img [ref=e37]
+            - listitem [ref=e40]:
+              - link "Documents" [ref=e41] [cursor=pointer]:
+                - /url: /banks/cluster-demo?view=documents
+                - img [ref=e42]
+            - listitem [ref=e45]:
+              - link "Entities" [ref=e46] [cursor=pointer]:
+                - /url: /banks/cluster-demo?view=entities
+                - img [ref=e47]
+            - listitem [ref=e52]:
+              - link "Bank Configuration" [ref=e53] [cursor=pointer]:
+                - /url: /banks/cluster-demo?view=profile
+                - img [ref=e54]
+        - button "Expand sidebar" [ref=e58]:
+          - img [ref=e59]
+      - main [ref=e61]:
+        - generic [ref=e63]:
+          - heading "Memories" [level=1] [ref=e64]
+          - paragraph [ref=e65]: View and explore different types of memories stored in this memory bank.
+          - generic [ref=e67]:
+            - button "World Facts" [ref=e68]
+            - button "Experience" [ref=e70]
+            - button "Observations" [ref=e71]: Observations
+            - button "Mental Models" [ref=e72]
+          - generic [ref=e173]:
+            - paragraph [ref=e174]: Consolidated knowledge synthesized from facts — patterns, preferences, and learnings that emerge from accumulated evidence.
+            - generic [ref=e175]:
+              - generic [ref=e177]:
+                - generic [ref=e178]:
+                  - img
+                  - textbox "Filter by text or context (press Enter)..." [ref=e179]
+                - generic [ref=e181]:
+                  - img
+                  - textbox "Filter by tag…" [ref=e182]
+                - combobox "Scope" [expanded] [ref=e183]:
+                  - img
+                  - generic [ref=e185]: All scopes
+                  - img
+              - generic [ref=e186]:
+                - generic [ref=e187]:
+                  - generic [ref=e188]: 163 total memories
+                  - 'generic "All memories consolidated (last: 6/11/2026, 5:58:22 PM)" [ref=e189]':
+                    - img [ref=e190]
+                    - text: In Sync
+                - generic [ref=e193]:
+                  - button "Constellation" [ref=e194]:
+                    - img [ref=e195]
+                    - text: Constellation
+                  - button "Graph" [ref=e202]:
+                    - img [ref=e203]
+                    - text: Graph
+                  - button "Table" [ref=e208]:
+                    - img [ref=e209]
+                    - text: Table
+                  - button "Timeline" [ref=e210]:
+                    - img [ref=e211]
+                    - text: Timeline
+              - generic [ref=e213]:
+                - generic [ref=e217]:
+                  - button "Share" [ref=e218] [cursor=pointer]:
+                    - img [ref=e219]
+                    - text: Share
+                  - button "Fullscreen" [ref=e222] [cursor=pointer]:
+                    - img [ref=e223]
+                    - text: Fullscreen
+                - button "Hide panel" [ref=e228]:
+                  - img [ref=e229]
+                - generic [ref=e232]:
+                  - heading "Constellation View" [level=3] [ref=e233]
+                  - paragraph [ref=e234]: Canvas-rendered memory map with spatial label deconfliction. Scroll to zoom, drag to pan, hover to explore entity connections. Click a memory to view details.
+                  - generic [ref=e235]:
+                    - generic [ref=e236]:
+                      - img [ref=e237]
+                      - heading "Group by scope" [level=4] [ref=e241]
+                    - switch [ref=e242] [cursor=pointer]
+                  - generic [ref=e243]:
+                    - heading "Color by" [level=4] [ref=e244]
+                    - combobox [ref=e245]:
+                      - generic: Mentioned
+                      - img [ref=e246]
+                  - generic [ref=e248]:
+                    - heading "Link types" [level=4] [ref=e249]
+                    - generic [ref=e252] [cursor=pointer]: semantic
+                    - generic [ref=e255] [cursor=pointer]: temporal
+                    - generic [ref=e258] [cursor=pointer]: entity
+                    - generic [ref=e261] [cursor=pointer]: causal
+                  - generic [ref=e262]:
+                    - generic [ref=e263]: "Nodes: 163"
+                    - generic [ref=e264]: "Links: 12563"
+  - region "Notifications alt+T"
+  - button "Open Next.js Dev Tools" [ref=e89] [cursor=pointer]:
+    - img [ref=e90]
+  - alert [ref=e93]
+  - dialog [ref=e266]:
+    - generic [ref=e267]:
+      - generic [ref=e269]:
+        - img [ref=e270]
+        - combobox [expanded] [active] [ref=e273]
+      - listbox "Suggestions" [ref=e274]:
+        - group [ref=e276]:
+          - option "All scopes" [selected] [ref=e277]:
+            - img
+            - text: All scopes
+          - option "# eng (8)" [ref=e278]:
+            - img
+            - generic [ref=e281]:
+              - generic [ref=e282]: "#"
+              - text: eng
+            - generic [ref=e283]: (8)
+          - option "# alice (5)" [ref=e284]:
+            - img
+            - generic [ref=e287]:
+              - generic [ref=e288]: "#"
+              - text: alice
+            - generic [ref=e289]: (5)
+          - option "# bob (5)" [ref=e290]:
+            - img
+            - generic [ref=e293]:
+              - generic [ref=e294]: "#"
+              - text: bob
+            - generic [ref=e295]: (5)
+          - 'option "# alice # eng (4)" [ref=e296]':
+            - img
+            - generic [ref=e298]:
+              - generic [ref=e299]:
+                - generic [ref=e300]: "#"
+                - text: alice
+              - generic [ref=e301]:
+                - generic [ref=e302]: "#"
+                - text: eng
+            - generic [ref=e303]: (4)
+          - 'option "# bob # eng (4)" [ref=e304]':
+            - img
+            - generic [ref=e306]:
+              - generic [ref=e307]:
+                - generic [ref=e308]: "#"
+                - text: bob
+              - generic [ref=e309]:
+                - generic [ref=e310]: "#"
+                - text: eng
+            - generic [ref=e311]: (4)
+          - option "# carol (4)" [ref=e312]:
+            - img
+            - generic [ref=e315]:
+              - generic [ref=e316]: "#"
+              - text: carol
+            - generic [ref=e317]: (4)
+          - 'option "# carol # product (4)" [ref=e318]':
+            - img
+            - generic [ref=e320]:
+              - generic [ref=e321]:
+                - generic [ref=e322]: "#"
+                - text: carol
+              - generic [ref=e323]:
+                - generic [ref=e324]: "#"
+                - text: product
+            - generic [ref=e325]: (4)
+          - option "# product (4)" [ref=e326]:
+            - img
+            - generic [ref=e329]:
+              - generic [ref=e330]: "#"
+              - text: product
+            - generic [ref=e331]: (4)
+          - 'option "# alice # bob (1)" [ref=e332]':
+            - img
+            - generic [ref=e334]:
+              - generic [ref=e335]:
+                - generic [ref=e336]: "#"
+                - text: alice
+              - generic [ref=e337]:
+                - generic [ref=e338]: "#"
+                - text: bob
+            - generic [ref=e339]: (1)
+          - 'option "# alice # bob # engineer (1)" [ref=e340]':
+            - img
+            - generic [ref=e342]:
+              - generic [ref=e343]:
+                - generic [ref=e344]: "#"
+                - text: alice
+              - generic [ref=e345]:
+                - generic [ref=e346]: "#"
+                - text: bob
+              - generic [ref=e347]:
+                - generic [ref=e348]: "#"
+                - text: engineer
+            - generic [ref=e349]: (1)
+          - 'option "# alice # bob # engineer # italy (1)" [ref=e350]':
+            - img
+            - generic [ref=e352]:
+              - generic [ref=e353]:
+                - generic [ref=e354]: "#"
+                - text: alice
+              - generic [ref=e355]:
+                - generic [ref=e356]: "#"
+                - text: bob
+              - generic [ref=e357]:
+                - generic [ref=e358]: "#"
+                - text: engineer
+              - generic [ref=e359]:
+                - generic [ref=e360]: "#"
+                - text: italy
+            - generic [ref=e361]: (1)
+          - 'option "# alice # bob # engineer # italy # live (1)" [ref=e362]':
+            - img
+            - generic [ref=e364]:
+              - generic [ref=e365]:
+                - generic [ref=e366]: "#"
+                - text: alice
+              - generic [ref=e367]:
+                - generic [ref=e368]: "#"
+                - text: bob
+              - generic [ref=e369]:
+                - generic [ref=e370]: "#"
+                - text: engineer
+              - generic [ref=e371]:
+                - generic [ref=e372]: "#"
+                - text: italy
+              - generic [ref=e373]:
+                - generic [ref=e374]: "#"
+                - text: live
+            - generic [ref=e375]: (1)
+          - 'option "# alice # bob # engineer # italy # live # nicolo (1)" [ref=e376]':
+            - img
+            - generic [ref=e378]:
+              - generic [ref=e379]:
+                - generic [ref=e380]: "#"
+                - text: alice
+              - generic [ref=e381]:
+                - generic [ref=e382]: "#"
+                - text: bob
+              - generic [ref=e383]:
+                - generic [ref=e384]: "#"
+                - text: engineer
+              - generic [ref=e385]:
+                - generic [ref=e386]: "#"
+                - text: italy
+              - generic [ref=e387]:
+                - generic [ref=e388]: "#"
+                - text: live
+              - generic [ref=e389]:
+                - generic [ref=e390]: "#"
+                - text: nicolo
+            - generic [ref=e391]: (1)
+          - 'option "# alice # bob # engineer # italy # live # nicolo # place (1)" [ref=e392]':
+            - img
+            - generic [ref=e394]:
+              - generic [ref=e395]:
+                - generic [ref=e396]: "#"
+                - text: alice
+              - generic [ref=e397]:
+                - generic [ref=e398]: "#"
+                - text: bob
+              - generic [ref=e399]:
+                - generic [ref=e400]: "#"
+                - text: engineer
+              - generic [ref=e401]:
+                - generic [ref=e402]: "#"
+                - text: italy
+              - generic [ref=e403]:
+                - generic [ref=e404]: "#"
+                - text: live
+              - generic [ref=e405]:
+                - generic [ref=e406]: "#"
+                - text: nicolo
+              - generic [ref=e407]:
+                - generic [ref=e408]: "#"
+                - text: place
+            - generic [ref=e409]: (1)
+          - 'option "# alice # bob # engineer # italy # live # place (1)" [ref=e410]':
+            - img
+            - generic [ref=e412]:
+              - generic [ref=e413]:
+                - generic [ref=e414]: "#"
+                - text: alice
+              - generic [ref=e415]:
+                - generic [ref=e416]: "#"
+                - text: bob
+              - generic [ref=e417]:
+                - generic [ref=e418]: "#"
+                - text: engineer
+              - generic [ref=e419]:
+                - generic [ref=e420]: "#"
+                - text: italy
+              - generic [ref=e421]:
+                - generic [ref=e422]: "#"
+                - text: live
+              - generic [ref=e423]:
+                - generic [ref=e424]: "#"
+                - text: place
+            - generic [ref=e425]: (1)
+          - 'option "# alice # bob # engineer # italy # nicolo (1)" [ref=e426]':
+            - img
+            - generic [ref=e428]:
+              - generic [ref=e429]:
+                - generic [ref=e430]: "#"
+                - text: alice
+              - generic [ref=e431]:
+                - generic [ref=e432]: "#"
+                - text: bob
+              - generic [ref=e433]:
+                - generic [ref=e434]: "#"
+                - text: engineer
+              - generic [ref=e435]:
+                - generic [ref=e436]: "#"
+                - text: italy
+              - generic [ref=e437]:
+                - generic [ref=e438]: "#"
+                - text: nicolo
+            - generic [ref=e439]: (1)
+          - 'option "# alice # bob # engineer # italy # nicolo # place (1)" [ref=e440]':
+            - img
+            - generic [ref=e442]:
+              - generic [ref=e443]:
+                - generic [ref=e444]: "#"
+                - text: alice
+              - generic [ref=e445]:
+                - generic [ref=e446]: "#"
+                - text: bob
+              - generic [ref=e447]:
+                - generic [ref=e448]: "#"
+                - text: engineer
+              - generic [ref=e449]:
+                - generic [ref=e450]: "#"
+                - text: italy
+              - generic [ref=e451]:
+                - generic [ref=e452]: "#"
+                - text: nicolo
+              - generic [ref=e453]:
+                - generic [ref=e454]: "#"
+                - text: place
+            - generic [ref=e455]: (1)
+          - 'option "# alice # bob # engineer # italy # place (1)" [ref=e456]':
+            - img
+            - generic [ref=e458]:
+              - generic [ref=e459]:
+                - generic [ref=e460]: "#"
+                - text: alice
+              - generic [ref=e461]:
+                - generic [ref=e462]: "#"
+                - text: bob
+              - generic [ref=e463]:
+                - generic [ref=e464]: "#"
+                - text: engineer
+              - generic [ref=e465]:
+                - generic [ref=e466]: "#"
+                - text: italy
+              - generic [ref=e467]:
+                - generic [ref=e468]: "#"
+                - text: place
+            - generic [ref=e469]: (1)
+          - 'option "# alice # bob # engineer # live (1)" [ref=e470]':
+            - img
+            - generic [ref=e472]:
+              - generic [ref=e473]:
+                - generic [ref=e474]: "#"
+                - text: alice
+              - generic [ref=e475]:
+                - generic [ref=e476]: "#"
+                - text: bob
+              - generic [ref=e477]:
+                - generic [ref=e478]: "#"
+                - text: engineer
+              - generic [ref=e479]:
+                - generic [ref=e480]: "#"
+                - text: live
+            - generic [ref=e481]: (1)
+          - 'option "# alice # bob # engineer # live # nicolo (1)" [ref=e482]':
+            - img
+            - generic [ref=e484]:
+              - generic [ref=e485]:
+                - generic [ref=e486]: "#"
+                - text: alice
+              - generic [ref=e487]:
+                - generic [ref=e488]: "#"
+                - text: bob
+              - generic [ref=e489]:
+                - generic [ref=e490]: "#"
+                - text: engineer
+              - generic [ref=e491]:
+                - generic [ref=e492]: "#"
+                - text: live
+              - generic [ref=e493]:
+                - generic [ref=e494]: "#"
+                - text: nicolo
+            - generic [ref=e495]: (1)
+          - 'option "# alice # bob # engineer # live # nicolo # place (1)" [ref=e496]':
+            - img
+            - generic [ref=e498]:
+              - generic [ref=e499]:
+                - generic [ref=e500]: "#"
+                - text: alice
+              - generic [ref=e501]:
+                - generic [ref=e502]: "#"
+                - text: bob
+              - generic [ref=e503]:
+                - generic [ref=e504]: "#"
+                - text: engineer
+              - generic [ref=e505]:
+                - generic [ref=e506]: "#"
+                - text: live
+              - generic [ref=e507]:
+                - generic [ref=e508]: "#"
+                - text: nicolo
+              - generic [ref=e509]:
+                - generic [ref=e510]: "#"
+                - text: place
+            - generic [ref=e511]: (1)
+          - 'option "# alice # bob # engineer # live # place (1)" [ref=e512]':
+            - img
+            - generic [ref=e514]:
+              - generic [ref=e515]:
+                - generic [ref=e516]: "#"
+                - text: alice
+              - generic [ref=e517]:
+                - generic [ref=e518]: "#"
+                - text: bob
+              - generic [ref=e519]:
+                - generic [ref=e520]: "#"
+                - text: engineer
+              - generic [ref=e521]:
+                - generic [ref=e522]: "#"
+                - text: live
+              - generic [ref=e523]:
+                - generic [ref=e524]: "#"
+                - text: place
+            - generic [ref=e525]: (1)
+          - 'option "# alice # bob # engineer # nicolo (1)" [ref=e526]':
+            - img
+            - generic [ref=e528]:
+              - generic [ref=e529]:
+                - generic [ref=e530]: "#"
+                - text: alice
+              - generic [ref=e531]:
+                - generic [ref=e532]: "#"
+                - text: bob
+              - generic [ref=e533]:
+                - generic [ref=e534]: "#"
+                - text: engineer
+              - generic [ref=e535]:
+                - generic [ref=e536]: "#"
+                - text: nicolo
+            - generic [ref=e537]: (1)
+          - 'option "# alice # bob # engineer # nicolo # place (1)" [ref=e538]':
+            - img
+            - generic [ref=e540]:
+              - generic [ref=e541]:
+                - generic [ref=e542]: "#"
+                - text: alice
+              - generic [ref=e543]:
+                - generic [ref=e544]: "#"
+                - text: bob
+              - generic [ref=e545]:
+                - generic [ref=e546]: "#"
+                - text: engineer
+              - generic [ref=e547]:
+                - generic [ref=e548]: "#"
+                - text: nicolo
+              - generic [ref=e549]:
+                - generic [ref=e550]: "#"
+                - text: place
+            - generic [ref=e551]: (1)
+          - 'option "# alice # bob # engineer # place (1)" [ref=e552]':
+            - img
+            - generic [ref=e554]:
+              - generic [ref=e555]:
+                - generic [ref=e556]: "#"
+                - text: alice
+              - generic [ref=e557]:
+                - generic [ref=e558]: "#"
+                - text: bob
+              - generic [ref=e559]:
+                - generic [ref=e560]: "#"
+                - text: engineer
+              - generic [ref=e561]:
+                - generic [ref=e562]: "#"
+                - text: place
+            - generic [ref=e563]: (1)
+          - 'option "# alice # bob # italy (1)" [ref=e564]':
+            - img
+            - generic [ref=e566]:
+              - generic [ref=e567]:
+                - generic [ref=e568]: "#"
+                - text: alice
+              - generic [ref=e569]:
+                - generic [ref=e570]: "#"
+                - text: bob
+              - generic [ref=e571]:
+                - generic [ref=e572]: "#"
+                - text: italy
+            - generic [ref=e573]: (1)
+          - 'option "# alice # bob # italy # live (1)" [ref=e574]':
+            - img
+            - generic [ref=e576]:
+              - generic [ref=e577]:
+                - generic [ref=e578]: "#"
+                - text: alice
+              - generic [ref=e579]:
+                - generic [ref=e580]: "#"
+                - text: bob
+              - generic [ref=e581]:
+                - generic [ref=e582]: "#"
+                - text: italy
+              - generic [ref=e583]:
+                - generic [ref=e584]: "#"
+                - text: live
+            - generic [ref=e585]: (1)
+          - 'option "# alice # bob # italy # live # nicolo (1)" [ref=e586]':
+            - img
+            - generic [ref=e588]:
+              - generic [ref=e589]:
+                - generic [ref=e590]: "#"
+                - text: alice
+              - generic [ref=e591]:
+                - generic [ref=e592]: "#"
+                - text: bob
+              - generic [ref=e593]:
+                - generic [ref=e594]: "#"
+                - text: italy
+              - generic [ref=e595]:
+                - generic [ref=e596]: "#"
+                - text: live
+              - generic [ref=e597]:
+                - generic [ref=e598]: "#"
+                - text: nicolo
+            - generic [ref=e599]: (1)
+          - 'option "# alice # bob # italy # live # nicolo # place (1)" [ref=e600]':
+            - img
+            - generic [ref=e602]:
+              - generic [ref=e603]:
+                - generic [ref=e604]: "#"
+                - text: alice
+              - generic [ref=e605]:
+                - generic [ref=e606]: "#"
+                - text: bob
+              - generic [ref=e607]:
+                - generic [ref=e608]: "#"
+                - text: italy
+              - generic [ref=e609]:
+                - generic [ref=e610]: "#"
+                - text: live
+              - generic [ref=e611]:
+                - generic [ref=e612]: "#"
+                - text: nicolo
+              - generic [ref=e613]:
+                - generic [ref=e614]: "#"
+                - text: place
+            - generic [ref=e615]: (1)
+          - 'option "# alice # bob # italy # live # place (1)" [ref=e616]':
+            - img
+            - generic [ref=e618]:
+              - generic [ref=e619]:
+                - generic [ref=e620]: "#"
+                - text: alice
+              - generic [ref=e621]:
+                - generic [ref=e622]: "#"
+                - text: bob
+              - generic [ref=e623]:
+                - generic [ref=e624]: "#"
+                - text: italy
+              - generic [ref=e625]:
+                - generic [ref=e626]: "#"
+                - text: live
+              - generic [ref=e627]:
+                - generic [ref=e628]: "#"
+                - text: place
+            - generic [ref=e629]: (1)
+          - 'option "# alice # bob # italy # nicolo (1)" [ref=e630]':
+            - img
+            - generic [ref=e632]:
+              - generic [ref=e633]:
+                - generic [ref=e634]: "#"
+                - text: alice
+              - generic [ref=e635]:
+                - generic [ref=e636]: "#"
+                - text: bob
+              - generic [ref=e637]:
+                - generic [ref=e638]: "#"
+                - text: italy
+              - generic [ref=e639]:
+                - generic [ref=e640]: "#"
+                - text: nicolo
+            - generic [ref=e641]: (1)
+          - 'option "# alice # bob # italy # nicolo # place (1)" [ref=e642]':
+            - img
+            - generic [ref=e644]:
+              - generic [ref=e645]:
+                - generic [ref=e646]: "#"
+                - text: alice
+              - generic [ref=e647]:
+                - generic [ref=e648]: "#"
+                - text: bob
+              - generic [ref=e649]:
+                - generic [ref=e650]: "#"
+                - text: italy
+              - generic [ref=e651]:
+                - generic [ref=e652]: "#"
+                - text: nicolo
+              - generic [ref=e653]:
+                - generic [ref=e654]: "#"
+                - text: place
+            - generic [ref=e655]: (1)
+          - 'option "# alice # bob # italy # place (1)" [ref=e656]':
+            - img
+            - generic [ref=e658]:
+              - generic [ref=e659]:
+                - generic [ref=e660]: "#"
+                - text: alice
+              - generic [ref=e661]:
+                - generic [ref=e662]: "#"
+                - text: bob
+              - generic [ref=e663]:
+                - generic [ref=e664]: "#"
+                - text: italy
+              - generic [ref=e665]:
+                - generic [ref=e666]: "#"
+                - text: place
+            - generic [ref=e667]: (1)
+          - 'option "# alice # bob # live (1)" [ref=e668]':
+            - img
+            - generic [ref=e670]:
+              - generic [ref=e671]:
+                - generic [ref=e672]: "#"
+                - text: alice
+              - generic [ref=e673]:
+                - generic [ref=e674]: "#"
+                - text: bob
+              - generic [ref=e675]:
+                - generic [ref=e676]: "#"
+                - text: live
+            - generic [ref=e677]: (1)
+          - 'option "# alice # bob # live # nicolo (1)" [ref=e678]':
+            - img
+            - generic [ref=e680]:
+              - generic [ref=e681]:
+                - generic [ref=e682]: "#"
+                - text: alice
+              - generic [ref=e683]:
+                - generic [ref=e684]: "#"
+                - text: bob
+              - generic [ref=e685]:
+                - generic [ref=e686]: "#"
+                - text: live
+              - generic [ref=e687]:
+                - generic [ref=e688]: "#"
+                - text: nicolo
+            - generic [ref=e689]: (1)
+          - 'option "# alice # bob # live # nicolo # place (1)" [ref=e690]':
+            - img
+            - generic [ref=e692]:
+              - generic [ref=e693]:
+                - generic [ref=e694]: "#"
+                - text: alice
+              - generic [ref=e695]:
+                - generic [ref=e696]: "#"
+                - text: bob
+              - generic [ref=e697]:
+                - generic [ref=e698]: "#"
+                - text: live
+              - generic [ref=e699]:
+                - generic [ref=e700]: "#"
+                - text: nicolo
+              - generic [ref=e701]:
+                - generic [ref=e702]: "#"
+                - text: place
+            - generic [ref=e703]: (1)
+          - 'option "# alice # bob # live # place (1)" [ref=e704]':
+            - img
+            - generic [ref=e706]:
+              - generic [ref=e707]:
+                - generic [ref=e708]: "#"
+                - text: alice
+              - generic [ref=e709]:
+                - generic [ref=e710]: "#"
+                - text: bob
+              - generic [ref=e711]:
+                - generic [ref=e712]: "#"
+                - text: live
+              - generic [ref=e713]:
+                - generic [ref=e714]: "#"
+                - text: place
+            - generic [ref=e715]: (1)
+          - 'option "# alice # bob # nicolo (1)" [ref=e716]':
+            - img
+            - generic [ref=e718]:
+              - generic [ref=e719]:
+                - generic [ref=e720]: "#"
+                - text: alice
+              - generic [ref=e721]:
+                - generic [ref=e722]: "#"
+                - text: bob
+              - generic [ref=e723]:
+                - generic [ref=e724]: "#"
+                - text: nicolo
+            - generic [ref=e725]: (1)
+          - 'option "# alice # bob # nicolo # place (1)" [ref=e726]':
+            - img
+            - generic [ref=e728]:
+              - generic [ref=e729]:
+                - generic [ref=e730]: "#"
+                - text: alice
+              - generic [ref=e731]:
+                - generic [ref=e732]: "#"
+                - text: bob
+              - generic [ref=e733]:
+                - generic [ref=e734]: "#"
+                - text: nicolo
+              - generic [ref=e735]:
+                - generic [ref=e736]: "#"
+                - text: place
+            - generic [ref=e737]: (1)
+          - 'option "# alice # bob # place (1)" [ref=e738]':
+            - img
+            - generic [ref=e740]:
+              - generic [ref=e741]:
+                - generic [ref=e742]: "#"
+                - text: alice
+              - generic [ref=e743]:
+                - generic [ref=e744]: "#"
+                - text: bob
+              - generic [ref=e745]:
+                - generic [ref=e746]: "#"
+                - text: place
+            - generic [ref=e747]: (1)
+          - 'option "# alice # engineer (1)" [ref=e748]':
+            - img
+            - generic [ref=e750]:
+              - generic [ref=e751]:
+                - generic [ref=e752]: "#"
+                - text: alice
+              - generic [ref=e753]:
+                - generic [ref=e754]: "#"
+                - text: engineer
+            - generic [ref=e755]: (1)
+          - 'option "# alice # engineer # italy (1)" [ref=e756]':
+            - img
+            - generic [ref=e758]:
+              - generic [ref=e759]:
+                - generic [ref=e760]: "#"
+                - text: alice
+              - generic [ref=e761]:
+                - generic [ref=e762]: "#"
+                - text: engineer
+              - generic [ref=e763]:
+                - generic [ref=e764]: "#"
+                - text: italy
+            - generic [ref=e765]: (1)
+          - 'option "# alice # engineer # italy # live (1)" [ref=e766]':
+            - img
+            - generic [ref=e768]:
+              - generic [ref=e769]:
+                - generic [ref=e770]: "#"
+                - text: alice
+              - generic [ref=e771]:
+                - generic [ref=e772]: "#"
+                - text: engineer
+              - generic [ref=e773]:
+                - generic [ref=e774]: "#"
+                - text: italy
+              - generic [ref=e775]:
+                - generic [ref=e776]: "#"
+                - text: live
+            - generic [ref=e777]: (1)
+          - 'option "# alice # engineer # italy # live # nicolo (1)" [ref=e778]':
+            - img
+            - generic [ref=e780]:
+              - generic [ref=e781]:
+                - generic [ref=e782]: "#"
+                - text: alice
+              - generic [ref=e783]:
+                - generic [ref=e784]: "#"
+                - text: engineer
+              - generic [ref=e785]:
+                - generic [ref=e786]: "#"
+                - text: italy
+              - generic [ref=e787]:
+                - generic [ref=e788]: "#"
+                - text: live
+              - generic [ref=e789]:
+                - generic [ref=e790]: "#"
+                - text: nicolo
+            - generic [ref=e791]: (1)
+          - 'option "# alice # engineer # italy # live # nicolo # place (1)" [ref=e792]':
+            - img
+            - generic [ref=e794]:
+              - generic [ref=e795]:
+                - generic [ref=e796]: "#"
+                - text: alice
+              - generic [ref=e797]:
+                - generic [ref=e798]: "#"
+                - text: engineer
+              - generic [ref=e799]:
+                - generic [ref=e800]: "#"
+                - text: italy
+              - generic [ref=e801]:
+                - generic [ref=e802]: "#"
+                - text: live
+              - generic [ref=e803]:
+                - generic [ref=e804]: "#"
+                - text: nicolo
+              - generic [ref=e805]:
+                - generic [ref=e806]: "#"
+                - text: place
+            - generic [ref=e807]: (1)
+          - 'option "# alice # engineer # italy # live # place (1)" [ref=e808]':
+            - img
+            - generic [ref=e810]:
+              - generic [ref=e811]:
+                - generic [ref=e812]: "#"
+                - text: alice
+              - generic [ref=e813]:
+                - generic [ref=e814]: "#"
+                - text: engineer
+              - generic [ref=e815]:
+                - generic [ref=e816]: "#"
+                - text: italy
+              - generic [ref=e817]:
+                - generic [ref=e818]: "#"
+                - text: live
+              - generic [ref=e819]:
+                - generic [ref=e820]: "#"
+                - text: place
+            - generic [ref=e821]: (1)
+          - 'option "# alice # engineer # italy # nicolo (1)" [ref=e822]':
+            - img
+            - generic [ref=e824]:
+              - generic [ref=e825]:
+                - generic [ref=e826]: "#"
+                - text: alice
+              - generic [ref=e827]:
+                - generic [ref=e828]: "#"
+                - text: engineer
+              - generic [ref=e829]:
+                - generic [ref=e830]: "#"
+                - text: italy
+              - generic [ref=e831]:
+                - generic [ref=e832]: "#"
+                - text: nicolo
+            - generic [ref=e833]: (1)
+          - 'option "# alice # engineer # italy # nicolo # place (1)" [ref=e834]':
+            - img
+            - generic [ref=e836]:
+              - generic [ref=e837]:
+                - generic [ref=e838]: "#"
+                - text: alice
+              - generic [ref=e839]:
+                - generic [ref=e840]: "#"
+                - text: engineer
+              - generic [ref=e841]:
+                - generic [ref=e842]: "#"
+                - text: italy
+              - generic [ref=e843]:
+                - generic [ref=e844]: "#"
+                - text: nicolo
+              - generic [ref=e845]:
+                - generic [ref=e846]: "#"
+                - text: place
+            - generic [ref=e847]: (1)
+          - 'option "# alice # engineer # italy # place (1)" [ref=e848]':
+            - img
+            - generic [ref=e850]:
+              - generic [ref=e851]:
+                - generic [ref=e852]: "#"
+                - text: alice
+              - generic [ref=e853]:
+                - generic [ref=e854]: "#"
+                - text: engineer
+              - generic [ref=e855]:
+                - generic [ref=e856]: "#"
+                - text: italy
+              - generic [ref=e857]:
+                - generic [ref=e858]: "#"
+                - text: place
+            - generic [ref=e859]: (1)
+          - 'option "# alice # engineer # live (1)" [ref=e860]':
+            - img
+            - generic [ref=e862]:
+              - generic [ref=e863]:
+                - generic [ref=e864]: "#"
+                - text: alice
+              - generic [ref=e865]:
+                - generic [ref=e866]: "#"
+                - text: engineer
+              - generic [ref=e867]:
+                - generic [ref=e868]: "#"
+                - text: live
+            - generic [ref=e869]: (1)
+          - 'option "# alice # engineer # live # nicolo (1)" [ref=e870]':
+            - img
+            - generic [ref=e872]:
+              - generic [ref=e873]:
+                - generic [ref=e874]: "#"
+                - text: alice
+              - generic [ref=e875]:
+                - generic [ref=e876]: "#"
+                - text: engineer
+              - generic [ref=e877]:
+                - generic [ref=e878]: "#"
+                - text: live
+              - generic [ref=e879]:
+                - generic [ref=e880]: "#"
+                - text: nicolo
+            - generic [ref=e881]: (1)
+          - 'option "# alice # engineer # live # nicolo # place (1)" [ref=e882]':
+            - img
+            - generic [ref=e884]:
+              - generic [ref=e885]:
+                - generic [ref=e886]: "#"
+                - text: alice
+              - generic [ref=e887]:
+                - generic [ref=e888]: "#"
+                - text: engineer
+              - generic [ref=e889]:
+                - generic [ref=e890]: "#"
+                - text: live
+              - generic [ref=e891]:
+                - generic [ref=e892]: "#"
+                - text: nicolo
+              - generic [ref=e893]:
+                - generic [ref=e894]: "#"
+                - text: place
+            - generic [ref=e895]: (1)
+          - 'option "# alice # engineer # live # place (1)" [ref=e896]':
+            - img
+            - generic [ref=e898]:
+              - generic [ref=e899]:
+                - generic [ref=e900]: "#"
+                - text: alice
+              - generic [ref=e901]:
+                - generic [ref=e902]: "#"
+                - text: engineer
+              - generic [ref=e903]:
+                - generic [ref=e904]: "#"
+                - text: live
+              - generic [ref=e905]:
+                - generic [ref=e906]: "#"
+                - text: place
+            - generic [ref=e907]: (1)
+          - 'option "# alice # engineer # nicolo (1)" [ref=e908]':
+            - img
+            - generic [ref=e910]:
+              - generic [ref=e911]:
+                - generic [ref=e912]: "#"
+                - text: alice
+              - generic [ref=e913]:
+                - generic [ref=e914]: "#"
+                - text: engineer
+              - generic [ref=e915]:
+                - generic [ref=e916]: "#"
+                - text: nicolo
+            - generic [ref=e917]: (1)
+          - 'option "# alice # engineer # nicolo # place (1)" [ref=e918]':
+            - img
+            - generic [ref=e920]:
+              - generic [ref=e921]:
+                - generic [ref=e922]: "#"
+                - text: alice
+              - generic [ref=e923]:
+                - generic [ref=e924]: "#"
+                - text: engineer
+              - generic [ref=e925]:
+                - generic [ref=e926]: "#"
+                - text: nicolo
+              - generic [ref=e927]:
+                - generic [ref=e928]: "#"
+                - text: place
+            - generic [ref=e929]: (1)
+          - 'option "# alice # engineer # place (1)" [ref=e930]':
+            - img
+            - generic [ref=e932]:
+              - generic [ref=e933]:
+                - generic [ref=e934]: "#"
+                - text: alice
+              - generic [ref=e935]:
+                - generic [ref=e936]: "#"
+                - text: engineer
+              - generic [ref=e937]:
+                - generic [ref=e938]: "#"
+                - text: place
+            - generic [ref=e939]: (1)
+          - 'option "# alice # italy (1)" [ref=e940]':
+            - img
+            - generic [ref=e942]:
+              - generic [ref=e943]:
+                - generic [ref=e944]: "#"
+                - text: alice
+              - generic [ref=e945]:
+                - generic [ref=e946]: "#"
+                - text: italy
+            - generic [ref=e947]: (1)
+          - 'option "# alice # italy # live (1)" [ref=e948]':
+            - img
+            - generic [ref=e950]:
+              - generic [ref=e951]:
+                - generic [ref=e952]: "#"
+                - text: alice
+              - generic [ref=e953]:
+                - generic [ref=e954]: "#"
+                - text: italy
+              - generic [ref=e955]:
+                - generic [ref=e956]: "#"
+                - text: live
+            - generic [ref=e957]: (1)
+          - 'option "# alice # italy # live # nicolo (1)" [ref=e958]':
+            - img
+            - generic [ref=e960]:
+              - generic [ref=e961]:
+                - generic [ref=e962]: "#"
+                - text: alice
+              - generic [ref=e963]:
+                - generic [ref=e964]: "#"
+                - text: italy
+              - generic [ref=e965]:
+                - generic [ref=e966]: "#"
+                - text: live
+              - generic [ref=e967]:
+                - generic [ref=e968]: "#"
+                - text: nicolo
+            - generic [ref=e969]: (1)
+          - 'option "# alice # italy # live # nicolo # place (1)" [ref=e970]':
+            - img
+            - generic [ref=e972]:
+              - generic [ref=e973]:
+                - generic [ref=e974]: "#"
+                - text: alice
+              - generic [ref=e975]:
+                - generic [ref=e976]: "#"
+                - text: italy
+              - generic [ref=e977]:
+                - generic [ref=e978]: "#"
+                - text: live
+              - generic [ref=e979]:
+                - generic [ref=e980]: "#"
+                - text: nicolo
+              - generic [ref=e981]:
+                - generic [ref=e982]: "#"
+                - text: place
+            - generic [ref=e983]: (1)
+          - 'option "# alice # italy # live # place (1)" [ref=e984]':
+            - img
+            - generic [ref=e986]:
+              - generic [ref=e987]:
+                - generic [ref=e988]: "#"
+                - text: alice
+              - generic [ref=e989]:
+                - generic [ref=e990]: "#"
+                - text: italy
+              - generic [ref=e991]:
+                - generic [ref=e992]: "#"
+                - text: live
+              - generic [ref=e993]:
+                - generic [ref=e994]: "#"
+                - text: place
+            - generic [ref=e995]: (1)
+          - 'option "# alice # italy # nicolo (1)" [ref=e996]':
+            - img
+            - generic [ref=e998]:
+              - generic [ref=e999]:
+                - generic [ref=e1000]: "#"
+                - text: alice
+              - generic [ref=e1001]:
+                - generic [ref=e1002]: "#"
+                - text: italy
+              - generic [ref=e1003]:
+                - generic [ref=e1004]: "#"
+                - text: nicolo
+            - generic [ref=e1005]: (1)
+          - 'option "# alice # italy # nicolo # place (1)" [ref=e1006]':
+            - img
+            - generic [ref=e1008]:
+              - generic [ref=e1009]:
+                - generic [ref=e1010]: "#"
+                - text: alice
+              - generic [ref=e1011]:
+                - generic [ref=e1012]: "#"
+                - text: italy
+              - generic [ref=e1013]:
+                - generic [ref=e1014]: "#"
+                - text: nicolo
+              - generic [ref=e1015]:
+                - generic [ref=e1016]: "#"
+                - text: place
+            - generic [ref=e1017]: (1)
+          - 'option "# alice # italy # place (1)" [ref=e1018]':
+            - img
+            - generic [ref=e1020]:
+              - generic [ref=e1021]:
+                - generic [ref=e1022]: "#"
+                - text: alice
+              - generic [ref=e1023]:
+                - generic [ref=e1024]: "#"
+                - text: italy
+              - generic [ref=e1025]:
+                - generic [ref=e1026]: "#"
+                - text: place
+            - generic [ref=e1027]: (1)
+          - 'option "# alice # live (1)" [ref=e1028]':
+            - img
+            - generic [ref=e1030]:
+              - generic [ref=e1031]:
+                - generic [ref=e1032]: "#"
+                - text: alice
+              - generic [ref=e1033]:
+                - generic [ref=e1034]: "#"
+                - text: live
+            - generic [ref=e1035]: (1)
+          - 'option "# alice # live # nicolo (1)" [ref=e1036]':
+            - img
+            - generic [ref=e1038]:
+              - generic [ref=e1039]:
+                - generic [ref=e1040]: "#"
+                - text: alice
+              - generic [ref=e1041]:
+                - generic [ref=e1042]: "#"
+                - text: live
+              - generic [ref=e1043]:
+                - generic [ref=e1044]: "#"
+                - text: nicolo
+            - generic [ref=e1045]: (1)
+          - 'option "# alice # live # nicolo # place (1)" [ref=e1046]':
+            - img
+            - generic [ref=e1048]:
+              - generic [ref=e1049]:
+                - generic [ref=e1050]: "#"
+                - text: alice
+              - generic [ref=e1051]:
+                - generic [ref=e1052]: "#"
+                - text: live
+              - generic [ref=e1053]:
+                - generic [ref=e1054]: "#"
+                - text: nicolo
+              - generic [ref=e1055]:
+                - generic [ref=e1056]: "#"
+                - text: place
+            - generic [ref=e1057]: (1)
+          - 'option "# alice # live # place (1)" [ref=e1058]':
+            - img
+            - generic [ref=e1060]:
+              - generic [ref=e1061]:
+                - generic [ref=e1062]: "#"
+                - text: alice
+              - generic [ref=e1063]:
+                - generic [ref=e1064]: "#"
+                - text: live
+              - generic [ref=e1065]:
+                - generic [ref=e1066]: "#"
+                - text: place
+            - generic [ref=e1067]: (1)
+          - 'option "# alice # nicolo (1)" [ref=e1068]':
+            - img
+            - generic [ref=e1070]:
+              - generic [ref=e1071]:
+                - generic [ref=e1072]: "#"
+                - text: alice
+              - generic [ref=e1073]:
+                - generic [ref=e1074]: "#"
+                - text: nicolo
+            - generic [ref=e1075]: (1)
+          - 'option "# alice # nicolo # place (1)" [ref=e1076]':
+            - img
+            - generic [ref=e1078]:
+              - generic [ref=e1079]:
+                - generic [ref=e1080]: "#"
+                - text: alice
+              - generic [ref=e1081]:
+                - generic [ref=e1082]: "#"
+                - text: nicolo
+              - generic [ref=e1083]:
+                - generic [ref=e1084]: "#"
+                - text: place
+            - generic [ref=e1085]: (1)
+          - 'option "# alice # place (1)" [ref=e1086]':
+            - img
+            - generic [ref=e1088]:
+              - generic [ref=e1089]:
+                - generic [ref=e1090]: "#"
+                - text: alice
+              - generic [ref=e1091]:
+                - generic [ref=e1092]: "#"
+                - text: place
+            - generic [ref=e1093]: (1)
+          - 'option "# bob # engineer (1)" [ref=e1094]':
+            - img
+            - generic [ref=e1096]:
+              - generic [ref=e1097]:
+                - generic [ref=e1098]: "#"
+                - text: bob
+              - generic [ref=e1099]:
+                - generic [ref=e1100]: "#"
+                - text: engineer
+            - generic [ref=e1101]: (1)
+          - 'option "# bob # engineer # italy (1)" [ref=e1102]':
+            - img
+            - generic [ref=e1104]:
+              - generic [ref=e1105]:
+                - generic [ref=e1106]: "#"
+                - text: bob
+              - generic [ref=e1107]:
+                - generic [ref=e1108]: "#"
+                - text: engineer
+              - generic [ref=e1109]:
+                - generic [ref=e1110]: "#"
+                - text: italy
+            - generic [ref=e1111]: (1)
+          - 'option "# bob # engineer # italy # live (1)" [ref=e1112]':
+            - img
+            - generic [ref=e1114]:
+              - generic [ref=e1115]:
+                - generic [ref=e1116]: "#"
+                - text: bob
+              - generic [ref=e1117]:
+                - generic [ref=e1118]: "#"
+                - text: engineer
+              - generic [ref=e1119]:
+                - generic [ref=e1120]: "#"
+                - text: italy
+              - generic [ref=e1121]:
+                - generic [ref=e1122]: "#"
+                - text: live
+            - generic [ref=e1123]: (1)
+          - 'option "# bob # engineer # italy # live # nicolo (1)" [ref=e1124]':
+            - img
+            - generic [ref=e1126]:
+              - generic [ref=e1127]:
+                - generic [ref=e1128]: "#"
+                - text: bob
+              - generic [ref=e1129]:
+                - generic [ref=e1130]: "#"
+                - text: engineer
+              - generic [ref=e1131]:
+                - generic [ref=e1132]: "#"
+                - text: italy
+              - generic [ref=e1133]:
+                - generic [ref=e1134]: "#"
+                - text: live
+              - generic [ref=e1135]:
+                - generic [ref=e1136]: "#"
+                - text: nicolo
+            - generic [ref=e1137]: (1)
+          - 'option "# bob # engineer # italy # live # nicolo # place (1)" [ref=e1138]':
+            - img
+            - generic [ref=e1140]:
+              - generic [ref=e1141]:
+                - generic [ref=e1142]: "#"
+                - text: bob
+              - generic [ref=e1143]:
+                - generic [ref=e1144]: "#"
+                - text: engineer
+              - generic [ref=e1145]:
+                - generic [ref=e1146]: "#"
+                - text: italy
+              - generic [ref=e1147]:
+                - generic [ref=e1148]: "#"
+                - text: live
+              - generic [ref=e1149]:
+                - generic [ref=e1150]: "#"
+                - text: nicolo
+              - generic [ref=e1151]:
+                - generic [ref=e1152]: "#"
+                - text: place
+            - generic [ref=e1153]: (1)
+          - 'option "# bob # engineer # italy # live # place (1)" [ref=e1154]':
+            - img
+            - generic [ref=e1156]:
+              - generic [ref=e1157]:
+                - generic [ref=e1158]: "#"
+                - text: bob
+              - generic [ref=e1159]:
+                - generic [ref=e1160]: "#"
+                - text: engineer
+              - generic [ref=e1161]:
+                - generic [ref=e1162]: "#"
+                - text: italy
+              - generic [ref=e1163]:
+                - generic [ref=e1164]: "#"
+                - text: live
+              - generic [ref=e1165]:
+                - generic [ref=e1166]: "#"
+                - text: place
+            - generic [ref=e1167]: (1)
+          - 'option "# bob # engineer # italy # nicolo (1)" [ref=e1168]':
+            - img
+            - generic [ref=e1170]:
+              - generic [ref=e1171]:
+                - generic [ref=e1172]: "#"
+                - text: bob
+              - generic [ref=e1173]:
+                - generic [ref=e1174]: "#"
+                - text: engineer
+              - generic [ref=e1175]:
+                - generic [ref=e1176]: "#"
+                - text: italy
+              - generic [ref=e1177]:
+                - generic [ref=e1178]: "#"
+                - text: nicolo
+            - generic [ref=e1179]: (1)
+          - 'option "# bob # engineer # italy # nicolo # place (1)" [ref=e1180]':
+            - img
+            - generic [ref=e1182]:
+              - generic [ref=e1183]:
+                - generic [ref=e1184]: "#"
+                - text: bob
+              - generic [ref=e1185]:
+                - generic [ref=e1186]: "#"
+                - text: engineer
+              - generic [ref=e1187]:
+                - generic [ref=e1188]: "#"
+                - text: italy
+              - generic [ref=e1189]:
+                - generic [ref=e1190]: "#"
+                - text: nicolo
+              - generic [ref=e1191]:
+                - generic [ref=e1192]: "#"
+                - text: place
+            - generic [ref=e1193]: (1)
+          - 'option "# bob # engineer # italy # place (1)" [ref=e1194]':
+            - img
+            - generic [ref=e1196]:
+              - generic [ref=e1197]:
+                - generic [ref=e1198]: "#"
+                - text: bob
+              - generic [ref=e1199]:
+                - generic [ref=e1200]: "#"
+                - text: engineer
+              - generic [ref=e1201]:
+                - generic [ref=e1202]: "#"
+                - text: italy
+              - generic [ref=e1203]:
+                - generic [ref=e1204]: "#"
+                - text: place
+            - generic [ref=e1205]: (1)
+          - 'option "# bob # engineer # live (1)" [ref=e1206]':
+            - img
+            - generic [ref=e1208]:
+              - generic [ref=e1209]:
+                - generic [ref=e1210]: "#"
+                - text: bob
+              - generic [ref=e1211]:
+                - generic [ref=e1212]: "#"
+                - text: engineer
+              - generic [ref=e1213]:
+                - generic [ref=e1214]: "#"
+                - text: live
+            - generic [ref=e1215]: (1)
+          - 'option "# bob # engineer # live # nicolo (1)" [ref=e1216]':
+            - img
+            - generic [ref=e1218]:
+              - generic [ref=e1219]:
+                - generic [ref=e1220]: "#"
+                - text: bob
+              - generic [ref=e1221]:
+                - generic [ref=e1222]: "#"
+                - text: engineer
+              - generic [ref=e1223]:
+                - generic [ref=e1224]: "#"
+                - text: live
+              - generic [ref=e1225]:
+                - generic [ref=e1226]: "#"
+                - text: nicolo
+            - generic [ref=e1227]: (1)
+          - 'option "# bob # engineer # live # nicolo # place (1)" [ref=e1228]':
+            - img
+            - generic [ref=e1230]:
+              - generic [ref=e1231]:
+                - generic [ref=e1232]: "#"
+                - text: bob
+              - generic [ref=e1233]:
+                - generic [ref=e1234]: "#"
+                - text: engineer
+              - generic [ref=e1235]:
+                - generic [ref=e1236]: "#"
+                - text: live
+              - generic [ref=e1237]:
+                - generic [ref=e1238]: "#"
+                - text: nicolo
+              - generic [ref=e1239]:
+                - generic [ref=e1240]: "#"
+                - text: place
+            - generic [ref=e1241]: (1)
+          - 'option "# bob # engineer # live # place (1)" [ref=e1242]':
+            - img
+            - generic [ref=e1244]:
+              - generic [ref=e1245]:
+                - generic [ref=e1246]: "#"
+                - text: bob
+              - generic [ref=e1247]:
+                - generic [ref=e1248]: "#"
+                - text: engineer
+              - generic [ref=e1249]:
+                - generic [ref=e1250]: "#"
+                - text: live
+              - generic [ref=e1251]:
+                - generic [ref=e1252]: "#"
+                - text: place
+            - generic [ref=e1253]: (1)
+          - 'option "# bob # engineer # nicolo (1)" [ref=e1254]':
+            - img
+            - generic [ref=e1256]:
+              - generic [ref=e1257]:
+                - generic [ref=e1258]: "#"
+                - text: bob
+              - generic [ref=e1259]:
+                - generic [ref=e1260]: "#"
+                - text: engineer
+              - generic [ref=e1261]:
+                - generic [ref=e1262]: "#"
+                - text: nicolo
+            - generic [ref=e1263]: (1)
+          - 'option "# bob # engineer # nicolo # place (1)" [ref=e1264]':
+            - img
+            - generic [ref=e1266]:
+              - generic [ref=e1267]:
+                - generic [ref=e1268]: "#"
+                - text: bob
+              - generic [ref=e1269]:
+                - generic [ref=e1270]: "#"
+                - text: engineer
+              - generic [ref=e1271]:
+                - generic [ref=e1272]: "#"
+                - text: nicolo
+              - generic [ref=e1273]:
+                - generic [ref=e1274]: "#"
+                - text: place
+            - generic [ref=e1275]: (1)
+          - 'option "# bob # engineer # place (1)" [ref=e1276]':
+            - img
+            - generic [ref=e1278]:
+              - generic [ref=e1279]:
+                - generic [ref=e1280]: "#"
+                - text: bob
+              - generic [ref=e1281]:
+                - generic [ref=e1282]: "#"
+                - text: engineer
+              - generic [ref=e1283]:
+                - generic [ref=e1284]: "#"
+                - text: place
+            - generic [ref=e1285]: (1)
+          - 'option "# bob # italy (1)" [ref=e1286]':
+            - img
+            - generic [ref=e1288]:
+              - generic [ref=e1289]:
+                - generic [ref=e1290]: "#"
+                - text: bob
+              - generic [ref=e1291]:
+                - generic [ref=e1292]: "#"
+                - text: italy
+            - generic [ref=e1293]: (1)
+          - 'option "# bob # italy # live (1)" [ref=e1294]':
+            - img
+            - generic [ref=e1296]:
+              - generic [ref=e1297]:
+                - generic [ref=e1298]: "#"
+                - text: bob
+              - generic [ref=e1299]:
+                - generic [ref=e1300]: "#"
+                - text: italy
+              - generic [ref=e1301]:
+                - generic [ref=e1302]: "#"
+                - text: live
+            - generic [ref=e1303]: (1)
+          - 'option "# bob # italy # live # nicolo (1)" [ref=e1304]':
+            - img
+            - generic [ref=e1306]:
+              - generic [ref=e1307]:
+                - generic [ref=e1308]: "#"
+                - text: bob
+              - generic [ref=e1309]:
+                - generic [ref=e1310]: "#"
+                - text: italy
+              - generic [ref=e1311]:
+                - generic [ref=e1312]: "#"
+                - text: live
+              - generic [ref=e1313]:
+                - generic [ref=e1314]: "#"
+                - text: nicolo
+            - generic [ref=e1315]: (1)
+          - 'option "# bob # italy # live # nicolo # place (1)" [ref=e1316]':
+            - img
+            - generic [ref=e1318]:
+              - generic [ref=e1319]:
+                - generic [ref=e1320]: "#"
+                - text: bob
+              - generic [ref=e1321]:
+                - generic [ref=e1322]: "#"
+                - text: italy
+              - generic [ref=e1323]:
+                - generic [ref=e1324]: "#"
+                - text: live
+              - generic [ref=e1325]:
+                - generic [ref=e1326]: "#"
+                - text: nicolo
+              - generic [ref=e1327]:
+                - generic [ref=e1328]: "#"
+                - text: place
+            - generic [ref=e1329]: (1)
+          - 'option "# bob # italy # live # place (1)" [ref=e1330]':
+            - img
+            - generic [ref=e1332]:
+              - generic [ref=e1333]:
+                - generic [ref=e1334]: "#"
+                - text: bob
+              - generic [ref=e1335]:
+                - generic [ref=e1336]: "#"
+                - text: italy
+              - generic [ref=e1337]:
+                - generic [ref=e1338]: "#"
+                - text: live
+              - generic [ref=e1339]:
+                - generic [ref=e1340]: "#"
+                - text: place
+            - generic [ref=e1341]: (1)
+          - 'option "# bob # italy # nicolo (1)" [ref=e1342]':
+            - img
+            - generic [ref=e1344]:
+              - generic [ref=e1345]:
+                - generic [ref=e1346]: "#"
+                - text: bob
+              - generic [ref=e1347]:
+                - generic [ref=e1348]: "#"
+                - text: italy
+              - generic [ref=e1349]:
+                - generic [ref=e1350]: "#"
+                - text: nicolo
+            - generic [ref=e1351]: (1)
+          - 'option "# bob # italy # nicolo # place (1)" [ref=e1352]':
+            - img
+            - generic [ref=e1354]:
+              - generic [ref=e1355]:
+                - generic [ref=e1356]: "#"
+                - text: bob
+              - generic [ref=e1357]:
+                - generic [ref=e1358]: "#"
+                - text: italy
+              - generic [ref=e1359]:
+                - generic [ref=e1360]: "#"
+                - text: nicolo
+              - generic [ref=e1361]:
+                - generic [ref=e1362]: "#"
+                - text: place
+            - generic [ref=e1363]: (1)
+          - 'option "# bob # italy # place (1)" [ref=e1364]':
+            - img
+            - generic [ref=e1366]:
+              - generic [ref=e1367]:
+                - generic [ref=e1368]: "#"
+                - text: bob
+              - generic [ref=e1369]:
+                - generic [ref=e1370]: "#"
+                - text: italy
+              - generic [ref=e1371]:
+                - generic [ref=e1372]: "#"
+                - text: place
+            - generic [ref=e1373]: (1)
+          - 'option "# bob # live (1)" [ref=e1374]':
+            - img
+            - generic [ref=e1376]:
+              - generic [ref=e1377]:
+                - generic [ref=e1378]: "#"
+                - text: bob
+              - generic [ref=e1379]:
+                - generic [ref=e1380]: "#"
+                - text: live
+            - generic [ref=e1381]: (1)
+          - 'option "# bob # live # nicolo (1)" [ref=e1382]':
+            - img
+            - generic [ref=e1384]:
+              - generic [ref=e1385]:
+                - generic [ref=e1386]: "#"
+                - text: bob
+              - generic [ref=e1387]:
+                - generic [ref=e1388]: "#"
+                - text: live
+              - generic [ref=e1389]:
+                - generic [ref=e1390]: "#"
+                - text: nicolo
+            - generic [ref=e1391]: (1)
+          - 'option "# bob # live # nicolo # place (1)" [ref=e1392]':
+            - img
+            - generic [ref=e1394]:
+              - generic [ref=e1395]:
+                - generic [ref=e1396]: "#"
+                - text: bob
+              - generic [ref=e1397]:
+                - generic [ref=e1398]: "#"
+                - text: live
+              - generic [ref=e1399]:
+                - generic [ref=e1400]: "#"
+                - text: nicolo
+              - generic [ref=e1401]:
+                - generic [ref=e1402]: "#"
+                - text: place
+            - generic [ref=e1403]: (1)
+          - 'option "# bob # live # place (1)" [ref=e1404]':
+            - img
+            - generic [ref=e1406]:
+              - generic [ref=e1407]:
+                - generic [ref=e1408]: "#"
+                - text: bob
+              - generic [ref=e1409]:
+                - generic [ref=e1410]: "#"
+                - text: live
+              - generic [ref=e1411]:
+                - generic [ref=e1412]: "#"
+                - text: place
+            - generic [ref=e1413]: (1)
+          - 'option "# bob # nicolo (1)" [ref=e1414]':
+            - img
+            - generic [ref=e1416]:
+              - generic [ref=e1417]:
+                - generic [ref=e1418]: "#"
+                - text: bob
+              - generic [ref=e1419]:
+                - generic [ref=e1420]: "#"
+                - text: nicolo
+            - generic [ref=e1421]: (1)
+          - 'option "# bob # nicolo # place (1)" [ref=e1422]':
+            - img
+            - generic [ref=e1424]:
+              - generic [ref=e1425]:
+                - generic [ref=e1426]: "#"
+                - text: bob
+              - generic [ref=e1427]:
+                - generic [ref=e1428]: "#"
+                - text: nicolo
+              - generic [ref=e1429]:
+                - generic [ref=e1430]: "#"
+                - text: place
+            - generic [ref=e1431]: (1)
+          - 'option "# bob # place (1)" [ref=e1432]':
+            - img
+            - generic [ref=e1434]:
+              - generic [ref=e1435]:
+                - generic [ref=e1436]: "#"
+                - text: bob
+              - generic [ref=e1437]:
+                - generic [ref=e1438]: "#"
+                - text: place
+            - generic [ref=e1439]: (1)
+          - option "# engineer (1)" [ref=e1440]:
+            - img
+            - generic [ref=e1443]:
+              - generic [ref=e1444]: "#"
+              - text: engineer
+            - generic [ref=e1445]: (1)
+          - 'option "# engineer # italy (1)" [ref=e1446]':
+            - img
+            - generic [ref=e1448]:
+              - generic [ref=e1449]:
+                - generic [ref=e1450]: "#"
+                - text: engineer
+              - generic [ref=e1451]:
+                - generic [ref=e1452]: "#"
+                - text: italy
+            - generic [ref=e1453]: (1)
+          - 'option "# engineer # italy # live (1)" [ref=e1454]':
+            - img
+            - generic [ref=e1456]:
+              - generic [ref=e1457]:
+                - generic [ref=e1458]: "#"
+                - text: engineer
+              - generic [ref=e1459]:
+                - generic [ref=e1460]: "#"
+                - text: italy
+              - generic [ref=e1461]:
+                - generic [ref=e1462]: "#"
+                - text: live
+            - generic [ref=e1463]: (1)
+          - 'option "# engineer # italy # live # nicolo (1)" [ref=e1464]':
+            - img
+            - generic [ref=e1466]:
+              - generic [ref=e1467]:
+                - generic [ref=e1468]: "#"
+                - text: engineer
+              - generic [ref=e1469]:
+                - generic [ref=e1470]: "#"
+                - text: italy
+              - generic [ref=e1471]:
+                - generic [ref=e1472]: "#"
+                - text: live
+              - generic [ref=e1473]:
+                - generic [ref=e1474]: "#"
+                - text: nicolo
+            - generic [ref=e1475]: (1)
+          - 'option "# engineer # italy # live # nicolo # place (1)" [ref=e1476]':
+            - img
+            - generic [ref=e1478]:
+              - generic [ref=e1479]:
+                - generic [ref=e1480]: "#"
+                - text: engineer
+              - generic [ref=e1481]:
+                - generic [ref=e1482]: "#"
+                - text: italy
+              - generic [ref=e1483]:
+                - generic [ref=e1484]: "#"
+                - text: live
+              - generic [ref=e1485]:
+                - generic [ref=e1486]: "#"
+                - text: nicolo
+              - generic [ref=e1487]:
+                - generic [ref=e1488]: "#"
+                - text: place
+            - generic [ref=e1489]: (1)
+          - 'option "# engineer # italy # live # place (1)" [ref=e1490]':
+            - img
+            - generic [ref=e1492]:
+              - generic [ref=e1493]:
+                - generic [ref=e1494]: "#"
+                - text: engineer
+              - generic [ref=e1495]:
+                - generic [ref=e1496]: "#"
+                - text: italy
+              - generic [ref=e1497]:
+                - generic [ref=e1498]: "#"
+                - text: live
+              - generic [ref=e1499]:
+                - generic [ref=e1500]: "#"
+                - text: place
+            - generic [ref=e1501]: (1)
+          - 'option "# engineer # italy # nicolo (1)" [ref=e1502]':
+            - img
+            - generic [ref=e1504]:
+              - generic [ref=e1505]:
+                - generic [ref=e1506]: "#"
+                - text: engineer
+              - generic [ref=e1507]:
+                - generic [ref=e1508]: "#"
+                - text: italy
+              - generic [ref=e1509]:
+                - generic [ref=e1510]: "#"
+                - text: nicolo
+            - generic [ref=e1511]: (1)
+          - 'option "# engineer # italy # nicolo # place (1)" [ref=e1512]':
+            - img
+            - generic [ref=e1514]:
+              - generic [ref=e1515]:
+                - generic [ref=e1516]: "#"
+                - text: engineer
+              - generic [ref=e1517]:
+                - generic [ref=e1518]: "#"
+                - text: italy
+              - generic [ref=e1519]:
+                - generic [ref=e1520]: "#"
+                - text: nicolo
+              - generic [ref=e1521]:
+                - generic [ref=e1522]: "#"
+                - text: place
+            - generic [ref=e1523]: (1)
+          - 'option "# engineer # italy # place (1)" [ref=e1524]':
+            - img
+            - generic [ref=e1526]:
+              - generic [ref=e1527]:
+                - generic [ref=e1528]: "#"
+                - text: engineer
+              - generic [ref=e1529]:
+                - generic [ref=e1530]: "#"
+                - text: italy
+              - generic [ref=e1531]:
+                - generic [ref=e1532]: "#"
+                - text: place
+            - generic [ref=e1533]: (1)
+          - 'option "# engineer # live (1)" [ref=e1534]':
+            - img
+            - generic [ref=e1536]:
+              - generic [ref=e1537]:
+                - generic [ref=e1538]: "#"
+                - text: engineer
+              - generic [ref=e1539]:
+                - generic [ref=e1540]: "#"
+                - text: live
+            - generic [ref=e1541]: (1)
+          - 'option "# engineer # live # nicolo (1)" [ref=e1542]':
+            - img
+            - generic [ref=e1544]:
+              - generic [ref=e1545]:
+                - generic [ref=e1546]: "#"
+                - text: engineer
+              - generic [ref=e1547]:
+                - generic [ref=e1548]: "#"
+                - text: live
+              - generic [ref=e1549]:
+                - generic [ref=e1550]: "#"
+                - text: nicolo
+            - generic [ref=e1551]: (1)
+          - 'option "# engineer # live # nicolo # place (1)" [ref=e1552]':
+            - img
+            - generic [ref=e1554]:
+              - generic [ref=e1555]:
+                - generic [ref=e1556]: "#"
+                - text: engineer
+              - generic [ref=e1557]:
+                - generic [ref=e1558]: "#"
+                - text: live
+              - generic [ref=e1559]:
+                - generic [ref=e1560]: "#"
+                - text: nicolo
+              - generic [ref=e1561]:
+                - generic [ref=e1562]: "#"
+                - text: place
+            - generic [ref=e1563]: (1)
+          - 'option "# engineer # live # place (1)" [ref=e1564]':
+            - img
+            - generic [ref=e1566]:
+              - generic [ref=e1567]:
+                - generic [ref=e1568]: "#"
+                - text: engineer
+              - generic [ref=e1569]:
+                - generic [ref=e1570]: "#"
+                - text: live
+              - generic [ref=e1571]:
+                - generic [ref=e1572]: "#"
+                - text: place
+            - generic [ref=e1573]: (1)
+          - 'option "# engineer # nicolo (1)" [ref=e1574]':
+            - img
+            - generic [ref=e1576]:
+              - generic [ref=e1577]:
+                - generic [ref=e1578]: "#"
+                - text: engineer
+              - generic [ref=e1579]:
+                - generic [ref=e1580]: "#"
+                - text: nicolo
+            - generic [ref=e1581]: (1)
+          - 'option "# engineer # nicolo # place (1)" [ref=e1582]':
+            - img
+            - generic [ref=e1584]:
+              - generic [ref=e1585]:
+                - generic [ref=e1586]: "#"
+                - text: engineer
+              - generic [ref=e1587]:
+                - generic [ref=e1588]: "#"
+                - text: nicolo
+              - generic [ref=e1589]:
+                - generic [ref=e1590]: "#"
+                - text: place
+            - generic [ref=e1591]: (1)
+          - 'option "# engineer # place (1)" [ref=e1592]':
+            - img
+            - generic [ref=e1594]:
+              - generic [ref=e1595]:
+                - generic [ref=e1596]: "#"
+                - text: engineer
+              - generic [ref=e1597]:
+                - generic [ref=e1598]: "#"
+                - text: place
+            - generic [ref=e1599]: (1)
+          - option "# italy (1)" [ref=e1600]:
+            - img
+            - generic [ref=e1603]:
+              - generic [ref=e1604]: "#"
+              - text: italy
+            - generic [ref=e1605]: (1)
+          - 'option "# italy # live (1)" [ref=e1606]':
+            - img
+            - generic [ref=e1608]:
+              - generic [ref=e1609]:
+                - generic [ref=e1610]: "#"
+                - text: italy
+              - generic [ref=e1611]:
+                - generic [ref=e1612]: "#"
+                - text: live
+            - generic [ref=e1613]: (1)
+          - 'option "# italy # live # nicolo (1)" [ref=e1614]':
+            - img
+            - generic [ref=e1616]:
+              - generic [ref=e1617]:
+                - generic [ref=e1618]: "#"
+                - text: italy
+              - generic [ref=e1619]:
+                - generic [ref=e1620]: "#"
+                - text: live
+              - generic [ref=e1621]:
+                - generic [ref=e1622]: "#"
+                - text: nicolo
+            - generic [ref=e1623]: (1)
+          - 'option "# italy # live # nicolo # place (1)" [ref=e1624]':
+            - img
+            - generic [ref=e1626]:
+              - generic [ref=e1627]:
+                - generic [ref=e1628]: "#"
+                - text: italy
+              - generic [ref=e1629]:
+                - generic [ref=e1630]: "#"
+                - text: live
+              - generic [ref=e1631]:
+                - generic [ref=e1632]: "#"
+                - text: nicolo
+              - generic [ref=e1633]:
+                - generic [ref=e1634]: "#"
+                - text: place
+            - generic [ref=e1635]: (1)
+          - 'option "# italy # live # place (1)" [ref=e1636]':
+            - img
+            - generic [ref=e1638]:
+              - generic [ref=e1639]:
+                - generic [ref=e1640]: "#"
+                - text: italy
+              - generic [ref=e1641]:
+                - generic [ref=e1642]: "#"
+                - text: live
+              - generic [ref=e1643]:
+                - generic [ref=e1644]: "#"
+                - text: place
+            - generic [ref=e1645]: (1)
+          - 'option "# italy # nicolo (1)" [ref=e1646]':
+            - img
+            - generic [ref=e1648]:
+              - generic [ref=e1649]:
+                - generic [ref=e1650]: "#"
+                - text: italy
+              - generic [ref=e1651]:
+                - generic [ref=e1652]: "#"
+                - text: nicolo
+            - generic [ref=e1653]: (1)
+          - 'option "# italy # nicolo # place (1)" [ref=e1654]':
+            - img
+            - generic [ref=e1656]:
+              - generic [ref=e1657]:
+                - generic [ref=e1658]: "#"
+                - text: italy
+              - generic [ref=e1659]:
+                - generic [ref=e1660]: "#"
+                - text: nicolo
+              - generic [ref=e1661]:
+                - generic [ref=e1662]: "#"
+                - text: place
+            - generic [ref=e1663]: (1)
+          - 'option "# italy # place (1)" [ref=e1664]':
+            - img
+            - generic [ref=e1666]:
+              - generic [ref=e1667]:
+                - generic [ref=e1668]: "#"
+                - text: italy
+              - generic [ref=e1669]:
+                - generic [ref=e1670]: "#"
+                - text: place
+            - generic [ref=e1671]: (1)
+          - option "# live (1)" [ref=e1672]:
+            - img
+            - generic [ref=e1675]:
+              - generic [ref=e1676]: "#"
+              - text: live
+            - generic [ref=e1677]: (1)
+          - 'option "# live # nicolo (1)" [ref=e1678]':
+            - img
+            - generic [ref=e1680]:
+              - generic [ref=e1681]:
+                - generic [ref=e1682]: "#"
+                - text: live
+              - generic [ref=e1683]:
+                - generic [ref=e1684]: "#"
+                - text: nicolo
+            - generic [ref=e1685]: (1)
+          - 'option "# live # nicolo # place (1)" [ref=e1686]':
+            - img
+            - generic [ref=e1688]:
+              - generic [ref=e1689]:
+                - generic [ref=e1690]: "#"
+                - text: live
+              - generic [ref=e1691]:
+                - generic [ref=e1692]: "#"
+                - text: nicolo
+              - generic [ref=e1693]:
+                - generic [ref=e1694]: "#"
+                - text: place
+            - generic [ref=e1695]: (1)
+          - 'option "# live # place (1)" [ref=e1696]':
+            - img
+            - generic [ref=e1698]:
+              - generic [ref=e1699]:
+                - generic [ref=e1700]: "#"
+                - text: live
+              - generic [ref=e1701]:
+                - generic [ref=e1702]: "#"
+                - text: place
+            - generic [ref=e1703]: (1)
+          - option "# nicolo (1)" [ref=e1704]:
+            - img
+            - generic [ref=e1707]:
+              - generic [ref=e1708]: "#"
+              - text: nicolo
+            - generic [ref=e1709]: (1)
+          - 'option "# nicolo # place (1)" [ref=e1710]':
+            - img
+            - generic [ref=e1712]:
+              - generic [ref=e1713]:
+                - generic [ref=e1714]: "#"
+                - text: nicolo
+              - generic [ref=e1715]:
+                - generic [ref=e1716]: "#"
+                - text: place
+            - generic [ref=e1717]: (1)
+          - option "# place (1)" [ref=e1718]:
+            - img
+            - generic [ref=e1721]:
+              - generic [ref=e1722]: "#"
+              - text: place
+            - generic [ref=e1723]: (1)

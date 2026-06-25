@@ -355,6 +355,48 @@ export HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG='{
 
 The config is a credential field — never returned by the bank-config API. Hindsight already retries calls; set `"num_retries": 0` in the Router config to avoid double-retries. Batch APIs aren't supported in router mode.
 
+### Multi-LLM Strategies (failover / round-robin)
+
+Configure additional LLMs **by index** alongside the primary, then choose a strategy for routing across them. This is a provider-agnostic alternative to the LiteLLM Router: the indexed LLMs can be any mix of providers, each fully configured.
+
+The unindexed `HINDSIGHT_API_LLM_*` config is the **primary** (member 1). Extra members are numbered from 1:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_LLM_<n>_PROVIDER` | Provider for extra member `n` (`n` = 1, 2, ...). Presence of this var defines the member; indices must be contiguous from 1. | - |
+| `HINDSIGHT_API_LLM_<n>_API_KEY` | API key for member `n` (required unless the provider needs none). | - |
+| `HINDSIGHT_API_LLM_<n>_MODEL` | Model for member `n`. | Provider default |
+| `HINDSIGHT_API_LLM_<n>_BASE_URL` | Base URL for member `n`. | Provider default |
+| `HINDSIGHT_API_LLM_<n>_REASONING_EFFORT` | Reasoning effort for member `n`. | `HINDSIGHT_API_LLM_REASONING_EFFORT` |
+| `HINDSIGHT_API_LLM_<n>_EXTRA_BODY` / `_DEFAULT_HEADERS` | Per-member JSON overrides. | - |
+| `HINDSIGHT_API_LLM_<n>_BEDROCK_SERVICE_TIER` / `_GEMINI_SERVICE_TIER` | Per-member service tier. | - |
+| `HINDSIGHT_API_LLM_<n>_VERTEXAI_PROJECT_ID` / `_VERTEXAI_REGION` / `_VERTEXAI_SERVICE_ACCOUNT_KEY` | Per-member Vertex AI project, region, and service-account key path (for a `vertexai` member). Each falls back to the global `HINDSIGHT_API_LLM_VERTEXAI_*` when unset. | Global / `us-central1` / ADC |
+| `HINDSIGHT_API_LLM_<n>_LITELLMROUTER_CONFIG` | Per-member LiteLLM Router config JSON (for a `litellmrouter` member). Falls back to the global `HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG` when unset. | - |
+| `HINDSIGHT_API_LLM_STRATEGY` | JSON routing strategy across the chain. Unset = single primary LLM (no change). | - |
+
+The strategy JSON supports two modes:
+
+- `{"mode": "failover"}` — try members in order (primary first); on a member's failure (after its own retries) advance to the next.
+- `{"mode": "round-robin"}` — rotate the starting member per request to spread load, then fall through the rest on failure. Add `"weights": [3, 1, ...]` (positive ints, one per member, primary first) for an **unbalanced** rotation.
+
+```bash
+# Primary OpenAI, failover to Groq then Anthropic
+export HINDSIGHT_API_LLM_PROVIDER=openai
+export HINDSIGHT_API_LLM_API_KEY=sk-...
+export HINDSIGHT_API_LLM_1_PROVIDER=groq
+export HINDSIGHT_API_LLM_1_API_KEY=gsk-...
+export HINDSIGHT_API_LLM_2_PROVIDER=anthropic
+export HINDSIGHT_API_LLM_2_API_KEY=sk-ant-...
+export HINDSIGHT_API_LLM_STRATEGY='{"mode": "failover"}'
+
+# Weighted round-robin: serve the primary 3x as often as member 1
+export HINDSIGHT_API_LLM_STRATEGY='{"mode": "round-robin", "weights": [3, 1]}'
+```
+
+**Per-operation chains.** Each operation can define its own members + strategy with the `RETAIN` / `REFLECT` / `CONSOLIDATION` prefix (e.g. `HINDSIGHT_API_RETAIN_LLM_1_PROVIDER`, `HINDSIGHT_API_RETAIN_LLM_STRATEGY`). A per-operation slot with no indexed members (or no strategy) inherits the global chain.
+
+The indexed members are credential fields — never returned by the bank-config API and server-level only (not per-bank configurable). **Batch retain** runs on the primary member only; failover/round-robin apply to the interactive retain/reflect/consolidation calls.
+
 ### Built-in llama.cpp
 
 The `llamacpp` provider runs a llama.cpp server as a managed subprocess — no external LLM server needed. On first run it auto-downloads a default GGUF model (~3.5 GB). Requires the `local-llm` extra: `pip install 'hindsight-api-slim[local-llm]'`.

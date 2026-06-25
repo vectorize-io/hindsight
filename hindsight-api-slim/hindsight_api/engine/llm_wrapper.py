@@ -506,6 +506,9 @@ class LLMProvider:
         default_headers: dict[str, str] | None = None,
         litellmrouter_config: dict[str, Any] | None = None,
         gemini_service_tier: str | None = None,
+        vertexai_project_id: str | None = None,
+        vertexai_region: str | None = None,
+        vertexai_service_account_key: str | None = None,
     ):
         """
         Initialize LLM provider.
@@ -524,14 +527,23 @@ class LLMProvider:
             extra_body: Extra request-body params merged into the provider's native call
                 (OpenAI-compatible, Fireworks, Anthropic, Gemini/VertexAI, LiteLLM).
             default_headers: Custom headers passed as ``default_headers`` to provider SDK clients.
-                Used by operators routing through proxies / request-tracing middleware. Falls
-                back to ``HindsightConfig.llm_default_headers`` (env: ``HINDSIGHT_API_LLM_DEFAULT_HEADERS``)
-                when ``None``.
+                Used by operators routing through proxies / request-tracing middleware.
             litellmrouter_config: Provider-specific config for ``provider="litellmrouter"``.
                 JSON object passed verbatim to ``litellm.Router(**config)`` — see
                 https://docs.litellm.ai/docs/routing. Ignored unless ``provider == "litellmrouter"``.
-                When None and the provider is ``litellmrouter``, falls back to
-                ``HindsightConfig.llm_litellmrouter_config``.
+            vertexai_project_id: Vertex AI project ID for ``provider="vertexai"`` (required for
+                that provider).
+            vertexai_region: Vertex AI region for ``provider="vertexai"`` (defaults to
+                ``"us-central1"`` when ``None``).
+            vertexai_service_account_key: Path to a Vertex AI service-account key file for
+                ``provider="vertexai"`` (uses ADC when ``None``).
+
+        This constructor uses every argument as passed and does not read global
+        ``HindsightConfig``: resolving the server-level default for a ``None`` argument is the
+        caller's responsibility (see ``MemoryEngine``'s per-op builds, ``_member_to_llm``, and
+        ``LLMProvider.from_env``). Keeping it config-free makes a provider's effective settings a
+        pure function of its arguments — which is what lets each member of a multi-LLM chain be
+        configured independently.
         """
         self.provider = provider.lower()
         self.api_key = api_key
@@ -554,16 +566,9 @@ class LLMProvider:
         # Extra body params for OpenAI-compatible providers (e.g. chat_template_kwargs)
         self.extra_body = extra_body
         # Default headers passed to provider SDK clients (e.g. proxy auth, request tracing).
-        # Same pattern as ``gemini_safety_settings``: explicit override wins; otherwise read
-        # the static server-level default from ``HindsightConfig`` via ``_get_raw_config()``.
+        # Used verbatim — callers resolve the global fallback (see _member_to_llm /
+        # the per-op builds in MemoryEngine, and LLMProvider.from_env).
         self.default_headers = default_headers
-        if self.default_headers is None:
-            from ..config import _get_raw_config
-
-            try:
-                self.default_headers = _get_raw_config().llm_default_headers
-            except Exception:
-                pass  # Config may not be initialized in test environments
 
         # Validate provider
         valid_providers = [
@@ -621,25 +626,20 @@ class LLMProvider:
             elif self.provider == "nous":
                 self.base_url = "https://inference-api.nousresearch.com/v1"
 
-        # Prepare Vertex AI config (if applicable)
-        vertexai_project_id = None
-        vertexai_region = None
+        # Prepare Vertex AI config (if applicable). Values are used as passed; the
+        # caller resolves the global-config fallback (MemoryEngine builds /
+        # _member_to_llm / from_env). The region keeps a constant default here.
         vertexai_credentials = None
 
         if self.provider == "vertexai":
-            from ..config import get_config
-
-            config = get_config()
-
-            vertexai_project_id = config.llm_vertexai_project_id
             if not vertexai_project_id:
                 raise ValueError(
                     "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID is required for Vertex AI provider. "
                     "Set it to your GCP project ID."
                 )
 
-            vertexai_region = config.llm_vertexai_region or "us-central1"
-            service_account_key = config.llm_vertexai_service_account_key
+            vertexai_region = vertexai_region or "us-central1"
+            service_account_key = vertexai_service_account_key
 
             # Load explicit service account credentials if provided
             if service_account_key:
@@ -663,61 +663,20 @@ class LLMProvider:
                 f"model={self.model}, auth={'service_account' if service_account_key else 'ADC'}"
             )
 
-        # For Gemini/VertexAI providers: read safety settings from global config if not explicitly provided
-        # Use _get_raw_config() to bypass StaticConfigProxy (which blocks configurable fields),
-        # since LLMProvider initialization legitimately needs the server-level default.
-        if self.provider in ("gemini", "vertexai") and self.gemini_safety_settings is None:
-            from ..config import _get_raw_config
-
-            try:
-                raw_config = _get_raw_config()
-                self.gemini_safety_settings = raw_config.llm_gemini_safety_settings
-            except Exception:
-                pass  # Config may not be initialized in test environments
-
+        # Normalize the Gemini service tier (pure: maps/validates the passed value,
+        # no global config read). Non-Gemini providers never carry a tier. The
+        # server-level default is resolved by the caller, like the other fields.
         if self.provider == "gemini":
             from ..config import parse_gemini_service_tier
 
             self.gemini_service_tier = parse_gemini_service_tier(self.gemini_service_tier)
-
-        if self.provider == "gemini" and self.gemini_service_tier is None:
-            from ..config import _get_raw_config
-
-            try:
-                raw_config = _get_raw_config()
-                self.gemini_service_tier = raw_config.llm_gemini_service_tier
-            except Exception:
-                pass  # Config may not be initialized in test environments
-        elif self.provider != "gemini":
+        else:
             self.gemini_service_tier = None
 
-        # Prompt-prefix caching is a provider-agnostic toggle (default on): resolve
-        # it from the static server config for every provider when the caller didn't
-        # pass an explicit override. Providers that don't support caching ignore the
-        # value; only those that implement get_or_create_cached_prefix act on it.
-        if not self.prompt_cache_enabled:
-            from ..config import DEFAULT_LLM_PROMPT_CACHE_ENABLED, _get_raw_config
-
-            try:
-                raw_config = _get_raw_config()
-                self.prompt_cache_enabled = bool(
-                    getattr(raw_config, "llm_prompt_cache_enabled", DEFAULT_LLM_PROMPT_CACHE_ENABLED)
-                )
-            except Exception:
-                pass  # Config may not be initialized in test environments
-
-        # For litellmrouter: prefer an explicit chain from the caller (per-op
-        # construction in MemoryEngine threads the right chain through). If the caller
-        # didn't supply one, fall back to the global ``llm_litellmrouter_config`` so
-        # ad-hoc constructions (e.g. ``LLMProvider.from_env()``) keep working.
+        # gemini_safety_settings / prompt_cache_enabled / litellmrouter_config are
+        # used as passed — the caller resolves the global-config fallback. Providers
+        # that don't support prompt caching ignore the flag.
         router_config: dict[str, Any] | None = self.litellmrouter_config
-        if self.provider == "litellmrouter" and router_config is None:
-            from ..config import _get_raw_config
-
-            try:
-                router_config = _get_raw_config().llm_litellmrouter_config
-            except Exception:
-                router_config = None
 
         # Create provider implementation using factory
         self._provider_impl = create_llm_provider(
@@ -854,7 +813,13 @@ class LLMProvider:
         # The requested params are stashed in a contextvar (only what the caller
         # actually set) so the recorder can attach them to either path.
         from ..tracing import get_span_recorder
-        from .llm_trace import reset_request_context, set_request_context
+        from .llm_trace import (
+            current_response_usage,
+            reset_request_context,
+            reset_response_usage,
+            set_request_context,
+            set_response_usage,
+        )
 
         call_start = time.monotonic()
         request_token = set_request_context(
@@ -865,6 +830,9 @@ class LLMProvider:
                 response_format=response_format,
             )
         )
+        # Cleared per call; the provider stashes real usage once a response is in
+        # hand so the error path below can attach it if parsing/validation fails.
+        usage_token = set_response_usage(None)
         try:
             async with AsyncExitStack() as stack:
                 for sem in _semaphores_for_scope(scope):
@@ -892,14 +860,19 @@ class LLMProvider:
                         **cache_kwarg,
                     )
                 except Exception as e:
+                    # The provider call may have succeeded (and incurred token
+                    # cost) before local parsing/validation raised; attach the
+                    # provider-reported usage to the error trace when available.
+                    usage = current_response_usage()
                     get_span_recorder().record_llm_call(
                         provider=self.provider,
                         model=self.model,
                         scope=scope,
                         messages=messages,
                         response_content=None,
-                        input_tokens=0,
-                        output_tokens=0,
+                        input_tokens=usage.input_tokens if usage else 0,
+                        output_tokens=usage.output_tokens if usage else 0,
+                        cached_tokens=usage.cached_tokens if usage else 0,
                         duration=time.monotonic() - call_start,
                         error=e,
                     )
@@ -915,6 +888,7 @@ class LLMProvider:
                         self._mock_calls = self._provider_impl.get_mock_calls()
         finally:
             reset_request_context(request_token)
+            reset_response_usage(usage_token)
 
         return result
 
@@ -954,7 +928,13 @@ class LLMProvider:
 
         # Failures forwarded to the GenAI recorder; successes recorded by providers.
         from ..tracing import get_span_recorder
-        from .llm_trace import reset_request_context, set_request_context
+        from .llm_trace import (
+            current_response_usage,
+            reset_request_context,
+            reset_response_usage,
+            set_request_context,
+            set_response_usage,
+        )
 
         call_start = time.monotonic()
         request_token = set_request_context(
@@ -965,6 +945,9 @@ class LLMProvider:
                 tool_choice=tool_choice,
             )
         )
+        # Cleared per call; the provider stashes real usage once a response is in
+        # hand so the error path below can attach it if parsing/validation fails.
+        usage_token = set_response_usage(None)
         try:
             async with AsyncExitStack() as stack:
                 for sem in _semaphores_for_scope(scope):
@@ -989,14 +972,19 @@ class LLMProvider:
                         **cache_kwarg,
                     )
                 except Exception as e:
+                    # The provider call may have succeeded (and incurred token
+                    # cost) before local parsing/validation raised; attach the
+                    # provider-reported usage to the error trace when available.
+                    usage = current_response_usage()
                     get_span_recorder().record_llm_call(
                         provider=self.provider,
                         model=self.model,
                         scope=scope,
                         messages=messages,
                         response_content=None,
-                        input_tokens=0,
-                        output_tokens=0,
+                        input_tokens=usage.input_tokens if usage else 0,
+                        output_tokens=usage.output_tokens if usage else 0,
+                        cached_tokens=usage.cached_tokens if usage else 0,
                         duration=time.monotonic() - call_start,
                         error=e,
                     )
@@ -1012,6 +1000,7 @@ class LLMProvider:
                         self._mock_calls = self._provider_impl.get_mock_calls()
         finally:
             reset_request_context(request_token)
+            reset_response_usage(usage_token)
 
         return result
 
@@ -1170,7 +1159,12 @@ class LLMProvider:
     @classmethod
     def from_env(cls) -> "LLMProvider":
         """Create provider from environment variables using config.py constants."""
+        # Read every field straight from the environment. The constructor no longer
+        # resolves global-config fallbacks, so this factory must supply them — and it
+        # does so without building the full HindsightConfig, keeping from_env() a
+        # lightweight env-only loader (see test_llm_provider_from_env_keeps_lightweight_loader).
         from ..config import (
+            DEFAULT_LLM_PROMPT_CACHE_ENABLED,
             DEFAULT_LLM_PROVIDER,
             DEFAULT_LLM_REASONING_EFFORT,
             ENV_LLM_API_KEY,
@@ -1178,11 +1172,18 @@ class LLMProvider:
             ENV_LLM_BEDROCK_SERVICE_TIER,
             ENV_LLM_DEFAULT_HEADERS,
             ENV_LLM_EXTRA_BODY,
+            ENV_LLM_GEMINI_SAFETY_SETTINGS,
             ENV_LLM_GEMINI_SERVICE_TIER,
+            ENV_LLM_LITELLMROUTER_CONFIG,
             ENV_LLM_MODEL,
+            ENV_LLM_PROMPT_CACHE_ENABLED,
             ENV_LLM_PROVIDER,
             ENV_LLM_REASONING_EFFORT,
+            ENV_LLM_VERTEXAI_PROJECT_ID,
+            ENV_LLM_VERTEXAI_REGION,
+            ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY,
             _get_default_model_for_provider,
+            _parse_llm_router_config,
             parse_gemini_service_tier,
         )
 
@@ -1200,6 +1201,14 @@ class LLMProvider:
         model = os.getenv(ENV_LLM_MODEL) or _get_default_model_for_provider(provider)
         extra_body = json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null"))
         default_headers = json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null"))
+        prompt_cache_enabled = os.getenv(
+            ENV_LLM_PROMPT_CACHE_ENABLED, str(DEFAULT_LLM_PROMPT_CACHE_ENABLED)
+        ).lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
 
         return cls(
             provider=provider,
@@ -1215,6 +1224,12 @@ class LLMProvider:
                 if provider.lower() == "gemini"
                 else None
             ),
+            gemini_safety_settings=json.loads(os.getenv(ENV_LLM_GEMINI_SAFETY_SETTINGS, "null")),
+            prompt_cache_enabled=prompt_cache_enabled,
+            litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
+            vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or None,
+            vertexai_region=os.getenv(ENV_LLM_VERTEXAI_REGION) or None,
+            vertexai_service_account_key=os.getenv(ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY) or None,
         )
 
 

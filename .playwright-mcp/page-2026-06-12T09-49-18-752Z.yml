@@ -1,0 +1,93 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e4]:
+      - img "Hindsight" [ref=e5]
+      - combobox [ref=e7]:
+        - generic [ref=e8]: locomo-demo-v3
+        - img
+      - button "Add Document" [ref=e10]:
+        - img
+        - generic [ref=e11]: Add Document
+      - link "GitHub" [ref=e12] [cursor=pointer]:
+        - /url: https://github.com/vectorize-io/hindsight
+        - img [ref=e13]
+        - generic [ref=e16]: GitHub
+      - button "Switch to dark mode" [ref=e18]:
+        - img
+      - button "Change language" [ref=e19]:
+        - img
+    - generic [ref=e20]:
+      - complementary [ref=e21]:
+        - navigation [ref=e22]:
+          - list [ref=e23]:
+            - listitem [ref=e24]:
+              - link "Memories" [ref=e25] [cursor=pointer]:
+                - /url: /banks/locomo-demo-v3?view=data
+                - img [ref=e26]
+            - listitem [ref=e30]:
+              - link "Recall" [ref=e31] [cursor=pointer]:
+                - /url: /banks/locomo-demo-v3?view=recall
+                - img [ref=e32]
+            - listitem [ref=e35]:
+              - link "Reflect" [ref=e36] [cursor=pointer]:
+                - /url: /banks/locomo-demo-v3?view=reflect
+                - img [ref=e37]
+            - listitem [ref=e40]:
+              - link "Documents" [ref=e41] [cursor=pointer]:
+                - /url: /banks/locomo-demo-v3?view=documents
+                - img [ref=e42]
+            - listitem [ref=e45]:
+              - link "Entities" [ref=e46] [cursor=pointer]:
+                - /url: /banks/locomo-demo-v3?view=entities
+                - img [ref=e47]
+            - listitem [ref=e52]:
+              - link "Bank Configuration" [ref=e53] [cursor=pointer]:
+                - /url: /banks/locomo-demo-v3?view=profile
+                - img [ref=e54]
+        - button "Expand sidebar" [ref=e58]:
+          - img [ref=e59]
+      - main [ref=e61]:
+        - generic [ref=e63]:
+          - generic [ref=e64]:
+            - generic [ref=e65]:
+              - heading "Bank Configuration" [level=1] [ref=e66]
+              - paragraph [ref=e67]: Manage bank settings, profile, and operations.
+            - button "Actions" [ref=e68]:
+              - text: Actions
+              - img
+          - generic [ref=e70]:
+            - button "General" [ref=e71]: General
+            - button "Webhooks" [ref=e73]
+            - button "Audit LogsOff" [ref=e74]
+            - button "LLM RequestsOff" [ref=e75]
+          - generic [ref=e77]:
+            - paragraph [ref=e78]: Overview statistics and background operations for this memory bank.
+            - generic [ref=e79]:
+              - img [ref=e81]
+              - generic [ref=e84]:
+                - generic [ref=e85]:
+                  - generic [ref=e86]:
+                    - generic [ref=e87]:
+                      - heading "Background Operations" [level=3] [ref=e88]
+                      - button "Refresh operations" [disabled] [ref=e89]:
+                        - img [ref=e90]
+                    - paragraph [ref=e95]: 0 operations
+                  - generic [ref=e96]:
+                    - combobox [ref=e97]:
+                      - generic:
+                        - generic:
+                          - generic: All types
+                      - img [ref=e98]
+                    - generic [ref=e100]:
+                      - button "All" [ref=e101]
+                      - button "Pending" [ref=e102]
+                      - button "Processing" [ref=e103]
+                      - button "Completed" [ref=e104]
+                      - button "Failed" [ref=e105]
+                      - button "Cancelled" [ref=e106]
+                - paragraph [ref=e108]: No operations
+              - generic [ref=e110]:
+                - img [ref=e111]
+                - generic [ref=e114]: Loading profile...
+  - region "Notifications alt+T"
+  - alert [ref=e115]

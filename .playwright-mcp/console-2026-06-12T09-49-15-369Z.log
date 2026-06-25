@@ -1,0 +1,101 @@
+[    2810ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[    2864ms] [LOG] [HMR] connected @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[    3193ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[    3194ms] [LOG] [Fast Refresh] done in 244ms @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[    3195ms] [WARNING] Image with src "http://localhost:9999/logo.png" has either width or height modified, but not the other. If you use CSS to change the size of your image, also include the styles 'width: "auto"' or 'height: "auto"' to maintain the aspect ratio. @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[    3296ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[    3749ms] [LOG] [Fast Refresh] done in 553ms @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[    3847ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:9999/api/version:0
+[    3848ms] [ERROR] Error loading features: Error: Failed to get version
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async FeaturesProvider.useEffect.loadFeatures (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:1039:42) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[    3894ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:9999/api/banks:0
+[    3894ms] [ERROR] Error loading banks: Error: Failed to fetch banks
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async loadBanks (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:924:30) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[    4149ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:9999/api/stats/locomo-demo-v3/memories-timeseries?period=7d&time_field=created_at:0
+[    4149ms] [ERROR] Error loading memories timeseries: Error: Failed to fetch memories timeseries
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async loadTimeseries (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_components_bank-stats-view_tsx_09_9kz8._.js:1530:26) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[    4204ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:9999/api/operations/locomo-demo-v3?limit=10&exclude_parents=true:0
+[    4204ms] [ERROR] Error loading operations: Error: Failed to fetch operations
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async BankOperationsView.useCallback[loadOperations] (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_components_bank-operations-view_tsx_1xto18i._.js:378:33) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[    4251ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:9999/api/stats/locomo-demo-v3:0
+[    4251ms] [ERROR] Error loading bank stats: Error: Failed to fetch stats
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async Promise.all (index 0)
+    at async loadData (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_components_bank-stats-view_tsx_09_9kz8._.js:1515:51) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[    4305ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:9999/api/banks/locomo-demo-v3/mental-models:0
+[    4350ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:9999/api/version:0
+[    4411ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:9999/api/stats/locomo-demo-v3:0
+[    4471ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:9999/api/profile/locomo-demo-v3:0
+[    4526ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:9999/api/banks/locomo-demo-v3/directives:0
+[    8276ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:9999/api/stats/locomo-demo-v3:0
+[    8277ms] [ERROR] Error loading bank stats: Error: Failed to fetch stats
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async Promise.all (index 0)
+    at async loadData (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_components_bank-stats-view_tsx_09_9kz8._.js:1515:51) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[    8298ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[    8413ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:9999/api/banks/locomo-demo-v3/mental-models:0
+[    8419ms] [LOG] [Fast Refresh] done in 223ms @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[    8453ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:9999/api/stats/locomo-demo-v3/memories-timeseries?period=7d&time_field=created_at:0
+[    8454ms] [ERROR] Error loading memories timeseries: Error: Failed to fetch memories timeseries
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async loadTimeseries (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_components_bank-stats-view_tsx_09_9kz8._.js:1530:26) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[    8570ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[    8627ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:9999/api/operations/locomo-demo-v3?limit=10&exclude_parents=true:0
+[    8628ms] [ERROR] Error loading operations: Error: Failed to fetch operations
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async BankOperationsView.useCallback[loadOperations] (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_components_bank-operations-view_tsx_1xto18i._.js:378:33) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[    8681ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:9999/api/banks/locomo-demo-v3/directives:0
+[    8681ms] [ERROR] Error refreshing stats: Error: Failed to list directives
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async Promise.all (index 1)
+    at async loadData (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_components_bank-profile-view_tsx_046c-92._.js:126:53) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[    8687ms] [LOG] [Fast Refresh] done in 217ms @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[    8797ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[    8891ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:9999/api/stats/locomo-demo-v3:0
+[    8898ms] [LOG] [Fast Refresh] done in 201ms @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[   13292ms] [LOG] [Fast Refresh] rebuilding @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[   13306ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:9999/api/stats/locomo-demo-v3:0
+[   13307ms] [ERROR] Error loading bank stats: Error: Failed to fetch stats
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async Promise.all (index 0)
+    at async loadData (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_components_bank-stats-view_tsx_09_9kz8._.js:1515:51) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[   13409ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:9999/api/banks/locomo-demo-v3/mental-models:0
+[   13413ms] [LOG] [Fast Refresh] done in 221ms @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:2477
+[   13515ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:9999/api/stats/locomo-demo-v3/memories-timeseries?period=7d&time_field=created_at:0
+[   13515ms] [ERROR] Error loading memories timeseries: Error: Failed to fetch memories timeseries
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async loadTimeseries (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_components_bank-stats-view_tsx_09_9kz8._.js:1530:26) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[   13557ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:9999/api/operations/locomo-demo-v3?limit=10&exclude_parents=true:0
+[   13558ms] [ERROR] Error loading operations: Error: Failed to fetch operations
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async BankOperationsView.useCallback[loadOperations] (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_components_bank-operations-view_tsx_1xto18i._.js:378:33) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[   13622ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:9999/api/banks/locomo-demo-v3/directives:0
+[   13624ms] [ERROR] Error refreshing stats: Error: Failed to list directives
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async Promise.all (index 1)
+    at async loadData (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_components_bank-profile-view_tsx_046c-92._.js:126:53) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[   13664ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:9999/api/stats/locomo-demo-v3:0
+[   18234ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:9999/api/stats/locomo-demo-v3:0
+[   18235ms] [ERROR] Error loading bank stats: Error: Failed to fetch stats
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async Promise.all (index 0)
+    at async loadData (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_components_bank-stats-view_tsx_09_9kz8._.js:1515:51) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[   18270ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:9999/api/banks/locomo-demo-v3/mental-models:0
+[   18313ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:9999/api/stats/locomo-demo-v3/memories-timeseries?period=7d&time_field=created_at:0
+[   18313ms] [ERROR] Error loading memories timeseries: Error: Failed to fetch memories timeseries
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async loadTimeseries (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_components_bank-stats-view_tsx_09_9kz8._.js:1530:26) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[   18360ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:9999/api/operations/locomo-demo-v3?limit=10&exclude_parents=true:0
+[   18360ms] [ERROR] Error loading operations: Error: Failed to fetch operations
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async BankOperationsView.useCallback[loadOperations] (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_components_bank-operations-view_tsx_1xto18i._.js:378:33) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[   18393ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:9999/api/banks/locomo-demo-v3/directives:0
+[   18394ms] [ERROR] Error refreshing stats: Error: Failed to list directives
+    at ControlPlaneClient.fetchApi (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_09ldbjk._.js:219:31)
+    at async Promise.all (index 1)
+    at async loadData (http://localhost:9999/_next/static/chunks/hindsight-control-plane_src_components_bank-profile-view_tsx_046c-92._.js:126:53) @ http://localhost:9999/_next/static/chunks/node_modules_next_dist_1ybzpk2._.js:3318
+[   18436ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:9999/api/stats/locomo-demo-v3:0

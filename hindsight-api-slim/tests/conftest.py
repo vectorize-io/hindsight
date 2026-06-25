@@ -11,6 +11,22 @@ import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
 
+# Force torch to initialize exactly once, in the main thread, at conftest import
+# time — before any fixture spins up an event loop or sentence-transformers'
+# thread pools. torch's C-level `_add_docstr(_has_torch_function, ...)` in
+# torch/overrides.py is not re-entrancy-safe: when the first `import torch`
+# happens lazily from inside concurrent/async code (e.g.
+# embeddings.initialize() -> sentence_transformers -> transformers -> torch, or
+# cross_encoder's ThreadPoolExecutor), torch/overrides.py can execute twice and
+# raise "RuntimeError: function '_has_torch_function' already has a docstring",
+# failing collection of every test on the pytest-xdist shard. Importing it here
+# (single-threaded, before any concurrency) makes that registration happen once
+# per worker process. Guarded so slim/no-torch environments still collect.
+try:
+    import torch  # noqa: F401  # eager one-time init; see comment above
+except ImportError:
+    pass
+
 from hindsight_api import LLMConfig, LocalSTEmbeddings, MemoryEngine, RequestContext
 from hindsight_api.engine.cross_encoder import LocalSTCrossEncoder
 from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer

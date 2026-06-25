@@ -73,6 +73,9 @@ def _tool_call_response() -> MagicMock:
     resp.usage.prompt_tokens = 10
     resp.usage.completion_tokens = 5
     resp.usage.total_tokens = 15
+    # Explicit None: an auto-MagicMock here is truthy, so the reasoning-token
+    # accounting (#2378) would do arithmetic on a MagicMock and crash.
+    resp.usage.completion_tokens_details = None
     resp.choices[0].finish_reason = "tool_calls"
     resp.choices[0].message.content = None
     resp.choices[0].message.tool_calls = [tc]

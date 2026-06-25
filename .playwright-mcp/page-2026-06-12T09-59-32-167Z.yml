@@ -1,0 +1,66 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e4]:
+      - img "Hindsight" [ref=e5]
+      - combobox [ref=e7]:
+        - generic [ref=e8]: cluster-demo
+        - img
+      - button "Add Document" [ref=e10]:
+        - img
+        - generic [ref=e11]: Add Document
+      - link "GitHub" [ref=e12] [cursor=pointer]:
+        - /url: https://github.com/vectorize-io/hindsight
+        - img [ref=e13]
+        - generic [ref=e16]: GitHub
+      - button "Switch to dark mode" [ref=e18]:
+        - img
+      - button "Change language" [ref=e19]:
+        - img
+    - generic [ref=e20]:
+      - complementary [ref=e21]:
+        - navigation [ref=e22]:
+          - list [ref=e23]:
+            - listitem [ref=e24]:
+              - link "Memories" [ref=e25] [cursor=pointer]:
+                - /url: /banks/cluster-demo?view=data
+                - img [ref=e26]
+            - listitem [ref=e30]:
+              - link "Recall" [ref=e31] [cursor=pointer]:
+                - /url: /banks/cluster-demo?view=recall
+                - img [ref=e32]
+            - listitem [ref=e35]:
+              - link "Reflect" [ref=e36] [cursor=pointer]:
+                - /url: /banks/cluster-demo?view=reflect
+                - img [ref=e37]
+            - listitem [ref=e40]:
+              - link "Documents" [ref=e41] [cursor=pointer]:
+                - /url: /banks/cluster-demo?view=documents
+                - img [ref=e42]
+            - listitem [ref=e45]:
+              - link "Entities" [ref=e46] [cursor=pointer]:
+                - /url: /banks/cluster-demo?view=entities
+                - img [ref=e47]
+            - listitem [ref=e52]:
+              - link "Bank Configuration" [ref=e53] [cursor=pointer]:
+                - /url: /banks/cluster-demo?view=profile
+                - img [ref=e54]
+        - button "Expand sidebar" [ref=e58]:
+          - img [ref=e59]
+      - main [ref=e61]:
+        - generic [ref=e63]:
+          - heading "Memories" [level=1] [ref=e64]
+          - paragraph [ref=e65]: View and explore different types of memories stored in this memory bank.
+          - generic [ref=e67]:
+            - button "World Facts" [ref=e68]: World Facts
+            - button "Experience" [ref=e70]
+            - button "ObservationsOff" [ref=e71]
+            - button "Mental Models" [ref=e72]
+          - generic [ref=e74]:
+            - paragraph [ref=e75]: Objective facts about the world received from external sources.
+            - generic [ref=e77]:
+              - img [ref=e78]
+              - paragraph [ref=e83]: Loading memories...
+  - region "Notifications alt+T"
+  - button "Open Next.js Dev Tools" [ref=e89] [cursor=pointer]:
+    - img [ref=e90]
+  - alert [ref=e93]
