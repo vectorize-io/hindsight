@@ -1,6 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "hindsight",
+  "version": "0.7.1",
   "description": "Official Hindsight integrations for Claude Code",
   "owner": {
     "name": "vectorize-io"

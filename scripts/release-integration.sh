@@ -164,6 +164,18 @@ else
     exit 1
 fi
 
+# The Claude Code plugin ships via the marketplace manifest (no package
+# registry). `claude plugin marketplace add vectorize-io/hindsight` only ever
+# reads the root .claude-plugin/marketplace.json, so its "version" must be
+# bumped in lockstep with the plugin so the published catalog reflects the new
+# release (see #2386).
+if [ "$INTEGRATION" = "claude-code" ]; then
+    MARKETPLACE_FILE=".claude-plugin/marketplace.json"
+    print_info "Updating marketplace version in $MARKETPLACE_FILE"
+    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$MARKETPLACE_FILE"
+    rm "$MARKETPLACE_FILE.bak"
+fi
+
 # Generate changelog entry using LLM
 print_info "Generating changelog entry..."
 if cd hindsight-dev && uv run generate-changelog "$VERSION" --integration "$INTEGRATION"; then
@@ -183,6 +195,8 @@ print_info "Regenerating docs skill..."
 # Commit version bump + changelog + regenerated skill together
 print_info "Committing changes..."
 git add "hindsight-integrations/$INTEGRATION/" "hindsight-docs/src/pages/changelog/integrations/$INTEGRATION.md" "skills/"
+# claude-code also bumps the root marketplace manifest (no-op stage for other integrations)
+git add ".claude-plugin/marketplace.json"
 git commit --no-verify -m "release($INTEGRATION): v$VERSION"
 
 # Create annotated tag
