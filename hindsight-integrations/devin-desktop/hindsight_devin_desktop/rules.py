@@ -1,9 +1,10 @@
-"""Write Hindsight's recall/retain rule into ``.windsurf/rules/hindsight.md``.
+"""Write Hindsight's recall/retain rule into ``.devin/rules/hindsight.md``.
 
-Windsurf applies workspace rule files under ``.windsurf/rules/``. A file with
-``trigger: always_on`` frontmatter is included in every Cascade request in the
-workspace, so the rule tells Cascade to use the Hindsight MCP tools — recall
-relevant memory at the start of a task, and retain durable facts.
+Devin Desktop applies workspace rule files under ``.devin/rules/`` (with
+``.windsurf/rules/`` kept as a legacy fallback). A file with ``trigger: always_on``
+frontmatter is included in every Devin request in the workspace, so the rule
+tells the agent to use the Hindsight MCP tools — recall relevant memory at the
+start of a task, and retain durable facts.
 
 The rule lives in its own dedicated file, so we own the whole file: a sentinel
 comment marks it as ours for idempotent update/removal without touching any
@@ -14,7 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-SENTINEL = "<!-- Managed by hindsight-windsurf -->"
+SENTINEL = "<!-- Managed by hindsight-devin-desktop -->"
 
 FRONTMATTER = "---\ntrigger: always_on\n---"
 
@@ -32,8 +33,8 @@ RULE_TEXT = (
 
 
 def default_rules_path() -> Path:
-    """The workspace ``.windsurf/rules/hindsight.md`` (always-on in Cascade)."""
-    return Path.cwd() / ".windsurf" / "rules" / "hindsight.md"
+    """The workspace ``.devin/rules/hindsight.md`` (always-on in Devin Desktop)."""
+    return Path.cwd() / ".devin" / "rules" / "hindsight.md"
 
 
 def render_rule(rule_text: str = RULE_TEXT) -> str:

@@ -1,13 +1,15 @@
-"""Configuration for the Hindsight Windsurf integration.
+"""Configuration for the Hindsight Devin Desktop integration.
 
-Settings layer (later wins): built-in defaults -> ``~/.hindsight/windsurf.json``
--> environment variables. Resolved into a typed :class:`WindsurfConfig`.
+Devin Desktop is the editor formerly known as Windsurf (Codeium).
+
+Settings layer (later wins): built-in defaults -> ``~/.hindsight/devin-desktop.json``
+-> environment variables. Resolved into a typed :class:`DevinDesktopConfig`.
 
 The integration is configuration-only: it wires the Hindsight MCP server into
-Windsurf's ``~/.codeium/windsurf/mcp_config.json`` and writes an always-on
-recall/retain rule into ``.windsurf/rules/hindsight.md`` (which Cascade applies
-to every request in the workspace). Memory operations run through the MCP server
-at runtime.
+Devin Desktop's ``~/.codeium/windsurf/mcp_config.json`` and writes an always-on
+recall/retain rule into ``.devin/rules/hindsight.md`` (which Devin applies to
+every request in the workspace). Memory operations run through the MCP server at
+runtime.
 """
 
 from __future__ import annotations
@@ -19,14 +21,14 @@ from pathlib import Path
 from typing import Optional
 
 DEFAULT_HINDSIGHT_API_URL = "https://api.hindsight.vectorize.io"
-DEFAULT_BANK_ID = "windsurf"
+DEFAULT_BANK_ID = "devin-desktop"
 
-USER_CONFIG_FILE = Path.home() / ".hindsight" / "windsurf.json"
+USER_CONFIG_FILE = Path.home() / ".hindsight" / "devin-desktop.json"
 
 
 @dataclass
-class WindsurfConfig:
-    """Resolved configuration for the Windsurf MCP setup."""
+class DevinDesktopConfig:
+    """Resolved configuration for the Devin Desktop MCP setup."""
 
     hindsight_api_url: str = DEFAULT_HINDSIGHT_API_URL
     hindsight_api_token: Optional[str] = None
@@ -44,13 +46,13 @@ _FILE_KEYS = {
 _ENV_KEYS = {
     "HINDSIGHT_API_URL": "hindsight_api_url",
     "HINDSIGHT_API_TOKEN": "hindsight_api_token",
-    "HINDSIGHT_WINDSURF_BANK_ID": "bank_id",
+    "HINDSIGHT_DEVIN_DESKTOP_BANK_ID": "bank_id",
 }
 
 
-def load_config(config_file: Optional[Path] = None, env: Optional[dict] = None) -> WindsurfConfig:
+def load_config(config_file: Optional[Path] = None, env: Optional[dict] = None) -> DevinDesktopConfig:
     """Load and resolve configuration from file then environment."""
-    cfg = WindsurfConfig()
+    cfg = DevinDesktopConfig()
     env = os.environ if env is None else env
 
     path = config_file if config_file is not None else USER_CONFIG_FILE

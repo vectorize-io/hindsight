@@ -1,8 +1,8 @@
-"""CLI for the Hindsight Windsurf integration.
+"""CLI for the Hindsight Devin Desktop integration.
 
-``hindsight-windsurf init`` wires the Hindsight MCP server into Windsurf's
-``~/.codeium/windsurf/mcp_config.json`` and writes an always-on recall/retain
-rule into ``.windsurf/rules/hindsight.md``. Cascade then exposes
+``hindsight-devin-desktop init`` wires the Hindsight MCP server into Devin
+Desktop's ``~/.codeium/windsurf/mcp_config.json`` and writes an always-on
+recall/retain rule into ``.devin/rules/hindsight.md``. Devin then exposes
 ``recall``/``retain``/``reflect`` and (via the rule) uses them automatically.
 """
 
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import __version__
-from .config import USER_CONFIG_FILE, WindsurfConfig, load_config
+from .config import USER_CONFIG_FILE, DevinDesktopConfig, load_config
 from .mcp_config import (
     McpResult,
     apply_to_mcp,
@@ -36,7 +36,7 @@ class InstallOutcome:
     rules_path: Path
 
 
-def build_install(config: WindsurfConfig, mcp_path: Path, rules_path: Path) -> InstallOutcome:
+def build_install(config: DevinDesktopConfig, mcp_path: Path, rules_path: Path) -> InstallOutcome:
     """Apply the MCP server entry and the recall/retain rule (the testable core)."""
     server = build_http_server(config.hindsight_api_url, config.hindsight_api_token, config.bank_id)
     mcp = apply_to_mcp(mcp_path, server)
@@ -44,7 +44,7 @@ def build_install(config: WindsurfConfig, mcp_path: Path, rules_path: Path) -> I
     return InstallOutcome(mcp=mcp, rules_path=rules_path)
 
 
-def _resolve_config(args: argparse.Namespace) -> WindsurfConfig:
+def _resolve_config(args: argparse.Namespace) -> DevinDesktopConfig:
     cfg = load_config(config_file=_user_config_path(args))
     if args.api_url:
         cfg.hindsight_api_url = args.api_url
@@ -67,7 +67,7 @@ def _rules_path(args: argparse.Namespace) -> Path:
     return Path(args.rules_path) if args.rules_path else default_rules_path()
 
 
-def _scaffold_user_config(cfg: WindsurfConfig, path: Path) -> None:
+def _scaffold_user_config(cfg: DevinDesktopConfig, path: Path) -> None:
     if path.is_file():
         return
     data = {"hindsightApiUrl": cfg.hindsight_api_url, "bankId": cfg.bank_id}
@@ -86,11 +86,11 @@ def cmd_init(args: argparse.Namespace) -> None:
     if args.print_only:
         print("Add this to your ~/.codeium/windsurf/mcp_config.json:\n")
         print(render_snippet(server))
-        print("\nAnd save this rule as .windsurf/rules/hindsight.md:\n")
+        print("\nAnd save this rule as .devin/rules/hindsight.md:\n")
         print(RULE_TEXT)
         return
 
-    print("Setting up Hindsight for Windsurf ...")
+    print("Setting up Hindsight for Devin Desktop ...")
     _scaffold_user_config(cfg, _user_config_path(args))
     outcome = build_install(cfg, mcp_path, rules_path)
 
@@ -102,7 +102,7 @@ def cmd_init(args: argparse.Namespace) -> None:
         verb = {"created": "Created", "merged": "Updated", "unchanged": "Already configured in"}[outcome.mcp.action]
         print(f"  {verb} {outcome.mcp.path} (MCP server: hindsight -> bank '{cfg.bank_id}')")
     print(f"  Wrote always-on recall/retain rule to {outcome.rules_path}")
-    print("\nDone. Reload Windsurf (or refresh MCP servers in Cascade) and the")
+    print("\nDone. Reload Devin Desktop (or refresh MCP servers) and the")
     print("hindsight MCP tools (recall/retain/reflect) are available + used automatically.")
 
 
@@ -131,21 +131,21 @@ def _add_overrides(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--mcp-path", default=None, help="mcp_config.json path (default: ~/.codeium/windsurf/mcp_config.json)"
     )
-    parser.add_argument("--rules-path", default=None, help="rule file path (default: ./.windsurf/rules/hindsight.md)")
+    parser.add_argument("--rules-path", default=None, help="rule file path (default: ./.devin/rules/hindsight.md)")
     parser.add_argument("--user-config-path", default=None, help=argparse.SUPPRESS)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="hindsight-windsurf", description="Hindsight memory for Windsurf (Codeium, via MCP)"
+        prog="hindsight-devin-desktop", description="Hindsight memory for Devin Desktop (formerly Windsurf), via MCP"
     )
-    parser.add_argument("--version", action="version", version=f"hindsight-windsurf {__version__}")
+    parser.add_argument("--version", action="version", version=f"hindsight-devin-desktop {__version__}")
     sub = parser.add_subparsers(dest="command")
 
-    init_p = sub.add_parser("init", help="Configure Windsurf's MCP server + recall/retain rule")
+    init_p = sub.add_parser("init", help="Configure Devin Desktop's MCP server + recall/retain rule")
     init_p.add_argument("--api-url", default=None, help="Hindsight API URL (default: cloud)")
     init_p.add_argument("--api-token", default=None, help="Hindsight API token (for Cloud)")
-    init_p.add_argument("--bank-id", default=None, help="Memory bank for the MCP server (default: windsurf)")
+    init_p.add_argument("--bank-id", default=None, help="Memory bank for the MCP server (default: devin-desktop)")
     init_p.add_argument("--print-only", action="store_true", help="Print the config to add manually; write nothing")
     _add_overrides(init_p)
     init_p.set_defaults(func=cmd_init)

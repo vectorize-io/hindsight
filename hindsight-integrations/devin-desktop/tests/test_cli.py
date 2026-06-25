@@ -2,18 +2,18 @@
 
 import json
 
-from hindsight_windsurf.cli import build_install, main
-from hindsight_windsurf.config import WindsurfConfig
-from hindsight_windsurf.mcp_config import SERVER_NAME
-from hindsight_windsurf.mcp_config import is_installed as server_installed
-from hindsight_windsurf.rules import is_installed as rule_installed
+from hindsight_devin_desktop.cli import build_install, main
+from hindsight_devin_desktop.config import DevinDesktopConfig
+from hindsight_devin_desktop.mcp_config import SERVER_NAME
+from hindsight_devin_desktop.mcp_config import is_installed as server_installed
+from hindsight_devin_desktop.rules import is_installed as rule_installed
 
 
 class TestBuildInstall:
     def test_writes_mcp_and_rule(self, tmp_path):
         mcp = tmp_path / "mcp_config.json"
         rules = tmp_path / "rules" / "hindsight.md"
-        cfg = WindsurfConfig(
+        cfg = DevinDesktopConfig(
             hindsight_api_url="https://api.hindsight.vectorize.io", hindsight_api_token="k", bank_id="proj"
         )
         outcome = build_install(cfg, mcp, rules)

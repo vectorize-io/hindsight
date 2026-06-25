@@ -82,7 +82,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "continue": IntegrationMeta("hindsight-continue", "Continue"),
     "zed": IntegrationMeta("hindsight-zed", "Zed"),
     "openhands": IntegrationMeta("hindsight-openhands", "OpenHands"),
-    "windsurf": IntegrationMeta("hindsight-windsurf", "Windsurf"),
+    "devin-desktop": IntegrationMeta("hindsight-devin-desktop", "Devin Desktop"),
 }
 
 VALID_INTEGRATIONS = list(INTEGRATIONS.keys())

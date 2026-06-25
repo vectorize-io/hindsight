@@ -571,14 +571,14 @@
       "icon": "/img/icons/openhands.png"
     },
     {
-      "id": "windsurf",
-      "name": "Windsurf",
-      "description": "Long-term memory for Windsurf (Codeium) via its native MCP support. One command wires the Hindsight MCP server into mcp_config.json plus an always-on recall/retain rule, so memory works automatically in Cascade.",
+      "id": "devin-desktop",
+      "name": "Devin Desktop",
+      "description": "Long-term memory for Devin Desktop (the editor formerly known as Windsurf) via its native MCP support. One command wires the Hindsight MCP server into mcp_config.json plus an always-on recall/retain rule, so memory works automatically.",
       "type": "official",
       "by": "hindsight",
       "category": "tool",
-      "link": "/sdks/integrations/windsurf",
-      "icon": "/img/icons/windsurf.svg"
+      "link": "/sdks/integrations/devin-desktop",
+      "icon": "/img/icons/devin-desktop.svg"
     },
     {
      "id": "epimetheus",

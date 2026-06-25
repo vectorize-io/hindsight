@@ -1,12 +1,12 @@
 [project]
-name = "hindsight-windsurf"
+name = "hindsight-devin-desktop"
 version = "0.1.0"
-description = "Windsurf (Codeium) integration for Hindsight - persistent long-term memory via MCP"
+description = "Devin Desktop (formerly Windsurf) integration for Hindsight - persistent long-term memory via MCP"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Vectorize", email = "support@vectorize.io" }]
-keywords = ["ai", "memory", "windsurf", "codeium", "cascade", "agents", "hindsight", "mcp"]
+keywords = ["ai", "memory", "devin", "devin-desktop", "windsurf", "agents", "hindsight", "mcp"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -20,11 +20,11 @@ classifiers = [
 dependencies = []
 
 [project.scripts]
-hindsight-windsurf = "hindsight_windsurf.cli:main"
+hindsight-devin-desktop = "hindsight_devin_desktop.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/vectorize-io/hindsight"
-Documentation = "https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/windsurf"
+Documentation = "https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/devin-desktop"
 Repository = "https://github.com/vectorize-io/hindsight"
 
 [build-system]
@@ -32,7 +32,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["hindsight_windsurf"]
+packages = ["hindsight_devin_desktop"]
 
 [tool.ruff]
 line-length = 120

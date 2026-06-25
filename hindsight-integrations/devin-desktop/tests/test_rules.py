@@ -1,6 +1,21 @@
-"""Tests for the .windsurf/rules/hindsight.md rule writer."""
+"""Tests for the .devin/rules/hindsight.md rule writer."""
 
-from hindsight_windsurf.rules import RULE_TEXT, SENTINEL, clear_rule, is_installed, render_rule, write_rule
+from hindsight_devin_desktop.rules import (
+    RULE_TEXT,
+    SENTINEL,
+    clear_rule,
+    default_rules_path,
+    is_installed,
+    render_rule,
+    write_rule,
+)
+
+
+def test_default_path_is_devin_rules():
+    p = default_rules_path()
+    assert p.parent.name == "rules"
+    assert p.parent.parent.name == ".devin"
+    assert p.name == "hindsight.md"
 
 
 def test_write_creates_dedicated_file(tmp_path):

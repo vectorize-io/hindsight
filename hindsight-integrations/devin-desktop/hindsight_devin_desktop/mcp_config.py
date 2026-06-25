@@ -1,9 +1,11 @@
-"""Wire Hindsight into Windsurf's MCP config (``~/.codeium/windsurf/mcp_config.json``).
+"""Wire Hindsight into Devin Desktop's MCP config (``~/.codeium/windsurf/mcp_config.json``).
 
-Windsurf's Cascade reads MCP servers from ``~/.codeium/windsurf/mcp_config.json``
-under the ``mcpServers`` key. For a remote server it uses a ``serverUrl`` field
-(plus optional ``headers``), so the Hindsight MCP endpoint connects with no
-bridge::
+Devin Desktop (formerly Windsurf) reads MCP servers from
+``~/.codeium/windsurf/mcp_config.json`` under the ``mcpServers`` key — the path
+still carries the legacy ``windsurf`` segment, which is the app's on-disk data
+directory and is unchanged by the rebrand. For a remote server it uses a
+``serverUrl`` field (plus optional ``headers``), so the Hindsight MCP endpoint
+connects with no bridge::
 
     {
       "mcpServers": {
@@ -14,9 +16,9 @@ bridge::
       }
     }
 
-Unlike VS Code, Windsurf has no project-local MCP file — ``mcp_config.json`` is
-a single global file. We only edit it in place when it parses as strict JSON;
-otherwise we return the exact snippet to paste, never risking the user's file.
+Devin Desktop has no project-local MCP file — ``mcp_config.json`` is a single
+global file. We only edit it in place when it parses as strict JSON; otherwise
+we return the exact snippet to paste, never risking the user's file.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ SERVER_NAME = "hindsight"
 
 
 def default_mcp_path() -> Path:
-    """The global Windsurf MCP config (``~/.codeium/windsurf/mcp_config.json``)."""
+    """The global Devin Desktop MCP config (``~/.codeium/windsurf/mcp_config.json``)."""
     return Path.home() / ".codeium" / "windsurf" / "mcp_config.json"
 
 

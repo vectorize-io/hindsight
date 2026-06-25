@@ -8,7 +8,7 @@ import urllib.request
 
 import pytest
 
-from hindsight_windsurf.mcp_config import mcp_endpoint_url
+from hindsight_devin_desktop.mcp_config import mcp_endpoint_url
 
 HINDSIGHT_API_URL = os.getenv("HINDSIGHT_API_URL", "http://localhost:8888")
 HINDSIGHT_API_TOKEN = os.getenv("HINDSIGHT_API_TOKEN")
@@ -40,7 +40,7 @@ def _rpc(url, payload, session=None):
 
 
 def test_mcp_endpoint_lists_memory_tools():
-    url = mcp_endpoint_url(HINDSIGHT_API_URL, "windsurf-e2e")
+    url = mcp_endpoint_url(HINDSIGHT_API_URL, "devin-desktop-e2e")
     init = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -48,7 +48,7 @@ def test_mcp_endpoint_lists_memory_tools():
         "params": {
             "protocolVersion": "2025-03-26",
             "capabilities": {},
-            "clientInfo": {"name": "windsurf-e2e", "version": "0"},
+            "clientInfo": {"name": "devin-desktop-e2e", "version": "0"},
         },
     }
     resp = _rpc(url, init)

@@ -2,7 +2,7 @@
 
 import json
 
-from hindsight_windsurf.mcp_config import (
+from hindsight_devin_desktop.mcp_config import (
     SERVER_NAME,
     apply_to_mcp,
     build_http_server,
