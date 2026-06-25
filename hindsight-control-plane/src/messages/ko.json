@@ -783,7 +783,7 @@
     "optionsRefreshTriggerManual": "수동만",
     "optionsRefreshTriggerAuto": "통합 후",
     "optionsRefreshTriggerScheduled": "일정에 따라 (cron)",
-    "optionsRefreshTriggerManualDesc": "직접 트리거할 때만 새로고침됩니다.",
+    "optionsRefreshTriggerManualDesc": "직접 또는 API로 트리거할 때만 새로고침됩니다.",
     "optionsRefreshTriggerAutoDesc": "새 메모리가 통합된 후 백그라운드에서 새로고침됩니다.",
     "optionsRefreshTriggerScheduledDesc": "모델이 오래되면 고정된 cron 일정(UTC)에 따라 새로고침됩니다.",
     "optionsRefreshTriggerDescription": "이 멘탈 모델의 콘텐츠를 최신 상태로 유지하는 방법입니다.",

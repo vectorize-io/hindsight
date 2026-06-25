@@ -783,7 +783,7 @@
     "optionsRefreshTriggerManual": "Solo manual",
     "optionsRefreshTriggerAuto": "Tras la consolidación",
     "optionsRefreshTriggerScheduled": "Según programación (cron)",
-    "optionsRefreshTriggerManualDesc": "Solo se actualiza cuando lo activas manualmente.",
+    "optionsRefreshTriggerManualDesc": "Solo se actualiza cuando lo activas manualmente o mediante la API.",
     "optionsRefreshTriggerAutoDesc": "Se actualiza en segundo plano tras consolidar nuevas memorias.",
     "optionsRefreshTriggerScheduledDesc": "Se actualiza según una programación cron fija (UTC) cuando el modelo está desactualizado.",
     "optionsRefreshTriggerDescription": "Cómo se mantiene actualizado el contenido de este modelo mental.",

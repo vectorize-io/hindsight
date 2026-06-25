@@ -783,7 +783,7 @@
     "optionsRefreshTriggerManual": "淨係手動",
     "optionsRefreshTriggerAuto": "整合後",
     "optionsRefreshTriggerScheduled": "按排程 (cron)",
-    "optionsRefreshTriggerManualDesc": "淨係喺你手動觸發嗰陣先會重新整理。",
+    "optionsRefreshTriggerManualDesc": "淨係喺你手動或者透過 API 觸發嗰陣先會重新整理。",
     "optionsRefreshTriggerAutoDesc": "喺新記憶整合之後喺背景重新整理。",
     "optionsRefreshTriggerScheduledDesc": "當模型過期時，按固定嘅 cron 排程（UTC）重新整理。",
     "optionsRefreshTriggerDescription": "呢個心智模型嘅內容點樣保持最新。",

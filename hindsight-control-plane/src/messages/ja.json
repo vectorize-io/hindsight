@@ -783,7 +783,7 @@
     "optionsRefreshTriggerManual": "手動のみ",
     "optionsRefreshTriggerAuto": "統合後",
     "optionsRefreshTriggerScheduled": "スケジュールに従う (cron)",
-    "optionsRefreshTriggerManualDesc": "手動でトリガーしたときのみ更新されます。",
+    "optionsRefreshTriggerManualDesc": "手動または API でトリガーしたときのみ更新されます。",
     "optionsRefreshTriggerAutoDesc": "新しいメモリが統合された後、バックグラウンドで更新されます。",
     "optionsRefreshTriggerScheduledDesc": "モデルが古くなったとき、固定の cron スケジュール (UTC) で更新されます。",
     "optionsRefreshTriggerDescription": "このメンタルモデルのコンテンツを最新に保つ方法。",

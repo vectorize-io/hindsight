@@ -783,7 +783,7 @@
     "optionsRefreshTriggerManual": "Nur manuell",
     "optionsRefreshTriggerAuto": "Nach der Konsolidierung",
     "optionsRefreshTriggerScheduled": "Nach Zeitplan (Cron)",
-    "optionsRefreshTriggerManualDesc": "Wird nur aktualisiert, wenn Sie es manuell auslösen.",
+    "optionsRefreshTriggerManualDesc": "Wird nur aktualisiert, wenn Sie es manuell oder über die API auslösen.",
     "optionsRefreshTriggerAutoDesc": "Wird im Hintergrund aktualisiert, nachdem neue Erinnerungen konsolidiert wurden.",
     "optionsRefreshTriggerScheduledDesc": "Wird nach einem festen Cron-Zeitplan (UTC) aktualisiert, wenn das Modell veraltet ist.",
     "optionsRefreshTriggerDescription": "Wie der Inhalt dieses mentalen Modells aktuell gehalten wird.",
