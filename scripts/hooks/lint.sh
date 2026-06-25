@@ -34,9 +34,9 @@ run_task() {
 echo "  Syncing Python dependencies..."
 # Run uv sync first to avoid race conditions when multiple uv run commands
 # try to reinstall local packages in parallel (e.g., after version bump).
-# In CI, UV_FROZEN=1 is set at the job level so this becomes a no-op for
-# lockfile resolution (see verify-generated-files in test.yml).
-uv sync --quiet
+# Keep pre-commit from rewriting uv.lock. Dependency changes should update
+# the lockfile explicitly before linting.
+uv sync --frozen --quiet
 
 echo "  Running lints in parallel..."
 
@@ -47,19 +47,19 @@ run_task "prettier-ts-client" "$REPO_ROOT/hindsight-clients/typescript" "npx --y
 run_task "prettier-all-npm" "$REPO_ROOT/hindsight-all-npm" "npx --yes prettier --write --config $REPO_ROOT/.prettierrc.json --ignore-path $REPO_ROOT/.gitignore ."
 
 # Python hindsight-api-slim tasks
-run_task "ruff-api-check" "$REPO_ROOT/hindsight-api-slim" "uv run ruff check --fix ."
-run_task "ruff-api-format" "$REPO_ROOT/hindsight-api-slim" "uv run ruff format ."
-run_task "ty-api" "$REPO_ROOT/hindsight-api-slim" "uv run ty check hindsight_api"
+run_task "ruff-api-check" "$REPO_ROOT/hindsight-api-slim" "uv run --frozen ruff check --fix ."
+run_task "ruff-api-format" "$REPO_ROOT/hindsight-api-slim" "uv run --frozen ruff format ."
+run_task "ty-api" "$REPO_ROOT/hindsight-api-slim" "uv run --frozen ty check hindsight_api"
 
 # Python hindsight-dev tasks
-run_task "ruff-dev-check" "$REPO_ROOT/hindsight-dev" "uv run ruff check --fix ."
-run_task "ruff-dev-format" "$REPO_ROOT/hindsight-dev" "uv run ruff format ."
-run_task "ty-dev" "$REPO_ROOT/hindsight-dev" "uv run ty check hindsight_dev benchmarks"
+run_task "ruff-dev-check" "$REPO_ROOT/hindsight-dev" "uv run --frozen ruff check --fix ."
+run_task "ruff-dev-format" "$REPO_ROOT/hindsight-dev" "uv run --frozen ruff format ."
+run_task "ty-dev" "$REPO_ROOT/hindsight-dev" "uv run --frozen ty check hindsight_dev benchmarks"
 
 # Python hindsight-embed tasks
-run_task "ruff-embed-check" "$REPO_ROOT/hindsight-embed" "uv run ruff check --fix ."
-run_task "ruff-embed-format" "$REPO_ROOT/hindsight-embed" "uv run ruff format ."
-run_task "ty-embed" "$REPO_ROOT/hindsight-embed" "uv run ty check hindsight_embed"
+run_task "ruff-embed-check" "$REPO_ROOT/hindsight-embed" "uv run --frozen ruff check --fix ."
+run_task "ruff-embed-format" "$REPO_ROOT/hindsight-embed" "uv run --frozen ruff format ."
+run_task "ty-embed" "$REPO_ROOT/hindsight-embed" "uv run --frozen ty check hindsight_embed"
 
 # Integrations: lint packages with modifications vs HEAD locally; lint all in CI.
 # Python integrations use shared ruff.toml; Node integrations use shared .prettierrc.json.
