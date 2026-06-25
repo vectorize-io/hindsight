@@ -16,10 +16,11 @@ so that future server-side changes affect both clients identically.
 """
 
 import asyncio
+import functools
+import hashlib
 import json
 import logging
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -154,6 +155,20 @@ class CodexLLM(LLMInterface):
     @_auth_file.setter
     def _auth_file(self, v: Path) -> None:
         self._auth_manager._auth_file = v
+
+    @functools.cached_property
+    def _prompt_cache_key(self) -> str:
+        """Stable ``prompt_cache_key`` for OpenAI/Codex prompt-cache routing.
+
+        OpenAI uses ``prompt_cache_key`` as an explicit hint for routing
+        requests to a cached-prefix backend, so it must stay constant across
+        calls that share the same system instructions + tools prefix. A fresh
+        ``uuid4`` per request defeats that routing and forces a 100% cache miss.
+        Derive it once per provider instance from (account, model) so it is
+        stable across requests but still distinct per account/model.
+        """
+        seed = f"{self.account_id}:{self.model}"
+        return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:32]
 
     # ------------------------------------------------------------------
     # Forwarding methods (keep surface area for tests / subclasses)
@@ -388,7 +403,7 @@ class CodexLLM(LLMInterface):
             "store": False,  # Codex uses stateless mode
             "stream": True,  # SSE streaming
             "include": ["reasoning.encrypted_content"],
-            "prompt_cache_key": str(uuid.uuid4()),
+            "prompt_cache_key": self._prompt_cache_key,
         }
 
         headers = {
@@ -711,7 +726,7 @@ class CodexLLM(LLMInterface):
             "store": False,
             "stream": True,
             "include": ["reasoning.encrypted_content"],
-            "prompt_cache_key": str(uuid.uuid4()),
+            "prompt_cache_key": self._prompt_cache_key,
         }
 
         headers = {
