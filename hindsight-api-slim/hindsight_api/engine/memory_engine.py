@@ -390,7 +390,8 @@ def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig) -> LLMCon
     """Build an LLMProvider from one indexed multi-LLM member.
 
     Member fields are self-contained; reasoning_effort falls back to the global
-    setting and default_headers falls back inside ``LLMProvider`` when unset.
+    setting and default_headers / litellmrouter_config / vertexai credentials fall
+    back inside ``LLMProvider`` when unset.
     """
     return LLMConfig(
         provider=member.provider,
@@ -404,6 +405,8 @@ def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig) -> LLMCon
         gemini_service_tier=member.gemini_service_tier,
         vertexai_project_id=member.vertexai_project_id,
         vertexai_region=member.vertexai_region,
+        vertexai_service_account_key=member.vertexai_service_account_key,
+        litellmrouter_config=member.litellmrouter_config,
     )
 
 

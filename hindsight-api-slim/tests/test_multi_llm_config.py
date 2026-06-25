@@ -113,6 +113,49 @@ def test_parse_members_without_vertexai_fields_default_none(clean_llm_env):
     members = _parse_llm_members("")
     assert members[0].vertexai_project_id is None
     assert members[0].vertexai_region is None
+    assert members[0].vertexai_service_account_key is None
+    assert members[0].litellmrouter_config is None
+
+
+def test_parse_members_vertexai_service_account_key(clean_llm_env):
+    # A vertexai member can carry its own service-account key for cross-project
+    # failover (credentials are otherwise global).
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_PROVIDER", "vertexai")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_VERTEXAI_PROJECT_ID", "p")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_VERTEXAI_SERVICE_ACCOUNT_KEY", "/keys/sa.json")
+    members = _parse_llm_members("")
+    assert members[0].vertexai_service_account_key == "/keys/sa.json"
+
+
+def test_parse_members_litellmrouter_config(clean_llm_env):
+    # A litellmrouter member can carry its own router config so a chain can fail
+    # over between differently-routed LiteLLM routers.
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_PROVIDER", "litellmrouter")
+    clean_llm_env.setenv(
+        "HINDSIGHT_API_LLM_1_LITELLMROUTER_CONFIG",
+        '{"model_list": [{"model_name": "m"}]}',
+    )
+    members = _parse_llm_members("")
+    assert members[0].litellmrouter_config == {"model_list": [{"model_name": "m"}]}
+
+
+def test_parse_members_litellmrouter_config_per_op_prefix(clean_llm_env):
+    clean_llm_env.setenv("HINDSIGHT_API_REFLECT_LLM_1_PROVIDER", "litellmrouter")
+    clean_llm_env.setenv(
+        "HINDSIGHT_API_REFLECT_LLM_1_LITELLMROUTER_CONFIG",
+        '{"model_list": [{"model_name": "reflect-m"}]}',
+    )
+    reflect = _parse_llm_members("REFLECT_")
+    assert reflect[0].litellmrouter_config == {"model_list": [{"model_name": "reflect-m"}]}
+    # Scoped to the prefix; the global chain is unaffected.
+    assert _parse_llm_members("") == []
+
+
+def test_parse_members_litellmrouter_config_invalid_json_raises(clean_llm_env):
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_PROVIDER", "litellmrouter")
+    clean_llm_env.setenv("HINDSIGHT_API_LLM_1_LITELLMROUTER_CONFIG", "{not json")
+    with pytest.raises(ValueError, match="invalid JSON"):
+        _parse_llm_members("")
 
 
 # ── strategy parsing ───────────────────────────────────────────────────────────
@@ -296,3 +339,101 @@ def test_member_to_llm_passes_vertexai_project_and_region(clean_llm_env, monkeyp
     # Project/region flowed all the way to the Vertex AI SDK client.
     assert captured["project"] == "member-proj"
     assert captured["location"] == "europe-west1"
+
+
+def test_member_to_llm_passes_vertexai_service_account_key(clean_llm_env, monkeypatch):
+    """A vertexai member's own service-account key reaches credential loading.
+
+    The key path flows to ``service_account.Credentials.from_service_account_file``
+    and the resulting credentials reach the Vertex AI SDK client — proving the
+    member value is used rather than the (unset) global one. Both the credential
+    loader and the SDK client are patched so no file or network is touched.
+    """
+    import hindsight_api.engine.llm_wrapper as llm_wrapper
+    import hindsight_api.engine.providers.gemini_llm as gemini_llm
+    from hindsight_api.config import clear_config_cache
+    from hindsight_api.engine.memory_engine import _member_to_llm
+
+    captured: dict = {}
+    sentinel_creds = object()
+
+    class _FakeServiceAccount:
+        class Credentials:
+            @staticmethod
+            def from_service_account_file(path, scopes=None):
+                captured["key_path"] = path
+                return sentinel_creds
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(llm_wrapper, "VERTEXAI_AVAILABLE", True)
+    monkeypatch.setattr(llm_wrapper, "service_account", _FakeServiceAccount)
+    monkeypatch.setattr(gemini_llm.genai, "Client", _FakeClient)
+    clear_config_cache()
+
+    member = LLMMemberConfig(
+        provider="vertexai",
+        api_key=None,
+        model="gemini-2.0-flash",
+        base_url=None,
+        reasoning_effort=None,
+        extra_body=None,
+        default_headers=None,
+        bedrock_service_tier=None,
+        gemini_service_tier=None,
+        vertexai_project_id="member-proj",
+        vertexai_service_account_key="/keys/member-sa.json",
+    )
+    provider = _member_to_llm(member, _empty_config())
+
+    assert provider.provider == "vertexai"
+    # The member's key path was loaded, and the credentials reached the SDK client.
+    assert captured["key_path"] == "/keys/member-sa.json"
+    assert captured["credentials"] is sentinel_creds
+
+
+# ── litellmrouter member build path (_member_to_llm) ─────────────────────────────
+
+
+def test_member_to_llm_passes_litellmrouter_config(clean_llm_env, monkeypatch):
+    """A litellmrouter member's own router config reaches the LiteLLM router build.
+
+    The global config has no router config, so this also proves the member's
+    config is used (no "requires a config object" error) instead of the global
+    fallback. The LiteLLM router provider is patched so no router is constructed.
+    """
+    import hindsight_api.engine.providers as providers
+    from hindsight_api.config import clear_config_cache
+    from hindsight_api.engine.memory_engine import _member_to_llm
+
+    captured: dict = {}
+
+    class _FakeRouterLLM:
+        provider = "litellmrouter"
+
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(providers, "LiteLLMRouterLLM", _FakeRouterLLM)
+    clear_config_cache()
+
+    router_cfg = {"model_list": [{"model_name": "m"}]}
+    member = LLMMemberConfig(
+        provider="litellmrouter",
+        api_key=None,
+        model="m",
+        base_url=None,
+        reasoning_effort=None,
+        extra_body=None,
+        default_headers=None,
+        bedrock_service_tier=None,
+        gemini_service_tier=None,
+        litellmrouter_config=router_cfg,
+    )
+    provider = _member_to_llm(member, _empty_config())
+
+    assert provider.provider == "litellmrouter"
+    # The member's own router config flowed to the LiteLLM router build.
+    assert captured["config"] == router_cfg

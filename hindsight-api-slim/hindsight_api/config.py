@@ -1322,6 +1322,8 @@ class LLMMemberConfig:
     gemini_service_tier: str | None
     vertexai_project_id: str | None = None
     vertexai_region: str | None = None
+    vertexai_service_account_key: str | None = None
+    litellmrouter_config: dict | None = None
 
 
 # Valid multi-LLM strategy modes.
@@ -1417,6 +1419,8 @@ def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
                 ),
                 vertexai_project_id=os.getenv(base + "VERTEXAI_PROJECT_ID") or None,
                 vertexai_region=os.getenv(base + "VERTEXAI_REGION") or None,
+                vertexai_service_account_key=os.getenv(base + "VERTEXAI_SERVICE_ACCOUNT_KEY") or None,
+                litellmrouter_config=_parse_llm_router_config(base + "LITELLMROUTER_CONFIG"),
             )
         )
         index += 1

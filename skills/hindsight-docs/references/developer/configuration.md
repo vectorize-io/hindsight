@@ -370,6 +370,8 @@ The unindexed `HINDSIGHT_API_LLM_*` config is the **primary** (member 1). Extra 
 | `HINDSIGHT_API_LLM_<n>_REASONING_EFFORT` | Reasoning effort for member `n`. | `HINDSIGHT_API_LLM_REASONING_EFFORT` |
 | `HINDSIGHT_API_LLM_<n>_EXTRA_BODY` / `_DEFAULT_HEADERS` | Per-member JSON overrides. | - |
 | `HINDSIGHT_API_LLM_<n>_BEDROCK_SERVICE_TIER` / `_GEMINI_SERVICE_TIER` | Per-member service tier. | - |
+| `HINDSIGHT_API_LLM_<n>_VERTEXAI_PROJECT_ID` / `_VERTEXAI_REGION` / `_VERTEXAI_SERVICE_ACCOUNT_KEY` | Per-member Vertex AI project, region, and service-account key path (for a `vertexai` member). Each falls back to the global `HINDSIGHT_API_LLM_VERTEXAI_*` when unset. | Global / `us-central1` / ADC |
+| `HINDSIGHT_API_LLM_<n>_LITELLMROUTER_CONFIG` | Per-member LiteLLM Router config JSON (for a `litellmrouter` member). Falls back to the global `HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG` when unset. | - |
 | `HINDSIGHT_API_LLM_STRATEGY` | JSON routing strategy across the chain. Unset = single primary LLM (no change). | - |
 
 The strategy JSON supports two modes:

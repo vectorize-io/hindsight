@@ -508,6 +508,7 @@ class LLMProvider:
         gemini_service_tier: str | None = None,
         vertexai_project_id: str | None = None,
         vertexai_region: str | None = None,
+        vertexai_service_account_key: str | None = None,
     ):
         """
         Initialize LLM provider.
@@ -539,6 +540,10 @@ class LLMProvider:
                 chain). When None, falls back to ``HindsightConfig.llm_vertexai_project_id``.
             vertexai_region: Vertex AI region for ``provider="vertexai"``. When None, falls back to
                 ``HindsightConfig.llm_vertexai_region`` (then ``"us-central1"``).
+            vertexai_service_account_key: Path to a Vertex AI service-account key file for
+                ``provider="vertexai"``. Lets a member target a project with its own credentials
+                (e.g. cross-project failover). When None, falls back to
+                ``HindsightConfig.llm_vertexai_service_account_key`` (then ADC).
         """
         self.provider = provider.lower()
         self.api_key = api_key
@@ -646,7 +651,7 @@ class LLMProvider:
                 )
 
             vertexai_region = vertexai_region or config.llm_vertexai_region or "us-central1"
-            service_account_key = config.llm_vertexai_service_account_key
+            service_account_key = vertexai_service_account_key or config.llm_vertexai_service_account_key
 
             # Load explicit service account credentials if provided
             if service_account_key:
