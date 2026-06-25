@@ -31,6 +31,7 @@ import {
 import { toast } from "sonner";
 import { CompactMarkdown } from "./compact-markdown";
 import { CronSchedulePreview } from "./cron-schedule-preview";
+import { NextRefresh } from "./next-refresh";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { DirectiveDetailModal } from "./directive-detail-modal";
 import { formatAbsoluteDateTime as formatDateTime, formatRelativeTime } from "@/lib/relative-time";
@@ -1067,6 +1068,10 @@ function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
               {formatRelativeTime(mentalModel.last_refreshed_at)}
             </span>
           }
+        />
+        <Metadata
+          label={t("labelNextRefresh")}
+          value={<NextRefresh trigger={mentalModel.trigger} />}
         />
         <Metadata label={t("labelMaxTokens")} value={mentalModel.max_tokens.toLocaleString()} />
       </InfoCard>

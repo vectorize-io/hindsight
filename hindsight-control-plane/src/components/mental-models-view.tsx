@@ -66,6 +66,7 @@ import {
 import { MentalModelDetailModal } from "./mental-model-detail-modal";
 import { TagFilterInput } from "./tag-filter-input";
 import { CronSchedulePreview } from "./cron-schedule-preview";
+import { NextRefresh } from "./next-refresh";
 
 interface ReflectResponseBasedOnFact {
   id: string;
@@ -425,11 +426,13 @@ export function MentalModelsView() {
                                 </div>
                               )}
                             </div>
-                            <div
-                              className="text-muted-foreground"
-                              title={formatAbsoluteDateTime(m.last_refreshed_at)}
-                            >
-                              {formatRelativeTime(m.last_refreshed_at)}
+                            <div className="text-right text-muted-foreground">
+                              <div title={formatAbsoluteDateTime(m.last_refreshed_at)}>
+                                {formatRelativeTime(m.last_refreshed_at)}
+                              </div>
+                              <div className="text-[11px] text-muted-foreground/70">
+                                {t("nextRefreshLabel")}: <NextRefresh trigger={m.trigger} />
+                              </div>
                             </div>
                           </div>
                         </CardContent>
@@ -1648,6 +1651,9 @@ function FilesView({
                         {m.source_query}
                       </div>
                     )}
+                    <div className="text-[10px] text-muted-foreground/70 truncate mt-0.5">
+                      {t("nextRefreshLabel")}: <NextRefresh trigger={m.trigger} />
+                    </div>
                   </div>
                 </button>
               </li>
@@ -1671,6 +1677,9 @@ function FilesView({
                   <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
                     <span title={formatAbsoluteDateTime(selected.last_refreshed_at)}>
                       Refreshed {formatRelativeTime(selected.last_refreshed_at)}
+                    </span>
+                    <span>
+                      {t("nextRefreshLabel")}: <NextRefresh trigger={selected.trigger} />
                     </span>
                     {selected.tags.length > 0 && (
                       <div className="flex gap-1">
