@@ -32,6 +32,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - DeepSeek
 - z.ai
 - opencode-go
+- Atlas Cloud
 - Volcano Engine
 - OpenRouter
 - OpenAI Codex
@@ -90,6 +91,7 @@ Beyond basic generation, some providers support optional features that lower cos
 | DeepSeek (`deepseek`) | — | — |
 | z.ai (`zai`) | — | — |
 | opencode-go (`opencode-go`) | — | — |
+| Atlas Cloud (`atlas`) | — | — |
 | Volcano Engine (`volcano`) | — | — |
 | OpenRouter (`openrouter`) | — | — |
 | OpenAI Codex (`openai-codex`) | — | — |
@@ -151,6 +153,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `deepseek` | `deepseek-v4-flash` |
 | `zai` | `glm-4.5-flash` |
 | `opencode-go` | `deepseek-v4-flash` |
+| `atlas` | `deepseek-ai/deepseek-v4-pro` |
 | `volcano` | `doubao-pro-32k` |
 | `openrouter` | `qwen/qwen3.5-9b` |
 | `openai-codex` | `gpt-5.4-mini` |
@@ -261,6 +264,11 @@ export HINDSIGHT_API_LLM_MODEL=glm-4.5-flash  # or glm-4.5-air for the paid tier
 export HINDSIGHT_API_LLM_PROVIDER=opencode-go
 export HINDSIGHT_API_LLM_API_KEY=your-opencode-go-api-key
 export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
+
+# Atlas Cloud (OpenAI-compatible, https://www.atlascloud.ai)
+export HINDSIGHT_API_LLM_PROVIDER=atlas
+export HINDSIGHT_API_LLM_API_KEY=your-atlascloud-api-key  # base_url defaults to https://api.atlascloud.ai/v1
+export HINDSIGHT_API_LLM_MODEL=deepseek-ai/deepseek-v4-pro  # reasoning model; also Qwen / GLM / Kimi / MiniMax, etc.
 
 # Nous Portal (OpenAI-compatible; no API key — uses your `hermes portal` login)
 export HINDSIGHT_API_LLM_PROVIDER=nous

@@ -79,6 +79,7 @@ Browse all supported integrations in the Integrations Hub.
 - DeepSeek
 - z.ai
 - opencode-go
+- Atlas Cloud
 - Volcano Engine
 - OpenRouter
 - OpenAI Codex

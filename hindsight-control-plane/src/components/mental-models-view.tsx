@@ -687,7 +687,7 @@ function CreateMentalModelDialog({
     sourceQuery: "",
     maxTokens: "2048",
     tags: "",
-    autoRefresh: false,
+    refreshTrigger: "manual" as "manual" | "auto" | "scheduled",
     mode: "full" as "full" | "delta",
     refreshCron: "",
     factTypes: [] as Array<"world" | "experience" | "observation">,
@@ -746,8 +746,9 @@ function CreateMentalModelDialog({
         max_tokens: maxTokens,
         trigger: {
           mode: form.mode,
-          refresh_after_consolidation: form.autoRefresh,
-          refresh_cron: form.refreshCron.trim() || undefined,
+          refresh_after_consolidation: form.refreshTrigger === "auto",
+          refresh_cron:
+            form.refreshTrigger === "scheduled" ? form.refreshCron.trim() || undefined : undefined,
           fact_types: form.factTypes.length > 0 ? form.factTypes : undefined,
           exclude_mental_models: form.excludeMentalModels || undefined,
           exclude_mental_model_ids: excludeIds.length > 0 ? excludeIds : undefined,
@@ -765,7 +766,7 @@ function CreateMentalModelDialog({
         sourceQuery: "",
         maxTokens: "2048",
         tags: "",
-        autoRefresh: false,
+        refreshTrigger: "manual",
         mode: "full",
         refreshCron: "",
         factTypes: [],
@@ -796,7 +797,7 @@ function CreateMentalModelDialog({
             sourceQuery: "",
             maxTokens: "2048",
             tags: "",
-            autoRefresh: false,
+            refreshTrigger: "manual",
             mode: "full",
             refreshCron: "",
             factTypes: [],
@@ -876,28 +877,52 @@ function CreateMentalModelDialog({
                 <h3 className="text-sm font-semibold text-foreground border-b pb-1">
                   {t("optionsSectionRefresh")}
                 </h3>
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="auto-refresh"
-                    checked={form.autoRefresh}
-                    // Mutually exclusive with a cron schedule: disabled while a
-                    // cron is set, and checking it clears any cron.
-                    disabled={form.refreshCron.trim().length > 0}
-                    onCheckedChange={(checked) =>
+                {/* Single mutually-exclusive choice: manual, after-consolidation, or scheduled. */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsRefreshTriggerLabel")}
+                  </label>
+                  <Select
+                    value={form.refreshTrigger}
+                    onValueChange={(value) =>
                       setForm({
                         ...form,
-                        autoRefresh: checked === true,
-                        refreshCron: checked === true ? "" : form.refreshCron,
+                        refreshTrigger: value as "manual" | "auto" | "scheduled",
+                        // Drop any cron when leaving the scheduled option.
+                        refreshCron: value === "scheduled" ? form.refreshCron : "",
                       })
                     }
-                  />
-                  <label
-                    htmlFor="auto-refresh"
-                    className="text-sm font-medium text-foreground cursor-pointer"
                   >
-                    {t("optionsAutoRefreshLabel")}
-                  </label>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="manual">{t("optionsRefreshTriggerManual")}</SelectItem>
+                      <SelectItem value="auto">{t("optionsRefreshTriggerAuto")}</SelectItem>
+                      <SelectItem value="scheduled">
+                        {t("optionsRefreshTriggerScheduled")}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {t("optionsRefreshTriggerDescription")}
+                  </p>
                 </div>
+                {form.refreshTrigger === "scheduled" && (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-foreground">
+                      {t("optionsRefreshCronLabel")}
+                    </label>
+                    <Input
+                      value={form.refreshCron}
+                      onChange={(e) => setForm({ ...form, refreshCron: e.target.value })}
+                      placeholder={t("optionsRefreshCronPlaceholder")}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t("optionsRefreshCronDescription")}
+                    </p>
+                  </div>
+                )}
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-foreground">
                     {t("optionsRefreshModeLabel")}
@@ -916,28 +941,6 @@ function CreateMentalModelDialog({
                   </Select>
                   <p className="text-xs text-muted-foreground">
                     {t("optionsRefreshModeDeltaDescription")}
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsRefreshCronLabel")}
-                  </label>
-                  <Input
-                    value={form.refreshCron}
-                    // Mutually exclusive with auto-refresh: disabled while
-                    // auto-refresh is on, and entering a cron turns it off.
-                    disabled={form.autoRefresh}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        refreshCron: e.target.value,
-                        autoRefresh: e.target.value.trim() ? false : form.autoRefresh,
-                      })
-                    }
-                    placeholder={t("optionsRefreshCronPlaceholder")}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {t("optionsRefreshCronDescription")}
                   </p>
                 </div>
               </section>
@@ -1144,7 +1147,11 @@ function UpdateMentalModelDialog({
     sourceQuery: mentalModel.source_query,
     maxTokens: String(mentalModel.max_tokens || 2048),
     tags: mentalModel.tags.join(", "),
-    autoRefresh: mentalModel.trigger?.refresh_after_consolidation || false,
+    refreshTrigger: (mentalModel.trigger?.refresh_cron
+      ? "scheduled"
+      : mentalModel.trigger?.refresh_after_consolidation
+        ? "auto"
+        : "manual") as "manual" | "auto" | "scheduled",
     mode: (mentalModel.trigger?.mode || "full") as "full" | "delta",
     refreshCron: mentalModel.trigger?.refresh_cron || "",
     factTypes:
@@ -1223,8 +1230,9 @@ function UpdateMentalModelDialog({
         max_tokens: maxTokens,
         trigger: {
           mode: form.mode,
-          refresh_after_consolidation: form.autoRefresh,
-          refresh_cron: form.refreshCron.trim() || undefined,
+          refresh_after_consolidation: form.refreshTrigger === "auto",
+          refresh_cron:
+            form.refreshTrigger === "scheduled" ? form.refreshCron.trim() || undefined : undefined,
           fact_types: form.factTypes.length > 0 ? form.factTypes : undefined,
           exclude_mental_models: form.excludeMentalModels || undefined,
           exclude_mental_model_ids: excludeIds.length > 0 ? excludeIds : undefined,
@@ -1307,28 +1315,52 @@ function UpdateMentalModelDialog({
                 <h3 className="text-sm font-semibold text-foreground border-b pb-1">
                   {t("optionsSectionRefresh")}
                 </h3>
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="update-auto-refresh"
-                    checked={form.autoRefresh}
-                    // Mutually exclusive with a cron schedule: disabled while a
-                    // cron is set, and checking it clears any cron.
-                    disabled={form.refreshCron.trim().length > 0}
-                    onCheckedChange={(checked) =>
+                {/* Single mutually-exclusive choice: manual, after-consolidation, or scheduled. */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-foreground">
+                    {t("optionsRefreshTriggerLabel")}
+                  </label>
+                  <Select
+                    value={form.refreshTrigger}
+                    onValueChange={(value) =>
                       setForm({
                         ...form,
-                        autoRefresh: checked === true,
-                        refreshCron: checked === true ? "" : form.refreshCron,
+                        refreshTrigger: value as "manual" | "auto" | "scheduled",
+                        // Drop any cron when leaving the scheduled option.
+                        refreshCron: value === "scheduled" ? form.refreshCron : "",
                       })
                     }
-                  />
-                  <label
-                    htmlFor="update-auto-refresh"
-                    className="text-sm font-medium text-foreground cursor-pointer"
                   >
-                    {t("optionsAutoRefreshLabel")}
-                  </label>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="manual">{t("optionsRefreshTriggerManual")}</SelectItem>
+                      <SelectItem value="auto">{t("optionsRefreshTriggerAuto")}</SelectItem>
+                      <SelectItem value="scheduled">
+                        {t("optionsRefreshTriggerScheduled")}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {t("optionsRefreshTriggerDescription")}
+                  </p>
                 </div>
+                {form.refreshTrigger === "scheduled" && (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-foreground">
+                      {t("optionsRefreshCronLabel")}
+                    </label>
+                    <Input
+                      value={form.refreshCron}
+                      onChange={(e) => setForm({ ...form, refreshCron: e.target.value })}
+                      placeholder={t("optionsRefreshCronPlaceholder")}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t("optionsRefreshCronDescription")}
+                    </p>
+                  </div>
+                )}
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-foreground">
                     {t("optionsRefreshModeLabel")}
@@ -1347,28 +1379,6 @@ function UpdateMentalModelDialog({
                   </Select>
                   <p className="text-xs text-muted-foreground">
                     {t("optionsRefreshModeDeltaDescription")}
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">
-                    {t("optionsRefreshCronLabel")}
-                  </label>
-                  <Input
-                    value={form.refreshCron}
-                    // Mutually exclusive with auto-refresh: disabled while
-                    // auto-refresh is on, and entering a cron turns it off.
-                    disabled={form.autoRefresh}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        refreshCron: e.target.value,
-                        autoRefresh: e.target.value.trim() ? false : form.autoRefresh,
-                      })
-                    }
-                    placeholder={t("optionsRefreshCronPlaceholder")}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {t("optionsRefreshCronDescription")}
                   </p>
                 </div>
               </section>
