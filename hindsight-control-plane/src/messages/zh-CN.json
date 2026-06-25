@@ -783,6 +783,9 @@
     "optionsRefreshTriggerManual": "仅手动",
     "optionsRefreshTriggerAuto": "整合后",
     "optionsRefreshTriggerScheduled": "按计划 (cron)",
+    "optionsRefreshTriggerManualDesc": "仅在你手动触发时刷新。",
+    "optionsRefreshTriggerAutoDesc": "在新记忆整合后于后台刷新。",
+    "optionsRefreshTriggerScheduledDesc": "当模型过期时，按固定的 cron 计划（UTC）刷新。",
     "optionsRefreshTriggerDescription": "此心智模型的内容如何保持最新。",
     "optionsRefreshModeLabel": "刷新模式",
     "optionsRefreshModeFull": "完整 — 每次刷新从头重新生成",
@@ -833,6 +836,13 @@
     "actionClearContent": "清除内容",
     "emptyContent": "暂无内容。刷新此心智模型以生成内容。",
     "selectModelPrompt": "选择一个心智模型以查看其内容。"
+  },
+  "cronPreview": {
+    "invalid": "无效的 cron 表达式",
+    "nextRun": "下次运行",
+    "upcoming": "即将运行",
+    "utc": "UTC",
+    "local": "本地"
   },
   "thinkView": {
     "noBankSelected": "未选择记忆库",

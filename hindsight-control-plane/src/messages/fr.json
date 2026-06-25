@@ -783,6 +783,9 @@
     "optionsRefreshTriggerManual": "Manuel uniquement",
     "optionsRefreshTriggerAuto": "Après la consolidation",
     "optionsRefreshTriggerScheduled": "Selon une planification (cron)",
+    "optionsRefreshTriggerManualDesc": "Ne s'actualise que lorsque vous le déclenchez manuellement.",
+    "optionsRefreshTriggerAutoDesc": "S'actualise en arrière-plan après la consolidation de nouvelles mémoires.",
+    "optionsRefreshTriggerScheduledDesc": "S'actualise selon une planification cron fixe (UTC) lorsque le modèle est obsolète.",
     "optionsRefreshTriggerDescription": "Comment le contenu de ce modèle mental est tenu à jour.",
     "optionsRefreshModeLabel": "Mode d'actualisation",
     "optionsRefreshModeFull": "Complet — régénérer depuis zéro à chaque actualisation",
@@ -833,6 +836,13 @@
     "actionClearContent": "Effacer le contenu",
     "emptyContent": "Aucun contenu pour le moment. Actualisez ce modèle mental pour générer du contenu.",
     "selectModelPrompt": "Sélectionnez un modèle mental pour afficher son contenu."
+  },
+  "cronPreview": {
+    "invalid": "Expression cron non valide",
+    "nextRun": "Prochaine exécution",
+    "upcoming": "Prochaines exécutions",
+    "utc": "UTC",
+    "local": "local"
   },
   "thinkView": {
     "noBankSelected": "Aucune banque sélectionnée",

@@ -783,6 +783,9 @@
     "optionsRefreshTriggerManual": "수동만",
     "optionsRefreshTriggerAuto": "통합 후",
     "optionsRefreshTriggerScheduled": "일정에 따라 (cron)",
+    "optionsRefreshTriggerManualDesc": "직접 트리거할 때만 새로고침됩니다.",
+    "optionsRefreshTriggerAutoDesc": "새 메모리가 통합된 후 백그라운드에서 새로고침됩니다.",
+    "optionsRefreshTriggerScheduledDesc": "모델이 오래되면 고정된 cron 일정(UTC)에 따라 새로고침됩니다.",
     "optionsRefreshTriggerDescription": "이 멘탈 모델의 콘텐츠를 최신 상태로 유지하는 방법입니다.",
     "optionsRefreshModeLabel": "새로고침 모드",
     "optionsRefreshModeFull": "전체 — 매번 새로고침 시 처음부터 재생성",
@@ -833,6 +836,13 @@
     "actionClearContent": "콘텐츠 지우기",
     "emptyContent": "아직 콘텐츠가 없습니다. 이 멘탈 모델을 새로 고쳐 콘텐츠를 생성하세요.",
     "selectModelPrompt": "콘텐츠를 보려면 멘탈 모델을 선택하세요."
+  },
+  "cronPreview": {
+    "invalid": "잘못된 cron 표현식",
+    "nextRun": "다음 실행",
+    "upcoming": "예정된 실행",
+    "utc": "UTC",
+    "local": "현지"
   },
   "thinkView": {
     "noBankSelected": "선택된 뱅크 없음",

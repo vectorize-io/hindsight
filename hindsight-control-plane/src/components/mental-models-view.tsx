@@ -65,6 +65,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { MentalModelDetailModal } from "./mental-model-detail-modal";
 import { TagFilterInput } from "./tag-filter-input";
+import { CronSchedulePreview } from "./cron-schedule-preview";
 
 interface ReflectResponseBasedOnFact {
   id: string;
@@ -897,9 +898,16 @@ function CreateMentalModelDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="manual">{t("optionsRefreshTriggerManual")}</SelectItem>
-                      <SelectItem value="auto">{t("optionsRefreshTriggerAuto")}</SelectItem>
-                      <SelectItem value="scheduled">
+                      <SelectItem value="manual" description={t("optionsRefreshTriggerManualDesc")}>
+                        {t("optionsRefreshTriggerManual")}
+                      </SelectItem>
+                      <SelectItem value="auto" description={t("optionsRefreshTriggerAutoDesc")}>
+                        {t("optionsRefreshTriggerAuto")}
+                      </SelectItem>
+                      <SelectItem
+                        value="scheduled"
+                        description={t("optionsRefreshTriggerScheduledDesc")}
+                      >
                         {t("optionsRefreshTriggerScheduled")}
                       </SelectItem>
                     </SelectContent>
@@ -921,6 +929,7 @@ function CreateMentalModelDialog({
                     <p className="text-xs text-muted-foreground">
                       {t("optionsRefreshCronDescription")}
                     </p>
+                    <CronSchedulePreview cron={form.refreshCron} />
                   </div>
                 )}
                 <div className="space-y-2">
@@ -1335,9 +1344,16 @@ function UpdateMentalModelDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="manual">{t("optionsRefreshTriggerManual")}</SelectItem>
-                      <SelectItem value="auto">{t("optionsRefreshTriggerAuto")}</SelectItem>
-                      <SelectItem value="scheduled">
+                      <SelectItem value="manual" description={t("optionsRefreshTriggerManualDesc")}>
+                        {t("optionsRefreshTriggerManual")}
+                      </SelectItem>
+                      <SelectItem value="auto" description={t("optionsRefreshTriggerAutoDesc")}>
+                        {t("optionsRefreshTriggerAuto")}
+                      </SelectItem>
+                      <SelectItem
+                        value="scheduled"
+                        description={t("optionsRefreshTriggerScheduledDesc")}
+                      >
                         {t("optionsRefreshTriggerScheduled")}
                       </SelectItem>
                     </SelectContent>
@@ -1359,6 +1375,7 @@ function UpdateMentalModelDialog({
                     <p className="text-xs text-muted-foreground">
                       {t("optionsRefreshCronDescription")}
                     </p>
+                    <CronSchedulePreview cron={form.refreshCron} />
                   </div>
                 )}
                 <div className="space-y-2">

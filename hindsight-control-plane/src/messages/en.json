@@ -783,6 +783,9 @@
     "optionsRefreshTriggerManual": "Manual only",
     "optionsRefreshTriggerAuto": "After consolidation",
     "optionsRefreshTriggerScheduled": "On a schedule (cron)",
+    "optionsRefreshTriggerManualDesc": "Only refreshes when you trigger it by hand.",
+    "optionsRefreshTriggerAutoDesc": "Refreshes in the background after new memories are consolidated.",
+    "optionsRefreshTriggerScheduledDesc": "Refreshes on a fixed cron schedule (UTC) when the model is stale.",
     "optionsRefreshTriggerDescription": "How this mental model's content is kept up to date.",
     "optionsRefreshModeLabel": "Refresh mode",
     "optionsRefreshModeFull": "Full — regenerate from scratch each refresh",
@@ -833,6 +836,13 @@
     "actionClearContent": "Clear Content",
     "emptyContent": "No content yet. Refresh this mental model to generate content.",
     "selectModelPrompt": "Select a mental model to view its content."
+  },
+  "cronPreview": {
+    "invalid": "Invalid cron expression",
+    "nextRun": "Next run",
+    "upcoming": "Upcoming runs",
+    "utc": "UTC",
+    "local": "local"
   },
   "thinkView": {
     "noBankSelected": "No Bank Selected",

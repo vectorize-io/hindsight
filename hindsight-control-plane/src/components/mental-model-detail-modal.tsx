@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { CompactMarkdown } from "./compact-markdown";
+import { CronSchedulePreview } from "./cron-schedule-preview";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { DirectiveDetailModal } from "./directive-detail-modal";
 import { formatAbsoluteDateTime as formatDateTime, formatRelativeTime } from "@/lib/relative-time";
@@ -1110,6 +1111,7 @@ function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
             )
           }
         />
+        {trigger.refresh_cron && <CronSchedulePreview cron={trigger.refresh_cron} />}
         <Metadata
           label={t("labelFactTypes")}
           value={

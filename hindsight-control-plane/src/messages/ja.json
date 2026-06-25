@@ -783,6 +783,9 @@
     "optionsRefreshTriggerManual": "手動のみ",
     "optionsRefreshTriggerAuto": "統合後",
     "optionsRefreshTriggerScheduled": "スケジュールに従う (cron)",
+    "optionsRefreshTriggerManualDesc": "手動でトリガーしたときのみ更新されます。",
+    "optionsRefreshTriggerAutoDesc": "新しいメモリが統合された後、バックグラウンドで更新されます。",
+    "optionsRefreshTriggerScheduledDesc": "モデルが古くなったとき、固定の cron スケジュール (UTC) で更新されます。",
     "optionsRefreshTriggerDescription": "このメンタルモデルのコンテンツを最新に保つ方法。",
     "optionsRefreshModeLabel": "更新モード",
     "optionsRefreshModeFull": "フル — 毎回ゼロから再生成",
@@ -833,6 +836,13 @@
     "actionClearContent": "内容をクリア",
     "emptyContent": "まだコンテンツがありません。このメンタルモデルを更新してコンテンツを生成します。",
     "selectModelPrompt": "メンタルモデルを選択して内容を表示します。"
+  },
+  "cronPreview": {
+    "invalid": "無効な cron 式",
+    "nextRun": "次回実行",
+    "upcoming": "今後の実行",
+    "utc": "UTC",
+    "local": "現地時間"
   },
   "thinkView": {
     "noBankSelected": "バンクが選択されていません",
