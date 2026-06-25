@@ -4,24 +4,23 @@
  * Hooks:
  *   - experimental.chat.system.transform → recall memories on **every turn** and
  *     inject them into the system prompt with contextual, query-based recall
- *   - event (session.idle) → auto-retain conversation transcript
- *   - experimental.session.compacting → inject memories into compaction context
+ *   - event (session.idle) → auto-retain conversation transcript (fires after
+ *     each agent response, upserting the same document so the latest state wins)
+ *   - experimental.session.compacting → retain + inject memories into compaction context
  *
- * Key design decisions (mirroring hermes-agent memory architecture):
+ * Key design decisions:
  *
- * 1. **Recall every turn** — unlike the previous "once per session" approach,
- *    we recall on every `system.transform`, keyed on the latest user message.
- *    This matches hermes-agent's `prefetch_all()` per-turn pattern.
+ * 1. **Recall every turn** — we recall on every `system.transform`, keyed on
+ *    the latest user message. This ensures injected memories are always relevant
+ *    to the current question.
  *
- * 2. **Background prefetch** — after each turn we fire a background recall
- *    for the next turn, so the result is cached and ready when system.transform
- *    fires. Matches hermes-agent's `queue_prefetch_all()` → `prefetch()` pattern.
+ * 2. **Retain on session idle** — `session.idle` fires after each agent
+ *    response. We always retain the full conversation (upsert with the same
+ *    documentId), so the latest state is stored reliably, including for
+ *    one-shot prompts. A pre-compaction retain serves as a backup before
+ *    context is compressed.
  *
- * 3. **Retain every turn** — we retain after each turn (configurable via
- *    retainEveryNTurns, default 1). Accumulates turns in a session buffer
- *    and sends them as a batch. Matches hermes-agent's `sync_turn()` pattern.
- *
- * 4. **System prompt instructions** — we inject memory usage instructions
+ * 3. **System prompt instructions** — we inject memory usage instructions
  *    into the system prompt so the LLM knows when and how to use memory tools.
  */
 
@@ -34,7 +33,6 @@ import {
   composeRecallQuery,
   truncateRecallQuery,
   prepareRetentionTranscript,
-  sliceLastTurnsByUserBoundary,
   stripMemoryTags,
   type Message,
 } from "./content.js";
@@ -43,16 +41,8 @@ import { ensureBankMission } from "./bank.js";
 export interface PluginState {
   turnCount: number;
   missionsSet: Set<string>;
-  /** Track last retained turn count per session to avoid duplicates */
-  lastRetainedTurn: Map<string, number>;
   /** Per-session turn counter — incremented on each system.transform */
   sessionTurnCount: Map<string, number>;
-  /** Background prefetch cache: session -> {context, timestamp} */
-  prefetchCache: Map<string, { context: string; timestamp: number }>;
-  /** Whether a background prefetch is in flight for a session */
-  prefetchInProgress: Map<string, boolean>;
-  /** Accumulated session turns for batch retention (session -> JSON strings) */
-  sessionTurns: Map<string, string[]>;
 }
 
 interface EventInput {
@@ -215,32 +205,16 @@ export function createHooks(
   }
 
   /**
-   * Retain messages for a session, respecting retainMode and documentId semantics.
+   * Retain the full conversation for a session as a single document (upsert).
    * Used by both idle-retain and pre-compaction retain.
    */
   async function retainSession(sessionId: string, messages: Message[]): Promise<void> {
-    const retainFullWindow = config.retainMode === "full-session";
-    let targetMessages: Message[];
-    let documentId: string;
-
-    if (retainFullWindow) {
-      targetMessages = messages;
-      // Full-session upserts the same document each time
-      documentId = sessionId;
-    } else {
-      // Sliding window: retainEveryNTurns + overlap
-      const windowTurns = config.retainEveryNTurns + config.retainOverlapTurns;
-      targetMessages = sliceLastTurnsByUserBoundary(messages, windowTurns);
-      // Chunked mode: unique document per chunk
-      documentId = `${sessionId}-${Date.now()}`;
-    }
-
-    const transcript = prepareRetentionTranscript(targetMessages, true);
+    const transcript = prepareRetentionTranscript(messages, true);
     if (!transcript) return;
 
     await ensureBankMission(hindsightClient, bankId, config, state.missionsSet, logger);
     await hindsightClient.retain(bankId, transcript, {
-      documentId,
+      documentId: sessionId,
       context: config.retainContext,
       tags: config.retainTags.length ? config.retainTags : undefined,
       metadata: Object.keys(config.retainMetadata).length
@@ -248,120 +222,6 @@ export function createHooks(
         : { session_id: sessionId },
       async: true,
     });
-  }
-
-  /**
-   * Retain a single turn as a structured JSON message pair.
-   * Mirrors hermes-agent's sync_turn() with _build_turn_messages().
-   * Note: does NOT increment sessionTurnCount — that's done in systemTransform.
-   */
-  async function retainTurn(
-    sessionId: string,
-    userContent: string,
-    assistantContent: string
-  ): Promise<void> {
-    if (!config.autoRetain) return;
-
-    const now = new Date().toISOString();
-    const turn = JSON.stringify(
-      [
-        { role: "user", content: userContent, timestamp: now },
-        { role: "assistant", content: assistantContent, timestamp: now },
-      ],
-      null,
-      0
-    );
-
-    // Accumulate turns for this session
-    const turns = state.sessionTurns.get(sessionId) || [];
-    turns.push(turn);
-    state.sessionTurns.set(sessionId, turns);
-
-    // Use the turn counter already set by systemTransform
-    const turnNum = state.sessionTurnCount.get(sessionId) ?? turns.length;
-
-    // Check if it's time to retain
-    if (turnNum % config.retainEveryNTurns !== 0) {
-      logger.debug(`retainTurn: buffered turn ${turnNum} for session ${sessionId}`);
-      return;
-    }
-
-    const content = "[" + turns.join(",") + "]";
-    const documentId = `${sessionId}-turn-${turnNum}`;
-
-    try {
-      await ensureBankMission(hindsightClient, bankId, config, state.missionsSet, logger);
-      await hindsightClient.retain(bankId, content, {
-        documentId,
-        context: config.retainContext,
-        tags: config.retainTags.length ? config.retainTags : undefined,
-        metadata: {
-          ...config.retainMetadata,
-          session_id: sessionId,
-          turn_index: String(turnNum),
-          retained_at: now,
-        },
-        async: true,
-      });
-      logger.debug(`retainTurn: retained ${turns.length} turns for session ${sessionId}`);
-    } catch (e) {
-      logger.error("retainTurn failed", e);
-    }
-  }
-
-  /**
-   * Background prefetch: fire a recall for the next turn.
-   * Mirrors hermes-agent's queue_prefetch_all() → prefetch() pattern.
-   */
-  function queueBackgroundPrefetch(sessionId: string, query: string): void {
-    if (!config.autoRecall) return;
-    if (state.prefetchInProgress.get(sessionId)) {
-      logger.debug(`prefetch: already in progress for session ${sessionId}`);
-      return;
-    }
-
-    state.prefetchInProgress.set(sessionId, true);
-    const prefetchStartedAt = Date.now();
-
-    // Fire-and-forget background prefetch
-    (async () => {
-      try {
-        const truncated =
-          query.length > config.recallMaxQueryChars
-            ? query.slice(0, config.recallMaxQueryChars)
-            : query;
-        const response = await hindsightClient.recall(bankId, truncated, {
-          budget: config.recallBudget as "low" | "mid" | "high",
-          maxTokens: config.recallMaxTokens,
-          types: config.recallTypes,
-          tags: config.recallTags.length ? config.recallTags : undefined,
-          tagsMatch: config.recallTags.length ? config.recallTagsMatch : undefined,
-        });
-
-        const results = response.results || [];
-        if (results.length) {
-          const formatted = formatMemories(results);
-          const context =
-            `<hindsight_memories>\n` +
-            `Hindsight Memory (persistent cross-session context)\n` +
-            `Use this to answer questions about the user and prior sessions. ` +
-            `Do not call tools to look up information that is already present here.\n` +
-            `Current time: ${formatCurrentTime()} UTC\n\n` +
-            `${formatted}\n` +
-            `</hindsight_memories>`;
-          const ts = Date.now();
-          const existing = state.prefetchCache.get(sessionId);
-          if (!existing || prefetchStartedAt > existing.timestamp) {
-            state.prefetchCache.set(sessionId, { context, timestamp: ts });
-          }
-          logger.debug(`prefetch: cached ${results.length} results for session ${sessionId}`);
-        }
-      } catch (e) {
-        logger.debug(`prefetch failed for session ${sessionId}`, { error: String(e) });
-      } finally {
-        state.prefetchInProgress.set(sessionId, false);
-      }
-    })();
   }
 
   /** Auto-retain conversation transcript on session idle */
@@ -372,19 +232,8 @@ export function createHooks(
     const messages = await getSessionMessages(sessionId);
     if (!messages.length) return;
 
-    // Count user turns
-    const userTurns = messages.filter((m) => m.role === "user").length;
-    const lastRetained = state.lastRetainedTurn.get(sessionId) || 0;
-    logger.debug(
-      `handleSessionIdle: userTurns=${userTurns}, lastRetained=${lastRetained}, retainEveryNTurns=${config.retainEveryNTurns}`
-    );
-
-    // Only retain if enough new turns since last retain
-    if (userTurns - lastRetained < config.retainEveryNTurns) return;
-
     try {
       await retainSession(sessionId, messages);
-      state.lastRetainedTurn.set(sessionId, userTurns);
       logger.info(`Auto-retained ${messages.length} messages`, {
         session: sessionId,
         bank: bankId,
@@ -412,18 +261,13 @@ export function createHooks(
 
   const compacting = async (input: CompactingInput, output: CompactingOutput): Promise<void> => {
     try {
-      // First, retain what we have before compaction (using shared retention logic)
+      // First, retain what we have before compaction
       const messages = await getSessionMessages(input.sessionID);
       if (messages.length && config.autoRetain) {
         try {
           await retainSession(input.sessionID, messages);
-          // Reset turn tracking — after compaction the message list shrinks,
-          // so the old lastRetainedTurn value would block future idle retains.
-          state.lastRetainedTurn.delete(input.sessionID);
+          // Reset turn tracking — after compaction the message list shrinks.
           state.sessionTurnCount.delete(input.sessionID);
-          state.sessionTurns.delete(input.sessionID);
-          state.prefetchCache.delete(input.sessionID);
-          state.prefetchInProgress.delete(input.sessionID);
           logger.debug("Pre-compaction retain completed");
         } catch (e) {
           logger.error("Pre-compaction retain failed", e);
@@ -464,7 +308,7 @@ export function createHooks(
       if (!sessionId) return;
 
       if (!config.autoRecall) {
-        // Still count turns for state consistency, but skip all recall/retain work
+        // Still count turns for state consistency, but skip all recall work
         const turnNum = (state.sessionTurnCount.get(sessionId) || 0) + 1;
         state.sessionTurnCount.set(sessionId, turnNum);
         return;
@@ -485,20 +329,6 @@ export function createHooks(
 
       await ensureBankMission(hindsightClient, bankId, config, state.missionsSet, logger);
 
-      // Try prefetch cache first (pop it so each turn gets fresh data)
-      const cacheEntry = state.prefetchCache.get(sessionId);
-      let cachedContext: string | null = null;
-      if (cacheEntry) {
-        // Use only if this entry was created _after_ the cacheEntry was set
-        // (guards against stale overwrites from rapid-fire prefetches)
-        state.prefetchCache.delete(sessionId);
-        cachedContext = cacheEntry.context;
-        output.system[0] = output.system[0]
-          ? `${output.system[0]}\n\n${cachedContext}`
-          : cachedContext;
-        logger.debug(`Used prefetch cache for session ${sessionId} turn ${turnNum}`);
-      }
-
       // Build a contextual recall query from the current conversation
       const messages = await getSessionMessages(sessionId);
       if (!messages.length) return;
@@ -511,27 +341,11 @@ export function createHooks(
       const query = composeRecallQuery(cleanUserMsg, messages, config.recallContextTurns);
       const truncated = truncateRecallQuery(query, cleanUserMsg, config.recallMaxQueryChars);
 
-      // Only do a live recall if we don't already have cached data
-      if (!cachedContext) {
-        const { context } = await recallForContext(truncated);
-        if (context) {
-          output.system[0] = output.system[0] ? `${output.system[0]}\n\n${context}` : context;
-          logger.debug(`Injected recall context for session ${sessionId} turn ${turnNum}`);
-        }
-      }
-
-      // Queue background prefetch for the NEXT turn
-      queueBackgroundPrefetch(sessionId, cleanUserMsg);
-
-      // Retain the last assistant response if available
-      if (config.autoRetain && messages.length >= 2) {
-        const lastAssistantMsg = [...messages].reverse().find((m) => m.role === "assistant");
-        if (lastAssistantMsg) {
-          // Run retain in the background to not block the response
-          retainTurn(sessionId, cleanUserMsg, stripMemoryTags(lastAssistantMsg.content)).catch(
-            (e) => logger.error("Background retainTurn failed", e)
-          );
-        }
+      // Always do a live recall
+      const { context } = await recallForContext(truncated);
+      if (context) {
+        output.system[0] = output.system[0] ? `${output.system[0]}\n\n${context}` : context;
+        logger.debug(`Injected recall context for session ${sessionId} turn ${turnNum}`);
       }
     } catch (e) {
       logger.error("System transform hook error", e);
