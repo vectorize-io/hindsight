@@ -10,11 +10,13 @@ success/error paths, and the HTTP read API (list / stats / tokens).
 import asyncio
 import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 import pytest_asyncio
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from hindsight_api import tracing
 from hindsight_api.api import create_app
@@ -285,6 +287,106 @@ async def test_wrapper_tools_error_attaches_provider_usage(registered_recorder):
     assert r.status == "error"
     assert r.input_tokens == 50
     assert r.output_tokens == 5
+
+
+# ── real provider: structured-output failure keeps provider usage (#2387) ─────
+
+
+class _Extracted(BaseModel):
+    """Stand-in for a retain fact-extraction schema."""
+
+    fact: str
+
+
+def _openai_response_with_usage(content: str):
+    """A successful OpenAI-shaped response carrying usage, like the provider sees
+    right before it parses/validates ``content``."""
+    message = SimpleNamespace(content=content, tool_calls=None, refusal=None)
+    choice = SimpleNamespace(finish_reason="stop", message=message)
+    usage = SimpleNamespace(
+        prompt_tokens=140,
+        completion_tokens=18,
+        total_tokens=158,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=20),
+    )
+    return SimpleNamespace(error=None, usage=usage, choices=[choice])
+
+
+@pytest.mark.asyncio
+async def test_retain_extract_json_parse_failure_keeps_usage(registered_recorder):
+    """The provider call succeeds (and reports usage) but returns non-JSON for a
+    structured request; the retain-extraction error trace keeps the tokens."""
+    llm = LLMProvider(provider="openai", api_key="test-key", base_url="https://example.test/v1", model="gpt-4o-mini")
+    llm._provider_impl._client.chat.completions.create = AsyncMock(
+        return_value=_openai_response_with_usage("not valid json at all")
+    )
+
+    with pytest.raises(json.JSONDecodeError):
+        await llm.call(
+            messages=[{"role": "user", "content": "extract facts"}],
+            response_format=_Extracted,
+            scope="retain_extract_facts",
+            max_retries=0,
+        )
+
+    assert len(registered_recorder.records) == 1
+    r = registered_recorder.records[0]
+    assert r.status == "error"
+    assert r.scope == "retain_extract_facts"
+    assert r.input_tokens == 140
+    assert r.output_tokens == 18
+    assert r.cached_tokens == 20
+    assert r.total_tokens == 158
+
+
+@pytest.mark.asyncio
+async def test_retain_extract_validation_failure_keeps_usage(registered_recorder):
+    """Valid JSON that doesn't match the schema fails ``model_validate`` locally
+    after a successful (billed) provider call; usage must survive."""
+    llm = LLMProvider(provider="openai", api_key="test-key", base_url="https://example.test/v1", model="gpt-4o-mini")
+    # Parses fine, but ``fact`` is missing → pydantic ValidationError.
+    llm._provider_impl._client.chat.completions.create = AsyncMock(
+        return_value=_openai_response_with_usage('{"wrong_field": 1}')
+    )
+
+    with pytest.raises(ValidationError):
+        await llm.call(
+            messages=[{"role": "user", "content": "extract facts"}],
+            response_format=_Extracted,
+            scope="retain_extract_facts",
+            max_retries=0,
+        )
+
+    r = registered_recorder.records[0]
+    assert r.status == "error"
+    assert r.input_tokens == 140
+    assert r.output_tokens == 18
+    assert r.cached_tokens == 20
+
+
+@pytest.mark.asyncio
+async def test_retain_extract_success_records_usage_once(registered_recorder):
+    """Sanity check the happy path the failure tests are contrasted against:
+    valid structured output records a single success trace with the same usage."""
+    llm = LLMProvider(provider="openai", api_key="test-key", base_url="https://example.test/v1", model="gpt-4o-mini")
+    llm._provider_impl._client.chat.completions.create = AsyncMock(
+        return_value=_openai_response_with_usage('{"fact": "the sky is blue"}')
+    )
+
+    result = await llm.call(
+        messages=[{"role": "user", "content": "extract facts"}],
+        response_format=_Extracted,
+        scope="retain_extract_facts",
+        max_retries=0,
+    )
+
+    assert isinstance(result, _Extracted)
+    assert len(registered_recorder.records) == 1
+    r = registered_recorder.records[0]
+    assert r.status == "success"
+    assert r.input_tokens == 140
+    assert r.output_tokens == 18
+    assert r.cached_tokens == 20
 
 
 @pytest.mark.asyncio
