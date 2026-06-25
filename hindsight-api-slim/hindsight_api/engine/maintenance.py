@@ -31,8 +31,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Coroutine
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..config import HindsightConfig, get_config
 from ..models import RequestContext
@@ -126,13 +127,25 @@ class MaintenanceLoop:
     async def _tick(self) -> None:
         cfg = get_config()
         if self._is_due("retention", _RETENTION_INTERVAL_SECONDS):
-            await self._run_retention(cfg)
+            await self._run_timed("retention", self._run_retention(cfg))
         interval = cfg.consolidation_reconcile_interval_seconds
         if interval > 0 and self._is_due("reconcile", interval):
-            await self._run_reconcile()
+            await self._run_timed("consolidation reconcile", self._run_reconcile())
         mm_interval = cfg.mental_model_refresh_tick_seconds
         if mm_interval > 0 and self._is_due("mm_refresh", mm_interval):
-            await self._run_scheduled_mm_refresh()
+            await self._run_timed("scheduled mental model refresh", self._run_scheduled_mm_refresh())
+
+    async def _run_timed(self, name: str, coro: Coroutine[Any, Any, None]) -> None:
+        """Run a maintenance job and emit one timing line for it.
+
+        Each job keeps its own summary log (counts of work done); this adds a
+        single, uniform line per run so the cost of every sweep is observable.
+        """
+        start = time.monotonic()
+        try:
+            await coro
+        finally:
+            logger.info(f"Maintenance: {name} took {time.monotonic() - start:.3f}s")
 
     # ── retention ──────────────────────────────────────────────────────────
 
