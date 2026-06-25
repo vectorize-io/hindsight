@@ -2,6 +2,7 @@
 Tests for retain update_mode='append' — appends new content to existing documents.
 """
 
+import json
 import logging
 from datetime import datetime, timezone
 
