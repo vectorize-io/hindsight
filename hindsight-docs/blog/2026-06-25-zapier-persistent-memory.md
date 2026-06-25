@@ -21,7 +21,7 @@ The Hindsight app for Zapier closes that gap, and it does it in both directions.
 
 - The Hindsight Zapier app gives any Zap access to persistent memory, across [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or a self-hosted instance.
 - **Three actions:** Retain (store content), Recall (search a bank), Reflect (an LLM-synthesized, memory-grounded answer).
-- **Three triggers** (instant, via REST Hooks): Retain Completed, Consolidation Completed, Memory Defense Triggered. These let a memory event *start* a Zap.
+- **Three triggers** (instant, via REST Hooks): Retain Completed, Consolidation Completed, Memory Defense Triggered. These let a memory event *start* a Zap. They use Hindsight's webhook API, which is available on self-hosted instances and on Hindsight Cloud's enterprise plan; it isn't enabled on Cloud by default. The three actions work on any plan.
 - The Bank field is a dynamic dropdown; type a new bank id and it's created on first use.
 - API-key auth (`hsk_...` as a Bearer token); leave the key blank to point at an open self-hosted instance.
 
@@ -59,6 +59,8 @@ The app installs as a single **Hindsight** app in Zapier, with actions and trigg
 
 This is what sets the Zapier app apart from a call-it-as-a-tool integration: Hindsight can *start* a Zap. Each trigger subscribes to Hindsight's webhook API (`POST /webhooks`) using Zapier's instant REST Hooks, and is torn down cleanly when you turn the Zap off (`DELETE /webhooks/{id}`).
 
+One availability note up front: the webhook API the triggers depend on is an **enterprise feature on Hindsight Cloud** and isn't enabled by default; it's available out of the box on self-hosted instances. The three actions above need no special plan.
+
 | Trigger | Event | Fires when |
 |---|---|---|
 | Retain Completed | `retain.completed` | A retain finishes processing and facts are live in the bank |
@@ -76,13 +78,13 @@ The app uses API-key auth:
 - **API Key**: your Hindsight key (starts with `hsk_`), sent as `Authorization: Bearer <key>`. Required for Hindsight Cloud. Leave it blank for a self-hosted instance running without auth.
 - **API URL**: defaults to Hindsight Cloud (`https://api.hindsight.vectorize.io`); point it at your own instance (for example `http://localhost:8888`) for self-hosting.
 
-Triggers work self-hosted too. They rely on your instance making an *outbound* POST to Zapier's webhook URL, which works for any box with outbound internet; only fully air-gapped instances can't. Each trigger registers its webhook with a freshly generated HMAC secret and verifies the `X-Hindsight-Signature: sha256=<hmac>` header on every delivery, rejecting any payload whose signature doesn't match.
+Triggers work self-hosted, where the webhook API is available out of the box. (On Hindsight Cloud, webhooks are an enterprise feature and aren't enabled by default.) They rely on your instance making an *outbound* POST to Zapier's webhook URL, which works for any box with outbound internet; only fully air-gapped instances can't. Each trigger registers its webhook with a freshly generated HMAC secret and verifies the `X-Hindsight-Signature: sha256=<hmac>` header on every delivery, rejecting any payload whose signature doesn't match.
 
 ## A Few Zaps to Build
 
 - **Support that learns.** Trigger on a closed Zendesk or Intercom ticket → Retain the resolution. On the next ticket from that customer, Recall before the LLM drafts a reply.
 - **Sales context on tap.** After a Gong or Fireflies call, Retain the transcript. Before the next meeting, Reflect to get a synthesized brief on the account.
-- **Memory-driven notifications.** Use the Retain Completed trigger to post newly learned facts into a Slack channel, so the team sees what the system is learning.
+- **Memory-driven notifications** (trigger-based, so it needs the webhook API: self-hosted or Cloud enterprise). Use the Retain Completed trigger to post newly learned facts into a Slack channel, so the team sees what the system is learning.
 - **Grounded form responses.** A Typeform submission triggers a Recall, an LLM step drafts a personalized reply, and an email action sends it.
 
 ## Setup
@@ -98,7 +100,7 @@ Triggers work self-hosted too. They rely on your instance making an *outbound* P
 No. Each Zap run is stateless. Persistent memory across runs comes from a memory layer like Hindsight wired into the Zap.
 
 **Can a memory event start a Zap?**
-Yes. The Hindsight app ships triggers (Retain Completed, Consolidation Completed, Memory Defense Triggered) that fire instantly via REST Hooks, so a memory event can be the start of a Zap, not just a step inside one.
+Yes, via the app's triggers (Retain Completed, Consolidation Completed, Memory Defense Triggered), which fire instantly via REST Hooks. They depend on Hindsight's webhook API, which is available self-hosted and on Hindsight Cloud's enterprise plan; it isn't enabled on Cloud by default. The three actions work on any plan.
 
 **Does it work with self-hosted Hindsight?**
 Yes. Set the API URL to your instance; if it runs without auth, leave the API key blank. Triggers work as long as your instance can make outbound requests to Zapier.
