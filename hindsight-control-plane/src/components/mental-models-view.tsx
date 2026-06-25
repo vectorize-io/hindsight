@@ -55,6 +55,7 @@ import {
   Pencil,
   FolderOpen,
   FileText,
+  Clock,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -1674,11 +1675,16 @@ function FilesView({
                       &ldquo;{selected.source_query}&rdquo;
                     </p>
                   )}
-                  <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-                    <span title={formatAbsoluteDateTime(selected.last_refreshed_at)}>
-                      Refreshed {formatRelativeTime(selected.last_refreshed_at)}
+                  <div className="flex flex-wrap items-center gap-2 mt-2 text-xs">
+                    <span
+                      className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2.5 py-1 text-muted-foreground"
+                      title={formatAbsoluteDateTime(selected.last_refreshed_at)}
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      {t("refreshedLabel")} {formatRelativeTime(selected.last_refreshed_at)}
                     </span>
-                    <span>
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-blue-600 dark:text-blue-400">
+                      <Clock className="w-3 h-3" />
                       {t("nextRefreshLabel")}: <NextRefresh trigger={selected.trigger} />
                     </span>
                     {selected.tags.length > 0 && (
@@ -1686,7 +1692,7 @@ function FilesView({
                         {selected.tags.map((tag) => (
                           <span
                             key={tag}
-                            className="px-1.5 py-0.5 rounded text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                            className="px-2 py-1 rounded-full text-xs bg-muted text-muted-foreground"
                           >
                             {tag}
                           </span>
