@@ -6,9 +6,10 @@ This test verifies that the API returns the correct based_on format:
 - v0.4.0+ (current): returns based_on as object {"memories": [], "mental_models": [], "directives": []}
 """
 
+import httpx
 import pytest
 import pytest_asyncio
-import httpx
+
 from hindsight_api.api import create_app
 
 
@@ -26,7 +27,10 @@ async def test_reflect_with_no_memories_empty_bank(api_client):
     """Test reflect on an empty bank (no memories) with include.facts enabled."""
     bank_id = "test_empty_bank"
 
-    # Reflect on empty bank with facts requested
+    create_response = await api_client.put(f"/v1/default/banks/{bank_id}", json={})
+    assert create_response.status_code == 200
+
+    # Reflect on an existing empty bank with facts requested
     response = await api_client.post(
         f"/v1/default/banks/{bank_id}/reflect",
         json={
@@ -80,9 +84,29 @@ async def test_reflect_with_no_memories_empty_bank(api_client):
 
 
 @pytest.mark.asyncio
+async def test_reflect_does_not_create_missing_bank(api_client):
+    """Reflect is read-only and must not create a missing bank."""
+    bank_id = "test_missing_reflect_bank"
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/reflect",
+        json={"query": "What do you know?", "budget": "low"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == f"Bank '{bank_id}' not found"
+
+    profile = await api_client.get(f"/v1/default/banks/{bank_id}/profile")
+    assert profile.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_reflect_without_include_facts(api_client):
     """Test reflect without requesting facts (based_on should be None)."""
     bank_id = "test_no_facts"
+
+    create_response = await api_client.put(f"/v1/default/banks/{bank_id}", json={})
+    assert create_response.status_code == 200
 
     response = await api_client.post(
         f"/v1/default/banks/{bank_id}/reflect",

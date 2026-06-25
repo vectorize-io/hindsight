@@ -8755,8 +8755,17 @@ class MemoryEngine(MemoryEngineInterface):
         tags_info = f", tags={tags} ({tags_match})" if tags else ""
         logger.info(f"[REFLECT {reflect_id}] Starting agentic reflect for query: {query[:50]}...{tags_info}")
 
-        # Get bank profile for agent identity
-        profile = await self.get_bank_profile(bank_id, request_context=request_context)
+        # Get bank profile for agent identity. Reflect is read-only and must
+        # not create a missing bank as a side effect.
+        profile = await self.get_bank_profile(
+            bank_id,
+            request_context=request_context,
+            create_if_missing=False,
+        )
+        if profile is None:
+            from hindsight_api.extensions.operation_validator import OperationValidationError
+
+            raise OperationValidationError(f"Bank '{bank_id}' not found", status_code=404)
 
         # NOTE: Mental models are NOT pre-loaded to keep the initial prompt small.
         # The agent can call lookup() to list available models if needed.
