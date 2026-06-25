@@ -34,7 +34,7 @@ classifiers = [
 
 dependencies = [
     "hindsight-client>=0.4.0",  # provides both hindsight_client and hindsight_client_api
-    "litellm>=1.83.0", # 1.82.7/1.82.8 had a supply chain compromise (yanked); 1.83.0+ also fixes GHSA-jjhc-v7c2-5hh6 / GHSA-53mr-6c8q-9789
+    "litellm>=1.83.14", # 1.82.7/1.82.8 supply-chain fix plus GHSA-jjhc-v7c2-5hh6 / GHSA-53mr-6c8q-9789 / GHSA-qrc4-49gv-mv9m / GHSA-wpfp-gwwc-vwq6
     # Transitive dependency security fixes
     "aiohttp>=3.13.3",  # Multiple DoS vulnerabilities
     "filelock>=3.20.3",  # TOCTOU race condition

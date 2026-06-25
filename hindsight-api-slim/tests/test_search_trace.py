@@ -129,6 +129,86 @@ async def test_search_with_trace(memory, request_context):
 
 
 @pytest.mark.asyncio
+async def test_trace_phase_coverage(memory, request_context):
+    """Phase metrics should account for (nearly) all of total_duration_seconds.
+
+    Regression guard for issue #2361: before the fix the named phases summed to
+    ~10-15% of total because backend acquisition, combined scoring, chunk/source/
+    entity enrichment and result serialization were un-instrumented.
+
+    The per-method ``retrieval_*`` splits and the pool-wait / finalize phases are
+    flagged ``details.diagnostic`` because they overlap (or sit outside) the
+    timeline; only the non-diagnostic phases partition it, so only those are summed.
+    """
+    bank_id = f"test_trace_cov_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Alice works at Google in Mountain View and joined in 2019.",
+            context="test context",
+            request_context=request_context,
+        )
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Bob also works at Google but in New York, on the search team.",
+            context="test context",
+            request_context=request_context,
+        )
+
+        # Exercise the enrichment paths (chunks + entities) so their phases fire.
+        search_result = await memory.recall_async(
+            bank_id=bank_id,
+            query="Who works at Google?",
+            fact_type=["world"],
+            budget=Budget.LOW,
+            max_tokens=512,
+            enable_trace=True,
+            include_chunks=True,
+            include_entities=True,
+            request_context=request_context,
+        )
+
+        trace = search_result.trace
+        assert trace is not None
+        phase_metrics = trace["summary"]["phase_metrics"]
+        total = trace["summary"]["total_duration_seconds"]
+
+        # The blocks the issue called out must now each have a phase.
+        phase_names = {pm["phase_name"] for pm in phase_metrics}
+        for expected in (
+            "backend_acquisition",
+            "combined_scoring",
+            "chunk_fetch",
+            "result_serialization",
+            "entity_build",
+        ):
+            assert expected in phase_names, f"missing phase metric: {expected}"
+
+        # Non-diagnostic phases partition the timeline; sum and compare to total.
+        timeline = [pm for pm in phase_metrics if not pm["details"].get("diagnostic")]
+        timeline_sum = sum(pm["duration_seconds"] for pm in timeline)
+
+        # No phase double-counts: the named partition never exceeds the wall clock.
+        assert timeline_sum <= total + 0.01, (
+            f"phase sum {timeline_sum:.4f}s exceeds total {total:.4f}s — likely double counting"
+        )
+        # Coverage: only tiny sync gaps between phases should be unaccounted.
+        # (finalize/to_dict serialization runs after the total snapshot, so it cannot
+        # be inside this total — it is reported as the diagnostic trace_finalize phase.)
+        gap = total - timeline_sum
+        assert gap <= 0.15 * total + 0.02, (
+            f"unaccounted recall time {gap:.4f}s of {total:.4f}s total — phases sum to "
+            f"only {timeline_sum / total:.0%}; an un-instrumented block likely regressed"
+        )
+
+        print(f"\n✓ Phase coverage: {timeline_sum / total:.0%} of {total:.3f}s accounted")
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_search_without_trace(memory, request_context):
     """Test that search with enable_trace=False returns None for trace."""
     bank_id = f"test_no_trace_{datetime.now(timezone.utc).timestamp()}"

@@ -78,6 +78,37 @@ async def test_dry_run_extracts_without_persisting(api_client, memory):
 
 
 @pytest.mark.asyncio
+async def test_dry_run_does_not_create_missing_bank(api_client, memory):
+    bank_id = f"dryrun-missing-{uuid.uuid4().hex[:8]}"
+    request_context = RequestContext()
+
+    assert (
+        await memory.get_bank_profile(
+            bank_id=bank_id,
+            request_context=request_context,
+            create_if_missing=False,
+        )
+        is None
+    )
+
+    resp = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories/dry-run-extract",
+        json={"content": "Alice moved to Berlin in 2021."},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["facts"]
+
+    assert (
+        await memory.get_bank_profile(
+            bank_id=bank_id,
+            request_context=request_context,
+            create_if_missing=False,
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_dry_run_rejects_empty_content(api_client, memory):
     """Empty/whitespace-only content is rejected by request validation (422) before the
     billable LLM extraction call runs — matching retain (RetainItem.content) and recall

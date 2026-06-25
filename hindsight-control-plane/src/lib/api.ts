@@ -187,6 +187,7 @@ export interface MentalModel {
   trigger: {
     mode?: "full" | "delta";
     refresh_after_consolidation: boolean;
+    refresh_cron?: string | null;
     fact_types?: Array<"world" | "experience" | "observation">;
     exclude_mental_models?: boolean;
     exclude_mental_model_ids?: string[];
@@ -1218,6 +1219,7 @@ export class ControlPlaneClient {
         trigger: {
           mode?: "full" | "delta";
           refresh_after_consolidation: boolean;
+          refresh_cron?: string | null;
           fact_types?: Array<"world" | "experience" | "observation">;
           exclude_mental_models?: boolean;
           exclude_mental_model_ids?: string[];
@@ -1252,6 +1254,7 @@ export class ControlPlaneClient {
       trigger?: {
         mode?: "full" | "delta";
         refresh_after_consolidation: boolean;
+        refresh_cron?: string | null;
         fact_types?: Array<"world" | "experience" | "observation">;
         exclude_mental_models?: boolean;
         exclude_mental_model_ids?: string[];
@@ -1294,6 +1297,7 @@ export class ControlPlaneClient {
       trigger?: {
         mode?: "full" | "delta";
         refresh_after_consolidation: boolean;
+        refresh_cron?: string | null;
         fact_types?: Array<"world" | "experience" | "observation">;
         exclude_mental_models?: boolean;
         exclude_mental_model_ids?: string[];
@@ -1315,6 +1319,7 @@ export class ControlPlaneClient {
       max_tokens: number;
       trigger: {
         refresh_after_consolidation: boolean;
+        refresh_cron?: string | null;
         fact_types?: Array<"world" | "experience" | "observation">;
         exclude_mental_models?: boolean;
         exclude_mental_model_ids?: string[];

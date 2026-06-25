@@ -3,14 +3,16 @@ export function formatRelativeTime(dateStr: string): string {
   const diffSec = Math.round((Date.now() - then) / 1000);
   const abs = Math.abs(diffSec);
   if (abs < 60) return diffSec >= 0 ? "just now" : "in a moment";
+  // value starts in seconds; each step divides by `factor` to reach `nextUnit`.
+  // (Previously the first pair was mislabeled [60, "second"], which left every
+  // unit one step too low — e.g. 8 minutes rendered as "in 8 seconds".)
   const units: [number, Intl.RelativeTimeFormatUnit][] = [
-    [60, "second"],
     [60, "minute"],
-    [24, "hour"],
-    [7, "day"],
-    [4.345, "week"],
-    [12, "month"],
-    [Number.POSITIVE_INFINITY, "year"],
+    [60, "hour"],
+    [24, "day"],
+    [7, "week"],
+    [4.345, "month"],
+    [12, "year"],
   ];
   let value = diffSec;
   let unit: Intl.RelativeTimeFormatUnit = "second";

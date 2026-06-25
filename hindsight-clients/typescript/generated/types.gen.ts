@@ -2522,6 +2522,12 @@ export type MentalModelTriggerInput = {
    */
   refresh_after_consolidation?: boolean;
   /**
+   * Refresh Cron
+   *
+   * Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) for refreshing this mental model on a fixed schedule. Mutually exclusive with refresh_after_consolidation — a model refreshes either after consolidation or on a cron schedule, not both. A scheduled refresh only runs when the model is stale (new memories in its scope since the last refresh); if nothing changed, the tick is skipped to avoid a wasted LLM call. null = no schedule.
+   */
+  refresh_cron?: string | null;
+  /**
    * Fact Types
    *
    * Filter which fact types are retrieved during reflect. None means all types (world, experience, observation).
@@ -2589,6 +2595,12 @@ export type MentalModelTriggerOutput = {
    * If true, refresh this mental model after observations consolidation (real-time mode)
    */
   refresh_after_consolidation?: boolean;
+  /**
+   * Refresh Cron
+   *
+   * Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) for refreshing this mental model on a fixed schedule. Mutually exclusive with refresh_after_consolidation — a model refreshes either after consolidation or on a cron schedule, not both. A scheduled refresh only runs when the model is stale (new memories in its scope since the last refresh); if nothing changed, the tick is skipped to avoid a wasted LLM call. null = no schedule.
+   */
+  refresh_cron?: string | null;
   /**
    * Fact Types
    *

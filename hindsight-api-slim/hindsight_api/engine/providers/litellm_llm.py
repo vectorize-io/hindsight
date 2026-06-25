@@ -23,11 +23,28 @@ from litellm.exceptions import Timeout as LiteLLMTimeout
 
 from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
 from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
+from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
 logger = logging.getLogger(__name__)
+
+
+def _usage_from_litellm_response(response: Any) -> LLMResponseUsage:
+    """Extract prompt/completion/cached token counts from a LiteLLM (OpenAI-shaped) usage block."""
+    usage = getattr(response, "usage", None)
+    if not usage:
+        return LLMResponseUsage()
+    cached_tokens = 0
+    details = getattr(usage, "prompt_tokens_details", None)
+    if details:
+        cached_tokens = getattr(details, "cached_tokens", 0) or 0
+    return LLMResponseUsage(
+        input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+        output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+        cached_tokens=cached_tokens,
+    )
 
 
 class LiteLLMLLM(LLMInterface):
@@ -219,6 +236,10 @@ class LiteLLMLLM(LLMInterface):
                     self._acompletion(**call_kwargs),
                     timeout=self.timeout,
                 )
+                # Stash usage before the length check and parse/validate below,
+                # which may raise locally even though the provider charged for
+                # these tokens (#2387).
+                stash_response_usage(_usage_from_litellm_response(response))
 
                 content = response.choices[0].message.content or ""
                 finish_reason = response.choices[0].finish_reason
@@ -249,8 +270,9 @@ class LiteLLMLLM(LLMInterface):
                     result = content
 
                 # Extract usage
-                input_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
-                output_tokens = getattr(response.usage, "completion_tokens", 0) or 0
+                response_usage = _usage_from_litellm_response(response)
+                input_tokens = response_usage.input_tokens
+                output_tokens = response_usage.output_tokens
                 total_tokens = input_tokens + output_tokens
 
                 # Record metrics

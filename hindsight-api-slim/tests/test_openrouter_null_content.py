@@ -38,6 +38,7 @@ def _make_chat_response(content: str | None) -> MagicMock:
     - response.error = None          (otherwise truthy MagicMock triggers error path)
     - response.model_dump()          (returns dict without 'error' key)
     - choice.message.tool_calls/refusal  (otherwise truthy MagicMock in error msg)
+    - usage.completion_tokens_details  (otherwise reasoning-token math crashes, #2378)
     """
     choice = MagicMock()
     choice.finish_reason = "stop"
@@ -51,6 +52,7 @@ def _make_chat_response(content: str | None) -> MagicMock:
     response.usage.prompt_tokens = 10
     response.usage.completion_tokens = 0 if content is None else 5
     response.usage.total_tokens = 10 if content is None else 15
+    response.usage.completion_tokens_details = None
     response.choices = [choice]
     return response
 

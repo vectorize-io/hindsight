@@ -20,6 +20,7 @@ from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 
 from hindsight_api.engine.llm_interface import LLMInterface
+from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
@@ -48,6 +49,18 @@ def _to_int(value: Any) -> int:
         return int(value)
     except (ValueError, TypeError):
         return 0
+
+
+def _usage_from_gemini_response(response: Any) -> LLMResponseUsage:
+    """Extract prompt/candidate/cached token counts from a Gemini usage_metadata block."""
+    usage = getattr(response, "usage_metadata", None)
+    if not usage:
+        return LLMResponseUsage()
+    return LLMResponseUsage(
+        input_tokens=usage.prompt_token_count or 0,
+        output_tokens=usage.candidates_token_count or 0,
+        cached_tokens=getattr(usage, "cached_content_token_count", 0) or 0,
+    )
 
 
 class GeminiLLM(LLMInterface):
@@ -327,6 +340,9 @@ class GeminiLLM(LLMInterface):
                     ),
                     timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
                 )
+                # Stash usage before parse/validate, which may raise locally
+                # even though the provider charged for these tokens (#2387).
+                stash_response_usage(_usage_from_gemini_response(response))
 
                 content = response.text
 
@@ -693,6 +709,7 @@ class GeminiLLM(LLMInterface):
                     ),
                     timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
                 )
+                stash_response_usage(_usage_from_gemini_response(response))
 
                 # Extract content and tool calls
                 content = None

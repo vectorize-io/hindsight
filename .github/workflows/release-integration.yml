@@ -75,7 +75,7 @@ jobs:
       if: steps.type.outputs.type == 'plugin'
       run: |
         echo "Plugin integration ${{ steps.info.outputs.integration }} v${{ steps.info.outputs.version }} — no package to publish."
-        echo "Users install via: claude plugin marketplace add vectorize-io/hindsight --sparse hindsight-integrations"
+        echo "Users install via: claude plugin marketplace add vectorize-io/hindsight"
 
     # ── TypeScript integrations (ai-sdk, chat, openclaw) ────────────────────
 

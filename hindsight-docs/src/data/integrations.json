@@ -171,6 +171,16 @@
       "icon": "/img/icons/codex.svg"
     },
     {
+      "id": "github-copilot",
+      "name": "GitHub Copilot",
+      "description": "Long-term memory for GitHub Copilot in VS Code. One command wires the Hindsight MCP server into .vscode/mcp.json plus a recall/retain rule in .github/copilot-instructions.md.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/github-copilot",
+      "icon": "/img/icons/github-copilot.svg"
+    },
+    {
       "id": "continue",
       "name": "Continue",
       "description": "Long-term memory for the Continue.dev coding assistant. Recall relevant project memory into chat with @hindsight, plus optional automatic recall/retain via the Hindsight MCP server.",
@@ -361,6 +371,16 @@
       "icon": "/img/icons/opencode.png"
     },
     {
+      "id": "eve",
+      "name": "Eve",
+      "description": "Long-term memory for Vercel Eve agents. A one-line MCP connection exposing retain, recall, and reflect.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/eve",
+      "icon": "/img/icons/eve.svg"
+    },
+    {
       "id": "n8n",
       "name": "n8n",
       "description": "Persistent memory community node for n8n workflows. Retain, recall, and reflect operations drop into any workflow alongside Slack, Sheets, OpenAI, and 400+ other integrations.",
@@ -549,6 +569,16 @@
       "category": "tool",
       "link": "/sdks/integrations/openhands",
       "icon": "/img/icons/openhands.png"
+    },
+    {
+      "id": "windsurf",
+      "name": "Windsurf",
+      "description": "Long-term memory for Windsurf (Codeium) via its native MCP support. One command wires the Hindsight MCP server into mcp_config.json plus an always-on recall/retain rule, so memory works automatically in Cascade.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/windsurf",
+      "icon": "/img/icons/windsurf.svg"
     }
   ]
 }

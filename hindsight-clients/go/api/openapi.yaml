@@ -6570,6 +6570,7 @@ components:
             mode: full
             refresh_after_consolidation: false
             recall_chunks_max_tokens: 1
+            refresh_cron: refresh_cron
             tag_groups:
             - match: any_strict
               tags:
@@ -6607,6 +6608,7 @@ components:
             mode: full
             refresh_after_consolidation: false
             recall_chunks_max_tokens: 1
+            refresh_cron: refresh_cron
             tag_groups:
             - match: any_strict
               tags:
@@ -6655,6 +6657,7 @@ components:
           mode: full
           refresh_after_consolidation: false
           recall_chunks_max_tokens: 1
+          refresh_cron: refresh_cron
           tag_groups:
           - match: any_strict
             tags:
@@ -6745,6 +6748,9 @@ components:
             \ (real-time mode)"
           title: Refresh After Consolidation
           type: boolean
+        refresh_cron:
+          nullable: true
+          type: string
         fact_types:
           items:
             enum:
@@ -6795,6 +6801,7 @@ components:
         mode: full
         refresh_after_consolidation: false
         recall_chunks_max_tokens: 1
+        refresh_cron: refresh_cron
         tag_groups:
         - match: any_strict
           tags:
@@ -6834,6 +6841,9 @@ components:
             \ (real-time mode)"
           title: Refresh After Consolidation
           type: boolean
+        refresh_cron:
+          nullable: true
+          type: string
         fact_types:
           items:
             enum:

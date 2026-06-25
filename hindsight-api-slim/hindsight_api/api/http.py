@@ -1967,6 +1967,17 @@ class MentalModelTrigger(BaseModel):
         default=False,
         description="If true, refresh this mental model after observations consolidation (real-time mode)",
     )
+    refresh_cron: str | None = Field(
+        default=None,
+        description=(
+            "Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) "
+            "for refreshing this mental model on a fixed schedule. Mutually exclusive with "
+            "refresh_after_consolidation — a model refreshes either after consolidation or on a cron "
+            "schedule, not both. A scheduled refresh only runs when the model is stale (new memories in "
+            "its scope since the last refresh); if nothing changed, the tick is skipped to avoid a "
+            "wasted LLM call. null = no schedule."
+        ),
+    )
     fact_types: list[Literal["world", "experience", "observation"]] | None = Field(
         default=None,
         description="Filter which fact types are retrieved during reflect. None means all types (world, experience, observation).",
@@ -2024,6 +2035,31 @@ class MentalModelTrigger(BaseModel):
         if v is not None and len(v) == 0:
             raise ValueError("fact_types must not be empty. Use null to include all fact types.")
         return v
+
+    @field_validator("refresh_cron")
+    @classmethod
+    def validate_refresh_cron(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            return None
+        from croniter import croniter
+
+        if not croniter.is_valid(v):
+            raise ValueError(f"refresh_cron is not a valid cron expression: {v!r}")
+        return v
+
+    @model_validator(mode="after")
+    def validate_refresh_exclusivity(self) -> "MentalModelTrigger":
+        # A mental model refreshes either after consolidation (real-time) or on a
+        # cron schedule, never both — the two triggers would race and double-refresh.
+        if self.refresh_after_consolidation and self.refresh_cron:
+            raise ValueError(
+                "refresh_after_consolidation and refresh_cron are mutually exclusive: "
+                "a mental model refreshes either after consolidation or on a cron schedule, not both."
+            )
+        return self
 
 
 class MentalModelResponse(BaseModel):
@@ -3069,8 +3105,12 @@ def create_app(
         # All current backends (PostgreSQL, Oracle) support async worker/poller.
         if config.worker_enabled and memory._backend.supports_worker_poller:
             from ..config import DEFAULT_DATABASE_SCHEMA
+            from ..utils import warn_if_container_default_worker_id
 
+            warn_if_container_default_worker_id(config.worker_id)
             worker_id = config.worker_id or socket.gethostname()
+            worker_id_source = "HINDSIGHT_API_WORKER_ID" if config.worker_id else "hostname (default)"
+            logging.info(f"Worker id: {worker_id} (source: {worker_id_source})")
             # Convert default schema to None for SQL compatibility (no schema prefix)
             schema = None if config.database_schema == DEFAULT_DATABASE_SCHEMA else config.database_schema
             poller = WorkerPoller(
@@ -5640,8 +5680,13 @@ def _register_routes(app: FastAPI):
     ):
         """Partially update an agent's profile (name, mission, disposition)."""
         try:
-            # Ensure bank exists
-            await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            # PATCH is update-only; missing banks must not be created as a
+            # side effect of reading the profile.
+            existing_profile = await app.state.memory.get_bank_profile(
+                bank_id, request_context=request_context, create_if_missing=False
+            )
+            if existing_profile is None:
+                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
 
             # Update name if provided (stored in DB for display only, deprecated)
             if request.name is not None:
@@ -5657,7 +5702,11 @@ def _register_routes(app: FastAPI):
                 await app.state.memory._config_resolver.update_bank_config(bank_id, config_updates, request_context)
 
             # Get final profile
-            final_profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            final_profile = await app.state.memory.get_bank_profile(
+                bank_id, request_context=request_context, create_if_missing=False
+            )
+            if final_profile is None:
+                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
             disposition_dict = (
                 final_profile["disposition"].model_dump()
                 if hasattr(final_profile["disposition"], "model_dump")

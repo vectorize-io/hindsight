@@ -23,6 +23,7 @@ type MentalModelTriggerOutput struct {
 	Mode *string `json:"mode,omitempty"`
 	// If true, refresh this mental model after observations consolidation (real-time mode)
 	RefreshAfterConsolidation *bool `json:"refresh_after_consolidation,omitempty"`
+	RefreshCron NullableString `json:"refresh_cron,omitempty"`
 	FactTypes []string `json:"fact_types,omitempty"`
 	// If true, exclude all mental models from the reflect loop (skip search_mental_models tool).
 	ExcludeMentalModels *bool `json:"exclude_mental_models,omitempty"`
@@ -125,6 +126,48 @@ func (o *MentalModelTriggerOutput) HasRefreshAfterConsolidation() bool {
 // SetRefreshAfterConsolidation gets a reference to the given bool and assigns it to the RefreshAfterConsolidation field.
 func (o *MentalModelTriggerOutput) SetRefreshAfterConsolidation(v bool) {
 	o.RefreshAfterConsolidation = &v
+}
+
+// GetRefreshCron returns the RefreshCron field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MentalModelTriggerOutput) GetRefreshCron() string {
+	if o == nil || IsNil(o.RefreshCron.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.RefreshCron.Get()
+}
+
+// GetRefreshCronOk returns a tuple with the RefreshCron field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MentalModelTriggerOutput) GetRefreshCronOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.RefreshCron.Get(), o.RefreshCron.IsSet()
+}
+
+// HasRefreshCron returns a boolean if a field has been set.
+func (o *MentalModelTriggerOutput) HasRefreshCron() bool {
+	if o != nil && o.RefreshCron.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRefreshCron gets a reference to the given NullableString and assigns it to the RefreshCron field.
+func (o *MentalModelTriggerOutput) SetRefreshCron(v string) {
+	o.RefreshCron.Set(&v)
+}
+// SetRefreshCronNil sets the value for RefreshCron to be an explicit nil
+func (o *MentalModelTriggerOutput) SetRefreshCronNil() {
+	o.RefreshCron.Set(nil)
+}
+
+// UnsetRefreshCron ensures that no value is present for RefreshCron, not even an explicit nil
+func (o *MentalModelTriggerOutput) UnsetRefreshCron() {
+	o.RefreshCron.Unset()
 }
 
 // GetFactTypes returns the FactTypes field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -441,6 +484,9 @@ func (o MentalModelTriggerOutput) ToMap() (map[string]interface{}, error) {
 	}
 	if !IsNil(o.RefreshAfterConsolidation) {
 		toSerialize["refresh_after_consolidation"] = o.RefreshAfterConsolidation
+	}
+	if o.RefreshCron.IsSet() {
+		toSerialize["refresh_cron"] = o.RefreshCron.Get()
 	}
 	if o.FactTypes != nil {
 		toSerialize["fact_types"] = o.FactTypes

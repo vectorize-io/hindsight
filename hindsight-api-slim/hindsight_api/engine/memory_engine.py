@@ -35,6 +35,8 @@ from ..config import (
     DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS,
     ENV_MODEL_INIT_TIMEOUT,
     HindsightConfig,
+    LLMMemberConfig,
+    LLMStrategyConfig,
     get_config,
 )
 from ..tracing import create_operation_span
@@ -348,6 +350,7 @@ from enum import Enum
 from ..pg0 import EmbeddedPostgres, parse_pg0_url
 from .entity_resolver import EntityResolver
 from .llm_wrapper import LLMConfig, requires_api_key, sanitize_llm_output, sanitize_text
+from .multi_llm import MultiLLMProvider
 from .query_analyzer import QueryAnalyzer
 from .reflect import run_reflect_agent
 from .reflect.tools import tool_expand, tool_recall, tool_search_mental_models, tool_search_observations
@@ -381,6 +384,64 @@ from .token_encoding import get_token_encoding
 
 RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
 RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
+
+
+def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig) -> LLMConfig:
+    """Build an LLMProvider from one indexed multi-LLM member.
+
+    ``LLMProvider`` uses its arguments verbatim (it no longer reads global config),
+    so resolve each fallback here: a member's explicit value wins, otherwise inherit
+    the global LLM default. Fields that aren't per-member configurable
+    (``gemini_safety_settings``, ``prompt_cache_enabled``) take the global default.
+    ``gemini_safety_settings`` is bank-configurable so it comes from the raw config
+    (the proxy blocks it); the per-bank value is applied per-call downstream.
+    """
+    from ..config import _get_raw_config
+
+    return LLMConfig(
+        provider=member.provider,
+        api_key=member.api_key or "",
+        base_url=member.base_url,
+        model=member.model,
+        reasoning_effort=member.reasoning_effort or config.llm_reasoning_effort,
+        extra_body=member.extra_body,
+        default_headers=member.default_headers or config.llm_default_headers,
+        bedrock_service_tier=member.bedrock_service_tier,
+        gemini_service_tier=member.gemini_service_tier or config.llm_gemini_service_tier,
+        gemini_safety_settings=_get_raw_config().llm_gemini_safety_settings,
+        prompt_cache_enabled=config.llm_prompt_cache_enabled,
+        vertexai_project_id=member.vertexai_project_id or config.llm_vertexai_project_id,
+        vertexai_region=member.vertexai_region or config.llm_vertexai_region,
+        vertexai_service_account_key=member.vertexai_service_account_key or config.llm_vertexai_service_account_key,
+        litellmrouter_config=member.litellmrouter_config or config.llm_litellmrouter_config,
+    )
+
+
+def _build_llm(
+    base: LLMConfig,
+    config: HindsightConfig,
+    prefix: str,
+) -> "LLMConfig | MultiLLMProvider":
+    """Resolve an operation's multi-LLM chain and wrap ``base`` (member 0) in it.
+
+    ``prefix`` is ``""`` (global) or ``"retain_"`` / ``"reflect_"`` /
+    ``"consolidation_"``. A per-op slot with no indexed members (or no strategy)
+    inherits the global chain, mirroring how per-op base config falls back to the
+    global LLM config. Returns ``base`` unchanged when no chain is configured
+    (byte-identical hot path).
+    """
+    members: list[LLMMemberConfig] = getattr(config, f"{prefix}llm_members")
+    strategy: LLMStrategyConfig | None = getattr(config, f"{prefix}llm_strategy")
+    if prefix:
+        if not members:
+            members = config.llm_members
+        if strategy is None:
+            strategy = config.llm_strategy
+
+    if not strategy or not members:
+        return base
+    extra = [_member_to_llm(m, config) for m in members]
+    return MultiLLMProvider([base, *extra], strategy)
 
 
 def _is_oracledb_connection_error(e: Exception) -> bool:
@@ -866,9 +927,15 @@ class MemoryEngine(MemoryEngineInterface):
                           HINDSIGHT_API_LAZY_RERANKER env var or False.
         """
         # Load config from environment for any missing parameters
-        from ..config import get_config
+        from ..config import _get_raw_config, get_config
 
         config = get_config()
+        # Gemini safety settings are bank-configurable, so the StaticConfigProxy from
+        # get_config() blocks reading them. The server-level default legitimately seeds
+        # each provider at construction (per-bank values are applied per-call via
+        # ConfiguredLLMProvider), so read it from the raw config. The other LLM fields
+        # below are static and safe to read off the proxy.
+        _llm_gemini_safety_settings = _get_raw_config().llm_gemini_safety_settings
 
         # Apply optimization flags from config if not explicitly provided
         self._skip_llm_verification = (
@@ -955,7 +1022,7 @@ class MemoryEngine(MemoryEngineInterface):
             self.query_analyzer = DateparserQueryAnalyzer()
 
         # Initialize LLM configuration (default, used as fallback)
-        self._llm_config = LLMConfig(
+        _default_base_llm = LLMConfig(
             provider=memory_llm_provider,
             api_key=memory_llm_api_key,
             base_url=memory_llm_base_url,
@@ -966,11 +1033,18 @@ class MemoryEngine(MemoryEngineInterface):
             litellmrouter_config=config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
+            gemini_safety_settings=_llm_gemini_safety_settings,
+            prompt_cache_enabled=config.llm_prompt_cache_enabled,
+            vertexai_project_id=config.llm_vertexai_project_id,
+            vertexai_region=config.llm_vertexai_region,
+            vertexai_service_account_key=config.llm_vertexai_service_account_key,
         )
+        self._llm_config = _build_llm(_default_base_llm, config, "")
 
-        # Store client and model for convenience (deprecated: use _llm_config.call() instead)
-        self._llm_client = self._llm_config._client
-        self._llm_model = self._llm_config.model
+        # Store client and model for convenience (deprecated: use _llm_config.call() instead).
+        # Read from the primary member so a multi-LLM chain behaves like the base config here.
+        self._llm_client = _default_base_llm._client
+        self._llm_model = _default_base_llm.model
 
         # Initialize per-operation LLM configs (fall back to default if not specified)
         # Retain LLM config - for fact extraction (benefits from strong structured output)
@@ -989,7 +1063,7 @@ class MemoryEngine(MemoryEngineInterface):
             else:
                 retain_base_url = ""
 
-        self._retain_llm_config = LLMConfig(
+        _retain_base_llm = LLMConfig(
             provider=retain_provider,
             api_key=retain_api_key,
             base_url=retain_base_url,
@@ -1000,7 +1074,13 @@ class MemoryEngine(MemoryEngineInterface):
             litellmrouter_config=config.retain_llm_litellmrouter_config or config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
+            gemini_safety_settings=_llm_gemini_safety_settings,
+            prompt_cache_enabled=config.llm_prompt_cache_enabled,
+            vertexai_project_id=config.llm_vertexai_project_id,
+            vertexai_region=config.llm_vertexai_region,
+            vertexai_service_account_key=config.llm_vertexai_service_account_key,
         )
+        self._retain_llm_config = _build_llm(_retain_base_llm, config, "retain_")
 
         # Reflect LLM config - for think/observe operations (can use lighter models)
         reflect_provider = reflect_llm_provider or config.reflect_llm_provider or memory_llm_provider
@@ -1018,7 +1098,7 @@ class MemoryEngine(MemoryEngineInterface):
             else:
                 reflect_base_url = ""
 
-        self._reflect_llm_config = LLMConfig(
+        _reflect_base_llm = LLMConfig(
             provider=reflect_provider,
             api_key=reflect_api_key,
             base_url=reflect_base_url,
@@ -1029,7 +1109,13 @@ class MemoryEngine(MemoryEngineInterface):
             litellmrouter_config=config.reflect_llm_litellmrouter_config or config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
+            gemini_safety_settings=_llm_gemini_safety_settings,
+            prompt_cache_enabled=config.llm_prompt_cache_enabled,
+            vertexai_project_id=config.llm_vertexai_project_id,
+            vertexai_region=config.llm_vertexai_region,
+            vertexai_service_account_key=config.llm_vertexai_service_account_key,
         )
+        self._reflect_llm_config = _build_llm(_reflect_base_llm, config, "reflect_")
 
         # Consolidation LLM config - for mental model consolidation (can use efficient models)
         consolidation_provider = consolidation_llm_provider or config.consolidation_llm_provider or memory_llm_provider
@@ -1047,7 +1133,7 @@ class MemoryEngine(MemoryEngineInterface):
             else:
                 consolidation_base_url = ""
 
-        self._consolidation_llm_config = LLMConfig(
+        _consolidation_base_llm = LLMConfig(
             provider=consolidation_provider,
             api_key=consolidation_api_key,
             base_url=consolidation_base_url,
@@ -1058,7 +1144,13 @@ class MemoryEngine(MemoryEngineInterface):
             litellmrouter_config=config.consolidation_llm_litellmrouter_config or config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
+            gemini_safety_settings=_llm_gemini_safety_settings,
+            prompt_cache_enabled=config.llm_prompt_cache_enabled,
+            vertexai_project_id=config.llm_vertexai_project_id,
+            vertexai_region=config.llm_vertexai_region,
+            vertexai_service_account_key=config.llm_vertexai_service_account_key,
         )
+        self._consolidation_llm_config = _build_llm(_consolidation_base_llm, config, "consolidation_")
 
         # Initialize cross-encoder reranker (cached for performance)
         self._cross_encoder_reranker = CrossEncoderReranker(cross_encoder=cross_encoder)
@@ -2515,7 +2607,7 @@ class MemoryEngine(MemoryEngineInterface):
             provider becomes available (e.g. after a quota reset).
             """
             if not self._skip_llm_verification:
-                configs_to_verify: list[tuple[str, LLMConfig]] = [("default", self._llm_config)]
+                configs_to_verify: list[tuple[str, LLMConfig | MultiLLMProvider]] = [("default", self._llm_config)]
 
                 # Verify retain config if different from default
                 retain_is_different = (
@@ -4207,7 +4299,10 @@ class MemoryEngine(MemoryEngineInterface):
         if tracer:
             tracer.start()
 
+        backend_acquire_start = time.time()
         backend = await self._get_read_backend()
+        if tracer:
+            tracer.add_phase_metric("backend_acquisition", time.time() - backend_acquire_start)
         recall_start = time.time()
 
         # Buffer logs for clean output in concurrent scenarios.
@@ -4503,10 +4598,12 @@ class MemoryEngine(MemoryEngineInterface):
                     },
                 )
                 # Also expose each retrieval method as its own phase so
-                # benchmarks can pinpoint which sub-query drives latency.
+                # benchmarks can pinpoint which sub-query drives latency. These are
+                # children of parallel_retrieval (marked diagnostic so the phase-coverage
+                # check doesn't double-count them).
                 for _method, _dur in aggregated_timings.items():
                     if _dur > 0:
-                        tracer.add_phase_metric(f"retrieval_{_method}", _dur)
+                        tracer.add_phase_metric(f"retrieval_{_method}", _dur, {"diagnostic": True})
 
             # Step 3: Merge ranked lists. RRF by default; interleave (round-robin) when
             # requested by consolidation dedup recall — RRF averages a strong-in-one-arm
@@ -4622,6 +4719,12 @@ class MemoryEngine(MemoryEngineInterface):
             # is_passthrough_reranker tells the scoring code to seed CE scores
             # from RRF rank — only meaningful when the configured reranker is
             # the slim/passthrough one that returns a constant score per pair.
+            #
+            # Timed separately from "reranking": the cross-encoder duration above
+            # (step_duration) is captured before this block runs, so the scoring
+            # math, additive boosts and final sort would otherwise be invisible in
+            # the phase metrics (issue #2361).
+            scoring_start = time.time()
             if scored_results and reranking == "interleave":
                 # Interleave order is authoritative for dedup recall: do NOT re-sort by the
                 # recency/temporal boosts — that re-sort is precisely what buried the twin
@@ -4669,6 +4772,13 @@ class MemoryEngine(MemoryEngineInterface):
                     step_duration,
                     {"reranker_type": rerank_kind, "candidates_reranked": len(scored_results)},
                 )
+                # Combined scoring + additive boosts + final sort, plus the trace
+                # serialization of reranked entries done just above.
+                tracer.add_phase_metric(
+                    "combined_scoring",
+                    time.time() - scoring_start,
+                    {"candidates_scored": len(scored_results)},
+                )
 
             # Cancellation checkpoint: reranking is done; skip the remaining
             # enrichment (chunk/entity/source-fact fetches, each its own DB work)
@@ -4693,6 +4803,7 @@ class MemoryEngine(MemoryEngineInterface):
                     if sr.retrieval.fact_type == "observation"
                 ]
                 if observation_ids:
+                    dedup_start = time.time()
                     superseded_ids: set[str] = set()
                     async with acquire_with_retry(backend) as dedup_conn:
                         obs_rows = await dedup_conn.fetch(
@@ -4702,6 +4813,12 @@ class MemoryEngine(MemoryEngineInterface):
                             WHERE id = ANY($1::uuid[]) AND fact_type = 'observation'
                             """,
                             observation_ids,
+                        )
+                    if tracer:
+                        tracer.add_phase_metric(
+                            "prefer_observations_dedup",
+                            time.time() - dedup_start,
+                            {"observations_considered": len(observation_ids)},
                         )
                     for obs_row in obs_rows:
                         for sid in obs_row["source_memory_ids"] or []:
@@ -4727,6 +4844,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Chunks are fetched independently of max_tokens filtering
             chunks_dict = None
             total_chunk_tokens = 0
+            chunk_fetch_start = time.time()
             if include_chunks and top_scored:
                 from .response_models import ChunkInfo
 
@@ -4835,6 +4953,15 @@ class MemoryEngine(MemoryEngineInterface):
                             )
                             total_chunk_tokens += chunk_tokens
 
+            # Chunk fetch involves up to two SQL round-trips plus per-chunk tiktoken
+            # encoding; record it only when chunks were actually requested (issue #2361).
+            if tracer and include_chunks:
+                tracer.add_phase_metric(
+                    "chunk_fetch",
+                    time.time() - chunk_fetch_start,
+                    {"chunks_returned": len(chunks_dict or {}), "chunk_tokens": total_chunk_tokens},
+                )
+
             # Step 6: Token budget filtering
             step_start = time.time()
 
@@ -4857,6 +4984,10 @@ class MemoryEngine(MemoryEngineInterface):
                     step_duration,
                     {"results_selected": len(top_scored), "tokens_used": total_tokens, "max_tokens": max_tokens},
                 )
+
+            # Record visits + build the JSON-serializable result dicts. Timed as one
+            # phase: the visit loop alone walks every scored result (issue #2361).
+            assembly_start = time.time()
 
             # Record visits for all retrieved nodes
             if tracer:
@@ -4907,7 +5038,15 @@ class MemoryEngine(MemoryEngineInterface):
                     )
                 top_results_dicts.append(result_dict)
 
+            if tracer:
+                tracer.add_phase_metric(
+                    "result_serialization",
+                    time.time() - assembly_start,
+                    {"results_serialized": len(top_results_dicts)},
+                )
+
             # Fetch source facts for observation-type results (mirrors chunks pattern)
+            source_fact_start = time.time()
             source_fact_ids_by_obs: dict[str, list[str]] = {}  # obs_id -> [source_id, ...]
             source_facts_dict: dict[str, MemoryFact] | None = None
             if include_source_facts:
@@ -5000,6 +5139,18 @@ class MemoryEngine(MemoryEngineInterface):
                                     source_facts_dict[sid] = _make_source_fact(sid, r)
                                     total_source_tokens += fact_tokens
 
+            # Source-fact enrichment is two SQL passes + tiktoken encoding; record it
+            # only when requested (issue #2361).
+            if tracer and include_source_facts:
+                tracer.add_phase_metric(
+                    "source_fact_fetch",
+                    time.time() - source_fact_start,
+                    {"source_facts_returned": len(source_facts_dict or {})},
+                )
+
+            # entity fetch + MemoryFact construction + entity-state build, timed together.
+            entity_build_start = time.time()
+
             # Get entities for each fact if include_entities is requested.
             # _entity_rows_for_units_sql resolves both direct unit_entities rows
             # and observation-via-source-memory inheritance in a single query.
@@ -5072,11 +5223,41 @@ class MemoryEngine(MemoryEngineInterface):
                         observations=[],  # Mental models provide this now
                     )
 
-            # Finalize trace if enabled
+            if tracer:
+                tracer.add_phase_metric(
+                    "entity_build",
+                    time.time() - entity_build_start,
+                    {"entities_returned": len(entities_dict or {})},
+                )
+
+                # Diagnostic phases — these do NOT partition the timeline and are
+                # excluded from the phase-coverage check (see test_trace_phase_coverage):
+                # the pool waits overlap other phases (semaphore_wait precedes the
+                # tracer window; connection_wait is part of parallel_retrieval), and the
+                # per-method retrieval splits are children of parallel_retrieval.
+                if semaphore_wait > 0:
+                    tracer.add_phase_metric("semaphore_wait", semaphore_wait, {"diagnostic": True})
+                if max_conn_wait > 0:
+                    tracer.add_phase_metric("connection_wait", max_conn_wait, {"diagnostic": True})
+
+            # Finalize trace if enabled. finalize() snapshots total_duration_seconds at
+            # entry, so its own object construction + to_dict() serialization fall outside
+            # that total; we still surface the cost as a diagnostic phase (issue #2361).
             trace_dict = None
             if tracer:
+                from .search.trace import SearchPhaseMetrics
+
+                finalize_start = time.time()
                 trace = tracer.finalize(top_results_dicts)
                 trace_dict = trace.to_dict() if trace else None
+                if trace_dict is not None:
+                    trace_dict["summary"]["phase_metrics"].append(
+                        SearchPhaseMetrics(
+                            phase_name="trace_finalize",
+                            duration_seconds=time.time() - finalize_start,
+                            details={"diagnostic": True},
+                        ).model_dump()
+                    )
 
             # Log final recall stats
             total_time = time.time() - recall_start
@@ -6963,10 +7144,11 @@ class MemoryEngine(MemoryEngineInterface):
             setattr(resolved_config, key, value)
 
         backend = await self._get_backend()
-        # Narrator primes the "Narrator:" line in the prompt — resolve it the same way retain does.
+        # Narrator primes the "Narrator:" line in the prompt. Dry-run must not
+        # create a bank just to resolve that optional display name.
         if agent_name is None:
-            profile = await bank_utils.get_bank_profile(backend, bank_id)
-            profile_name = profile["name"] if profile else bank_id
+            profile = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
+            profile_name = profile["name"] if profile is not None else bank_id
             agent_name = None if profile_name == bank_id else profile_name
 
         retain_llm = self._retain_llm_config.with_config(resolved_config, bank_id=bank_id, operation="retain")
