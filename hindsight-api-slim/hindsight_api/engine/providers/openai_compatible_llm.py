@@ -449,6 +449,7 @@ class OpenAICompatibleLLM(LLMInterface):
             "deepseek",
             "volcano",
             "openrouter",
+            "requesty",
             "zai",
             "opencode-go",
             "atlas",
@@ -473,6 +474,8 @@ class OpenAICompatibleLLM(LLMInterface):
                 self.base_url = "https://api.deepseek.com"
             elif self.provider == "openrouter":
                 self.base_url = "https://openrouter.ai/api/v1"
+            elif self.provider == "requesty":
+                self.base_url = "https://router.requesty.ai/v1"
             elif self.provider == "zai":
                 self.base_url = "https://api.z.ai/api/coding/paas/v4"
             elif self.provider == "opencode-go":
@@ -497,6 +500,7 @@ class OpenAICompatibleLLM(LLMInterface):
                 "minimax",
                 "deepseek",
                 "openrouter",
+                "requesty",
                 "zai",
                 "opencode-go",
                 "atlas",
