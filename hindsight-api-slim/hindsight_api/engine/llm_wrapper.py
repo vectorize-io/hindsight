@@ -506,6 +506,8 @@ class LLMProvider:
         default_headers: dict[str, str] | None = None,
         litellmrouter_config: dict[str, Any] | None = None,
         gemini_service_tier: str | None = None,
+        vertexai_project_id: str | None = None,
+        vertexai_region: str | None = None,
     ):
         """
         Initialize LLM provider.
@@ -532,6 +534,11 @@ class LLMProvider:
                 https://docs.litellm.ai/docs/routing. Ignored unless ``provider == "litellmrouter"``.
                 When None and the provider is ``litellmrouter``, falls back to
                 ``HindsightConfig.llm_litellmrouter_config``.
+            vertexai_project_id: Vertex AI project ID for ``provider="vertexai"``. Lets a single
+                provider instance target a specific project (e.g. an indexed member of a multi-LLM
+                chain). When None, falls back to ``HindsightConfig.llm_vertexai_project_id``.
+            vertexai_region: Vertex AI region for ``provider="vertexai"``. When None, falls back to
+                ``HindsightConfig.llm_vertexai_region`` (then ``"us-central1"``).
         """
         self.provider = provider.lower()
         self.api_key = api_key
@@ -621,9 +628,9 @@ class LLMProvider:
             elif self.provider == "nous":
                 self.base_url = "https://inference-api.nousresearch.com/v1"
 
-        # Prepare Vertex AI config (if applicable)
-        vertexai_project_id = None
-        vertexai_region = None
+        # Prepare Vertex AI config (if applicable). Explicit per-instance values
+        # (e.g. from an indexed multi-LLM member) win; otherwise fall back to the
+        # global config so existing single-LLM setups are unchanged.
         vertexai_credentials = None
 
         if self.provider == "vertexai":
@@ -631,14 +638,14 @@ class LLMProvider:
 
             config = get_config()
 
-            vertexai_project_id = config.llm_vertexai_project_id
+            vertexai_project_id = vertexai_project_id or config.llm_vertexai_project_id
             if not vertexai_project_id:
                 raise ValueError(
                     "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID is required for Vertex AI provider. "
                     "Set it to your GCP project ID."
                 )
 
-            vertexai_region = config.llm_vertexai_region or "us-central1"
+            vertexai_region = vertexai_region or config.llm_vertexai_region or "us-central1"
             service_account_key = config.llm_vertexai_service_account_key
 
             # Load explicit service account credentials if provided
