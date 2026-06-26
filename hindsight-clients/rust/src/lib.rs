@@ -148,6 +148,7 @@ mod tests {
             tags: None,
             tags_match: types::TagsMatch::Any,
             tag_groups: None,
+            min_scores: None,
         };
         let recall_response = client
             .recall_memories(&bank_id, None, &recall_request)

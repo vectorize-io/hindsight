@@ -172,6 +172,47 @@ class DispositionTraits(BaseModel):
     model_config = ConfigDict(json_schema_extra={"example": {"skepticism": 3, "literalism": 3, "empathy": 3}})
 
 
+class RecallScores(BaseModel):
+    """Per-result recall scores from different stages of the pipeline.
+
+    ``final`` is the value results are ranked by. The others are diagnostic and
+    can be filtered on via the recall ``min_scores`` request parameter. ``semantic``
+    and ``keyword`` are the raw per-strategy retrieval scores (``None`` when that
+    strategy did not surface this result); ``reranker`` is the cross-encoder's
+    normalized relevance.
+    """
+
+    final: float = Field(description="Final ranking score (combined reranker + recency/temporal/proof boosts)")
+    reranker: float | None = Field(
+        default=None,
+        description="Cross-encoder relevance, normalized 0-1. None when the reranker is a passthrough (rrf/interleave modes).",
+    )
+    semantic: float | None = Field(
+        default=None, description="Vector cosine similarity (0-1). None if this result was not surfaced semantically."
+    )
+    keyword: float | None = Field(
+        default=None,
+        description="Keyword/full-text (BM25) score (>= 0, unbounded). None if this result was not surfaced by keyword search.",
+    )
+
+
+class MinScores(BaseModel):
+    """Optional per-stage score floors for recall (all inclusive, AND-ed).
+
+    ``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into the SQL
+    arms (overriding the global ``semantic_min_similarity`` / ``bm25_min_score``
+    config for this request), so they prune weak matches before fusion. ``reranker``
+    and ``final`` are **post-query** filters applied to the scored results after
+    reranking. Any field left None imposes no floor; all-None (the default) means
+    no score filtering.
+    """
+
+    semantic: float | None = Field(default=None, description="Retrieval-level: minimum vector similarity (0-1).")
+    keyword: float | None = Field(default=None, description="Retrieval-level: minimum keyword/full-text (BM25) score.")
+    reranker: float | None = Field(default=None, description="Post-query: minimum normalized reranker score (0-1).")
+    final: float | None = Field(default=None, description="Post-query: minimum final ranking score.")
+
+
 class MemoryFact(BaseModel):
     """
     A single memory fact returned by search or think operations.
@@ -230,6 +271,10 @@ class MemoryFact(BaseModel):
     source_fact_ids: list[str] | None = Field(
         None,
         description="IDs of source facts this observation was derived from (observation type only, when source_facts is enabled)",
+    )
+    scores: RecallScores | None = Field(
+        None,
+        description="Recall scores from each pipeline stage (final/reranker/semantic/text). Not returned for source facts.",
     )
 
 

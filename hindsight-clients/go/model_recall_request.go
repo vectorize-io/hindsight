@@ -35,6 +35,7 @@ type RecallRequest struct {
 	// How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set-equality on the full scope, excludes untagged). With 'exact' and no tags (or []), the empty global scope is selected and only untagged memories match.
 	TagsMatch *string `json:"tags_match,omitempty"`
 	TagGroups []MentalModelTriggerInputTagGroupsInner `json:"tag_groups,omitempty"`
+	MinScores NullableMinScores `json:"min_scores,omitempty"`
 }
 
 type _RecallRequest RecallRequest
@@ -430,6 +431,48 @@ func (o *RecallRequest) SetTagGroups(v []MentalModelTriggerInputTagGroupsInner) 
 	o.TagGroups = v
 }
 
+// GetMinScores returns the MinScores field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RecallRequest) GetMinScores() MinScores {
+	if o == nil || IsNil(o.MinScores.Get()) {
+		var ret MinScores
+		return ret
+	}
+	return *o.MinScores.Get()
+}
+
+// GetMinScoresOk returns a tuple with the MinScores field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RecallRequest) GetMinScoresOk() (*MinScores, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.MinScores.Get(), o.MinScores.IsSet()
+}
+
+// HasMinScores returns a boolean if a field has been set.
+func (o *RecallRequest) HasMinScores() bool {
+	if o != nil && o.MinScores.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetMinScores gets a reference to the given NullableMinScores and assigns it to the MinScores field.
+func (o *RecallRequest) SetMinScores(v MinScores) {
+	o.MinScores.Set(&v)
+}
+// SetMinScoresNil sets the value for MinScores to be an explicit nil
+func (o *RecallRequest) SetMinScoresNil() {
+	o.MinScores.Set(nil)
+}
+
+// UnsetMinScores ensures that no value is present for MinScores, not even an explicit nil
+func (o *RecallRequest) UnsetMinScores() {
+	o.MinScores.Unset()
+}
+
 func (o RecallRequest) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -470,6 +513,9 @@ func (o RecallRequest) ToMap() (map[string]interface{}, error) {
 	}
 	if o.TagGroups != nil {
 		toSerialize["tag_groups"] = o.TagGroups
+	}
+	if o.MinScores.IsSet() {
+		toSerialize["min_scores"] = o.MinScores.Get()
 	}
 	return toSerialize, nil
 }

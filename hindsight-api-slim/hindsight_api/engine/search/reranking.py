@@ -177,6 +177,9 @@ def apply_combined_scoring(
         else:
             # Neutral baseline is precisely 0.5, ensuring neutral multiplier (1.0)
             proof_norm = 0.5
+        # Surface the proof signal so the trace can show the proof_count_boost
+        # factor (otherwise the reranked breakdown can't reconcile CE × boosts).
+        sr.proof_norm = proof_norm
 
         # RRF: kept at 0.0 for trace continuity but excluded from scoring.
         # RRF is batch-relative (min-max normalised) and redundant after reranking.

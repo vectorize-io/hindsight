@@ -10356,6 +10356,61 @@
         "title": "MentalModelTrigger",
         "description": "Trigger settings for a mental model."
       },
+      "MinScores": {
+        "properties": {
+          "semantic": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Semantic",
+            "description": "Retrieval-level: minimum vector similarity (0-1)."
+          },
+          "keyword": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword",
+            "description": "Retrieval-level: minimum keyword/full-text (BM25) score."
+          },
+          "reranker": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker",
+            "description": "Post-query: minimum normalized reranker score (0-1)."
+          },
+          "final": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final",
+            "description": "Post-query: minimum final ranking score."
+          }
+        },
+        "type": "object",
+        "title": "MinScores",
+        "description": "Optional per-stage score floors for recall (all inclusive, AND-ed).\n\n``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into the SQL\narms (overriding the global ``semantic_min_similarity`` / ``bm25_min_score``\nconfig for this request), so they prune weak matches before fusion. ``reranker``\nand ``final`` are **post-query** filters applied to the scored results after\nreranking. Any field left None imposes no floor; all-None (the default) means\nno score filtering."
+      },
       "ObservationScope": {
         "properties": {
           "tags": {
@@ -10933,6 +10988,17 @@
             ],
             "title": "Tag Groups",
             "description": "Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}."
+          },
+          "min_scores": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MinScores"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional per-stage score floors (all inclusive, AND-ed). `semantic` and `keyword` are retrieval-level cutoffs pushed into the SQL arms (overriding the global similarity/BM25 minimums for this request); `reranker` and `final` are post-ranking filters on the scored results. Any field left unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering. Use with care \u2014 the reranker's absolute scores are not calibrated across queries (a clearly-relevant match may score ~0.001 even though it is ranked first)."
           }
         },
         "type": "object",
@@ -11219,6 +11285,16 @@
               }
             ],
             "title": "Source Fact Ids"
+          },
+          "scores": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecallScores"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -11250,6 +11326,57 @@
           "text": "Alice works at Google on the AI team",
           "type": "world"
         }
+      },
+      "RecallScores": {
+        "properties": {
+          "final": {
+            "type": "number",
+            "title": "Final",
+            "description": "Final ranking score (combined reranker + recency/temporal/proof boosts)"
+          },
+          "reranker": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker",
+            "description": "Cross-encoder relevance, normalized 0-1. None when the reranker is a passthrough (rrf/interleave modes)."
+          },
+          "semantic": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Semantic",
+            "description": "Vector cosine similarity (0-1). None if this result was not surfaced semantically."
+          },
+          "keyword": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword",
+            "description": "Keyword/full-text (BM25) score (>= 0, unbounded). None if this result was not surfaced by keyword search."
+          }
+        },
+        "type": "object",
+        "required": [
+          "final"
+        ],
+        "title": "RecallScores",
+        "description": "Per-result recall scores from different stages of the pipeline.\n\n``final`` is the value results are ranked by. The others are diagnostic and\ncan be filtered on via the recall ``min_scores`` request parameter. ``semantic``\nand ``keyword`` are the raw per-strategy retrieval scores (``None`` when that\nstrategy did not surface this result); ``reranker`` is the cross-encoder's\nnormalized relevance."
       },
       "RecoverConsolidationResponse": {
         "properties": {

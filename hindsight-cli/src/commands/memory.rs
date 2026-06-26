@@ -316,6 +316,7 @@ pub fn recall(
         tags: if tags.is_empty() { None } else { Some(tags) },
         tags_match: parse_tags_match(&tags_match),
         tag_groups: None,
+        min_scores: None,
     };
 
     let response = client.recall(agent_id, &request, verbose);

@@ -358,6 +358,27 @@ With any other `tags_match` mode, absent or empty `tags` means "no tag filter" (
 
 When set to `true`, the response includes a detailed debug trace covering the query embedding, entry points, per-strategy retrieval results, RRF fusion candidates, reranked results, temporal constraints detected, and per-phase timings. Has no effect on the retrieval logic itself. Useful for understanding why specific memories were or were not returned.
 
+### min_scores
+
+An optional object of per-stage score floors, each compared **inclusively** (`>=`) against the matching field of a result's [`scores`](#scores) and AND-ed together. Any field you leave unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering at all. The four fields operate at **two different levels of the pipeline**:
+
+| field | level | effect |
+|---|---|---|
+| `semantic` | retrieval | minimum vector similarity, pushed into the SQL — prunes weak vector matches **before** fusion (overrides the global similarity minimum for this request) |
+| `keyword` | retrieval | minimum keyword/full-text (BM25) score, pushed into the SQL — prunes weak keyword matches before fusion |
+| `reranker` | post-query | minimum normalized cross-encoder score, applied to the ranked results |
+| `final` | post-query | minimum final ranking score, applied to the ranked results |
+
+```json
+{ "query": "...", "min_scores": { "reranker": 0.5 } }
+```
+
+The retrieval-level floors (`semantic`/`keyword`) change *which candidates are considered*, so they can also change the final ordering; the post-query floors (`reranker`/`final`) only drop already-ranked results. Because freed slots are **not** backfilled, any floor can return fewer results than the budget allows.
+
+**Use floors with care.** The reranker's scores are reliable for *ordering* but not as *absolute* values — a clearly-relevant memory can score `~0.001` on one query and `~1.0` on another, so a fixed cutoff risks silently dropping good results. Calibrate any threshold against the scores you actually observe (recall with no `min_scores` first and inspect the [`scores`](#scores) object).
+
+The threshold is compared against the same `score` value the response reports. See the note under [`score`](#score) on why the scale is relative, not absolute, before relying on a fixed threshold.
+
 ---
 
 ## Response
@@ -366,7 +387,7 @@ When set to `true`, the response includes a detailed debug trace covering the qu
 
 The main list of recalled facts, ordered by relevance. Relevance is computed by running four retrieval strategies in parallel — semantic similarity, BM25 keyword, graph traversal, and temporal — fusing their rankings with Reciprocal Rank Fusion (RRF), then re-scoring the merged candidates with a cross-encoder reranker against the original query.
 
-Results do not include a numeric score. Raw retrieval scores are not meaningful on an absolute scale — a score of 0.8 from one query tells you nothing useful compared to a score of 0.8 from another. What matters is the relative ordering, which is already reflected in the list order. Agents should consume memories in order and let `max_tokens` determine how many fit, rather than filtering by score.
+Each result carries a [`scores`](#scores) object (see below). Treat these as **relative** signals: they reflect the ranking within a single query, not an absolute, cross-query confidence — a `0.8` from one query is not comparable to a `0.8` from another. For most agents the right approach is to consume memories in order and let `max_tokens` determine how many fit, rather than filtering by score. The `scores` object (and the [`min_scores`](#min_scores) parameter) exist for callers that want to inspect the ranking or drop a low-confidence tail; calibrate any threshold against the scores you see on an unfiltered query.
 
 Each item in `results` has the following fields:
 
@@ -417,6 +438,17 @@ The ID of the source text chunk this fact was extracted from. Used to cross-refe
 #### source_fact_ids
 
 For `observation`-type results only: the IDs of the original facts this observation was synthesized from. Cross-references with `source_facts` in the response. `null` for other types or when `include.source_facts` is not enabled.
+
+#### scores
+
+An object of the per-stage scores for this result. `null` for `source_facts` entries, which are attached by provenance rather than ranked. Fields:
+
+- **`final`** — the score this fact was ranked by (cross-encoder relevance × recency/temporal/evidence boosts). `results` is ordered by it descending. A relative signal, not a calibrated probability (see the note above).
+- **`reranker`** — the cross-encoder's normalized relevance (`0`–`1`). `null` when the deployment uses a passthrough reranker (RRF/interleave modes).
+- **`semantic`** — the raw vector cosine similarity (`0`–`1`). `null` if this result was not surfaced by semantic search.
+- **`keyword`** — the raw keyword/full-text (BM25) score (`≥ 0`, unbounded). `null` if this result was not surfaced by keyword search.
+
+Each field is also a valid [`min_scores`](#min_scores) floor.
 
 ---
 

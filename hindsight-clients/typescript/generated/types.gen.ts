@@ -2649,6 +2649,45 @@ export type MentalModelTriggerOutput = {
 };
 
 /**
+ * MinScores
+ *
+ * Optional per-stage score floors for recall (all inclusive, AND-ed).
+ *
+ * ``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into the SQL
+ * arms (overriding the global ``semantic_min_similarity`` / ``bm25_min_score``
+ * config for this request), so they prune weak matches before fusion. ``reranker``
+ * and ``final`` are **post-query** filters applied to the scored results after
+ * reranking. Any field left None imposes no floor; all-None (the default) means
+ * no score filtering.
+ */
+export type MinScores = {
+  /**
+   * Semantic
+   *
+   * Retrieval-level: minimum vector similarity (0-1).
+   */
+  semantic?: number | null;
+  /**
+   * Keyword
+   *
+   * Retrieval-level: minimum keyword/full-text (BM25) score.
+   */
+  keyword?: number | null;
+  /**
+   * Reranker
+   *
+   * Post-query: minimum normalized reranker score (0-1).
+   */
+  reranker?: number | null;
+  /**
+   * Final
+   *
+   * Post-query: minimum final ranking score.
+   */
+  final?: number | null;
+};
+
+/**
  * ObservationScope
  *
  * A distinct observation scope: an exact tag set plus its observation count.
@@ -2953,6 +2992,10 @@ export type RecallRequest = {
    * Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.
    */
   tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
+  /**
+   * Optional per-stage score floors (all inclusive, AND-ed). `semantic` and `keyword` are retrieval-level cutoffs pushed into the SQL arms (overriding the global similarity/BM25 minimums for this request); `reranker` and `final` are post-ranking filters on the scored results. Any field left unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering. Use with care — the reranker's absolute scores are not calibrated across queries (a clearly-relevant match may score ~0.001 even though it is ranked first).
+   */
+  min_scores?: MinScores | null;
 };
 
 /**
@@ -3057,6 +3100,45 @@ export type RecallResult = {
    * Source Fact Ids
    */
   source_fact_ids?: Array<string> | null;
+  scores?: RecallScores | null;
+};
+
+/**
+ * RecallScores
+ *
+ * Per-result recall scores from different stages of the pipeline.
+ *
+ * ``final`` is the value results are ranked by. The others are diagnostic and
+ * can be filtered on via the recall ``min_scores`` request parameter. ``semantic``
+ * and ``keyword`` are the raw per-strategy retrieval scores (``None`` when that
+ * strategy did not surface this result); ``reranker`` is the cross-encoder's
+ * normalized relevance.
+ */
+export type RecallScores = {
+  /**
+   * Final
+   *
+   * Final ranking score (combined reranker + recency/temporal/proof boosts)
+   */
+  final: number;
+  /**
+   * Reranker
+   *
+   * Cross-encoder relevance, normalized 0-1. None when the reranker is a passthrough (rrf/interleave modes).
+   */
+  reranker?: number | null;
+  /**
+   * Semantic
+   *
+   * Vector cosine similarity (0-1). None if this result was not surfaced semantically.
+   */
+  semantic?: number | null;
+  /**
+   * Keyword
+   *
+   * Keyword/full-text (BM25) score (>= 0, unbounded). None if this result was not surfaced by keyword search.
+   */
+  keyword?: number | null;
 };
 
 /**

@@ -357,6 +357,12 @@ export class ControlPlaneClient {
     query_timestamp?: string;
     tags?: string[];
     tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
+    min_scores?: {
+      semantic?: number | null;
+      keyword?: number | null;
+      reranker?: number | null;
+      final?: number | null;
+    };
   }) {
     return this.fetchApi("/api/recall", {
       method: "POST",

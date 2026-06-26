@@ -39,6 +39,12 @@ type Budget = "low" | "mid" | "high";
 type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
 type ViewMode = "results" | "trace" | "json";
 
+// Render a score at FULL precision — never round. Rounded scores hide meaningful
+// differences (e.g. 0.001125 vs 0.001004 both render as "0.001"), which is exactly
+// what makes the reranker's behaviour hard to read. `null`/`undefined` → em dash.
+const fmtScore = (v: number | null | undefined): string =>
+  v === null || v === undefined ? "—" : String(v);
+
 export function SearchDebugView() {
   const t = useTranslations("searchDebug");
   const { currentBank } = useBank();
@@ -364,7 +370,7 @@ export function SearchDebugView() {
                             Observation
                           </span>
                           <span>{t("proofCount", { count: obs.proof_count || 1 })}</span>
-                          <span>{t("relevance", { value: (obs.relevance || 0).toFixed(3) })}</span>
+                          <span>{t("relevance", { value: fmtScore(obs.relevance) })}</span>
                         </div>
                       </div>
                     ))}
@@ -384,7 +390,7 @@ export function SearchDebugView() {
                 ) : (
                   results.map((result: any, idx: number) => {
                     const visit = trace?.visits?.find((v: any) => v.node_id === result.id);
-                    const score = visit ? visit.weights.final_weight : result.score || 0;
+                    const score = visit ? visit.weights.final_weight : result.scores?.final;
 
                     return (
                       <Card
@@ -412,9 +418,26 @@ export function SearchDebugView() {
                                   </span>
                                 )}
                               </div>
+                              {result.scores && (
+                                <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-[10px] text-muted-foreground font-mono">
+                                  <span>final {fmtScore(result.scores.final)}</span>
+                                  {result.scores.reranker !== null &&
+                                    result.scores.reranker !== undefined && (
+                                      <span>reranker {fmtScore(result.scores.reranker)}</span>
+                                    )}
+                                  {result.scores.semantic !== null &&
+                                    result.scores.semantic !== undefined && (
+                                      <span>semantic {fmtScore(result.scores.semantic)}</span>
+                                    )}
+                                  {result.scores.keyword !== null &&
+                                    result.scores.keyword !== undefined && (
+                                      <span>keyword {fmtScore(result.scores.keyword)}</span>
+                                    )}
+                                </div>
+                              )}
                             </div>
                             <div className="flex-shrink-0 text-right">
-                              <div className="text-sm font-semibold">{(score ?? 0).toFixed(3)}</div>
+                              <div className="text-sm font-semibold">{fmtScore(score)}</div>
                               <div className="text-xs text-muted-foreground">{t("scoreLabel")}</div>
                             </div>
                             <ChevronRight className="h-5 w-5 text-muted-foreground flex-shrink-0" />
@@ -653,11 +676,7 @@ export function SearchDebugView() {
                                                             </p>
                                                             <div className="flex items-center gap-2 mt-1">
                                                               <span className="text-[10px] text-muted-foreground">
-                                                                {(
-                                                                  r.score ||
-                                                                  r.similarity ||
-                                                                  0
-                                                                ).toFixed(4)}
+                                                                {fmtScore(r.score ?? r.similarity)}
                                                               </span>
                                                             </div>
                                                           </div>
@@ -794,7 +813,7 @@ export function SearchDebugView() {
                                         {r.text}
                                       </p>
                                       <div className="text-xs text-muted-foreground mt-1">
-                                        {t("rrfScore")} {(r.rrf_score || r.score || 0).toFixed(4)}
+                                        {t("rrfScore")} {fmtScore(r.rrf_score ?? r.score)}
                                       </div>
                                     </div>
                                   </div>
@@ -853,7 +872,8 @@ export function SearchDebugView() {
                               </div>
                               <div className="text-sm text-muted-foreground mt-0.5">
                                 <span className="font-mono text-xs">
-                                  ce × recency_boost(±10%) × temporal_boost(±10%)
+                                  reranker_score × recency_boost(±10%) × temporal_boost(±10%) ×
+                                  proof_boost(±5%)
                                 </span>
                               </div>
                             </div>
@@ -884,6 +904,21 @@ export function SearchDebugView() {
                             <div className="ml-6 mt-2 space-y-2 border-l-2 border-muted pl-4 max-h-[400px] overflow-y-auto">
                               {displayResults.map((r: any, rIdx: number) => {
                                 const sc = r.score_components || {};
+                                // The combined score is CE × multiplicative boosts, where each
+                                // boost = 1 + alpha·(signal − 0.5) (neutral 1.0 at signal 0.5).
+                                // The trace carries the raw 0–1 signals, so derive the actual
+                                // multipliers here — otherwise CE × "Rec 1.000" can't reproduce
+                                // the displayed total (e.g. 0.999 × recency-boost 1.100 ≈ 1.099).
+                                const boost = (signal: number, alpha: number) =>
+                                  1 + alpha * (signal - 0.5);
+                                const recBoost =
+                                  sc.recency !== undefined ? boost(sc.recency, 0.2) : undefined;
+                                const tmpBoost =
+                                  sc.temporal !== undefined ? boost(sc.temporal, 0.2) : undefined;
+                                const proofBoost =
+                                  sc.proof_norm !== undefined
+                                    ? boost(sc.proof_norm, 0.1)
+                                    : undefined;
                                 return (
                                   <div
                                     key={rIdx}
@@ -903,21 +938,32 @@ export function SearchDebugView() {
                                         </p>
                                         <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-[10px] text-muted-foreground font-mono">
                                           <span className="font-semibold text-foreground">
-                                            = {(r.rerank_score || r.score || 0).toFixed(4)}
+                                            = {fmtScore(r.rerank_score ?? r.score)}
                                           </span>
                                           {sc.cross_encoder_score_normalized !== undefined && (
                                             <span title={t("tooltipCrossEncoder")}>
-                                              CE: {sc.cross_encoder_score_normalized.toFixed(3)}
+                                              reranker {fmtScore(sc.cross_encoder_score_normalized)}
                                             </span>
                                           )}
-                                          {sc.temporal !== undefined && sc.temporal !== 0.5 && (
-                                            <span title={t("tooltipTemporal")}>
-                                              Tmp: {sc.temporal.toFixed(3)}
+                                          {recBoost !== undefined && (
+                                            <span
+                                              title={`${t("tooltipRecency")} — signal ${fmtScore(sc.recency)} → ×${fmtScore(recBoost)}`}
+                                            >
+                                              × rec {fmtScore(recBoost)}
                                             </span>
                                           )}
-                                          {sc.recency !== undefined && (
-                                            <span title={t("tooltipRecency")}>
-                                              Rec: {sc.recency.toFixed(3)}
+                                          {tmpBoost !== undefined && sc.temporal !== 0.5 && (
+                                            <span
+                                              title={`${t("tooltipTemporal")} — signal ${fmtScore(sc.temporal)} → ×${fmtScore(tmpBoost)}`}
+                                            >
+                                              × tmp {fmtScore(tmpBoost)}
+                                            </span>
+                                          )}
+                                          {proofBoost !== undefined && sc.proof_norm !== 0.5 && (
+                                            <span
+                                              title={`Proof-count boost (±5%) — signal ${fmtScore(sc.proof_norm)} → ×${fmtScore(proofBoost)}`}
+                                            >
+                                              × proof {fmtScore(proofBoost)}
                                             </span>
                                           )}
                                         </div>

@@ -19,6 +19,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.recall_scores import RecallScores
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -39,7 +40,8 @@ class RecallResult(BaseModel):
     chunk_id: Optional[StrictStr] = None
     tags: Optional[List[StrictStr]] = None
     source_fact_ids: Optional[List[StrictStr]] = None
-    __properties: ClassVar[List[str]] = ["id", "text", "type", "entities", "context", "occurred_start", "occurred_end", "mentioned_at", "document_id", "metadata", "chunk_id", "tags", "source_fact_ids"]
+    scores: Optional[RecallScores] = None
+    __properties: ClassVar[List[str]] = ["id", "text", "type", "entities", "context", "occurred_start", "occurred_end", "mentioned_at", "document_id", "metadata", "chunk_id", "tags", "source_fact_ids", "scores"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -80,6 +82,9 @@ class RecallResult(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of scores
+        if self.scores:
+            _dict['scores'] = self.scores.to_dict()
         # set to None if type (nullable) is None
         # and model_fields_set contains the field
         if self.type is None and "type" in self.model_fields_set:
@@ -135,6 +140,11 @@ class RecallResult(BaseModel):
         if self.source_fact_ids is None and "source_fact_ids" in self.model_fields_set:
             _dict['source_fact_ids'] = None
 
+        # set to None if scores (nullable) is None
+        # and model_fields_set contains the field
+        if self.scores is None and "scores" in self.model_fields_set:
+            _dict['scores'] = None
+
         return _dict
 
     @classmethod
@@ -159,7 +169,8 @@ class RecallResult(BaseModel):
             "metadata": obj.get("metadata"),
             "chunk_id": obj.get("chunk_id"),
             "tags": obj.get("tags"),
-            "source_fact_ids": obj.get("source_fact_ids")
+            "source_fact_ids": obj.get("source_fact_ids"),
+            "scores": RecallScores.from_dict(obj["scores"]) if obj.get("scores") is not None else None
         })
         return _obj
 
