@@ -25,6 +25,7 @@ type OperationResponse struct {
 	TaskType string `json:"task_type"`
 	ItemsCount int32 `json:"items_count"`
 	DocumentId NullableString `json:"document_id,omitempty"`
+	Filename NullableString `json:"filename,omitempty"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt NullableString `json:"updated_at,omitempty"`
 	Status string `json:"status"`
@@ -171,6 +172,48 @@ func (o *OperationResponse) SetDocumentIdNil() {
 // UnsetDocumentId ensures that no value is present for DocumentId, not even an explicit nil
 func (o *OperationResponse) UnsetDocumentId() {
 	o.DocumentId.Unset()
+}
+
+// GetFilename returns the Filename field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationResponse) GetFilename() string {
+	if o == nil || IsNil(o.Filename.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.Filename.Get()
+}
+
+// GetFilenameOk returns a tuple with the Filename field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationResponse) GetFilenameOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.Filename.Get(), o.Filename.IsSet()
+}
+
+// HasFilename returns a boolean if a field has been set.
+func (o *OperationResponse) HasFilename() bool {
+	if o != nil && o.Filename.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetFilename gets a reference to the given NullableString and assigns it to the Filename field.
+func (o *OperationResponse) SetFilename(v string) {
+	o.Filename.Set(&v)
+}
+// SetFilenameNil sets the value for Filename to be an explicit nil
+func (o *OperationResponse) SetFilenameNil() {
+	o.Filename.Set(nil)
+}
+
+// UnsetFilename ensures that no value is present for Filename, not even an explicit nil
+func (o *OperationResponse) UnsetFilename() {
+	o.Filename.Unset()
 }
 
 // GetCreatedAt returns the CreatedAt field value
@@ -430,6 +473,9 @@ func (o OperationResponse) ToMap() (map[string]interface{}, error) {
 	toSerialize["items_count"] = o.ItemsCount
 	if o.DocumentId.IsSet() {
 		toSerialize["document_id"] = o.DocumentId.Get()
+	}
+	if o.Filename.IsSet() {
+		toSerialize["filename"] = o.Filename.Get()
 	}
 	toSerialize["created_at"] = o.CreatedAt
 	if o.UpdatedAt.IsSet() {

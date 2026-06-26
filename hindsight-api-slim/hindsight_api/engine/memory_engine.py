@@ -11511,7 +11511,8 @@ class MemoryEngine(MemoryEngineInterface):
                         "id": str(row["operation_id"]),
                         "task_type": row["operation_type"],
                         "items_count": result_metadata.get("items_count", 0),
-                        "document_id": None,
+                        "document_id": result_metadata.get("document_id"),
+                        "filename": result_metadata.get("original_filename"),
                         "created_at": row["created_at"].isoformat(),
                         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
                         "status": row["status"],
@@ -12496,6 +12497,7 @@ class MemoryEngine(MemoryEngineInterface):
                 task_payload=task_payload,
                 result_metadata={
                     "original_filename": file.filename,
+                    "document_id": item["document_id"],
                 },
                 dedupe_by_bank=False,
             )

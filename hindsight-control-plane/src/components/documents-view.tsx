@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { client, LLMRequestEntry } from "@/lib/api";
@@ -78,6 +78,26 @@ import {
 } from "lucide-react";
 
 const ITEMS_PER_PAGE = 50;
+
+// Show in-flight/failed uploads that don't have a real document row yet. The
+// source of truth is the server's file_convert_retain operations, not any
+// client-side store — so the status survives reloads, tabs and devices.
+const PENDING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const PENDING_POLL_INTERVAL_MS = 4000;
+// A file_convert_retain operation flips to "completed" a couple of seconds
+// before the document becomes visible in listDocuments. Keep showing the
+// pending row for recently-completed operations so it stays on screen until
+// the real document row takes over (dedup by document_id) — no flicker.
+const PENDING_BRIDGE_MS = 30000;
+const DOCUMENTS_REFRESH_EVENT = "hindsight:documents-refresh";
+
+type PendingUpload = {
+  id: string;
+  filename: string | null;
+  status: "processing" | "failed";
+  error?: string | null;
+  createdAt: string;
+};
 
 function formatRelativeTime(dateStr: string): string {
   const now = Date.now();
@@ -576,6 +596,7 @@ export function DocumentsView() {
   const { currentBank } = useBank();
   const { features } = useFeatures();
   const [documents, setDocuments] = useState<any[]>([]);
+  const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [total, setTotal] = useState(0);
@@ -631,26 +652,98 @@ export function DocumentsView() {
     null
   );
 
-  const loadDocuments = async (page: number = 1) => {
-    if (!currentBank) return;
+  const loadDocuments = useCallback(
+    async (page: number = 1) => {
+      if (!currentBank) return;
 
-    setLoading(true);
-    try {
-      const pageOffset = (page - 1) * ITEMS_PER_PAGE;
-      const data: any = await client.listDocuments({
-        bank_id: currentBank,
-        q: searchQuery,
-        limit: ITEMS_PER_PAGE,
-        offset: pageOffset,
-      });
-      setDocuments(data.items || []);
-      setTotal(data.total || 0);
-    } catch (error) {
-      // Error toast is shown automatically by the API client interceptor
-    } finally {
-      setLoading(false);
+      setLoading(true);
+      try {
+        const pageOffset = (page - 1) * ITEMS_PER_PAGE;
+        const data: any = await client.listDocuments({
+          bank_id: currentBank,
+          q: searchQuery,
+          limit: ITEMS_PER_PAGE,
+          offset: pageOffset,
+        });
+        setDocuments(data.items || []);
+        setTotal(data.total || 0);
+      } catch (error) {
+        // Error toast is shown automatically by the API client interceptor
+      } finally {
+        setLoading(false);
+      }
+    },
+    [currentBank, searchQuery]
+  );
+
+  // Pull in-flight/failed file uploads straight from the server's
+  // file_convert_retain operations. Completed operations drop off here and
+  // reappear as real document rows once listDocuments returns them.
+  const loadPendingUploads = useCallback(async () => {
+    if (!currentBank) {
+      setPendingUploads([]);
+      return;
     }
-  };
+    try {
+      const data = await client.listOperations(currentBank, {
+        type: "file_convert_retain",
+        limit: 100,
+      });
+      const now = Date.now();
+      const cutoff = now - PENDING_MAX_AGE_MS;
+      const uploads: PendingUpload[] = (data.operations || [])
+        .filter((op) => {
+          const created = Date.parse(op.created_at);
+          if (!Number.isFinite(created) || created < cutoff) return false;
+          if (op.status === "pending" || op.status === "processing" || op.status === "failed") {
+            return true;
+          }
+          // Bridge the window between completion and the document appearing in
+          // the list. After PENDING_BRIDGE_MS we stop bridging so older
+          // completed uploads (whose row simply sits on another page) don't
+          // resurface as phantom "Processing" rows.
+          if (op.status === "completed") {
+            const settled = Date.parse(op.updated_at || op.created_at);
+            return Number.isFinite(settled) && now - settled < PENDING_BRIDGE_MS;
+          }
+          return false;
+        })
+        .map((op) => ({
+          id: op.document_id || op.id,
+          filename: op.filename ?? null,
+          status: op.status === "failed" ? "failed" : "processing",
+          error: op.error_message,
+          createdAt: op.created_at,
+        }));
+      setPendingUploads(uploads);
+    } catch {
+      // Keep whatever we had; the Operations tab remains the detailed source of truth.
+    }
+  }, [currentBank]);
+
+  // Pending rows: in-flight/failed uploads that aren't yet in the real list.
+  const pendingRows = useMemo<PendingUpload[]>(() => {
+    const realIds = new Set(documents.map((doc) => doc.id));
+    const q = searchQuery.trim().toLowerCase();
+    return pendingUploads
+      .filter((upload) => !realIds.has(upload.id))
+      .filter((upload) => {
+        if (!q) return true;
+        return (
+          upload.id.toLowerCase().includes(q) ||
+          (upload.filename?.toLowerCase().includes(q) ?? false)
+        );
+      });
+  }, [documents, pendingUploads, searchQuery]);
+
+  // Keep polling while any *visible* pending row is still processing (i.e. its
+  // real document hasn't shown up yet). Basing this on pendingRows rather than
+  // pendingUploads stops the poll as soon as the document takes over.
+  const hasActiveUploads = useMemo(
+    () => pendingRows.some((upload) => upload.status === "processing"),
+    [pendingRows]
+  );
+  const displayTotal = total + pendingRows.length;
 
   // Handle page change
   const handlePageChange = (newPage: number) => {
@@ -848,8 +941,36 @@ export function DocumentsView() {
     if (currentBank) {
       setCurrentPage(1);
       loadDocuments(1);
+      loadPendingUploads();
+    } else {
+      setPendingUploads([]);
     }
-  }, [currentBank]);
+  }, [currentBank, loadDocuments, loadPendingUploads]);
+
+  // While any upload is converting, poll the operations endpoint and refresh
+  // the document list so finished uploads flip from "Processing" to a real row.
+  useEffect(() => {
+    if (!currentBank || !hasActiveUploads) return;
+
+    const interval = window.setInterval(() => {
+      loadPendingUploads();
+      loadDocuments(currentPage);
+    }, PENDING_POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(interval);
+  }, [currentBank, hasActiveUploads, currentPage, loadDocuments, loadPendingUploads]);
+
+  // Refresh immediately after an upload is submitted elsewhere (bank selector).
+  useEffect(() => {
+    if (!currentBank) return;
+
+    const onRefresh = () => {
+      loadPendingUploads();
+      loadDocuments(currentPage);
+    };
+    window.addEventListener(DOCUMENTS_REFRESH_EVENT, onRefresh);
+    return () => window.removeEventListener(DOCUMENTS_REFRESH_EVENT, onRefresh);
+  }, [currentBank, currentPage, loadDocuments, loadPendingUploads]);
 
   // Reload when search query changes (with debounce)
   useEffect(() => {
@@ -1083,16 +1204,18 @@ export function DocumentsView() {
         </DialogContent>
       </Dialog>
       {/* Documents List Section */}
-      {loading ? (
+      {loading && documents.length === 0 && pendingRows.length === 0 ? (
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <div className="text-4xl mb-2">⏳</div>
             <div className="text-sm text-muted-foreground">{t("loadingDocuments")}</div>
           </div>
         </div>
-      ) : documents.length > 0 ? (
+      ) : documents.length > 0 || pendingRows.length > 0 ? (
         <>
-          <div className="mb-4 text-sm text-muted-foreground">{t("totalDocuments", { total })}</div>
+          <div className="mb-4 text-sm text-muted-foreground">
+            {t("totalDocuments", { total: displayTotal })}
+          </div>
           {/* Documents Table */}
           <div className="w-full">
             <div className="px-5 mb-4">
@@ -1119,6 +1242,48 @@ export function DocumentsView() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
+                  {pendingRows.map((upload) => (
+                    <TableRow key={`pending-${upload.id}`} className="bg-muted/30">
+                      <TableCell className="text-card-foreground font-mono text-xs break-all">
+                        <div>{upload.id}</div>
+                        {upload.filename && (
+                          <div className="mt-1 font-sans text-[11px] text-muted-foreground">
+                            {upload.filename}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell
+                        className="text-card-foreground"
+                        title={new Date(upload.createdAt).toLocaleString()}
+                      >
+                        {formatRelativeTime(upload.createdAt)}
+                      </TableCell>
+                      <TableCell className="text-card-foreground">-</TableCell>
+                      <TableCell className="text-card-foreground">-</TableCell>
+                      <TableCell className="text-card-foreground">
+                        <span className="text-xs text-muted-foreground">
+                          {t("pendingUploadMetadata")}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-card-foreground">-</TableCell>
+                      <TableCell className="text-card-foreground">
+                        {upload.status === "failed" ? (
+                          <span
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20"
+                            title={upload.error || t("pendingUploadFailed")}
+                          >
+                            <X className="w-3 h-3" />
+                            {t("pendingUploadFailedStatus")}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                            {t("pendingUploadProcessingStatus")}
+                          </span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
                   {documents.length > 0 ? (
                     documents.map((doc) => (
                       <TableRow
@@ -1178,13 +1343,13 @@ export function DocumentsView() {
                         </TableCell>
                       </TableRow>
                     ))
-                  ) : (
+                  ) : pendingRows.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center">
                         {t("clickLoadDocumentsToView")}
                       </TableCell>
                     </TableRow>
-                  )}
+                  ) : null}
                 </TableBody>
               </Table>
             </div>

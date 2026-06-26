@@ -503,6 +503,7 @@ export class ControlPlaneClient {
         task_type: string;
         items_count: number;
         document_id: string | null;
+        filename?: string | null;
         created_at: string;
         updated_at?: string | null;
         status: string;

@@ -10504,6 +10504,18 @@
             ],
             "title": "Document Id"
           },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename",
+            "description": "Original filename for file-conversion operations (file_convert_retain); null for other task types."
+          },
           "created_at": {
             "type": "string",
             "title": "Created At"

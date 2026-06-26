@@ -31,6 +31,7 @@ class OperationResponse(BaseModel):
     task_type: StrictStr
     items_count: StrictInt
     document_id: Optional[StrictStr] = None
+    filename: Optional[StrictStr] = None
     created_at: StrictStr
     updated_at: Optional[StrictStr] = None
     status: StrictStr
@@ -38,7 +39,7 @@ class OperationResponse(BaseModel):
     retry_count: Optional[StrictInt] = None
     next_retry_at: Optional[StrictStr] = None
     progress: Optional[OperationProgress] = None
-    __properties: ClassVar[List[str]] = ["id", "task_type", "items_count", "document_id", "created_at", "updated_at", "status", "error_message", "retry_count", "next_retry_at", "progress"]
+    __properties: ClassVar[List[str]] = ["id", "task_type", "items_count", "document_id", "filename", "created_at", "updated_at", "status", "error_message", "retry_count", "next_retry_at", "progress"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -87,6 +88,11 @@ class OperationResponse(BaseModel):
         if self.document_id is None and "document_id" in self.model_fields_set:
             _dict['document_id'] = None
 
+        # set to None if filename (nullable) is None
+        # and model_fields_set contains the field
+        if self.filename is None and "filename" in self.model_fields_set:
+            _dict['filename'] = None
+
         # set to None if updated_at (nullable) is None
         # and model_fields_set contains the field
         if self.updated_at is None and "updated_at" in self.model_fields_set:
@@ -128,6 +134,7 @@ class OperationResponse(BaseModel):
             "task_type": obj.get("task_type"),
             "items_count": obj.get("items_count"),
             "document_id": obj.get("document_id"),
+            "filename": obj.get("filename"),
             "created_at": obj.get("created_at"),
             "updated_at": obj.get("updated_at"),
             "status": obj.get("status"),
