@@ -3619,3 +3619,42 @@ def test_consolidation_prompt_split_is_cacheable_and_complete():
     )
     assert "OBSERVATION LIMIT REACHED" in capped
     assert "OBSERVATION LIMIT REACHED" not in sys_prompt
+
+
+@pytest.mark.asyncio
+async def test_create_observation_populates_search_vector_native(memory, request_context):
+    """Observations created via consolidation must have search_vector populated
+    when text_search_extension == 'native', so BM25 retrieval finds them."""
+    from hindsight_api.config import get_config
+
+    config = get_config()
+    if config.text_search_extension != "native":
+        pytest.skip("Only applies to native text search backend")
+
+    bank_id = f"test-search-vector-{uuid.uuid4().hex[:8]}"
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    await memory.retain_async(
+        bank_id=bank_id,
+        content="Django uses middleware for request processing.",
+        request_context=request_context,
+    )
+
+    async with memory._pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT search_vector
+            FROM memory_units
+            WHERE bank_id = $1 AND fact_type = 'observation'
+            LIMIT 1
+            """,
+            bank_id,
+        )
+
+    assert row is not None, "Consolidation should have created an observation"
+    assert row["search_vector"] is not None, (
+        "search_vector must be populated for BM25 retrieval under native backend"
+    )
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+    
