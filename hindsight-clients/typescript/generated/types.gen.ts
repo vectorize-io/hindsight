@@ -4631,7 +4631,12 @@ export type GetAgentStatsData = {
      */
     bank_id: string;
   };
-  query?: never;
+  query?: {
+    /**
+     * Include Entity Links
+     */
+    include_entity_links?: boolean;
+  };
   url: "/v1/default/banks/{bank_id}/stats";
 };
 

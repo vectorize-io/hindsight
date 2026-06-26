@@ -572,7 +572,11 @@ paths:
       - Banks
   /v1/default/banks/{bank_id}/stats:
     get:
-      description: Get statistics about nodes and links for a specific agent
+      description: "Get statistics about nodes and links for a specific agent. Pass\
+        \ include_entity_links=false to skip the entity-link aggregation when the\
+        \ caller doesn't need the per-entity slice; this can significantly reduce\
+        \ response time on banks with many memories and many distinct entities. Default\
+        \ is true, preserving the historical response shape."
       operationId: get_agent_stats
       parameters:
       - explode: false
@@ -583,6 +587,15 @@ paths:
           title: Bank Id
           type: string
         style: simple
+      - explode: true
+        in: query
+        name: include_entity_links
+        required: false
+        schema:
+          default: true
+          title: Include Entity Links
+          type: boolean
+        style: form
       - explode: false
         in: header
         name: authorization

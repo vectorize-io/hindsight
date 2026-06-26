@@ -540,7 +540,13 @@ type ApiGetAgentStatsRequest struct {
 	ctx context.Context
 	ApiService *BanksAPIService
 	bankId string
+	includeEntityLinks *bool
 	authorization *string
+}
+
+func (r ApiGetAgentStatsRequest) IncludeEntityLinks(includeEntityLinks bool) ApiGetAgentStatsRequest {
+	r.includeEntityLinks = &includeEntityLinks
+	return r
 }
 
 func (r ApiGetAgentStatsRequest) Authorization(authorization string) ApiGetAgentStatsRequest {
@@ -555,7 +561,7 @@ func (r ApiGetAgentStatsRequest) Execute() (*BankStatsResponse, *http.Response, 
 /*
 GetAgentStats Get statistics for memory bank
 
-Get statistics about nodes and links for a specific agent
+Get statistics about nodes and links for a specific agent. Pass include_entity_links=false to skip the entity-link aggregation when the caller doesn't need the per-entity slice; this can significantly reduce response time on banks with many memories and many distinct entities. Default is true, preserving the historical response shape.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
@@ -591,6 +597,12 @@ func (a *BanksAPIService) GetAgentStatsExecute(r ApiGetAgentStatsRequest) (*Bank
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 
+	if r.includeEntityLinks != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "include_entity_links", r.includeEntityLinks, "form", "")
+	} else {
+		var defaultValue bool = true
+		r.includeEntityLinks = &defaultValue
+	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 

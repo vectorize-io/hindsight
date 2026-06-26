@@ -320,9 +320,7 @@ async def test_default_key_suffix_is_distinct_slot() -> None:
     # Default key_suffix=()
     assert await cache.get_or_load("schema", "bank", none_loader) == {"slot": "default"}
     # Explicit key_suffix=(True,) — different slot, runs its own loader.
-    assert await cache.get_or_load("schema", "bank", true_loader, key_suffix=(True,)) == {
-        "slot": "true"
-    }
+    assert await cache.get_or_load("schema", "bank", true_loader, key_suffix=(True,)) == {"slot": "true"}
     assert calls == {"none": 1, "true": 1}
 
 
@@ -418,9 +416,7 @@ async def test_concurrent_misses_coalesce_per_variant() -> None:
     # concurrent caller on the False variant should run independently.
     t1 = asyncio.create_task(cache.get_or_load("schema", "bank", with_loader, key_suffix=(True,)))
     t2 = asyncio.create_task(cache.get_or_load("schema", "bank", with_loader, key_suffix=(True,)))
-    t3 = asyncio.create_task(
-        cache.get_or_load("schema", "bank", without_loader, key_suffix=(False,))
-    )
+    t3 = asyncio.create_task(cache.get_or_load("schema", "bank", without_loader, key_suffix=(False,)))
 
     await started["with"].wait()
     await started["without"].wait()

@@ -316,10 +316,10 @@ async def test_reflect_uses_freshness_not_bank_stats(memory, test_bank_id):
         compute_calls = 0
         original_compute = memory._compute_bank_stats
 
-        async def counting_compute(bank_id: str):
+        async def counting_compute(bank_id: str, *, include_entity_links: bool = True):
             nonlocal compute_calls
             compute_calls += 1
-            return await original_compute(bank_id)
+            return await original_compute(bank_id, include_entity_links=include_entity_links)
 
         memory._compute_bank_stats = counting_compute  # type: ignore[method-assign]
         try:
@@ -379,9 +379,7 @@ async def test_bank_stats_default_includes_entity_link_count(api_client, test_ba
 
 
 @pytest.mark.asyncio
-async def test_bank_stats_include_entity_links_false_skips_entity_aggregation(
-    api_client, memory, test_bank_id
-):
+async def test_bank_stats_include_entity_links_false_skips_entity_aggregation(api_client, memory, test_bank_id):
     """include_entity_links=false must omit the entity key and skip the CTE.
 
     Verifies two things:
@@ -430,8 +428,7 @@ async def test_bank_stats_include_entity_links_false_skips_entity_aggregation(
         assert response.status_code == 200
         stats = response.json()
         assert captured["include_entity_links"] is False, (
-            "include_entity_links=false at the HTTP layer must thread through to "
-            "_compute_bank_stats"
+            "include_entity_links=false at the HTTP layer must thread through to _compute_bank_stats"
         )
         # No "entity" key — matches the historical "no entity edges" rendering.
         assert "entity" not in stats["links_by_link_type"]
@@ -488,9 +485,7 @@ async def test_bank_stats_caches_true_and_false_separately(api_client, memory, t
             assert r.status_code == 200
 
         # Exactly two loader calls: one per variant.
-        assert calls == [True, False], (
-            f"Expected exactly two distinct loader calls (True then False); got {calls}"
-        )
+        assert calls == [True, False], f"Expected exactly two distinct loader calls (True then False); got {calls}"
 
         # True and False payloads must agree on every key except the optional
         # "entity" slot (which the False path omits).
@@ -511,12 +506,19 @@ async def test_bank_stats_caches_true_and_false_separately(api_client, memory, t
 
 @pytest.mark.asyncio
 async def test_bank_stats_invalidate_clears_both_variants(api_client, memory, test_bank_id):
-    """A writer that invalidates the cache must clear BOTH variants — the
-    True slot AND the False slot — so a later read after a retain sees fresh
-    data regardless of which variant the client requests.
+    """invalidate(schema, bank_id) must clear ALL key_suffix variants for
+    that bank — so a writer (delete, clear, update) that doesn't know which
+    variants the read path is using still wipes the bank cleanly.
+
+    Note: retain does not call invalidate; only mutations that change the
+    counts the stats endpoint reports (delete_memory_unit, delete_document,
+    clear_observations, update_bank_disposition, etc.) do. We invoke
+    invalidate directly here to exercise the cache-level contract end-to-end
+    through HTTP.
     """
+    from hindsight_api.engine.memory_engine import get_current_schema
+
     try:
-        # Seed one memory and prime both cache slots.
         r = await api_client.post(
             f"/v1/default/banks/{test_bank_id}/memories",
             json={"items": [{"content": "First memory.", "context": "team"}]},
@@ -540,12 +542,9 @@ async def test_bank_stats_invalidate_clears_both_variants(api_client, memory, te
 
         memory._compute_bank_stats = counting_compute  # type: ignore[method-assign]
         try:
-            # Retain → engine invalidates the cache for this bank.
-            r = await api_client.post(
-                f"/v1/default/banks/{test_bank_id}/memories",
-                json={"items": [{"content": "Second memory.", "context": "team"}]},
-            )
-            assert r.status_code == 200
+            # Clear both variants in a single call — what a writer does without
+            # knowing which key_suffixes the read path uses.
+            await memory._bank_stats_cache.invalidate(get_current_schema(), test_bank_id)
 
             # Both reads after invalidation must re-run the loader.
             await api_client.get(f"/v1/default/banks/{test_bank_id}/stats")
@@ -557,10 +556,8 @@ async def test_bank_stats_invalidate_clears_both_variants(api_client, memory, te
             memory._compute_bank_stats = original  # type: ignore[method-assign]
             await memory._bank_stats_cache.clear()
 
-        # Both variants reloaded fresh after the invalidating retain.
-        assert sorted(calls) == [False, True], (
-            f"Both cache variants should be cleared on invalidate; got {calls}"
-        )
+        # Both variants reloaded fresh after invalidate.
+        assert sorted(calls) == [False, True], f"Both cache variants should be cleared on invalidate; got {calls}"
     finally:
         await api_client.delete(f"/v1/default/banks/{test_bank_id}")
 
@@ -583,10 +580,10 @@ async def test_bank_stats_served_from_cache_on_repeat_call(api_client, memory, t
         original = memory._compute_bank_stats
         call_count = 0
 
-        async def counting_compute(bank_id: str):
+        async def counting_compute(bank_id: str, *, include_entity_links: bool = True):
             nonlocal call_count
             call_count += 1
-            return await original(bank_id)
+            return await original(bank_id, include_entity_links=include_entity_links)
 
         # Make sure no stale entry exists from prior test ordering.
         await memory._bank_stats_cache.clear()
