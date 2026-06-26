@@ -152,7 +152,9 @@ impl ApiClient {
 
     pub fn get_stats(&self, agent_id: &str, _verbose: bool) -> Result<AgentStats> {
         self.runtime.block_on(async {
-            let response = self.client.get_agent_stats(agent_id, None).await?;
+            // Args: bank_id, include_entity_links (Option<bool>; None = server
+            // default = true → preserves existing behavior), authorization.
+            let response = self.client.get_agent_stats(agent_id, None, None).await?;
             let value = response.into_inner();
             // Convert to JSON Value first, then parse into our type
             let json_value = serde_json::to_value(&value)?;

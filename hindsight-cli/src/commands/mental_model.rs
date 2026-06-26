@@ -120,6 +120,7 @@ pub fn create(
         Some(types::MentalModelTriggerInput {
             mode: types::Mode::Full,
             refresh_after_consolidation: true,
+            refresh_cron: None,
             exclude_mental_models: false,
             exclude_mental_model_ids: None,
             fact_types: None,
@@ -198,6 +199,7 @@ pub fn update(
     let trigger = trigger_refresh_after_consolidation.map(|refresh| types::MentalModelTriggerInput {
         mode: types::Mode::Full,
         refresh_after_consolidation: refresh,
+        refresh_cron: None,
         exclude_mental_models: false,
         exclude_mental_model_ids: None,
         fact_types: None,
