@@ -3652,9 +3652,6 @@ async def test_create_observation_populates_search_vector_native(memory, request
         )
 
     assert row is not None, "Consolidation should have created an observation"
-    assert row["search_vector"] is not None, (
-        "search_vector must be populated for BM25 retrieval under native backend"
-    )
+    assert row["search_vector"] is not None, "search_vector must be populated for BM25 retrieval under native backend"
 
     await memory.delete_bank(bank_id, request_context=request_context)
-    

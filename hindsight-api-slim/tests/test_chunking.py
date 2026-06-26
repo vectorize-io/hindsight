@@ -455,4 +455,3 @@ def test_merged_json_array_routes_to_conversation_chunking():
         assert isinstance(parsed, list), f"Chunk must be a JSON array: {chunk[:60]}"
         assert all(isinstance(e, dict) for e in parsed), f"Every element must be a dict: {chunk[:60]}"
         assert all("role" in e for e in parsed), f"Every element must have a role key: {chunk[:60]}"
-        
