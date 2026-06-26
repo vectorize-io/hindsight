@@ -360,6 +360,8 @@ from .response_models import (
     EntityState,
     LLMCallTrace,
     MemoryFact,
+    MinScores,
+    RecallScores,
     ReflectResult,
     TokenUsage,
     ToolCallTrace,
@@ -3919,6 +3921,7 @@ class MemoryEngine(MemoryEngineInterface):
         tag_groups: list[TagGroup] | None = None,
         created_after: datetime | None = None,
         created_before: datetime | None = None,
+        min_scores: MinScores | None = None,
         _connection_budget: int | None = None,
         _quiet: bool = False,
         reranking: RecallReranking = "cross_encoder",
@@ -4084,6 +4087,7 @@ class MemoryEngine(MemoryEngineInterface):
                             tag_groups=tag_groups,
                             created_after=created_after,
                             created_before=created_before,
+                            min_scores=min_scores,
                             connection_budget=_connection_budget,
                             quiet=_quiet,
                             include_source_facts=include_source_facts,
@@ -4221,6 +4225,7 @@ class MemoryEngine(MemoryEngineInterface):
         tag_groups: list[TagGroup] | None = None,
         created_after: datetime | None = None,
         created_before: datetime | None = None,
+        min_scores: MinScores | None = None,
         connection_budget: int | None = None,
         quiet: bool = False,
         include_source_facts: bool = False,
@@ -4357,6 +4362,8 @@ class MemoryEngine(MemoryEngineInterface):
                         tag_groups=tag_groups,
                         created_after=created_after,
                         created_before=created_before,
+                        min_semantic=min_scores.semantic if min_scores else None,
+                        min_keyword=min_scores.keyword if min_scores else None,
                     )
                     parallel_duration = time.time() - parallel_start
             finally:
@@ -4722,6 +4729,30 @@ class MemoryEngine(MemoryEngineInterface):
                 log_buffer.append("  [4.6] Combined scoring: ce * recency_boost(0.2) * temporal_boost(0.2)")
                 if strategy_boosts:
                     log_buffer.append(f"  [4.7] Strategy boosts applied: {strategy_boosts}")
+
+            # Step 4.9: post-query min_scores filters (reranker + final). The
+            # semantic/text floors are applied earlier inside the SQL arms (see
+            # retrieve_semantic_bm25_combined); here we apply the post-rank floors on
+            # the scored results, after the final sort and before truncation, so every
+            # downstream step (prefer_observations dedup, truncation, token filtering)
+            # operates on the filtered set. Inclusive (>=), AND-ed, opt-in: a None
+            # threshold is a no-op. There is deliberately no default — the
+            # cross-encoder's absolute scores are not calibrated for a fixed cutoff
+            # (a clearly-relevant match can score ~0.001 while its *ranking* is right).
+            min_reranker = min_scores.reranker if min_scores else None
+            min_final = min_scores.final if min_scores else None
+            if (min_reranker is not None or min_final is not None) and scored_results:
+                before_min_score = len(scored_results)
+                scored_results = [
+                    sr
+                    for sr in scored_results
+                    if (min_reranker is None or sr.cross_encoder_score_normalized >= min_reranker)
+                    and (min_final is None or sr.weight >= min_final)
+                ]
+                log_buffer.append(
+                    f"  [4.9] min_scores(reranker={min_reranker}, final={min_final}): "
+                    f"{before_min_score}->{len(scored_results)} results"
+                )
 
             # Add reranked results to tracer AFTER combined scoring (so normalized values are included)
             if tracer:
@@ -5134,6 +5165,25 @@ class MemoryEngine(MemoryEngineInterface):
                             )
 
             # Convert results to MemoryFact objects
+            # Build per-result scores (final/reranker/semantic/text) keyed by id.
+            # reranker is None when the configured reranker is a passthrough (rrf /
+            # interleave modes, or the RRFPassthroughCrossEncoder), since its
+            # cross_encoder_score_normalized is then a rank-derived placeholder, not a
+            # true relevance score.
+            ce_model = self._cross_encoder_reranker.cross_encoder
+            reranker_passthrough = (reranking != "cross_encoder") or (
+                ce_model is not None and getattr(ce_model, "provider_name", None) == "rrf"
+            )
+            scores_by_id: dict[str, RecallScores] = {
+                sr.id: RecallScores(
+                    final=sr.weight,
+                    reranker=None if reranker_passthrough else sr.cross_encoder_score_normalized,
+                    semantic=sr.candidate.arm_scores.semantic,
+                    keyword=sr.candidate.arm_scores.keyword,
+                )
+                for sr in top_scored
+            }
+
             memory_facts = []
             for result_dict in top_results_dicts:
                 result_id = str(result_dict.get("id"))
@@ -5157,6 +5207,7 @@ class MemoryEngine(MemoryEngineInterface):
                         chunk_id=result_dict.get("chunk_id"),
                         tags=result_dict.get("tags"),
                         source_fact_ids=source_fact_ids_by_obs.get(result_id) if include_source_facts else None,
+                        scores=scores_by_id.get(result_id),
                     )
                 )
 

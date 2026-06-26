@@ -2,7 +2,7 @@
 Helper functions for hybrid search (semantic + BM25 + graph).
 """
 
-from .types import MergedCandidate, RetrievalResult
+from .types import ArmScores, MergedCandidate, RetrievalResult
 
 
 def cap_per_source(results: list[RetrievalResult], cap: int) -> list[RetrievalResult]:
@@ -51,6 +51,7 @@ def reciprocal_rank_fusion(result_lists: list[list[RetrievalResult]], k: int = 6
     rrf_scores = {}
     source_ranks = {}  # Track rank from each source for each doc_id
     all_retrievals = {}  # Store the actual RetrievalResult (use first occurrence)
+    arm_scores: dict[str, ArmScores] = {}  # doc_id -> raw per-strategy scores across arms
 
     source_names = ["semantic", "bm25", "graph", "temporal"]
 
@@ -79,9 +80,17 @@ def reciprocal_rank_fusion(result_lists: list[list[RetrievalResult]], k: int = 6
             if doc_id not in rrf_scores:
                 rrf_scores[doc_id] = 0.0
                 source_ranks[doc_id] = {}
+                arm_scores[doc_id] = ArmScores()
 
             rrf_scores[doc_id] += 1.0 / (k + rank)
             source_ranks[doc_id][f"{source_name}_rank"] = rank
+
+            # Capture this arm's raw score for the doc (the merged RetrievalResult
+            # below keeps only the first arm's score, so record each arm here).
+            if source_name == "semantic" and retrieval.similarity is not None:
+                arm_scores[doc_id].semantic = retrieval.similarity
+            elif source_name == "bm25" and retrieval.bm25_score is not None:
+                arm_scores[doc_id].keyword = retrieval.bm25_score
 
     # Combine into final results with metadata
     merged_results = []
@@ -89,7 +98,11 @@ def reciprocal_rank_fusion(result_lists: list[list[RetrievalResult]], k: int = 6
         sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True), start=1
     ):
         merged_candidate = MergedCandidate(
-            retrieval=all_retrievals[doc_id], rrf_score=rrf_score, rrf_rank=rrf_rank, source_ranks=source_ranks[doc_id]
+            retrieval=all_retrievals[doc_id],
+            rrf_score=rrf_score,
+            rrf_rank=rrf_rank,
+            source_ranks=source_ranks[doc_id],
+            arm_scores=arm_scores[doc_id],
         )
         merged_results.append(merged_candidate)
 
@@ -118,6 +131,7 @@ def interleave_fusion(result_lists: list[list[RetrievalResult]]) -> list[MergedC
     source_names = ["semantic", "bm25", "graph", "temporal"]
     source_ranks: dict[str, dict[str, int]] = {}
     all_retrievals: dict[str, RetrievalResult] = {}
+    arm_scores: dict[str, ArmScores] = {}
 
     for source_idx, results in enumerate(result_lists):
         source_name = source_names[source_idx] if source_idx < len(source_names) else f"source_{source_idx}"
@@ -129,6 +143,11 @@ def interleave_fusion(result_lists: list[list[RetrievalResult]]) -> list[MergedC
             doc_id = retrieval.id
             all_retrievals.setdefault(doc_id, retrieval)
             source_ranks.setdefault(doc_id, {})[f"{source_name}_rank"] = rank
+            arm = arm_scores.setdefault(doc_id, ArmScores())
+            if source_name == "semantic" and retrieval.similarity is not None:
+                arm.semantic = retrieval.similarity
+            elif source_name == "bm25" and retrieval.bm25_score is not None:
+                arm.keyword = retrieval.bm25_score
 
     # Round-robin pick across arms in priority order: all #1s, then all #2s, ...
     ordered_ids: list[str] = []
@@ -151,6 +170,7 @@ def interleave_fusion(result_lists: list[list[RetrievalResult]]) -> list[MergedC
             rrf_score=float(n - pos),
             rrf_rank=pos + 1,
             source_ranks=source_ranks[doc_id],
+            arm_scores=arm_scores[doc_id],
         )
         for pos, doc_id in enumerate(ordered_ids)
     ]

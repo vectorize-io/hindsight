@@ -189,6 +189,7 @@ Search memories to provide personalized responses.
 | `tags` | list[string] | No | Filter memories by tags |
 | `tags_match` | string | No | Tag matching mode: `any` (default) or `all` |
 | `query_timestamp` | string | No | ISO 8601 timestamp — recall as if asking at this point in time; anchors relative temporal expressions and recency scoring |
+| `min_scores` | object | No | Optional per-stage score floors, e.g. `{"reranker": 0.5}`. Keys: `semantic`/`keyword` (retrieval-level cutoffs), `reranker`/`final` (post-ranking). All inclusive and AND-ed; omit for no filtering. Reranker scores aren't calibrated across queries — calibrate before use |
 
 **Example:**
 ```json

@@ -95,6 +95,7 @@ hindsight_client_api/models/mental_model_trigger_input.py
 hindsight_client_api/models/mental_model_trigger_input_tag_groups_inner.py
 hindsight_client_api/models/mental_model_trigger_output.py
 hindsight_client_api/models/mental_model_trigger_output_tag_groups_inner.py
+hindsight_client_api/models/min_scores.py
 hindsight_client_api/models/model_not.py
 hindsight_client_api/models/not1.py
 hindsight_client_api/models/observation_scope.py
@@ -107,6 +108,7 @@ hindsight_client_api/models/operations_list_response.py
 hindsight_client_api/models/recall_request.py
 hindsight_client_api/models/recall_response.py
 hindsight_client_api/models/recall_result.py
+hindsight_client_api/models/recall_scores.py
 hindsight_client_api/models/recover_consolidation_response.py
 hindsight_client_api/models/reflect_based_on.py
 hindsight_client_api/models/reflect_directive.py

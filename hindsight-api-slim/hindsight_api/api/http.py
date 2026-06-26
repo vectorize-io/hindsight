@@ -154,6 +154,8 @@ from hindsight_api.engine.response_models import (
     VALID_RECALL_FACT_TYPES,
     DryRunExtractionResult,
     MemoryFact,
+    MinScores,
+    RecallScores,
     TokenUsage,
 )
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
@@ -312,6 +314,15 @@ class RecallRequest(BaseModel):
         description="Compound tag filter using boolean groups. Groups in the list are AND-ed. "
         "Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.",
     )
+    min_scores: MinScores | None = Field(
+        default=None,
+        description="Optional per-stage score floors (all inclusive, AND-ed). `semantic` and `keyword` are "
+        "retrieval-level cutoffs pushed into the SQL arms (overriding the global similarity/BM25 minimums for "
+        "this request); `reranker` and `final` are post-ranking filters on the scored results. Any field left "
+        "unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering. Use "
+        "with care — the reranker's absolute scores are not calibrated across queries (a clearly-relevant match "
+        "may score ~0.001 even though it is ranked first).",
+    )
 
     @field_validator("query")
     @classmethod
@@ -367,6 +378,7 @@ class RecallResult(BaseModel):
     source_fact_ids: list[str] | None = (
         None  # IDs of source facts (observation type only, when source_facts is enabled)
     )
+    scores: RecallScores | None = None  # Per-stage recall scores (final/reranker/semantic/text)
 
 
 class EntityObservationResponse(BaseModel):
@@ -3857,6 +3869,7 @@ def _register_routes(app: FastAPI):
                         tags=request.tags,
                         tags_match=request.tags_match,
                         tag_groups=request.tag_groups,
+                        min_scores=request.min_scores,
                     ),
                     operation="recall",
                     bank_id=bank_id,
@@ -3878,6 +3891,7 @@ def _register_routes(app: FastAPI):
                     chunk_id=fact.chunk_id,
                     tags=fact.tags,
                     source_fact_ids=fact.source_fact_ids,
+                    scores=fact.scores,
                 )
 
             recall_results = [_fact_to_result(fact) for fact in core_result.results]

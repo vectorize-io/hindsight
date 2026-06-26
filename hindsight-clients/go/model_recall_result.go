@@ -34,6 +34,7 @@ type RecallResult struct {
 	ChunkId NullableString `json:"chunk_id,omitempty"`
 	Tags []string `json:"tags,omitempty"`
 	SourceFactIds []string `json:"source_fact_ids,omitempty"`
+	Scores NullableRecallScores `json:"scores,omitempty"`
 }
 
 type _RecallResult RecallResult
@@ -531,6 +532,48 @@ func (o *RecallResult) SetSourceFactIds(v []string) {
 	o.SourceFactIds = v
 }
 
+// GetScores returns the Scores field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RecallResult) GetScores() RecallScores {
+	if o == nil || IsNil(o.Scores.Get()) {
+		var ret RecallScores
+		return ret
+	}
+	return *o.Scores.Get()
+}
+
+// GetScoresOk returns a tuple with the Scores field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RecallResult) GetScoresOk() (*RecallScores, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.Scores.Get(), o.Scores.IsSet()
+}
+
+// HasScores returns a boolean if a field has been set.
+func (o *RecallResult) HasScores() bool {
+	if o != nil && o.Scores.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetScores gets a reference to the given NullableRecallScores and assigns it to the Scores field.
+func (o *RecallResult) SetScores(v RecallScores) {
+	o.Scores.Set(&v)
+}
+// SetScoresNil sets the value for Scores to be an explicit nil
+func (o *RecallResult) SetScoresNil() {
+	o.Scores.Set(nil)
+}
+
+// UnsetScores ensures that no value is present for Scores, not even an explicit nil
+func (o *RecallResult) UnsetScores() {
+	o.Scores.Unset()
+}
+
 func (o RecallResult) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -575,6 +618,9 @@ func (o RecallResult) ToMap() (map[string]interface{}, error) {
 	}
 	if o.SourceFactIds != nil {
 		toSerialize["source_fact_ids"] = o.SourceFactIds
+	}
+	if o.Scores.IsSet() {
+		toSerialize["scores"] = o.Scores.Get()
 	}
 	return toSerialize, nil
 }
