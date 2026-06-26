@@ -84,7 +84,7 @@ No embedding could have done that from the names alone, because the names are id
 
 ## How Resolved Entities Power Retrieval
 
-Resolution would be academic if it didn't change what the agent recalls. It feeds one of Hindsight's four parallel [retrieval strategies](/blog/2026/03/27/parallel-hybrid-search): entity-link expansion.
+Resolution would be academic if it didn't change what the agent recalls. It powers entity-link expansion, the entity arm of Hindsight's parallel [hybrid retrieval](/blog/2026/03/27/parallel-hybrid-search).
 
 When a query surfaces a set of seed facts, Hindsight collects the entities in those facts and follows them out to every other fact that mentions the same entities, scoring candidates by how many entities they share with the seeds. Ask "what's the status of the Acme renewal," land on a few seed facts, and the expansion pulls in every other fact touching Acme-Alex, the renewal, and the SOC 2 review, even ones that never used the word "status."
 
