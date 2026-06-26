@@ -2596,6 +2596,10 @@ class OperationResponse(BaseModel):
     task_type: str
     items_count: int
     document_id: str | None = None
+    filename: str | None = Field(
+        default=None,
+        description="Original filename for file-conversion operations (file_convert_retain); null for other task types.",
+    )
     created_at: str
     updated_at: str | None = Field(
         default=None,

@@ -6982,6 +6982,9 @@ components:
         document_id:
           nullable: true
           type: string
+        filename:
+          nullable: true
+          type: string
         created_at:
           title: Created At
           type: string

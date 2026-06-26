@@ -376,6 +376,12 @@ function BankSelectorInner() {
       setDocAsync(false);
       setUploadProgress("");
 
+      // Nudge the documents view to surface the new file_convert_retain
+      // operations right away (it derives pending rows from the server).
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("hindsight:documents-refresh"));
+      }
+
       // Navigate to documents view
       router.push(bankRoute(currentBank!, "?view=documents"));
     } catch {

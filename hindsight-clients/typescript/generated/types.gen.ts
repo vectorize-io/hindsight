@@ -2756,6 +2756,12 @@ export type OperationResponse = {
    */
   document_id?: string | null;
   /**
+   * Filename
+   *
+   * Original filename for file-conversion operations (file_convert_retain); null for other task types.
+   */
+  filename?: string | null;
+  /**
    * Created At
    */
   created_at: string;

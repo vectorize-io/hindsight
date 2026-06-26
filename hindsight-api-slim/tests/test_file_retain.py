@@ -618,6 +618,59 @@ async def test_file_conversion_creates_separate_retain_operation(memory_no_llm_v
 
 
 @pytest.mark.asyncio
+async def test_list_operations_surfaces_file_document_id_and_filename(memory_no_llm_verify, sample_txt_content):
+    """list_operations must expose document_id + filename for file_convert_retain ops.
+
+    The control plane derives its pending-upload rows from these fields (it
+    matches an in-flight operation to the real document via document_id and
+    labels the row with the original filename), so both must round-trip from
+    the operation's result_metadata into the list response.
+    """
+    from hindsight_api.models import RequestContext
+
+    bank_id = "test_file_op_fields_bank"
+    context = RequestContext(internal=True)
+    await memory_no_llm_verify.get_bank_profile(bank_id, request_context=context)
+
+    class MockFile:
+        def __init__(self, content, filename, content_type):
+            self.content = content
+            self.filename = filename
+            self.content_type = content_type
+
+        async def read(self):
+            return self.content
+
+    file_items = [
+        {
+            "file": MockFile(sample_txt_content, "report.txt", "text/plain"),
+            "document_id": "doc_op_fields",
+            "context": None,
+            "metadata": {},
+            "tags": [],
+            "timestamp": None,
+            "parser": ["markitdown"],
+        }
+    ]
+
+    await memory_no_llm_verify.submit_async_file_retain(
+        bank_id=bank_id,
+        file_items=file_items,
+        document_tags=None,
+        request_context=context,
+    )
+
+    result = await memory_no_llm_verify.list_operations(
+        bank_id, task_type="file_convert_retain", request_context=context
+    )
+
+    file_ops = [op for op in result["operations"] if op["task_type"] == "file_convert_retain"]
+    assert len(file_ops) == 1
+    assert file_ops[0]["document_id"] == "doc_op_fields"
+    assert file_ops[0]["filename"] == "report.txt"
+
+
+@pytest.mark.asyncio
 async def test_async_file_retain_serializes_datetime_timestamp(memory_no_llm_verify, sample_txt_content):
     """Async file retain should accept Python datetimes in task payloads."""
     from hindsight_api.engine.parsers.base import FileParser
