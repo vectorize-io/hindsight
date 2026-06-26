@@ -9,11 +9,19 @@ from fastapi.testclient import TestClient
 from hindsight_api.extensions import (
     ApiKeyTenantExtension,
     AuthenticationError,
+    BankReadContext,
+    BankReadOperation,
+    BankWriteContext,
+    BankWriteOperation,
+    # Consolidation operation
+    ConsolidateContext,
+    ConsolidateResult,
     Extension,
     HttpExtension,
     OperationValidationError,
     OperationValidatorExtension,
     PrecheckContext,
+    PrecheckOperation,
     RecallContext,
     RecallResult,
     ReflectContext,
@@ -21,13 +29,8 @@ from hindsight_api.extensions import (
     RequestContext,
     RetainContext,
     RetainResult,
-    TenantContext,
-    TenantExtension,
     ValidationResult,
     load_extension,
-    # Consolidation operation
-    ConsolidateContext,
-    ConsolidateResult,
 )
 
 
@@ -67,6 +70,36 @@ class TestExtensionLoader:
 
         await ext.on_shutdown()
         assert ext.stopped
+
+    def test_operation_enums_remain_string_compatible(self):
+        """Operation enums centralize names without breaking string comparisons."""
+        request_context = RequestContext(tenant_id="tenant-1")
+
+        precheck_ctx = PrecheckContext(
+            bank_id="bank-1",
+            operation=PrecheckOperation.RETAIN,
+            request_context=request_context,
+        )
+        read_ctx = BankReadContext(
+            bank_id="bank-1",
+            operation=BankReadOperation.GET_BANK_STATS,
+            request_context=request_context,
+        )
+        write_ctx = BankWriteContext(
+            bank_id="bank-1",
+            operation=BankWriteOperation.UPDATE_BANK_CONFIG,
+            request_context=request_context,
+        )
+
+        assert precheck_ctx.operation is PrecheckOperation.RETAIN
+        assert read_ctx.operation is BankReadOperation.GET_BANK_STATS
+        assert write_ctx.operation is BankWriteOperation.UPDATE_BANK_CONFIG
+        assert precheck_ctx.operation == "retain"
+        assert read_ctx.operation == "get_bank_stats"
+        assert write_ctx.operation == "update_bank_config"
+        assert isinstance(precheck_ctx.operation, str)
+        assert isinstance(read_ctx.operation, str)
+        assert isinstance(write_ctx.operation, str)
 
 
 class LifecycleTestExtension(Extension):
@@ -356,6 +389,7 @@ class TestOperationHooksParameters:
     async def test_recall_pre_hook_receives_all_parameters(self, memory_with_tracking_validator):
         """Pre-recall hook receives all user-provided parameters."""
         from datetime import datetime, timezone
+
         from hindsight_api.engine.memory_engine import Budget
 
         memory, validator = memory_with_tracking_validator
@@ -882,7 +916,7 @@ class TestPrecheckDefault:
         validator = RecordingPrecheckValidator(reject=False)
         # Bypass our override by calling the base implementation directly.
         ctx = PrecheckContext(
-            operation="retain",
+            operation=PrecheckOperation.RETAIN,
             bank_id="bank-x",
             request_context=RequestContext(),
         )
@@ -914,7 +948,7 @@ class TestPrecheckHttpWiring:
         from fastapi import Depends, FastAPI, HTTPException, Request
         from pydantic import BaseModel, model_validator
 
-        from hindsight_api.extensions import PrecheckContext
+        from hindsight_api.extensions import PrecheckContext, PrecheckOperation
         from hindsight_api.models import RequestContext
 
         body_parses: list[str] = []
@@ -949,7 +983,7 @@ class TestPrecheckHttpWiring:
         async def _request_context() -> RequestContext:
             return RequestContext()
 
-        def _precheck_for(operation: str):
+        def _precheck_for(operation: PrecheckOperation):
             async def _dep(
                 bank_id: str,
                 request: Request,
@@ -985,7 +1019,7 @@ class TestPrecheckHttpWiring:
         async def retain(
             bank_id: str,
             body: _RetainBody,
-            _: None = Depends(_precheck_for("retain")),
+            _: None = Depends(_precheck_for(PrecheckOperation.RETAIN)),
         ):
             return {"ok": True, "bank_id": bank_id, "n": len(body.items)}
 
@@ -993,7 +1027,7 @@ class TestPrecheckHttpWiring:
         async def recall(
             bank_id: str,
             body: _RecallBody,
-            _: None = Depends(_precheck_for("recall")),
+            _: None = Depends(_precheck_for(PrecheckOperation.RECALL)),
         ):
             return {"ok": True}
 
@@ -1001,7 +1035,7 @@ class TestPrecheckHttpWiring:
         async def reflect(
             bank_id: str,
             body: _ReflectBody,
-            _: None = Depends(_precheck_for("reflect")),
+            _: None = Depends(_precheck_for(PrecheckOperation.REFLECT)),
         ):
             return {"ok": True}
 
@@ -1168,7 +1202,7 @@ class TestPrecheckHttpWiring:
                 content_length = parsed
 
         ctx = PrecheckContext(
-            operation="retain",
+            operation=PrecheckOperation.RETAIN,
             bank_id="bank-x",
             request_context=RequestContext(),
             content_length=content_length,
