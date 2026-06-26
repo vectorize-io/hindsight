@@ -9616,6 +9616,7 @@ class MemoryEngine(MemoryEngineInterface):
         self,
         bank_id: str,
         *,
+        include_entity_links: bool = True,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
         """Get statistics about memory nodes and links for a bank.
@@ -9623,7 +9624,9 @@ class MemoryEngine(MemoryEngineInterface):
         Results are served from a short-TTL per-process cache so a polling
         client cannot drive the link/unit aggregations multiple times per
         second; concurrent misses on the same bank are coalesced onto a
-        single in-flight loader.
+        single in-flight loader. The cache slot is keyed on
+        `include_entity_links` so the two variants don't return each
+        other's payload.
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
@@ -9636,10 +9639,16 @@ class MemoryEngine(MemoryEngineInterface):
         return await self._bank_stats_cache.get_or_load(
             schema,
             bank_id,
-            lambda: self._compute_bank_stats(bank_id),
+            lambda: self._compute_bank_stats(bank_id, include_entity_links=include_entity_links),
+            key_suffix=(include_entity_links,),
         )
 
-    async def _compute_bank_stats(self, bank_id: str) -> dict[str, Any]:
+    async def _compute_bank_stats(
+        self,
+        bank_id: str,
+        *,
+        include_entity_links: bool = True,
+    ) -> dict[str, Any]:
         backend = await self._get_backend()
 
         async with acquire_with_retry(backend) as conn:
@@ -9685,23 +9694,33 @@ class MemoryEngine(MemoryEngineInterface):
             # slice doubled the join cost and only fed link_counts_by_fact_type
             # / link_breakdown, which the UI ignores and the CLI renders into
             # sections that degrade gracefully when empty.
-            max_links_per_entity = 10
-            entity_total_row = await conn.fetchrow(
-                f"""
-                WITH per_entity AS (
-                    SELECT ue.entity_id, COUNT(*) AS n
-                    FROM {fq_table("unit_entities")} ue
-                    JOIN {fq_table("memory_units")} mu ON mu.id = ue.unit_id
-                    WHERE mu.bank_id = $1
-                    GROUP BY ue.entity_id
+            #
+            # On banks with many memories and many distinct entities per memory,
+            # this CTE dominates the cost of /stats. Callers that don't need
+            # the entity slice can opt out via include_entity_links=False and
+            # save the join + group entirely. The "entity" key is omitted from
+            # link_counts on that path, matching the existing "0 → key absent"
+            # convention below.
+            if include_entity_links:
+                max_links_per_entity = 10
+                entity_total_row = await conn.fetchrow(
+                    f"""
+                    WITH per_entity AS (
+                        SELECT ue.entity_id, COUNT(*) AS n
+                        FROM {fq_table("unit_entities")} ue
+                        JOIN {fq_table("memory_units")} mu ON mu.id = ue.unit_id
+                        WHERE mu.bank_id = $1
+                        GROUP BY ue.entity_id
+                    )
+                    SELECT COALESCE(SUM(LEAST(n - 1, $2)), 0)::bigint AS count
+                    FROM per_entity
+                    """,
+                    bank_id,
+                    max_links_per_entity,
                 )
-                SELECT COALESCE(SUM(LEAST(n - 1, $2)), 0)::bigint AS count
-                FROM per_entity
-                """,
-                bank_id,
-                max_links_per_entity,
-            )
-            entity_link_total = int(entity_total_row["count"] or 0) if entity_total_row else 0
+                entity_link_total = int(entity_total_row["count"] or 0) if entity_total_row else 0
+            else:
+                entity_link_total = 0
 
             link_counts: dict[str, int] = {row["link_type"]: row["count"] for row in non_entity_link_rows}
             if entity_link_total > 0:

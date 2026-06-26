@@ -868,7 +868,7 @@
           "Banks"
         ],
         "summary": "Get statistics for memory bank",
-        "description": "Get statistics about nodes and links for a specific agent",
+        "description": "Get statistics about nodes and links for a specific agent. Pass include_entity_links=false to skip the entity-link aggregation when the caller doesn't need the per-entity slice; this can significantly reduce response time on banks with many memories and many distinct entities. Default is true, preserving the historical response shape.",
         "operationId": "get_agent_stats",
         "parameters": [
           {
@@ -878,6 +878,16 @@
             "schema": {
               "type": "string",
               "title": "Bank Id"
+            }
+          },
+          {
+            "name": "include_entity_links",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Include Entity Links"
             }
           },
           {
