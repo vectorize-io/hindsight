@@ -97,3 +97,30 @@ class TestServerRoundtrip:
 
         assert status == 502
         assert "error" in json.loads(raw)
+
+    def test_resolves_a_fresh_client_per_request(self, monkeypatch):
+        """Regression: with no injected client, resolve one per request.
+
+        ThreadingHTTPServer handles each request on its own thread, and the
+        Hindsight client's aiohttp session is thread/loop-bound — so a single
+        shared client fails on the 2nd request with "Timeout context manager
+        should be used inside a task". The adapter must resolve per request.
+        """
+        import hindsight_continue.server as server_mod
+
+        calls = []
+
+        def fake_resolve():
+            calls.append(1)
+            return make_client(["recalled fact"])
+
+        monkeypatch.setattr(server_mod, "resolve_client", fake_resolve)
+
+        # client=None -> production path -> per-request resolution
+        with running_server(None) as (host, port):
+            for _ in range(3):
+                status, raw = _post(host, port, continue_request(query="hi"))
+                assert status == 200
+                assert "recalled fact" in json.loads(raw)[0]["content"]
+
+        assert len(calls) == 3, f"expected a fresh client per request, got {len(calls)} resolves"
