@@ -239,6 +239,9 @@ OUTPUT:"""
             ],
             response_format=DynamicModel,
             scope="reflect_structured",
+            max_retries=1,
+            initial_backoff=0.25,
+            max_backoff=1.0,
             skip_validation=True,  # We'll handle the dict ourselves
             return_usage=True,
         )

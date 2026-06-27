@@ -18,6 +18,7 @@ from hindsight_api.engine.reflect.agent import (
     _clean_answer_text,
     _clean_done_answer,
     _count_messages_tokens,
+    _generate_structured_output,
     _is_context_overflow_error,
     _is_done_tool,
     _normalize_tool_name,
@@ -232,6 +233,36 @@ class TestMentalModelFreshnessHelper:
         # only responsible for freshness/content of the models it is given.
         assert _all_mental_models_are_usable_and_fresh({"mental_models": []}) is True
         assert _all_mental_models_are_usable_and_fresh({}) is True
+
+
+class TestReflectStructuredOutput:
+    """Tests for the second-pass structured-output extraction."""
+
+    @pytest.mark.asyncio
+    async def test_structured_output_uses_short_retry_budget(self):
+        """A provider-specific structured-output failure must not consume the full reflect timeout."""
+        llm = MagicMock()
+        llm.call = AsyncMock(side_effect=RuntimeError("empty message content: finish_reason=length"))
+
+        result = await _generate_structured_output(
+            answer="Alice prefers concise engineering updates.",
+            response_schema={
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string"},
+                },
+                "required": ["summary"],
+            },
+            llm_config=llm,
+            reflect_id="test-reflect",
+        )
+
+        assert result.structured_output is None
+        call_kwargs = llm.call.await_args.kwargs
+        assert call_kwargs["scope"] == "reflect_structured"
+        assert call_kwargs["max_retries"] == 1
+        assert call_kwargs["initial_backoff"] == 0.25
+        assert call_kwargs["max_backoff"] == 1.0
 
 
 class TestReflectAgentMocked:
@@ -1022,7 +1053,6 @@ class TestContextOverflowIntegration:
 
             # Patch get_config where memory_engine uses it, injecting a tiny
             # max_context_tokens.  Everything else delegates to the real config.
-            real_config = memory._get_raw_config() if hasattr(memory, "_get_raw_config") else None
             from hindsight_api.config import get_config as _real_get_config
 
             class _TinyContextProxy:
