@@ -156,6 +156,12 @@ async def test_llm_api_methods():
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(600)
+# Provider-side rate limits and transient 503 / "model busy" responses
+# (e.g. Gemini's UNAVAILABLE during demand spikes) surface here as fact
+# extraction failures. Same retry policy as test_llm_api_methods so a
+# brief upstream blip doesn't fail the whole acceptance matrix; a real
+# regression still fails after 3 attempts.
+@pytest.mark.flaky(reruns=2, reruns_delay=2)
 async def test_llm_memory_operations():
     """
     Test fact extraction and reflect with the configured LLM provider.
