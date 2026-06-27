@@ -45,11 +45,27 @@ def _get_api_key() -> str:
 
 
 def _make_llm() -> LLMProvider:
+    # Provider-specific required fields. The constructor stopped backfilling
+    # these from global config, so the test must pass them explicitly — using
+    # the same env vars and parser helper that LLMProvider.from_env() uses in
+    # production, so no new attack surface is introduced.
+    from hindsight_api.config import (
+        ENV_LLM_LITELLMROUTER_CONFIG,
+        _parse_llm_router_config,
+    )
+
     return LLMProvider(
         provider=_PROVIDER,
         api_key=_get_api_key(),
         base_url=os.environ.get("HINDSIGHT_API_LLM_BASE_URL", ""),
         model=_MODEL,
+        vertexai_project_id=os.environ.get("HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID") or None,
+        vertexai_region=os.environ.get("HINDSIGHT_API_LLM_VERTEXAI_REGION") or None,
+        vertexai_service_account_key=os.environ.get(
+            "HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY"
+        )
+        or None,
+        litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
     )
 
 
