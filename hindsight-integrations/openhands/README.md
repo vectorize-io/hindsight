@@ -40,6 +40,20 @@ open local server).
 > snippet to paste instead of touching the file. `hindsight-openhands init
 > --print-only` shows the snippet + rule anytime.
 
+### Running the OpenHands Docker app?
+
+The containerized OpenHands app loads MCP servers from its **UI settings**, not
+from a project `config.toml`. So add the server in **Settings → MCP** as a
+**Streamable HTTP** server (not SSE — Hindsight's endpoint is streamable HTTP):
+
+- **URL:** `http://host.docker.internal:8888/mcp/<bank>/` (use `host.docker.internal`,
+  not `localhost`, so the container can reach a Hindsight server on your host;
+  launch the app with `--add-host host.docker.internal:host-gateway`)
+- **API key:** your `hsk_...` for Cloud, or none for an open local server
+
+The MCP tools load when a conversation starts. The `AGENTS.md` rule still applies
+when you open the project as a repository.
+
 ## Commands
 
 | Command | Description |

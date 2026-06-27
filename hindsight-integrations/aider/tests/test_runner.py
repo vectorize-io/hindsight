@@ -157,3 +157,21 @@ class TestRun:
         cfg = _config(tmp_path)
         client = make_client([])
         assert run([], config=cfg, client=client, run_aider=lambda cmd: 3) == 3
+
+    def test_closes_client_it_created(self, tmp_path, monkeypatch):
+        """A client run() resolves itself is closed on exit (avoids the aiohttp
+        'Unclosed connector' warning)."""
+        import hindsight_aider.runner as runner_mod
+
+        client = make_client([])
+        monkeypatch.setattr(runner_mod, "resolve_client", lambda config: client)
+        cfg = _config(tmp_path, auto_recall=False, auto_retain=False)
+        run([], config=cfg, run_aider=lambda cmd: 0)  # no client= -> run() owns it
+        client.close.assert_called_once()
+
+    def test_injected_client_not_closed(self, tmp_path):
+        """A test/caller-injected client is left for the caller to manage."""
+        client = make_client([])
+        cfg = _config(tmp_path, auto_recall=False, auto_retain=False)
+        run([], config=cfg, client=client, run_aider=lambda cmd: 0)
+        client.close.assert_not_called()
