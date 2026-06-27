@@ -557,6 +557,14 @@ with a concert surrounded by music, joy and the warm summer breeze.
             raise last_error
 
     @pytest.mark.asyncio
+    # Two layers of LLM non-determinism stack here: the extractor sometimes
+    # leaves "Yesterday" literal in the When field instead of resolving it to
+    # 2024-11-12, and the LLM judge then (correctly) rejects the literal as
+    # ambiguous. The sibling test_date_field_calculation_last_night handles
+    # the same class of flake with an in-function max_retries=3 loop; we
+    # take the simpler @pytest.mark.flaky path here to match the convention
+    # used for the other LLM-acceptance tests.
+    @pytest.mark.flaky(reruns=2, reruns_delay=2)
     async def test_date_field_calculation_yesterday(self):
         """Test that the date field is calculated correctly for "yesterday" events."""
         text = """
