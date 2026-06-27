@@ -198,6 +198,16 @@
             }
           },
           {
+            "name": "include_entity_data",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Include Entity Data"
+            }
+          },
+          {
             "name": "authorization",
             "in": "header",
             "required": false,

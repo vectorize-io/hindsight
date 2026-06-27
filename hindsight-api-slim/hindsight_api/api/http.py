@@ -3541,9 +3541,18 @@ def _register_routes(app: FastAPI):
         tags_match: str = "all_strict",
         document_id: str | None = None,
         chunk_id: str | None = None,
+        include_entity_data: bool = True,
         request_context: RequestContext = Depends(get_request_context),
     ):
-        """Get graph data from database, filtered by bank_id and optionally by type."""
+        """Get graph data from database, filtered by bank_id and optionally by type.
+
+        Pass include_entity_data=false to skip the entity lookup
+        (unit_entities ⨝ entities) and the in-memory entity-link inference.
+        Callers that don't surface entity coloring or entity-link edges (e.g.
+        the cloud data view) can avoid the join + group cost on banks with
+        large source_memory_ids arrays. Default is true, preserving the
+        historical response shape.
+        """
         try:
             data = await app.state.memory.get_graph_data(
                 bank_id,
@@ -3554,6 +3563,7 @@ def _register_routes(app: FastAPI):
                 tags_match=tags_match,
                 document_id=document_id,
                 chunk_id=chunk_id,
+                include_entity_data=include_entity_data,
                 request_context=request_context,
             )
             return data

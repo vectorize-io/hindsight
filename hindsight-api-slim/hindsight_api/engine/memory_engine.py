@@ -6732,6 +6732,7 @@ class MemoryEngine(MemoryEngineInterface):
         tags_match: str = "all_strict",
         document_id: str | None = None,
         chunk_id: str | None = None,
+        include_entity_data: bool = True,
         request_context: "RequestContext",
     ):
         """
@@ -6937,9 +6938,18 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Get entity information — only for visible units
             # Fetch entities for visible units AND their source memories
-            # (so observations can inherit entities from source memories)
+            # (so observations can inherit entities from source memories).
+            #
+            # The unit_entities ⨝ entities join is the dominant cost on banks
+            # where observations carry large source_memory_ids arrays — the
+            # IN-list balloons to thousands of UUIDs and the join through to
+            # `entities` to resolve canonical names is the slow query. Callers
+            # that don't render entity coloring or entity-link edges (e.g. the
+            # cloud control plane's data view) can opt out via
+            # include_entity_data=False and skip both the lookup and the
+            # in-memory entity-link inference below.
             entity_lookup_ids = unit_ids + source_memory_ids
-            if entity_lookup_ids:
+            if include_entity_data and entity_lookup_ids:
                 unit_entities = await conn.fetch(
                     f"""
                     SELECT ue.unit_id, e.canonical_name
@@ -7019,9 +7029,10 @@ class MemoryEngine(MemoryEngineInterface):
         # Bounds total edges to ~N * cap per entity instead of N² for hot entities.
         max_neighbors_per_unit = 10
         entity_to_units_visible: dict[str, list] = {}
-        for unit_id in unit_ids:
-            for entity_name in entity_map.get(unit_id, []):
-                entity_to_units_visible.setdefault(entity_name, []).append(unit_id)
+        if include_entity_data:
+            for unit_id in unit_ids:
+                for entity_name in entity_map.get(unit_id, []):
+                    entity_to_units_visible.setdefault(entity_name, []).append(unit_id)
 
         # Semantic links: pair observations that share at least one source memory
         source_to_obs_for_semantic: dict = {}
@@ -7033,27 +7044,31 @@ class MemoryEngine(MemoryEngineInterface):
         observation_inferred_links = []
         seen_inferred: set[tuple] = set()
 
-        for entity_name, ent_unit_ids in entity_to_units_visible.items():
-            n = len(ent_unit_ids)
-            for i, unit_a in enumerate(ent_unit_ids):
-                # Sliding window: link unit_a to its next max_neighbors_per_unit
-                # in the list. Each pair is also "incoming" for the later unit,
-                # so every unit ends up with up to ~2*max_neighbors_per_unit edges
-                # for this entity (its successors + its predecessors via their pairs).
-                for j in range(i + 1, min(i + 1 + max_neighbors_per_unit, n)):
-                    unit_b = ent_unit_ids[j]
-                    pair = (min(str(unit_a), str(unit_b)), max(str(unit_a), str(unit_b)), "entity", entity_name)
-                    if pair not in seen_inferred:
-                        seen_inferred.add(pair)
-                        observation_inferred_links.append(
-                            {
-                                "from_unit_id": unit_a,
-                                "to_unit_id": unit_b,
-                                "link_type": "entity",
-                                "weight": 1.0,
-                                "entity_name": entity_name,
-                            }
-                        )
+        # Entity-link inference is gated on include_entity_data — without the
+        # unit_entities lookup above, entity_to_units_visible is empty and this
+        # loop is a no-op, but explicit gating documents the intent.
+        if include_entity_data:
+            for entity_name, ent_unit_ids in entity_to_units_visible.items():
+                n = len(ent_unit_ids)
+                for i, unit_a in enumerate(ent_unit_ids):
+                    # Sliding window: link unit_a to its next max_neighbors_per_unit
+                    # in the list. Each pair is also "incoming" for the later unit,
+                    # so every unit ends up with up to ~2*max_neighbors_per_unit edges
+                    # for this entity (its successors + its predecessors via their pairs).
+                    for j in range(i + 1, min(i + 1 + max_neighbors_per_unit, n)):
+                        unit_b = ent_unit_ids[j]
+                        pair = (min(str(unit_a), str(unit_b)), max(str(unit_a), str(unit_b)), "entity", entity_name)
+                        if pair not in seen_inferred:
+                            seen_inferred.add(pair)
+                            observation_inferred_links.append(
+                                {
+                                    "from_unit_id": unit_a,
+                                    "to_unit_id": unit_b,
+                                    "link_type": "entity",
+                                    "weight": 1.0,
+                                    "entity_name": entity_name,
+                                }
+                            )
 
         for src_id, obs_ids in source_to_obs_for_semantic.items():
             for i, obs_a in enumerate(obs_ids):

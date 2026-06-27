@@ -671,8 +671,14 @@ impl ApiClient {
         self.runtime.block_on(async {
             let response = self
                 .client
+                // Args (alphabetical, per progenitor): bank_id, chunk_id,
+                // document_id, include_entity_data, limit, q, tags, tags_match,
+                // type_, authorization. Passing None for include_entity_data
+                // gets the server default (true) and preserves existing CLI
+                // behavior — the renderer still shows entity-decorated edges.
                 .get_graph(
                     bank_id,
+                    None,
                     None,
                     None,
                     limit.map(|l| l as u64),
