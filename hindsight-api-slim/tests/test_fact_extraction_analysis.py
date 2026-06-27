@@ -41,9 +41,7 @@ def llm_config():
         vertexai_project_id=config.llm_vertexai_project_id,
         vertexai_region=config.llm_vertexai_region,
         vertexai_service_account_key=config.llm_vertexai_service_account_key,
-        litellmrouter_config=(
-            config.retain_llm_litellmrouter_config or config.llm_litellmrouter_config
-        ),
+        litellmrouter_config=(config.retain_llm_litellmrouter_config or config.llm_litellmrouter_config),
     )
 
 
