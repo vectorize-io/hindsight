@@ -1,0 +1,196 @@
+# CollabMind Backplane Manifest
+# Version: 1.0
+# Status: Active
+# This is the single source of truth for runtime infrastructure.
+# No agent acts without querying this first.
+
+metadata:
+  host: Mac Studio M1 Max (64GB)
+  os: macOS (Darwin)
+  base_dir: /Users/oliververmeulen/hindsight
+  repo: github.com/oliverv/collabmind-hindsight
+  branch: feat/collabmind-brain
+  last_verified: 2026-06-28
+
+ports:
+  - port: 8888
+    service: hindsight-api
+    type: http
+    description: Hindsight memory engine API (REST + MCP)
+    health: /health
+    docs: /docs
+  
+  - port: 9998
+    service: control-plane-ui
+    type: http
+    description: CollabMind Brain / Hindsight Control Plane UI
+    auth: HINDSIGHT_CP_ACCESS_KEY
+    dev: npm run dev (port 9998)
+    prod: npm run build + standalone server
+
+  - port: 8005
+    service: memlord-mcp
+    type: http
+    description: Memlord MCP server — cross-session agent memory
+    health: /health
+
+  - port: 5435
+    service: memlord-postgres
+    type: postgresql
+    description: Memlord PostgreSQL database
+    docker: memlord-postgres
+
+  - port: 6333
+    service: memlord-qdrant
+    type: http
+    description: Memlord Qdrant vector database
+    docker: memlord-qdrant
+    health: /health
+
+  - port: 11434
+    service: ollama-embeddings
+    type: http
+    description: Ollama embeddings lane (fast, frequent vector gen)
+    models: nomic-embed-text (768-dim)
+    config: HINDSIGHT_API_EMBEDDINGS_OLLAMA_API_BASE
+    health: /api/tags
+
+  - port: 11435
+    service: ollama-llm
+    type: http
+    description: Ollama LLM lane (legacy — replaced by LM Studio)
+    status: inactive (migrated to LM Studio :1234)
+    
+  - port: 1234
+    service: lm-studio
+    type: http
+    description: LM Studio LLM inference (dedicated machine 192.168.1.144)
+    model: openai/gpt-oss-20b
+    status: active
+    warning: Single-threaded — set max_concurrent=1-2
+    config: HINDSIGHT_API_LLM_BASE_URL=http://192.168.1.144:1234/v1
+    health: /v1/models
+
+  - port: 5433
+    service: pg0-embed
+    type: postgresql
+    description: Hindsight embedded PostgreSQL (pg0 — default database backend)
+    status: active (primary database)
+
+  - port: 3000
+    service: grafana
+    type: http
+    description: Grafana LGTM monitoring stack
+    docker: hindsight-monitoring
+    health: /api/health
+
+  - port: 4317
+    service: otlp-grpc
+    type: grpc
+    description: OpenTelemetry gRPC endpoint
+    docker: hindsight-monitoring
+
+  - port: 4318
+    service: otlp-http
+    type: http
+    description: OpenTelemetry HTTP endpoint
+    docker: hindsight-monitoring
+
+  - port: 5434
+    service: pg0-embed-alt
+    type: postgresql
+    description: Alternative pg0 instance (used in some configurations)
+
+services:
+  - name: hindsight-api
+    type: python
+    command: scripts/dev/start-api.sh
+    log: /tmp/hindsight-api.log
+    depends_on: [pg0-embed, ollama-embeddings]
+    
+  - name: hindsight-worker
+    type: python
+    command: scripts/dev/start-worker.sh
+    workers: 4 (configurable via --workers N)
+    log: logs/worker-N.log
+    state_file: /tmp/hindsight-workers.state
+    depends_on: [hindsight-api, lm-studio]
+
+  - name: control-plane-ui
+    type: nextjs
+    command: scripts/dev/start-control-plane.sh
+    port: 9998
+    depends_on: [hindsight-api]
+
+  - name: memlord-mcp
+    type: docker
+    containers: [memlord-service, memlord-postgres, memlord-qdrant]
+    compose: docker-compose.yml
+    depends_on: []
+
+  - name: monitoring
+    type: docker
+    compose: scripts/dev/monitoring/docker-compose.yaml
+    containers: [grafana, loki, tempo, mimir, alloy]
+
+databases:
+  - name: hindsight-pg0
+    type: postgresql (embedded)
+    port: 5433
+    schema: pg0
+    vector_extensions: pgvector (HNSW)
+    dimension: 384 (BGE small)
+    backup: pg_dump
+
+  - name: memlord-postgres
+    type: postgresql 17
+    port: 5435
+    docker_volume: collabmind-memory_postgres_data
+    vector_db: qdrant (port 6333)
+    backup: docker volume backup
+
+llm_providers:
+  - name: lm-studio
+    type: openai-compatible
+    endpoint: http://192.168.1.144:1234/v1
+    model: openai/gpt-oss-20b
+    status: active
+    concurrency_limit: 1-2 (single-threaded)
+    
+  - name: ollama-llm
+    type: ollama
+    endpoint: http://localhost:11435/v1
+    models: [neural-chat, mistral]
+    status: inactive (migrated to LM Studio)
+
+embedding_providers:
+  - name: ollama-embeddings
+    type: ollama
+    endpoint: http://localhost:11434
+    model: nomic-embed-text
+    dimension: 768
+    status: active
+
+  - name: local-bge
+    type: local-sentence-transformers
+    model: BAAI/bge-small-en-v1.5
+    dimension: 384
+    status: available (fallback)
+
+config_files:
+  - path: /Users/oliververmeulen/hindsight/.env
+    scope: root (used by start-api.sh)
+    backup: .env.backup
+    
+  - path: /Users/oliververmeulen/hindsight/hindsight-api-slim/.env
+    scope: api-slim (backup/override)
+
+monitoring:
+  grafana_url: http://localhost:3000
+  dashboards:
+    - Hindsight Operations
+    - LLM Dashboard
+    - API Service
+  logs: Loki (Explore → Logs)
+  traces: Tempo (Explore → Traces)
+  metrics: Prometheus (Explore → Metrics)
