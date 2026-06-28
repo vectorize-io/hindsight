@@ -42,6 +42,8 @@ import {
   ChevronRight,
   LogOut,
   Copy,
+  Monitor,
+  Database,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useTheme } from "@/lib/theme-context";
@@ -320,13 +322,7 @@ function BankSelectorInner() {
   const updateFileMeta = (
     index: number,
     field:
-      | "context"
-      | "timestamp"
-      | "document_id"
-      | "tags"
-      | "metadata"
-      | "strategy"
-      | "advancedTab",
+      "context" | "timestamp" | "document_id" | "tags" | "metadata" | "strategy" | "advancedTab",
     value: string
   ) => {
     setFilesMetadata((prev) => prev.map((m, i) => (i === index ? { ...m, [field]: value } : m)));
@@ -473,11 +469,12 @@ function BankSelectorInner() {
       <div className="flex items-center gap-4 text-sm">
         {/* Logo */}
         <Image
-          src={withBasePath("/logo.png")}
-          alt="Hindsight"
-          width={40}
+          src={withBasePath("/logo-header.png?v=3")}
+          alt="CollabMind"
+          width={120}
           height={40}
           className="h-10 w-auto"
+          style={{ width: "auto", height: "auto" }}
           unoptimized
         />
 
@@ -629,6 +626,26 @@ function BankSelectorInner() {
 
         {/* Spacer */}
         <div className="flex-1" />
+
+        {/* Vector Admin Link */}
+        <a
+          href={withBasePath("/vector-admin")}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+          title="Vector Admin"
+        >
+          <Database className="h-5 w-5" />
+          <span className="text-sm font-medium">Vector Admin</span>
+        </a>
+
+        {/* System Monitor Link */}
+        <a
+          href={withBasePath("/system")}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+          title="System Monitor"
+        >
+          <Monitor className="h-5 w-5" />
+          <span className="text-sm font-medium">System</span>
+        </a>
 
         {/* GitHub Link */}
         <a
@@ -1201,11 +1218,7 @@ function BankSelectorInner() {
                             onValueChange={(v) =>
                               setDocObservationScopes(
                                 v as
-                                  | "per_tag"
-                                  | "combined"
-                                  | "all_combinations"
-                                  | "custom"
-                                  | "shared"
+                                  "per_tag" | "combined" | "all_combinations" | "custom" | "shared"
                               )
                             }
                           >
@@ -1384,11 +1397,12 @@ export function BankSelector() {
         <div className="bg-card text-card-foreground px-5 py-3 border-b-4 border-primary-gradient">
           <div className="flex items-center gap-4 text-sm">
             <Image
-              src={withBasePath("/logo.png")}
-              alt="Hindsight"
-              width={40}
+              src={withBasePath("/logo-header.png?v=3")}
+              alt="CollabMind"
+              width={120}
               height={40}
               className="h-10 w-auto"
+              style={{ width: "auto", height: "auto" }}
               unoptimized
             />
             <div className="h-8 w-px bg-border" />
