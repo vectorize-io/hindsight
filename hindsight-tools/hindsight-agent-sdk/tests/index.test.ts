@@ -180,6 +180,45 @@ describe("createKnowledgeTools", () => {
     expect(body.types).toEqual(["observation"]);
   });
 
+  it("recall uses default max_tokens and does not map max_results to token budget", async () => {
+    const manyResults = Array.from({ length: 30 }, (_, i) => ({ text: `fact-${i}` }));
+    mockFetch.mockReturnValueOnce(mockResponse({ results: manyResults }));
+
+    const tool = tools.find((t) => t.name === "agent_knowledge_recall")!;
+    const result = await tool.execute({ query: "budget test", max_results: 25 });
+
+    const body = await getBody(mockFetch.mock.calls[0]);
+    expect(body.max_tokens).toBe(1024);
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.results).toHaveLength(25);
+    expect(parsed.results[0].text).toBe("fact-0");
+    expect(parsed.results[24].text).toBe("fact-24");
+  });
+
+  it("recall max_tokens still controls recall token budget", async () => {
+    mockFetch.mockReturnValueOnce(mockResponse({ results: [{ text: "found" }] }));
+
+    const tool = tools.find((t) => t.name === "agent_knowledge_recall")!;
+    await tool.execute({ query: "token budget", max_tokens: 512 });
+
+    const body = await getBody(mockFetch.mock.calls[0]);
+    expect(body.max_tokens).toBe(512);
+  });
+
+  it("recall clamps max_results to 1-50 and ignores invalid values", async () => {
+    const manyResults = Array.from({ length: 60 }, (_, i) => ({ text: `fact-${i}` }));
+    mockFetch.mockReturnValueOnce(mockResponse({ results: manyResults }));
+
+    const tool = tools.find((t) => t.name === "agent_knowledge_recall")!;
+    const clamped = await tool.execute({ query: "clamp high", max_results: 100 });
+    expect(JSON.parse(clamped.content[0].text).results).toHaveLength(50);
+
+    mockFetch.mockReturnValueOnce(mockResponse({ results: manyResults }));
+    const ignored = await tool.execute({ query: "ignore invalid", max_results: "nope" });
+    expect(JSON.parse(ignored.content[0].text).results).toHaveLength(60);
+  });
+
   it("reflect sends POST with conservative defaults", async () => {
     mockFetch.mockReturnValueOnce(mockResponse({ text: "answer" }));
 
