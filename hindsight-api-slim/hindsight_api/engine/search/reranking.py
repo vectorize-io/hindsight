@@ -214,6 +214,7 @@ class CrossEncoderReranker:
             cross_encoder = create_cross_encoder_from_env()
         self.cross_encoder = cross_encoder
         self._initialized = False
+        self._init_lock = None  # asyncio.Lock — created lazily inside async context
 
     async def ensure_initialized(self):
         """Ensure the cross-encoder model is initialized (for lazy initialization)."""
@@ -222,30 +223,39 @@ class CrossEncoderReranker:
 
         import asyncio
 
-        from hindsight_api.config import ENV_MODEL_INIT_TIMEOUT, get_config
+        # Lazy-create lock in async context (cannot create in __init__ which may
+        # run outside a running event loop).
+        if self._init_lock is None:
+            self._init_lock = asyncio.Lock()
 
-        cross_encoder = self.cross_encoder
-        # For local providers, run in thread pool to avoid blocking event loop
-        if cross_encoder.provider_name == "local":
-            loop = asyncio.get_event_loop()
-            init = loop.run_in_executor(None, lambda: asyncio.run(cross_encoder.initialize()))
-        else:
-            init = cross_encoder.initialize()
+        async with self._init_lock:
+            if self._initialized:
+                return
 
-        # Cap lazy init with the same wall-clock timeout used at startup so a
-        # hung model download surfaces as a clear error on the request that
-        # triggered it, rather than hanging the caller forever.
-        init_timeout = get_config().model_init_timeout
-        try:
-            await asyncio.wait_for(init, timeout=init_timeout)
-        except TimeoutError as e:
-            raise RuntimeError(
-                f"Cross-encoder initialization did not complete within {init_timeout:g}s. "
-                f"The reranker model is likely blocked loading — e.g. an offline model "
-                f"download. Increase {ENV_MODEL_INIT_TIMEOUT} if the first-time download "
-                f"legitimately needs more time."
-            ) from e
-        self._initialized = True
+            from hindsight_api.config import ENV_MODEL_INIT_TIMEOUT, get_config
+
+            cross_encoder = self.cross_encoder
+            # For local providers, run in thread pool to avoid blocking event loop
+            if cross_encoder.provider_name == "local":
+                loop = asyncio.get_event_loop()
+                init = loop.run_in_executor(None, lambda: asyncio.run(cross_encoder.initialize()))
+            else:
+                init = cross_encoder.initialize()
+
+            # Cap lazy init with the same wall-clock timeout used at startup so a
+            # hung model download surfaces as a clear error on the request that
+            # triggered it, rather than hanging the caller forever.
+            init_timeout = get_config().model_init_timeout
+            try:
+                await asyncio.wait_for(init, timeout=init_timeout)
+            except TimeoutError as e:
+                raise RuntimeError(
+                    f"Cross-encoder initialization did not complete within {init_timeout:g}s. "
+                    f"The reranker model is likely blocked loading — e.g. an offline model "
+                    f"download. Increase {ENV_MODEL_INIT_TIMEOUT} if the first-time download "
+                    f"legitimately needs more time."
+                ) from e
+            self._initialized = True
 
     async def rerank(self, query: str, candidates: list[MergedCandidate]) -> list[ScoredResult]:
         """
