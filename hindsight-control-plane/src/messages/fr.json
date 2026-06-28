@@ -147,7 +147,8 @@
       "memoryBank": "Banque de mémoire",
       "expandSidebar": "Développer la barre latérale",
       "collapseSidebar": "Réduire la barre latérale",
-      "collapse": "Réduire"
+      "collapse": "Réduire",
+      "uploads": "Uploads"
     },
     "overviewAndOperations": "Statistiques générales et opérations en arrière-plan pour cette banque mémoire.",
     "operations": "Opérations",
@@ -165,7 +166,9 @@
     "llmRequestsDisabledMessage": "Le traçage des requêtes LLM est désactivé sur ce serveur. Définissez <envVar></envVar> pour l'activer.",
     "deleteWillDeleteDetails": "Cela supprimera {memories, plural, one {# mémoire} other {# mémoires}}, {documents, plural, one {# document} other {# documents}} et {links, plural, one {# lien} other {# liens}}.",
     "deleteWillDeleteObservations": "Cela supprimera {count, plural, one {# observation} other {# observations}}.",
-    "memoryDefense": "Défense de la mémoire"
+    "memoryDefense": "Défense de la mémoire",
+    "uploads": "Uploads",
+    "uploadsDescription": "Monitor file upload progress and pending operations."
   },
   "bankProfile": {
     "noBankSelected": "Aucune banque sélectionnée",
@@ -1710,5 +1713,56 @@
         "deliveries": "Impossible de récupérer les livraisons du webhook"
       }
     }
+  },
+  "uploads": {
+    "title": "Pending Uploads",
+    "description": "Monitor file ingest operations in real-time.",
+    "refresh": "Refresh",
+    "active": "Active",
+    "completed": "Completed",
+    "failed": "Failed",
+    "total": "Total",
+    "loading": "Loading uploads...",
+    "emptyState": "No upload operations found. Upload a document to get started.",
+    "recentUploads": "Recent Uploads",
+    "statusProcessing": "Processing",
+    "statusCompleted": "Completed",
+    "statusFailed": "Failed",
+    "statusPending": "Pending",
+    "itemsCount": "{count} items",
+    "started": "Started",
+    "retries": "{count, plural, one {# retry} other {# retries}}",
+    "noBankSelected": "Select a memory bank"
+  },
+  "deployment": {
+    "title": "Deployment",
+    "description": "Monitor service health, feature flags, and server configuration.",
+    "refresh": "Refresh",
+    "controlPlane": "Control Plane",
+    "service": "Service",
+    "status": "Status",
+    "dataplane": "Dataplane",
+    "connection": "Connection",
+    "url": "URL",
+    "apiVersion": "API Version",
+    "features": {
+      "title": "Features",
+      "observations": "Observations",
+      "mcp": "MCP",
+      "worker": "Worker",
+      "bankConfigApi": "Bank Config API",
+      "fileUploadApi": "File Upload API",
+      "accessKeyAuth": "Access Key Auth"
+    },
+    "storageConfig": "Storage Configuration",
+    "storageType": "Storage Type",
+    "storageBucket": "Bucket",
+    "nativeStorageHint": "Files stored in PostgreSQL (native). Set HINDSIGHT_API_FILE_STORAGE_TYPE=s3 for S3 storage.",
+    "llmConfig": "LLM Configuration",
+    "provider": "Provider",
+    "model": "Model",
+    "promptCache": "Prompt Cache",
+    "embeddingsModel": "Embeddings Model",
+    "noData": "No data available"
   }
 }

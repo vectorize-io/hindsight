@@ -103,6 +103,7 @@
     "documents": "Dokumente",
     "documentsDescription": "Verwalten Sie Dokumente und speichern Sie neue Erinnerungen.",
     "entities": "Entitäten",
+    "uploads": "Uploads",
     "entitiesDescription": "Erkunden Sie Entitäten (Personen, Organisationen, Orte), die in Erinnerungen erwähnt werden.",
     "deleteMemoryBank": "Speicherbank löschen",
     "deleteConfirmMessage": "Sind Sie absolut sicher, dass Sie {bankName} löschen möchten?",
@@ -144,6 +145,7 @@
       "reflect": "Reflect",
       "documents": "Dokumente",
       "entities": "Entitäten",
+      "uploads": "Uploads",
       "memoryBank": "Speicherbank",
       "expandSidebar": "Seitenleiste ausklappen",
       "collapseSidebar": "Seitenleiste einklappen",
@@ -165,7 +167,8 @@
     "llmRequestsDisabledMessage": "Das Tracing von LLM-Anfragen ist auf diesem Server deaktiviert. Setzen Sie <envVar></envVar>, um es zu aktivieren.",
     "deleteWillDeleteDetails": "Dadurch werden {memories, plural, one {# Erinnerung} other {# Erinnerungen}}, {documents, plural, one {# Dokument} other {# Dokumente}} und {links, plural, one {# Verknüpfung} other {# Verknüpfungen}} gelöscht.",
     "deleteWillDeleteObservations": "Dadurch werden {count, plural, one {# Beobachtung} other {# Beobachtungen}} gelöscht.",
-    "memoryDefense": "Speicherschutz"
+    "memoryDefense": "Speicherschutz",
+    "uploadsDescription": "Monitor file upload progress and pending operations."
   },
   "bankProfile": {
     "noBankSelected": "Keine Bank ausgewählt",
@@ -939,6 +942,7 @@
     "queryDatePlaceholder": "Abfragedatum",
     "chunks": "Chunks",
     "entities": "Entitäten",
+    "uploads": "Uploads",
     "tagsPlaceholder": "Nach Tags filtern (kommagetrennt)",
     "tagsMatchAny": "Beliebig (inkl. ohne Tags)",
     "tagsMatchAll": "Alle (inkl. ohne Tags)",
@@ -1710,5 +1714,56 @@
         "deliveries": "Webhook-Zustellungen konnten nicht abgerufen werden"
       }
     }
+  },
+  "uploads": {
+    "title": "Pending Uploads",
+    "description": "Monitor file ingest operations in real-time.",
+    "refresh": "Refresh",
+    "active": "Active",
+    "completed": "Completed",
+    "failed": "Failed",
+    "total": "Total",
+    "loading": "Loading uploads...",
+    "emptyState": "No upload operations found. Upload a document to get started.",
+    "recentUploads": "Recent Uploads",
+    "statusProcessing": "Processing",
+    "statusCompleted": "Completed",
+    "statusFailed": "Failed",
+    "statusPending": "Pending",
+    "itemsCount": "{count} items",
+    "started": "Started",
+    "retries": "{count, plural, one {# retry} other {# retries}}",
+    "noBankSelected": "Select a memory bank"
+  },
+  "deployment": {
+    "title": "Deployment",
+    "description": "Monitor service health, feature flags, and server configuration.",
+    "refresh": "Refresh",
+    "controlPlane": "Control Plane",
+    "service": "Service",
+    "status": "Status",
+    "dataplane": "Dataplane",
+    "connection": "Connection",
+    "url": "URL",
+    "apiVersion": "API Version",
+    "features": {
+      "title": "Features",
+      "observations": "Observations",
+      "mcp": "MCP",
+      "worker": "Worker",
+      "bankConfigApi": "Bank Config API",
+      "fileUploadApi": "File Upload API",
+      "accessKeyAuth": "Access Key Auth"
+    },
+    "storageConfig": "Storage Configuration",
+    "storageType": "Storage Type",
+    "storageBucket": "Bucket",
+    "nativeStorageHint": "Files stored in PostgreSQL (native). Set HINDSIGHT_API_FILE_STORAGE_TYPE=s3 for S3 storage.",
+    "llmConfig": "LLM Configuration",
+    "provider": "Provider",
+    "model": "Model",
+    "promptCache": "Prompt Cache",
+    "embeddingsModel": "Embeddings Model",
+    "noData": "No data available"
   }
 }

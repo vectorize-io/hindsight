@@ -6,6 +6,7 @@ import { BankProvider } from "@/lib/bank-context";
 import { FeaturesProvider } from "@/lib/features-context";
 import { ThemeProvider } from "@/lib/theme-context";
 import { Toaster } from "@/components/ui/sonner";
+import { BrandStyleInjector } from "@/components/brand-style-injector";
 
 export function generateStaticParams() {
   return routing.locales.map((locale) => ({ locale }));
@@ -35,6 +36,7 @@ export default async function LocaleLayout({
             </BankProvider>
           </FeaturesProvider>
         </ThemeProvider>
+        <BrandStyleInjector />
         <Toaster />
       </body>
     </html>

@@ -20,6 +20,7 @@ import { MentalModelsView } from "@/components/mental-models-view";
 import { WebhooksView } from "@/components/webhooks-view";
 import { AuditLogsView } from "@/components/audit-logs-view";
 import { LLMRequestsView } from "@/components/llm-requests-view";
+import { PendingUploadsView } from "@/components/pending-uploads-view";
 import { FeatureNotEnabled } from "@/components/feature-not-enabled";
 import { useFeatures } from "@/lib/features-context";
 import { useBank } from "@/lib/bank-context";
@@ -57,7 +58,7 @@ import {
 import { LlmHealthDialog } from "@/components/llm-health-dialog";
 import { ExtractDialog } from "@/components/extract-dialog";
 
-type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
+type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "uploads" | "profile";
 type DataSubTab = "world" | "experience" | "observations" | "mental-models";
 type BankConfigTab =
   | "general"
@@ -636,6 +637,15 @@ export default function BankPage() {
                 <h1 className="text-3xl font-bold mb-2 text-foreground">{t("entities")}</h1>
                 <p className="text-muted-foreground mb-6">{t("entitiesDescription")}</p>
                 <EntitiesView />
+              </div>
+            )}
+
+            {/* Uploads Tab */}
+            {view === "uploads" && (
+              <div>
+                <h1 className="text-3xl font-bold mb-2 text-foreground">{t("uploads")}</h1>
+                <p className="text-muted-foreground mb-6">{t("uploadsDescription")}</p>
+                <PendingUploadsView />
               </div>
             )}
           </div>

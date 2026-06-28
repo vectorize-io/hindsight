@@ -147,7 +147,8 @@
       "memoryBank": "메모리 뱅크",
       "expandSidebar": "사이드바 펼치기",
       "collapseSidebar": "사이드바 접기",
-      "collapse": "접기"
+      "collapse": "접기",
+      "uploads": "Uploads"
     },
     "overviewAndOperations": "이 메모리 뱅크의 개요 통계 및 백그라운드 작업.",
     "operations": "작업",
@@ -165,7 +166,9 @@
     "llmRequestsDisabledMessage": "이 서버에서는 LLM 요청 추적이 비활성화되어 있습니다. 활성화하려면 <envVar></envVar>를 설정하세요.",
     "deleteWillDeleteDetails": "{memories, plural, other {# 메모리}}, {documents, plural, other {# 문서}}, {links, plural, other {# 링크}}가 삭제됩니다.",
     "deleteWillDeleteObservations": "{count, plural, other {# 관찰}}이 삭제됩니다.",
-    "memoryDefense": "메모리 방어"
+    "memoryDefense": "메모리 방어",
+    "uploads": "Uploads",
+    "uploadsDescription": "Monitor file upload progress and pending operations."
   },
   "bankProfile": {
     "noBankSelected": "선택된 뱅크 없음",
@@ -1710,5 +1713,56 @@
         "deliveries": "Webhook 전달 내역을 가져오지 못했습니다"
       }
     }
+  },
+  "uploads": {
+    "title": "Pending Uploads",
+    "description": "Monitor file ingest operations in real-time.",
+    "refresh": "Refresh",
+    "active": "Active",
+    "completed": "Completed",
+    "failed": "Failed",
+    "total": "Total",
+    "loading": "Loading uploads...",
+    "emptyState": "No upload operations found. Upload a document to get started.",
+    "recentUploads": "Recent Uploads",
+    "statusProcessing": "Processing",
+    "statusCompleted": "Completed",
+    "statusFailed": "Failed",
+    "statusPending": "Pending",
+    "itemsCount": "{count} items",
+    "started": "Started",
+    "retries": "{count, plural, one {# retry} other {# retries}}",
+    "noBankSelected": "Select a memory bank"
+  },
+  "deployment": {
+    "title": "Deployment",
+    "description": "Monitor service health, feature flags, and server configuration.",
+    "refresh": "Refresh",
+    "controlPlane": "Control Plane",
+    "service": "Service",
+    "status": "Status",
+    "dataplane": "Dataplane",
+    "connection": "Connection",
+    "url": "URL",
+    "apiVersion": "API Version",
+    "features": {
+      "title": "Features",
+      "observations": "Observations",
+      "mcp": "MCP",
+      "worker": "Worker",
+      "bankConfigApi": "Bank Config API",
+      "fileUploadApi": "File Upload API",
+      "accessKeyAuth": "Access Key Auth"
+    },
+    "storageConfig": "Storage Configuration",
+    "storageType": "Storage Type",
+    "storageBucket": "Bucket",
+    "nativeStorageHint": "Files stored in PostgreSQL (native). Set HINDSIGHT_API_FILE_STORAGE_TYPE=s3 for S3 storage.",
+    "llmConfig": "LLM Configuration",
+    "provider": "Provider",
+    "model": "Model",
+    "promptCache": "Prompt Cache",
+    "embeddingsModel": "Embeddings Model",
+    "noData": "No data available"
   }
 }

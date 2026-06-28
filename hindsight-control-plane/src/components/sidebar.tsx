@@ -13,11 +13,12 @@ import {
   ChevronLeft,
   ChevronRight,
   Settings,
+  Upload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 
-type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
+type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "uploads" | "profile";
 
 interface SidebarProps {
   currentTab: NavItem;
@@ -40,6 +41,7 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
     { id: "reflect" as NavItem, label: t("reflect"), icon: Sparkles },
     { id: "documents" as NavItem, label: t("documents"), icon: FileText },
     { id: "entities" as NavItem, label: t("entities"), icon: Users },
+    { id: "uploads" as NavItem, label: t("uploads"), icon: Upload },
     { id: "profile" as NavItem, label: tBank("bankConfiguration"), icon: Settings },
   ];
 

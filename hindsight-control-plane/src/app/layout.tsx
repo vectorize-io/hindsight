@@ -1,12 +1,23 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { whitelabelConfig } from "@/lib/whitelabel-config";
 
 export const metadata: Metadata = {
-  title: "Hindsight Control Plane",
-  description: "Control plane for the temporal semantic memory system",
+  title: whitelabelConfig.metadata.title,
+  description: whitelabelConfig.metadata.description,
   icons: {
     icon: "/favicon.png",
   },
+  viewport: {
+    width: "device-width",
+    initialScale: 1,
+    maximumScale: 5,
+    userScalable: true,
+  },
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
+  ],
 };
 
 export default function RootLayout({

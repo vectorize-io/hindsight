@@ -145,11 +145,14 @@
       "reflect": "Reflect",
       "documents": "Documents",
       "entities": "Entities",
+      "uploads": "Uploads",
       "memoryBank": "Memory Bank",
       "expandSidebar": "Expand sidebar",
       "collapseSidebar": "Collapse sidebar",
       "collapse": "Collapse"
     },
+    "uploads": "Uploads",
+    "uploadsDescription": "Monitor file upload progress and pending operations.",
     "overviewAndOperations": "Overview statistics and background operations for this memory bank.",
     "operations": "Operations",
     "deleteBankPrompt": "Are you sure you want to delete the memory bank <bankName></bankName>?",
@@ -1557,7 +1560,7 @@
     "textNotStoredWarning": "Raw document text won't be stored on this server — only the extracted memories are kept."
   },
   "dashboard": {
-    "welcome": "Welcome to Hindsight",
+    "welcome": "Welcome to CollabMind",
     "selectBank": "Select a memory bank from the dropdown above to get started.",
     "sidebarHint": "The sidebar will appear once you select a memory bank."
   },
@@ -1710,5 +1713,56 @@
         "deliveries": "Failed to fetch webhook deliveries"
       }
     }
+  },
+  "uploads": {
+    "title": "Pending Uploads",
+    "description": "Monitor file ingest operations in real-time.",
+    "refresh": "Refresh",
+    "active": "Active",
+    "completed": "Completed",
+    "failed": "Failed",
+    "total": "Total",
+    "loading": "Loading uploads...",
+    "emptyState": "No upload operations found. Upload a document to get started.",
+    "recentUploads": "Recent Uploads",
+    "statusProcessing": "Processing",
+    "statusCompleted": "Completed",
+    "statusFailed": "Failed",
+    "statusPending": "Pending",
+    "itemsCount": "{count} items",
+    "started": "Started",
+    "retries": "{count, plural, one {# retry} other {# retries}}",
+    "noBankSelected": "Select a memory bank"
+  },
+  "deployment": {
+    "title": "Deployment",
+    "description": "Monitor service health, feature flags, and server configuration.",
+    "refresh": "Refresh",
+    "controlPlane": "Control Plane",
+    "service": "Service",
+    "status": "Status",
+    "dataplane": "Dataplane",
+    "connection": "Connection",
+    "url": "URL",
+    "apiVersion": "API Version",
+    "features": {
+      "title": "Features",
+      "observations": "Observations",
+      "mcp": "MCP",
+      "worker": "Worker",
+      "bankConfigApi": "Bank Config API",
+      "fileUploadApi": "File Upload API",
+      "accessKeyAuth": "Access Key Auth"
+    },
+    "storageConfig": "Storage Configuration",
+    "storageType": "Storage Type",
+    "storageBucket": "Bucket",
+    "nativeStorageHint": "Files stored in PostgreSQL (native). Set HINDSIGHT_API_FILE_STORAGE_TYPE=s3 for S3 storage.",
+    "llmConfig": "LLM Configuration",
+    "provider": "Provider",
+    "model": "Model",
+    "promptCache": "Prompt Cache",
+    "embeddingsModel": "Embeddings Model",
+    "noData": "No data available"
   }
 }
