@@ -86,6 +86,13 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `bankMission`              | —                              | Mission stamped onto the bank's `reflect_mission` column on first use. **Only affects the `reflect` operation** — does not steer retain or recall. Leave unset (or empty) to manage missions out-of-band via `PATCH /banks/{id}`.                                                                           |
 | `retainMission`            | —                              | Mission stamped onto the bank's `retain_mission` column on first use. Steers what gets extracted as facts during retain. Leave unset to use built-in extraction rules.                                                                                                                                      |
 | `observationsMission`      | —                              | Mission stamped onto the bank's `observations_mission` column on first use. Controls what gets synthesised into observations during consolidation.                                                                                                                                                          |
+| `retainExtractionMode`     | —                              | Fact extraction mode stamped on each bank's first use: `concise`, `verbose`, `custom`, `verbatim`, or `chunks`. Use with dynamic banks so per-user banks match your analytics/base bank settings.                                                                                                             |
+| `enableObservations`       | —                              | When set, stamped on first bank use to toggle observation consolidation after retain.                                                                                                                                                                                                                         |
+| `enableAutoConsolidation`  | —                              | When set, stamped on first bank use (via bank config API) to toggle automatic consolidation scheduling.                                                                                                                                                                                                   |
+| `dispositionSkepticism`    | —                              | Reflect skepticism trait (`1`–`5`) stamped on first bank use.                                                                                                                                                                                                                                               |
+| `dispositionLiteralism`    | —                              | Reflect literalism trait (`1`–`5`) stamped on first bank use.                                                                                                                                                                                                                                               |
+| `dispositionEmpathy`       | —                              | Reflect empathy trait (`1`–`5`) stamped on first bank use.                                                                                                                                                                                                                                                |
+| `entityLabels`             | —                              | Controlled vocabulary for entity labels (array or object). Passed through to `PATCH /banks/{id}/config` as `entity_labels` on first bank use.                                                                                                                                                               |
 | `llmProvider`              | —                              | LLM provider for memory extraction (`openai`, `anthropic`, `gemini`, `groq`, `ollama`, `openai-codex`, `claude-code`). Required unless `hindsightApiUrl` is set.                                                                                                                                            |
 | `llmModel`                 | provider default               | LLM model used with `llmProvider`                                                                                                                                                                                                                                                                           |
 | `llmApiKey`                | —                              | API key for the LLM provider. **Sensitive** — set via `openclaw config set ... --ref-source env --ref-id OPENAI_API_KEY` to reference an env var (or `--ref-source file`/`exec` for mounted-secret/Vault sources).                                                                                          |
@@ -120,6 +127,32 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `skipStatelessSessions`    | `true`                         | When `true`, sessions matching `statelessSessionPatterns` also skip recall. Set to `false` to allow recall but still skip retain.                                                                                                                                                                           |
 | `debugPerfTiming`          | `false`                        | Emit one info-level perf line per `before_prompt_build` (recall path) and `agent_end` (retain path) so you can spot whether latency is in the plugin or upstream. Off by default. Format: `perf: <hook> hook_total=Xms <hook-specific fields>`. Safe in production — uses the existing logger.              |
 | `enableKnowledgeTools`     | `false`                        | Register `agent_knowledge_*` tools for explicit agent-driven lookup, reflection, ingest, and knowledge-page management. Set automatically by the self-driving-agents CLI.                                                                                                                                   |
+
+### Per-user dynamic bank defaults
+
+When `dynamicBankId` is enabled (default), OpenClaw derives a separate Hindsight bank per context (e.g. per Slack user). New banks otherwise inherit only Hindsight server defaults (`concise` extraction, no entity labels, etc.). Set the options below in plugin config to stamp **full bank defaults on first use** — before the first retain or recall touches that bank:
+
+```json
+{
+  "dynamicBankId": true,
+  "dynamicBankGranularity": ["agent", "channel", "user"],
+  "retainExtractionMode": "verbose",
+  "enableObservations": true,
+  "enableAutoConsolidation": true,
+  "dispositionSkepticism": 3,
+  "dispositionLiteralism": 3,
+  "dispositionEmpathy": 4,
+  "entityLabels": [
+    { "name": "person", "description": "A human user or contact" },
+    { "name": "project", "description": "A software project or product" }
+  ],
+  "retainMission": "Extract durable preferences, decisions, and project context.",
+  "observationsMission": "Synthesise stable user preferences and active projects.",
+  "bankMission": "You are a helpful assistant with long-term memory across channels."
+}
+```
+
+Unset options are not sent — existing behaviour is unchanged when you only configure missions (as before). Each bank is configured at most once per gateway process.
 
 ### Manual Knowledge Tools
 

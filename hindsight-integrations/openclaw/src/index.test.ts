@@ -1640,6 +1640,48 @@ describe("getPluginConfig — mission semantics (#1270, #1353)", () => {
   });
 });
 
+describe("getPluginConfig — dynamic bank defaults", () => {
+  it("leaves bank default fields unset when not configured", () => {
+    const cfg = getPluginConfig(makeApi({}));
+    expect(cfg.retainExtractionMode).toBeUndefined();
+    expect(cfg.enableObservations).toBeUndefined();
+    expect(cfg.enableAutoConsolidation).toBeUndefined();
+    expect(cfg.dispositionSkepticism).toBeUndefined();
+    expect(cfg.entityLabels).toBeUndefined();
+  });
+
+  it("normalizes configured bank default fields", () => {
+    const labels = [{ name: "person", description: "Human" }];
+    const cfg = getPluginConfig(
+      makeApi({
+        retainExtractionMode: "VERBOSE",
+        enableObservations: true,
+        enableAutoConsolidation: false,
+        dispositionSkepticism: 4,
+        dispositionLiteralism: 2,
+        dispositionEmpathy: 5,
+        entityLabels: labels,
+      })
+    );
+    expect(cfg.retainExtractionMode).toBe("verbose");
+    expect(cfg.enableObservations).toBe(true);
+    expect(cfg.enableAutoConsolidation).toBe(false);
+    expect(cfg.dispositionSkepticism).toBe(4);
+    expect(cfg.entityLabels).toEqual(labels);
+  });
+
+  it("rejects invalid retainExtractionMode and disposition values", () => {
+    const cfg = getPluginConfig(
+      makeApi({
+        retainExtractionMode: "not-a-mode",
+        dispositionSkepticism: 9,
+      })
+    );
+    expect(cfg.retainExtractionMode).toBeUndefined();
+    expect(cfg.dispositionSkepticism).toBeUndefined();
+  });
+});
+
 describe("getPluginConfig — retainContext", () => {
   it("defaults retainContext to the built-in OpenClaw transcript guidance", () => {
     const cfg = getPluginConfig(makeApi({}));
