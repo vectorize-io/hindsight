@@ -854,9 +854,8 @@ export function resolveSessionIdentity(
   const sessionParsed = ctx.sessionKey ? parseSessionKey(ctx.sessionKey) : {};
   const messageProvider = ctx.messageProvider || sessionParsed.provider;
   const channelId = ctx.channelId || sessionParsed.channel;
-  const senderId =
-    ctx.senderId ||
-    (messageProvider === "telegram" ? extractTelegramDirectSenderId(channelId) : undefined);
+  // direct:<id> channel ids carry the user id for any provider (telegram, msteams, …).
+  const senderId = ctx.senderId || extractTelegramDirectSenderId(channelId);
 
   return {
     ...ctx,
@@ -1176,6 +1175,84 @@ export function deriveBankId(
   const baseBankId = fields.map((f) => encodeURIComponent(fieldMap[f] || "unknown")).join("::");
 
   return pluginConfig.bankIdPrefix ? `${pluginConfig.bankIdPrefix}-${baseBankId}` : baseBankId;
+}
+
+function usesUserScopedBanking(pluginConfig: PluginConfig): boolean {
+  if (usesStaticBank(pluginConfig)) {
+    return false;
+  }
+  const granularity = pluginConfig.dynamicBankGranularity?.length
+    ? pluginConfig.dynamicBankGranularity
+    : DEFAULT_DYNAMIC_BANK_GRANULARITY;
+  return granularity.includes("user");
+}
+
+export interface KnowledgeToolBankResolution {
+  bankId: string;
+  resolvedCtx: PluginHookAgentContext | undefined;
+  identityError?: string;
+}
+
+/**
+ * Resolve the Hindsight bank for knowledge tools using the same identity path as
+ * auto-recall/retain. When user-scoped dynamic banking is enabled, unresolved
+ * identity must not silently route to the shared default or anonymous bank.
+ */
+export function resolveBankIdForKnowledgeTools(
+  toolCtx: PluginToolContext,
+  pluginConfig: PluginConfig
+): KnowledgeToolBankResolution {
+  if (usesStaticBank(pluginConfig)) {
+    return { bankId: getStaticBankId(pluginConfig), resolvedCtx: undefined };
+  }
+
+  const hookCtx: PluginHookAgentContext = {
+    agentId: toolCtx.agentId,
+    sessionKey: toolCtx.sessionKey,
+    workspaceDir: toolCtx.workspaceDir,
+  };
+
+  const { resolvedCtx, skipReason } = resolveAndCacheIdentity({
+    sessionKey: toolCtx.sessionKey,
+    ctx: hookCtx,
+    pluginConfig,
+  });
+  const { reason: identityReason } = getIdentitySkipReason(resolvedCtx, pluginConfig);
+  const effectiveSkip = skipReason ?? identityReason;
+  const bankId = deriveBankId(resolvedCtx, pluginConfig);
+
+  if (usesUserScopedBanking(pluginConfig)) {
+    const userSegment = resolvedCtx?.senderId || "anonymous";
+    if (effectiveSkip) {
+      return {
+        bankId,
+        resolvedCtx,
+        identityError:
+          `Hindsight knowledge tools skipped: ${formatIdentitySkipReason(effectiveSkip)}. ` +
+          "Knowledge tools use the same per-user memory bank as auto-recall/retain.",
+      };
+    }
+    if (userSegment === "anonymous") {
+      return {
+        bankId,
+        resolvedCtx,
+        identityError:
+          "Hindsight knowledge tools skipped: missing stable sender identity. " +
+          "Knowledge tools use the same per-user memory bank as auto-recall/retain.",
+      };
+    }
+    if (bankId === getDefaultBankId(pluginConfig)) {
+      return {
+        bankId,
+        resolvedCtx,
+        identityError:
+          "Hindsight knowledge tools skipped: could not resolve per-user memory bank. " +
+          "Knowledge tools use the same per-user memory bank as auto-recall/retain.",
+      };
+    }
+  }
+
+  return { bankId, resolvedCtx };
 }
 
 export function formatMemories(results: MemoryResult[]): string {
@@ -2581,16 +2658,30 @@ ${memoriesFormatted}
         })();
         const apiToken = pluginConfig.hindsightApiToken || undefined;
 
-        // Factory: called per session with agent context, returns tools scoped to that bank
+        // Factory: called per session with agent context, returns tools scoped to that bank.
+        // Identity is resolved the same way as auto-recall/retain so PluginToolContext
+        // (which lacks senderId/messageProvider) still routes to the per-user bank.
         const factory = (ctx: PluginToolContext) => {
-          const bankId = deriveBankId(ctx as any, pluginConfig);
-          const tools = createKnowledgeTools({ apiUrl, apiToken, bankId });
+          const resolution = resolveBankIdForKnowledgeTools(ctx, pluginConfig);
+          const tools = createKnowledgeTools({
+            apiUrl,
+            apiToken,
+            bankId: resolution.bankId,
+          });
           return tools.map((t) => ({
             name: t.name,
             label: t.label,
             description: t.description,
             parameters: t.parameters,
             async execute(_id: string, params: Record<string, unknown>) {
+              if (resolution.identityError) {
+                return {
+                  content: [{ type: "text", text: resolution.identityError }],
+                  details: {},
+                };
+              }
+              const config = currentPluginConfig || pluginConfig;
+              await ensureBankDefaultsApplied(resolution.bankId, config);
               return { ...(await t.execute(params)), details: {} };
             },
           }));

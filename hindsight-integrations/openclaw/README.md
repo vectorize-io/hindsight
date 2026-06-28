@@ -158,6 +158,8 @@ Unset options are not sent — existing behaviour is unchanged when you only con
 
 When `enableKnowledgeTools` is enabled, the plugin registers explicit `agent_knowledge_*` tools in addition to automatic recall. Use `agent_knowledge_recall` for ordinary memory lookup. Use `agent_knowledge_reflect` only for deliberate synthesis, retrospectives, or long-term preference/pattern questions; it retrieves memories and then calls the configured Reflect LLM to generate an answer.
 
+Knowledge tools resolve the same dynamic memory bank as auto-recall and auto-retain: the plugin runs the shared identity-resolution path (`resolveAndCacheIdentity`) from the tool session context before deriving the bank ID. With user-scoped dynamic banking (`dynamicBankGranularity` includes `"user"`), tools target the per-user bank for that session; if sender identity cannot be resolved, tool execution returns a clear error instead of querying the shared `openclaw` default or an `anonymous` fallback bank. Configured bank defaults (missions, extraction mode, entity labels, etc.) are applied on first knowledge-tool use, matching `getClientForContext` behavior.
+
 `agent_knowledge_reflect` uses conservative defaults: `budget: "low"`, `max_tokens: 1024`, and `fact_types: ["world", "experience", "observation"]`. Production deployments should also set a finite bank-level `reflect_source_facts_max_tokens` value, such as `4096` or `8192`, rather than leaving reflection source facts unlimited.
 
 ### Session pattern filtering
