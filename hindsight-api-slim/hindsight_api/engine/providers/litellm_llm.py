@@ -408,6 +408,14 @@ class LiteLLMLLM(LLMInterface):
                     self._acompletion(**call_kwargs),
                     timeout=self.timeout,
                 )
+                # Stash usage before the tool-call argument parse below, which
+                # can raise json.JSONDecodeError locally even though the provider
+                # already billed for these tokens; without this the error trace
+                # records 0/0 tokens (#2387). Mirrors call() and the anthropic/
+                # gemini call_with_tools paths so the litellm tool path (and the
+                # LiteLLMRouterLLM subclass that inherits this method) completes
+                # the #2396 usage-on-error coverage.
+                stash_response_usage(_usage_from_litellm_response(response))
 
                 message = response.choices[0].message
                 content = message.content
