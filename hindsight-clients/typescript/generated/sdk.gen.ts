@@ -32,6 +32,12 @@ import type {
   CreateDirectiveData,
   CreateDirectiveErrors,
   CreateDirectiveResponses,
+  CreateKnowledgeFolderData,
+  CreateKnowledgeFolderErrors,
+  CreateKnowledgeFolderResponses,
+  CreateKnowledgePageData,
+  CreateKnowledgePageErrors,
+  CreateKnowledgePageResponses,
   CreateMentalModelData,
   CreateMentalModelErrors,
   CreateMentalModelResponses,
@@ -50,6 +56,9 @@ import type {
   DeleteDocumentData,
   DeleteDocumentErrors,
   DeleteDocumentResponses,
+  DeleteKnowledgeNodeData,
+  DeleteKnowledgeNodeErrors,
+  DeleteKnowledgeNodeResponses,
   DeleteMentalModelData,
   DeleteMentalModelErrors,
   DeleteMentalModelResponses,
@@ -65,6 +74,9 @@ import type {
   ExportDocumentsData,
   ExportDocumentsErrors,
   ExportDocumentsResponses,
+  ExportKnowledgeBaseData,
+  ExportKnowledgeBaseErrors,
+  ExportKnowledgeBaseResponses,
   FileRetainData,
   FileRetainErrors,
   FileRetainResponses,
@@ -97,6 +109,15 @@ import type {
   GetGraphData,
   GetGraphErrors,
   GetGraphResponses,
+  GetKnowledgeBaseGraphData,
+  GetKnowledgeBaseGraphErrors,
+  GetKnowledgeBaseGraphResponses,
+  GetKnowledgeBaseTreeData,
+  GetKnowledgeBaseTreeErrors,
+  GetKnowledgeBaseTreeResponses,
+  GetKnowledgePageData,
+  GetKnowledgePageErrors,
+  GetKnowledgePageResponses,
   GetMemoriesTimeseriesData,
   GetMemoriesTimeseriesErrors,
   GetMemoriesTimeseriesResponses,
@@ -220,6 +241,9 @@ import type {
   UpdateDocumentData,
   UpdateDocumentErrors,
   UpdateDocumentResponses,
+  UpdateKnowledgeNodeData,
+  UpdateKnowledgeNodeErrors,
+  UpdateKnowledgeNodeResponses,
   UpdateMemoryData,
   UpdateMemoryErrors,
   UpdateMemoryResponses,
@@ -652,6 +676,138 @@ export const clearMentalModel = <ThrowOnError extends boolean = false>(
   (options.client ?? client).post<ClearMentalModelResponses, ClearMentalModelErrors, ThrowOnError>({
     url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/clear",
     ...options,
+  });
+
+/**
+ * Get the knowledge-base tree
+ *
+ * Return the knowledge base as a nested tree of folders and pages.
+ */
+export const getKnowledgeBaseTree = <ThrowOnError extends boolean = false>(
+  options: Options<GetKnowledgeBaseTreeData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    GetKnowledgeBaseTreeResponses,
+    GetKnowledgeBaseTreeErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/knowledge-base/tree", ...options });
+
+/**
+ * Create a knowledge-base folder
+ *
+ * Create a folder, optionally nested under a parent folder.
+ */
+export const createKnowledgeFolder = <ThrowOnError extends boolean = false>(
+  options: Options<CreateKnowledgeFolderData, ThrowOnError>
+) =>
+  (options.client ?? client).post<
+    CreateKnowledgeFolderResponses,
+    CreateKnowledgeFolderErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/knowledge-base/folders",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Create a knowledge-base page
+ *
+ * Create a page (a mental model + tree node). Content is generated asynchronously; use the returned operation_id to track completion.
+ */
+export const createKnowledgePage = <ThrowOnError extends boolean = false>(
+  options: Options<CreateKnowledgePageData, ThrowOnError>
+) =>
+  (options.client ?? client).post<
+    CreateKnowledgePageResponses,
+    CreateKnowledgePageErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/knowledge-base/pages",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Knowledge-base constellation graph
+ *
+ * Return pages as nodes linked by shared tags, for the constellation view.
+ */
+export const getKnowledgeBaseGraph = <ThrowOnError extends boolean = false>(
+  options: Options<GetKnowledgeBaseGraphData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    GetKnowledgeBaseGraphResponses,
+    GetKnowledgeBaseGraphErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/knowledge-base/graph", ...options });
+
+/**
+ * Export the knowledge base as an OKF bundle
+ *
+ * Return a portable OKF bundle: a nested index.md, one <id>.md per page, and history logs.
+ */
+export const exportKnowledgeBase = <ThrowOnError extends boolean = false>(
+  options: Options<ExportKnowledgeBaseData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    ExportKnowledgeBaseResponses,
+    ExportKnowledgeBaseErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/knowledge-base/export", ...options });
+
+/**
+ * Get a knowledge-base page
+ *
+ * Return a single page as an OKF document (frontmatter + markdown body).
+ */
+export const getKnowledgePage = <ThrowOnError extends boolean = false>(
+  options: Options<GetKnowledgePageData, ThrowOnError>
+) =>
+  (options.client ?? client).get<GetKnowledgePageResponses, GetKnowledgePageErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/knowledge-base/pages/{page_id}",
+    ...options,
+  });
+
+/**
+ * Delete a knowledge-base node
+ *
+ * Delete a folder or page and its whole subtree (pages' mental models are removed too).
+ */
+export const deleteKnowledgeNode = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteKnowledgeNodeData, ThrowOnError>
+) =>
+  (options.client ?? client).delete<
+    DeleteKnowledgeNodeResponses,
+    DeleteKnowledgeNodeErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}", ...options });
+
+/**
+ * Rename or move a knowledge-base node
+ *
+ * Rename a node (set `name`) and/or move it under another folder (set `parent_id`, null for the root).
+ */
+export const updateKnowledgeNode = <ThrowOnError extends boolean = false>(
+  options: Options<UpdateKnowledgeNodeData, ThrowOnError>
+) =>
+  (options.client ?? client).patch<
+    UpdateKnowledgeNodeResponses,
+    UpdateKnowledgeNodeErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   });
 
 /**

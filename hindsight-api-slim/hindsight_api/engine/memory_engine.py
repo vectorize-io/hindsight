@@ -1871,6 +1871,28 @@ class MemoryEngine(MemoryEngineInterface):
 
         logger.info(f"[REFRESH_MENTAL_MODEL_TASK] Completed for bank_id={bank_id}, mental_model_id={mental_model_id}")
 
+    async def _handle_curate_folder(self, task_dict: dict[str, Any]):
+        """Handler for curate_folder tasks — delegates to curate_folder.
+
+        Runs the mission-driven curator for one folder in the background (queued
+        on folder creation and after each consolidation), mirroring how
+        refresh_mental_model tasks run the async refresh.
+        """
+        bank_id = task_dict.get("bank_id")
+        folder_id = task_dict.get("folder_id")
+        if not bank_id or not folder_id:
+            raise ValueError("bank_id and folder_id are required for curate_folder task")
+
+        from hindsight_api.models import RequestContext
+
+        internal_context = RequestContext(
+            internal=True,
+            tenant_id=task_dict.get("_tenant_id"),
+            api_key_id=task_dict.get("_api_key_id"),
+            retry_count=task_dict.get("_retry_count", 0),
+        )
+        await self.curate_folder(bank_id=bank_id, folder_id=folder_id, request_context=internal_context)
+
     @_bind_bank_id("task_dict", key="bank_id")
     async def execute_task(self, task_dict: dict[str, Any]):
         """
@@ -1930,6 +1952,8 @@ class MemoryEngine(MemoryEngineInterface):
                     await self._handle_graph_maintenance(task_dict)
                 elif task_type == "refresh_mental_model":
                     await self._handle_refresh_mental_model(task_dict)
+                elif task_type == "curate_folder":
+                    await self._handle_curate_folder(task_dict)
                 elif task_type == "webhook_delivery":
                     await self._handle_webhook_delivery(task_dict)
                 else:
@@ -11119,6 +11143,412 @@ class MemoryEngine(MemoryEngineInterface):
 
         return result == "DELETE 1"
 
+    # =====================================================================
+    # KNOWLEDGE BASE (folders + pages over mental models)
+    # =====================================================================
+    # The knowledge base is a tree of folders and pages stored in
+    # ``knowledge_pages``. A page references the mental model holding its content
+    # (``mental_model_id``); a folder is a container (``mental_model_id`` NULL).
+    # Content lives in ``mental_models`` — this layer owns only tree structure.
+
+    @staticmethod
+    def _row_to_knowledge_node(row) -> dict[str, Any]:
+        """Project a knowledge_pages row (optionally joined to its mental model)."""
+        node: dict[str, Any] = {
+            "id": row["id"],
+            "bank_id": row["bank_id"],
+            "parent_id": row["parent_id"],
+            "kind": row["kind"],
+            "name": row["name"],
+            "mental_model_id": row["mental_model_id"],
+            "sort_order": row["sort_order"],
+            "mission": row["mission"] if "mission" in row else None,
+            "managed": (row["managed"] if "managed" in row else False),
+            "last_curated_at": (
+                row["last_curated_at"].isoformat() if "last_curated_at" in row and row["last_curated_at"] else None
+            ),
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+            "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+        }
+        # Page rows are returned LEFT JOINed to mental_models so the OKF
+        # projection (type/tags/description) needs no second round-trip.
+        if "mm_tags" in row:
+            node["tags"] = list(row["mm_tags"] or [])
+            node["source_query"] = row["mm_source_query"]
+            node["last_refreshed_at"] = row["mm_last_refreshed_at"].isoformat() if row["mm_last_refreshed_at"] else None
+        return node
+
+    # Column list for plain (non-joined) knowledge_pages reads/RETURNING.
+    _KP_COLUMNS = (
+        "id, bank_id, parent_id, kind, name, mental_model_id, sort_order, mission, managed, "
+        "last_curated_at, created_at, updated_at"
+    )
+
+    _KP_PAGE_SELECT = (
+        "kp.id, kp.bank_id, kp.parent_id, kp.kind, kp.name, kp.mental_model_id, "
+        "kp.sort_order, kp.mission, kp.managed, kp.last_curated_at, kp.created_at, kp.updated_at, "
+        "mm.tags AS mm_tags, mm.source_query AS mm_source_query, "
+        "mm.last_refreshed_at AS mm_last_refreshed_at"
+    )
+
+    def _kp_join(self) -> str:
+        kp = fq_table("knowledge_pages")
+        mm = fq_table("mental_models")
+        return f"{kp} kp LEFT JOIN {mm} mm ON mm.id = kp.mental_model_id AND mm.bank_id = kp.bank_id"
+
+    async def _kp_assert_folder_parent(self, conn, bank_id: str, parent_id: str | None) -> None:
+        """A non-null parent must be an existing folder in this bank."""
+        if parent_id is None:
+            return
+        row = await conn.fetchrow(
+            f"SELECT kind FROM {fq_table('knowledge_pages')} WHERE bank_id = $1 AND id = $2",
+            bank_id,
+            parent_id,
+        )
+        if row is None:
+            raise ValueError(f"Parent folder '{parent_id}' not found")
+        if row["kind"] != "folder":
+            raise ValueError(f"Parent '{parent_id}' is not a folder")
+
+    async def create_knowledge_folder(
+        self,
+        bank_id: str,
+        name: str,
+        *,
+        parent_id: str | None = None,
+        mission: str | None = None,
+        managed: bool = False,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Create a folder (a container node) in the knowledge base.
+
+        ``mission`` is the curator's steering prompt for the folder; ``managed``
+        marks folders the curator spawned itself (vs. human-created).
+        """
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        folder_id = f"kf-{uuid.uuid4().hex}"
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                await self._ensure_bank_exists(bank_id, request_context, conn=conn)
+                await self._kp_assert_folder_parent(conn, bank_id, parent_id)
+                row = await conn.fetchrow(
+                    f"""
+                    INSERT INTO {fq_table("knowledge_pages")} (id, bank_id, parent_id, kind, name, mission, managed)
+                    VALUES ($1, $2, $3, 'folder', $4, $5, $6)
+                    RETURNING {self._KP_COLUMNS}
+                    """,
+                    folder_id,
+                    bank_id,
+                    parent_id,
+                    name,
+                    mission,
+                    managed,
+                )
+        return self._row_to_knowledge_node(row)
+
+    async def create_knowledge_page(
+        self,
+        bank_id: str,
+        name: str,
+        source_query: str,
+        content: str,
+        *,
+        parent_id: str | None = None,
+        tags: list[str] | None = None,
+        max_tokens: int | None = None,
+        trigger: dict[str, Any] | None = None,
+        mental_model_id: str | None = None,
+        managed: bool = False,
+        request_context: "RequestContext",
+    ) -> dict[str, Any] | None:
+        """Create a page: a backing mental model plus the tree node that refs it.
+
+        ``managed=True`` marks a curator-created page the curator may later
+        merge/delete; human-created pages default to ``managed=False`` (pinned).
+
+        Returns ``None`` when a page with the same name already exists in the same
+        folder (a uniqueness violation, e.g. two concurrent curator runs creating
+        the same page) — the caller should treat that as "already exists".
+        """
+        await self._authenticate_tenant(request_context)
+        # The mental model carries the content (and is created+validated by the
+        # existing path, including lazy bank creation); the node only refs it.
+        mm = await self.create_mental_model(
+            bank_id=bank_id,
+            name=name,
+            source_query=source_query,
+            content=content,
+            mental_model_id=mental_model_id,
+            tags=tags,
+            max_tokens=max_tokens,
+            trigger=trigger,
+            request_context=request_context,
+        )
+        backend = await self._get_backend()
+        page_id = f"kp-{uuid.uuid4().hex}"
+        try:
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    await self._kp_assert_folder_parent(conn, bank_id, parent_id)
+                    row = await conn.fetchrow(
+                        f"""
+                        INSERT INTO {fq_table("knowledge_pages")}
+                            (id, bank_id, parent_id, kind, name, mental_model_id, managed)
+                        VALUES ($1, $2, $3, 'page', $4, $5, $6)
+                        RETURNING {self._KP_COLUMNS}
+                        """,
+                        page_id,
+                        bank_id,
+                        parent_id,
+                        name,
+                        mm["id"],
+                        managed,
+                    )
+        except asyncpg.UniqueViolationError:
+            # Duplicate page name in this folder (uq_kp_folder_pagename). Roll back
+            # by deleting the orphan mental model we just created, then signal the
+            # caller that the page already exists.
+            await self.delete_mental_model(bank_id, mm["id"], request_context=request_context)
+            return None
+        node = self._row_to_knowledge_node(row)
+        # Surface the mental-model metadata so the caller can render OKF or
+        # schedule a content refresh without a second fetch.
+        node["tags"] = list(mm.get("tags") or [])
+        node["source_query"] = mm.get("source_query")
+        node["last_refreshed_at"] = mm.get("last_refreshed_at")
+        return node
+
+    async def list_knowledge_nodes(self, bank_id: str, *, request_context: "RequestContext") -> list[dict[str, Any]]:
+        """Return every folder/page node in the bank (flat; caller builds the tree)."""
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            rows = await conn.fetch(
+                f"""
+                SELECT {self._KP_PAGE_SELECT}
+                FROM {self._kp_join()}
+                WHERE kp.bank_id = $1
+                ORDER BY kp.sort_order, kp.name
+                """,
+                bank_id,
+            )
+        return [self._row_to_knowledge_node(r) for r in rows]
+
+    async def get_knowledge_page(
+        self, bank_id: str, page_id: str, *, request_context: "RequestContext"
+    ) -> dict[str, Any] | None:
+        """Return a page node merged with its mental model's content (for OKF)."""
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"""
+                SELECT {self._KP_PAGE_SELECT}, mm.content AS mm_content
+                FROM {self._kp_join()}
+                WHERE kp.bank_id = $1 AND kp.id = $2 AND kp.kind = 'page'
+                """,
+                bank_id,
+                page_id,
+            )
+        if row is None:
+            return None
+        node = self._row_to_knowledge_node(row)
+        node["content"] = row["mm_content"]
+        return node
+
+    async def rename_knowledge_node(
+        self, bank_id: str, node_id: str, name: str, *, request_context: "RequestContext"
+    ) -> dict[str, Any] | None:
+        """Rename a folder or page node."""
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"""
+                UPDATE {fq_table("knowledge_pages")}
+                SET name = $3, updated_at = now()
+                WHERE bank_id = $1 AND id = $2
+                RETURNING {self._KP_COLUMNS}
+                """,
+                bank_id,
+                node_id,
+                name,
+            )
+        return self._row_to_knowledge_node(row) if row else None
+
+    async def move_knowledge_node(
+        self, bank_id: str, node_id: str, new_parent_id: str | None, *, request_context: "RequestContext"
+    ) -> dict[str, Any] | None:
+        """Re-parent a node, rejecting self-parenting and cycles."""
+        await self._authenticate_tenant(request_context)
+        if new_parent_id == node_id:
+            raise ValueError("A node cannot be its own parent")
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                await self._kp_assert_folder_parent(conn, bank_id, new_parent_id)
+                # Cycle guard: walk up from the new parent; if we reach node_id,
+                # the move would create a loop. Done in Python so the check stays
+                # dialect-agnostic (no recursive CTE).
+                if new_parent_id is not None:
+                    parents = {
+                        r["id"]: r["parent_id"]
+                        for r in await conn.fetch(
+                            f"SELECT id, parent_id FROM {fq_table('knowledge_pages')} WHERE bank_id = $1",
+                            bank_id,
+                        )
+                    }
+                    cursor: str | None = new_parent_id
+                    while cursor is not None:
+                        if cursor == node_id:
+                            raise ValueError("Cannot move a node into its own subtree")
+                        cursor = parents.get(cursor)
+                row = await conn.fetchrow(
+                    f"""
+                    UPDATE {fq_table("knowledge_pages")}
+                    SET parent_id = $3, updated_at = now()
+                    WHERE bank_id = $1 AND id = $2
+                    RETURNING {self._KP_COLUMNS}
+                    """,
+                    bank_id,
+                    node_id,
+                    new_parent_id,
+                )
+        return self._row_to_knowledge_node(row) if row else None
+
+    async def delete_knowledge_node(self, bank_id: str, node_id: str, *, request_context: "RequestContext") -> bool:
+        """Delete a node and its whole subtree, including each page's mental model.
+
+        Deleting the mental models cascades their page rows away (FK ON DELETE
+        CASCADE); deleting the node then cascades any remaining descendant folder
+        rows. The subtree is gathered in Python so the logic is dialect-agnostic.
+        """
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                all_rows = await conn.fetch(
+                    f"SELECT id, parent_id, mental_model_id FROM {fq_table('knowledge_pages')} WHERE bank_id = $1",
+                    bank_id,
+                )
+                by_parent: dict[str | None, list] = {}
+                for r in all_rows:
+                    by_parent.setdefault(r["parent_id"], []).append(r)
+                if not any(r["id"] == node_id for r in all_rows):
+                    return False
+                # BFS the subtree rooted at node_id, collecting page mental models.
+                stack = [node_id]
+                mm_ids: list[str] = []
+                while stack:
+                    current = stack.pop()
+                    for child in by_parent.get(current, []):
+                        stack.append(child["id"])
+                    node_row = next((r for r in all_rows if r["id"] == current), None)
+                    if node_row and node_row["mental_model_id"]:
+                        mm_ids.append(node_row["mental_model_id"])
+                # Delete each backing mental model individually (the subtree is
+                # small) to keep the SQL dialect-neutral — no PG array casts.
+                for mm_id in mm_ids:
+                    await conn.execute(
+                        f"DELETE FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                        bank_id,
+                        mm_id,
+                    )
+                await conn.execute(
+                    f"DELETE FROM {fq_table('knowledge_pages')} WHERE bank_id = $1 AND id = $2",
+                    bank_id,
+                    node_id,
+                )
+        return True
+
+    async def set_folder_mission(
+        self, bank_id: str, folder_id: str, mission: str | None, *, request_context: "RequestContext"
+    ) -> dict[str, Any] | None:
+        """Set (or clear) a folder's curator mission."""
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"""
+                UPDATE {fq_table("knowledge_pages")}
+                SET mission = $3, updated_at = now()
+                WHERE bank_id = $1 AND id = $2 AND kind = 'folder'
+                RETURNING {self._KP_COLUMNS}
+                """,
+                bank_id,
+                folder_id,
+                mission,
+            )
+        return self._row_to_knowledge_node(row) if row else None
+
+    async def list_new_memory_texts(
+        self, bank_id: str, *, since: datetime | None, limit: int, request_context: "RequestContext"
+    ) -> list[str]:
+        """Return source-memory texts (world/experience) created since ``since``.
+
+        The folder curator uses this instead of a semantic recall — it sees the
+        new memories (the delta), like the mental-model refresh's ``created_after``
+        scope. Newest first, capped at ``limit``. ``since=None`` returns the most
+        recent ``limit`` memories (first curation of a folder).
+        """
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        table = fq_table("memory_units")
+        async with acquire_with_retry(backend) as conn:
+            if since is None:
+                rows = await conn.fetch(
+                    f"SELECT text FROM {table} WHERE bank_id = $1 AND fact_type IN ('world', 'experience') "
+                    f"ORDER BY created_at DESC LIMIT $2",
+                    bank_id,
+                    limit,
+                )
+            else:
+                rows = await conn.fetch(
+                    f"SELECT text FROM {table} WHERE bank_id = $1 AND fact_type IN ('world', 'experience') "
+                    f"AND created_at > $2 ORDER BY created_at DESC LIMIT $3",
+                    bank_id,
+                    since,
+                    limit,
+                )
+        return [r["text"] for r in rows]
+
+    async def mark_folder_curated(self, bank_id: str, folder_id: str, *, request_context: "RequestContext") -> None:
+        """Stamp a folder's ``last_curated_at`` watermark to now (after a curation run)."""
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"UPDATE {fq_table('knowledge_pages')} SET last_curated_at = now() WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                folder_id,
+            )
+
+    async def curate_folder(
+        self, bank_id: str, folder_id: str, *, request_context: "RequestContext", dry_run: bool = False
+    ):
+        """Run the mission-driven curator for a single folder (see knowledge_curator).
+
+        This is the synchronous worker-side entry point (called by the
+        ``curate_folder`` task handler). Callers that want it to run in the
+        background should use :meth:`submit_async_curate_folder` instead.
+
+        Serialized per folder: the folder-create trigger and the post-consolidation
+        sweep can both fire for the same folder, and without this lock they race —
+        both read ``last_curated_at`` before either advances it and create the same
+        pages twice. The lock makes the second run see the advanced watermark (and
+        the pages the first run created), so it no-ops. In-process only; a multi-
+        worker deployment would also need a DB advisory lock.
+        """
+        await self._authenticate_tenant(request_context)
+        from .knowledge_curator import curate_folder as _curate_folder
+
+        if not hasattr(self, "_curate_locks"):
+            self._curate_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        lock = self._curate_locks.setdefault((bank_id, folder_id), asyncio.Lock())
+        async with lock:
+            return await _curate_folder(self, bank_id, folder_id, request_context=request_context, dry_run=dry_run)
+
     async def compute_mental_model_is_stale(
         self,
         conn,
@@ -12847,3 +13277,52 @@ class MemoryEngine(MemoryEngineInterface):
             result_metadata={"mental_model_id": mental_model_id, "name": mental_model["name"]},
             dedupe_by_bank=False,
         )
+
+    async def submit_async_curate_folder(
+        self, bank_id: str, folder_id: str, *, request_context: "RequestContext"
+    ) -> dict[str, Any]:
+        """Schedule a background curation run for one knowledge-base folder.
+
+        Returns ``{"operation_id": None}`` without scheduling when no LLM provider
+        is configured (curation needs the LLM, and this path is auto-triggered, so
+        a missing provider should be a silent no-op rather than an error).
+        """
+        if self._llm_config.provider == "none":
+            return {"operation_id": None}
+
+        await self._authenticate_tenant(request_context)
+        task_payload: dict[str, Any] = {"folder_id": folder_id}
+        if request_context.tenant_id:
+            task_payload["_tenant_id"] = request_context.tenant_id
+        if request_context.api_key_id:
+            task_payload["_api_key_id"] = request_context.api_key_id
+
+        return await self._submit_async_operation(
+            bank_id=bank_id,
+            operation_type="curate_folder",
+            task_type="curate_folder",
+            task_payload=task_payload,
+            result_metadata={"folder_id": folder_id},
+            dedupe_by_bank=False,
+        )
+
+    async def submit_async_curate_bank_folders(self, bank_id: str, *, request_context: "RequestContext") -> int:
+        """Schedule background curation for every mission-bearing folder (capped).
+
+        Used by the post-consolidation hook: each folder with a mission gets its
+        own ``curate_folder`` task so they run independently in the background.
+        Returns the number of curation tasks submitted.
+        """
+        from .knowledge_curator import MAX_FOLDERS_PER_RUN
+
+        await self._authenticate_tenant(request_context)
+        nodes = await self.list_knowledge_nodes(bank_id, request_context=request_context)
+        folders = [n for n in nodes if n.get("kind") == "folder" and n.get("mission")][:MAX_FOLDERS_PER_RUN]
+        submitted = 0
+        for folder in folders:
+            try:
+                await self.submit_async_curate_folder(bank_id, folder["id"], request_context=request_context)
+                submitted += 1
+            except Exception as e:
+                logger.warning("Failed to schedule curation for %s/%s: %s", bank_id, folder["id"], e)
+        return submitted

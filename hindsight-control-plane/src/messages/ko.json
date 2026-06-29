@@ -147,7 +147,8 @@
       "memoryBank": "메모리 뱅크",
       "expandSidebar": "사이드바 펼치기",
       "collapseSidebar": "사이드바 접기",
-      "collapse": "접기"
+      "collapse": "접기",
+      "knowledge": "Knowledge base"
     },
     "overviewAndOperations": "이 메모리 뱅크의 개요 통계 및 백그라운드 작업.",
     "operations": "작업",
@@ -1712,7 +1713,55 @@
         "update": "Webhook을 업데이트하지 못했습니다",
         "delete": "Webhook을 삭제하지 못했습니다",
         "deliveries": "Webhook 전달 내역을 가져오지 못했습니다"
+      },
+      "knowledgeBase": {
+        "tree": "Failed to fetch knowledge base tree",
+        "graph": "Failed to fetch knowledge base graph",
+        "export": "Failed to export knowledge base",
+        "createFolder": "Failed to create folder",
+        "createPage": "Failed to create page",
+        "fetchPage": "Failed to fetch knowledge page",
+        "updateNode": "Failed to update node",
+        "deleteNode": "Failed to delete node"
       }
     }
+  },
+  "knowledgeBase": {
+    "title": "Knowledge base",
+    "description": "Organize your knowledge into folders and pages, linked by shared tags.",
+    "loading": "Loading knowledge base…",
+    "loadingPage": "Loading page…",
+    "empty": "No folders or pages yet.",
+    "emptyHint": "Create a folder or a page to get started.",
+    "viewTree": "Tree",
+    "viewGraph": "Graph",
+    "newFolder": "New folder",
+    "newPage": "New page",
+    "exportButton": "Export OKF bundle",
+    "count": "{folders} folders · {pages} pages",
+    "graphCount": "{pages} pages · {links} shared-tag links",
+    "sizeLegendLabel": "shared-tag links",
+    "updatedLabel": "Updated",
+    "close": "Close",
+    "noBody": "This page has no content yet.",
+    "deleteConfirm": "Delete \"{name}\" and everything inside it?",
+    "deleteButton": "Delete",
+    "cancel": "Cancel",
+    "create": "Create",
+    "creating": "Creating…",
+    "fieldName": "Name",
+    "fieldSourceQuery": "Source query (the question that rebuilds this page)",
+    "fieldParent": "Parent folder",
+    "rootFolder": "Root",
+    "selectPagePrompt": "Select a page to read it.",
+    "createFolderTitle": "New folder",
+    "createPageTitle": "New page",
+    "fieldMission": "Mission (what this folder should collect)",
+    "missionPlaceholder": "e.g. Track all incidents for the payments service",
+    "editMissionTitle": "Edit folder mission",
+    "editMission": "Edit mission",
+    "saveMission": "Save mission",
+    "autoBadge": "auto",
+    "missionNone": "No mission set"
   }
 }
