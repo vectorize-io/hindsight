@@ -275,7 +275,7 @@ export default function ConfigPage() {
                   <div className="space-y-3">
                     {providers.map((provider) => (
                       <div
-                        key={provider.name}
+                        key={`${provider.type}-${provider.name}`}
                         className="flex items-center justify-between p-4 rounded-lg border bg-card hover:bg-accent/50 transition-colors"
                       >
                         <div className="flex items-start gap-3">
