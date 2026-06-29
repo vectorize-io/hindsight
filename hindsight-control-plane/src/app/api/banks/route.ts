@@ -1,44 +1,31 @@
 import { NextResponse } from "next/server";
-import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { sdk, lowLevelClient } from "@/lib/hindsight-client";
-import { respondWithSdk } from "@/lib/sdk-response";
+import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
 
-const HTTP_CREATED = 201;
+export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
-  const response = await sdk.listBanks({ client: lowLevelClient });
-  return respondWithSdk(response, "Failed to fetch banks", { request });
-}
-
-export async function POST(request: Request) {
-  let body;
+export async function GET() {
   try {
-    body = await request.json();
-  } catch {
+    const url = `${DATAPLANE_URL}/v1/default/banks`;
+    const response = await fetch(url, {
+      headers: getDataplaneHeaders(),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Dataplane returned ${response.status}`);
+    }
+
+    const data = await response.json();
+    const banks = data.banks || data || [];
+    return NextResponse.json({
+      banks,
+      count: Array.isArray(banks) ? banks.length : 0,
+    });
+  } catch (error) {
+    console.error("Error fetching banks:", error);
     return NextResponse.json(
-      localizeApiErrorPayload(request, {
-        error: "Invalid JSON body",
-        errorKey: "api.errors.auth.invalidRequestBody",
-      }),
-      { status: 400 }
+      { banks: [], count: 0, error: "Failed to fetch banks" },
+      { status: 500 }
     );
   }
-  const { bank_id } = body;
-
-  if (!bank_id) {
-    return NextResponse.json(
-      localizeApiErrorPayload(request, {
-        error: "bank_id is required",
-        errorKey: "api.errors.validation.bankIdRequired",
-      }),
-      { status: 400 }
-    );
-  }
-
-  const response = await sdk.createOrUpdateBank({
-    client: lowLevelClient,
-    path: { bank_id },
-    body: {},
-  });
-  return respondWithSdk(response, "Failed to create bank", HTTP_CREATED, { request });
 }
