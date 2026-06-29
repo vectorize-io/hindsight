@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { stringifyFrontmatter, parseDocument, type Frontmatter } from "../src/frontmatter.js";
-import { renderMentalModel, fileNameFor } from "../src/format.js";
+import { slug, planMirror } from "../src/format.js";
+import type { KnowledgeSnapshot } from "../src/client.js";
 
 describe("frontmatter", () => {
   it("round-trips scalars and arrays", () => {
@@ -39,35 +40,40 @@ describe("frontmatter", () => {
   });
 });
 
-describe("renderMentalModel", () => {
-  it("emits frontmatter + content body", () => {
-    const md = renderMentalModel({
-      id: "team-comms",
-      bank_id: "acme",
-      name: "Team Comms",
-      tags: ["team"],
-      source_query: "How does the team communicate?",
-      content: "The team prefers async updates.",
-      last_refreshed_at: "2026-01-01T00:00:00Z",
-      created_at: "2025-12-01T00:00:00Z",
-      is_stale: false,
-    });
-    const parsed = parseDocument(md);
-    expect(parsed.frontmatter.id).toBe("team-comms");
-    expect(parsed.frontmatter.bank).toBe("acme");
-    expect(parsed.frontmatter.is_stale).toBe(false);
-    expect(parsed.body.trim()).toBe("The team prefers async updates.");
-  });
-
-  it("uses a placeholder when content is empty", () => {
-    const md = renderMentalModel({ id: "x", bank_id: "b", name: "X", content: "" });
-    expect(md).toContain("has not been generated yet");
+describe("slug", () => {
+  it("produces safe path segments", () => {
+    expect(slug("user-preferences")).toBe("user-preferences");
+    expect(slug("Weird Name!!")).toBe("weird-name");
+    expect(slug("Billing Policy")).toBe("billing-policy");
+    expect(slug("")).toBe("untitled");
   });
 });
 
-describe("fileNameFor", () => {
-  it("produces safe markdown filenames", () => {
-    expect(fileNameFor("user-preferences")).toBe("user-preferences.md");
-    expect(fileNameFor("Weird Name!!")).toBe("weird-name.md");
+describe("planMirror", () => {
+  it("nests pages under folder dirs and uses the page's OKF content", () => {
+    const snapshot: KnowledgeSnapshot = {
+      roots: [
+        {
+          id: "f1",
+          kind: "folder",
+          name: "Policies",
+          parent_id: null,
+          children: [{ id: "p1", kind: "page", name: "Billing", parent_id: "f1", children: [] }],
+        },
+        { id: "p2", kind: "page", name: "Glossary", parent_id: null, children: [] },
+      ],
+      content: new Map([["p1", "# Billing\n\nNet-30.\n"]]), // p2 intentionally has no content
+    };
+
+    const plan = planMirror(snapshot);
+    expect(plan.folderCount).toBe(1);
+    expect(plan.pageCount).toBe(2);
+    expect(plan.dirs).toEqual(["policies"]);
+
+    const billing = plan.files.find((f) => f.relPath === "policies/billing.md");
+    expect(billing?.content).toContain("Net-30.");
+
+    const glossary = plan.files.find((f) => f.relPath === "glossary.md");
+    expect(glossary?.content).toContain("has not been generated yet"); // placeholder
   });
 });
