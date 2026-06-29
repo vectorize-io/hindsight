@@ -1,0 +1,45 @@
+{
+  "name": "@vectorize-io/hindsight-fs",
+  "version": "0.1.0",
+  "description": "Mount a Hindsight memory bank's mental models as a live, auto-refreshing local folder of markdown files — ls, cat, grep and friends just work.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "hindsight-fs": "dist/cli.js",
+    "hsfs": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "pretest": "tsc",
+    "test": "vitest run tests",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "ai-agents",
+    "hindsight",
+    "memory",
+    "mental-models",
+    "filesystem",
+    "markdown",
+    "cli"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vectorize-io/hindsight.git",
+    "directory": "hindsight-tools/hindsight-fs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.4",
+    "vitest": "^4.1.2"
+  }
+}
