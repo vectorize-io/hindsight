@@ -98,7 +98,7 @@ _DEDUP_TOP_K = 5
 class _DedupDecision(BaseModel):
     """Focused 1-by-1 verdict for whether a new observation duplicates an existing one."""
 
-    action: Literal["merge", "keep"]
+    action: Literal["merge", "keep"] = "keep"
     text: str = ""  # the synthesized merged observation (when action == "merge")
     reason: str = ""
 
