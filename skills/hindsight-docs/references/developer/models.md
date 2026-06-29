@@ -35,6 +35,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - Atlas Cloud
 - Volcano Engine
 - OpenRouter
+- Requesty
 - OpenAI Codex
 - Claude Code
 - AWS Bedrock
@@ -94,6 +95,7 @@ Beyond basic generation, some providers support optional features that lower cos
 | Atlas Cloud (`atlas`) | — | — |
 | Volcano Engine (`volcano`) | — | — |
 | OpenRouter (`openrouter`) | — | — |
+| Requesty (`requesty`) | — | — |
 | OpenAI Codex (`openai-codex`) | — | — |
 | Claude Code (`claude-code`) | — | — |
 | AWS Bedrock (`bedrock`) | — | — |
@@ -156,6 +158,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `atlas` | `deepseek-ai/deepseek-v4-pro` |
 | `volcano` | `doubao-pro-32k` |
 | `openrouter` | `qwen/qwen3.5-9b` |
+| `requesty` | `openai/gpt-4o-mini` |
 | `openai-codex` | `gpt-5.4-mini` |
 | `claude-code` | `claude-sonnet-4-5-20250929` |
 | `bedrock` | `us.amazon.nova-2-lite-v1:0` |
