@@ -579,11 +579,16 @@ async def test_export_import_observations(memory, request_context):
         source_ids = [uuid.UUID(str(i["id"])) for i in units["items"][:2]]
         assert len(source_ids) == 2
 
-        # Create a real observation over those source facts.
+        # Create a real observation over those source facts. The helper now self-acquires a
+        # short-lived connection (embed runs off-connection), so we pass the backend, not a conn.
         backend = await memory._get_backend()
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                await _create_observation_directly(conn, memory, src, source_ids, "Alice and Bob are colleagues.")
+        await _create_observation_directly(
+            pool=backend,
+            memory_engine=memory,
+            bank_id=src,
+            source_memory_ids=source_ids,
+            observation_text="Alice and Bob are colleagues.",
+        )
 
         # Export WITHOUT observations -> none in the archive (the bank may also
         # contain auto-consolidation observations; the flag is what gates them).

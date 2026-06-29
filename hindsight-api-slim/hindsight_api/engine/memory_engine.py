@@ -45,7 +45,7 @@ from ..worker.exceptions import DeferOperation, RetryTaskAt
 from ..worker.stage import set_stage
 from .audit import AuditLogger, audit_context
 from .bank_stats_cache import BankStatsCache
-from .db import DatabaseBackend, create_database_backend
+from .db import DatabaseBackend, ResultRow, create_database_backend
 from .db_budget import budgeted_operation
 from .llm_interface import ProviderRateLimitResetError
 from .llm_trace import (
@@ -837,6 +837,41 @@ def _overlay_bank_config_disposition_mission(
         "empathy": cfg_emp if cfg_emp is not None else disposition["empathy"],
     }
     return ResolvedDispositionMission(disposition=resolved_disposition, mission=resolved_mission)
+
+
+@dataclass
+class _MemoryEditPlan:
+    """Inputs for the edit path of update_memory_unit, carried from the read/resolve
+    phase to the short write transaction so the embedding is computed off-connection."""
+
+    new_text: str
+    new_context: str | None
+    new_fact: str
+    new_occ_start: datetime | None
+    new_occ_end: datetime | None
+    new_event_date: datetime | None
+    # Entity ids resolved for the unit when ``entities`` is being changed; None when the
+    # edit leaves the unit's entity set untouched.
+    resolved_for_unit: list[uuid.UUID] | None
+    entity_date: datetime | None
+    mentioned_at: datetime | None
+    # Canonical entity names the embedding was built from, used to detect a concurrent
+    # entity-only edit when the row is re-locked in the write transaction.
+    names: list[str]
+    # Phase-1 snapshot Record of the row's editable columns (text/context/fact_type/event_date/
+    # occurred_start/occurred_end/mentioned_at). Re-locked and compared in the write transaction
+    # to abort if a concurrent edit changed any of them while the embedder ran off-connection.
+    live_row: ResultRow
+    embedding: str | None = None
+
+
+@dataclass
+class _MemoryRevertPlan:
+    """Inputs for the revert path of update_memory_unit (see _MemoryEditPlan)."""
+
+    arch_row: ResultRow | None  # row snapshot (text/occurred_*/mentioned_at/entity_ids), or None
+    names: list[str]
+    embedding: str | None = None
 
 
 class MemoryEngine(MemoryEngineInterface):
@@ -6449,10 +6484,22 @@ class MemoryEngine(MemoryEngineInterface):
 
         need_consolidation = False
         need_graph = False
-        found = False
+        entities_maybe_committed = False  # resolve_entities_only may autocommit entities off-txn (Phase 1)
+        edit_relinked = False  # the Phase-2 edit branch ran its writes (set in-txn)
+        phase2_committed = False  # the Phase-2 write transaction committed without raising
 
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
+        # -- Phase 1: read current state + compute embeddings OFF any write
+        # transaction. A slow embedder must never pin a pooled connection, so all
+        # embed work happens here, between two short-lived connections. Entity
+        # resolution (idempotent find-or-create) also runs here; the canonical
+        # names it yields feed the embedding. The authoritative writes happen in
+        # the Phase-2 transaction, which re-locks the row and applies the
+        # precomputed embedding + resolved entity set atomically.
+        edit_plan: _MemoryEditPlan | None = None
+        revert_plan: _MemoryRevertPlan | None = None
+
+        try:
+            async with acquire_with_retry(backend) as conn:
                 live = await conn.fetchrow(
                     f"SELECT text, context, fact_type, event_date, occurred_start, occurred_end, mentioned_at "
                     f"FROM {mu} WHERE id = $1 AND bank_id = $2",
@@ -6469,22 +6516,12 @@ class MemoryEngine(MemoryEngineInterface):
                 record = live or archived
                 if record is None:
                     return None
-                found = True
                 current_fact_type = record["fact_type"]
                 if current_fact_type not in ("experience", "world"):
                     raise ValueError(
                         f"Memory '{memory_id}' is a {current_fact_type}; only world/experience facts can be "
                         "curated. Observations are derived and regenerate from their sources."
                     )
-
-                collist = await self._memory_unit_columns(conn)
-                # The archive is cold storage, never a recall surface, so the schema gives it
-                # no `embedding` column at all (dropped in d4f6a8c2e1b3). The move in/out is
-                # therefore over every memory_units column EXCEPT embedding; on revert the
-                # embedding is recomputed from the unit's text/dates/entities below. This makes
-                # a model switch (which re-dimensions memory_units) structurally unable to trip
-                # a vector-dimension mismatch on the INSERT … SELECT round-trip (#2209).
-                arch_cols = ", ".join(c for c in (s.strip() for s in collist.split(",")) if c != '"embedding"')
 
                 # --- Edit fields (live rows only): text / context / dates / fact_type / entities ---
                 doing_edit = any(
@@ -6504,13 +6541,19 @@ class MemoryEngine(MemoryEngineInterface):
                     # tracks the occurred start when it's set.
                     new_event_date = new_occ_start or live["event_date"]
 
-                    # Rebuild the unit's entity set FIRST, so the re-embed below picks
-                    # up the corrected canonical names. Reuses retain's resolver
-                    # (find-or-create + cooccurrence) rather than touching entities
-                    # directly. Orphaned entities + stale cooccurrence are swept by
-                    # the graph-maintenance run this edit submits.
+                    # Resolve the corrected entity set (find-or-create + cooccurrence) so
+                    # the re-embed picks up the canonical names. resolve_entities_only is
+                    # idempotent and designed to run outside the write txn; the Phase-2
+                    # relink writes exactly this resolved set, keeping the stored
+                    # embedding consistent with the linked entities.
+                    resolved_for_unit: list[uuid.UUID] | None = None
+                    entity_date = None
                     if new_entities is not None:
                         entity_date = new_occ_start or live["mentioned_at"]
+                        # resolve_entities_only autocommits new entities OUTSIDE the Phase-2 txn. Set
+                        # this before the call so the failure-path cleanup also covers the resolver
+                        # itself raising after autocommitting some entities.
+                        entities_maybe_committed = True
                         _resolved_ids, _e2u, unit_to_entity_ids = await resolve_entities_only(
                             self.entity_resolver,
                             conn,
@@ -6522,163 +6565,394 @@ class MemoryEngine(MemoryEngineInterface):
                             [[{"text": name, "type": "CONCEPT"} for name in new_entities]],
                             entity_labels=entity_labels,
                         )
-                        await conn.execute(f"DELETE FROM {ue} WHERE unit_id = $1", str(memory_uuid))
                         resolved_for_unit = unit_to_entity_ids.get(str(memory_uuid), [])
-                        if resolved_for_unit:
-                            await self.entity_resolver.link_units_to_entities_batch(
-                                [(str(memory_uuid), eid, entity_date) for eid in resolved_for_unit],
-                                conn=conn,
+                        name_rows = (
+                            await conn.fetch(
+                                f"SELECT canonical_name FROM {ent} WHERE id = ANY($1::uuid[]) AND bank_id = $2 ORDER BY id",
+                                resolved_for_unit,
+                                bank_id,
                             )
-
-                    ent_rows = await conn.fetch(
-                        f"SELECT e.canonical_name FROM {ue} ue JOIN {ent} e ON ue.entity_id = e.id "
-                        f"WHERE ue.unit_id = $1",
-                        str(memory_uuid),
-                    )
-                    new_emb = await self._reembed_memory_text(
-                        text=new_text,
-                        occurred_start=new_occ_start,
-                        occurred_end=new_occ_end,
+                            if resolved_for_unit
+                            else []
+                        )
+                    else:
+                        name_rows = await conn.fetch(
+                            f"SELECT e.canonical_name FROM {ue} ue JOIN {ent} e ON ue.entity_id = e.id "
+                            f"WHERE ue.unit_id = $1 ORDER BY e.id",
+                            str(memory_uuid),
+                        )
+                    edit_plan = _MemoryEditPlan(
+                        new_text=new_text,
+                        new_context=new_context,
+                        new_fact=new_fact,
+                        new_occ_start=new_occ_start,
+                        new_occ_end=new_occ_end,
+                        new_event_date=new_event_date,
+                        resolved_for_unit=resolved_for_unit,
+                        entity_date=entity_date,
                         mentioned_at=live["mentioned_at"],
-                        entities=[r["canonical_name"] for r in ent_rows],
-                    )
-                    await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
-                    await conn.execute(
-                        f"""
-                        UPDATE {mu}
-                        SET text = $3, context = $4, fact_type = $5, occurred_start = $6,
-                            occurred_end = $7, event_date = $8, embedding = $9::vector,
-                            consolidated_at = NULL, consolidation_failed_at = NULL,
-                            edited_at = now(), updated_at = now()
-                        WHERE id = $1 AND bank_id = $2
-                        """,
-                        str(memory_uuid),
-                        bank_id,
-                        new_text,
-                        new_context,
-                        new_fact,
-                        new_occ_start,
-                        new_occ_end,
-                        new_event_date,
-                        new_emb,
-                    )
-                    await conn.execute(f"DELETE FROM {ml} WHERE from_unit_id = $1 OR to_unit_id = $1", str(memory_uuid))
-                    await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
-                    need_consolidation = True
-                    need_graph = True
-
-                # --- Invalidate: move live → archive ---
-                if state == "invalidated" and live:
-                    entity_ids = [
-                        r["entity_id"]
-                        for r in await conn.fetch(f"SELECT entity_id FROM {ue} WHERE unit_id = $1", str(memory_uuid))
-                    ]
-                    # Capture relink victims BEFORE the row (and its links) disappear.
-                    await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
-                    await conn.execute(
-                        f"INSERT INTO {arch} ({arch_cols}, invalidation_reason, invalidated_at, entity_ids) "
-                        f"SELECT {arch_cols}, $2, now(), $3::uuid[] FROM {mu} WHERE id = $1 AND bank_id = $4",
-                        str(memory_uuid),
-                        reason,
-                        entity_ids,
-                        bank_id,
-                    )
-                    # Cascade prunes unit_entities + memory_links; sweep runs after
-                    # the delete so it also catches a racing observation insert.
-                    await conn.execute(f"DELETE FROM {mu} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id)
-                    await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
-                    need_consolidation = True
-                    need_graph = True
-                elif state == "invalidated" and archived and reason is not None:
-                    # Already archived — just update the recorded reason.
-                    await conn.execute(
-                        f"UPDATE {arch} SET invalidation_reason = $3 WHERE id = $1 AND bank_id = $2",
-                        str(memory_uuid),
-                        bank_id,
-                        reason,
+                        names=[r["canonical_name"] for r in name_rows],
+                        live_row=live,
                     )
 
-                # --- Revert: move archive → live ---
+                # --- Revert prep (archived rows): gather the archive snapshot the
+                # re-embed needs. The move copies the archive row verbatim minus the
+                # embedding, so its text/dates ARE the reverted values. ---
                 elif state == "valid" and archived:
                     arch_row = await conn.fetchrow(
-                        f"SELECT entity_ids FROM {arch} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id
-                    )
-                    # The archive has no embedding column (see arch_cols above), so the live
-                    # row's embedding defaults to NULL on the way back and is recomputed below
-                    # once entities are restored.
-                    await conn.execute(
-                        f"INSERT INTO {mu} ({arch_cols}) SELECT {arch_cols} FROM {arch} WHERE id = $1 AND bank_id = $2",
+                        f"SELECT text, occurred_start, occurred_end, mentioned_at, entity_ids "
+                        f"FROM {arch} WHERE id = $1 AND bank_id = $2",
                         str(memory_uuid),
                         bank_id,
                     )
-                    # Re-consolidate from scratch; links are rebuilt by graph maintenance.
-                    await conn.execute(
-                        f"UPDATE {mu} SET consolidated_at = NULL, consolidation_failed_at = NULL, updated_at = now() "
-                        f"WHERE id = $1 AND bank_id = $2",
-                        str(memory_uuid),
-                        bank_id,
-                    )
-                    # Restore entity associations for entities that still exist (some may
-                    # have been pruned as orphans after the original move).
-                    if arch_row and arch_row["entity_ids"]:
-                        await conn.execute(
-                            f"INSERT INTO {ue} (unit_id, entity_id) "
-                            f"SELECT $1, eid FROM unnest($2::uuid[]) AS eid "
-                            f"WHERE EXISTS (SELECT 1 FROM {ent} e WHERE e.id = eid AND e.bank_id = $3) "
-                            f"ON CONFLICT DO NOTHING",
-                            str(memory_uuid),
-                            arch_row["entity_ids"],
+                    rev_entity_ids = list(arch_row["entity_ids"]) if (arch_row and arch_row["entity_ids"]) else []
+                    rev_name_rows = (
+                        await conn.fetch(
+                            f"SELECT canonical_name FROM {ent} WHERE id = ANY($1::uuid[]) AND bank_id = $2 ORDER BY id",
+                            rev_entity_ids,
                             bank_id,
                         )
-                    # Recompute the embedding (the archive doesn't keep one) so the reverted
-                    # unit is searchable again, using the now-current model's dimension and the
-                    # restored entity set — mirroring how an edit re-embeds.
-                    reverted = await conn.fetchrow(
-                        f"SELECT text, occurred_start, occurred_end, mentioned_at FROM {mu} "
-                        f"WHERE id = $1 AND bank_id = $2",
+                        if rev_entity_ids
+                        else []
+                    )
+                    revert_plan = _MemoryRevertPlan(
+                        arch_row=arch_row,
+                        names=[r["canonical_name"] for r in rev_name_rows],
+                    )
+
+            # -- Embed OFF any connection --
+            if edit_plan is not None:
+                edit_plan.embedding = await self._reembed_memory_text(
+                    text=edit_plan.new_text,
+                    occurred_start=edit_plan.new_occ_start,
+                    occurred_end=edit_plan.new_occ_end,
+                    mentioned_at=edit_plan.mentioned_at,
+                    entities=edit_plan.names,
+                )
+            if revert_plan is not None and revert_plan.arch_row is not None:
+                ar = revert_plan.arch_row
+                revert_plan.embedding = await self._reembed_memory_text(
+                    text=ar["text"],
+                    occurred_start=ar["occurred_start"],
+                    occurred_end=ar["occurred_end"],
+                    mentioned_at=ar["mentioned_at"],
+                    entities=revert_plan.names,
+                )
+
+            # -- Phase 2: short write transaction -- all visible mutations atomic --
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    # Re-lock the target under the write txn. Moving the embed out
+                    # widened the stale-snapshot window, so we revalidate existence
+                    # here and skip cleanly if the row was concurrently moved/deleted.
+                    live2 = await conn.fetchrow(
+                        f"SELECT text, context, fact_type, event_date, occurred_start, occurred_end, mentioned_at "
+                        f"FROM {mu} WHERE id = $1 AND bank_id = $2 FOR UPDATE",
                         str(memory_uuid),
                         bank_id,
                     )
-                    if reverted:
-                        ent_rows = await conn.fetch(
+                    archived2 = None
+                    if not live2:
+                        archived2 = await conn.fetchrow(
+                            f"SELECT text, occurred_start, occurred_end, mentioned_at, entity_ids "
+                            f"FROM {arch} WHERE id = $1 AND bank_id = $2 FOR UPDATE",
+                            str(memory_uuid),
+                            bank_id,
+                        )
+
+                    # Column list for the archive <-> live moves (only invalidate/revert need it).
+                    arch_cols = None
+                    if state in ("invalidated", "valid") and (live2 or archived2):
+                        collist = await self._memory_unit_columns(conn)
+                        arch_cols = ", ".join(c for c in (s.strip() for s in collist.split(",")) if c != '"embedding"')
+
+                    # --- Apply edit (live rows only) ---
+                    if edit_plan is not None and live2:
+                        # Abort if a concurrent edit changed any embedding-/resolution-input column while
+                        # the embedder ran off-connection: applying the precomputed embedding + resolved
+                        # entities would clobber the concurrent writer with stale-derived data. Roll back
+                        # the txn for a cheap retry. Background paths never touch these columns
+                        # (consolidation writes only consolidated_at; graph maintenance only entities),
+                        # so only a competing edit trips this.
+                        snap = edit_plan.live_row
+                        if (
+                            live2["text"],
+                            live2["context"],
+                            live2["fact_type"],
+                            live2["event_date"],
+                            live2["occurred_start"],
+                            live2["occurred_end"],
+                            live2["mentioned_at"],
+                        ) != (
+                            snap["text"],
+                            snap["context"],
+                            snap["fact_type"],
+                            snap["event_date"],
+                            snap["occurred_start"],
+                            snap["occurred_end"],
+                            snap["mentioned_at"],
+                        ):
+                            raise RuntimeError(
+                                f"update_memory_unit: memory {memory_id} was modified concurrently "
+                                f"between read and write; retry the edit"
+                            )
+                        edit_embedding = edit_plan.embedding
+                        if edit_plan.resolved_for_unit is not None:
+                            # Entities are being changed: rebuild unit_entities to the resolved set.
+                            # Phase 1 resolved (and autocommitted) these entities OFF any txn, so until
+                            # we link them they are committed orphans a concurrent graph-maintenance
+                            # prune can delete. link_units_to_entities_batch is a plain FK INSERT, so a
+                            # prune between a non-locking check and the insert would FK-fail. Lock the
+                            # resolved rows FOR UPDATE (the prune's DELETE then blocks until we commit,
+                            # by which point the link exists and the row is no longer an orphan) and link
+                            # EXACTLY the locked ids. ORDER BY id keeps a stable lock order.
+                            await conn.execute(f"DELETE FROM {ue} WHERE unit_id = $1", str(memory_uuid))
+                            link_ids = list(edit_plan.resolved_for_unit)
+                            if link_ids:
+                                locked = await conn.fetch(
+                                    f"SELECT id, canonical_name FROM {ent} "
+                                    f"WHERE id = ANY($1::uuid[]) AND bank_id = $2 ORDER BY id FOR UPDATE",
+                                    link_ids,
+                                    bank_id,
+                                )
+                                if {r["id"] for r in locked} != set(link_ids):
+                                    # Some resolved entities were pruned before we locked them. Re-resolve
+                                    # under the lock (rows recreated here live in this txn, unprunable),
+                                    # re-lock the fresh id set, and re-embed from the locked names.
+                                    assert new_entities is not None  # set whenever resolved_for_unit is not None
+                                    _ri, _e2u, u2e = await resolve_entities_only(
+                                        self.entity_resolver,
+                                        conn,
+                                        bank_id,
+                                        [str(memory_uuid)],
+                                        [edit_plan.new_text],
+                                        edit_plan.new_context or "",
+                                        [edit_plan.entity_date],
+                                        [[{"text": name, "type": "CONCEPT"} for name in new_entities]],
+                                        entity_labels=entity_labels,
+                                    )
+                                    link_ids = u2e.get(str(memory_uuid), [])
+                                    locked = (
+                                        await conn.fetch(
+                                            f"SELECT id, canonical_name FROM {ent} "
+                                            f"WHERE id = ANY($1::uuid[]) AND bank_id = $2 ORDER BY id FOR UPDATE",
+                                            link_ids,
+                                            bank_id,
+                                        )
+                                        if link_ids
+                                        else []
+                                    )
+                                    if {r["id"] for r in locked} != set(link_ids):
+                                        # A found-existing entity was pruned again in the sub-statement
+                                        # gap before this second lock. Abort rather than commit a partial
+                                        # set: the txn rolls back and the finally-block sweep reclaims
+                                        # orphans; the caller can retry.
+                                        raise RuntimeError(
+                                            f"update_memory_unit: entity set for {memory_id} changed under "
+                                            f"concurrent graph maintenance; retry the edit"
+                                        )
+                                    edit_embedding = await self._reembed_memory_text(
+                                        text=edit_plan.new_text,
+                                        occurred_start=edit_plan.new_occ_start,
+                                        occurred_end=edit_plan.new_occ_end,
+                                        mentioned_at=edit_plan.mentioned_at,
+                                        entities=[r["canonical_name"] for r in locked],
+                                    )
+                                locked_ids = [r["id"] for r in locked]
+                                if locked_ids:
+                                    await self.entity_resolver.link_units_to_entities_batch(
+                                        [(str(memory_uuid), eid, edit_plan.entity_date) for eid in locked_ids],
+                                        conn=conn,
+                                    )
+                        else:
+                            # Entities are NOT changing here, so the precomputed embedding used the
+                            # unit's Phase-1 entity names. Re-read them under the lock: a concurrent
+                            # entity-only edit between the phases could have changed the set, which
+                            # would leave the embedding naming stale entities. Only on that (rare)
+                            # mismatch do we re-embed in-txn, keeping the stored embedding consistent
+                            # with the committed unit_entities.
+                            locked_rows = await conn.fetch(
+                                f"SELECT e.canonical_name FROM {ue} ue JOIN {ent} e ON ue.entity_id = e.id "
+                                f"WHERE ue.unit_id = $1 ORDER BY e.id",
+                                str(memory_uuid),
+                            )
+                            locked_names = [r["canonical_name"] for r in locked_rows]
+                            if locked_names != edit_plan.names:
+                                edit_embedding = await self._reembed_memory_text(
+                                    text=edit_plan.new_text,
+                                    occurred_start=edit_plan.new_occ_start,
+                                    occurred_end=edit_plan.new_occ_end,
+                                    mentioned_at=edit_plan.mentioned_at,
+                                    entities=locked_names,
+                                )
+                        await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
+                        await conn.execute(
+                            f"""
+                            UPDATE {mu}
+                            SET text = $3, context = $4, fact_type = $5, occurred_start = $6,
+                                occurred_end = $7, event_date = $8, embedding = $9::vector,
+                                consolidated_at = NULL, consolidation_failed_at = NULL,
+                                edited_at = now(), updated_at = now()
+                            WHERE id = $1 AND bank_id = $2
+                            """,
+                            str(memory_uuid),
+                            bank_id,
+                            edit_plan.new_text,
+                            edit_plan.new_context,
+                            edit_plan.new_fact,
+                            edit_plan.new_occ_start,
+                            edit_plan.new_occ_end,
+                            edit_plan.new_event_date,
+                            edit_embedding,
+                        )
+                        await conn.execute(
+                            f"DELETE FROM {ml} WHERE from_unit_id = $1 OR to_unit_id = $1", str(memory_uuid)
+                        )
+                        await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
+                        need_consolidation = True
+                        need_graph = True
+                        edit_relinked = True
+
+                    # --- Invalidate: move live -> archive ---
+                    if state == "invalidated" and live2:
+                        entity_ids = [
+                            r["entity_id"]
+                            for r in await conn.fetch(
+                                f"SELECT entity_id FROM {ue} WHERE unit_id = $1", str(memory_uuid)
+                            )
+                        ]
+                        # Capture relink victims BEFORE the row (and its links) disappear.
+                        await enqueue_relink_victims(conn, bank_id, [memory_id], ops=backend.ops)
+                        await conn.execute(
+                            f"INSERT INTO {arch} ({arch_cols}, invalidation_reason, invalidated_at, entity_ids) "
+                            f"SELECT {arch_cols}, $2, now(), $3::uuid[] FROM {mu} WHERE id = $1 AND bank_id = $4",
+                            str(memory_uuid),
+                            reason,
+                            entity_ids,
+                            bank_id,
+                        )
+                        # Cascade prunes unit_entities + memory_links; sweep runs after
+                        # the delete so it also catches a racing observation insert.
+                        await conn.execute(
+                            f"DELETE FROM {mu} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id
+                        )
+                        await self._delete_stale_observations_for_memories(conn, bank_id, [memory_id])
+                        need_consolidation = True
+                        need_graph = True
+                    elif state == "invalidated" and archived2 and reason is not None:
+                        # Already archived — just update the recorded reason.
+                        await conn.execute(
+                            f"UPDATE {arch} SET invalidation_reason = $3 WHERE id = $1 AND bank_id = $2",
+                            str(memory_uuid),
+                            bank_id,
+                            reason,
+                        )
+
+                    # --- Revert: move archive -> live ---
+                    elif state == "valid" and archived2 and revert_plan is not None:
+                        # The archive has no embedding column (see arch_cols above), so the
+                        # live row's embedding defaults to NULL on the way back and is set
+                        # below from the embedding computed off-connection in Phase 1.
+                        await conn.execute(
+                            f"INSERT INTO {mu} ({arch_cols}) SELECT {arch_cols} FROM {arch} WHERE id = $1 AND bank_id = $2",
+                            str(memory_uuid),
+                            bank_id,
+                        )
+                        # Re-consolidate from scratch; links are rebuilt by graph maintenance.
+                        await conn.execute(
+                            f"UPDATE {mu} SET consolidated_at = NULL, consolidation_failed_at = NULL, updated_at = now() "
+                            f"WHERE id = $1 AND bank_id = $2",
+                            str(memory_uuid),
+                            bank_id,
+                        )
+                        # Restore entity associations for entities that still exist, from the LOCKED
+                        # archive row (some may have been pruned as orphans after the original move).
+                        locked_entity_ids = list(archived2["entity_ids"]) if archived2["entity_ids"] else []
+                        if locked_entity_ids:
+                            await conn.execute(
+                                f"INSERT INTO {ue} (unit_id, entity_id) "
+                                f"SELECT $1, eid FROM unnest($2::uuid[]) AS eid "
+                                f"WHERE EXISTS (SELECT 1 FROM {ent} e WHERE e.id = eid AND e.bank_id = $3) "
+                                f"ON CONFLICT DO NOTHING",
+                                str(memory_uuid),
+                                locked_entity_ids,
+                                bank_id,
+                            )
+                        # The Phase-1 embedding was computed from the Phase-1 archive snapshot. If the
+                        # archive row was rewritten (text/dates) or its surviving entity set differs while
+                        # the embedder ran off-connection, recompute under the lock so the stored vector
+                        # matches the restored (locked) row.
+                        revert_embedding = revert_plan.embedding
+                        linked = await conn.fetch(
                             f"SELECT e.canonical_name FROM {ue} ue JOIN {ent} e ON ue.entity_id = e.id "
-                            f"WHERE ue.unit_id = $1",
+                            f"WHERE ue.unit_id = $1 ORDER BY e.id",
                             str(memory_uuid),
                         )
-                        new_emb = await self._reembed_memory_text(
-                            text=reverted["text"],
-                            occurred_start=reverted["occurred_start"],
-                            occurred_end=reverted["occurred_end"],
-                            mentioned_at=reverted["mentioned_at"],
-                            entities=[r["canonical_name"] for r in ent_rows],
-                        )
-                        if new_emb is not None:
+                        linked_names = [r["canonical_name"] for r in linked]
+                        snap = revert_plan.arch_row
+                        if (
+                            snap is None
+                            or (
+                                archived2["text"],
+                                archived2["occurred_start"],
+                                archived2["occurred_end"],
+                                archived2["mentioned_at"],
+                            )
+                            != (snap["text"], snap["occurred_start"], snap["occurred_end"], snap["mentioned_at"])
+                            or linked_names != revert_plan.names
+                        ):
+                            revert_embedding = await self._reembed_memory_text(
+                                text=archived2["text"],
+                                occurred_start=archived2["occurred_start"],
+                                occurred_end=archived2["occurred_end"],
+                                mentioned_at=archived2["mentioned_at"],
+                                entities=linked_names,
+                            )
+                        if revert_embedding is not None:
                             await conn.execute(
                                 f"UPDATE {mu} SET embedding = $3::vector WHERE id = $1 AND bank_id = $2",
                                 str(memory_uuid),
                                 bank_id,
-                                new_emb,
+                                revert_embedding,
                             )
-                    await conn.execute(f"DELETE FROM {arch} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id)
-                    need_consolidation = True
-                    need_graph = True
-
-        if not found:
-            return None
-
-        if need_consolidation:
-            config = await self._config_resolver.resolve_full_config(bank_id, request_context)
-            if config.enable_auto_consolidation:
+                        await conn.execute(
+                            f"DELETE FROM {arch} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id
+                        )
+                        need_consolidation = True
+                        need_graph = True
+            phase2_committed = True  # reached only if the Phase-2 txn committed
+        finally:
+            # An entity-changing edit resolved (and may have autocommitted) entities in Phase 1, but the
+            # edit did not durably apply: resolve/embed/Phase 2 raised, the row was concurrently
+            # invalidated (live2 None), or a combined edit+invalidate rolled back. Those entities are now
+            # orphaned; submit_async_graph_maintenance short-circuits on an empty queue and the edit's own
+            # relink-victim enqueue never ran, so enqueue this unit explicitly to force the bank-wide
+            # orphan-entity prune to run.
+            force_graph_submit = False
+            if entities_maybe_committed and not (edit_relinked and phase2_committed):
                 try:
-                    await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+                    async with acquire_with_retry(backend) as cleanup_conn:
+                        await backend.ops.enqueue_graph_maintenance(
+                            cleanup_conn, fq_table("graph_maintenance_queue"), bank_id, [memory_uuid]
+                        )
+                    force_graph_submit = True
                 except Exception as e:
-                    logger.warning(f"Failed to submit consolidation after curating memory in bank {bank_id}: {e}")
-        if need_graph:
-            try:
-                await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
-            except Exception as e:
-                logger.warning(f"Failed to submit graph maintenance after curating memory in bank {bank_id}: {e}")
-
+                    logger.warning(
+                        f"Failed to enqueue orphan-entity cleanup after a failed edit in bank {bank_id}: {e}"
+                    )
+            # Normal post-commit follow-ups run only when the Phase-2 txn committed.
+            if phase2_committed and need_consolidation:
+                config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+                if config.enable_auto_consolidation:
+                    try:
+                        await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+                    except Exception as e:
+                        logger.warning(f"Failed to submit consolidation after curating memory in bank {bank_id}: {e}")
+            if (phase2_committed and need_graph) or force_graph_submit:
+                try:
+                    await self.submit_async_graph_maintenance(bank_id=bank_id, request_context=request_context)
+                except Exception as e:
+                    logger.warning(f"Failed to submit graph maintenance after curating memory in bank {bank_id}: {e}")
         return await self.get_memory_unit(bank_id=bank_id, memory_id=memory_id, request_context=request_context)
 
     async def run_consolidation(
@@ -10725,6 +10999,16 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
+        # Compute the new embedding BEFORE acquiring a pooled connection: a slow
+        # embedder must never pin a DB connection. The embedding text depends only
+        # on the incoming name/content, never on DB state, so it can be done here.
+        new_embedding_str: str | None = None
+        if content is not None:
+            embedding_text = f"{name or ''} {content}"
+            embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [embedding_text])
+            if embedding:
+                new_embedding_str = str(embedding[0])
+
         async with acquire_with_retry(backend) as conn:
             # If content is changing, fetch current content + reflect_response to record history
             previous_content: str | None = None
@@ -10775,12 +11059,10 @@ class MemoryEngine(MemoryEngineInterface):
                         if based_on is not None:
                             slim_reflect_response = {"based_on": based_on}
                     record_mm_history = True
-                # Also update embedding (convert to string for asyncpg vector type)
-                embedding_text = f"{name or ''} {content}"
-                embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [embedding_text])
-                if embedding:
+                # Apply the embedding computed above (off-connection).
+                if new_embedding_str is not None:
                     updates.append(f"embedding = ${param_idx}")
-                    params.append(str(embedding[0]))
+                    params.append(new_embedding_str)
                     param_idx += 1
 
             if reflect_response is not None:

@@ -4,6 +4,7 @@ Link creation utilities for temporal, semantic, and entity links.
 
 import logging
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from ..._vector_index import ann_search_tuning_settings, configured_vector_extension
@@ -300,7 +301,7 @@ async def resolve_entities_only(
     llm_entities: list[list[dict]],
     log_buffer: list[str] = None,
     entity_labels: list | None = None,
-) -> tuple[list[str], list[tuple], dict[str, list[str]]]:
+) -> tuple[list[uuid.UUID], list[tuple], dict[str, list[uuid.UUID]]]:
     """
     Phase 1 of entity processing: resolve entity names to canonical IDs.
 
@@ -350,7 +351,7 @@ async def resolve_entities_only(
     )
 
     # Build unit_to_entity_ids mapping
-    unit_to_entity_ids: dict[str, list[str]] = {}
+    unit_to_entity_ids: dict[str, list[uuid.UUID]] = {}
     for idx, (unit_id, _local_idx, _fact_date) in enumerate(entity_to_unit):
         if unit_id not in unit_to_entity_ids:
             unit_to_entity_ids[unit_id] = []

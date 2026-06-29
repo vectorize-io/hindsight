@@ -8,6 +8,7 @@ to disambiguate entities across memory units.
 import asyncio
 import json
 import logging
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -230,7 +231,7 @@ class EntityResolver:
         unit_event_date,
         conn=None,
         entity_labels: list | None = None,
-    ) -> list[str]:
+    ) -> list[uuid.UUID]:
         """
         Resolve multiple entities in batch (MUCH faster than sequential).
 
@@ -271,7 +272,7 @@ class EntityResolver:
         unit_event_date,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
-    ) -> list[str]:
+    ) -> list[uuid.UUID]:
         if self.entity_lookup == "trigram":
             # Route to backend-specific fuzzy strategy.
             # Non-PG backends (Oracle) use UTL_MATCH instead of pg_trgm.
@@ -311,7 +312,7 @@ class EntityResolver:
         unit_event_date,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
-    ) -> list[str]:
+    ) -> list[uuid.UUID]:
         """Original strategy: load all bank entities then match in Python."""
         # Query ALL candidates for this bank
         all_entities = await conn.fetch(
@@ -395,7 +396,7 @@ class EntityResolver:
         unit_event_date,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
-    ) -> list[str]:
+    ) -> list[uuid.UUID]:
         """
         Trigram strategy: fetch only similar candidates per entity name using pg_trgm.
 
@@ -499,7 +500,7 @@ class EntityResolver:
         unit_event_date: datetime | None,
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
-    ) -> list[str]:
+    ) -> list[uuid.UUID]:
         """
         Oracle strategy: fetch similar candidates using UTL_MATCH.JARO_WINKLER_SIMILARITY.
 
@@ -607,7 +608,7 @@ class EntityResolver:
         cooccurrence_map: dict[str, set[str]],
         taxonomy_lookup: set[str] | None = None,
         labels_cfg=None,
-    ) -> list[str]:
+    ) -> list[uuid.UUID]:
         """Shared scoring + upsert logic used by both lookup strategies."""
 
         # Resolve each entity using pre-fetched candidates
