@@ -18,7 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 
-type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "uploads" | "profile";
+import type { NavItem } from "@/lib/nav-types";
 
 interface SidebarProps {
   currentTab: NavItem;

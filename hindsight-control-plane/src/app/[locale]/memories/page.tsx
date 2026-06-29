@@ -114,10 +114,7 @@ export default function MemoriesPage() {
   }, []);
 
   // Compute aggregate stats
-  const totalFacts = Object.values(bankStatsMap).reduce(
-    (sum, s) => sum + (s.totalFacts ?? 0),
-    0
-  );
+  const totalFacts = Object.values(bankStatsMap).reduce((sum, s) => sum + (s.totalFacts ?? 0), 0);
   const totalDocuments = Object.values(bankStatsMap).reduce(
     (sum, s) => sum + (s.totalDocuments ?? 0),
     0
@@ -162,11 +159,17 @@ export default function MemoriesPage() {
               <Brain className="h-6 w-6 text-primary" />
               {t("memories.title")}
             </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              {t("descriptions.memories")}
-            </p>
+            <p className="text-sm text-muted-foreground mt-1">{t("descriptions.memories")}</p>
           </div>
-          <Button variant="outline" size="sm" onClick={() => { loadBanks(); loadOperations(); }} disabled={loadingBanks}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              loadBanks();
+              loadOperations();
+            }}
+            disabled={loadingBanks}
+          >
             <RefreshCw className={`h-4 w-4 mr-1 ${loadingBanks ? "animate-spin" : ""}`} />
             Refresh
           </Button>
@@ -194,7 +197,11 @@ export default function MemoriesPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {loadingBanks ? <Loader2 className="h-5 w-5 animate-spin" /> : totalFacts.toLocaleString()}
+                {loadingBanks ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  totalFacts.toLocaleString()
+                )}
               </div>
             </CardContent>
           </Card>
@@ -218,7 +225,11 @@ export default function MemoriesPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {loadingBanks ? <Loader2 className="h-5 w-5 animate-spin" /> : totalDocuments.toLocaleString()}
+                {loadingBanks ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  totalDocuments.toLocaleString()
+                )}
               </div>
             </CardContent>
           </Card>

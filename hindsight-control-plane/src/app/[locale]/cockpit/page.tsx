@@ -26,6 +26,7 @@ import {
   MessageSquare,
   Search,
   Sparkles,
+  Key,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Link from "next/link";
@@ -87,6 +88,36 @@ export default function CockpitPage() {
       startedAt: "5m ago",
       progress: "Vector search phase",
     },
+    {
+      id: "run_003",
+      agent: "Memory Agent",
+      intent: "Consolidate daily observations",
+      status: "completed",
+      startedAt: "12m ago",
+    },
+    {
+      id: "run_004",
+      agent: "Security Agent",
+      intent: "Audit access control policies",
+      status: "failed",
+      startedAt: "18m ago",
+      progress: "Authentication check failed",
+    },
+    {
+      id: "run_005",
+      agent: "Planner",
+      intent: "Generate sprint roadmap",
+      status: "processing",
+      startedAt: "1m ago",
+      progress: "Dependency analysis",
+    },
+    {
+      id: "run_006",
+      agent: "Tool Agent",
+      intent: "Index documentation corpus",
+      status: "completed",
+      startedAt: "25m ago",
+    },
   ]);
 
   // Memory stats
@@ -126,7 +157,9 @@ export default function CockpitPage() {
       const ops = data.operations || [];
       setMemoryStats((prev) => ({
         ...prev,
-        activeOperations: ops.filter((o: any) => o.status === "processing" || o.status === "pending").length,
+        activeOperations: ops.filter(
+          (o: any) => o.status === "processing" || o.status === "pending"
+        ).length,
       }));
 
       // Try to get bank stats
@@ -156,10 +189,14 @@ export default function CockpitPage() {
 
   const statusColor = (status: string) => {
     switch (status) {
-      case "healthy": return "text-green-500 bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-800";
-      case "degraded": return "text-amber-500 bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800";
-      case "down": return "text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800";
-      default: return "text-muted-foreground";
+      case "healthy":
+        return "text-green-500 bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-800";
+      case "degraded":
+        return "text-amber-500 bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800";
+      case "down":
+        return "text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800";
+      default:
+        return "text-muted-foreground";
     }
   };
 
@@ -170,7 +207,9 @@ export default function CockpitPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Cockpit</h1>
-            <p className="text-sm text-muted-foreground">Operator overview — all systems at a glance</p>
+            <p className="text-sm text-muted-foreground">
+              Operator overview — all systems at a glance
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={checkEngines} disabled={healthLoading}>
@@ -190,7 +229,11 @@ export default function CockpitPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {statsLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : memoryStats.totalBanks}
+                {statsLoading ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  memoryStats.totalBanks
+                )}
               </div>
             </CardContent>
           </Card>
@@ -202,7 +245,11 @@ export default function CockpitPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-blue-600">
-                {statsLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : memoryStats.activeOperations}
+                {statsLoading ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  memoryStats.activeOperations
+                )}
               </div>
             </CardContent>
           </Card>
@@ -225,9 +272,7 @@ export default function CockpitPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
-                {activeRuns.length}
-              </div>
+              <div className="text-2xl font-bold">{activeRuns.length}</div>
             </CardContent>
           </Card>
         </div>
@@ -242,7 +287,7 @@ export default function CockpitPage() {
               <CardDescription>Real-time status of all CollabMind engines</CardDescription>
             </CardHeader>
             <CardContent>
-              {healthLoading && engineHealth.every(e => e.status === "healthy") ? (
+              {healthLoading && engineHealth.every((e) => e.status === "healthy") ? (
                 <div className="flex items-center justify-center py-8 text-muted-foreground">
                   <Loader2 className="h-5 w-5 animate-spin mr-2" /> Checking engines...
                 </div>
@@ -259,7 +304,9 @@ export default function CockpitPage() {
                           <Icon className="h-5 w-5" />
                           <div>
                             <div className="text-sm font-medium">{engine.name}</div>
-                            <div className="text-xs text-muted-foreground">{engine.category} · :{engine.port}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {engine.category} · :{engine.port}
+                            </div>
                           </div>
                         </div>
                         <Badge
@@ -273,11 +320,17 @@ export default function CockpitPage() {
                           }
                         >
                           {engine.status === "healthy" ? (
-                            <><CheckCircle2 className="w-3 h-3 mr-1" /> Healthy</>
+                            <>
+                              <CheckCircle2 className="w-3 h-3 mr-1" /> Healthy
+                            </>
                           ) : engine.status === "degraded" ? (
-                            <><AlertCircle className="w-3 h-3 mr-1" /> Degraded</>
+                            <>
+                              <AlertCircle className="w-3 h-3 mr-1" /> Degraded
+                            </>
                           ) : (
-                            <><AlertCircle className="w-3 h-3 mr-1" /> Down</>
+                            <>
+                              <AlertCircle className="w-3 h-3 mr-1" /> Down
+                            </>
                           )}
                         </Badge>
                       </div>
@@ -303,7 +356,9 @@ export default function CockpitPage() {
                 activeRuns.map((run) => (
                   <div key={run.id} className="p-3 rounded-lg border bg-card space-y-2">
                     <div className="flex items-center justify-between">
-                      <Badge variant="outline" className="text-xs">{run.agent}</Badge>
+                      <Badge variant="outline" className="text-xs">
+                        {run.agent}
+                      </Badge>
                       <span className="text-xs text-muted-foreground">{run.startedAt}</span>
                     </div>
                     <p className="text-sm font-medium">{run.intent}</p>
@@ -322,7 +377,9 @@ export default function CockpitPage() {
                         <Badge className="bg-green-500 text-xs">Completed</Badge>
                       )}
                       {run.status === "failed" && (
-                        <Badge variant="destructive" className="text-xs">Failed</Badge>
+                        <Badge variant="destructive" className="text-xs">
+                          Failed
+                        </Badge>
                       )}
                     </div>
                     {run.progress && (
@@ -344,40 +401,76 @@ export default function CockpitPage() {
         </div>
 
         {/* Quick Access Panel Group */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Link href="/memories">
-            <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <Brain className="h-4 w-4 text-primary" /> Memory Console
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          <Link href="/backplane">
+            <Card className="hover:bg-accent/50 transition-colors cursor-pointer h-full">
+              <CardHeader className="pb-1 pt-3 px-3">
+                <CardTitle className="text-xs font-medium flex items-center gap-1.5">
+                  <Network className="h-3.5 w-3.5 text-primary" /> Backplane
                 </CardTitle>
               </CardHeader>
-              <CardContent className="text-sm text-muted-foreground">
-                Browse banks, search memories, manage documents
+              <CardContent className="text-[11px] text-muted-foreground px-3 pb-3">
+                Agent orchestra
               </CardContent>
             </Card>
           </Link>
-          <Link href="/backplane">
-            <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <Network className="h-4 w-4 text-primary" /> Backplane
+          <Link href="/memories">
+            <Card className="hover:bg-accent/50 transition-colors cursor-pointer h-full">
+              <CardHeader className="pb-1 pt-3 px-3">
+                <CardTitle className="text-xs font-medium flex items-center gap-1.5">
+                  <Brain className="h-3.5 w-3.5 text-primary" /> Memory Console
                 </CardTitle>
               </CardHeader>
-              <CardContent className="text-sm text-muted-foreground">
-                System map, service inventory, health overview
+              <CardContent className="text-[11px] text-muted-foreground px-3 pb-3">
+                Banks & facts
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/agents">
+            <Card className="hover:bg-accent/50 transition-colors cursor-pointer h-full">
+              <CardHeader className="pb-1 pt-3 px-3">
+                <CardTitle className="text-xs font-medium flex items-center gap-1.5">
+                  <Bot className="h-3.5 w-3.5 text-primary" /> Agents
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-[11px] text-muted-foreground px-3 pb-3">
+                Registry & management
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/config">
+            <Card className="hover:bg-accent/50 transition-colors cursor-pointer h-full">
+              <CardHeader className="pb-1 pt-3 px-3">
+                <CardTitle className="text-xs font-medium flex items-center gap-1.5">
+                  <Key className="h-3.5 w-3.5 text-primary" /> Model Manager
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-[11px] text-muted-foreground px-3 pb-3">
+                Providers & config
               </CardContent>
             </Card>
           </Link>
           <Link href="/evaluation">
-            <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <BarChart3 className="h-4 w-4 text-primary" /> Evaluation Lab
+            <Card className="hover:bg-accent/50 transition-colors cursor-pointer h-full">
+              <CardHeader className="pb-1 pt-3 px-3">
+                <CardTitle className="text-xs font-medium flex items-center gap-1.5">
+                  <BarChart3 className="h-3.5 w-3.5 text-primary" /> Evaluation Lab
                 </CardTitle>
               </CardHeader>
-              <CardContent className="text-sm text-muted-foreground">
-                Run tests, view scores, track improvements
+              <CardContent className="text-[11px] text-muted-foreground px-3 pb-3">
+                Tests & benchmarks
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/runs">
+            <Card className="hover:bg-accent/50 transition-colors cursor-pointer h-full">
+              <CardHeader className="pb-1 pt-3 px-3">
+                <CardTitle className="text-xs font-medium flex items-center gap-1.5">
+                  <Activity className="h-3.5 w-3.5 text-primary" /> Runs
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-[11px] text-muted-foreground px-3 pb-3">
+                Execution timeline
               </CardContent>
             </Card>
           </Link>

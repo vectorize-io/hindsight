@@ -13,10 +13,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, Sparkles } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { client } from "@/lib/api";
-
-const ENTERPRISE_DEMO_URL = "https://calendly.com/d/ctw6-byb-3kg";
 
 const DETECTORS = {
   SENSITIVE_DATA: "sensitive_data",
@@ -229,8 +227,6 @@ export function MemoryDefenseSection({ bankId }: MemoryDefenseSectionProps) {
         </div>
       </div>
 
-      <EnterpriseDiscoveryPanel />
-
       {saving && (
         <div className="flex justify-end items-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -238,60 +234,6 @@ export function MemoryDefenseSection({ bankId }: MemoryDefenseSectionProps) {
         </div>
       )}
     </section>
-  );
-}
-
-// Product-discovery surface. The OSS extension only ships sensitive_data
-// scanning; everything below sits behind Hindsight Cloud entitlements. This
-// panel is informational only — no fake disabled toggles, no entitlement
-// fetch, no flag plumbing — just a list of what's available with a CTA. The
-// panel sits outside the master-enabled disabled-wrapper above so it remains
-// legible when the master switch is off (discovery isn't gated on policy).
-function EnterpriseDiscoveryPanel() {
-  const t = useTranslations("bankConfig");
-  const features = [
-    t("memoryDefenseEnterpriseFeatureDetectSecrets"),
-    t("memoryDefenseEnterpriseFeatureBase64"),
-    t("memoryDefenseEnterpriseFeatureLlm"),
-    t("memoryDefenseEnterpriseFeaturePromptInjection"),
-    t("memoryDefenseEnterpriseFeatureSizeAnomaly"),
-    t("memoryDefenseEnterpriseFeatureProtectedKeys"),
-  ];
-  return (
-    <div className="rounded-xl border border-emerald-600/15 bg-emerald-500/[0.04] dark:bg-emerald-400/[0.06] p-6 flex flex-col gap-4">
-      <div className="flex items-start gap-3">
-        <div className="rounded-full bg-emerald-500/10 p-2 shrink-0">
-          <Sparkles className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
-        </div>
-        <div className="flex-1">
-          <p className="text-base font-semibold text-foreground">
-            {t("memoryDefenseEnterpriseTitle")}
-          </p>
-          <p className="text-sm text-muted-foreground mt-1">
-            {t("memoryDefenseEnterpriseSubtitle")}
-          </p>
-        </div>
-      </div>
-      <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 text-sm text-foreground">
-        {features.map((f) => (
-          <li key={f} className="flex items-start gap-2">
-            <span className="text-emerald-600 dark:text-emerald-400 mt-0.5">✓</span>
-            <span>{f}</span>
-          </li>
-        ))}
-      </ul>
-      <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-        <a
-          href={ENTERPRISE_DEMO_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center justify-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2.5 transition-colors w-full sm:w-auto"
-        >
-          {t("memoryDefenseEnterpriseCta")}
-          <span aria-hidden>→</span>
-        </a>
-      </div>
-    </div>
   );
 }
 

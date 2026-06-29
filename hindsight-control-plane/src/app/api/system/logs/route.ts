@@ -10,7 +10,7 @@ const LOG_FILES: Record<string, string> = {
   "worker-1": "/Users/oliververmeulen/hindsight/logs/worker-1.log",
   "worker-2": "/Users/oliververmeulen/hindsight/logs/worker-2.log",
   "worker-3": "/Users/oliververmeulen/hindsight/logs/worker-3.log",
-  "worker-4": "/Users/oliververmeulen/hindsight/logs/worker-4.log"
+  "worker-4": "/Users/oliververmeulen/hindsight/logs/worker-4.log",
 };
 
 function tailLog(filePath: string, lines: number = 100): string[] {
@@ -34,9 +34,7 @@ export async function GET(request: NextRequest) {
 
   if (!service) {
     // Return available log files
-    const available = Object.keys(LOG_FILES).filter(key => 
-      existsSync(LOG_FILES[key])
-    );
+    const available = Object.keys(LOG_FILES).filter((key) => existsSync(LOG_FILES[key]));
     return NextResponse.json({ available });
   }
 
@@ -56,9 +54,7 @@ export async function GET(request: NextRequest) {
         try {
           // Send initial logs
           const initialLogs = tailLog(logFile, lines);
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ lines: initialLogs })}\n\n`)
-          );
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ lines: initialLogs })}\n\n`));
 
           // Note: Real-time streaming would require a tail -f implementation
           // For now, we'll close after sending initial logs
@@ -67,15 +63,15 @@ export async function GET(request: NextRequest) {
         } catch (error) {
           controller.error(error);
         }
-      }
+      },
     });
 
     return new Response(stream, {
       headers: {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
-        "Connection": "keep-alive"
-      }
+        Connection: "keep-alive",
+      },
     });
   }
 
@@ -85,6 +81,6 @@ export async function GET(request: NextRequest) {
     service,
     file: logFile,
     lines: logLines,
-    count: logLines.length
+    count: logLines.length,
   });
 }

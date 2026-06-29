@@ -29,18 +29,19 @@ export const OPERATOR_PANELS: { id: OperatorPanel; route: string; icon: string }
   { id: "constitution", route: "/constitution", icon: "BookOpen" },
 ];
 
-export const OPERATOR_PANEL_LABELS: Record<OperatorPanel, { primary: string; secondary: string }> = {
-  cockpit: { primary: "overview", secondary: "cockpit" },
-  runs: { primary: "timeline", secondary: "runs" },
-  agents: { primary: "registry", secondary: "agents" },
-  memories: { primary: "console", secondary: "memories" },
-  vector: { primary: "explorer", secondary: "vector" },
-  evaluation: { primary: "lab", secondary: "evaluation" },
-  directives: { primary: "directives", secondary: "" },
-  backplane: { primary: "system map", secondary: "backplane" },
-  tools: { primary: "registry", secondary: "tools" },
-  config: { primary: "secrets", secondary: "config" },
-  audit: { primary: "& provenance", secondary: "audit" },
-  settings: { primary: "system", secondary: "settings" },
-  constitution: { primary: "locked", secondary: "prime directives" },
-};
+export const OPERATOR_PANEL_LABELS: Record<OperatorPanel, { primary: string; secondary: string }> =
+  {
+    cockpit: { primary: "overview", secondary: "cockpit" },
+    runs: { primary: "timeline", secondary: "runs" },
+    agents: { primary: "registry", secondary: "agents" },
+    memories: { primary: "console", secondary: "memories" },
+    vector: { primary: "explorer", secondary: "vector" },
+    evaluation: { primary: "lab", secondary: "evaluation" },
+    directives: { primary: "directives", secondary: "" },
+    backplane: { primary: "system map", secondary: "backplane" },
+    tools: { primary: "registry", secondary: "tools" },
+    config: { primary: "secrets", secondary: "config" },
+    audit: { primary: "& provenance", secondary: "audit" },
+    settings: { primary: "system", secondary: "settings" },
+    constitution: { primary: "locked", secondary: "prime directives" },
+  };

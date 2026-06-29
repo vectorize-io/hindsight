@@ -103,7 +103,10 @@ export function DeploymentView() {
       const [version, health, config] = await Promise.all([
         client.getVersion(),
         fetch("/api/health").then((r) => r.json() as Promise<HealthInfo>),
-        fetch("/api/system/config").then((r) => r.json().catch(() => null)) as Promise<Record<string, unknown> | null>,
+        fetch("/api/system/config").then((r) => r.json().catch(() => null)) as Promise<Record<
+          string,
+          unknown
+        > | null>,
       ]);
       setVersionInfo(version);
       setHealthInfo(health);
@@ -255,7 +258,9 @@ export function DeploymentView() {
                 <div className="h-4 w-24 bg-muted rounded animate-pulse" />
               ) : (
                 <Badge variant="outline" className="text-xs font-mono">
-                  {serverConfig?.storage ? (serverConfig.storage as Record<string, unknown>).type as string : "native"}
+                  {serverConfig?.storage
+                    ? ((serverConfig.storage as Record<string, unknown>).type as string)
+                    : "native"}
                 </Badge>
               )}
             </div>
@@ -263,7 +268,7 @@ export function DeploymentView() {
               <div className="flex items-center justify-between py-2 border-b border-border">
                 <span className="text-sm text-muted-foreground">{t("storageBucket")}</span>
                 <span className="text-sm font-mono text-foreground truncate max-w-[200px]">
-                  {(serverConfig?.storage as Record<string, unknown>)?.s3_bucket as string || "—"}
+                  {((serverConfig?.storage as Record<string, unknown>)?.s3_bucket as string) || "—"}
                 </span>
               </div>
             ) : !isLoading ? (
@@ -287,7 +292,9 @@ export function DeploymentView() {
                 <div className="h-4 w-24 bg-muted rounded animate-pulse" />
               ) : (
                 <span className="text-sm font-mono text-foreground">
-                  {serverConfig?.llm ? (serverConfig.llm as Record<string, unknown>).provider as string : "—"}
+                  {serverConfig?.llm
+                    ? ((serverConfig.llm as Record<string, unknown>).provider as string)
+                    : "—"}
                 </span>
               )}
             </div>
@@ -297,7 +304,9 @@ export function DeploymentView() {
                 <div className="h-4 w-24 bg-muted rounded animate-pulse" />
               ) : (
                 <span className="text-sm font-mono text-foreground">
-                  {serverConfig?.llm ? (serverConfig.llm as Record<string, unknown>).model as string : "—"}
+                  {serverConfig?.llm
+                    ? ((serverConfig.llm as Record<string, unknown>).model as string)
+                    : "—"}
                 </span>
               )}
             </div>
@@ -315,9 +324,13 @@ export function DeploymentView() {
                   }
                 >
                   {(serverConfig.llm as Record<string, unknown>).prompt_cache_enabled ? (
-                    <><CheckCircle2 className="w-3 h-3" /> On</>
+                    <>
+                      <CheckCircle2 className="w-3 h-3" /> On
+                    </>
                   ) : (
-                    <><XCircle className="w-3 h-3" /> Off</>
+                    <>
+                      <XCircle className="w-3 h-3" /> Off
+                    </>
                   )}
                 </Badge>
               ) : (
@@ -330,7 +343,9 @@ export function DeploymentView() {
                 <div className="h-4 w-24 bg-muted rounded animate-pulse" />
               ) : (
                 <span className="text-sm font-mono text-foreground truncate max-w-[200px]">
-                  {serverConfig?.embeddings ? (serverConfig.embeddings as Record<string, unknown>).model as string : "—"}
+                  {serverConfig?.embeddings
+                    ? ((serverConfig.embeddings as Record<string, unknown>).model as string)
+                    : "—"}
                 </span>
               )}
             </div>

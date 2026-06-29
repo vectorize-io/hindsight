@@ -58,15 +58,10 @@ import {
 import { LlmHealthDialog } from "@/components/llm-health-dialog";
 import { ExtractDialog } from "@/components/extract-dialog";
 
-type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "uploads" | "profile";
+import type { NavItem } from "@/lib/nav-types";
 type DataSubTab = "world" | "experience" | "observations" | "mental-models";
 type BankConfigTab =
-  | "general"
-  | "memory-defense"
-  | "configuration"
-  | "webhooks"
-  | "audit-logs"
-  | "llm-requests";
+  "general" | "memory-defense" | "configuration" | "webhooks" | "audit-logs" | "llm-requests";
 
 export default function BankPage() {
   const params = useParams();

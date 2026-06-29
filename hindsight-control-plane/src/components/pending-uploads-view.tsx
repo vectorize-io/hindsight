@@ -5,7 +5,15 @@ import { useTranslations } from "next-intl";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, FileUp, Loader2, CheckCircle2, XCircle, Clock, AlertCircle } from "lucide-react";
+import {
+  RefreshCw,
+  FileUp,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  AlertCircle,
+} from "lucide-react";
 import { useBank } from "@/lib/bank-context";
 
 interface UploadOperation {
@@ -43,24 +51,27 @@ export function PendingUploadsView() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchUploads = useCallback(async (showRefresh = false) => {
-    if (showRefresh) setRefreshing(true);
-    else setLoading(true);
-    try {
-      const bankId = currentBank || "default";
-      const response = await fetch(`/api/system/operations?bank_id=${bankId}&limit=50`);
-      const data: OperationsResponse = await response.json();
-      const fileOps = (data.operations || []).filter(
-        (op) => op.task_type === "file_convert_retain" || op.task_type === "retain"
-      );
-      setOperations(fileOps);
-    } catch (err) {
-      console.error("Failed to fetch upload operations:", err);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [currentBank]);
+  const fetchUploads = useCallback(
+    async (showRefresh = false) => {
+      if (showRefresh) setRefreshing(true);
+      else setLoading(true);
+      try {
+        const bankId = currentBank || "default";
+        const response = await fetch(`/api/system/operations?bank_id=${bankId}&limit=50`);
+        const data: OperationsResponse = await response.json();
+        const fileOps = (data.operations || []).filter(
+          (op) => op.task_type === "file_convert_retain" || op.task_type === "retain"
+        );
+        setOperations(fileOps);
+      } catch (err) {
+        console.error("Failed to fetch upload operations:", err);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [currentBank]
+  );
 
   useEffect(() => {
     fetchUploads();
@@ -113,7 +124,9 @@ export function PendingUploadsView() {
     }
   };
 
-  const activeOps = operations.filter((op) => op.status === "processing" || op.status === "pending");
+  const activeOps = operations.filter(
+    (op) => op.status === "processing" || op.status === "pending"
+  );
   const completedOps = operations.filter((op) => op.status === "completed");
   const failedOps = operations.filter((op) => op.status === "failed");
 
@@ -140,7 +153,9 @@ export function PendingUploadsView() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">{t("active")}</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              {t("active")}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-blue-600">{activeOps.length}</div>
@@ -148,7 +163,9 @@ export function PendingUploadsView() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">{t("completed")}</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              {t("completed")}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-emerald-600">{completedOps.length}</div>
@@ -156,7 +173,9 @@ export function PendingUploadsView() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">{t("failed")}</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              {t("failed")}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">{failedOps.length}</div>
@@ -164,7 +183,9 @@ export function PendingUploadsView() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">{t("total")}</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              {t("total")}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{operations.length}</div>
@@ -202,8 +223,8 @@ export function PendingUploadsView() {
                     op.status === "failed"
                       ? "border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/20"
                       : op.status === "processing"
-                      ? "border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/20"
-                      : "border-border bg-card"
+                        ? "border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/20"
+                        : "border-border bg-card"
                   }`}
                 >
                   <div className="flex items-center justify-between mb-2">
@@ -236,7 +257,7 @@ export function PendingUploadsView() {
                       <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
                         <div
                           className="bg-blue-500 h-full rounded-full animate-pulse"
-                          style={{ width: `${Math.min(100, (op.items_count > 0 ? 50 : 10))}%` }}
+                          style={{ width: `${Math.min(100, op.items_count > 0 ? 50 : 10)}%` }}
                         />
                       </div>
                     </div>
@@ -252,10 +273,10 @@ export function PendingUploadsView() {
 
                   {/* Metadata */}
                   <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-                    <span>{t("started")}: {new Date(op.created_at).toLocaleString()}</span>
-                    {op.retry_count > 0 && (
-                      <span>{t("retries", { count: op.retry_count })}</span>
-                    )}
+                    <span>
+                      {t("started")}: {new Date(op.created_at).toLocaleString()}
+                    </span>
+                    {op.retry_count > 0 && <span>{t("retries", { count: op.retry_count })}</span>}
                   </div>
                 </div>
               ))}

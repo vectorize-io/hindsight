@@ -111,7 +111,7 @@ export function VectorAdminView() {
               {loading ? (
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
               ) : (
-                stats?.totalConnections ?? "-"
+                (stats?.totalConnections ?? "-")
               )}
             </div>
             <p className="text-xs text-muted-foreground">
@@ -130,7 +130,7 @@ export function VectorAdminView() {
               {loading ? (
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
               ) : (
-                stats?.connectedCount ?? 0
+                (stats?.connectedCount ?? 0)
               )}
             </div>
             <p className="text-xs text-muted-foreground">{t("connectionStatus")}</p>
@@ -147,7 +147,7 @@ export function VectorAdminView() {
               {loading ? (
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
               ) : (
-                stats?.totalDocuments?.toLocaleString() ?? "-"
+                (stats?.totalDocuments?.toLocaleString() ?? "-")
               )}
             </div>
             <p className="text-xs text-muted-foreground">{t("overview")}</p>
@@ -164,7 +164,7 @@ export function VectorAdminView() {
               {loading ? (
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
               ) : (
-                stats?.totalVectors?.toLocaleString() ?? "-"
+                (stats?.totalVectors?.toLocaleString() ?? "-")
               )}
             </div>
             <p className="text-xs text-muted-foreground">{t("vectorCount")}</p>

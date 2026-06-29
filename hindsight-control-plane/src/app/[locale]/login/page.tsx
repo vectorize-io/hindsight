@@ -62,11 +62,13 @@ function LoginForm() {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <Image
-            src={withBasePath("/logo.png")}
-            alt="Hindsight"
-            width={160}
-            height={160}
+            src={withBasePath("/logo-core.png?v=3")}
+            alt="CollabMind"
+            width={200}
+            height={200}
+            priority
             className="mx-auto"
+            style={{ width: "auto", height: "auto" }}
             unoptimized
           />
           <CardDescription>{t("description")}</CardDescription>

@@ -21,7 +21,9 @@ export async function GET() {
       provider: process.env.HINDSIGHT_API_RERANKER_PROVIDER || "local",
     },
     database: {
-      type: process.env.HINDSIGHT_API_DATABASE_URL?.startsWith("pg0") ? "pg0 (embedded)" : "external",
+      type: process.env.HINDSIGHT_API_DATABASE_URL?.startsWith("pg0")
+        ? "pg0 (embedded)"
+        : "external",
     },
   };
 

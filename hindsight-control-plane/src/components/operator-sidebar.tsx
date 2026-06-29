@@ -99,9 +99,7 @@ export function OperatorSidebar({ locale = "en" }: OperatorSidebarProps) {
               title={isCollapsed ? t(`panels.${labelKey}`) : undefined}
             >
               <Icon className="w-5 h-5 flex-shrink-0" />
-              {!isCollapsed && (
-                <span className="truncate">{t(`panels.${labelKey}`)}</span>
-              )}
+              {!isCollapsed && <span className="truncate">{t(`panels.${labelKey}`)}</span>}
             </Link>
           );
         })}

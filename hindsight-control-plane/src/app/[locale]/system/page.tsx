@@ -4,7 +4,21 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Play, Square, RotateCw, Activity, Database, Cpu, HardDrive, Monitor, FileText, Plus, Minus, Pause } from "lucide-react";
+import {
+  RefreshCw,
+  Play,
+  Square,
+  RotateCw,
+  Activity,
+  Database,
+  Cpu,
+  HardDrive,
+  Monitor,
+  FileText,
+  Plus,
+  Minus,
+  Pause,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
@@ -39,7 +53,7 @@ export default function SystemPage() {
   const [mounted, setMounted] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [logs, setLogs] = useState<{[key: string]: string[]}>({});
+  const [logs, setLogs] = useState<{ [key: string]: string[] }>({});
   const [selectedLogService, setSelectedLogService] = useState<string>("api");
   const [workerCount, setWorkerCount] = useState(2);
   const [operations, setOperations] = useState<Operation[]>([]);
@@ -63,16 +77,16 @@ export default function SystemPage() {
   const handleServiceAction = async (serviceName: string, action: "start" | "stop" | "restart") => {
     const serviceKey = serviceName.toLowerCase().replace(/ /g, "-");
     setActionLoading(`${serviceKey}-${action}`);
-    
+
     try {
       const response = await fetch(`/api/system/services/${serviceKey}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action })
+        body: JSON.stringify({ action }),
       });
-      
+
       const result = await response.json();
-      
+
       if (result.success) {
         toast.success(`${serviceName}: ${action} successful`);
         setTimeout(fetchServiceStatus, 2000); // Refresh after 2s
@@ -92,7 +106,7 @@ export default function SystemPage() {
       const response = await fetch(`/api/system/logs?service=${service}&lines=100`);
       const data = await response.json();
       if (data.lines) {
-        setLogs(prev => ({ ...prev, [service]: data.lines }));
+        setLogs((prev) => ({ ...prev, [service]: data.lines }));
       }
     } catch (error) {
       console.error(`Failed to fetch logs for ${service}:`, error);
@@ -117,15 +131,15 @@ export default function SystemPage() {
       toast.error("Worker count must be between 0 and 10");
       return;
     }
-    
+
     setActionLoading("workers-scale");
     try {
       const response = await fetch("/api/system/services/workers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "scale", count: newCount })
+        body: JSON.stringify({ action: "scale", count: newCount }),
       });
-      
+
       const result = await response.json();
       if (result.success) {
         setWorkerCount(newCount);
@@ -147,11 +161,11 @@ export default function SystemPage() {
     fetchServiceStatus();
     fetchLogs(selectedLogService);
     fetchOperations();
-    
+
     const statusInterval = autoRefresh ? setInterval(fetchServiceStatus, 10000) : null;
     const logsInterval = setInterval(() => fetchLogs(selectedLogService), 5000);
     const opsInterval = autoRefresh ? setInterval(fetchOperations, 5000) : null;
-    
+
     return () => {
       if (statusInterval) clearInterval(statusInterval);
       clearInterval(logsInterval);
@@ -198,12 +212,7 @@ export default function SystemPage() {
               Last updated: {lastUpdate.toLocaleTimeString()}
             </span>
           )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={fetchServiceStatus}
-            disabled={loading}
-          >
+          <Button variant="outline" size="sm" onClick={fetchServiceStatus} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           </Button>
         </div>
@@ -217,151 +226,154 @@ export default function SystemPage() {
         </TabsList>
 
         <TabsContent value="services" className="space-y-4">
+          {/* Services Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {loading && services.length === 0 ? (
+              <>
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <Card key={i} className="animate-pulse">
+                    <CardHeader>
+                      <div className="h-6 w-32 bg-muted rounded" />
+                      <div className="h-4 w-20 bg-muted rounded mt-2" />
+                    </CardHeader>
+                    <CardContent>
+                      <div className="h-20 w-full bg-muted rounded" />
+                    </CardContent>
+                  </Card>
+                ))}
+              </>
+            ) : (
+              services.map((service) => {
+                const serviceKey = service.name.toLowerCase().replace(/ /g, "-");
+                const isWorkers = service.name === "Workers";
+                const isControlPlane = service.name === "Control Plane";
 
-      {/* Services Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {loading && services.length === 0 ? (
-          <>
-            {[1, 2, 3, 4, 5].map(i => (
-              <Card key={i} className="animate-pulse">
-                <CardHeader>
-                  <div className="h-6 w-32 bg-muted rounded" />
-                  <div className="h-4 w-20 bg-muted rounded mt-2" />
-                </CardHeader>
-                <CardContent>
-                  <div className="h-20 w-full bg-muted rounded" />
-                </CardContent>
-              </Card>
-            ))}
-          </>
-        ) : (
-          services.map((service) => {
-            const serviceKey = service.name.toLowerCase().replace(/ /g, "-");
-            const isWorkers = service.name === "Workers";
-            const isControlPlane = service.name === "Control Plane";
-            
-            return (
-              <Card key={service.name}>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      {getServiceIcon(service.name)}
-                      <CardTitle className="text-lg">{service.name}</CardTitle>
-                    </div>
-                    {getStatusBadge(service.status)}
-                  </div>
-                  <CardDescription>Port: {service.port}</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {/* Service Info */}
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    {service.pid && (
-                      <div>
-                        <span className="text-muted-foreground">PID:</span> {service.pid}
-                      </div>
-                    )}
-                    {service.uptime && (
-                      <div>
-                        <span className="text-muted-foreground">Uptime:</span> {service.uptime}
-                      </div>
-                    )}
-                    {service.health && (
-                      <div className="col-span-2">
-                        <span className="text-muted-foreground">Health:</span> {service.health}
-                      </div>
-                    )}
-                    {service.cpu !== undefined && (
-                      <div>
-                        <span className="text-muted-foreground">CPU:</span> {service.cpu.toFixed(1)}%
-                      </div>
-                    )}
-                    {service.memory !== undefined && (
-                      <div>
-                        <span className="text-muted-foreground">Memory:</span> {service.memory.toFixed(1)}%
-                      </div>
-                    )}
-                  </div>
-
-                   {/* Service Controls */}
-                  {!isControlPlane && (
-                    <div className="space-y-2">
-                      {/* Worker Scaling */}
-                      {isWorkers && service.status === "running" && (
-                        <div className="flex items-center gap-2 pb-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleWorkerScale(workerCount - 1)}
-                            disabled={workerCount <= 0 || actionLoading === "workers-scale"}
-                          >
-                            <Minus className="h-3 w-3" />
-                          </Button>
-                          <span className="text-sm flex-1 text-center">
-                            {workerCount} workers
-                          </span>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleWorkerScale(workerCount + 1)}
-                            disabled={workerCount >= 10 || actionLoading === "workers-scale"}
-                          >
-                            <Plus className="h-3 w-3" />
-                          </Button>
+                return (
+                  <Card key={service.name}>
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          {getServiceIcon(service.name)}
+                          <CardTitle className="text-lg">{service.name}</CardTitle>
                         </div>
-                      )}
-                      
-                      <div className="flex gap-2 pt-2 border-t">
-                        {service.status === "stopped" ? (
-                          <Button
-                            size="sm"
-                            variant="default"
-                            className="flex-1"
-                            onClick={() => handleServiceAction(service.name, "start")}
-                            disabled={actionLoading === `${serviceKey}-start`}
-                          >
-                            <Play className="h-3 w-3 mr-1" />
-                            Start
-                          </Button>
-                        ) : (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              className="flex-1"
-                              onClick={() => handleServiceAction(service.name, "stop")}
-                              disabled={actionLoading === `${serviceKey}-stop`}
-                            >
-                              <Square className="h-3 w-3 mr-1" />
-                              Stop
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="flex-1"
-                              onClick={() => handleServiceAction(service.name, "restart")}
-                              disabled={actionLoading === `${serviceKey}-restart`}
-                            >
-                              <RotateCw className="h-3 w-3 mr-1" />
-                              Restart
-                            </Button>
-                          </>
+                        {getStatusBadge(service.status)}
+                      </div>
+                      <CardDescription>Port: {service.port}</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {/* Service Info */}
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        {service.pid && (
+                          <div>
+                            <span className="text-muted-foreground">PID:</span> {service.pid}
+                          </div>
+                        )}
+                        {service.uptime && (
+                          <div>
+                            <span className="text-muted-foreground">Uptime:</span> {service.uptime}
+                          </div>
+                        )}
+                        {service.health && (
+                          <div className="col-span-2">
+                            <span className="text-muted-foreground">Health:</span> {service.health}
+                          </div>
+                        )}
+                        {service.cpu !== undefined && (
+                          <div>
+                            <span className="text-muted-foreground">CPU:</span>{" "}
+                            {service.cpu.toFixed(1)}%
+                          </div>
+                        )}
+                        {service.memory !== undefined && (
+                          <div>
+                            <span className="text-muted-foreground">Memory:</span>{" "}
+                            {service.memory.toFixed(1)}%
+                          </div>
                         )}
                       </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })
-        )}
-      </div>
+
+                      {/* Service Controls */}
+                      {!isControlPlane && (
+                        <div className="space-y-2">
+                          {/* Worker Scaling */}
+                          {isWorkers && service.status === "running" && (
+                            <div className="flex items-center gap-2 pb-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleWorkerScale(workerCount - 1)}
+                                disabled={workerCount <= 0 || actionLoading === "workers-scale"}
+                              >
+                                <Minus className="h-3 w-3" />
+                              </Button>
+                              <span className="text-sm flex-1 text-center">
+                                {workerCount} workers
+                              </span>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleWorkerScale(workerCount + 1)}
+                                disabled={workerCount >= 10 || actionLoading === "workers-scale"}
+                              >
+                                <Plus className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          )}
+
+                          <div className="flex gap-2 pt-2 border-t">
+                            {service.status === "stopped" ? (
+                              <Button
+                                size="sm"
+                                variant="default"
+                                className="flex-1"
+                                onClick={() => handleServiceAction(service.name, "start")}
+                                disabled={actionLoading === `${serviceKey}-start`}
+                              >
+                                <Play className="h-3 w-3 mr-1" />
+                                Start
+                              </Button>
+                            ) : (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  className="flex-1"
+                                  onClick={() => handleServiceAction(service.name, "stop")}
+                                  disabled={actionLoading === `${serviceKey}-stop`}
+                                >
+                                  <Square className="h-3 w-3 mr-1" />
+                                  Stop
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="flex-1"
+                                  onClick={() => handleServiceAction(service.name, "restart")}
+                                  disabled={actionLoading === `${serviceKey}-restart`}
+                                >
+                                  <RotateCw className="h-3 w-3 mr-1" />
+                                  Restart
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })
+            )}
+          </div>
         </TabsContent>
 
         <TabsContent value="operations" className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Total Operations</CardTitle>
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Total Operations
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{operations.length}</div>
@@ -369,11 +381,13 @@ export default function SystemPage() {
             </Card>
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Processing</CardTitle>
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Processing
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-blue-600">
-                  {operations.filter(op => op.status === "processing").length}
+                  {operations.filter((op) => op.status === "processing").length}
                 </div>
               </CardContent>
             </Card>
@@ -383,7 +397,7 @@ export default function SystemPage() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-yellow-600">
-                  {operations.filter(op => op.status === "pending").length}
+                  {operations.filter((op) => op.status === "pending").length}
                 </div>
               </CardContent>
             </Card>
@@ -393,7 +407,7 @@ export default function SystemPage() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-red-600">
-                  {operations.filter(op => op.status === "failed").length}
+                  {operations.filter((op) => op.status === "failed").length}
                 </div>
               </CardContent>
             </Card>
@@ -416,9 +430,14 @@ export default function SystemPage() {
                 <div className="space-y-2">
                   {operations.map((op) => {
                     const age = Math.floor((Date.now() - new Date(op.created_at).getTime()) / 1000);
-                    const ageStr = age < 60 ? `${age}s` : age < 3600 ? `${Math.floor(age/60)}m` : `${Math.floor(age/3600)}h`;
+                    const ageStr =
+                      age < 60
+                        ? `${age}s`
+                        : age < 3600
+                          ? `${Math.floor(age / 60)}m`
+                          : `${Math.floor(age / 3600)}h`;
                     const isStuck = age > 300; // 5 minutes
-                    
+
                     return (
                       <div
                         key={op.id}
@@ -430,19 +449,19 @@ export default function SystemPage() {
                           <div className="flex items-center gap-2">
                             <span className="font-mono text-sm">{op.task_type}</span>
                             {op.status === "processing" && (
-                              <Badge variant="default" className="bg-blue-500">Processing</Badge>
+                              <Badge variant="default" className="bg-blue-500">
+                                Processing
+                              </Badge>
                             )}
-                            {op.status === "pending" && (
-                              <Badge variant="secondary">Pending</Badge>
-                            )}
-                            {op.status === "failed" && (
-                              <Badge variant="destructive">Failed</Badge>
-                            )}
+                            {op.status === "pending" && <Badge variant="secondary">Pending</Badge>}
+                            {op.status === "failed" && <Badge variant="destructive">Failed</Badge>}
                             {op.status === "completed" && (
                               <Badge className="bg-green-500">Completed</Badge>
                             )}
                             {isStuck && (
-                              <Badge variant="destructive" className="animate-pulse">STUCK</Badge>
+                              <Badge variant="destructive" className="animate-pulse">
+                                STUCK
+                              </Badge>
                             )}
                           </div>
                           <div className="text-xs text-muted-foreground mt-1">
@@ -450,7 +469,9 @@ export default function SystemPage() {
                             {op.retry_count > 0 && ` | Retries: ${op.retry_count}`}
                           </div>
                           {op.error_message && (
-                            <div className="text-xs text-red-600 mt-1">Error: {op.error_message}</div>
+                            <div className="text-xs text-red-600 mt-1">
+                              Error: {op.error_message}
+                            </div>
                           )}
                         </div>
                       </div>

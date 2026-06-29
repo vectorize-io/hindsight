@@ -18,37 +18,37 @@ const SERVICE_CONFIGS: Record<string, ServiceConfig> = {
   "hindsight-api": {
     name: "Hindsight API",
     startScript: path.join(SCRIPTS_DIR, "start-api.sh"),
-    stopCommand: `pkill -f "hindsight-api"`
+    stopCommand: `pkill -f "hindsight-api"`,
   },
   "ollama-embeddings": {
     name: "Ollama Embeddings",
     startCommand: `OLLAMA_HOST=127.0.0.1:11434 /opt/homebrew/opt/ollama/bin/ollama serve > /tmp/ollama-embeddings.log 2>&1 &`,
-    stopCommand: `pkill -f "OLLAMA_HOST=127.0.0.1:11434"`
+    stopCommand: `pkill -f "OLLAMA_HOST=127.0.0.1:11434"`,
   },
   "ollama-llm": {
     name: "Ollama LLM",
     startCommand: `OLLAMA_HOST=127.0.0.1:11435 OLLAMA_MODELS=/Volumes/Mac/Users/oliververmeulen/.ollama/models /opt/homebrew/opt/ollama/bin/ollama serve > /tmp/ollama-llm.log 2>&1 &`,
-    stopCommand: `pkill -f "OLLAMA_HOST=127.0.0.1:11435"`
+    stopCommand: `pkill -f "OLLAMA_HOST=127.0.0.1:11435"`,
   },
-  "workers": {
+  workers: {
     name: "Workers",
     startScript: path.join(SCRIPTS_DIR, "scale-workers.sh"),
-    stopScript: path.join(SCRIPTS_DIR, "scale-workers.sh")
-  }
+    stopScript: path.join(SCRIPTS_DIR, "scale-workers.sh"),
+  },
 };
 
 function executeCommand(command: string): { success: boolean; output: string; error?: string } {
   try {
-    const output = execSync(command, { 
+    const output = execSync(command, {
       encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"]
+      stdio: ["pipe", "pipe", "pipe"],
     });
     return { success: true, output };
   } catch (error: any) {
-    return { 
-      success: false, 
+    return {
+      success: false,
       output: error.stdout || "",
-      error: error.stderr || error.message 
+      error: error.stderr || error.message,
     };
   }
 }
@@ -63,10 +63,7 @@ export async function POST(
 
   const config = SERVICE_CONFIGS[service];
   if (!config) {
-    return NextResponse.json(
-      { error: `Unknown service: ${service}` },
-      { status: 404 }
-    );
+    return NextResponse.json({ error: `Unknown service: ${service}` }, { status: 404 });
   }
 
   let result: { success: boolean; output: string; error?: string };
@@ -111,8 +108,8 @@ export async function POST(
         if (config.stopCommand) {
           executeCommand(config.stopCommand);
         }
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
         if (config.startScript && existsSync(config.startScript)) {
           result = executeCommand(`bash ${config.startScript}`);
         } else if (config.startCommand) {
@@ -135,15 +132,12 @@ export async function POST(
             { status: 400 }
           );
         }
-        
+
         const scaleScript = path.join(SCRIPTS_DIR, "scale-workers.sh");
         if (!existsSync(scaleScript)) {
-          return NextResponse.json(
-            { error: "Worker scaling script not found" },
-            { status: 500 }
-          );
+          return NextResponse.json({ error: "Worker scaling script not found" }, { status: 500 });
         }
-        
+
         result = executeCommand(`bash ${scaleScript} ${count}`);
       } else {
         return NextResponse.json(
@@ -154,10 +148,7 @@ export async function POST(
       break;
 
     default:
-      return NextResponse.json(
-        { error: `Unknown action: ${action}` },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
   }
 
   return NextResponse.json({
@@ -165,6 +156,6 @@ export async function POST(
     action,
     success: result.success,
     output: result.output,
-    error: result.error
+    error: result.error,
   });
 }

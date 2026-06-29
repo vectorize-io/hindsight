@@ -32,9 +32,7 @@ export function OperatorPanelPlaceholder({ panel, icon: Icon, description }: Pla
               <Icon className="h-5 w-5" />
               {t(`panels.${panel}`)}
             </CardTitle>
-            <CardDescription>
-              {description || t(`descriptions.${panel}`)}
-            </CardDescription>
+            <CardDescription>{description || t(`descriptions.${panel}`)}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="flex items-center justify-center py-16 text-muted-foreground">
