@@ -43,7 +43,7 @@ async def test_append_mode_concatenates_content(memory, request_context):
         assert "Alice works at Google" in v1_text
 
         # Second retain with append — add new content
-        v2_units = await memory.retain_batch_async(
+        await memory.retain_batch_async(
             bank_id=bank_id,
             contents=[
                 {
@@ -254,10 +254,12 @@ async def test_append_mode_conversation_arrays_produce_valid_json(memory, reques
 
     try:
         # First retain - JSON conversation array
-        turn1 = json.dumps([
-            {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi there"},
-        ])
+        turn1 = json.dumps(
+            [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there"},
+            ]
+        )
         await memory.retain_batch_async(
             bank_id=bank_id,
             contents=[
@@ -271,10 +273,12 @@ async def test_append_mode_conversation_arrays_produce_valid_json(memory, reques
         )
 
         # Second retain - append more turns
-        turn2 = json.dumps([
-            {"role": "user", "content": "How are you"},
-            {"role": "assistant", "content": "Doing well"},
-        ])
+        turn2 = json.dumps(
+            [
+                {"role": "user", "content": "How are you"},
+                {"role": "assistant", "content": "Doing well"},
+            ]
+        )
         await memory.retain_batch_async(
             bank_id=bank_id,
             contents=[
@@ -300,10 +304,12 @@ async def test_append_mode_conversation_arrays_produce_valid_json(memory, reques
         assert len(parsed) == 4, "Should contain all 4 messages from both retains"
 
         # Third retain - append again, verify no degradation
-        turn3 = json.dumps([
-            {"role": "user", "content": "What is new"},
-            {"role": "assistant", "content": "Not much"},
-        ])
+        turn3 = json.dumps(
+            [
+                {"role": "user", "content": "What is new"},
+                {"role": "assistant", "content": "Not much"},
+            ]
+        )
         await memory.retain_batch_async(
             bank_id=bank_id,
             contents=[
@@ -329,4 +335,3 @@ async def test_append_mode_conversation_arrays_produce_valid_json(memory, reques
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
-        
