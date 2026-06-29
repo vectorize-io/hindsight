@@ -1,6 +1,7 @@
 /**
- * The sync engine: fetch a bank's mental models and mirror them as markdown
- * files in the mount directory.
+ * The sync engine: fetch a bank's knowledge base (folder/page tree + page
+ * contents) and mirror it as a nested folder of markdown files in the mount
+ * directory — folders become directories, pages become `.md` files.
  *
  * The mirror is strictly one-way (API → disk). Two mechanisms enforce that:
  *
@@ -8,26 +9,28 @@
  *     so an agent's in-place edit or editor-save fails with EACCES.
  *  2. Every pass compares the *on-disk* bytes against the freshly rendered
  *     content, so any drift — a tampered file, a force-chmod edit, a partial
- *     write — is reverted on the next tick, even when the model is unchanged
- *     server-side. (Change detection looks at disk, not just the last API hash,
- *     precisely so local edits cannot survive.)
+ *     write — is reverted on the next tick, even when the page is unchanged
+ *     server-side.
  */
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { HindsightFsClient, type MentalModel } from "./client.js";
-import { fileNameFor, renderIndex, renderMentalModel } from "./format.js";
+import { HindsightFsClient } from "./client.js";
+import { planMirror, renderIndex } from "./format.js";
 import { hashContent, loadState, saveState, type SyncState } from "./state.js";
 import { CONTROL_DIR, INDEX_FILE } from "./paths.js";
 import type { MountConfig } from "./config.js";
 
 export interface SyncResult {
+  /** Pages mirrored. */
   total: number;
+  /** Folder directories in the mirror. */
+  folders: number;
   /** Files (re)written because they were new, changed, or tampered with. */
   written: number;
   /** Files left untouched because disk already matched the API. */
   unchanged: number;
-  /** Files removed because their model no longer exists in the bank. */
+  /** Files removed because their page no longer exists in the bank. */
   removed: number;
   /** Subset of `written` that were rewritten because the on-disk copy drifted. */
   reverted: number;
@@ -41,8 +44,6 @@ const WRITABLE_MODE = 0o644;
 async function atomicWrite(file: string, content: string, mode: number): Promise<void> {
   const tmp = `${file}.${process.pid}.tmp`;
   await fs.writeFile(tmp, content, "utf8");
-  // rename replaces the destination entry regardless of the old file's mode
-  // (only the directory needs to be writable), so this works over a 0444 file.
   await fs.rename(tmp, file);
   await fs.chmod(file, mode);
 }
@@ -67,8 +68,8 @@ async function enforceMode(file: string, mode: number): Promise<void> {
 /**
  * Perform a single sync pass.
  *
- * Pruning of files for deleted models happens only after a successful fetch, so
- * a transient API/network error never wipes the existing mirror.
+ * Pruning of files/folders for removed pages happens only after a successful
+ * fetch, so a transient API/network error never wipes the existing mirror.
  */
 export async function runSync(config: MountConfig): Promise<SyncResult> {
   const syncedAt = new Date().toISOString();
@@ -78,9 +79,9 @@ export async function runSync(config: MountConfig): Promise<SyncResult> {
   const state = await loadState(config.dir, config.bankId, config.apiUrl);
   const client = new HindsightFsClient({ apiUrl: config.apiUrl, apiToken: config.apiToken });
 
-  let models: MentalModel[];
+  let snapshot;
   try {
-    models = await client.listMentalModels(config.bankId, config.detail);
+    snapshot = await client.loadKnowledge(config.bankId);
   } catch (err) {
     state.lastSyncAt = syncedAt;
     state.lastSyncOk = false;
@@ -89,47 +90,54 @@ export async function runSync(config: MountConfig): Promise<SyncResult> {
     throw err;
   }
 
+  const plan = planMirror(snapshot);
+
+  // Create folder directories first (parents before children — plan.dirs is in
+  // tree order). The control dir is excluded by the .hindsight-fs prefix.
+  for (const dir of plan.dirs) {
+    await fs.mkdir(path.join(config.dir, dir), { recursive: true });
+  }
+
   let written = 0;
   let unchanged = 0;
   let reverted = 0;
-  const seenIds = new Set<string>();
   const nextFiles: SyncState["files"] = {};
 
-  for (const model of models) {
-    seenIds.add(model.id);
-    const fileName = fileNameFor(model.id);
-    const expected = renderMentalModel(model);
-    const hash = hashContent(expected);
-    const prev = state.files[model.id];
-    const absPath = path.join(config.dir, fileName);
-
-    // Clean up a renamed file (id kept, slug changed).
-    if (prev && prev.file !== fileName) {
-      await safeUnlink(path.join(config.dir, prev.file));
-    }
+  for (const page of plan.files) {
+    const hash = hashContent(page.content);
+    const prev = state.files[page.relPath];
+    const absPath = path.join(config.dir, page.relPath);
+    await fs.mkdir(path.dirname(absPath), { recursive: true });
 
     // Source of truth is the bytes on disk — so a local edit is detected and
-    // overwritten even when the model is identical to last time.
+    // overwritten even when the page is identical to last time.
     const onDisk = await readFileOrNull(absPath);
-    if (onDisk === null || onDisk !== expected) {
-      await atomicWrite(absPath, expected, mode);
+    if (onDisk === null || onDisk !== page.content) {
+      await atomicWrite(absPath, page.content, mode);
       written++;
-      // It drifted (not new, and the API content didn't change) ⇒ tampering.
       if (onDisk !== null && prev && prev.hash === hash) reverted++;
     } else {
       await enforceMode(absPath, mode);
       unchanged++;
     }
-    nextFiles[model.id] = { file: fileName, hash };
+    nextFiles[page.relPath] = { file: page.relPath, hash };
   }
 
-  // Prune files whose models no longer exist.
+  // Prune files whose pages no longer exist.
   let removed = 0;
-  for (const [id, entry] of Object.entries(state.files)) {
-    if (!seenIds.has(id)) {
+  for (const [rel, entry] of Object.entries(state.files)) {
+    if (!nextFiles[rel]) {
       await safeUnlink(path.join(config.dir, entry.file));
       removed++;
     }
+  }
+
+  // Prune folder directories that no longer exist (deepest first so they empty
+  // out before removal); only remove ones we created and that are now gone.
+  const liveDirs = new Set(plan.dirs);
+  const goneDirs = state.dirs.filter((d) => !liveDirs.has(d)).sort((a, b) => b.length - a.length);
+  for (const dir of goneDirs) {
+    await safeRmdir(path.join(config.dir, dir));
   }
 
   const newState: SyncState = {
@@ -140,17 +148,19 @@ export async function runSync(config: MountConfig): Promise<SyncResult> {
     lastSyncOk: true,
     lastError: null,
     files: nextFiles,
+    dirs: plan.dirs,
   };
   await saveState(config.dir, newState);
 
   await atomicWrite(
     path.join(config.dir, CONTROL_DIR, INDEX_FILE),
-    renderIndex(models, config),
+    renderIndex(snapshot, config),
     mode
   );
 
   return {
-    total: models.length,
+    total: plan.pageCount,
+    folders: plan.folderCount,
     written,
     unchanged,
     removed,
@@ -161,10 +171,17 @@ export async function runSync(config: MountConfig): Promise<SyncResult> {
 
 async function safeUnlink(p: string): Promise<void> {
   try {
-    // Drop read-only bit first so the unlink itself isn't blocked on some FS.
     await fs.chmod(p, WRITABLE_MODE).catch(() => {});
     await fs.unlink(p);
   } catch {
     /* already gone */
+  }
+}
+
+async function safeRmdir(p: string): Promise<void> {
+  try {
+    await fs.rmdir(p);
+  } catch {
+    /* non-empty (has unmirrored files) or already gone — leave it */
   }
 }

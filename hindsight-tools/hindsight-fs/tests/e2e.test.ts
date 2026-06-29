@@ -15,23 +15,30 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { MentalModel } from "../src/client.js";
+import type { KnowledgeNode } from "../src/client.js";
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist/cli.js");
 const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
 
-// ── Mock Hindsight API ─────────────────────────────────
+// ── Mock Hindsight API (knowledge-base tree + export) ──
 
-/** Mutable bank contents; tests reassign this to simulate API changes. */
-let bankModels: MentalModel[] = [];
+/** Mutable bank contents; tests reassign these to simulate API changes. */
+let bankTree: KnowledgeNode[] = [];
+let bankContent: Record<string, string> = {};
 let server: Server;
 let baseUrl: string;
 
 beforeAll(async () => {
   server = createServer((req, res) => {
-    if (req.url && req.url.includes("/mental-models")) {
-      res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ items: bankModels }));
+    res.setHeader("content-type", "application/json");
+    if (req.url && req.url.includes("/knowledge-base/tree")) {
+      res.end(JSON.stringify({ roots: bankTree }));
+    } else if (req.url && req.url.includes("/knowledge-base/export")) {
+      const files = Object.entries(bankContent).map(([id, content]) => ({
+        path: `${id}.md`,
+        content,
+      }));
+      res.end(JSON.stringify({ files }));
     } else {
       res.statusCode = 404;
       res.end("{}");
@@ -56,7 +63,6 @@ interface RunResult {
 
 /** Run a command, always resolving with the exit code (never throws on non-zero). */
 function run(cmd: string, args: string[], cwd?: string): Promise<RunResult> {
-  // Strip ambient HINDSIGHT_* env so tests are hermetic.
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith("HINDSIGHT_")) delete env[k];
 
@@ -73,12 +79,10 @@ function run(cmd: string, args: string[], cwd?: string): Promise<RunResult> {
   });
 }
 
-/** Invoke the hindsight-fs CLI. */
 function cli(args: string[]): Promise<RunResult> {
   return run("node", [CLI, ...args]);
 }
 
-/** Run a bash one-liner (the "common bash operations" under test). */
 function sh(command: string, cwd?: string): Promise<RunResult> {
   return run("bash", ["-c", command], cwd);
 }
@@ -106,38 +110,53 @@ async function fileExists(p: string): Promise<boolean> {
 }
 
 // ── Fixtures ───────────────────────────────────────────
+// A small knowledge base: a "Profile" folder holding one page, plus a root page.
 
-const SAMPLE: MentalModel[] = [
-  {
-    id: "user-preferences",
-    bank_id: "demo",
-    name: "User Preferences",
-    source_query: "What are the user's preferences?",
-    content: "The user prefers dark mode and async, written communication.",
-    tags: ["ui", "comms"],
-    last_refreshed_at: "2026-06-25T10:00:00Z",
-    created_at: "2026-06-01T00:00:00Z",
-  },
-  {
-    id: "project-status",
-    bank_id: "demo",
-    name: "Project Status",
-    source_query: "What is the project status?",
-    content: "Phase 2 is in progress; the API freeze is next week.",
-    tags: ["project"],
-  },
-];
+function sampleTree(): KnowledgeNode[] {
+  return [
+    {
+      id: "profile",
+      kind: "folder",
+      name: "Profile",
+      parent_id: null,
+      mission: "Everything about the user",
+      children: [
+        {
+          id: "user-preferences",
+          kind: "page",
+          name: "User Preferences",
+          parent_id: "profile",
+          children: [],
+        },
+      ],
+    },
+    { id: "project-status", kind: "page", name: "Project Status", parent_id: null, children: [] },
+  ];
+}
+
+function sampleContent(): Record<string, string> {
+  return {
+    "user-preferences":
+      "---\nid: user-preferences\ntype: knowledge-page\ntitle: User Preferences\n---\n\n" +
+      "The user prefers dark mode and async, written communication.\n",
+    "project-status":
+      "---\nid: project-status\ntitle: Project Status\n---\n\n" +
+      "Phase 2 is in progress; the API freeze is next week.\n",
+  };
+}
 
 let dir: string;
 const startedDirs = new Set<string>();
 
+const PREFS = path.join("profile", "user-preferences.md");
+
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "hsfs-e2e-"));
-  bankModels = JSON.parse(JSON.stringify(SAMPLE));
+  bankTree = sampleTree();
+  bankContent = sampleContent();
 });
 
 afterEach(async () => {
-  // Stop any daemon a test left running, then clean the dir.
   for (const d of startedDirs) await cli(["stop", d]).catch(() => {});
   startedDirs.clear();
   await fs.rm(dir, { recursive: true, force: true });
@@ -146,48 +165,45 @@ afterEach(async () => {
 // ── Tests ──────────────────────────────────────────────
 
 describe("e2e: real CLI + real bash", () => {
-  it("syncs the bank and the files work with ls / cat / grep / find / wc / head", async () => {
+  it("mirrors the tree and the nested files work with ls / cat / grep / find / wc / head", async () => {
     const synced = await cli(["sync", dir, "--bank", "demo", "--api-url", baseUrl]);
     expect(synced.code).toBe(0);
-    expect(synced.stdout).toContain("2 mental models");
+    expect(synced.stdout).toContain("2 pages / 1 folders");
 
-    // ls — both files present at the mount root
-    const ls = await sh(`ls -1 "${dir}"`);
-    expect(ls.code).toBe(0);
-    const names = ls.stdout.trim().split("\n").sort();
-    expect(names).toEqual(["project-status.md", "user-preferences.md"]);
+    // Folder became a directory; pages are at their nested paths.
+    expect(await fileExists(path.join(dir, PREFS))).toBe(true);
+    expect(await fileExists(path.join(dir, "project-status.md"))).toBe(true);
 
     // cat — frontmatter + body are real file content
-    const cat = await sh(`cat "${dir}/user-preferences.md"`);
+    const cat = await sh(`cat "${path.join(dir, PREFS)}"`);
     expect(cat.stdout).toContain("id: user-preferences");
-    expect(cat.stdout).toContain("bank: demo");
     expect(cat.stdout).toContain("dark mode and async");
 
-    // grep -rl — content is searchable across the folder
+    // grep -rl — content is searchable across the tree
     const grep = await sh(`grep -rl "API freeze" "${dir}"`);
     expect(grep.code).toBe(0);
     expect(grep.stdout.trim()).toBe(path.join(dir, "project-status.md"));
 
-    // find — only markdown files at the root (control data is hidden)
-    const find = await sh(`find "${dir}" -maxdepth 1 -name '*.md' | wc -l | tr -d ' '`);
+    // find — two page files (excluding the hidden control dir)
+    const find = await sh(
+      `find "${dir}" -name '*.md' -not -path '*/.hindsight-fs/*' | wc -l | tr -d ' '`
+    );
     expect(find.stdout.trim()).toBe("2");
 
     // head + wc — ordinary text tooling
-    const head = await sh(`head -1 "${dir}/project-status.md"`);
+    const head = await sh(`head -1 "${path.join(dir, "project-status.md")}"`);
     expect(head.stdout.trim()).toBe("---");
-    const wc = await sh(`wc -l < "${dir}/user-preferences.md" | tr -d ' '`);
-    expect(Number(wc.stdout.trim())).toBeGreaterThan(5);
+    const wc = await sh(`wc -l < "${path.join(dir, PREFS)}" | tr -d ' '`);
+    expect(Number(wc.stdout.trim())).toBeGreaterThan(4);
   });
 
   it("blocks an agent's write with read-only files", async () => {
     await cli(["sync", dir, "--bank", "demo", "--api-url", baseUrl]);
-    const file = path.join(dir, "user-preferences.md");
+    const file = path.join(dir, PREFS);
 
-    // Permissions are r--r--r--
     const stat = await sh(`ls -l "${file}" | cut -c1-10`);
     expect(stat.stdout.trim()).toBe("-r--r--r--");
 
-    // A naive append fails (skipped under root, which bypasses mode bits).
     if (!isRoot) {
       const write = await sh(`echo "AGENT EDIT" >> "${file}"`);
       expect(write.code).not.toBe(0);
@@ -199,30 +215,34 @@ describe("e2e: real CLI + real bash", () => {
 
   it("reverts a force-edited file on the next sync", async () => {
     await cli(["sync", dir, "--bank", "demo", "--api-url", baseUrl]);
-    const file = path.join(dir, "user-preferences.md");
+    const file = path.join(dir, PREFS);
 
-    // Force the file writable and hijack it (as a determined agent would).
     await sh(`chmod u+w "${file}" && echo "HIJACKED" > "${file}"`);
     expect((await sh(`cat "${file}"`)).stdout.trim()).toBe("HIJACKED");
 
-    // Re-sync with identical API content → must still be reverted.
     const resync = await cli(["sync", dir]);
     expect(resync.stdout).toContain("1 reverted");
-    const restored = await sh(`cat "${file}"`);
-    expect(restored.stdout).toContain("dark mode and async");
+    expect((await sh(`cat "${file}"`)).stdout).toContain("dark mode and async");
     expect((await sh(`ls -l "${file}" | cut -c1-10`)).stdout.trim()).toBe("-r--r--r--");
   });
 
-  it("prunes a file when its model is deleted from the bank", async () => {
+  it("prunes a file (and emptied folder) when its page is deleted from the bank", async () => {
     await cli(["sync", dir, "--bank", "demo", "--api-url", baseUrl]);
-    expect(await fileExists(path.join(dir, "project-status.md"))).toBe(true);
+    expect(await fileExists(path.join(dir, PREFS))).toBe(true);
 
-    bankModels = bankModels.filter((m) => m.id !== "project-status");
+    // Remove the user-preferences page (and its folder) from the bank.
+    bankTree = [
+      { id: "project-status", kind: "page", name: "Project Status", parent_id: null, children: [] },
+    ];
+    delete bankContent["user-preferences"];
     const resync = await cli(["sync", dir]);
     expect(resync.stdout).toContain("1 removed");
 
-    expect((await sh(`test -f "${dir}/project-status.md"; echo $?`)).stdout.trim()).toBe("1");
-    expect((await sh(`test -f "${dir}/user-preferences.md"; echo $?`)).stdout.trim()).toBe("0");
+    expect((await sh(`test -f "${path.join(dir, PREFS)}"; echo $?`)).stdout.trim()).toBe("1");
+    expect((await sh(`test -d "${path.join(dir, "profile")}"; echo $?`)).stdout.trim()).toBe("1");
+    expect(
+      (await sh(`test -f "${path.join(dir, "project-status.md")}"; echo $?`)).stdout.trim()
+    ).toBe("0");
   });
 
   it("runs as a background daemon and refreshes files on an interval", async () => {
@@ -240,28 +260,24 @@ describe("e2e: real CLI + real bash", () => {
     expect(start.code).toBe(0);
     expect(start.stdout).toContain("in background");
 
-    // Files appear shortly after starting.
-    const appeared = await waitFor(() => fileExists(path.join(dir, "user-preferences.md")));
+    const appeared = await waitFor(() => fileExists(path.join(dir, PREFS)));
     expect(appeared).toBe(true);
 
-    // status --json reports healthy with exit 0.
     const healthy = await waitFor(async () => (await cli(["status", dir, "--json"])).code === 0);
     expect(healthy).toBe(true);
-    const status = await cli(["status", dir, "--json"]);
-    const report = JSON.parse(status.stdout);
+    const report = JSON.parse((await cli(["status", dir, "--json"])).stdout);
     expect(report.status).toBe("ok");
     expect(report.daemon.running).toBe(true);
 
     // Change the bank server-side → the daemon picks it up within an interval.
-    bankModels[0].content = "The user now prefers LIGHT mode and phone calls.";
+    bankContent["user-preferences"] =
+      "---\nid: user-preferences\n---\n\nThe user now prefers LIGHT mode.\n";
     const picked = await waitFor(
       async () =>
-        (await sh(`grep -c "LIGHT mode" "${dir}/user-preferences.md" || true`)).stdout.trim() ===
-        "1"
+        (await sh(`grep -c "LIGHT mode" "${path.join(dir, PREFS)}" || true`)).stdout.trim() === "1"
     );
     expect(picked).toBe(true);
 
-    // Stop → status reports dead with non-zero exit.
     const stop = await cli(["stop", dir]);
     startedDirs.delete(dir);
     expect(stop.code).toBe(0);
@@ -271,15 +287,13 @@ describe("e2e: real CLI + real bash", () => {
   }, 20000);
 
   it("status exit codes: dead / stale / ok drive the exit code", async () => {
-    // Never mounted → dead, exit 1.
     const never = await cli(["status", dir, "--bank", "demo", "--api-url", baseUrl, "--json"]);
     expect(never.code).toBe(1);
     expect(JSON.parse(never.stdout).status).toBe("dead");
 
-    // Running daemon, but force the stale threshold to 0 → stale, exit 1.
     await cli(["start", dir, "--bank", "demo", "--api-url", baseUrl, "--interval", "1"]);
     startedDirs.add(dir);
-    await waitFor(() => fileExists(path.join(dir, "user-preferences.md")));
+    await waitFor(() => fileExists(path.join(dir, PREFS)));
 
     const ok = await waitFor(async () => (await cli(["status", dir, "--json"])).code === 0);
     expect(ok).toBe(true);
@@ -289,13 +303,16 @@ describe("e2e: real CLI + real bash", () => {
     expect(JSON.parse(stale.stdout).status).toBe("stale");
   }, 20000);
 
-  it("list prints models without writing any files", async () => {
+  it("list prints folders + pages without writing any files", async () => {
     const list = await cli(["list", "--bank", "demo", "--api-url", baseUrl, "--dir", dir]);
     expect(list.code).toBe(0);
-    expect(list.stdout).toContain("user-preferences.md");
+    expect(list.stdout).toContain("profile/");
+    expect(list.stdout).toContain("profile/user-preferences.md");
     expect(list.stdout).toContain("project-status.md");
-    // No .md files were written to the mount root.
-    const ls = await sh(`ls -1 "${dir}"/*.md 2>/dev/null | wc -l | tr -d ' '`);
-    expect(ls.stdout.trim()).toBe("0");
+    // No files were written to the mount.
+    const count = await sh(
+      `find "${dir}" -name '*.md' -not -path '*/.hindsight-fs/*' 2>/dev/null | wc -l | tr -d ' '`
+    );
+    expect(count.stdout.trim()).toBe("0");
   });
 });

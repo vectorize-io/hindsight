@@ -1,7 +1,8 @@
 /**
- * Persistent sync state for a mount. Tracks which file mirrors each mental model
- * and a content hash so unchanged models are not rewritten (keeps mtimes stable
- * for editors, watchers, and `ls -la`).
+ * Persistent sync state for a mount. Tracks which file mirrors each knowledge
+ * page (keyed by its relative path) and a content hash so unchanged pages are
+ * not rewritten (keeps mtimes stable for editors, watchers, and `ls -la`), plus
+ * the folder directories created, so removed folders are pruned.
  */
 
 import { promises as fs } from "node:fs";
@@ -10,7 +11,7 @@ import * as path from "node:path";
 import { CONTROL_DIR, STATE_FILE } from "./paths.js";
 
 export interface FileEntry {
-  /** Filename relative to the mount root. */
+  /** Path relative to the mount root (e.g. "policies/billing.md"). */
   file: string;
   /** sha256 of the rendered document. */
   hash: string;
@@ -23,8 +24,10 @@ export interface SyncState {
   lastSyncAt: string | null;
   lastSyncOk: boolean;
   lastError: string | null;
-  /** Mental-model id → file entry. */
+  /** Relative page path → file entry. */
   files: Record<string, FileEntry>;
+  /** Folder directories created (relative paths), for pruning removed folders. */
+  dirs: string[];
 }
 
 export function emptyState(bankId: string, apiUrl: string): SyncState {
@@ -36,6 +39,7 @@ export function emptyState(bankId: string, apiUrl: string): SyncState {
     lastSyncOk: false,
     lastError: null,
     files: {},
+    dirs: [],
   };
 }
 
@@ -50,7 +54,7 @@ function statePath(dir: string): string {
 export async function loadState(dir: string, bankId: string, apiUrl: string): Promise<SyncState> {
   try {
     const raw = JSON.parse(await fs.readFile(statePath(dir), "utf8")) as SyncState;
-    if (raw.version === 1 && raw.files) return raw;
+    if (raw.version === 1 && raw.files) return { ...raw, dirs: raw.dirs ?? [] };
   } catch {
     /* fall through to empty */
   }

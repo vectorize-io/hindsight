@@ -1,29 +1,29 @@
 # hindsight-fs
 
-Mount a [Hindsight](https://github.com/vectorize-io/hindsight) memory bank's **mental models** as a live, auto-refreshing folder of markdown files on your local disk.
+Mount a [Hindsight](https://github.com/vectorize-io/hindsight) memory bank's **knowledge base** as a live, auto-refreshing folder of markdown files on your local disk.
 
-Each mental model becomes a real `.md` file with YAML frontmatter. A background loop re-syncs them from the API on an interval, so ordinary shell tools — `ls`, `cat`, `grep`, `rg`, `find`, `fzf`, your editor, anything — just work against current memory. Think of it as a read-only filesystem view over an agent's living knowledge, in the spirit of [Supermemory's SMFS](https://supermemory.ai/docs/smfs/overview).
+The knowledge base is a tree of **folders** and **pages**. hindsight-fs mirrors it one-to-one: each folder becomes a directory, each page becomes a real `.md` file (the page's [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) document — YAML frontmatter + markdown body). A background loop re-syncs from the API on an interval, so ordinary shell tools — `ls`, `cat`, `grep`, `rg`, `find`, `fzf`, your editor, anything — just work against current memory. Think of it as a read-only filesystem view over an agent's living knowledge, in the spirit of [Supermemory's SMFS](https://supermemory.ai/docs/smfs/overview).
 
 ```
-./memory/
-├── user-preferences.md      # ← mental model "user-preferences"
-├── project-status.md
-├── editorial-style.md
+./kb/
+├── profile/                 # ← folder "Profile"
+│   ├── user-preferences.md  # ← page "User Preferences"
+│   └── communication.md
+├── policies/
+│   └── billing-policy.md
+├── project-status.md        # ← a root-level page
 └── .hindsight-fs/           # control data (config, state, daemon log, index.md)
 ```
 
-Each file looks like:
+Each page file looks like:
 
 ```markdown
 ---
-id: user-preferences
-name: User Preferences
-bank: my-agent
+id: 0f3c…
+type: knowledge-page
+title: User Preferences
 tags: [ui, comms]
-source_query: "What are the user's preferences?"
-last_refreshed_at: "2026-06-25T10:00:00Z"
-created_at: "2026-06-01T00:00:00Z"
-is_stale: false
+timestamp: "2026-06-25T10:00:00Z"
 ---
 
 The user prefers dark mode and async, written communication. They dislike
@@ -48,7 +48,7 @@ hindsight-fs start ./memory --bank my-agent --api-url http://localhost:8000 --in
 
 # Now use plain shell tools — these are real files
 ls ./memory
-cat ./memory/user-preferences.md
+cat ./kb/profile/user-preferences.md
 grep -ril "dark mode" ./memory
 
 # See what's going on
@@ -69,7 +69,7 @@ hindsight-fs stop ./memory
 | `restart [dir]` | Restart the background daemon.                                                                                                                   |
 | `sync [dir]`    | Run a single refresh pass and exit.                                                                                                              |
 | `status [dir]`  | Show daemon + last-sync health. `--json` for a machine-readable report; **exits non-zero when unhealthy**.                                       |
-| `list`          | List the bank's mental models without writing files.                                                                                             |
+| `list`          | List the bank's knowledge-base folders + pages without writing files.                                                                            |
 | `logs [dir]`    | Print the tail of the background daemon log.                                                                                                     |
 | `unmount [dir]` | Stop the daemon and remove mirrored files + control data.                                                                                        |
 
@@ -82,7 +82,6 @@ hindsight-fs stop ./memory
 | `-t, --token <token>`  | `HINDSIGHT_API_TOKEN`   | —                       | Bearer token, if the API requires auth.                   |
 | `-i, --interval <sec>` | `HINDSIGHT_FS_INTERVAL` | `30`                    | Refresh interval in seconds.                              |
 | `-d, --dir <path>`     | `HINDSIGHT_FS_DIR`      | `./hindsight-fs`        | Mount directory (overrides the positional arg).           |
-| `--full`               |                         |                         | Request full detail (adds `is_stale` to frontmatter).     |
 | `--writable`           |                         |                         | Make mirrored files editable (default: read-only `0444`). |
 
 Settings are remembered per mount in `<dir>/.hindsight-fs/config.json`, so after the first `start`/`mount` you can just run `hindsight-fs status ./memory` (or `sync`, `stop`) without re-passing `--bank`/`--api-url`.
@@ -91,15 +90,15 @@ Settings are remembered per mount in `<dir>/.hindsight-fs/config.json`, so after
 
 It's **pull-based polling**, not a push/webhook or a kernel filesystem. Each tick the engine:
 
-1. Does a full `GET /v1/default/banks/{bank}/mental-models` (paginated) — one request lists every model with its content.
-2. Renders each model to markdown and reconciles it against disk: writes new/changed/tampered files, leaves identical files untouched, and removes files for models that no longer exist.
+1. Fetches the knowledge-base tree (`GET …/knowledge-base/tree`) and the page bundle (`GET …/knowledge-base/export`) — two requests, regardless of bank size.
+2. Mirrors the tree to disk: creates folder directories, writes each page's markdown at its nested path, reconciles against disk (writes new/changed/tampered files, leaves identical files untouched), and prunes files + emptied folders for pages that no longer exist.
 3. Records a per-file content hash and the last-sync time in `.hindsight-fs/state.json`.
 
 The staleness window is therefore up to one `--interval`. There is no diffing on the wire — the whole list is fetched each tick — but only files whose **bytes actually differ** are rewritten, so disk churn is minimal.
 
 ## One-way mirror — agents can't edit it
 
-Mental models are owned by the API, so the mirror is strictly read-only at the filesystem level, enforced two ways:
+Pages are owned by the API, so the mirror is strictly read-only at the filesystem level, enforced two ways:
 
 - **Read-only files (default).** Mirrored files are written with mode `0444`, so an agent's in-place edit, `>>`, or editor-save fails immediately with `EACCES`. Pass `--writable` to opt out (e.g. if you want to scratch-edit locally).
 - **Tamper-revert backstop.** Change detection compares the **on-disk bytes** against the freshly rendered content — not just the last API hash — so if a file drifts anyway (a force-`chmod`, an external tool), it's overwritten on the next tick and reset to `0444`. `status` and the sync log report a `reverted` count when this happens.
@@ -109,7 +108,7 @@ Mental models are owned by the API, so the mirror is strictly read-only at the f
 ## Other guarantees
 
 - **Safe on errors.** A transient API/network failure never wipes the mirror; the previous files are left in place and the error is recorded in `status`.
-- **Pruning.** When a model is deleted in the bank, its file is removed on the next successful sync.
+- **Pruning.** When a page is removed from the bank, its file (and any emptied folder) is removed on the next successful sync.
 - **Atomic writes.** Files are written to a temp file and renamed, so readers never see a half-written document.
 - **Quiet files.** Frontmatter carries no per-poll timestamp, so an unchanged model keeps identical bytes and mtime across refreshes — editors and file watchers stay calm.
 

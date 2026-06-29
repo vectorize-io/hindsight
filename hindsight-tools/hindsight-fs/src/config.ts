@@ -20,12 +20,10 @@ export interface MountConfig {
   apiUrl: string;
   /** Bearer token, if the API requires auth. */
   apiToken?: string;
-  /** Bank whose mental models are mirrored. */
+  /** Bank whose knowledge base is mirrored. */
   bankId: string;
   /** Refresh interval in seconds for the sync loop. */
   intervalSeconds: number;
-  /** Detail level requested from the API (richer = more frontmatter). */
-  detail: "content" | "full";
   /**
    * When false (the default), mirrored files are written read-only so agents
    * cannot edit them. Set true to opt into editable files (still one-way: any
@@ -41,7 +39,6 @@ export interface ConfigOverrides {
   apiToken?: string;
   bankId?: string;
   intervalSeconds?: number;
-  detail?: "content" | "full";
   writable?: boolean;
 }
 
@@ -59,7 +56,6 @@ interface SavedConfig {
   apiToken?: string;
   bankId?: string;
   intervalSeconds?: number;
-  detail?: "content" | "full";
   writable?: boolean;
 }
 
@@ -110,10 +106,9 @@ export async function resolveConfig(
       ? Math.floor(intervalRaw)
       : DEFAULT_INTERVAL_SECONDS;
 
-  const detail = overrides.detail ?? saved.detail ?? "content";
   const writable = overrides.writable ?? saved.writable ?? false;
 
-  return { dir, apiUrl, apiToken, bankId, intervalSeconds, detail, writable };
+  return { dir, apiUrl, apiToken, bankId, intervalSeconds, writable };
 }
 
 /** Persist the parts of a config worth remembering for a mounted folder. */
@@ -125,7 +120,6 @@ export async function saveConfig(config: MountConfig): Promise<void> {
     apiToken: config.apiToken,
     bankId: config.bankId,
     intervalSeconds: config.intervalSeconds,
-    detail: config.detail,
     writable: config.writable,
   };
   await fs.writeFile(

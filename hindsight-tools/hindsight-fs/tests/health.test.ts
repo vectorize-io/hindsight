@@ -14,7 +14,6 @@ function config(): MountConfig {
     apiUrl: "http://localhost:8000",
     bankId: "acme",
     intervalSeconds: 10,
-    detail: "content",
     writable: false,
   };
 }

@@ -2,9 +2,9 @@
 /**
  * hindsight-fs CLI.
  *
- * Mirrors a Hindsight bank's mental models as a folder of markdown files that
- * stay current via a background refresh loop. Once mounted, ordinary shell
- * tools (ls, cat, grep, find, rg, fzf …) work against real files on disk.
+ * Mirrors a Hindsight bank's knowledge base (folders + pages) as a folder of
+ * markdown files that stay current via a background refresh loop. Once mounted,
+ * ordinary shell tools (ls, cat, grep, find, rg, fzf …) work against real files.
  */
 
 import { promises as fs } from "node:fs";
@@ -15,7 +15,7 @@ import { runSync } from "./sync.js";
 import { runLoop } from "./loop.js";
 import { HindsightFsClient } from "./client.js";
 import { startDaemon, stopDaemon, logPath } from "./daemon.js";
-import { fileNameFor } from "./format.js";
+import { planMirror } from "./format.js";
 import { loadState } from "./state.js";
 import { computeHealth } from "./health.js";
 import { CONTROL_DIR } from "./paths.js";
@@ -94,14 +94,7 @@ function overridesFrom(args: ParsedArgs): ConfigOverrides {
   if (typeof args.flags.interval === "string" && args.flags.interval) {
     o.intervalSeconds = Number(args.flags.interval);
   }
-  if (args.flags.full === true) o.detail = "full";
   if (args.flags.writable === true) o.writable = true;
-  if (
-    typeof args.flags.detail === "string" &&
-    (args.flags.detail === "content" || args.flags.detail === "full")
-  ) {
-    o.detail = args.flags.detail;
-  }
   return o;
 }
 
@@ -125,7 +118,7 @@ async function cmdSync(args: ParsedArgs): Promise<void> {
   const result = await runSync(config);
   const reverted = result.reverted > 0 ? `, ${result.reverted} reverted` : "";
   out(
-    `Synced ${result.total} mental models into ${config.dir} ` +
+    `Synced ${result.total} pages / ${result.folders} folders into ${config.dir} ` +
       `(${result.written} updated, ${result.unchanged} unchanged, ${result.removed} removed${reverted})`
   );
 }
@@ -214,16 +207,14 @@ async function cmdStatus(args: ParsedArgs): Promise<void> {
 async function cmdList(args: ParsedArgs): Promise<void> {
   const config = await resolveConfig(overridesFrom(args), { requireBank: true });
   const client = new HindsightFsClient({ apiUrl: config.apiUrl, apiToken: config.apiToken });
-  const models = await client.listMentalModels(config.bankId, config.detail);
-  if (models.length === 0) {
-    out(`No mental models in bank "${config.bankId}".`);
+  const snapshot = await client.loadKnowledge(config.bankId);
+  const plan = planMirror(snapshot);
+  if (plan.dirs.length === 0 && plan.files.length === 0) {
+    out(`No knowledge base in bank "${config.bankId}".`);
     return;
   }
-  for (const m of models.slice().sort((a, b) => a.id.localeCompare(b.id))) {
-    const stale = m.is_stale === true ? "  ⟳ stale" : "";
-    const tags = (m.tags ?? []).length ? `  [${(m.tags ?? []).join(", ")}]` : "";
-    out(`${fileNameFor(m.id).padEnd(36)} ${m.name}${tags}${stale}`);
-  }
+  for (const dir of plan.dirs) out(`${dir}/`);
+  for (const page of plan.files) out(page.relPath);
 }
 
 async function cmdUnmount(args: ParsedArgs): Promise<void> {
@@ -281,7 +272,7 @@ async function readVersion(): Promise<string> {
 }
 
 function printHelp(): void {
-  out(`hindsight-fs — mount a Hindsight bank's mental models as a live local folder
+  out(`hindsight-fs — mount a Hindsight bank's knowledge base as a live local folder
 
 USAGE
   hindsight-fs <command> [dir] [options]
@@ -296,7 +287,7 @@ COMMANDS
   status [dir]     Show daemon + last-sync health for <dir>
                    Add --json for a machine-readable report. Exits non-zero when
                    the mount is unhealthy (dead, failed, or stale).
-  list             List the bank's mental models (no files written)
+  list             List the bank's knowledge-base folders + pages (no files written)
   logs [dir]       Print the tail of the background daemon log
   unmount [dir]    Stop the daemon and delete mirrored files + control data
   help             Show this help
@@ -308,7 +299,6 @@ OPTIONS
   -t, --token <token>    Bearer token (env: HINDSIGHT_API_TOKEN)
   -i, --interval <sec>   Refresh interval in seconds (default 30)
   -d, --dir <path>       Mount directory (overrides positional; env: HINDSIGHT_FS_DIR)
-      --full             Request full detail (adds is_stale to frontmatter)
       --writable         Make mirrored files editable (default: read-only)
       --once             For 'mount': run a single pass instead of looping
       --detach           For 'mount': run in the background
@@ -317,17 +307,18 @@ OPTIONS
                          (default: max(interval × 3, 15))
 
 FILES
-  Each mental model becomes <dir>/<id>.md with YAML frontmatter + markdown body.
-  The mirror is one-way (API → disk). By default files are read-only (mode 0444)
-  so agents cannot edit them; any drift is also reverted on the next refresh.
-  Control data lives in <dir>/.hindsight-fs/ (config, state, daemon log, index.md).
+  Folders become directories and pages become <name>.md (YAML frontmatter +
+  markdown body), nested to match the knowledge-base tree. The mirror is one-way
+  (API → disk). By default files are read-only (mode 0444) so agents cannot edit
+  them; any drift is also reverted on the next refresh. Control data lives in
+  <dir>/.hindsight-fs/ (config, state, daemon log, index.md).
 
 EXAMPLES
-  hindsight-fs mount ./memory --bank my-agent --interval 15
-  hindsight-fs start ./memory --bank my-agent
-  ls ./memory && cat ./memory/user-preferences.md
-  grep -ril "prefers dark mode" ./memory
-  hindsight-fs stop ./memory`);
+  hindsight-fs mount ./kb --bank my-agent --interval 15
+  hindsight-fs start ./kb --bank my-agent
+  ls -R ./kb && cat ./kb/policies/billing-policy.md
+  grep -ril "net-30" ./kb
+  hindsight-fs stop ./kb`);
 }
 
 // ── Dispatch ───────────────────────────────────────────

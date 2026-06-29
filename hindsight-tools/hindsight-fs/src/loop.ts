@@ -40,7 +40,7 @@ export async function runLoop(config: MountConfig, opts: RunLoopOptions = {}): P
       const result = await runSync(config);
       const reverted = result.reverted > 0 ? `, ${result.reverted} reverted` : "";
       log(
-        `synced ${result.total} mental models — ${result.written} updated, ` +
+        `synced ${result.total} pages / ${result.folders} folders — ${result.written} updated, ` +
           `${result.unchanged} unchanged, ${result.removed} removed${reverted}`
       );
     } catch (err) {
