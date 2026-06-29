@@ -464,6 +464,7 @@ def create_llm_provider(
         "deepseek",
         "volcano",
         "openrouter",
+        "requesty",
         "zai",
         "opencode-go",
         "atlas",
@@ -592,6 +593,7 @@ class LLMProvider:
             "bedrock",
             "volcano",
             "openrouter",
+            "requesty",
             "zai",
             "opencode-go",
             "atlas",
@@ -617,6 +619,8 @@ class LLMProvider:
                 self.base_url = "https://api.deepseek.com"
             elif self.provider == "openrouter":
                 self.base_url = "https://openrouter.ai/api/v1"
+            elif self.provider == "requesty":
+                self.base_url = "https://router.requesty.ai/v1"
             elif self.provider == "zai":
                 self.base_url = "https://api.z.ai/api/coding/paas/v4"
             elif self.provider == "opencode-go":

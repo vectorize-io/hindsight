@@ -282,6 +282,11 @@ ENV_RERANKER_OPENROUTER_API_KEY = "HINDSIGHT_API_RERANKER_OPENROUTER_API_KEY"
 ENV_RERANKER_OPENROUTER_MODEL = "HINDSIGHT_API_RERANKER_OPENROUTER_MODEL"
 ENV_RERANKER_OPENROUTER_BASE_URL = "HINDSIGHT_API_RERANKER_OPENROUTER_BASE_URL"
 
+# Requesty configuration (OpenAI-compatible gateway; embeddings)
+ENV_REQUESTY_API_KEY = "HINDSIGHT_API_REQUESTY_API_KEY"
+ENV_EMBEDDINGS_REQUESTY_API_KEY = "HINDSIGHT_API_EMBEDDINGS_REQUESTY_API_KEY"
+ENV_EMBEDDINGS_REQUESTY_MODEL = "HINDSIGHT_API_EMBEDDINGS_REQUESTY_MODEL"
+
 # ZeroEntropy configuration (embeddings)
 ENV_EMBEDDINGS_ZEROENTROPY_API_KEY = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY"
 ENV_EMBEDDINGS_ZEROENTROPY_MODEL = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_MODEL"
@@ -643,6 +648,7 @@ PROVIDER_DEFAULT_MODELS = {
     "bedrock": "us.amazon.nova-2-lite-v1:0",
     "volcano": "doubao-pro-32k",
     "openrouter": "qwen/qwen3.5-9b",
+    "requesty": "openai/gpt-4o-mini",
     "fireworks": "accounts/fireworks/models/llama-v3p1-8b-instruct",
     "nous": "deepseek/deepseek-v4-flash",
 }
@@ -798,6 +804,9 @@ DEFAULT_RERANKER_COHERE_MODEL = "rerank-english-v3.0"
 DEFAULT_EMBEDDINGS_OPENROUTER_MODEL = "perplexity/pplx-embed-v1-0.6b"
 DEFAULT_RERANKER_OPENROUTER_MODEL = "cohere/rerank-v3.5"
 DEFAULT_RERANKER_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/rerank"
+
+# Requesty defaults
+DEFAULT_EMBEDDINGS_REQUESTY_MODEL = "openai/text-embedding-3-small"
 
 # ZeroEntropy defaults
 DEFAULT_EMBEDDINGS_ZEROENTROPY_MODEL = "zembed-1"
@@ -1600,6 +1609,8 @@ class HindsightConfig:
     embeddings_cohere_output_dimensions: int | None
     embeddings_openrouter_api_key: str | None
     embeddings_openrouter_model: str
+    embeddings_requesty_api_key: str | None
+    embeddings_requesty_model: str
     embeddings_litellm_api_base: str
     embeddings_litellm_api_key: str | None
     embeddings_litellm_model: str
@@ -2415,6 +2426,11 @@ class HindsightConfig:
             or os.getenv(ENV_OPENROUTER_API_KEY)
             or os.getenv(ENV_LLM_API_KEY),
             embeddings_openrouter_model=os.getenv(ENV_EMBEDDINGS_OPENROUTER_MODEL, DEFAULT_EMBEDDINGS_OPENROUTER_MODEL),
+            # Requesty embeddings (with fallback to shared Requesty key, then LLM key)
+            embeddings_requesty_api_key=os.getenv(ENV_EMBEDDINGS_REQUESTY_API_KEY)
+            or os.getenv(ENV_REQUESTY_API_KEY)
+            or os.getenv(ENV_LLM_API_KEY),
+            embeddings_requesty_model=os.getenv(ENV_EMBEDDINGS_REQUESTY_MODEL, DEFAULT_EMBEDDINGS_REQUESTY_MODEL),
             # ZeroEntropy embeddings
             embeddings_zeroentropy_api_key=os.getenv(ENV_EMBEDDINGS_ZEROENTROPY_API_KEY)
             or os.getenv("ZEROENTROPY_API_KEY"),
