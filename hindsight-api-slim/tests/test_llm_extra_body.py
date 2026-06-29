@@ -349,7 +349,7 @@ async def test_gemini_cached_parse_retry_keeps_cached_native_schema():
 # ─── LiteLLM ──────────────────────────────────────────────────────────────────
 
 
-def _make_litellm_provider(extra_body=None, default_headers=None):
+def _make_litellm_provider(extra_body=None, default_headers=None, model="gpt-4o"):
     pytest.importorskip("litellm")
     from hindsight_api.engine.providers.litellm_llm import LiteLLMLLM
 
@@ -357,7 +357,7 @@ def _make_litellm_provider(extra_body=None, default_headers=None):
         provider="litellm",
         api_key="fake-key",
         base_url="",
-        model="gpt-4o",
+        model=model,
         extra_body=extra_body,
         default_headers=default_headers,
     )
@@ -373,6 +373,18 @@ def _fake_litellm_response():
     resp.choices = [choice]
     resp.usage = MagicMock(prompt_tokens=5, completion_tokens=2)
     return resp
+
+
+async def _call_litellm_provider(provider, temperature=0.1):
+    provider._acompletion = AsyncMock(return_value=_fake_litellm_response())
+    with patch("hindsight_api.engine.providers.litellm_llm.get_metrics_collector"):
+        await provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            temperature=temperature,
+            scope="test",
+            max_retries=0,
+        )
+    return provider._acompletion.call_args.kwargs
 
 
 def test_litellm_stores_extra_body():
@@ -404,6 +416,33 @@ async def test_litellm_explicit_param_wins_over_extra_body():
         await provider.call(messages=[{"role": "user", "content": "hi"}], temperature=0.9, scope="test", max_retries=0)
 
     assert provider._acompletion.call_args.kwargs.get("temperature") == 0.9
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model", "expected_temperature"),
+    [
+        ("azure/gpt-5.5", None),
+        ("openai/o3-mini", None),
+        ("deepseek/deepseek-reasoner", None),
+        ("deepseek/deepseek-v4-flash", 0.1),
+    ],
+)
+async def test_litellm_temperature_for_reasoning_models(model, expected_temperature):
+    kwargs = await _call_litellm_provider(_make_litellm_provider(model=model))
+
+    if expected_temperature is None:
+        assert "temperature" not in kwargs
+    else:
+        assert kwargs["temperature"] == expected_temperature
+
+
+@pytest.mark.asyncio
+async def test_litellm_gpt5_omits_extra_body_temperature():
+    provider = _make_litellm_provider(extra_body=EXTRA_BODY, model="azure/gpt-5.5")
+    kwargs = await _call_litellm_provider(provider, temperature=None)
+    assert "temperature" not in kwargs
+    assert kwargs.get("top_p") == 0.9
 
 
 def test_litellm_router_forwards_extra_body():

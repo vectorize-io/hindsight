@@ -70,6 +70,22 @@ def mock_router_response() -> MagicMock:
     return response
 
 
+def _router_config(
+    default_model: str,
+    *,
+    extra_model: str | None = None,
+    extra_name: str = "fallback",
+    fallbacks: list[dict[str, list[str]]] | None = None,
+) -> dict[str, Any]:
+    model_list = [{"model_name": "default", "litellm_params": {"model": default_model, "api_key": "sk"}}]
+    if extra_model:
+        model_list.append({"model_name": extra_name, "litellm_params": {"model": extra_model, "api_key": "sk"}})
+    config: dict[str, Any] = {"model_list": model_list}
+    if fallbacks:
+        config["fallbacks"] = fallbacks
+    return config
+
+
 # --- config parsing ----------------------------------------------------------
 
 
@@ -202,6 +218,20 @@ def _make_router_provider(config: dict[str, Any], mock_router: Any) -> LiteLLMRo
 
 
 class TestRouterCall:
+    async def _call_with_temperature(self, config, mock_router_response):
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock(return_value=mock_router_response)
+        provider = _make_router_provider(config, mock_router)
+        provider._router_omits_temperature = provider._config_has_temperature_rejecting_model(config)
+
+        await provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            temperature=0.1,
+            max_retries=0,
+        )
+
+        return mock_router.acompletion.await_args.kwargs
+
     @pytest.mark.asyncio
     async def test_plain_text_call_targets_default_entrypoint(self, two_step_config, mock_router_response):
         mock_router = MagicMock()
@@ -313,6 +343,35 @@ class TestRouterCall:
         )
         kwargs = mock_router.acompletion.await_args.kwargs
         assert kwargs["max_completion_tokens"] == 64000
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("config", "expected_temperature"),
+        [
+            (_router_config("azure/gpt-5.5"), None),
+            (_router_config("openai/gpt-4o-mini", extra_model="azure/gpt-5.5", extra_name="unused"), 0.1),
+            (
+                _router_config(
+                    "openai/gpt-4o-mini",
+                    extra_model="azure/gpt-5.5",
+                    fallbacks=[{"default": ["fallback"]}],
+                ),
+                None,
+            ),
+        ],
+    )
+    async def test_router_temperature_for_reachable_reasoning_models(
+        self,
+        config,
+        expected_temperature,
+        mock_router_response,
+    ):
+        kwargs = await self._call_with_temperature(config, mock_router_response)
+        assert kwargs["model"] == "default"
+        if expected_temperature is None:
+            assert "temperature" not in kwargs
+        else:
+            assert kwargs["temperature"] == expected_temperature
 
     @pytest.mark.asyncio
     async def test_call_with_tools(self, two_step_config):

@@ -24,6 +24,7 @@ from litellm.exceptions import Timeout as LiteLLMTimeout
 from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
 from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.providers.model_capabilities import supports_openai_compatible_reasoning
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
@@ -159,11 +160,17 @@ class LiteLLMLLM(LLMInterface):
         if self._default_headers:
             kwargs.setdefault("extra_headers", dict(self._default_headers))
 
+        if self._should_omit_temperature():
+            kwargs.pop("temperature", None)
+
         # Bedrock service tier: flex (50% cheaper), priority, or reserved
         if self.model.startswith("bedrock/") and self.bedrock_service_tier is not None:
             kwargs["service_tier"] = self.bedrock_service_tier
 
         return kwargs
+
+    def _should_omit_temperature(self) -> bool:
+        return supports_openai_compatible_reasoning(self.model)
 
     # ── per-model output-tokens cap (shared with Router subclass) ────────────
     # Hindsight's defaults (e.g. retain_max_completion_tokens=64000) target

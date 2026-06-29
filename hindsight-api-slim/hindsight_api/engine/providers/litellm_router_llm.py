@@ -37,6 +37,7 @@ import logging
 from typing import Any
 
 from hindsight_api.engine.providers.litellm_llm import LiteLLMLLM
+from hindsight_api.engine.providers.model_capabilities import supports_openai_compatible_reasoning
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,7 @@ class LiteLLMRouterLLM(LiteLLMLLM):
         # deployment Router picks. Uses LiteLLM's own per-model registry; unknown
         # models contribute no cap. See LiteLLMLLM._cap_max_completion_tokens.
         self._router_output_cap = self._compute_router_output_cap(config)
+        self._router_omits_temperature = self._config_has_temperature_rejecting_model(config)
 
         logger.info("LiteLLM Router initialized; entrypoint model_name=%r", _ENTRYPOINT_MODEL_NAME)
 
@@ -130,6 +132,48 @@ class LiteLLMRouterLLM(LiteLLMLLM):
     def _get_model_output_cap(self) -> int | None:
         return self._router_output_cap
 
+    def _should_omit_temperature(self) -> bool:
+        return bool(getattr(self, "_router_omits_temperature", False))
+
+    def _config_has_temperature_rejecting_model(self, config: dict[str, Any]) -> bool:
+        reachable_model_names = self._reachable_model_names(config)
+        for deployment in (config.get("model_list") or []) if isinstance(config, dict) else []:
+            if not isinstance(deployment, dict):
+                continue
+            model_name = deployment.get("model_name")
+            if model_name not in reachable_model_names:
+                continue
+            params = deployment.get("litellm_params") or {}
+            model_str = params.get("model") if isinstance(params, dict) else None
+            if model_str and supports_openai_compatible_reasoning(model_str):
+                return True
+        return False
+
+    def _reachable_model_names(self, config: dict[str, Any]) -> set[str]:
+        reachable = {_ENTRYPOINT_MODEL_NAME}
+        pending = [_ENTRYPOINT_MODEL_NAME]
+        fallback_specs = []
+        for key in ("fallbacks", "context_window_fallbacks"):
+            value = config.get(key) if isinstance(config, dict) else None
+            if isinstance(value, list):
+                fallback_specs.extend(value)
+
+        while pending:
+            source = pending.pop()
+            for spec in fallback_specs:
+                if not isinstance(spec, dict):
+                    continue
+                targets = spec.get(source)
+                if isinstance(targets, str):
+                    targets = [targets]
+                if not isinstance(targets, list):
+                    continue
+                for target in targets:
+                    if isinstance(target, str) and target not in reachable:
+                        reachable.add(target)
+                        pending.append(target)
+        return reachable
+
     def _build_common_kwargs(
         self,
         messages: list[dict[str, Any]],
@@ -144,7 +188,7 @@ class LiteLLMRouterLLM(LiteLLMLLM):
         }
         if max_completion_tokens is not None:
             kwargs["max_completion_tokens"] = self._cap_max_completion_tokens(max_completion_tokens)
-        if temperature is not None:
+        if temperature is not None and not self._should_omit_temperature():
             kwargs["temperature"] = temperature
 
         # Forward operator-configured default headers as ``extra_headers`` so they
@@ -154,8 +198,9 @@ class LiteLLMRouterLLM(LiteLLMLLM):
         # concern, so we inject them here too — mirroring the base provider.
         # ``setdefault`` keeps any explicit per-call ``extra_headers`` authoritative;
         # a per-call copy prevents LiteLLM/downstream from mutating the stored dict.
-        if self._default_headers:
-            kwargs.setdefault("extra_headers", dict(self._default_headers))
+        default_headers = getattr(self, "_default_headers", {})
+        if default_headers:
+            kwargs.setdefault("extra_headers", dict(default_headers))
         return kwargs
 
     async def verify_connection(self) -> None:

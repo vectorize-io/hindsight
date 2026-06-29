@@ -38,6 +38,7 @@ from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
 from hindsight_api.engine.bank_attribution import apply_bank_attribution
 from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError, ProviderRateLimitResetError
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
+from hindsight_api.engine.providers.model_capabilities import supports_openai_compatible_reasoning
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
@@ -594,13 +595,7 @@ class OpenAICompatibleLLM(LLMInterface):
 
     def _supports_reasoning_model(self) -> bool:
         """Check if the current model is a reasoning model (o1, o3, GPT-5, DeepSeek)."""
-        model_lower = self.model.lower()
-        if "deepseek" in model_lower:
-            # DeepSeek v4-flash is the non-thinking route. Treating every
-            # DeepSeek model as a reasoning model injects reasoning_effort,
-            # which conflicts with thinking-disabled flash calls.
-            return any(x in model_lower for x in ["v4-pro", "reasoner", "r1", "thinking"])
-        return any(x in model_lower for x in ["gpt-5", "o1", "o3"])
+        return supports_openai_compatible_reasoning(self.model)
 
     def _get_max_reasoning_tokens(self) -> int | None:
         """Get max reasoning tokens for reasoning models."""
