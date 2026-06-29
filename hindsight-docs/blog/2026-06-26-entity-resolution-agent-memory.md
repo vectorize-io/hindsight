@@ -26,6 +26,7 @@ This post is a walkthrough of how [agent memory](https://vectorize.io/what-is-ag
 - Resolution is a weighted score over three signals: **name similarity** (0.5), **co-occurrence overlap** (0.3), and **temporal recency** (0.2). Clear `0.6` and the mention resolves to an existing entity; otherwise a new one is created.
 - A **co-occurrence graph** (`entity_cooccurrences`) is the differentiator: who an entity appears next to disambiguates two people with the same name.
 - The system is **deliberately conservative about merging** and leans on the graph at retrieval time instead of collapsing records it isn't sure about.
+- You can make resolution reliable up front: pass a `context` string at retain time, or declare a known cast as **enum entity labels** so mentions map to a fixed vocabulary by exact match.
 
 ---
 
@@ -90,6 +91,48 @@ When a query surfaces a set of seed facts, Hindsight collects the entities in th
 
 This is why resolution quality compounds. Each correctly resolved mention thickens the links between facts, so retrieval reaches more of the relevant history with less prompting. It also runs alongside semantic, causal, and [time-aware](/blog/2026/03/12/spreading-activation-memory-graphs) links rather than replacing them, so a missed entity match is often covered by another strategy.
 
+## How to Make Sure Entities Resolve
+
+The resolver is conservative by design, which means it will sometimes leave two records separate when you'd rather it didn't. When resolution accuracy matters, you have two levers, and both act *before* the scoring runs, at extraction time. They're far more reliable than hoping a name similarity clears 0.6.
+
+### Give the extractor context
+
+Every retain call takes an optional `context` string alongside the content. It's woven directly into the extraction prompt, and it takes precedence over the model's defaults when attributing who said or did what.
+
+This matters most for transcripts and multi-party text, where "I," "she," and "the customer" are ambiguous on their own. Tell the extractor who is in the room and the first-person statements get attributed to the right person instead of defaulting to the agent. The entities come out already pointed at the people you named, so resolution has far less to guess at.
+
+```python
+client.retain(
+    content=transcript,
+    context="Support call between agent Maria Lopez and customer John Doe (Acme).",
+)
+```
+
+### Use entity labels in enum mode
+
+If you already know the full cast, the people on a project, a product catalog, a support taxonomy, don't make the resolver rediscover it. Declare those values as an **entity label** in the bank's `entity_labels` config, and extraction is constrained to map every mention onto one of them.
+
+Under the hood, a `value`-type label compiles to a Pydantic `Literal[...]` of your allowed values, so the model can't return anything off-list. And label entities resolve by **exact match**, not fuzzy scoring. "Sarah," "Sarah Chen," and "she" all collapse onto the one canonical value you defined, with the 0.6 threshold out of the picture entirely.
+
+```json
+{
+  "entity_labels": {
+    "attributes": [
+      {
+        "key": "person",
+        "type": "value",
+        "values": [
+          { "value": "sarah-chen", "description": "Eng lead, frontend" },
+          { "value": "alex-kim",   "description": "PM, growth" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Enum mode is the most reliable resolution lever Hindsight offers. The catch is that it only works when the set is known and bounded: ideal for a fixed team or a finite catalog, wrong for an open-ended cast you discover as you go. For the open-ended case, the `context` field plus the co-occurrence graph is the right tool. (If you've already identified entities upstream, you can also pass them directly via the `entities` field on a retain call.)
+
 ## The Data Model, Briefly
 
 Three tables carry the whole system, and they're worth seeing because they're refreshingly boring:
@@ -132,6 +175,9 @@ By their neighbors. The co-occurrence graph records which entities appear togeth
 
 **What happens when it isn't sure?**
 It creates a new entity. Resolution only merges when a weighted score clears `0.6`. A duplicate record is cheap to live with; a wrong merge corrupts the agent's memory of a person, so the system errs toward the safe mistake.
+
+**How do I make sure the right entities get merged?**
+Two levers, both at extraction time. Pass a `context` string when you retain (it tells the extractor who's involved and takes precedence for attribution), and, when the cast is known, declare those values as enum entity labels so mentions map onto a fixed vocabulary by exact match. Both are more reliable than leaning on name-similarity scoring after the fact.
 
 **Can it merge two records later if it learns they're the same?**
 Not automatically. Co-occurrence links strengthen between them, which helps retrieval reach both, but Hindsight does not retroactively collapse canonical entities, and it has no splitting operation either.
