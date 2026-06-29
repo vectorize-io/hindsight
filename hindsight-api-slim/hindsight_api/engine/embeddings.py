@@ -1638,6 +1638,20 @@ def create_embeddings_from_env() -> Embeddings:
             batch_size=config.embeddings_openai_batch_size,
             dimensions=config.embeddings_openai_dimensions,
         )
+    elif provider == "requesty":
+        api_key = config.embeddings_requesty_api_key
+        if not api_key:
+            raise ValueError(
+                "HINDSIGHT_API_EMBEDDINGS_REQUESTY_API_KEY, HINDSIGHT_API_REQUESTY_API_KEY, "
+                f"or {ENV_LLM_API_KEY} is required when {ENV_EMBEDDINGS_PROVIDER} is 'requesty'"
+            )
+        return OpenAIEmbeddings(
+            api_key=api_key,
+            model=config.embeddings_requesty_model,
+            base_url="https://router.requesty.ai/v1",
+            batch_size=config.embeddings_openai_batch_size,
+            dimensions=config.embeddings_openai_dimensions,
+        )
     elif provider == "zeroentropy":
         api_key = config.embeddings_zeroentropy_api_key
         if not api_key:
@@ -1701,6 +1715,6 @@ def create_embeddings_from_env() -> Embeddings:
     else:
         raise ValueError(
             f"Unknown embeddings provider: {provider}. "
-            f"Supported: 'local', 'onnx', 'tei', 'openai', 'openai-codex', 'openrouter', 'cohere', 'google', "
+            f"Supported: 'local', 'onnx', 'tei', 'openai', 'openai-codex', 'openrouter', 'requesty', 'cohere', 'google', "
             f"'zeroentropy', 'litellm', 'litellm-sdk'"
         )
