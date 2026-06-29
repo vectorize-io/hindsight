@@ -1,8 +1,8 @@
 ---
 title: "Entity Resolution in Agent Memory: One Person, Many Names"
 authors: [benfrank241]
-slug: "2026/06/26/entity-resolution-agent-memory"
-date: 2026-06-26T12:00
+slug: "2026/06/29/entity-resolution-agent-memory"
+date: 2026-06-29T12:00
 tags: [hindsight, entity-resolution, agent-memory, memory, retrieval, knowledge-graph, deep-dive]
 description: "How agent memory decides that Sarah, Sarah Chen, and she are one person, and why Hindsight resolves entities with a co-occurrence graph, not embeddings."
 image: /img/blog/entity-resolution-agent-memory.png
