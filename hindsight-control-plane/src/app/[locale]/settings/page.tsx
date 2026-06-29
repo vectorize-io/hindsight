@@ -1,120 +1,161 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
+import { useParams } from "next/navigation";
 import { OperatorShell } from "@/components/operator-shell";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
 import {
-  Settings,
-  Save,
+  Settings2,
+  Zap,
+  Bell,
+  Shield,
+  Monitor,
   Globe,
   Clock,
   Palette,
-  Cpu,
-  Bell,
-  Shield,
+  Loader2,
+  Save,
   CheckCircle2,
 } from "lucide-react";
 
 export default function SettingsPage() {
-  const t = useTranslations("operator.settings");
-  const [activeTab, setActiveTab] = useState<"general" | "performance" | "notifications" | "security">("general");
+  const t = useTranslations("operator");
+  const params = useParams();
+  const locale = (params?.locale as string) || "en";
+  const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
-  const [settings, setSettings] = useState({
-    systemName: "CollabMind Operator",
-    language: "en",
-    timezone: "UTC",
-    theme: "system",
-    workerCount: "4",
-    cacheTTL: "3600",
-    batchSize: "50",
-    pollingInterval: "30",
-    systemAlerts: true,
-    agentNotifications: true,
-    errorReports: true,
-    weeklyDigest: false,
-    sessionTimeout: "30",
-    maxLoginAttempts: "5",
-    apiKeyRotation: "90",
-    auditLogRetention: "365",
-  });
+
+  const [systemName, setSystemName] = useState("CollabMind Hindsight");
+  const [language, setLanguage] = useState("en");
+  const [timezone, setTimezone] = useState("UTC");
+  const [theme, setTheme] = useState("system");
+  const [workerCount, setWorkerCount] = useState(4);
+  const [cacheTTL, setCacheTTL] = useState(300);
+  const [batchSize, setBatchSize] = useState(50);
+  const [pollingInterval, setPollingInterval] = useState(30);
+  const [systemAlerts, setSystemAlerts] = useState(true);
+  const [agentNotifications, setAgentNotifications] = useState(true);
+  const [errorReports, setErrorReports] = useState(true);
+  const [weeklyDigest, setWeeklyDigest] = useState(false);
+  const [sessionTimeout, setSessionTimeout] = useState(60);
+  const [maxLoginAttempts, setMaxLoginAttempts] = useState(5);
+  const [apiKeyRotation, setApiKeyRotation] = useState(90);
+  const [auditLogRetention, setAuditLogRetention] = useState(365);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch("/api/system/config");
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.llm?.provider) setSystemName(`CollabMind ${data.llm.provider}`);
+        }
+      } catch {
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
 
   const handleSave = () => {
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
 
+  if (loading) {
+    return (
+      <OperatorShell>
+        <div className="p-6">
+          <div className="flex items-center justify-center py-16 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading settings...
+          </div>
+        </div>
+      </OperatorShell>
+    );
+  }
+
   return (
     <OperatorShell>
       <div className="p-6 space-y-6">
-        <h1 className="text-2xl font-bold tracking-tight">{t("title")}</h1>
-
-        <div className="flex items-center gap-4 border-b pb-2">
-          <button onClick={() => setActiveTab("general")} className={`text-sm pb-2 px-1 -mb-2 border-b-2 transition-colors ${activeTab === "general" ? "border-primary font-medium" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
-            {t("tabGeneral")}
-          </button>
-          <button onClick={() => setActiveTab("performance")} className={`text-sm pb-2 px-1 -mb-2 border-b-2 transition-colors ${activeTab === "performance" ? "border-primary font-medium" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
-            {t("tabPerformance")}
-          </button>
-          <button onClick={() => setActiveTab("notifications")} className={`text-sm pb-2 px-1 -mb-2 border-b-2 transition-colors ${activeTab === "notifications" ? "border-primary font-medium" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
-            {t("tabNotifications")}
-          </button>
-          <button onClick={() => setActiveTab("security")} className={`text-sm pb-2 px-1 -mb-2 border-b-2 transition-colors ${activeTab === "security" ? "border-primary font-medium" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
-            {t("tabSecurity")}
-          </button>
-          <div className="ml-auto">
-            <Button size="sm" onClick={handleSave} disabled={saved}>
-              {saved ? (
-                <><CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />{t("saved")}</>
-              ) : (
-                <><Save className="w-3.5 h-3.5 mr-1.5" />{t("save")}</>
-              )}
-            </Button>
-          </div>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-3">
+            <Settings2 className="h-6 w-6 text-primary" />
+            {t("panels.settings")}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">{t("descriptions.settings")}</p>
         </div>
 
-        {activeTab === "general" && (
-          <div className="space-y-4 max-w-2xl">
+        <Tabs defaultValue="general" className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="general" className="flex items-center gap-2">
+              <Monitor className="h-4 w-4" /> General
+            </TabsTrigger>
+            <TabsTrigger value="performance" className="flex items-center gap-2">
+              <Zap className="h-4 w-4" /> Performance
+            </TabsTrigger>
+            <TabsTrigger value="notifications" className="flex items-center gap-2">
+              <Bell className="h-4 w-4" /> Notifications
+            </TabsTrigger>
+            <TabsTrigger value="security" className="flex items-center gap-2">
+              <Shield className="h-4 w-4" /> Security
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="general" className="space-y-4">
             <Card>
-              <CardHeader><CardTitle className="text-sm flex items-center gap-2"><Globe className="w-4 h-4" />{t("tabGeneral")}</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle className="text-base">General Settings</CardTitle>
+                <CardDescription>System-wide preferences and localization</CardDescription>
+              </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium">{t("systemName")}</label>
-                    <Input className="h-9 text-xs" value={settings.systemName} onChange={e => setSettings({ ...settings, systemName: e.target.value })} />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">System Name</label>
+                    <Input value={systemName} onChange={(e) => setSystemName(e.target.value)} />
                   </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium">{t("language")}</label>
-                    <select className="w-full h-9 text-xs border rounded-md px-2 bg-background" value={settings.language} onChange={e => setSettings({ ...settings, language: e.target.value })}>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Default Language</label>
+                    <select
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      value={language}
+                      onChange={(e) => setLanguage(e.target.value)}
+                    >
                       <option value="en">English</option>
-                      <option value="zh">中文</option>
-                      <option value="ja">日本語</option>
-                      <option value="ko">한국어</option>
                       <option value="fr">Français</option>
                       <option value="de">Deutsch</option>
-                      <option value="es">Español</option>
+                      <option value="ja">日本語</option>
+                      <option value="zh">中文</option>
                     </select>
                   </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium">{t("timezone")}</label>
-                    <select className="w-full h-9 text-xs border rounded-md px-2 bg-background" value={settings.timezone} onChange={e => setSettings({ ...settings, timezone: e.target.value })}>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Timezone</label>
+                    <select
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      value={timezone}
+                      onChange={(e) => setTimezone(e.target.value)}
+                    >
                       <option value="UTC">UTC</option>
-                      <option value="America/New_York">Eastern</option>
-                      <option value="America/Chicago">Central</option>
-                      <option value="America/Denver">Mountain</option>
-                      <option value="America/Los_Angeles">Pacific</option>
-                      <option value="Europe/London">London</option>
-                      <option value="Europe/Berlin">Berlin</option>
-                      <option value="Asia/Tokyo">Tokyo</option>
-                      <option value="Asia/Shanghai">Shanghai</option>
+                      <option value="America/New_York">America/New_York</option>
+                      <option value="America/Los_Angeles">America/Los_Angeles</option>
+                      <option value="Europe/London">Europe/London</option>
+                      <option value="Europe/Paris">Europe/Paris</option>
+                      <option value="Asia/Tokyo">Asia/Tokyo</option>
                     </select>
                   </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium">{t("theme")}</label>
-                    <select className="w-full h-9 text-xs border rounded-md px-2 bg-background" value={settings.theme} onChange={e => setSettings({ ...settings, theme: e.target.value })}>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Theme</label>
+                    <select
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      value={theme}
+                      onChange={(e) => setTheme(e.target.value)}
+                    >
                       <option value="system">System</option>
                       <option value="light">Light</option>
                       <option value="dark">Dark</option>
@@ -123,90 +164,155 @@ export default function SettingsPage() {
                 </div>
               </CardContent>
             </Card>
-          </div>
-        )}
+          </TabsContent>
 
-        {activeTab === "performance" && (
-          <div className="space-y-4 max-w-2xl">
+          <TabsContent value="performance" className="space-y-4">
             <Card>
-              <CardHeader><CardTitle className="text-sm flex items-center gap-2"><Cpu className="w-4 h-4" />{t("tabPerformance")}</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle className="text-base">Performance Settings</CardTitle>
+                <CardDescription>Worker pool, caching, and processing tuning</CardDescription>
+              </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium">{t("workerCount")}</label>
-                    <Input type="number" className="h-9 text-xs" value={settings.workerCount} onChange={e => setSettings({ ...settings, workerCount: e.target.value })} />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Worker Count ({workerCount})</label>
+                    <Input
+                      type="range"
+                      min={1}
+                      max={16}
+                      value={workerCount}
+                      onChange={(e) => setWorkerCount(Number(e.target.value))}
+                    />
                   </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium">{t("cacheTTL")} (s)</label>
-                    <Input type="number" className="h-9 text-xs" value={settings.cacheTTL} onChange={e => setSettings({ ...settings, cacheTTL: e.target.value })} />
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Cache TTL (seconds)</label>
+                    <Input
+                      type="number"
+                      value={cacheTTL}
+                      onChange={(e) => setCacheTTL(Number(e.target.value))}
+                    />
                   </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium">{t("batchSize")}</label>
-                    <Input type="number" className="h-9 text-xs" value={settings.batchSize} onChange={e => setSettings({ ...settings, batchSize: e.target.value })} />
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Batch Size</label>
+                    <Input
+                      type="number"
+                      value={batchSize}
+                      onChange={(e) => setBatchSize(Number(e.target.value))}
+                    />
                   </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium">{t("pollingInterval")} (s)</label>
-                    <Input type="number" className="h-9 text-xs" value={settings.pollingInterval} onChange={e => setSettings({ ...settings, pollingInterval: e.target.value })} />
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Polling Interval (seconds)</label>
+                    <Input
+                      type="number"
+                      value={pollingInterval}
+                      onChange={(e) => setPollingInterval(Number(e.target.value))}
+                    />
                   </div>
                 </div>
               </CardContent>
             </Card>
-          </div>
-        )}
+          </TabsContent>
 
-        {activeTab === "notifications" && (
-          <div className="space-y-4 max-w-2xl">
+          <TabsContent value="notifications" className="space-y-4">
             <Card>
-              <CardHeader><CardTitle className="text-sm flex items-center gap-2"><Bell className="w-4 h-4" />{t("tabNotifications")}</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle className="text-base">Notification Preferences</CardTitle>
+                <CardDescription>Control what alerts you receive</CardDescription>
+              </CardHeader>
               <CardContent className="space-y-4">
-                {[
-                  { key: "systemAlerts", label: t("systemAlerts") },
-                  { key: "agentNotifications", label: t("agentNotifications") },
-                  { key: "errorReports", label: t("errorReports") },
-                  { key: "weeklyDigest", label: t("weeklyDigest") },
-                ].map(({ key, label }) => (
-                  <div key={key} className="flex items-center justify-between">
-                    <span className="text-sm">{label}</span>
-                    <button
-                      className={`w-10 h-5 rounded-full transition-colors ${settings[key as keyof typeof settings] ? "bg-primary" : "bg-muted"}`}
-                      onClick={() => setSettings({ ...settings, [key]: !settings[key as keyof typeof settings] })}
-                    >
-                      <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${settings[key as keyof typeof settings] ? "translate-x-5" : "translate-x-0.5"}`} />
-                    </button>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium">System Alerts</p>
+                      <p className="text-xs text-muted-foreground">Critical system events and failures</p>
+                    </div>
+                    <Switch checked={systemAlerts} onCheckedChange={setSystemAlerts} />
                   </div>
-                ))}
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {activeTab === "security" && (
-          <div className="space-y-4 max-w-2xl">
-            <Card>
-              <CardHeader><CardTitle className="text-sm flex items-center gap-2"><Shield className="w-4 h-4" />{t("tabSecurity")}</CardTitle></CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium">{t("sessionTimeout")} (min)</label>
-                    <Input type="number" className="h-9 text-xs" value={settings.sessionTimeout} onChange={e => setSettings({ ...settings, sessionTimeout: e.target.value })} />
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Agent Notifications</p>
+                      <p className="text-xs text-muted-foreground">Agent task completions and failures</p>
+                    </div>
+                    <Switch checked={agentNotifications} onCheckedChange={setAgentNotifications} />
                   </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium">{t("maxLoginAttempts")}</label>
-                    <Input type="number" className="h-9 text-xs" value={settings.maxLoginAttempts} onChange={e => setSettings({ ...settings, maxLoginAttempts: e.target.value })} />
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Error Reports</p>
+                      <p className="text-xs text-muted-foreground">Detailed error reports for debugging</p>
+                    </div>
+                    <Switch checked={errorReports} onCheckedChange={setErrorReports} />
                   </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium">{t("apiKeyRotation")} (days)</label>
-                    <Input type="number" className="h-9 text-xs" value={settings.apiKeyRotation} onChange={e => setSettings({ ...settings, apiKeyRotation: e.target.value })} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium">{t("auditLogRetention")} (days)</label>
-                    <Input type="number" className="h-9 text-xs" value={settings.auditLogRetention} onChange={e => setSettings({ ...settings, auditLogRetention: e.target.value })} />
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Weekly Digest</p>
+                      <p className="text-xs text-muted-foreground">Weekly summary of system activity</p>
+                    </div>
+                    <Switch checked={weeklyDigest} onCheckedChange={setWeeklyDigest} />
                   </div>
                 </div>
               </CardContent>
             </Card>
-          </div>
-        )}
+          </TabsContent>
+
+          <TabsContent value="security" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Security Settings</CardTitle>
+                <CardDescription>Authentication, encryption, and audit configuration</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Session Timeout (minutes)</label>
+                    <Input
+                      type="number"
+                      value={sessionTimeout}
+                      onChange={(e) => setSessionTimeout(Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Max Login Attempts</label>
+                    <Input
+                      type="number"
+                      value={maxLoginAttempts}
+                      onChange={(e) => setMaxLoginAttempts(Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">API Key Rotation (days)</label>
+                    <Input
+                      type="number"
+                      value={apiKeyRotation}
+                      onChange={(e) => setApiKeyRotation(Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Audit Log Retention (days)</label>
+                    <Input
+                      type="number"
+                      value={auditLogRetention}
+                      onChange={(e) => setAuditLogRetention(Number(e.target.value))}
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+
+        <div className="flex items-center gap-3">
+          <Button onClick={handleSave} className="flex items-center gap-2">
+            {saved ? (
+              <>
+                <CheckCircle2 className="h-4 w-4" /> Settings Saved
+              </>
+            ) : (
+              <>
+                <Save className="h-4 w-4" /> Save Settings
+              </>
+            )}
+          </Button>
+        </div>
       </div>
     </OperatorShell>
   );
