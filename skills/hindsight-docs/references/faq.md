@@ -82,6 +82,7 @@ Browse all supported integrations in the Integrations Hub.
 - Atlas Cloud
 - Volcano Engine
 - OpenRouter
+- Requesty
 - OpenAI Codex
 - Claude Code
 - AWS Bedrock
