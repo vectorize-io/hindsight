@@ -116,6 +116,48 @@ class TestReadTranscript:
         assert tool_uses and tool_uses[0]["name"] == "shell"
         assert tool_results and "a.txt" in tool_results[0]["content"]
 
+    def test_reads_cursor3_role_nested_agent_transcript(self, tmp_path):
+        """Regression: Cursor 3.x agent-transcripts use role-nested block content.
+
+        See vectorize-io/hindsight#1975 review (Should fix #4) and the fix in
+        hindsight-integrations/cursor/tests/test_hooks.py.
+        """
+        f = tmp_path / "cursor3.jsonl"
+        f.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "role": "user",
+                            "message": {"content": [{"type": "text", "text": "Remember Vim over Emacs"}]},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "role": "assistant",
+                            "message": {
+                                "content": [
+                                    {"type": "text", "text": "Got it. Saving."},
+                                    {"type": "tool_use", "name": "Shell", "input": {"command": "ls"}},
+                                ]
+                            },
+                        }
+                    ),
+                ]
+            )
+        )
+        msgs = read_transcript(str(f))
+        assert len(msgs) == 2
+        assert msgs[0] == {"role": "user", "content": "Remember Vim over Emacs"}
+        assert msgs[1]["role"] == "assistant"
+        assert "Got it. Saving." in msgs[1]["content"]
+        assert "[tool_use:Shell]" in msgs[1]["content"]
+
+        rich = read_transcript(str(f), include_tool_calls=True)
+        assert len(rich) == 2
+        assistant_blocks = rich[1]["content"]
+        assert any(b.get("type") == "tool_use" and b.get("name") == "Shell" for b in assistant_blocks)
+
 
 class TestComposeRecallQuery:
     def test_single_turn_returns_latest(self):

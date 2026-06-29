@@ -18,9 +18,11 @@ Cursor transcript format (JSONL):
   TextBlock is always `{"type": "text", "text": "..."}`. ToolUseBlock
   can vary; the docs warn that tool args/result shape is unstable.
 
-For testing and future compatibility we also accept a flat shape:
+For testing and future compatibility we also accept:
   - {"role": "user", "content": "..."}
   - {"role": "user", "content": [{"type": "text", "text": "..."}]}
+  - {"role": "user", "message": {"content": [{"type": "text", "text": "..."}]}}
+    (role-nested — Cursor 3.x agent-transcripts/*.jsonl)
 """
 
 import json
@@ -95,27 +97,12 @@ def _read_transcript_text(transcript_path):
                 except json.JSONDecodeError:
                     continue
 
-                # Flat test format
-                if "role" in entry and "content" in entry:
-                    role = entry.get("role")
-                    if role not in ("user", "assistant"):
-                        continue
-                    text = entry["content"]
-                    if isinstance(text, list):
-                        text = _extract_text_from_blocks(text)
-                    if isinstance(text, str) and text.strip():
-                        messages.append({"role": role, "content": text.strip()})
+                if not isinstance(entry, dict):
                     continue
 
-                # Cursor SDK envelope
-                if entry.get("type") in ("user", "assistant"):
-                    msg = entry.get("message", {})
-                    role = msg.get("role") or entry["type"]
-                    if role not in ("user", "assistant"):
-                        continue
-                    text = _extract_text_from_blocks(msg.get("content", []))
-                    if text.strip():
-                        messages.append({"role": role, "content": text.strip()})
+                parsed = _parse_transcript_entry(entry, text_only=True)
+                if parsed:
+                    messages.append(parsed)
     except OSError:
         pass
     return messages
@@ -148,10 +135,13 @@ def _read_transcript_rich(transcript_path):
                 except json.JSONDecodeError:
                     continue
 
-                # Flat test format
-                if "role" in entry and "content" in entry:
-                    role = entry["role"]
-                    content = entry["content"]
+                if not isinstance(entry, dict):
+                    continue
+
+                role_nested = _parse_transcript_entry(entry, text_only=False)
+                if role_nested:
+                    role = role_nested["role"]
+                    content = role_nested["content"]
                     if role == "user":
                         _flush_assistant()
                         if isinstance(content, str):
@@ -250,6 +240,96 @@ def _extract_text_from_blocks(blocks):
             if text:
                 parts.append(text)
     return "\n".join(parts).strip()
+
+
+def _normalize_blocks_to_text(content):
+    """Flatten block content to text; surface tool_use as compact markers."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return str(content) if content else ""
+    parts = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == "text":
+            text = block.get("text", "")
+            if text:
+                parts.append(text)
+        elif btype == "tool_use":
+            name = block.get("name", "tool")
+            parts.append(f"[tool_use:{name}]")
+        elif btype == "tool_result":
+            parts.append("[tool_result]")
+    return "\n".join(parts).strip()
+
+
+def _normalize_blocks_content(content):
+    """Normalize a content payload to blocks (rich) or plain text (light)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return content
+    if content is None:
+        return ""
+    return str(content)
+
+
+def _parse_transcript_entry(entry, *, text_only):
+    """Parse one JSONL transcript line into a message dict, or None.
+
+    Supports flat, type-nested SDK envelopes, and role-nested Cursor 3.x lines.
+    When text_only is True, content is flattened to a string.
+    """
+    # Flat: {role, content}
+    if entry.get("role") in ("user", "assistant") and "content" in entry:
+        role = entry["role"]
+        content = _normalize_blocks_content(entry.get("content"))
+        if text_only:
+            if isinstance(content, list):
+                content = _normalize_blocks_to_text(content)
+            if isinstance(content, str) and content.strip():
+                return {"role": role, "content": content.strip()}
+            return None
+        return {"role": role, "content": content}
+
+    # Type-nested SDK envelope: {type, message: {role, content}}
+    if entry.get("type") in ("user", "assistant"):
+        msg = entry.get("message", {})
+        if not isinstance(msg, dict):
+            return None
+        role = msg.get("role") or entry["type"]
+        if role not in ("user", "assistant"):
+            return None
+        content = _normalize_blocks_content(msg.get("content", []))
+        if text_only:
+            if isinstance(content, list):
+                content = _normalize_blocks_to_text(content)
+            if isinstance(content, str) and content.strip():
+                return {"role": role, "content": content.strip()}
+            return None
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}] if content.strip() else []
+        return {"role": role, "content": content} if content else None
+
+    # Role-nested (Cursor 3.x agent-transcripts):
+    # {role: "user", message: {content: [...blocks...]}}
+    role = entry.get("role")
+    msg_obj = entry.get("message")
+    if role in ("user", "assistant") and isinstance(msg_obj, dict) and "content" in msg_obj:
+        content = _normalize_blocks_content(msg_obj.get("content"))
+        if text_only:
+            if isinstance(content, list):
+                content = _normalize_blocks_to_text(content)
+            if isinstance(content, str) and content.strip():
+                return {"role": role, "content": content.strip()}
+            return None
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}] if content.strip() else []
+        return {"role": role, "content": content} if content else None
+
+    return None
 
 
 def _coerce_result_text(result):
