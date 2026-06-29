@@ -1812,7 +1812,8 @@
       "config": "Config",
       "audit": "Audit",
       "settings": "Settings",
-      "constitution": "Constitution"
+      "constitution": "Constitution",
+      "chat": "Chat"
     },
     "descriptions": {
       "cockpit": "Operator overview — all systems at a glance",
@@ -1827,7 +1828,8 @@
       "config": "Configuration, secrets, and environment",
       "audit": "Audit log and provenance tracking",
       "settings": "System settings and preferences",
-      "constitution": "Constitution status and enforcement"
+      "constitution": "Constitution status and enforcement",
+      "chat": "AI assistant with full system access — talk to your intelligence"
     },
     "memories": {
       "title": "Memory Console",

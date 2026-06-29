@@ -1,5 +1,6 @@
 export type OperatorPanel =
   | "cockpit"
+  | "chat"
   | "runs"
   | "agents"
   | "memories"
@@ -15,6 +16,7 @@ export type OperatorPanel =
 
 export const OPERATOR_PANELS: { id: OperatorPanel; route: string; icon: string }[] = [
   { id: "cockpit", route: "/cockpit", icon: "LayoutDashboard" },
+  { id: "chat", route: "/chat", icon: "MessageSquare" },
   { id: "runs", route: "/runs", icon: "Timeline" },
   { id: "agents", route: "/agents", icon: "Bot" },
   { id: "memories", route: "/memories", icon: "Brain" },
@@ -32,6 +34,7 @@ export const OPERATOR_PANELS: { id: OperatorPanel; route: string; icon: string }
 export const OPERATOR_PANEL_LABELS: Record<OperatorPanel, { primary: string; secondary: string }> =
   {
     cockpit: { primary: "overview", secondary: "cockpit" },
+    chat: { primary: "assistant", secondary: "chat" },
     runs: { primary: "timeline", secondary: "runs" },
     agents: { primary: "registry", secondary: "agents" },
     memories: { primary: "console", secondary: "memories" },

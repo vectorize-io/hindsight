@@ -5,8 +5,10 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
+import type { OperatorPanel } from "@/lib/operator-nav-types";
 import {
   LayoutDashboard,
+  MessageSquare,
   History,
   Bot,
   Brain,
@@ -22,10 +24,10 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
-import type { OperatorPanel } from "@/lib/operator-nav-types";
 
 const PANELS: { id: OperatorPanel; href: string; icon: React.ElementType }[] = [
   { id: "cockpit", href: "/cockpit", icon: LayoutDashboard },
+  { id: "chat", href: "/chat", icon: MessageSquare },
   { id: "runs", href: "/runs", icon: History },
   { id: "agents", href: "/agents", icon: Bot },
   { id: "memories", href: "/memories", icon: Brain },
