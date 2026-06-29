@@ -9,6 +9,7 @@ import { Sidebar } from "@/components/sidebar";
 import { DataView } from "@/components/data-view";
 import { DocumentsView } from "@/components/documents-view";
 import { EntitiesView } from "@/components/entities-view";
+import { KnowledgeBaseView } from "@/components/knowledge-base-view";
 import { ThinkView } from "@/components/think-view";
 import { SearchDebugView } from "@/components/search-debug-view";
 import { BankProfileView } from "@/components/bank-profile-view";
@@ -57,7 +58,7 @@ import {
 import { LlmHealthDialog } from "@/components/llm-health-dialog";
 import { ExtractDialog } from "@/components/extract-dialog";
 
-type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
+type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "knowledge" | "profile";
 type DataSubTab = "world" | "experience" | "observations" | "mental-models";
 type BankConfigTab =
   | "general"
@@ -636,6 +637,13 @@ export default function BankPage() {
                 <h1 className="text-3xl font-bold mb-2 text-foreground">{t("entities")}</h1>
                 <p className="text-muted-foreground mb-6">{t("entitiesDescription")}</p>
                 <EntitiesView />
+              </div>
+            )}
+
+            {/* Knowledge base Tab — KnowledgeBaseView renders its own header. */}
+            {view === "knowledge" && (
+              <div>
+                <KnowledgeBaseView />
               </div>
             )}
           </div>

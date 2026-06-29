@@ -1154,6 +1154,48 @@ export type CreateDirectiveRequest = {
 };
 
 /**
+ * CreateFolderRequest
+ *
+ * Create a folder under an optional parent folder.
+ */
+export type CreateFolderRequest = {
+  /**
+   * Name
+   */
+  name: string;
+  /**
+   * Parent Id
+   */
+  parent_id?: string | null;
+  /**
+   * Mission
+   *
+   * Curator mission for the folder.
+   */
+  mission?: string | null;
+};
+
+/**
+ * CreateKnowledgePageResponse
+ *
+ * Result of creating a page: the node id, its mental model, and the refresh op.
+ */
+export type CreateKnowledgePageResponse = {
+  /**
+   * Page Id
+   */
+  page_id: string;
+  /**
+   * Mental Model Id
+   */
+  mental_model_id: string;
+  /**
+   * Operation Id
+   */
+  operation_id?: string | null;
+};
+
+/**
  * CreateMentalModelRequest
  *
  * Request model for creating a mental model.
@@ -1213,6 +1255,35 @@ export type CreateMentalModelResponse = {
    * Operation ID to track refresh progress
    */
   operation_id: string;
+};
+
+/**
+ * CreatePageRequest
+ *
+ * Create a page (a mental model + tree node) under an optional parent folder.
+ */
+export type CreatePageRequest = {
+  /**
+   * Name
+   */
+  name: string;
+  /**
+   * Source Query
+   */
+  source_query: string;
+  /**
+   * Parent Id
+   */
+  parent_id?: string | null;
+  /**
+   * Tags
+   */
+  tags?: Array<string> | null;
+  /**
+   * Max Tokens
+   */
+  max_tokens?: number | null;
+  trigger?: MentalModelTriggerInput | null;
 };
 
 /**
@@ -1974,6 +2045,190 @@ export type IncludeOptions = {
    * Include source facts for observation-type results. Set to {} to enable, null to disable (default: disabled).
    */
   source_facts?: SourceFactsIncludeOptions | null;
+};
+
+/**
+ * KnowledgeNode
+ *
+ * A node in the knowledge-base tree — a folder or a page.
+ *
+ * Folders carry a ``mission`` (the curator's steering prompt); pages carry
+ * ``description``/``tags`` from their backing mental model and a ``managed``
+ * flag (true = curator-managed, false = pinned/human).
+ */
+export type KnowledgeNode = {
+  /**
+   * Id
+   */
+  id: string;
+  /**
+   * Kind
+   */
+  kind: "folder" | "page";
+  /**
+   * Name
+   */
+  name: string;
+  /**
+   * Parent Id
+   */
+  parent_id?: string | null;
+  /**
+   * Mental Model Id
+   *
+   * Backing mental model id (pages only).
+   */
+  mental_model_id?: string | null;
+  /**
+   * Mission
+   *
+   * Curator mission (folders only).
+   */
+  mission?: string | null;
+  /**
+   * Managed
+   *
+   * True for curator-managed nodes; false for pinned/human.
+   */
+  managed?: boolean;
+  /**
+   * Description
+   *
+   * Page source query (OKF `description`).
+   */
+  description?: string | null;
+  /**
+   * Tags
+   */
+  tags?: Array<string>;
+  /**
+   * Timestamp
+   *
+   * Last refresh (page) or last update (folder).
+   */
+  timestamp?: string | null;
+  /**
+   * Children
+   */
+  children?: Array<KnowledgeNode>;
+};
+
+/**
+ * KnowledgePageBundleFile
+ *
+ * One file in a portable OKF bundle.
+ */
+export type KnowledgePageBundleFile = {
+  /**
+   * Path
+   */
+  path: string;
+  /**
+   * Content
+   */
+  content: string;
+};
+
+/**
+ * KnowledgePageBundleResponse
+ *
+ * A portable OKF bundle — a flat set of markdown files (index + pages + logs).
+ */
+export type KnowledgePageBundleResponse = {
+  /**
+   * Files
+   */
+  files: Array<KnowledgePageBundleFile>;
+};
+
+/**
+ * KnowledgePageGraphResponse
+ *
+ * Constellation graph of knowledge pages linked by shared tags.
+ */
+export type KnowledgePageGraphResponse = {
+  /**
+   * Nodes
+   */
+  nodes: Array<{
+    [key: string]: unknown;
+  }>;
+  /**
+   * Edges
+   */
+  edges: Array<{
+    [key: string]: unknown;
+  }>;
+  /**
+   * Total Pages
+   */
+  total_pages: number;
+  /**
+   * Total Edges
+   */
+  total_edges: number;
+};
+
+/**
+ * KnowledgePageResponse
+ *
+ * A knowledge page rendered as an OKF document.
+ */
+export type KnowledgePageResponse = {
+  /**
+   * Id
+   */
+  id: string;
+  /**
+   * Name
+   */
+  name: string;
+  /**
+   * Type
+   *
+   * OKF document type — from a `type:<x>` tag, else 'knowledge-page'.
+   */
+  type: string;
+  /**
+   * Description
+   *
+   * The source query that rebuilds the page.
+   */
+  description?: string | null;
+  /**
+   * Tags
+   */
+  tags?: Array<string>;
+  /**
+   * Timestamp
+   *
+   * Last refresh time (falls back to creation).
+   */
+  timestamp?: string | null;
+  /**
+   * Body
+   *
+   * The page's synthesized markdown body.
+   */
+  body?: string | null;
+  /**
+   * Markdown
+   *
+   * The full OKF document: YAML frontmatter + markdown body.
+   */
+  markdown: string;
+};
+
+/**
+ * KnowledgeTreeResponse
+ *
+ * The knowledge base as a nested folder/page tree.
+ */
+export type KnowledgeTreeResponse = {
+  /**
+   * Roots
+   */
+  roots: Array<KnowledgeNode>;
 };
 
 /**
@@ -3959,6 +4214,26 @@ export type UpdateMentalModelRequest = {
 };
 
 /**
+ * UpdateNodeRequest
+ *
+ * Rename, move, and/or set a folder's mission. Each field applies only when present.
+ */
+export type UpdateNodeRequest = {
+  /**
+   * Name
+   */
+  name?: string | null;
+  /**
+   * Parent Id
+   */
+  parent_id?: string | null;
+  /**
+   * Mission
+   */
+  mission?: string | null;
+};
+
+/**
  * UpdateWebhookRequest
  *
  * Request model for updating a webhook. Only provided fields are updated.
@@ -5298,6 +5573,313 @@ export type ClearMentalModelResponses = {
 };
 
 export type ClearMentalModelResponse = ClearMentalModelResponses[keyof ClearMentalModelResponses];
+
+export type GetKnowledgeBaseTreeData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/knowledge-base/tree";
+};
+
+export type GetKnowledgeBaseTreeErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetKnowledgeBaseTreeError =
+  GetKnowledgeBaseTreeErrors[keyof GetKnowledgeBaseTreeErrors];
+
+export type GetKnowledgeBaseTreeResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgeTreeResponse;
+};
+
+export type GetKnowledgeBaseTreeResponse =
+  GetKnowledgeBaseTreeResponses[keyof GetKnowledgeBaseTreeResponses];
+
+export type CreateKnowledgeFolderData = {
+  body: CreateFolderRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/knowledge-base/folders";
+};
+
+export type CreateKnowledgeFolderErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type CreateKnowledgeFolderError =
+  CreateKnowledgeFolderErrors[keyof CreateKnowledgeFolderErrors];
+
+export type CreateKnowledgeFolderResponses = {
+  /**
+   * Successful Response
+   */
+  201: KnowledgeNode;
+};
+
+export type CreateKnowledgeFolderResponse =
+  CreateKnowledgeFolderResponses[keyof CreateKnowledgeFolderResponses];
+
+export type CreateKnowledgePageData = {
+  body: CreatePageRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/knowledge-base/pages";
+};
+
+export type CreateKnowledgePageErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type CreateKnowledgePageError = CreateKnowledgePageErrors[keyof CreateKnowledgePageErrors];
+
+export type CreateKnowledgePageResponses = {
+  /**
+   * Successful Response
+   */
+  201: CreateKnowledgePageResponse;
+};
+
+export type CreateKnowledgePageResponse2 =
+  CreateKnowledgePageResponses[keyof CreateKnowledgePageResponses];
+
+export type GetKnowledgeBaseGraphData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/knowledge-base/graph";
+};
+
+export type GetKnowledgeBaseGraphErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetKnowledgeBaseGraphError =
+  GetKnowledgeBaseGraphErrors[keyof GetKnowledgeBaseGraphErrors];
+
+export type GetKnowledgeBaseGraphResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgePageGraphResponse;
+};
+
+export type GetKnowledgeBaseGraphResponse =
+  GetKnowledgeBaseGraphResponses[keyof GetKnowledgeBaseGraphResponses];
+
+export type ExportKnowledgeBaseData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/knowledge-base/export";
+};
+
+export type ExportKnowledgeBaseErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ExportKnowledgeBaseError = ExportKnowledgeBaseErrors[keyof ExportKnowledgeBaseErrors];
+
+export type ExportKnowledgeBaseResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgePageBundleResponse;
+};
+
+export type ExportKnowledgeBaseResponse =
+  ExportKnowledgeBaseResponses[keyof ExportKnowledgeBaseResponses];
+
+export type GetKnowledgePageData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Page Id
+     */
+    page_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/knowledge-base/pages/{page_id}";
+};
+
+export type GetKnowledgePageErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetKnowledgePageError = GetKnowledgePageErrors[keyof GetKnowledgePageErrors];
+
+export type GetKnowledgePageResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgePageResponse;
+};
+
+export type GetKnowledgePageResponse = GetKnowledgePageResponses[keyof GetKnowledgePageResponses];
+
+export type DeleteKnowledgeNodeData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Node Id
+     */
+    node_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}";
+};
+
+export type DeleteKnowledgeNodeErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DeleteKnowledgeNodeError = DeleteKnowledgeNodeErrors[keyof DeleteKnowledgeNodeErrors];
+
+export type DeleteKnowledgeNodeResponses = {
+  /**
+   * Successful Response
+   */
+  200: unknown;
+};
+
+export type UpdateKnowledgeNodeData = {
+  body: UpdateNodeRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Node Id
+     */
+    node_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}";
+};
+
+export type UpdateKnowledgeNodeErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type UpdateKnowledgeNodeError = UpdateKnowledgeNodeErrors[keyof UpdateKnowledgeNodeErrors];
+
+export type UpdateKnowledgeNodeResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgeNode;
+};
+
+export type UpdateKnowledgeNodeResponse =
+  UpdateKnowledgeNodeResponses[keyof UpdateKnowledgeNodeResponses];
 
 export type ListDirectivesData = {
   body?: never;

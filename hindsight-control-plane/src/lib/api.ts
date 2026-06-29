@@ -38,6 +38,20 @@ export interface WebhookHttpConfig {
   params: Record<string, string>;
 }
 
+export interface KnowledgeNode {
+  id: string;
+  kind: "folder" | "page";
+  name: string;
+  parent_id: string | null;
+  mental_model_id: string | null;
+  mission: string | null;
+  managed: boolean;
+  description: string | null;
+  tags: string[];
+  timestamp: string | null;
+  children: KnowledgeNode[];
+}
+
 export interface Webhook {
   id: string;
   bank_id: string | null;
@@ -604,6 +618,115 @@ export class ControlPlaneClient {
       total_edges: number;
       limit: number;
     }>(`/api/entities/graph?${queryParams}`);
+  }
+
+  /**
+   * Get the knowledge base as a nested folder/page tree.
+   */
+  async getKnowledgeTree(bankId: string) {
+    return this.fetchApi<{ roots: KnowledgeNode[] }>(
+      `/api/knowledge-base/tree?bank_id=${encodeURIComponent(bankId)}`
+    );
+  }
+
+  /**
+   * Get the knowledge-base constellation graph (pages linked by shared tags).
+   */
+  async getKnowledgeBaseGraph(bankId: string) {
+    return this.fetchApi<{
+      nodes: Array<{
+        data: { id: string; label: string; type: string; tagCount: number; color: string };
+      }>;
+      edges: Array<{
+        data: {
+          id: string;
+          source: string;
+          target: string;
+          sharedTags: string[];
+          weight: number;
+          color: string;
+        };
+      }>;
+      total_pages: number;
+      total_edges: number;
+    }>(`/api/knowledge-base/graph?bank_id=${encodeURIComponent(bankId)}`);
+  }
+
+  /**
+   * Get a single knowledge page rendered as an OKF document.
+   */
+  async getKnowledgePage(bankId: string, pageId: string) {
+    return this.fetchApi<{
+      id: string;
+      name: string;
+      type: string;
+      description: string | null;
+      tags: string[];
+      timestamp: string | null;
+      body: string | null;
+      markdown: string;
+    }>(
+      `/api/knowledge-base/pages/${encodeURIComponent(pageId)}?bank_id=${encodeURIComponent(bankId)}`
+    );
+  }
+
+  /**
+   * Create a folder, optionally under a parent folder, with an optional mission.
+   */
+  async createKnowledgeFolder(
+    bankId: string,
+    body: { name: string; parent_id?: string | null; mission?: string | null }
+  ) {
+    return this.fetchApi<KnowledgeNode>(
+      `/api/knowledge-base/folders?bank_id=${encodeURIComponent(bankId)}`,
+      { method: "POST", body: JSON.stringify(body) }
+    );
+  }
+
+  /**
+   * Create a page (mental model + tree node). Content is generated asynchronously.
+   */
+  async createKnowledgePage(
+    bankId: string,
+    body: { name: string; source_query: string; parent_id?: string | null; tags?: string[] }
+  ) {
+    return this.fetchApi<{ page_id: string; mental_model_id: string; operation_id: string | null }>(
+      `/api/knowledge-base/pages?bank_id=${encodeURIComponent(bankId)}`,
+      { method: "POST", body: JSON.stringify(body) }
+    );
+  }
+
+  /**
+   * Rename and/or move a node. Pass `parent_id: null` to move to the root.
+   */
+  async updateKnowledgeNode(
+    bankId: string,
+    nodeId: string,
+    body: { name?: string; parent_id?: string | null; mission?: string | null }
+  ) {
+    return this.fetchApi<KnowledgeNode>(
+      `/api/knowledge-base/nodes/${encodeURIComponent(nodeId)}?bank_id=${encodeURIComponent(bankId)}`,
+      { method: "PATCH", body: JSON.stringify(body) }
+    );
+  }
+
+  /**
+   * Delete a node and its whole subtree.
+   */
+  async deleteKnowledgeNode(bankId: string, nodeId: string) {
+    return this.fetchApi<{ status: string }>(
+      `/api/knowledge-base/nodes/${encodeURIComponent(nodeId)}?bank_id=${encodeURIComponent(bankId)}`,
+      { method: "DELETE" }
+    );
+  }
+
+  /**
+   * Export the knowledge base as a portable OKF bundle (markdown files).
+   */
+  async exportKnowledgeBase(bankId: string) {
+    return this.fetchApi<{ files: Array<{ path: string; content: string }> }>(
+      `/api/knowledge-base/export?bank_id=${encodeURIComponent(bankId)}`
+    );
   }
 
   /**
