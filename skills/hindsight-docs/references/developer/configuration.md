@@ -1025,7 +1025,7 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 | `HINDSIGHT_API_LOG_FORMAT` | Log format: `text` or `json` (structured logging for cloud platforms) | `text` |
 | `HINDSIGHT_API_LOG_JSON_FIELDS` | Comma-separated allowlist of JSON log fields to emit (e.g. `severity,message,tenant`). Available: `severity`, `message`, `timestamp`, `logger`, `tenant`, `exception`. Empty = all fields. | `""` (all) |
 | `HINDSIGHT_API_MCP_ENABLED` | Enable MCP server at `/mcp/{bank_id}/` | `true` |
-| `HINDSIGHT_API_MODEL_INIT_TIMEOUT` | Wall-clock cap (seconds) on startup model/connection initialization. If embeddings, the cross-encoder, or LLM verification block (e.g. an offline model download or an unreachable provider), the server fails fast with a clear error instead of hanging forever. Also applies to lazy reranker init on the first request. Increase if a legitimate first-time model download needs more time. | `300` |
+| `HINDSIGHT_API_MODEL_INIT_TIMEOUT` | Wall-clock cap (seconds) on startup model/connection initialization. If embeddings, the cross-encoder, or LLM verification block (e.g. an offline model download or an unreachable provider), the server fails fast with a clear error instead of hanging forever. Increase if a legitimate first-time model download needs more time. | `300` |
 
 ### Retrieval
 
@@ -1653,7 +1653,6 @@ This ensures `shadow-*` banks are always consolidated before others, even if the
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_SKIP_LLM_VERIFICATION` | Skip LLM connection check on startup | `false` |
-| `HINDSIGHT_API_LAZY_RERANKER` | Lazy-load reranker model (faster startup) | `false` |
 
 #### Bank stats cache
 

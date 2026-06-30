@@ -64,7 +64,6 @@ def _clean_timeout_env(monkeypatch):
     from hindsight_api.config import clear_config_cache
 
     monkeypatch.setenv("HINDSIGHT_API_SKIP_LLM_VERIFICATION", "true")
-    monkeypatch.setenv("HINDSIGHT_API_LAZY_RERANKER", "true")
     monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
     monkeypatch.setenv("HINDSIGHT_API_LLM_MODEL", "default-model")
     for op in ("LLM", "RETAIN_LLM", "REFLECT_LLM", "CONSOLIDATION_LLM"):
@@ -123,7 +122,7 @@ def test_memory_engine_threads_per_operation_timeout(monkeypatch, _clean_timeout
     # reflect intentionally unset -> inherits the global 100
     clear_config_cache()
 
-    engine = MemoryEngine(skip_llm_verification=True, lazy_reranker=True)
+    engine = MemoryEngine(skip_llm_verification=True)
 
     assert engine._llm_config.timeout == 100.0
     assert engine._retain_llm_config.timeout == 300.0
@@ -144,7 +143,7 @@ def test_memory_engine_threads_per_operation_retry_policy(monkeypatch, _clean_ti
     monkeypatch.setenv("HINDSIGHT_API_CONSOLIDATION_LLM_MAX_BACKOFF", "99")
     clear_config_cache()
 
-    engine = MemoryEngine(skip_llm_verification=True, lazy_reranker=True)
+    engine = MemoryEngine(skip_llm_verification=True)
 
     # Global applies everywhere unless overridden.
     assert engine._llm_config.max_retries == 4
@@ -166,7 +165,7 @@ def test_memory_engine_per_op_defaults_to_global_default(_clean_timeout_env):
         DEFAULT_LLM_MAX_RETRIES,
     )
 
-    engine = MemoryEngine(skip_llm_verification=True, lazy_reranker=True)
+    engine = MemoryEngine(skip_llm_verification=True)
 
     for cfg in (
         engine._llm_config,

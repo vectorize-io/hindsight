@@ -917,7 +917,6 @@ class MemoryEngine(MemoryEngineInterface):
         operation_validator: "OperationValidatorExtension | None" = None,
         tenant_extension: "TenantExtension | None" = None,
         skip_llm_verification: bool | None = None,
-        lazy_reranker: bool | None = None,
     ):
         """
         Initialize the temporal + semantic memory system.
@@ -959,9 +958,6 @@ class MemoryEngine(MemoryEngineInterface):
                              If provided, operations require a RequestContext for authentication.
             skip_llm_verification: Skip LLM connection verification during initialization.
                                   Defaults to HINDSIGHT_API_SKIP_LLM_VERIFICATION env var or False.
-            lazy_reranker: Delay reranker initialization until first use. Useful for retain-only
-                          operations that don't need the cross-encoder. Defaults to
-                          HINDSIGHT_API_LAZY_RERANKER env var or False.
         """
         # Load config from environment for any missing parameters
         from ..config import _get_raw_config, get_config
@@ -978,7 +974,6 @@ class MemoryEngine(MemoryEngineInterface):
         self._skip_llm_verification = (
             skip_llm_verification if skip_llm_verification is not None else config.skip_llm_verification
         )
-        self._lazy_reranker = lazy_reranker if lazy_reranker is not None else config.lazy_reranker
 
         # Apply defaults from config
         db_url = db_url or config.database_url
@@ -2748,16 +2743,16 @@ class MemoryEngine(MemoryEngineInterface):
                             f"set HINDSIGHT_API_RETAIN_BATCH_ENABLED=false."
                         )
 
-        # Build list of initialization tasks
+        # Build list of initialization tasks. The cross-encoder is initialized
+        # eagerly here (single-threaded, before any request is served) so that
+        # the per-request ensure_initialized() guard always short-circuits and
+        # concurrent cold-start recalls can never double-load the model.
         init_tasks = [
             start_pg0(),
             init_embeddings(),
             init_query_analyzer(),
+            init_cross_encoder(),
         ]
-
-        # Only init cross-encoder eagerly if not using lazy initialization
-        if not self._lazy_reranker:
-            init_tasks.append(init_cross_encoder())
 
         # Only verify LLM if not skipping
         if not self._skip_llm_verification:

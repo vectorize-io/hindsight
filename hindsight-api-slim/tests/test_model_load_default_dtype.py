@@ -70,7 +70,6 @@ async def test_global_default_dtype_restored_to_float32_after_init():
             query_analyzer=_NoopQueryAnalyzer(),
             run_migrations=False,
             skip_llm_verification=True,
-            lazy_reranker=False,  # load the cross-encoder eagerly, in the gather
             task_backend=SyncTaskBackend(),
         )
 
