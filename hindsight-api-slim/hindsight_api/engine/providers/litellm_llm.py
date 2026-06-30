@@ -100,12 +100,14 @@ class LiteLLMLLM(LLMInterface):
             raise RuntimeError("LiteLLM SDK not installed. Run: uv add litellm or pip install litellm") from e
 
     async def verify_connection(self) -> None:
+        from ...config import get_config
+
         try:
             test_messages = [{"role": "user", "content": "test"}]
             await self.call(
                 messages=test_messages,
                 max_completion_tokens=50,
-                temperature=0.0,
+                temperature=get_config().llm_temperature_verification,
                 scope="verification",
                 max_retries=0,
             )

@@ -101,7 +101,7 @@ class MockLLM(LLMInterface):
             messages: List of message dicts with 'role' and 'content'.
             response_format: Optional Pydantic model for structured output.
             max_completion_tokens: Not used in mock.
-            temperature: Not used in mock.
+            temperature: Recorded on the call record for test assertions.
             scope: Scope identifier for tracking.
             max_retries: Not used in mock.
             initial_backoff: Not used in mock.
@@ -123,6 +123,9 @@ class MockLLM(LLMInterface):
             if response_format and hasattr(response_format, "__name__")
             else str(response_format),
             "scope": scope,
+            # Record the temperature so tests can assert per-operation temperature
+            # wiring (None means the parameter was omitted from the call).
+            "temperature": temperature,
         }
         self._mock_calls.append(call_record)
         logger.debug(f"Mock LLM call recorded: scope={scope}, model={self.model}")
@@ -208,7 +211,7 @@ class MockLLM(LLMInterface):
             messages: List of message dicts. Can include tool results with role='tool'.
             tools: List of tool definitions in OpenAI format.
             max_completion_tokens: Not used in mock.
-            temperature: Not used in mock.
+            temperature: Recorded on the call record for test assertions.
             scope: Scope identifier for tracking.
             max_retries: Not used in mock.
             initial_backoff: Not used in mock.
@@ -225,6 +228,9 @@ class MockLLM(LLMInterface):
             "messages": messages,
             "tools": [t.get("function", {}).get("name") for t in tools],
             "scope": scope,
+            # Record the temperature so tests can assert per-operation temperature
+            # wiring (None means the parameter was omitted from the call).
+            "temperature": temperature,
         }
         self._mock_calls.append(call_record)
 

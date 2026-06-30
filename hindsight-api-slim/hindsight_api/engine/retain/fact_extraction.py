@@ -1314,7 +1314,7 @@ async def _extract_facts_from_chunk(
                 messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_message}],
                 response_format=response_schema,
                 scope="retain_extract_facts",
-                temperature=0.1,
+                temperature=config.llm_temperature_retain,
                 max_completion_tokens=config.retain_max_completion_tokens,
                 max_retries=llm_max_retries,
                 initial_backoff=initial_backoff,

@@ -119,12 +119,14 @@ class ClaudeCodeLLM(LLMInterface):
         Raises:
             RuntimeError: If the connection test fails.
         """
+        from ...config import get_config
+
         try:
             test_messages = [{"role": "user", "content": "test"}]
             await self.call(
                 messages=test_messages,
                 max_completion_tokens=10,
-                temperature=0.0,
+                temperature=get_config().llm_temperature_verification,
                 scope="verification",
                 max_retries=0,
             )

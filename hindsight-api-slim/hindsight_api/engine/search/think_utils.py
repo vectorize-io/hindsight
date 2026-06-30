@@ -5,6 +5,7 @@ Think operation utilities for formulating answers based on agent and world facts
 import logging
 from datetime import datetime
 
+from ...config import get_config
 from ..response_models import DispositionTraits, MemoryFact
 
 logger = logging.getLogger(__name__)
@@ -251,7 +252,7 @@ async def reflect(
     answer_text = await llm_config.call(
         messages=[{"role": "system", "content": system_message}, {"role": "user", "content": prompt}],
         scope="memory_think",
-        temperature=0.9,
+        temperature=get_config().llm_temperature_reflect,
         max_completion_tokens=1000,
     )
 
