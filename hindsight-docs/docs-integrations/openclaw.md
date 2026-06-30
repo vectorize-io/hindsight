@@ -123,7 +123,14 @@ Optional settings in `~/.openclaw/openclaw.json`:
 - `llmModel` - LLM model used with `llmProvider` (provider default if omitted)
 - `llmApiKey` - API key for the LLM provider. **Sensitive** — set via `openclaw config set ... --ref-source env --ref-id OPENAI_API_KEY` to reference an env var.
 - `llmBaseUrl` - Optional base URL override for OpenAI-compatible providers (e.g. `https://openrouter.ai/api/v1`)
-- `bankMission` - Agent identity/purpose stored on the memory bank. Helps the memory engine understand context for better fact extraction during retain. Set once per bank on first use — not a recall prompt.
+- `bankMission` - Agent identity/purpose stored on the memory bank's `reflect_mission`. **Only affects `reflect`** — does not steer retain or recall. Set once per bank on first use.
+- `retainMission` - Stamped onto the bank's `retain_mission` on first use. Steers what gets extracted as facts during retain.
+- `observationsMission` - Stamped onto the bank's `observations_mission` on first use. Controls what gets synthesised into observations during consolidation.
+- `retainExtractionMode` - Fact extraction mode stamped on first bank use: `concise`, `verbose`, `custom`, `verbatim`, or `chunks`. Leave unset to keep the server default.
+- `enableObservations` - Toggle observation consolidation after retain, stamped on first bank use.
+- `enableAutoConsolidation` - Toggle automatic consolidation scheduling, stamped on first bank use (via the bank config API).
+- `dispositionSkepticism` / `dispositionLiteralism` / `dispositionEmpathy` - Reflect disposition traits (`1`–`5`) stamped on first bank use.
+- `entityLabels` - Controlled vocabulary for entity labels. Either a list of attribute defs (e.g. `[{ "name": "person", "description": "Human user" }]`) or a `{ "attributes": [...] }` object; other shapes are ignored. Stamped on first bank use.
 - `dynamicBankId` - Enable per-context memory banks (default: `true`)
 - `bankId` - Static bank ID used when `dynamicBankId` is `false`.
 - `bankIdPrefix` - Optional prefix for bank IDs (e.g. `"prod"` → `"prod-slack-C123"` or `"prod-shared-bank"`)
@@ -146,7 +153,7 @@ Optional settings in `~/.openclaw/openclaw.json`:
 - `enableKnowledgeTools` - Register `agent_knowledge_*` tools for explicit agent-driven lookup, reflection, ingest, and knowledge-page management (default: `false`).
 - `debug` - Enable debug logging (default: `false`).
 
-When using `agent_knowledge_recall` manually, pass `max_tokens` to control how much memory text the recall response may contain. Do not use `max_results` for this tool; OpenClaw auto-recall uses `recallTopK` when you need a count cap for automatically injected memories.
+When using `agent_knowledge_recall` manually, pass `max_tokens` to control how much memory text the recall response may contain. The tool has no `max_results` parameter — to cap the number of automatically injected memories, use `recallTopK` on auto-recall instead.
 
 When using `agent_knowledge_reflect`, keep the default conservative settings unless you intentionally need a deeper synthesis: `budget` defaults to `low`, `max_tokens` defaults to `1024`, and `fact_types` defaults to `world`, `experience`, and `observation`. Reflect calls can be more expensive than recall because they retrieve memories and then call the configured Reflect LLM to generate an answer. For production banks, set a finite bank-level `reflect_source_facts_max_tokens` value (for example `4096` or `8192`) instead of leaving it unlimited, so ad-hoc reflection cannot pull an unbounded amount of source facts into the LLM context.
 
@@ -180,6 +187,41 @@ Available isolation fields:
 - `provider` - The message provider (e.g. Slack, Discord)
 
 Use `bankIdPrefix` to namespace bank IDs across environments (e.g. `"prod"`, `"staging"`). Set `dynamicBankId` to `false` to use a single shared bank for all conversations. In static mode, the plugin uses `bankId` if set, otherwise the default `openclaw` bank name.
+
+### Per-user bank defaults
+
+With `dynamicBankId` enabled (the default), each derived bank otherwise inherits only the Hindsight **server** defaults (`concise` extraction, no entity labels, etc.). To make every per-user bank match your intended base/shared bank, set the bank-default options below — they are stamped onto each bank **on first use**, before its first retain or recall:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "hindsight-openclaw": {
+        "enabled": true,
+        "config": {
+          "dynamicBankId": true,
+          "dynamicBankGranularity": ["agent", "channel", "user"],
+          "retainExtractionMode": "verbose",
+          "enableObservations": true,
+          "enableAutoConsolidation": true,
+          "dispositionSkepticism": 3,
+          "dispositionLiteralism": 3,
+          "dispositionEmpathy": 4,
+          "entityLabels": [
+            { "name": "person", "description": "A human user or contact" },
+            { "name": "project", "description": "A software project or product" }
+          ],
+          "retainMission": "Extract durable preferences, decisions, and project context.",
+          "observationsMission": "Synthesise stable user preferences and active projects.",
+          "bankMission": "You are a helpful assistant with long-term memory across channels."
+        }
+      }
+    }
+  }
+}
+```
+
+Unset options are not sent, so existing behaviour is unchanged when you only configure missions. Each bank is configured at most once per gateway process.
 
 ### Retention Controls
 

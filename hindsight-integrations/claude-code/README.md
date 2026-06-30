@@ -227,6 +227,10 @@ Auto-recall runs on every user prompt. It queries Hindsight for relevant memorie
 | `recallContextTurns` | `HINDSIGHT_RECALL_CONTEXT_TURNS` | `1` | How many prior conversation turns to include when composing the recall query. `1` = only the latest user message; higher values give more context but may dilute the query. |
 | `recallMaxQueryChars` | `HINDSIGHT_RECALL_MAX_QUERY_CHARS` | `800` | Maximum character length of the query sent to Hindsight. Longer queries are truncated. |
 | `recallRoles` | — | `["user", "assistant"]` | Which message roles to include when building the recall query from prior turns. |
+| `recallTags` | `HINDSIGHT_RECALL_TAGS` | `[]` | Optional tags to pass to the recall API, such as `["memory_type:rule"]`. The env var accepts JSON or a comma-separated list. |
+| `recallTagsMatch` | `HINDSIGHT_RECALL_TAGS_MATCH` | `"any"` | Tag matching mode used with `recallTags` or `recallTagGroups`: `"any"`, `"all"`, `"any_strict"`, or `"all_strict"`. |
+| `recallTagGroups` | `HINDSIGHT_RECALL_TAG_GROUPS` | `null` | Optional compound tag filter passed through to the recall API. The env var must be JSON. |
+| `recallAdditionalBankFilters` | `HINDSIGHT_RECALL_ADDITIONAL_BANK_FILTERS` | `{}` | Optional per-bank tag filter overrides for banks listed in `recallAdditionalBanks`, keyed by bank ID. Each value may set `recallTags`, `recallTagsMatch`, and `recallTagGroups`. The env var must be JSON. |
 | `recallPromptPreamble` | — | built-in string | Text placed above the recalled memories in the injected context block. Customize this to change how Claude interprets the memories. |
 
 ---

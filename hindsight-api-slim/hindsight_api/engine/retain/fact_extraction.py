@@ -1814,7 +1814,14 @@ async def extract_facts_from_text(
         total_usage = total_usage + chunk_usage
 
     if failed_chunks:
-        failed_summary = ", ".join(f"chunk {idx}: {type(err).__name__}" for idx, err in failed_chunks[:5])
+        # Include the exception message — not just the type — so operators
+        # can tell a structured-JSON parse failure apart from a rate limit
+        # apart from a network 5xx, all of which can surface as the same
+        # exception types. The error_message we propagate to the
+        # async_operations row is the only inspection surface a worker-side
+        # failure leaves behind, and a bare "chunk 0: RuntimeError" is not
+        # actionable.
+        failed_summary = ", ".join(f"chunk {idx}: {type(err).__name__}: {err}" for idx, err in failed_chunks[:5])
         quota_errors = [err for _, err in failed_chunks if isinstance(err, ProviderRateLimitResetError)]
         if quota_errors and len(quota_errors) == len(failed_chunks):
             retry_at = max(err.retry_at for err in quota_errors)

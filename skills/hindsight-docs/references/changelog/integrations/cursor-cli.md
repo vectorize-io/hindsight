@@ -10,6 +10,12 @@ For the source code, see [`hindsight-integrations/cursor-cli`](https://github.co
 
 ← [Back to main changelog](../index.md)
 
+## [0.3.0](https://github.com/vectorize-io/hindsight/tree/integrations/cursor-cli/v0.3.0)
+
+**Bug Fixes**
+
+- Fixed Cursor 3.x transcripts so role-nested agent conversations are parsed correctly for recall/retention.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/bjornmp" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@bjornmp</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/84e67efbf" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>84e67efbf</a>
+
 ## [0.2.0](https://github.com/vectorize-io/hindsight/tree/integrations/cursor-cli/v0.2.0)
 
 **Features**
