@@ -51,6 +51,7 @@ import type {
   TagGroupAndInput,
   TagGroupOrInput,
   TagGroupNotInput,
+  MinScores,
   AsyncOperationSubmitResponse,
   CreateMentalModelResponse,
   DirectiveListResponse,
@@ -337,6 +338,8 @@ export class HindsightClient {
       tagsMatch?: "any" | "all" | "any_strict" | "all_strict" | "exact";
       /** Compound tag filter using boolean groups. Groups are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. Mutually exclusive with tags/tagsMatch. */
       tagGroups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput>;
+      /** Optional per-stage score floors, e.g. {semantic: 0.2, final: 0.5}. 'semantic' and 'keyword' are retrieval-level cutoffs; 'reranker' and 'final' are applied to the scored results after reranking. Any omitted stage imposes no floor. */
+      minScores?: MinScores;
       signal?: AbortSignal;
     }
   ): Promise<RecallResponse> {
@@ -368,6 +371,7 @@ export class HindsightClient {
         tags: options?.tags,
         tags_match: options?.tagsMatch,
         tag_groups: options?.tagGroups,
+        min_scores: options?.minScores,
       },
       signal: options?.signal,
     });
@@ -1105,6 +1109,7 @@ export type {
   TagGroupAndInput,
   TagGroupOrInput,
   TagGroupNotInput,
+  MinScores,
   AsyncOperationSubmitResponse,
   CreateMentalModelResponse,
   DirectiveListResponse,
