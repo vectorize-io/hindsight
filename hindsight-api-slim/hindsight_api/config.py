@@ -148,6 +148,19 @@ ENV_LLM_DEFAULT_HEADERS = "HINDSIGHT_API_LLM_DEFAULT_HEADERS"
 ENV_LLM_STRICT_SCHEMA = "HINDSIGHT_API_LLM_STRICT_SCHEMA"
 ENV_LLM_SEND_BANK_AS_USER = "HINDSIGHT_API_LLM_SEND_BANK_AS_USER"
 
+# Per-operation sampling temperature. Each internal LLM call uses a temperature
+# tuned for its task (deterministic extraction vs. creative reflection). These
+# expose those as overridable knobs. Resolution per operation:
+#   per-operation env -> global env (ENV_LLM_TEMPERATURE) -> built-in default.
+# A value of "none"/"default"/"" (or "off") omits the temperature parameter
+# entirely, for models that reject explicit temperatures (e.g. Azure GPT-5.5,
+# which only accepts the default value) -- see issue #2459.
+ENV_LLM_TEMPERATURE = "HINDSIGHT_API_LLM_TEMPERATURE"
+ENV_LLM_TEMPERATURE_VERIFICATION = "HINDSIGHT_API_LLM_TEMPERATURE_VERIFICATION"
+ENV_LLM_TEMPERATURE_RETAIN = "HINDSIGHT_API_LLM_TEMPERATURE_RETAIN"
+ENV_LLM_TEMPERATURE_REFLECT = "HINDSIGHT_API_LLM_TEMPERATURE_REFLECT"
+ENV_LLM_TEMPERATURE_CONSOLIDATION = "HINDSIGHT_API_LLM_TEMPERATURE_CONSOLIDATION"
+
 # Multi-LLM strategy. Extra LLMs are configured by index alongside the unindexed
 # primary (e.g. HINDSIGHT_API_LLM_1_PROVIDER, HINDSIGHT_API_LLM_2_PROVIDER, ...),
 # and HINDSIGHT_API_LLM_STRATEGY (JSON) selects how to route across them — see
@@ -165,6 +178,12 @@ ENV_CONSOLIDATION_LLM_STRATEGY = "HINDSIGHT_API_CONSOLIDATION_LLM_STRATEGY"
 # llm_vertexai_*). Note the single token "LITELLMROUTER" — keeping it one word
 # disambiguates from the embeddings/reranker LITELLM_* settings.
 ENV_LLM_LITELLMROUTER_CONFIG = "HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG"
+
+# Per-operation temperature defaults (preserve historical hardcoded values).
+DEFAULT_LLM_TEMPERATURE_VERIFICATION = 0.0  # connection check
+DEFAULT_LLM_TEMPERATURE_RETAIN = 0.1  # fact extraction
+DEFAULT_LLM_TEMPERATURE_REFLECT = 0.9  # reflect "thinking"
+DEFAULT_LLM_TEMPERATURE_CONSOLIDATION = 0.0  # mental-model delta / dedup
 
 # Defaults for service tiers
 DEFAULT_LLM_GROQ_SERVICE_TIER = "auto"  # "on_demand", "flex", or "auto"
@@ -187,6 +206,46 @@ def parse_gemini_service_tier(value: str | None) -> str | None:
             f"{tier!r}. Must be one of: {', '.join(t for t in valid_tiers if t is not None)}."
         )
     return tier
+
+
+# Sentinel strings that, as a temperature value, mean "omit the temperature
+# parameter entirely" rather than a numeric setting.
+_TEMPERATURE_OMIT_VALUES = frozenset({"", "none", "default", "off", "unset"})
+
+
+def _parse_temperature(raw: str) -> float | None:
+    """Parse a raw temperature env value into a float, or None to omit it.
+
+    Returns None for the omit sentinels (so the temperature parameter is dropped
+    from the LLM call); otherwise parses a float and validates the 0.0-2.0 range.
+    """
+    if raw.strip().lower() in _TEMPERATURE_OMIT_VALUES:
+        return None
+    try:
+        value = float(raw)
+    except ValueError as e:
+        raise ValueError(
+            f"Invalid LLM temperature {raw!r}: must be a number in [0.0, 2.0] "
+            f"or one of {sorted(_TEMPERATURE_OMIT_VALUES)} to omit it."
+        ) from e
+    if not 0.0 <= value <= 2.0:
+        raise ValueError(f"Invalid LLM temperature {value}: must be in [0.0, 2.0].")
+    return value
+
+
+def _resolve_operation_temperature(operation_env: str, default: float) -> float | None:
+    """Resolve a per-operation temperature: per-op env -> global env -> default.
+
+    The omit sentinels resolve to None at any layer, so a single
+    ``HINDSIGHT_API_LLM_TEMPERATURE=none`` drops temperature from every operation
+    that has no explicit per-operation override.
+    """
+    raw = os.getenv(operation_env)
+    if raw is None:
+        raw = os.getenv(ENV_LLM_TEMPERATURE)
+    if raw is None:
+        return default
+    return _parse_temperature(raw)
 
 
 # Per-operation LLM configuration (optional, falls back to global LLM config)
@@ -1520,6 +1579,14 @@ class HindsightConfig:
     # overrides a `user` the caller already set.
     llm_send_bank_as_user: bool
 
+    # Per-operation sampling temperature. None means the temperature parameter is
+    # omitted from the call (for models that reject explicit temperatures). See
+    # ENV_LLM_TEMPERATURE and _resolve_operation_temperature.
+    llm_temperature_verification: float | None
+    llm_temperature_retain: float | None
+    llm_temperature_reflect: float | None
+    llm_temperature_consolidation: float | None
+
     # LiteLLM Router chain (provider-specific; consumed by the "litellmrouter" provider).
     # List of deployment dicts evaluated in order with fallback on transient errors.
     # Each entry: {"provider": str, "model": str, "api_key": str | None, "base_url": str | None}.
@@ -2254,6 +2321,18 @@ class HindsightConfig:
             llm_strict_schema=os.getenv(ENV_LLM_STRICT_SCHEMA, str(DEFAULT_LLM_STRICT_SCHEMA)).lower() in ("true", "1"),
             llm_send_bank_as_user=os.getenv(ENV_LLM_SEND_BANK_AS_USER, str(DEFAULT_LLM_SEND_BANK_AS_USER)).lower()
             in ("true", "1"),
+            llm_temperature_verification=_resolve_operation_temperature(
+                ENV_LLM_TEMPERATURE_VERIFICATION, DEFAULT_LLM_TEMPERATURE_VERIFICATION
+            ),
+            llm_temperature_retain=_resolve_operation_temperature(
+                ENV_LLM_TEMPERATURE_RETAIN, DEFAULT_LLM_TEMPERATURE_RETAIN
+            ),
+            llm_temperature_reflect=_resolve_operation_temperature(
+                ENV_LLM_TEMPERATURE_REFLECT, DEFAULT_LLM_TEMPERATURE_REFLECT
+            ),
+            llm_temperature_consolidation=_resolve_operation_temperature(
+                ENV_LLM_TEMPERATURE_CONSOLIDATION, DEFAULT_LLM_TEMPERATURE_CONSOLIDATION
+            ),
             llm_litellmrouter_config=_parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG),
             # Vertex AI
             llm_vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or DEFAULT_LLM_VERTEXAI_PROJECT_ID,

@@ -10675,7 +10675,7 @@ class MemoryEngine(MemoryEngineInterface):
                                 {"role": "user", "content": user_prompt},
                             ],
                             max_completion_tokens=delta_max_tokens,
-                            temperature=0.0,
+                            temperature=get_config().llm_temperature_consolidation,
                             scope="mental_model_delta_ops",
                         )
                         op_list = parse_delta_operation_list(raw)

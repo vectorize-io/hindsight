@@ -151,11 +151,13 @@ class LiteLLMRouterLLM(LiteLLMLLM):
     async def verify_connection(self) -> None:
         from hindsight_api.engine.llm_interface import OutputTooLongError
 
+        from ...config import get_config
+
         try:
             await self.call(
                 messages=[{"role": "user", "content": "test"}],
                 max_completion_tokens=50,
-                temperature=0.0,
+                temperature=get_config().llm_temperature_verification,
                 scope="verification",
                 max_retries=0,
             )
