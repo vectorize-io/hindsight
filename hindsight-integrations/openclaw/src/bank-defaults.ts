@@ -46,8 +46,13 @@ export function normalizeEntityLabels(value: unknown): unknown | undefined {
   if (Array.isArray(value)) {
     return value.length > 0 ? value : undefined;
   }
+  // The server accepts either a bare list or a `{ attributes: [...] }` object
+  // (see parse_entity_labels). A plain keyed object is silently ignored
+  // server-side, so only pass through the documented wrapper shape — otherwise
+  // drop it and preserve the bank's existing entity_labels.
   if (typeof value === "object") {
-    return Object.keys(value as object).length > 0 ? value : undefined;
+    const attributes = (value as { attributes?: unknown }).attributes;
+    return Array.isArray(attributes) && attributes.length > 0 ? value : undefined;
   }
   return undefined;
 }
@@ -115,11 +120,6 @@ export function hasConfiguredBankDefaults(config: PluginConfig): boolean {
   return Object.keys(createPayload).length > 0 || Object.keys(configUpdates).length > 0;
 }
 
-/** @deprecated Use hasConfiguredBankDefaults */
-export function hasConfiguredMissions(config: PluginConfig): boolean {
-  return hasConfiguredBankDefaults(config);
-}
-
 export async function patchBankConfig(
   bankId: string,
   updates: Record<string, unknown>,
@@ -170,14 +170,4 @@ export async function applyConfiguredBankDefaults(
   if (Object.keys(configUpdates).length > 0) {
     await patchBankConfig(bankId, configUpdates as Record<string, unknown>, clientOpts);
   }
-}
-
-/** @deprecated Use applyConfiguredBankDefaults */
-export async function applyConfiguredMissions(
-  client: HindsightClient,
-  bankId: string,
-  config: PluginConfig,
-  clientOpts: HindsightClientOptions
-): Promise<void> {
-  return applyConfiguredBankDefaults(client, bankId, config, clientOpts);
 }

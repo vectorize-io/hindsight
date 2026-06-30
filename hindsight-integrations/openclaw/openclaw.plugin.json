@@ -86,7 +86,7 @@
         "description": "Reflect empathy trait (1=detached, 5=empathetic) stamped on first bank use."
       },
       "entityLabels": {
-        "description": "Controlled vocabulary for entity labels. Array or object passed through to PATCH /banks/{id}/config as entity_labels on first bank use."
+        "description": "Controlled vocabulary for entity labels. Either a list of attribute defs (e.g. [{\"name\":\"person\",\"description\":\"Human user\"}]) or a { \"attributes\": [...] } object, passed through to PATCH /banks/{id}/config as entity_labels on first bank use. Other shapes are ignored."
       },
       "embedVersion": {
         "type": "string",

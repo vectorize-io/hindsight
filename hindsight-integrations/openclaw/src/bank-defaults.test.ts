@@ -100,10 +100,19 @@ describe("normalizers", () => {
     expect(normalizeDispositionTrait(2.5)).toBeUndefined();
   });
 
-  it("passes through non-empty entity label shapes", () => {
-    const obj = { person: { description: "Human" } };
-    expect(normalizeEntityLabels(obj)).toEqual(obj);
+  it("passes through the server's entity label shapes", () => {
+    const list = [{ name: "person", description: "Human" }];
+    expect(normalizeEntityLabels(list)).toEqual(list);
+    const wrapped = { attributes: list };
+    expect(normalizeEntityLabels(wrapped)).toEqual(wrapped);
+  });
+
+  it("drops empty or malformed entity label shapes", () => {
     expect(normalizeEntityLabels([])).toBeUndefined();
+    expect(normalizeEntityLabels({ attributes: [] })).toBeUndefined();
+    // A plain keyed object is not the server's wrapper shape — it would be
+    // silently ignored server-side, so it's dropped rather than sent.
+    expect(normalizeEntityLabels({ person: { description: "Human" } })).toBeUndefined();
   });
 });
 
@@ -196,8 +205,8 @@ describe("patchBankConfig", () => {
 
   it("throws on non-OK responses", async () => {
     vi.mocked(global.fetch).mockResolvedValue(new Response("nope", { status: 422 }));
-    await expect(
-      patchBankConfig("bank-a", { entity_labels: ["x"] }, clientOpts)
-    ).rejects.toThrow(/patchBankConfig failed \(422\)/);
+    await expect(patchBankConfig("bank-a", { entity_labels: ["x"] }, clientOpts)).rejects.toThrow(
+      /patchBankConfig failed \(422\)/
+    );
   });
 });

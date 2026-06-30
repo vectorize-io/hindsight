@@ -94,8 +94,9 @@ export interface PluginConfig {
   dispositionLiteralism?: number;
   dispositionEmpathy?: number;
   /**
-   * Controlled vocabulary for entity labels. Array or object passed through to
-   * PATCH /banks/{id}/config as `entity_labels`.
+   * Controlled vocabulary for entity labels. Either a list of attribute defs or
+   * a `{ attributes: [...] }` object — passed through to PATCH /banks/{id}/config
+   * as `entity_labels`. Other shapes are ignored (the server only accepts these two).
    */
   entityLabels?: unknown;
   embedPort?: number;
