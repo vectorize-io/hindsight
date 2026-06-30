@@ -97,7 +97,7 @@ def main():
 
     if recall_context_turns > 1:
         transcript_path = hook_input.get("transcript_path", "")
-        messages = read_transcript(transcript_path)
+        messages = read_transcript(transcript_path, include_tools=config.get("includeTools", False))
         debug_log(config, f"Multi-turn context: {recall_context_turns} turns, {len(messages)} messages")
         query = compose_recall_query(prompt, messages, recall_context_turns, recall_roles)
     else:

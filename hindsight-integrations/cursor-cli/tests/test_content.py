@@ -146,17 +146,46 @@ class TestReadTranscript:
                 ]
             )
         )
+        # Light text read keeps text and drops tool blocks by default.
         msgs = read_transcript(str(f))
         assert len(msgs) == 2
         assert msgs[0] == {"role": "user", "content": "Remember Vim over Emacs"}
         assert msgs[1]["role"] == "assistant"
         assert "Got it. Saving." in msgs[1]["content"]
-        assert "[tool_use:Shell]" in msgs[1]["content"]
+        assert "[tool_use:Shell]" not in msgs[1]["content"]
 
+        # include_tools surfaces tool blocks as compact text markers.
+        with_tools = read_transcript(str(f), include_tools=True)
+        assert "Got it. Saving." in with_tools[1]["content"]
+        assert "[tool_use:Shell]" in with_tools[1]["content"]
+
+        # Rich read always preserves tool calls as structured blocks.
         rich = read_transcript(str(f), include_tool_calls=True)
         assert len(rich) == 2
         assistant_blocks = rich[1]["content"]
         assert any(b.get("type") == "tool_use" and b.get("name") == "Shell" for b in assistant_blocks)
+
+    def test_include_tools_flag_gates_markers_for_sdk_envelope(self, tmp_path):
+        """Light reads drop tool blocks by default; include_tools surfaces markers."""
+        f = tmp_path / "envelope.jsonl"
+        f.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": "Listing files"},
+                            {"type": "tool_use", "name": "shell", "input": {"command": "ls"}},
+                            {"type": "tool_result", "content": "a.txt"},
+                        ],
+                    },
+                }
+            )
+        )
+        assert read_transcript(str(f)) == [{"role": "assistant", "content": "Listing files"}]
+        with_tools = read_transcript(str(f), include_tools=True)
+        assert with_tools[0]["content"] == "Listing files\n[tool_use:shell]\n[tool_result]"
 
 
 class TestComposeRecallQuery:

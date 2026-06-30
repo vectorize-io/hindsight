@@ -58,7 +58,11 @@ def run_retain(hook_input: dict, force: bool = False) -> None:
 
     # Read full transcript
     include_tool_calls = config.get("retainToolCalls", True)
-    all_messages = read_transcript(transcript_path, include_tool_calls=include_tool_calls)
+    all_messages = read_transcript(
+        transcript_path,
+        include_tool_calls=include_tool_calls,
+        include_tools=config.get("includeTools", False),
+    )
     if not all_messages:
         debug_log(config, "No messages in transcript, skipping retain")
         return

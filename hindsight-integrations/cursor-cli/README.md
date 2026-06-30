@@ -79,6 +79,7 @@ Default config lives in `~/.cursor/hooks/cursor-cli/settings.json`. For personal
 | `autoRetain` | `true` | Store conversations after each turn |
 | `retainMode` | `"full-session"` | `"full-session"` or `"chunked"` |
 | `retainEveryNTurns` | `10` | Retain every N turns (1 = every turn) |
+| `includeTools` | `false` | Surface tool calls as `[tool_use:name]`/`[tool_result]` markers in the plain-text transcript (recall queries; retain when tool calls aren't already stored as blocks) |
 | `recallBudget` | `"mid"` | Recall depth: `"low"`, `"mid"`, `"high"` |
 | `recallMaxTokens` | `1024` | Max tokens for injected memories |
 | `recallTimeout` | `10` | Timeout in seconds for recall API calls |

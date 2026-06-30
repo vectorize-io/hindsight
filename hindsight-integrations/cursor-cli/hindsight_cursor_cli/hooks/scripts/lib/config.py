@@ -41,6 +41,10 @@ DEFAULTS = {
     "retainContext": "cursor-cli",
     "retainTags": ["{conversation_id}"],
     "retainMetadata": {},
+    # Surface tool calls as compact [tool_use:name]/[tool_result] markers in the
+    # plain-text transcript view (recall queries; retain when retainToolCalls is
+    # off). Off by default — only natural-language text is kept.
+    "includeTools": False,
     # Connection
     "hindsightApiUrl": None,
     "hindsightApiToken": None,
@@ -80,6 +84,7 @@ ENV_OVERRIDES = {
     "HINDSIGHT_AUTO_RECALL": ("autoRecall", bool),
     "HINDSIGHT_AUTO_RETAIN": ("autoRetain", bool),
     "HINDSIGHT_RETAIN_MODE": ("retainMode", str),
+    "HINDSIGHT_INCLUDE_TOOLS": ("includeTools", bool),
     "HINDSIGHT_RECALL_BUDGET": ("recallBudget", str),
     "HINDSIGHT_RECALL_MAX_TOKENS": ("recallMaxTokens", int),
     "HINDSIGHT_RECALL_TIMEOUT": ("recallTimeout", int),
