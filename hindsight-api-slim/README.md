@@ -121,7 +121,7 @@ This runs a stdio-based MCP server that can be used directly with MCP-compatible
 - **Entity Graph** — Automatic entity extraction and relationship tracking
 - **Temporal Reasoning** — Native support for time-based queries
 - **Disposition Traits** — Configurable skepticism, literalism, and empathy influence opinion formation
-- **Three Memory Types** — World facts, bank actions, and formed opinions with confidence scores
+- **Three Memory Types** — World facts, experience facts (the bank's own actions), and observations
 
 ## Documentation
 

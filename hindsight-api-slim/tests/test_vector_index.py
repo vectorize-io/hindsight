@@ -13,6 +13,7 @@ from hindsight_api._vector_index import (
     validate_extension,
 )
 from hindsight_api.engine.retain import bank_utils
+from hindsight_api.migrations import _bootstrap_vector_extension_for_migrations
 
 
 class RecordingConn:
@@ -62,6 +63,25 @@ def test_bootstrap_extension_scann_installs_vector_before_alloydb_scann():
     conn = RecordingConn()
 
     bootstrap_extension(conn, "scann")
+
+    assert conn.statements == [
+        "CREATE EXTENSION IF NOT EXISTS vector",
+        "CREATE EXTENSION IF NOT EXISTS alloydb_scann CASCADE",
+    ]
+
+
+def test_migration_bootstrap_vchord_skips_pgvector_preflight():
+    conn = RecordingConn()
+
+    _bootstrap_vector_extension_for_migrations(conn, "vchord")
+
+    assert conn.statements == ["CREATE EXTENSION IF NOT EXISTS vchord CASCADE"]
+
+
+def test_migration_bootstrap_scann_uses_dispatcher_without_legacy_pgvector_check():
+    conn = RecordingConn()
+
+    _bootstrap_vector_extension_for_migrations(conn, "scann")
 
     assert conn.statements == [
         "CREATE EXTENSION IF NOT EXISTS vector",

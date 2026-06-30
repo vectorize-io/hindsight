@@ -410,6 +410,7 @@ class Hindsight:
         tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         tag_groups: list[dict[str, Any]] | None = None,
         prefer_observations: bool = False,
+        min_scores: dict[str, float] | None = None,
     ) -> RecallResponse:
         """
         Recall memories using semantic similarity (sync wrapper — prefer :meth:`arecall` in async code).
@@ -438,6 +439,10 @@ class Hindsight:
                 "observation", drop any raw fact a returned observation was consolidated from, so the
                 observation supersedes it (no duplicate content). Disabled by default; no effect unless
                 "observation" and at least one raw type are both in ``types``.
+            min_scores: Optional per-stage score floors, e.g. ``{"semantic": 0.2, "final": 0.5}``.
+                ``semantic`` and ``keyword`` are retrieval-level cutoffs; ``reranker`` and ``final``
+                are applied to the scored results after reranking. Any omitted stage imposes no floor.
+                Unknown keys raise ``ValueError`` (rather than silently applying no floor).
 
         Returns:
             RecallResponse with results, optional entities, optional chunks, optional source_facts, and optional trace
@@ -461,6 +466,7 @@ class Hindsight:
                 tags_match=tags_match,
                 tag_groups=tag_groups,
                 prefer_observations=prefer_observations,
+                min_scores=min_scores,
             )
         )
 
@@ -890,6 +896,7 @@ class Hindsight:
         tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
         tag_groups: list[dict[str, Any]] | None = None,
         prefer_observations: bool = False,
+        min_scores: dict[str, float] | None = None,
     ) -> RecallResponse:
         """
         Recall memories using semantic similarity (async — preferred over :meth:`recall`).
@@ -923,6 +930,10 @@ class Hindsight:
                 "observation", drop any raw fact a returned observation was consolidated from, so the
                 observation supersedes it (no duplicate content). Disabled by default; no effect unless
                 "observation" and at least one raw type are both in ``types``.
+            min_scores: Optional per-stage score floors, e.g. ``{"semantic": 0.2, "final": 0.5}``.
+                ``semantic`` and ``keyword`` are retrieval-level cutoffs; ``reranker`` and ``final``
+                are applied to the scored results after reranking. Any omitted stage imposes no floor.
+                Unknown keys raise ``ValueError`` (rather than silently applying no floor).
 
         Returns:
             RecallResponse with results, optional entities, optional chunks, optional source_facts, and optional trace
@@ -950,6 +961,21 @@ class Hindsight:
 
             tag_groups_objs = [RecallRequestTagGroupsInner.from_dict(tg) for tg in tag_groups]
 
+        min_scores_obj = None
+        if min_scores is not None:
+            from hindsight_client_api.models.min_scores import MinScores
+
+            allowed_min_scores = {"semantic", "keyword", "reranker", "final"}
+            unknown = set(min_scores) - allowed_min_scores
+            if unknown:
+                # Fail loud instead of silently dropping a misspelled floor, which
+                # would make the caller believe filtering is active when it is not.
+                raise ValueError(
+                    f"Unknown min_scores keys: {sorted(unknown)}. "
+                    f"Allowed keys: {sorted(allowed_min_scores)}."
+                )
+            min_scores_obj = MinScores.from_dict(min_scores)
+
         request_obj = recall_request.RecallRequest(
             query=query,
             types=types,
@@ -962,6 +988,7 @@ class Hindsight:
             tags=tags,
             tags_match=tags_match,
             tag_groups=tag_groups_objs,
+            min_scores=min_scores_obj,
         )
 
         return await self._memory_api.recall_memories(bank_id, request_obj, _request_timeout=self._timeout)

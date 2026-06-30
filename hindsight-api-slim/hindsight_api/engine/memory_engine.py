@@ -1035,6 +1035,8 @@ class MemoryEngine(MemoryEngineInterface):
             litellmrouter_config=config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
+            groq_service_tier=config.llm_groq_service_tier,
+            openai_service_tier=config.llm_openai_service_tier,
             gemini_safety_settings=_llm_gemini_safety_settings,
             prompt_cache_enabled=config.llm_prompt_cache_enabled,
             vertexai_project_id=config.llm_vertexai_project_id,
@@ -1076,6 +1078,8 @@ class MemoryEngine(MemoryEngineInterface):
             litellmrouter_config=config.retain_llm_litellmrouter_config or config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
+            groq_service_tier=config.llm_groq_service_tier,
+            openai_service_tier=config.llm_openai_service_tier,
             gemini_safety_settings=_llm_gemini_safety_settings,
             prompt_cache_enabled=config.llm_prompt_cache_enabled,
             vertexai_project_id=config.llm_vertexai_project_id,
@@ -1111,6 +1115,8 @@ class MemoryEngine(MemoryEngineInterface):
             litellmrouter_config=config.reflect_llm_litellmrouter_config or config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
+            groq_service_tier=config.llm_groq_service_tier,
+            openai_service_tier=config.llm_openai_service_tier,
             gemini_safety_settings=_llm_gemini_safety_settings,
             prompt_cache_enabled=config.llm_prompt_cache_enabled,
             vertexai_project_id=config.llm_vertexai_project_id,
@@ -1146,6 +1152,8 @@ class MemoryEngine(MemoryEngineInterface):
             litellmrouter_config=config.consolidation_llm_litellmrouter_config or config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
+            groq_service_tier=config.llm_groq_service_tier,
+            openai_service_tier=config.llm_openai_service_tier,
             gemini_safety_settings=_llm_gemini_safety_settings,
             prompt_cache_enabled=config.llm_prompt_cache_enabled,
             vertexai_project_id=config.llm_vertexai_project_id,
@@ -5488,9 +5496,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_document", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_DOCUMENT, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -5579,9 +5589,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="delete_document", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.DELETE_DOCUMENT, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         invalidated_obs = 0
@@ -5682,9 +5694,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="update_document", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.UPDATE_DOCUMENT, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         invalidated_obs = 0
@@ -5969,9 +5983,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="delete_bank", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.DELETE_BANK, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         invalidated_obs = 0
@@ -6105,9 +6121,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="clear_observations", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.CLEAR_OBSERVATIONS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -6167,9 +6185,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_observation_scopes", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_OBSERVATION_SCOPES, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -6211,10 +6231,12 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             ctx = BankWriteContext(
-                bank_id=bank_id, operation="retry_failed_consolidation", request_context=request_context
+                bank_id=bank_id,
+                operation=BankWriteOperation.RETRY_FAILED_CONSOLIDATION,
+                request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
@@ -6265,10 +6287,12 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             ctx = BankWriteContext(
-                bank_id=bank_id, operation="clear_observations_for_memory", request_context=request_context
+                bank_id=bank_id,
+                operation=BankWriteOperation.CLEAR_OBSERVATIONS_FOR_MEMORY,
+                request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
@@ -6425,9 +6449,11 @@ class MemoryEngine(MemoryEngineInterface):
 
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="update_memory_unit", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.UPDATE_MEMORY_UNIT, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
         backend = await self._get_backend()
@@ -6699,9 +6725,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="run_consolidation", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.RUN_CONSOLIDATION, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
         from .consolidation import run_consolidation_job
@@ -6753,9 +6781,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_graph_data", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_GRAPH_DATA, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -7262,9 +7292,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_memory_units", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_MEMORY_UNITS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         if state is not None and state not in ("valid", "invalidated"):
             raise ValueError(f"Invalid state '{state}': expected 'valid' or 'invalidated'.")
@@ -7442,9 +7474,11 @@ class MemoryEngine(MemoryEngineInterface):
             raise ValueError(f"Invalid memory_id: '{memory_id}' is not a valid UUID")
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_memory_unit", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_MEMORY_UNIT, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -7551,9 +7585,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_observation_history", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_OBSERVATION_HISTORY, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -7689,9 +7725,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_documents", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_DOCUMENTS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -7855,9 +7893,11 @@ class MemoryEngine(MemoryEngineInterface):
                 return None
 
             if self._operation_validator:
-                from hindsight_api.extensions import BankReadContext
+                from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-                ctx = BankReadContext(bank_id=chunk["bank_id"], operation="get_chunk", request_context=request_context)
+                ctx = BankReadContext(
+                    bank_id=chunk["bank_id"], operation=BankReadOperation.GET_CHUNK, request_context=request_context
+                )
                 await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
             return {
@@ -7893,9 +7933,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_document_chunks", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_DOCUMENT_CHUNKS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -7967,9 +8009,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="reprocess_document", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.REPROCESS_DOCUMENT, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
         # Fetch the document
@@ -8482,9 +8526,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_bank_profile", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_BANK_PROFILE, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         if not create_if_missing:
@@ -8638,10 +8684,10 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             ctx = BankWriteContext(
-                bank_id=bank_id, operation="update_bank_disposition", request_context=request_context
+                bank_id=bank_id, operation=BankWriteOperation.UPDATE_BANK_DISPOSITION, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         await self._get_backend()
@@ -8667,9 +8713,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="set_bank_mission", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.SET_BANK_MISSION, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         await self._get_backend()
         await bank_utils.set_bank_mission(self._backend, bank_id, mission)
@@ -8696,9 +8744,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="merge_bank_mission", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.MERGE_BANK_MISSION, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         await self._get_backend()
         return await bank_utils.merge_bank_mission(self._backend, self._reflect_llm_config, bank_id, new_info)
@@ -9270,9 +9320,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_entities", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_ENTITIES, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -9349,9 +9401,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_entity_graph", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_ENTITY_GRAPH, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -9464,9 +9518,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_tags", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_TAGS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         return await self._list_tags_from_table(
             table="memory_units",
@@ -9493,11 +9549,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
             ctx = BankReadContext(
                 bank_id=bank_id,
-                operation="list_mental_model_tags",
+                operation=BankReadOperation.LIST_MENTAL_MODEL_TAGS,
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
@@ -9602,9 +9658,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_entity_state", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_ENTITY_STATE, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         return EntityState(entity_id=entity_id, canonical_name=entity_name, observations=[])
 
@@ -9627,9 +9685,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_bank_stats", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_BANK_STATS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
         schema = get_current_schema()
@@ -9773,9 +9833,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_bank_stats", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_BANK_STATS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
         backend = await self._get_backend()
@@ -9842,9 +9904,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_bank_stats", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_BANK_STATS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
         per_operation_llm = [
@@ -9895,9 +9959,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_memories_timeseries", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_MEMORIES_TIMESERIES, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
         cfg = _MEMORIES_TIMESERIES_PERIODS.get(period) or _MEMORIES_TIMESERIES_PERIODS["7d"]
@@ -9984,9 +10050,11 @@ class MemoryEngine(MemoryEngineInterface):
         """Get entity details including metadata and observations."""
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_entity", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_ENTITY, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
 
@@ -10061,9 +10129,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_mental_models", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_MENTAL_MODELS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
 
@@ -10250,9 +10320,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="create_mental_model", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.CREATE_MENTAL_MODEL, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -10719,9 +10791,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="update_mental_model", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.UPDATE_MENTAL_MODEL, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -10914,9 +10988,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="clear_mental_model", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.CLEAR_MENTAL_MODEL, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -10957,9 +11033,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="delete_mental_model", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.DELETE_MENTAL_MODEL, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -11131,9 +11209,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_directives", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_DIRECTIVES, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
 
@@ -11214,9 +11294,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_directive", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_DIRECTIVE, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
 
@@ -11260,9 +11342,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="create_directive", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.CREATE_DIRECTIVE, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -11314,9 +11398,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="update_directive", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.UPDATE_DIRECTIVE, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -11384,9 +11470,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="delete_directive", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.DELETE_DIRECTIVE, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -11440,9 +11528,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_operations", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_OPERATIONS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
 
@@ -11535,9 +11625,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_operation_status", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_OPERATION_STATUS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
 
@@ -11675,9 +11767,11 @@ class MemoryEngine(MemoryEngineInterface):
         """Cancel a pending async operation."""
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="cancel_operation", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.CANCEL_OPERATION, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -11727,9 +11821,11 @@ class MemoryEngine(MemoryEngineInterface):
         from hindsight_api.extensions import OperationValidationError
 
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="retry_operation", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.RETRY_OPERATION, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -11784,9 +11880,11 @@ class MemoryEngine(MemoryEngineInterface):
         """Update bank name and/or mission."""
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="update_bank", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.UPDATE_BANK, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -11852,9 +11950,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="create_webhook", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.CREATE_WEBHOOK, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
         backend = await self._get_backend()
@@ -11892,9 +11992,11 @@ class MemoryEngine(MemoryEngineInterface):
         """List webhooks for a bank in the bank's resolved schema."""
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_webhooks", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_WEBHOOKS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
         backend = await self._get_backend()
@@ -11924,9 +12026,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="update_webhook", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.UPDATE_WEBHOOK, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
         backend = await self._get_backend()
@@ -11954,9 +12058,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="delete_webhook", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.DELETE_WEBHOOK, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
         backend = await self._get_backend()
@@ -11988,9 +12094,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_webhook_deliveries", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_WEBHOOK_DELIVERIES, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
         backend = await self._get_backend()
@@ -12518,10 +12626,12 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             ctx = BankWriteContext(
-                bank_id=bank_id, operation="submit_async_consolidation", request_context=request_context
+                bank_id=bank_id,
+                operation=BankWriteOperation.SUBMIT_ASYNC_CONSOLIDATION,
+                request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
@@ -12581,10 +12691,12 @@ class MemoryEngine(MemoryEngineInterface):
             return {"operation_id": None, "no_work": True}
 
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             ctx = BankWriteContext(
-                bank_id=bank_id, operation="submit_async_graph_maintenance", request_context=request_context
+                bank_id=bank_id,
+                operation=BankWriteOperation.SUBMIT_ASYNC_GRAPH_MAINTENANCE,
+                request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 

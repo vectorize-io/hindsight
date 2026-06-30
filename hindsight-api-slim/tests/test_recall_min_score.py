@@ -2,9 +2,9 @@
 
 Inserts memory_units with known content + real embeddings directly via SQL, then
 verifies that recall_async:
-  - returns a `scores` object (final/reranker/semantic/text) on every result,
+  - returns a `scores` object (final/reranker/semantic/keyword) on every result,
   - applies the post-query floors (`reranker`, `final`) to the scored results,
-  - applies the retrieval-level floors (`semantic`, `text`) inside the SQL arms,
+  - applies the retrieval-level floors (`semantic`, `keyword`) inside the SQL arms,
   - is unchanged by the default (`min_scores=None`).
 
 Filtering is deterministic post/﻿pre-processing, so these assertions are direct —

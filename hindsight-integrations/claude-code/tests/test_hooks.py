@@ -16,16 +16,16 @@ import time
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from conftest import FakeHTTPResponse, make_hook_input, make_memory, make_transcript_file
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _run_hook(module_name, hook_input, monkeypatch, tmp_path, urlopen_side_effect=None, extra_env=None, extra_settings=None):
+def _run_hook(
+    module_name, hook_input, monkeypatch, tmp_path, urlopen_side_effect=None, extra_env=None, extra_settings=None
+):
     """Import and run a hook script's main() with mocked stdin/stdout/HTTP."""
     # Isolated plugin dirs
     monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path / "plugin_root"))
@@ -171,6 +171,66 @@ class TestRecallHook:
         if "body" in captured_body:
             assert "Python" in captured_body["body"].get("query", "")
 
+    def test_passes_tag_filters_to_recall_api(self, monkeypatch, tmp_path):
+        captured = {}
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "recallTags": ["memory_type:rule"],
+                "recallTagsMatch": "any_strict",
+                "recallTagGroups": [{"op": "all", "tags": ["memory_type:rule", "tech_stack:supabase"]}],
+            },
+        )
+
+        assert captured["body"]["tags"] == ["memory_type:rule"]
+        assert captured["body"]["tags_match"] == "any_strict"
+        assert captured["body"]["tag_groups"] == [{"op": "all", "tags": ["memory_type:rule", "tech_stack:supabase"]}]
+
+    def test_additional_bank_filters_override_global_tags(self, monkeypatch, tmp_path):
+        captured = []
+
+        def capture_and_respond(req, timeout=None):
+            if "/recall" in req.full_url:
+                captured.append(json.loads(req.data.decode()))
+            return FakeHTTPResponse({"results": []})
+
+        hook_input = make_hook_input(prompt="What project rules apply here?")
+        _run_hook(
+            "recall",
+            hook_input,
+            monkeypatch,
+            tmp_path,
+            urlopen_side_effect=capture_and_respond,
+            extra_settings={
+                "bankId": "project-bank",
+                "recallAdditionalBanks": ["normative-bank"],
+                "recallTags": ["tech_stack:supabase"],
+                "recallTagsMatch": "any",
+                "recallAdditionalBankFilters": {
+                    "normative-bank": {
+                        "recallTags": ["memory_type:rule"],
+                        "recallTagsMatch": "all_strict",
+                    }
+                },
+            },
+        )
+
+        assert captured[0]["tags"] == ["tech_stack:supabase"]
+        assert captured[0]["tags_match"] == "any"
+        assert captured[1]["tags"] == ["memory_type:rule"]
+        assert captured[1]["tags_match"] == "all_strict"
+
     def test_disabled_auto_recall_produces_no_output(self, monkeypatch, tmp_path):
         (tmp_path / "plugin_root").mkdir(exist_ok=True)
         (tmp_path / "plugin_data").mkdir(exist_ok=True)
@@ -267,7 +327,10 @@ class TestRetainHook:
             return FakeHTTPResponse({})
 
         _run_hook(
-            "retain", hook_input, monkeypatch, tmp_path,
+            "retain",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=capture,
             extra_settings={"retainTags": ["{session_id}", "claude-code", "custom-tag"]},
         )
@@ -289,7 +352,10 @@ class TestRetainHook:
             return FakeHTTPResponse({})
 
         _run_hook(
-            "retain", hook_input, monkeypatch, tmp_path,
+            "retain",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=capture,
             extra_env={"HINDSIGHT_USER_ID": "alice"},
             extra_settings={"retainTags": ["user:{user_id}", "session:{session_id}"]},
@@ -312,7 +378,10 @@ class TestRetainHook:
             return FakeHTTPResponse({})
 
         _run_hook(
-            "retain", hook_input, monkeypatch, tmp_path,
+            "retain",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=capture,
             extra_settings={"retainTags": ["user:{user_id}", "session:{session_id}"]},
         )
@@ -336,7 +405,10 @@ class TestRetainHook:
             return FakeHTTPResponse({})
 
         _run_hook(
-            "retain", hook_input, monkeypatch, tmp_path,
+            "retain",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=capture,
             extra_settings={"retainTags": ["plain-tag", "another"]},
         )
@@ -359,7 +431,10 @@ class TestRetainHook:
             return FakeHTTPResponse({})
 
         _run_hook(
-            "retain", hook_input, monkeypatch, tmp_path,
+            "retain",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=capture,
             extra_settings={"retainTags": ["user:{user_id}"]},
         )
@@ -383,7 +458,10 @@ class TestRetainHook:
             return FakeHTTPResponse({})
 
         _run_hook(
-            "retain", hook_input, monkeypatch, tmp_path,
+            "retain",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=capture,
             extra_settings={"retainMetadata": {"project": "my-project", "session": "{session_id}"}},
         )
@@ -511,7 +589,10 @@ class TestRetainHook:
 
         # retainEveryNTurns=3 in full-session mode — first 2 calls should be skipped
         _run_hook(
-            "retain", hook_input, monkeypatch, tmp_path,
+            "retain",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=capture,
             extra_settings={"retainEveryNTurns": 3},
         )
@@ -521,7 +602,10 @@ class TestRetainHook:
         # Turn 2 — still skip
         captured.clear()
         _run_hook(
-            "retain", hook_input, monkeypatch, tmp_path,
+            "retain",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=capture,
             extra_settings={"retainEveryNTurns": 3},
         )
@@ -530,7 +614,10 @@ class TestRetainHook:
         # Turn 3 — should fire, with full session content and session_id as doc ID
         captured.clear()
         _run_hook(
-            "retain", hook_input, monkeypatch, tmp_path,
+            "retain",
+            hook_input,
+            monkeypatch,
+            tmp_path,
             urlopen_side_effect=capture,
             extra_settings={"retainEveryNTurns": 3},
         )
