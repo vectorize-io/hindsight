@@ -15,8 +15,12 @@ from hindsight_api.config import (
     _parse_llm_strategy,
 )
 from hindsight_api.engine.llm_wrapper import LLMProvider
-from hindsight_api.engine.memory_engine import _build_llm
+from hindsight_api.engine.memory_engine import _build_llm, _LLMCallDefaults
 from hindsight_api.engine.multi_llm import MultiLLMProvider
+
+# No per-request overrides — exercises the chain-resolution logic without
+# touching timeout/retry defaults (those have their own tests).
+_NO_CALL_DEFAULTS = _LLMCallDefaults(timeout=None, max_retries=None, initial_backoff=None, max_backoff=None)
 
 
 @pytest.fixture
@@ -248,7 +252,7 @@ def _base_llm() -> LLMProvider:
 
 def test_build_llm_no_chain_returns_plain_provider(clean_llm_env):
     base = _base_llm()
-    result = _build_llm(base, _empty_config(), "")
+    result = _build_llm(base, _empty_config(), "", _NO_CALL_DEFAULTS)
     assert result is base
     assert not isinstance(result, MultiLLMProvider)
 
@@ -259,7 +263,7 @@ def test_build_llm_global_chain_wraps(clean_llm_env):
         llm_strategy=LLMStrategyConfig(mode="failover"),
     )
     base = _base_llm()
-    result = _build_llm(base, config, "")
+    result = _build_llm(base, config, "", _NO_CALL_DEFAULTS)
     assert isinstance(result, MultiLLMProvider)
     assert result.members[0] is base  # primary stays index 0
     assert result.members[1].provider == "ollama"
@@ -272,7 +276,7 @@ def test_build_llm_per_op_inherits_global(clean_llm_env):
         retain_llm_members=[],
         retain_llm_strategy=None,
     )
-    result = _build_llm(_base_llm(), config, "retain_")
+    result = _build_llm(_base_llm(), config, "retain_", _NO_CALL_DEFAULTS)
     assert isinstance(result, MultiLLMProvider)
     assert [m.provider for m in result.members[1:]] == ["ollama"]  # inherited
 
@@ -284,7 +288,7 @@ def test_build_llm_per_op_overrides_global(clean_llm_env):
         retain_llm_members=[_member("lmstudio")],
         retain_llm_strategy=LLMStrategyConfig(mode="round-robin"),
     )
-    result = _build_llm(_base_llm(), config, "retain_")
+    result = _build_llm(_base_llm(), config, "retain_", _NO_CALL_DEFAULTS)
     assert isinstance(result, MultiLLMProvider)
     assert [m.provider for m in result.members[1:]] == ["lmstudio"]
     assert result._strategy.mode == "round-robin"
@@ -294,7 +298,7 @@ def test_build_llm_members_without_strategy_stays_plain(clean_llm_env):
     # Members configured but no strategy → no wrapping (strategy is required).
     config = _empty_config(llm_members=[_member("ollama")], llm_strategy=None)
     base = _base_llm()
-    assert _build_llm(base, config, "") is base
+    assert _build_llm(base, config, "", _NO_CALL_DEFAULTS) is base
 
 
 # ── vertexai member build path (_member_to_llm) ─────────────────────────────────
@@ -333,7 +337,7 @@ def test_member_to_llm_passes_vertexai_project_and_region(clean_llm_env, monkeyp
         vertexai_project_id="member-proj",
         vertexai_region="europe-west1",
     )
-    provider = _member_to_llm(member, _empty_config())
+    provider = _member_to_llm(member, _empty_config(), _NO_CALL_DEFAULTS)
 
     assert provider.provider == "vertexai"
     # Project/region flowed all the way to the Vertex AI SDK client.
@@ -386,7 +390,7 @@ def test_member_to_llm_passes_vertexai_service_account_key(clean_llm_env, monkey
         vertexai_project_id="member-proj",
         vertexai_service_account_key="/keys/member-sa.json",
     )
-    provider = _member_to_llm(member, _empty_config())
+    provider = _member_to_llm(member, _empty_config(), _NO_CALL_DEFAULTS)
 
     assert provider.provider == "vertexai"
     # The member's key path was loaded, and the credentials reached the SDK client.
@@ -432,7 +436,7 @@ def test_member_to_llm_passes_litellmrouter_config(clean_llm_env, monkeypatch):
         gemini_service_tier=None,
         litellmrouter_config=router_cfg,
     )
-    provider = _member_to_llm(member, _empty_config())
+    provider = _member_to_llm(member, _empty_config(), _NO_CALL_DEFAULTS)
 
     assert provider.provider == "litellmrouter"
     # The member's own router config flowed to the LiteLLM router build.

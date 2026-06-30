@@ -388,7 +388,33 @@ RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
 RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
 
 
-def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig) -> LLMConfig:
+@dataclass(frozen=True)
+class _LLMCallDefaults:
+    """An operation's resolved per-request defaults, threaded into every provider
+    of its multi-LLM chain.
+
+    Each field is the effective value after the per-op-override-else-global
+    resolution (e.g. ``retain_llm_timeout`` falling back to ``llm_timeout``). They
+    are carried on the ``LLMProvider`` and used by ``call``/``call_with_tools`` when
+    the per-call argument is omitted — previously these per-op config fields were
+    resolved but never reached the provider (issue #2452).
+    """
+
+    timeout: float | None
+    max_retries: int | None
+    initial_backoff: float | None
+    max_backoff: float | None
+
+    def as_kwargs(self) -> dict[str, Any]:
+        return {
+            "timeout": self.timeout,
+            "max_retries": self.max_retries,
+            "initial_backoff": self.initial_backoff,
+            "max_backoff": self.max_backoff,
+        }
+
+
+def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig, defaults: _LLMCallDefaults) -> LLMConfig:
     """Build an LLMProvider from one indexed multi-LLM member.
 
     ``LLMProvider`` uses its arguments verbatim (it no longer reads global config),
@@ -397,6 +423,10 @@ def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig) -> LLMCon
     (``gemini_safety_settings``, ``prompt_cache_enabled``) take the global default.
     ``gemini_safety_settings`` is bank-configurable so it comes from the raw config
     (the proxy blocks it); the per-bank value is applied per-call downstream.
+
+    ``defaults`` are the operation's already-resolved request defaults (timeout +
+    retry policy). Members have no per-member knobs for these, so every member of a
+    chain shares its operation's values.
     """
     from ..config import _get_raw_config
 
@@ -416,6 +446,7 @@ def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig) -> LLMCon
         vertexai_region=member.vertexai_region or config.llm_vertexai_region,
         vertexai_service_account_key=member.vertexai_service_account_key or config.llm_vertexai_service_account_key,
         litellmrouter_config=member.litellmrouter_config or config.llm_litellmrouter_config,
+        **defaults.as_kwargs(),
     )
 
 
@@ -423,6 +454,7 @@ def _build_llm(
     base: LLMConfig,
     config: HindsightConfig,
     prefix: str,
+    defaults: _LLMCallDefaults,
 ) -> "LLMConfig | MultiLLMProvider":
     """Resolve an operation's multi-LLM chain and wrap ``base`` (member 0) in it.
 
@@ -431,6 +463,9 @@ def _build_llm(
     inherits the global chain, mirroring how per-op base config falls back to the
     global LLM config. Returns ``base`` unchanged when no chain is configured
     (byte-identical hot path).
+
+    ``defaults`` are the operation's resolved request defaults, applied to every
+    fallback member so the whole chain shares the operation's effective settings.
     """
     members: list[LLMMemberConfig] = getattr(config, f"{prefix}llm_members")
     strategy: LLMStrategyConfig | None = getattr(config, f"{prefix}llm_strategy")
@@ -442,7 +477,7 @@ def _build_llm(
 
     if not strategy or not members:
         return base
-    extra = [_member_to_llm(m, config) for m in members]
+    extra = [_member_to_llm(m, config, defaults) for m in members]
     return MultiLLMProvider([base, *extra], strategy)
 
 
@@ -1023,6 +1058,29 @@ class MemoryEngine(MemoryEngineInterface):
 
             self.query_analyzer = DateparserQueryAnalyzer()
 
+        # Resolve each operation's effective per-request defaults: a per-op override
+        # (``HINDSIGHT_API_RETAIN_LLM_TIMEOUT``, ``..._MAX_RETRIES``, ``..._INITIAL_BACKOFF``,
+        # ``..._MAX_BACKOFF``) wins, otherwise the global ``llm_*``. Threaded all the way
+        # into the provider so the configured value actually governs the call (issue #2452);
+        # previously these per-op fields were resolved into config but never reached the
+        # provider, which silently used the global/method default.
+        def _op_defaults(prefix: str) -> _LLMCallDefaults:
+            def pick(field: str) -> Any:
+                per_op = getattr(config, f"{prefix}llm_{field}") if prefix else None
+                return per_op if per_op is not None else getattr(config, f"llm_{field}")
+
+            return _LLMCallDefaults(
+                timeout=pick("timeout"),
+                max_retries=pick("max_retries"),
+                initial_backoff=pick("initial_backoff"),
+                max_backoff=pick("max_backoff"),
+            )
+
+        default_call_defaults = _op_defaults("")
+        retain_call_defaults = _op_defaults("retain_")
+        reflect_call_defaults = _op_defaults("reflect_")
+        consolidation_call_defaults = _op_defaults("consolidation_")
+
         # Initialize LLM configuration (default, used as fallback)
         _default_base_llm = LLMConfig(
             provider=memory_llm_provider,
@@ -1042,8 +1100,9 @@ class MemoryEngine(MemoryEngineInterface):
             vertexai_project_id=config.llm_vertexai_project_id,
             vertexai_region=config.llm_vertexai_region,
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
+            **default_call_defaults.as_kwargs(),
         )
-        self._llm_config = _build_llm(_default_base_llm, config, "")
+        self._llm_config = _build_llm(_default_base_llm, config, "", default_call_defaults)
 
         # Store client and model for convenience (deprecated: use _llm_config.call() instead).
         # Read from the primary member so a multi-LLM chain behaves like the base config here.
@@ -1085,8 +1144,9 @@ class MemoryEngine(MemoryEngineInterface):
             vertexai_project_id=config.llm_vertexai_project_id,
             vertexai_region=config.llm_vertexai_region,
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
+            **retain_call_defaults.as_kwargs(),
         )
-        self._retain_llm_config = _build_llm(_retain_base_llm, config, "retain_")
+        self._retain_llm_config = _build_llm(_retain_base_llm, config, "retain_", retain_call_defaults)
 
         # Reflect LLM config - for think/observe operations (can use lighter models)
         reflect_provider = reflect_llm_provider or config.reflect_llm_provider or memory_llm_provider
@@ -1122,8 +1182,9 @@ class MemoryEngine(MemoryEngineInterface):
             vertexai_project_id=config.llm_vertexai_project_id,
             vertexai_region=config.llm_vertexai_region,
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
+            **reflect_call_defaults.as_kwargs(),
         )
-        self._reflect_llm_config = _build_llm(_reflect_base_llm, config, "reflect_")
+        self._reflect_llm_config = _build_llm(_reflect_base_llm, config, "reflect_", reflect_call_defaults)
 
         # Consolidation LLM config - for mental model consolidation (can use efficient models)
         consolidation_provider = consolidation_llm_provider or config.consolidation_llm_provider or memory_llm_provider
@@ -1159,8 +1220,11 @@ class MemoryEngine(MemoryEngineInterface):
             vertexai_project_id=config.llm_vertexai_project_id,
             vertexai_region=config.llm_vertexai_region,
             vertexai_service_account_key=config.llm_vertexai_service_account_key,
+            **consolidation_call_defaults.as_kwargs(),
         )
-        self._consolidation_llm_config = _build_llm(_consolidation_base_llm, config, "consolidation_")
+        self._consolidation_llm_config = _build_llm(
+            _consolidation_base_llm, config, "consolidation_", consolidation_call_defaults
+        )
 
         # Initialize cross-encoder reranker (cached for performance)
         self._cross_encoder_reranker = CrossEncoderReranker(cross_encoder=cross_encoder)
