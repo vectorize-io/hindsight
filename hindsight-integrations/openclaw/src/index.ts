@@ -3078,10 +3078,7 @@ export function sliceLastTurnsByUserBoundary(messages: any[], turns: number): an
     if (typeof content === "string") return content.trim().length > 0;
     if (Array.isArray(content)) {
       return content.some(
-        (b: any) =>
-          b?.type === "text" &&
-          typeof b?.text === "string" &&
-          b.text.trim().length > 0,
+        (b: any) => b?.type === "text" && typeof b?.text === "string" && b.text.trim().length > 0
       );
     }
     return false;
