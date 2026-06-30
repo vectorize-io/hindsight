@@ -15,10 +15,23 @@ import time
 from typing import Any
 
 from hindsight_api.engine.llm_interface import LLMInterface
+from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 
 logger = logging.getLogger(__name__)
+
+
+def _usage_from_anthropic_response(response: Any) -> LLMResponseUsage:
+    """Extract input/output/cached token counts from an Anthropic usage block."""
+    usage = getattr(response, "usage", None)
+    if not usage:
+        return LLMResponseUsage()
+    return LLMResponseUsage(
+        input_tokens=usage.input_tokens or 0,
+        output_tokens=usage.output_tokens or 0,
+        cached_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+    )
 
 
 class AnthropicLLM(LLMInterface):
@@ -136,7 +149,9 @@ class AnthropicLLM(LLMInterface):
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
             skip_validation: Return raw JSON without Pydantic validation.
-            strict_schema: Use strict JSON schema enforcement (not supported by Anthropic).
+            strict_schema: Route structured output through a forced tool_use tool for
+                native constrained decoding (issue #1002). When False, falls back to
+                schema-in-prompt + JSON parse.
             return_usage: If True, return tuple (result, TokenUsage) instead of just result.
 
         Returns:
@@ -167,14 +182,21 @@ class AnthropicLLM(LLMInterface):
             else:
                 anthropic_messages.append({"role": role, "content": content})
 
-        # Add JSON schema instruction if response_format is provided
+        # Structured output: prefer Anthropic-native constrained decoding via a single
+        # forced tool_use tool (strict_schema) over text-injecting the schema and
+        # parsing the reply. Native constrained decoding guarantees schema-valid JSON,
+        # eliminating the invalid-JSON retry storm (issue #1002). When strict_schema is
+        # off we keep the text-inject + json.loads fallback for backward compatibility.
+        schema = None
+        use_forced_tool = False
+        _tool_name = "structured_response"
         if response_format is not None and hasattr(response_format, "model_json_schema"):
             schema = response_format.model_json_schema()
-            schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
-            if system_prompt:
-                system_prompt += schema_msg
+            if strict_schema:
+                use_forced_tool = True
             else:
-                system_prompt = schema_msg
+                schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
+                system_prompt = (system_prompt + schema_msg) if system_prompt else schema_msg
 
         # Prepare parameters
         call_params: dict[str, Any] = {
@@ -186,6 +208,14 @@ class AnthropicLLM(LLMInterface):
         if system_prompt:
             call_params["system"] = system_prompt
 
+        if use_forced_tool:
+            # Single tool whose input_schema IS the response schema; force the model to
+            # emit it via tool_choice so the SDK does constrained decoding for us.
+            call_params["tools"] = [
+                {"name": _tool_name, "description": "Return the structured response.", "input_schema": schema}
+            ]
+            call_params["tool_choice"] = {"type": "tool", "name": _tool_name}
+
         if self._extra_body:
             call_params["extra_body"] = self._extra_body
 
@@ -194,40 +224,61 @@ class AnthropicLLM(LLMInterface):
         for attempt in range(max_retries + 1):
             try:
                 response = await self._client.messages.create(**call_params)
+                # Stash usage before parse/validate, which may raise locally
+                # even though the provider charged for these tokens (#2387).
+                stash_response_usage(_usage_from_anthropic_response(response))
 
-                # Anthropic response content is a list of blocks
-                content = ""
-                for block in response.content:
-                    if block.type == "text":
-                        content += block.text
-
-                if response_format is not None:
-                    # Models may wrap JSON in markdown code blocks
-                    clean_content = content
-                    if "```json" in content:
-                        clean_content = content.split("```json")[1].split("```")[0].strip()
-                    elif "```" in content:
-                        clean_content = content.split("```")[1].split("```")[0].strip()
-
-                    try:
-                        json_data = json.loads(clean_content)
-                    except json.JSONDecodeError:
-                        # Fallback to parsing raw content if markdown stripping failed
-                        json_data = json.loads(content)
-
-                    if skip_validation:
-                        result = json_data
-                    else:
-                        result = response_format.model_validate(json_data)
+                if use_forced_tool:
+                    # Forced tool_use → the validated args are already a dict; no parsing,
+                    # no markdown-strip, no JSON-decode retry possible.
+                    tool_input = None
+                    for block in response.content:
+                        if block.type == "tool_use" and block.name == _tool_name:
+                            tool_input = block.input or {}
+                            break
+                    if tool_input is None:
+                        # Model ignored the forced tool (rare, e.g. a gateway that drops
+                        # tool_choice). Fall back to text parse so we don't hard-fail; the
+                        # existing retry loop still covers genuine errors.
+                        content = "".join(b.text for b in response.content if b.type == "text")
+                        tool_input = json.loads(content)
+                    content = json.dumps(tool_input)
+                    result = tool_input if skip_validation else response_format.model_validate(tool_input)
                 else:
-                    result = content
+                    # Anthropic response content is a list of blocks
+                    content = ""
+                    for block in response.content:
+                        if block.type == "text":
+                            content += block.text
+
+                    if response_format is not None:
+                        # Models may wrap JSON in markdown code blocks
+                        clean_content = content
+                        if "```json" in content:
+                            clean_content = content.split("```json")[1].split("```")[0].strip()
+                        elif "```" in content:
+                            clean_content = content.split("```")[1].split("```")[0].strip()
+
+                        try:
+                            json_data = json.loads(clean_content)
+                        except json.JSONDecodeError:
+                            # Fallback to parsing raw content if markdown stripping failed
+                            json_data = json.loads(content)
+
+                        if skip_validation:
+                            result = json_data
+                        else:
+                            result = response_format.model_validate(json_data)
+                    else:
+                        result = content
 
                 # Record metrics and log slow calls
                 duration = time.time() - start_time
-                input_tokens = response.usage.input_tokens or 0 if response.usage else 0
-                output_tokens = response.usage.output_tokens or 0 if response.usage else 0
+                response_usage = _usage_from_anthropic_response(response)
+                input_tokens = response_usage.input_tokens
+                output_tokens = response_usage.output_tokens
                 total_tokens = input_tokens + output_tokens
-                cached_tokens = getattr(response.usage, "cache_read_input_tokens", 0) or 0 if response.usage else 0
+                cached_tokens = response_usage.cached_tokens
 
                 # Record LLM metrics
                 metrics = get_metrics_collector()
@@ -415,6 +466,7 @@ class AnthropicLLM(LLMInterface):
         for attempt in range(max_retries + 1):
             try:
                 response = await self._client.messages.create(**call_params)
+                stash_response_usage(_usage_from_anthropic_response(response))
 
                 # Extract content and tool calls
                 content_parts = []

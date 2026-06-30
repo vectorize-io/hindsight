@@ -97,6 +97,20 @@ def do_retain(client: Any, config: AiderConfig, bank_id: str, transcript: str) -
         logger.warning("Hindsight retain failed: %s", e)
 
 
+def _close_client(client: Any) -> None:
+    """Best-effort close of the Hindsight client's HTTP session.
+
+    The client wraps an aiohttp session; leaving it open prints
+    "Unclosed connector" warnings after aider exits.
+    """
+    close = getattr(client, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:  # pragma: no cover - cleanup best-effort
+            pass
+
+
 def _default_run_aider(cmd: list[str]) -> int:
     """Run aider, inheriting stdio so the session is interactive."""
     try:
@@ -119,25 +133,34 @@ def run(
 ) -> int:
     """Recall -> run aider -> retain. Returns Aider's exit code."""
     config = config or load_config()
+    # Track whether we created the client so we can close it on exit. A
+    # test-injected client is left for the caller to manage.
+    owns_client = client is None
     client = client or resolve_client(config)
     bank_id = resolve_bank_id(config)
 
     memory_path = Path(config.memory_filename)
     history_path = Path(config.chat_history_file)
 
-    injected = False
-    if config.auto_recall:
-        query = compose_recall_query(aider_args, config.recall_default_query)
-        injected = do_recall(client, config, bank_id, query, memory_path)
+    try:
+        injected = False
+        if config.auto_recall:
+            query = compose_recall_query(aider_args, config.recall_default_query)
+            injected = do_recall(client, config, bank_id, query, memory_path)
 
-    prev_size = history_size(history_path)
+        prev_size = history_size(history_path)
 
-    cmd = build_aider_command(config, aider_args, memory_path if injected else None)
-    code = (run_aider or _default_run_aider)(cmd)
+        cmd = build_aider_command(config, aider_args, memory_path if injected else None)
+        code = (run_aider or _default_run_aider)(cmd)
 
-    if config.auto_retain:
-        transcript = format_transcript(read_history_delta(history_path, prev_size))
-        if transcript:
-            do_retain(client, config, bank_id, transcript)
+        if config.auto_retain:
+            transcript = format_transcript(read_history_delta(history_path, prev_size))
+            if transcript:
+                do_retain(client, config, bank_id, transcript)
 
-    return code
+        return code
+    finally:
+        # Close the HTTP session we opened so aiohttp doesn't print
+        # "Unclosed connector" warnings after aider exits.
+        if owns_client:
+            _close_client(client)

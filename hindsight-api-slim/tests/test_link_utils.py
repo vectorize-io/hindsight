@@ -5,6 +5,7 @@ import pytest
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
+from hindsight_api.config import clear_config_cache
 from hindsight_api.engine.retain.link_utils import (
     _normalize_datetime,
     _cap_links_per_unit,
@@ -407,6 +408,19 @@ class TestComputeSemanticLinksAnnPgBouncerSafety:
     `relation "_ann_seeds" does not exist` on the statement immediately
     following the CREATE TEMP TABLE.
     """
+
+    @pytest.fixture(autouse=True)
+    def _reset_config_cache(self):
+        # Tests below monkeypatch HINDSIGHT_API_VECTOR_EXTENSION. The ANN code
+        # path reads it through the process-global config cache, and monkeypatch
+        # reverts only the env var — not the cache. Left uncleared, a leaked
+        # "vchord" makes every later bank-creating test on the same xdist worker
+        # emit `USING vchordrq` against the pgvector-only test DB and fail with
+        # `access method "vchordrq" does not exist`. Clear before and after so
+        # the cache is rebuilt from the current env for each test.
+        clear_config_cache()
+        yield
+        clear_config_cache()
 
     @pytest.fixture
     def mock_conn(self):

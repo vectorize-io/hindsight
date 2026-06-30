@@ -146,6 +146,11 @@ def main():
 
     debug_log(config, f"Recalling from bank '{bank_id}', query length: {len(query)}")
 
+    recall_tags = config.get("recallTags") or None
+    tag_groups = config.get("recallTagGroups") or None
+    tags_match = config.get("recallTagsMatch") if recall_tags or tag_groups else None
+    additional_bank_filters = config.get("recallAdditionalBankFilters") or {}
+
     # Call Hindsight recall API
     try:
         response = client.recall(
@@ -154,6 +159,9 @@ def main():
             max_tokens=config.get("recallMaxTokens", 1024),
             budget=config.get("recallBudget", "mid"),
             types=config.get("recallTypes"),
+            tags=recall_tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
             timeout=10,
         )
     except Exception as e:
@@ -165,6 +173,13 @@ def main():
     # Also recall from any additional banks (e.g. shared user profile bank)
     additional_banks = config.get("recallAdditionalBanks", [])
     for extra_bank_id in additional_banks:
+        extra_filter = additional_bank_filters.get(extra_bank_id, {})
+        extra_tags = extra_filter.get("recallTags", recall_tags) or None
+        extra_tag_groups = extra_filter.get("recallTagGroups", tag_groups) or None
+        extra_tags_match = extra_filter.get(
+            "recallTagsMatch",
+            tags_match if extra_tags or extra_tag_groups else None,
+        )
         try:
             extra_response = client.recall(
                 bank_id=extra_bank_id,
@@ -172,6 +187,9 @@ def main():
                 max_tokens=config.get("recallMaxTokens", 1024),
                 budget=config.get("recallBudget", "mid"),
                 types=config.get("recallTypes"),
+                tags=extra_tags,
+                tags_match=extra_tags_match,
+                tag_groups=extra_tag_groups,
                 timeout=10,
             )
             extra_results = extra_response.get("results", [])

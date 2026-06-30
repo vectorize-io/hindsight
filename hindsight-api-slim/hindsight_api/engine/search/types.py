@@ -83,6 +83,20 @@ class RetrievalResult:
 
 
 @dataclass
+class ArmScores:
+    """Raw per-strategy retrieval scores for a single doc, aggregated across arms.
+
+    Fusion keeps only the first-seen RetrievalResult per doc, so its per-arm score
+    fields reflect just one arm. This captures each arm's raw score for the same doc
+    so the recall response can report them (and ``min_scores`` can filter on them).
+    ``None`` means the doc was not surfaced by that arm.
+    """
+
+    semantic: float | None = None  # cosine similarity from the semantic arm
+    keyword: float | None = None  # BM25 / full-text score from the keyword arm
+
+
+@dataclass
 class MergedCandidate:
     """
     Candidate after RRF merge of multiple retrieval results.
@@ -97,6 +111,7 @@ class MergedCandidate:
     rrf_score: float
     rrf_rank: int = 0
     source_ranks: dict[str, int] = field(default_factory=dict)  # method_name -> rank
+    arm_scores: "ArmScores" = field(default_factory=lambda: ArmScores())  # raw per-strategy scores
 
     @property
     def id(self) -> str:
@@ -123,6 +138,7 @@ class ScoredResult:
     rrf_normalized: float = 0.0
     recency: float = 0.5
     temporal: float = 0.5
+    proof_norm: float = 0.5  # log-normalized proof count (neutral 0.5); drives proof_count_boost
 
     # Final combined score
     combined_score: float = 0.0
@@ -179,6 +195,7 @@ class ScoredResult:
         result["rrf_normalized"] = self.rrf_normalized
         result["temporal"] = self.temporal
         result["recency"] = self.recency
+        result["proof_norm"] = self.proof_norm
         result["combined_score"] = self.combined_score
         result["weight"] = self.weight
         result["activation"] = self.weight  # Legacy field

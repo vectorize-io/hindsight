@@ -111,6 +111,9 @@ class HindsightClient:
         max_tokens: int = 1024,
         budget: str = "mid",
         types: Optional[list] = None,
+        tags: Optional[list] = None,
+        tags_match: Optional[str] = None,
+        tag_groups: Optional[object] = None,
         timeout: int = 10,
     ) -> dict:
         """Recall memories from a bank.
@@ -126,6 +129,12 @@ class HindsightClient:
             body["budget"] = budget
         if types:
             body["types"] = types
+        if tags:
+            body["tags"] = tags
+        if tags_match:
+            body["tags_match"] = tags_match
+        if tag_groups:
+            body["tag_groups"] = tag_groups
         return self.request("POST", path, body, timeout=timeout)
 
     def retain(

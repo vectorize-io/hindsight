@@ -30,6 +30,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { CompactMarkdown } from "./compact-markdown";
+import { CronSchedulePreview } from "./cron-schedule-preview";
+import { NextRefresh } from "./next-refresh";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { DirectiveDetailModal } from "./directive-detail-modal";
 import { formatAbsoluteDateTime as formatDateTime, formatRelativeTime } from "@/lib/relative-time";
@@ -1067,6 +1069,10 @@ function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
             </span>
           }
         />
+        <Metadata
+          label={t("labelNextRefresh")}
+          value={<NextRefresh trigger={mentalModel.trigger} />}
+        />
         <Metadata label={t("labelMaxTokens")} value={mentalModel.max_tokens.toLocaleString()} />
       </InfoCard>
 
@@ -1097,6 +1103,20 @@ function ConfigurationTab({ mentalModel }: { mentalModel: MentalModel }) {
             )
           }
         />
+        <Metadata
+          label={t("labelRefreshCron")}
+          value={
+            trigger.refresh_cron ? (
+              <Pill
+                label={trigger.refresh_cron}
+                color="bg-blue-500/10 text-blue-600 dark:text-blue-400"
+              />
+            ) : (
+              <Pill label={t("pillDisabled")} />
+            )
+          }
+        />
+        {trigger.refresh_cron && <CronSchedulePreview cron={trigger.refresh_cron} />}
         <Metadata
           label={t("labelFactTypes")}
           value={

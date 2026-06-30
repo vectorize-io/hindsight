@@ -35,6 +35,8 @@ from ..config import (
     DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS,
     ENV_MODEL_INIT_TIMEOUT,
     HindsightConfig,
+    LLMMemberConfig,
+    LLMStrategyConfig,
     get_config,
 )
 from ..tracing import create_operation_span
@@ -348,6 +350,7 @@ from enum import Enum
 from ..pg0 import EmbeddedPostgres, parse_pg0_url
 from .entity_resolver import EntityResolver
 from .llm_wrapper import LLMConfig, requires_api_key, sanitize_llm_output, sanitize_text
+from .multi_llm import MultiLLMProvider
 from .query_analyzer import QueryAnalyzer
 from .reflect import run_reflect_agent
 from .reflect.tools import tool_expand, tool_recall, tool_search_mental_models, tool_search_observations
@@ -357,6 +360,8 @@ from .response_models import (
     EntityState,
     LLMCallTrace,
     MemoryFact,
+    MinScores,
+    RecallScores,
     ReflectResult,
     TokenUsage,
     ToolCallTrace,
@@ -381,6 +386,64 @@ from .token_encoding import get_token_encoding
 
 RetainOutboxCallback = Callable[[asyncpg.Connection], Awaitable[None]]
 RetainOutboxCallbackFactory = Callable[[list[RetainContentDict]], RetainOutboxCallback | None]
+
+
+def _member_to_llm(member: "LLMMemberConfig", config: HindsightConfig) -> LLMConfig:
+    """Build an LLMProvider from one indexed multi-LLM member.
+
+    ``LLMProvider`` uses its arguments verbatim (it no longer reads global config),
+    so resolve each fallback here: a member's explicit value wins, otherwise inherit
+    the global LLM default. Fields that aren't per-member configurable
+    (``gemini_safety_settings``, ``prompt_cache_enabled``) take the global default.
+    ``gemini_safety_settings`` is bank-configurable so it comes from the raw config
+    (the proxy blocks it); the per-bank value is applied per-call downstream.
+    """
+    from ..config import _get_raw_config
+
+    return LLMConfig(
+        provider=member.provider,
+        api_key=member.api_key or "",
+        base_url=member.base_url,
+        model=member.model,
+        reasoning_effort=member.reasoning_effort or config.llm_reasoning_effort,
+        extra_body=member.extra_body,
+        default_headers=member.default_headers or config.llm_default_headers,
+        bedrock_service_tier=member.bedrock_service_tier,
+        gemini_service_tier=member.gemini_service_tier or config.llm_gemini_service_tier,
+        gemini_safety_settings=_get_raw_config().llm_gemini_safety_settings,
+        prompt_cache_enabled=config.llm_prompt_cache_enabled,
+        vertexai_project_id=member.vertexai_project_id or config.llm_vertexai_project_id,
+        vertexai_region=member.vertexai_region or config.llm_vertexai_region,
+        vertexai_service_account_key=member.vertexai_service_account_key or config.llm_vertexai_service_account_key,
+        litellmrouter_config=member.litellmrouter_config or config.llm_litellmrouter_config,
+    )
+
+
+def _build_llm(
+    base: LLMConfig,
+    config: HindsightConfig,
+    prefix: str,
+) -> "LLMConfig | MultiLLMProvider":
+    """Resolve an operation's multi-LLM chain and wrap ``base`` (member 0) in it.
+
+    ``prefix`` is ``""`` (global) or ``"retain_"`` / ``"reflect_"`` /
+    ``"consolidation_"``. A per-op slot with no indexed members (or no strategy)
+    inherits the global chain, mirroring how per-op base config falls back to the
+    global LLM config. Returns ``base`` unchanged when no chain is configured
+    (byte-identical hot path).
+    """
+    members: list[LLMMemberConfig] = getattr(config, f"{prefix}llm_members")
+    strategy: LLMStrategyConfig | None = getattr(config, f"{prefix}llm_strategy")
+    if prefix:
+        if not members:
+            members = config.llm_members
+        if strategy is None:
+            strategy = config.llm_strategy
+
+    if not strategy or not members:
+        return base
+    extra = [_member_to_llm(m, config) for m in members]
+    return MultiLLMProvider([base, *extra], strategy)
 
 
 def _is_oracledb_connection_error(e: Exception) -> bool:
@@ -866,9 +929,15 @@ class MemoryEngine(MemoryEngineInterface):
                           HINDSIGHT_API_LAZY_RERANKER env var or False.
         """
         # Load config from environment for any missing parameters
-        from ..config import get_config
+        from ..config import _get_raw_config, get_config
 
         config = get_config()
+        # Gemini safety settings are bank-configurable, so the StaticConfigProxy from
+        # get_config() blocks reading them. The server-level default legitimately seeds
+        # each provider at construction (per-bank values are applied per-call via
+        # ConfiguredLLMProvider), so read it from the raw config. The other LLM fields
+        # below are static and safe to read off the proxy.
+        _llm_gemini_safety_settings = _get_raw_config().llm_gemini_safety_settings
 
         # Apply optimization flags from config if not explicitly provided
         self._skip_llm_verification = (
@@ -955,7 +1024,7 @@ class MemoryEngine(MemoryEngineInterface):
             self.query_analyzer = DateparserQueryAnalyzer()
 
         # Initialize LLM configuration (default, used as fallback)
-        self._llm_config = LLMConfig(
+        _default_base_llm = LLMConfig(
             provider=memory_llm_provider,
             api_key=memory_llm_api_key,
             base_url=memory_llm_base_url,
@@ -966,11 +1035,20 @@ class MemoryEngine(MemoryEngineInterface):
             litellmrouter_config=config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
+            groq_service_tier=config.llm_groq_service_tier,
+            openai_service_tier=config.llm_openai_service_tier,
+            gemini_safety_settings=_llm_gemini_safety_settings,
+            prompt_cache_enabled=config.llm_prompt_cache_enabled,
+            vertexai_project_id=config.llm_vertexai_project_id,
+            vertexai_region=config.llm_vertexai_region,
+            vertexai_service_account_key=config.llm_vertexai_service_account_key,
         )
+        self._llm_config = _build_llm(_default_base_llm, config, "")
 
-        # Store client and model for convenience (deprecated: use _llm_config.call() instead)
-        self._llm_client = self._llm_config._client
-        self._llm_model = self._llm_config.model
+        # Store client and model for convenience (deprecated: use _llm_config.call() instead).
+        # Read from the primary member so a multi-LLM chain behaves like the base config here.
+        self._llm_client = _default_base_llm._client
+        self._llm_model = _default_base_llm.model
 
         # Initialize per-operation LLM configs (fall back to default if not specified)
         # Retain LLM config - for fact extraction (benefits from strong structured output)
@@ -989,7 +1067,7 @@ class MemoryEngine(MemoryEngineInterface):
             else:
                 retain_base_url = ""
 
-        self._retain_llm_config = LLMConfig(
+        _retain_base_llm = LLMConfig(
             provider=retain_provider,
             api_key=retain_api_key,
             base_url=retain_base_url,
@@ -1000,7 +1078,15 @@ class MemoryEngine(MemoryEngineInterface):
             litellmrouter_config=config.retain_llm_litellmrouter_config or config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
+            groq_service_tier=config.llm_groq_service_tier,
+            openai_service_tier=config.llm_openai_service_tier,
+            gemini_safety_settings=_llm_gemini_safety_settings,
+            prompt_cache_enabled=config.llm_prompt_cache_enabled,
+            vertexai_project_id=config.llm_vertexai_project_id,
+            vertexai_region=config.llm_vertexai_region,
+            vertexai_service_account_key=config.llm_vertexai_service_account_key,
         )
+        self._retain_llm_config = _build_llm(_retain_base_llm, config, "retain_")
 
         # Reflect LLM config - for think/observe operations (can use lighter models)
         reflect_provider = reflect_llm_provider or config.reflect_llm_provider or memory_llm_provider
@@ -1018,7 +1104,7 @@ class MemoryEngine(MemoryEngineInterface):
             else:
                 reflect_base_url = ""
 
-        self._reflect_llm_config = LLMConfig(
+        _reflect_base_llm = LLMConfig(
             provider=reflect_provider,
             api_key=reflect_api_key,
             base_url=reflect_base_url,
@@ -1029,7 +1115,15 @@ class MemoryEngine(MemoryEngineInterface):
             litellmrouter_config=config.reflect_llm_litellmrouter_config or config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
+            groq_service_tier=config.llm_groq_service_tier,
+            openai_service_tier=config.llm_openai_service_tier,
+            gemini_safety_settings=_llm_gemini_safety_settings,
+            prompt_cache_enabled=config.llm_prompt_cache_enabled,
+            vertexai_project_id=config.llm_vertexai_project_id,
+            vertexai_region=config.llm_vertexai_region,
+            vertexai_service_account_key=config.llm_vertexai_service_account_key,
         )
+        self._reflect_llm_config = _build_llm(_reflect_base_llm, config, "reflect_")
 
         # Consolidation LLM config - for mental model consolidation (can use efficient models)
         consolidation_provider = consolidation_llm_provider or config.consolidation_llm_provider or memory_llm_provider
@@ -1047,7 +1141,7 @@ class MemoryEngine(MemoryEngineInterface):
             else:
                 consolidation_base_url = ""
 
-        self._consolidation_llm_config = LLMConfig(
+        _consolidation_base_llm = LLMConfig(
             provider=consolidation_provider,
             api_key=consolidation_api_key,
             base_url=consolidation_base_url,
@@ -1058,7 +1152,15 @@ class MemoryEngine(MemoryEngineInterface):
             litellmrouter_config=config.consolidation_llm_litellmrouter_config or config.llm_litellmrouter_config,
             bedrock_service_tier=config.llm_bedrock_service_tier,
             gemini_service_tier=config.llm_gemini_service_tier,
+            groq_service_tier=config.llm_groq_service_tier,
+            openai_service_tier=config.llm_openai_service_tier,
+            gemini_safety_settings=_llm_gemini_safety_settings,
+            prompt_cache_enabled=config.llm_prompt_cache_enabled,
+            vertexai_project_id=config.llm_vertexai_project_id,
+            vertexai_region=config.llm_vertexai_region,
+            vertexai_service_account_key=config.llm_vertexai_service_account_key,
         )
+        self._consolidation_llm_config = _build_llm(_consolidation_base_llm, config, "consolidation_")
 
         # Initialize cross-encoder reranker (cached for performance)
         self._cross_encoder_reranker = CrossEncoderReranker(cross_encoder=cross_encoder)
@@ -2515,7 +2617,7 @@ class MemoryEngine(MemoryEngineInterface):
             provider becomes available (e.g. after a quota reset).
             """
             if not self._skip_llm_verification:
-                configs_to_verify: list[tuple[str, LLMConfig]] = [("default", self._llm_config)]
+                configs_to_verify: list[tuple[str, LLMConfig | MultiLLMProvider]] = [("default", self._llm_config)]
 
                 # Verify retain config if different from default
                 retain_is_different = (
@@ -3442,6 +3544,8 @@ class MemoryEngine(MemoryEngineInterface):
                 llm_input_tokens=total_usage.input_tokens,
                 llm_output_tokens=total_usage.output_tokens,
                 llm_total_tokens=total_usage.total_tokens,
+                llm_cached_input_tokens=getattr(total_usage, "cached_tokens", 0) or 0,
+                llm_thoughts_tokens=getattr(total_usage, "thoughts_tokens", 0) or 0,
                 processed_content_tokens=total_processed_content_tokens,
             )
             try:
@@ -3843,6 +3947,10 @@ class MemoryEngine(MemoryEngineInterface):
         max_tokens: int = 4096,
         enable_trace: bool = False,
         fact_type: list[str] | None = None,
+        # Opt-in (default False). Internal callers that recall raw facts on purpose —
+        # notably consolidation, which needs the raw facts it folds into observations —
+        # must leave this off so they aren't silently deduped away.
+        prefer_observations: bool = False,
         question_date: datetime | None = None,
         include_entities: bool = False,
         max_entity_tokens: int = 500,
@@ -3857,6 +3965,7 @@ class MemoryEngine(MemoryEngineInterface):
         tag_groups: list[TagGroup] | None = None,
         created_after: datetime | None = None,
         created_before: datetime | None = None,
+        min_scores: MinScores | None = None,
         _connection_budget: int | None = None,
         _quiet: bool = False,
         reranking: RecallReranking = "cross_encoder",
@@ -3875,6 +3984,10 @@ class MemoryEngine(MemoryEngineInterface):
             bank_id: bank ID to recall for
             query: Recall query
             fact_type: List of fact types to recall (e.g., ['world', 'experience'])
+            prefer_observations: When True and both 'observation' and a raw type ('world'/'experience')
+                       are requested, drop raw facts that a returned observation was consolidated from
+                       (deduplication by provenance). Freed slots backfill, keeping the result count at
+                       the budget. No-op unless both observation and raw types are requested.
             budget: Budget level for graph traversal (low=100, mid=300, high=600 units)
             max_tokens: Maximum tokens to return (counts only 'text' field, default 4096)
                        Results are returned until token budget is reached, stopping before
@@ -4012,11 +4125,13 @@ class MemoryEngine(MemoryEngineInterface):
                             max_chunk_tokens,
                             request_context,
                             semaphore_wait=semaphore_wait,
+                            prefer_observations=prefer_observations,
                             tags=tags,
                             tags_match=tags_match,
                             tag_groups=tag_groups,
                             created_after=created_after,
                             created_before=created_before,
+                            min_scores=min_scores,
                             connection_budget=_connection_budget,
                             quiet=_quiet,
                             include_source_facts=include_source_facts,
@@ -4148,11 +4263,13 @@ class MemoryEngine(MemoryEngineInterface):
         max_chunk_tokens: int = 8192,
         request_context: "RequestContext" = None,
         semaphore_wait: float = 0.0,
+        prefer_observations: bool = False,
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
         tag_groups: list[TagGroup] | None = None,
         created_after: datetime | None = None,
         created_before: datetime | None = None,
+        min_scores: MinScores | None = None,
         connection_budget: int | None = None,
         quiet: bool = False,
         include_source_facts: bool = False,
@@ -4195,7 +4312,10 @@ class MemoryEngine(MemoryEngineInterface):
         if tracer:
             tracer.start()
 
+        backend_acquire_start = time.time()
         backend = await self._get_read_backend()
+        if tracer:
+            tracer.add_phase_metric("backend_acquisition", time.time() - backend_acquire_start)
         recall_start = time.time()
 
         # Buffer logs for clean output in concurrent scenarios.
@@ -4286,6 +4406,8 @@ class MemoryEngine(MemoryEngineInterface):
                         tag_groups=tag_groups,
                         created_after=created_after,
                         created_before=created_before,
+                        min_semantic=min_scores.semantic if min_scores else None,
+                        min_keyword=min_scores.keyword if min_scores else None,
                     )
                     parallel_duration = time.time() - parallel_start
             finally:
@@ -4491,10 +4613,12 @@ class MemoryEngine(MemoryEngineInterface):
                     },
                 )
                 # Also expose each retrieval method as its own phase so
-                # benchmarks can pinpoint which sub-query drives latency.
+                # benchmarks can pinpoint which sub-query drives latency. These are
+                # children of parallel_retrieval (marked diagnostic so the phase-coverage
+                # check doesn't double-count them).
                 for _method, _dur in aggregated_timings.items():
                     if _dur > 0:
-                        tracer.add_phase_metric(f"retrieval_{_method}", _dur)
+                        tracer.add_phase_metric(f"retrieval_{_method}", _dur, {"diagnostic": True})
 
             # Step 3: Merge ranked lists. RRF by default; interleave (round-robin) when
             # requested by consolidation dedup recall — RRF averages a strong-in-one-arm
@@ -4610,6 +4734,12 @@ class MemoryEngine(MemoryEngineInterface):
             # is_passthrough_reranker tells the scoring code to seed CE scores
             # from RRF rank — only meaningful when the configured reranker is
             # the slim/passthrough one that returns a constant score per pair.
+            #
+            # Timed separately from "reranking": the cross-encoder duration above
+            # (step_duration) is captured before this block runs, so the scoring
+            # math, additive boosts and final sort would otherwise be invisible in
+            # the phase metrics (issue #2361).
+            scoring_start = time.time()
             if scored_results and reranking == "interleave":
                 # Interleave order is authoritative for dedup recall: do NOT re-sort by the
                 # recency/temporal boosts — that re-sort is precisely what buried the twin
@@ -4622,10 +4752,14 @@ class MemoryEngine(MemoryEngineInterface):
                 ce = reranker_instance.cross_encoder
                 # "rrf" mode is passthrough by construction; so is a configured "rrf" CE.
                 is_passthrough = (reranking == "rrf") or (ce is not None and ce.provider_name == "rrf")
+                scoring_config = get_config()
                 apply_combined_scoring(
                     scored_results,
                     now=_recall_scoring_now(question_date),
                     is_passthrough_reranker=is_passthrough,
+                    recency_decay_function=scoring_config.recency_decay_function,
+                    recency_decay_linear_window_days=scoring_config.recency_decay_linear_window_days,
+                    recency_decay_halflife_days=scoring_config.recency_decay_halflife_days,
                 )
                 # Per-strategy additive boost: nudge candidates surfaced by a
                 # prioritised retrieval arm up the final ordering.
@@ -4640,6 +4774,30 @@ class MemoryEngine(MemoryEngineInterface):
                 if strategy_boosts:
                     log_buffer.append(f"  [4.7] Strategy boosts applied: {strategy_boosts}")
 
+            # Step 4.9: post-query min_scores filters (reranker + final). The
+            # semantic/text floors are applied earlier inside the SQL arms (see
+            # retrieve_semantic_bm25_combined); here we apply the post-rank floors on
+            # the scored results, after the final sort and before truncation, so every
+            # downstream step (prefer_observations dedup, truncation, token filtering)
+            # operates on the filtered set. Inclusive (>=), AND-ed, opt-in: a None
+            # threshold is a no-op. There is deliberately no default — the
+            # cross-encoder's absolute scores are not calibrated for a fixed cutoff
+            # (a clearly-relevant match can score ~0.001 while its *ranking* is right).
+            min_reranker = min_scores.reranker if min_scores else None
+            min_final = min_scores.final if min_scores else None
+            if (min_reranker is not None or min_final is not None) and scored_results:
+                before_min_score = len(scored_results)
+                scored_results = [
+                    sr
+                    for sr in scored_results
+                    if (min_reranker is None or sr.cross_encoder_score_normalized >= min_reranker)
+                    and (min_final is None or sr.weight >= min_final)
+                ]
+                log_buffer.append(
+                    f"  [4.9] min_scores(reranker={min_reranker}, final={min_final}): "
+                    f"{before_min_score}->{len(scored_results)} results"
+                )
+
             # Add reranked results to tracer AFTER combined scoring (so normalized values are included)
             if tracer:
                 results_dict = [sr.to_dict() for sr in scored_results]
@@ -4653,12 +4811,68 @@ class MemoryEngine(MemoryEngineInterface):
                     step_duration,
                     {"reranker_type": rerank_kind, "candidates_reranked": len(scored_results)},
                 )
+                # Combined scoring + additive boosts + final sort, plus the trace
+                # serialization of reranked entries done just above.
+                tracer.add_phase_metric(
+                    "combined_scoring",
+                    time.time() - scoring_start,
+                    {"candidates_scored": len(scored_results)},
+                )
 
             # Cancellation checkpoint: reranking is done; skip the remaining
             # enrichment (chunk/entity/source-fact fetches, each its own DB work)
             # if the client disconnected while we were reranking (issue #2122).
             if request_context is not None:
                 request_context.raise_if_cancelled()
+
+            # Step 4.8: prefer-observations dedup. When the caller asked for observations
+            # alongside raw facts, an observation supersedes the raw facts it was
+            # consolidated from: drop those raw facts so the same content isn't returned
+            # twice. Runs BEFORE the Step 5 truncation so the freed slots backfill with
+            # the next-best results, keeping the result count at the budget. No-op unless
+            # 'observation' and at least one raw type were both requested.
+            raw_types_requested = {"world", "experience"} & set(fact_type)
+            if prefer_observations and "observation" in fact_type and raw_types_requested:
+                # "The observation list" = observations within the window we would return.
+                # Only those can supersede a raw fact; a far-down observation should not
+                # suppress a top raw fact it merely happens to reference.
+                observation_ids = [
+                    uuid.UUID(sr.id)
+                    for sr in scored_results[: thinking_budget * 2]
+                    if sr.retrieval.fact_type == "observation"
+                ]
+                if observation_ids:
+                    dedup_start = time.time()
+                    superseded_ids: set[str] = set()
+                    async with acquire_with_retry(backend) as dedup_conn:
+                        obs_rows = await dedup_conn.fetch(
+                            f"""
+                            SELECT source_memory_ids
+                            FROM {fq_table("memory_units")}
+                            WHERE id = ANY($1::uuid[]) AND fact_type = 'observation'
+                            """,
+                            observation_ids,
+                        )
+                    if tracer:
+                        tracer.add_phase_metric(
+                            "prefer_observations_dedup",
+                            time.time() - dedup_start,
+                            {"observations_considered": len(observation_ids)},
+                        )
+                    for obs_row in obs_rows:
+                        for sid in obs_row["source_memory_ids"] or []:
+                            superseded_ids.add(str(sid))
+                    if superseded_ids:
+                        before_count = len(scored_results)
+                        scored_results = [
+                            sr
+                            for sr in scored_results
+                            if not (sr.retrieval.fact_type in ("world", "experience") and sr.id in superseded_ids)
+                        ]
+                        log_buffer.append(
+                            f"  [4.8] prefer_observations: dropped {before_count - len(scored_results)} "
+                            f"raw fact(s) superseded by {len(observation_ids)} observation(s)"
+                        )
 
             # Step 5: Truncate to thinking_budget * 2 for token filtering
             rerank_limit = thinking_budget * 2
@@ -4669,6 +4883,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Chunks are fetched independently of max_tokens filtering
             chunks_dict = None
             total_chunk_tokens = 0
+            chunk_fetch_start = time.time()
             if include_chunks and top_scored:
                 from .response_models import ChunkInfo
 
@@ -4777,6 +4992,15 @@ class MemoryEngine(MemoryEngineInterface):
                             )
                             total_chunk_tokens += chunk_tokens
 
+            # Chunk fetch involves up to two SQL round-trips plus per-chunk tiktoken
+            # encoding; record it only when chunks were actually requested (issue #2361).
+            if tracer and include_chunks:
+                tracer.add_phase_metric(
+                    "chunk_fetch",
+                    time.time() - chunk_fetch_start,
+                    {"chunks_returned": len(chunks_dict or {}), "chunk_tokens": total_chunk_tokens},
+                )
+
             # Step 6: Token budget filtering
             step_start = time.time()
 
@@ -4799,6 +5023,10 @@ class MemoryEngine(MemoryEngineInterface):
                     step_duration,
                     {"results_selected": len(top_scored), "tokens_used": total_tokens, "max_tokens": max_tokens},
                 )
+
+            # Record visits + build the JSON-serializable result dicts. Timed as one
+            # phase: the visit loop alone walks every scored result (issue #2361).
+            assembly_start = time.time()
 
             # Record visits for all retrieved nodes
             if tracer:
@@ -4849,7 +5077,15 @@ class MemoryEngine(MemoryEngineInterface):
                     )
                 top_results_dicts.append(result_dict)
 
+            if tracer:
+                tracer.add_phase_metric(
+                    "result_serialization",
+                    time.time() - assembly_start,
+                    {"results_serialized": len(top_results_dicts)},
+                )
+
             # Fetch source facts for observation-type results (mirrors chunks pattern)
+            source_fact_start = time.time()
             source_fact_ids_by_obs: dict[str, list[str]] = {}  # obs_id -> [source_id, ...]
             source_facts_dict: dict[str, MemoryFact] | None = None
             if include_source_facts:
@@ -4942,6 +5178,18 @@ class MemoryEngine(MemoryEngineInterface):
                                     source_facts_dict[sid] = _make_source_fact(sid, r)
                                     total_source_tokens += fact_tokens
 
+            # Source-fact enrichment is two SQL passes + tiktoken encoding; record it
+            # only when requested (issue #2361).
+            if tracer and include_source_facts:
+                tracer.add_phase_metric(
+                    "source_fact_fetch",
+                    time.time() - source_fact_start,
+                    {"source_facts_returned": len(source_facts_dict or {})},
+                )
+
+            # entity fetch + MemoryFact construction + entity-state build, timed together.
+            entity_build_start = time.time()
+
             # Get entities for each fact if include_entities is requested.
             # _entity_rows_for_units_sql resolves both direct unit_entities rows
             # and observation-via-source-memory inheritance in a single query.
@@ -4961,6 +5209,25 @@ class MemoryEngine(MemoryEngineInterface):
                             )
 
             # Convert results to MemoryFact objects
+            # Build per-result scores (final/reranker/semantic/text) keyed by id.
+            # reranker is None when the configured reranker is a passthrough (rrf /
+            # interleave modes, or the RRFPassthroughCrossEncoder), since its
+            # cross_encoder_score_normalized is then a rank-derived placeholder, not a
+            # true relevance score.
+            ce_model = self._cross_encoder_reranker.cross_encoder
+            reranker_passthrough = (reranking != "cross_encoder") or (
+                ce_model is not None and getattr(ce_model, "provider_name", None) == "rrf"
+            )
+            scores_by_id: dict[str, RecallScores] = {
+                sr.id: RecallScores(
+                    final=sr.weight,
+                    reranker=None if reranker_passthrough else sr.cross_encoder_score_normalized,
+                    semantic=sr.candidate.arm_scores.semantic,
+                    keyword=sr.candidate.arm_scores.keyword,
+                )
+                for sr in top_scored
+            }
+
             memory_facts = []
             for result_dict in top_results_dicts:
                 result_id = str(result_dict.get("id"))
@@ -4984,6 +5251,7 @@ class MemoryEngine(MemoryEngineInterface):
                         chunk_id=result_dict.get("chunk_id"),
                         tags=result_dict.get("tags"),
                         source_fact_ids=source_fact_ids_by_obs.get(result_id) if include_source_facts else None,
+                        scores=scores_by_id.get(result_id),
                     )
                 )
 
@@ -5014,11 +5282,41 @@ class MemoryEngine(MemoryEngineInterface):
                         observations=[],  # Mental models provide this now
                     )
 
-            # Finalize trace if enabled
+            if tracer:
+                tracer.add_phase_metric(
+                    "entity_build",
+                    time.time() - entity_build_start,
+                    {"entities_returned": len(entities_dict or {})},
+                )
+
+                # Diagnostic phases — these do NOT partition the timeline and are
+                # excluded from the phase-coverage check (see test_trace_phase_coverage):
+                # the pool waits overlap other phases (semaphore_wait precedes the
+                # tracer window; connection_wait is part of parallel_retrieval), and the
+                # per-method retrieval splits are children of parallel_retrieval.
+                if semaphore_wait > 0:
+                    tracer.add_phase_metric("semaphore_wait", semaphore_wait, {"diagnostic": True})
+                if max_conn_wait > 0:
+                    tracer.add_phase_metric("connection_wait", max_conn_wait, {"diagnostic": True})
+
+            # Finalize trace if enabled. finalize() snapshots total_duration_seconds at
+            # entry, so its own object construction + to_dict() serialization fall outside
+            # that total; we still surface the cost as a diagnostic phase (issue #2361).
             trace_dict = None
             if tracer:
+                from .search.trace import SearchPhaseMetrics
+
+                finalize_start = time.time()
                 trace = tracer.finalize(top_results_dicts)
                 trace_dict = trace.to_dict() if trace else None
+                if trace_dict is not None:
+                    trace_dict["summary"]["phase_metrics"].append(
+                        SearchPhaseMetrics(
+                            phase_name="trace_finalize",
+                            duration_seconds=time.time() - finalize_start,
+                            details={"diagnostic": True},
+                        ).model_dump()
+                    )
 
             # Log final recall stats
             total_time = time.time() - recall_start
@@ -5198,9 +5496,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_document", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_DOCUMENT, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -5289,9 +5589,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="delete_document", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.DELETE_DOCUMENT, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         invalidated_obs = 0
@@ -5333,6 +5635,17 @@ class MemoryEngine(MemoryEngineInterface):
                     "document_deleted": 1 if deleted else 0,
                     "memory_units_deleted": units_count if deleted else 0,
                 }
+
+        # Drop any cached stats for this bank — deleting the document changed
+        # the document count and (via cascade) the memory-unit/link counts
+        # get_bank_stats reports, which the TTL would otherwise serve at
+        # pre-delete values for up to a minute (mirrors delete_bank). Best-effort:
+        # a cache-eviction failure must not fail an already-committed delete.
+        if deleted:
+            try:
+                await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
+            except Exception as e:
+                logger.warning(f"Failed to invalidate bank stats cache after document deletion for bank {bank_id}: {e}")
 
         if invalidated_obs > 0:
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)
@@ -5381,9 +5694,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="update_document", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.UPDATE_DOCUMENT, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         invalidated_obs = 0
@@ -5501,6 +5816,14 @@ class MemoryEngine(MemoryEngineInterface):
                             )
 
         if invalidated_obs > 0:
+            # Observation units were deleted, changing the counts get_bank_stats
+            # reports — drop the cached stats so the TTL does not serve pre-update
+            # values for up to a minute (mirrors delete_bank). Best-effort: a
+            # cache-eviction failure must not fail an already-committed update.
+            try:
+                await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
+            except Exception as e:
+                logger.warning(f"Failed to invalidate bank stats cache after document update for bank {bank_id}: {e}")
             config = await self._config_resolver.resolve_full_config(bank_id, request_context)
             if config.enable_auto_consolidation:
                 try:
@@ -5592,6 +5915,19 @@ class MemoryEngine(MemoryEngineInterface):
                     else "Memory unit not found",
                 }
 
+        # Drop any cached stats for this bank — the deleted unit (and its
+        # cascaded links/entities) changed the counts get_bank_stats reports,
+        # which the TTL would otherwise serve at pre-delete values for up to a
+        # minute (mirrors delete_bank). Best-effort: a cache-eviction failure
+        # must not fail an already-committed delete.
+        if deleted and bank_id:
+            try:
+                await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to invalidate bank stats cache after memory unit deletion for bank {bank_id}: {e}"
+                )
+
         if bank_id_for_consolidation:
             config = await self._config_resolver.resolve_full_config(bank_id_for_consolidation, request_context)
             if config.enable_auto_consolidation:
@@ -5647,9 +5983,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="delete_bank", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.DELETE_BANK, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         invalidated_obs = 0
@@ -5783,9 +6121,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="clear_observations", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.CLEAR_OBSERVATIONS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -5814,7 +6154,17 @@ class MemoryEngine(MemoryEngineInterface):
                     bank_id,
                 )
 
-                return {"deleted_count": count or 0}
+        # Drop any cached stats for this bank — clearing observations changed
+        # the memory-unit/observation counts and the consolidation timestamps
+        # get_bank_stats reports, which the TTL would otherwise serve at stale
+        # values for up to a minute (mirrors delete_bank). Best-effort: a
+        # cache-eviction failure must not fail an already-committed clear.
+        try:
+            await self._bank_stats_cache.invalidate(get_current_schema(), bank_id)
+        except Exception as e:
+            logger.warning(f"Failed to invalidate bank stats cache after clearing observations for bank {bank_id}: {e}")
+
+        return {"deleted_count": count or 0}
 
     async def list_observation_scopes(
         self,
@@ -5835,9 +6185,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_observation_scopes", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_OBSERVATION_SCOPES, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -5879,10 +6231,12 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             ctx = BankWriteContext(
-                bank_id=bank_id, operation="retry_failed_consolidation", request_context=request_context
+                bank_id=bank_id,
+                operation=BankWriteOperation.RETRY_FAILED_CONSOLIDATION,
+                request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
@@ -5933,10 +6287,12 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             ctx = BankWriteContext(
-                bank_id=bank_id, operation="clear_observations_for_memory", request_context=request_context
+                bank_id=bank_id,
+                operation=BankWriteOperation.CLEAR_OBSERVATIONS_FOR_MEMORY,
+                request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
@@ -6093,9 +6449,11 @@ class MemoryEngine(MemoryEngineInterface):
 
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="update_memory_unit", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.UPDATE_MEMORY_UNIT, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
         backend = await self._get_backend()
@@ -6367,9 +6725,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="run_consolidation", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.RUN_CONSOLIDATION, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
         from .consolidation import run_consolidation_job
@@ -6421,9 +6781,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_graph_data", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_GRAPH_DATA, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -6863,10 +7225,11 @@ class MemoryEngine(MemoryEngineInterface):
             setattr(resolved_config, key, value)
 
         backend = await self._get_backend()
-        # Narrator primes the "Narrator:" line in the prompt — resolve it the same way retain does.
+        # Narrator primes the "Narrator:" line in the prompt. Dry-run must not
+        # create a bank just to resolve that optional display name.
         if agent_name is None:
-            profile = await bank_utils.get_bank_profile(backend, bank_id)
-            profile_name = profile["name"] if profile else bank_id
+            profile = await bank_utils.get_bank_profile_if_exists(backend, bank_id)
+            profile_name = profile["name"] if profile is not None else bank_id
             agent_name = None if profile_name == bank_id else profile_name
 
         retain_llm = self._retain_llm_config.with_config(resolved_config, bank_id=bank_id, operation="retain")
@@ -6929,9 +7292,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_memory_units", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_MEMORY_UNITS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         if state is not None and state not in ("valid", "invalidated"):
             raise ValueError(f"Invalid state '{state}': expected 'valid' or 'invalidated'.")
@@ -7109,9 +7474,11 @@ class MemoryEngine(MemoryEngineInterface):
             raise ValueError(f"Invalid memory_id: '{memory_id}' is not a valid UUID")
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_memory_unit", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_MEMORY_UNIT, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -7218,9 +7585,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_observation_history", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_OBSERVATION_HISTORY, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -7356,9 +7725,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_documents", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_DOCUMENTS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -7522,9 +7893,11 @@ class MemoryEngine(MemoryEngineInterface):
                 return None
 
             if self._operation_validator:
-                from hindsight_api.extensions import BankReadContext
+                from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-                ctx = BankReadContext(bank_id=chunk["bank_id"], operation="get_chunk", request_context=request_context)
+                ctx = BankReadContext(
+                    bank_id=chunk["bank_id"], operation=BankReadOperation.GET_CHUNK, request_context=request_context
+                )
                 await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
             return {
@@ -7560,9 +7933,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_document_chunks", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_DOCUMENT_CHUNKS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -7634,9 +8009,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="reprocess_document", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.REPROCESS_DOCUMENT, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
         # Fetch the document
@@ -8149,9 +8526,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_bank_profile", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_BANK_PROFILE, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         if not create_if_missing:
@@ -8305,10 +8684,10 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             ctx = BankWriteContext(
-                bank_id=bank_id, operation="update_bank_disposition", request_context=request_context
+                bank_id=bank_id, operation=BankWriteOperation.UPDATE_BANK_DISPOSITION, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         await self._get_backend()
@@ -8334,9 +8713,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="set_bank_mission", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.SET_BANK_MISSION, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         await self._get_backend()
         await bank_utils.set_bank_mission(self._backend, bank_id, mission)
@@ -8363,9 +8744,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="merge_bank_mission", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.MERGE_BANK_MISSION, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         await self._get_backend()
         return await bank_utils.merge_bank_mission(self._backend, self._reflect_llm_config, bank_id, new_info)
@@ -8937,9 +9320,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_entities", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_ENTITIES, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -9016,9 +9401,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_entity_graph", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_ENTITY_GRAPH, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -9131,9 +9518,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_tags", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_TAGS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         return await self._list_tags_from_table(
             table="memory_units",
@@ -9160,11 +9549,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
             ctx = BankReadContext(
                 bank_id=bank_id,
-                operation="list_mental_model_tags",
+                operation=BankReadOperation.LIST_MENTAL_MODEL_TAGS,
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
@@ -9269,9 +9658,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_entity_state", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_ENTITY_STATE, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         return EntityState(entity_id=entity_id, canonical_name=entity_name, observations=[])
 
@@ -9294,9 +9685,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_bank_stats", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_BANK_STATS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
         schema = get_current_schema()
@@ -9440,9 +9833,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_bank_stats", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_BANK_STATS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
         backend = await self._get_backend()
@@ -9509,9 +9904,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_bank_stats", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_BANK_STATS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
         per_operation_llm = [
@@ -9562,9 +9959,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_memories_timeseries", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_MEMORIES_TIMESERIES, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
         cfg = _MEMORIES_TIMESERIES_PERIODS.get(period) or _MEMORIES_TIMESERIES_PERIODS["7d"]
@@ -9651,9 +10050,11 @@ class MemoryEngine(MemoryEngineInterface):
         """Get entity details including metadata and observations."""
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_entity", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_ENTITY, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
 
@@ -9728,9 +10129,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_mental_models", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_MENTAL_MODELS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
 
@@ -9917,9 +10320,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="create_mental_model", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.CREATE_MENTAL_MODEL, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -10386,9 +10791,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="update_mental_model", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.UPDATE_MENTAL_MODEL, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -10581,9 +10988,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="clear_mental_model", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.CLEAR_MENTAL_MODEL, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -10624,9 +11033,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="delete_mental_model", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.DELETE_MENTAL_MODEL, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -10798,9 +11209,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_directives", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_DIRECTIVES, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
 
@@ -10881,9 +11294,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_directive", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_DIRECTIVE, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
 
@@ -10927,9 +11342,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="create_directive", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.CREATE_DIRECTIVE, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -10981,9 +11398,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="update_directive", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.UPDATE_DIRECTIVE, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -11051,9 +11470,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="delete_directive", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.DELETE_DIRECTIVE, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -11107,9 +11528,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_operations", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_OPERATIONS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
 
@@ -11165,7 +11588,8 @@ class MemoryEngine(MemoryEngineInterface):
                         "id": str(row["operation_id"]),
                         "task_type": row["operation_type"],
                         "items_count": result_metadata.get("items_count", 0),
-                        "document_id": None,
+                        "document_id": result_metadata.get("document_id"),
+                        "filename": result_metadata.get("original_filename"),
                         "created_at": row["created_at"].isoformat(),
                         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
                         "status": row["status"],
@@ -11201,9 +11625,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="get_operation_status", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.GET_OPERATION_STATUS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
 
@@ -11341,9 +11767,11 @@ class MemoryEngine(MemoryEngineInterface):
         """Cancel a pending async operation."""
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="cancel_operation", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.CANCEL_OPERATION, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -11393,9 +11821,11 @@ class MemoryEngine(MemoryEngineInterface):
         from hindsight_api.extensions import OperationValidationError
 
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="retry_operation", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.RETRY_OPERATION, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -11450,9 +11880,11 @@ class MemoryEngine(MemoryEngineInterface):
         """Update bank name and/or mission."""
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="update_bank", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.UPDATE_BANK, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         backend = await self._get_backend()
 
@@ -11518,9 +11950,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="create_webhook", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.CREATE_WEBHOOK, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
         backend = await self._get_backend()
@@ -11558,9 +11992,11 @@ class MemoryEngine(MemoryEngineInterface):
         """List webhooks for a bank in the bank's resolved schema."""
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_webhooks", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_WEBHOOKS, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
         backend = await self._get_backend()
@@ -11590,9 +12026,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="update_webhook", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.UPDATE_WEBHOOK, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
         backend = await self._get_backend()
@@ -11620,9 +12058,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-            ctx = BankWriteContext(bank_id=bank_id, operation="delete_webhook", request_context=request_context)
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation=BankWriteOperation.DELETE_WEBHOOK, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
         backend = await self._get_backend()
@@ -11654,9 +12094,11 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankReadContext
+            from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-            ctx = BankReadContext(bank_id=bank_id, operation="list_webhook_deliveries", request_context=request_context)
+            ctx = BankReadContext(
+                bank_id=bank_id, operation=BankReadOperation.LIST_WEBHOOK_DELIVERIES, request_context=request_context
+            )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
 
         backend = await self._get_backend()
@@ -11755,6 +12197,8 @@ class MemoryEngine(MemoryEngineInterface):
             **task_payload,
         }
 
+        from hindsight_api.extensions.operation_validator import OperationValidationError
+
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
                 if dedupe_by_bank:
@@ -11776,10 +12220,20 @@ class MemoryEngine(MemoryEngineInterface):
                     # serialize) but not with FOR KEY SHARE (so those inserts proceed).
                     # On Oracle this rewrites to FOR UPDATE, which there does not block
                     # indexed-FK child inserts.
-                    await conn.execute(
+                    #
+                    # Use fetchval so we can also verify the bank actually exists.
+                    # Without this check, callers that race against bank deletion
+                    # or that derive bank IDs before creating the bank reach the
+                    # INSERT below and get an asyncpg.ForeignKeyViolationError, which
+                    # surfaces as an opaque 500 from the API. A clean
+                    # OperationValidationError(404) is the right shape — the FastAPI
+                    # handler already converts it via its existing except clause.
+                    bank_exists = await conn.fetchval(
                         f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1 FOR NO KEY UPDATE",
                         bank_id,
                     )
+                    if bank_exists is None:
+                        raise OperationValidationError(f"Bank '{bank_id}' not found", status_code=404)
                     # Only check 'pending', not 'processing': a processing task uses a
                     # watermark from when it started, so memories added after that need
                     # a fresh run regardless.
@@ -11809,6 +12263,16 @@ class MemoryEngine(MemoryEngineInterface):
                                 "operation_id": str(row["operation_id"]),
                                 "deduplicated": True,
                             }
+                else:
+                    # Scoped/non-dedupe submits skip the lock + dedup above.
+                    # Still verify the bank exists so an FK violation can't
+                    # escape as a 500.
+                    bank_exists = await conn.fetchval(
+                        f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1",
+                        bank_id,
+                    )
+                    if bank_exists is None:
+                        raise OperationValidationError(f"Bank '{bank_id}' not found", status_code=404)
 
                 await conn.execute(
                     f"""
@@ -12128,6 +12592,7 @@ class MemoryEngine(MemoryEngineInterface):
                 task_payload=task_payload,
                 result_metadata={
                     "original_filename": file.filename,
+                    "document_id": item["document_id"],
                 },
                 dedupe_by_bank=False,
             )
@@ -12161,10 +12626,12 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             ctx = BankWriteContext(
-                bank_id=bank_id, operation="submit_async_consolidation", request_context=request_context
+                bank_id=bank_id,
+                operation=BankWriteOperation.SUBMIT_ASYNC_CONSOLIDATION,
+                request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 
@@ -12224,10 +12691,12 @@ class MemoryEngine(MemoryEngineInterface):
             return {"operation_id": None, "no_work": True}
 
         if self._operation_validator:
-            from hindsight_api.extensions import BankWriteContext
+            from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
             ctx = BankWriteContext(
-                bank_id=bank_id, operation="submit_async_graph_maintenance", request_context=request_context
+                bank_id=bank_id,
+                operation=BankWriteOperation.SUBMIT_ASYNC_GRAPH_MAINTENANCE,
+                request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
 

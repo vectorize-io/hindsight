@@ -178,6 +178,55 @@ class TestRetainTool:
         assert call_kwargs["tags"] == ["source:chat"]
 
     @pytest.mark.asyncio
+    async def test_retain_resolves_bank_id_from_config(self):
+        client = _mock_client()
+        client.aretain.return_value = _mock_retain_response()
+        tools = create_hindsight_tools(
+            client=client,
+            include_recall=False,
+            include_reflect=False,
+        )
+        await tools[0].ainvoke(
+            {"content": "Alice prefers dark mode"},
+            config={"configurable": {"user_id": "user-alice"}},
+        )
+        client.aretain.assert_called_once_with(
+            bank_id="user-alice",
+            content="Alice prefers dark mode",
+        )
+
+    @pytest.mark.asyncio
+    async def test_retain_static_bank_id_overrides_config(self):
+        client = _mock_client()
+        client.aretain.return_value = _mock_retain_response()
+        tools = create_hindsight_tools(
+            bank_id="static-bank",
+            client=client,
+            include_recall=False,
+            include_reflect=False,
+        )
+        await tools[0].ainvoke(
+            {"content": "use static bank"},
+            config={"configurable": {"user_id": "user-alice"}},
+        )
+        client.aretain.assert_called_once_with(
+            bank_id="static-bank",
+            content="use static bank",
+        )
+
+    @pytest.mark.asyncio
+    async def test_retain_raises_when_bank_id_missing(self):
+        client = _mock_client()
+        tools = create_hindsight_tools(
+            client=client,
+            include_recall=False,
+            include_reflect=False,
+        )
+        with pytest.raises(HindsightError, match="No bank_id available"):
+            await tools[0].ainvoke({"content": "orphan memory"})
+        client.aretain.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_retain_raises_hindsight_error(self):
         client = _mock_client()
         client.aretain.side_effect = RuntimeError("connection refused")
@@ -252,6 +301,23 @@ class TestRecallTool:
         call_kwargs = client.arecall.call_args[1]
         assert call_kwargs["tags"] == ["scope:user"]
         assert call_kwargs["tags_match"] == "all"
+
+    @pytest.mark.asyncio
+    async def test_recall_resolves_bank_id_from_config(self):
+        client = _mock_client()
+        client.arecall.return_value = _mock_recall_response(["Alice prefers dark mode"])
+        tools = create_hindsight_tools(
+            client=client,
+            include_retain=False,
+            include_reflect=False,
+        )
+        result = await tools[0].ainvoke(
+            {"query": "user preferences"},
+            config={"configurable": {"user_id": "user-alice"}},
+        )
+        assert "Alice prefers dark mode" in result
+        call_kwargs = client.arecall.call_args[1]
+        assert call_kwargs["bank_id"] == "user-alice"
 
 
 class TestReflectTool:
@@ -347,6 +413,23 @@ class TestReflectTool:
         call_kwargs = client.areflect.call_args[1]
         assert call_kwargs["tags"] == ["scope:global"]
         assert call_kwargs["tags_match"] == "all"
+
+    @pytest.mark.asyncio
+    async def test_reflect_resolves_bank_id_from_config(self):
+        client = _mock_client()
+        client.areflect.return_value = _mock_reflect_response("User prefers dark mode.")
+        tools = create_hindsight_tools(
+            client=client,
+            include_retain=False,
+            include_recall=False,
+        )
+        result = await tools[0].ainvoke(
+            {"query": "what should I remember?"},
+            config={"configurable": {"user_id": "user-alice"}},
+        )
+        assert result == "User prefers dark mode."
+        call_kwargs = client.areflect.call_args[1]
+        assert call_kwargs["bank_id"] == "user-alice"
 
 
 class TestRetainExtendedParams:

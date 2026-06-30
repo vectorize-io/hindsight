@@ -117,6 +117,7 @@ http_config = "Advanced HTTP customisation (headers/method/timeout/params) is no
 types = "CLI exposes this as --fact-type (the schema property is named `types` but it holds fact types)."
 include = "Flattened into --include-chunks / --chunk-max-tokens (facts are always included)."
 tag_groups = "Complex nested tag filter not yet exposed in the CLI; use --tags / --tags-match for simple cases."
+min_scores = "Complex nested per-stage score floors (semantic/keyword/reranker/final) not yet exposed in the CLI."
 
 [fields.reflect]
 include = "Flattened into --include-facts and related flags."

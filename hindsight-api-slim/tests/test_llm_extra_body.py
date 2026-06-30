@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 EXTRA_BODY = {"temperature": 0.2, "top_p": 0.9}
+DEFAULT_HEADERS = {"X-Component-Id": "hindsight", "X-Trace": "abc"}
 
 
 # ─── config / env parsing ─────────────────────────────────────────────────────
@@ -205,10 +206,150 @@ async def test_gemini_extra_body_service_tier_takes_precedence():
     assert provider._extra_body["http_options"]["extra_body"]["service_tier"] == "standard"
 
 
+@pytest.mark.asyncio
+async def test_gemini_structured_call_uses_native_schema_without_prompt_duplicate():
+    """Structured Gemini calls send schema through response_schema only."""
+    from pydantic import BaseModel
+
+    class StructuredAnswer(BaseModel):
+        answer: str
+
+    provider = _make_gemini_provider()
+    response = _fake_gemini_response()
+    response.text = '{"answer": "ok"}'
+    provider._client.aio.models.generate_content = AsyncMock(return_value=response)
+
+    result = await provider.call(
+        messages=[
+            {"role": "system", "content": "Return concise JSON."},
+            {"role": "user", "content": "hello"},
+        ],
+        response_format=StructuredAnswer,
+        scope="test",
+    )
+
+    config_arg = provider._client.aio.models.generate_content.call_args.kwargs.get("config")
+    assert result.answer == "ok"
+    assert config_arg.response_mime_type == "application/json"
+    assert config_arg.response_schema is StructuredAnswer
+    assert config_arg.system_instruction == "Return concise JSON."
+    assert "valid JSON matching this schema" not in config_arg.system_instruction
+
+
+@pytest.mark.asyncio
+async def test_gemini_cached_structured_call_keeps_native_schema():
+    """Cached Gemini calls still send response_schema per request."""
+    from pydantic import BaseModel
+
+    class StructuredAnswer(BaseModel):
+        answer: str
+
+    provider = _make_gemini_provider()
+    response = _fake_gemini_response()
+    response.text = '{"answer": "ok"}'
+    provider._client.aio.models.generate_content = AsyncMock(return_value=response)
+
+    result = await provider.call(
+        messages=[
+            {"role": "system", "content": "Return concise JSON."},
+            {"role": "user", "content": "hello"},
+        ],
+        response_format=StructuredAnswer,
+        cached_prefix="cachedContents/test",
+        scope="test",
+    )
+
+    config_arg = provider._client.aio.models.generate_content.call_args.kwargs.get("config")
+    assert result.answer == "ok"
+    assert config_arg.cached_content == "cachedContents/test"
+    assert config_arg.system_instruction is None
+    assert config_arg.response_mime_type == "application/json"
+    assert config_arg.response_schema is StructuredAnswer
+
+
+@pytest.mark.asyncio
+async def test_gemini_structured_parse_failure_falls_back_to_prompt_schema():
+    """Malformed native-schema output gets one prompt-schema compatibility retry."""
+    from pydantic import BaseModel
+
+    class StructuredAnswer(BaseModel):
+        answer: str
+
+    provider = _make_gemini_provider()
+    invalid = _fake_gemini_response()
+    invalid.text = "not json"
+    valid = _fake_gemini_response()
+    valid.text = '{"answer": "ok"}'
+    provider._client.aio.models.generate_content = AsyncMock(side_effect=[invalid, valid])
+
+    result = await provider.call(
+        messages=[
+            {"role": "system", "content": "Return concise JSON."},
+            {"role": "user", "content": "hello"},
+        ],
+        response_format=StructuredAnswer,
+        scope="test",
+        max_retries=1,
+        initial_backoff=0,
+        max_backoff=0,
+    )
+
+    first_config = provider._client.aio.models.generate_content.call_args_list[0].kwargs["config"]
+    fallback_config = provider._client.aio.models.generate_content.call_args_list[1].kwargs["config"]
+
+    assert result.answer == "ok"
+    assert first_config.response_schema is StructuredAnswer
+    assert first_config.system_instruction == "Return concise JSON."
+    assert fallback_config.response_schema is None
+    assert fallback_config.response_mime_type is None
+    assert fallback_config.system_instruction.startswith("Return concise JSON.")
+    assert "valid JSON matching this schema" in fallback_config.system_instruction
+    assert '"answer"' in fallback_config.system_instruction
+
+
+@pytest.mark.asyncio
+async def test_gemini_cached_parse_retry_keeps_cached_native_schema():
+    """Cached structured retries keep cache context instead of switching prompts."""
+    from pydantic import BaseModel
+
+    class StructuredAnswer(BaseModel):
+        answer: str
+
+    provider = _make_gemini_provider()
+    invalid = _fake_gemini_response()
+    invalid.text = "not json"
+    valid = _fake_gemini_response()
+    valid.text = '{"answer": "ok"}'
+    provider._client.aio.models.generate_content = AsyncMock(side_effect=[invalid, valid])
+
+    result = await provider.call(
+        messages=[
+            {"role": "system", "content": "Return concise JSON."},
+            {"role": "user", "content": "hello"},
+        ],
+        response_format=StructuredAnswer,
+        cached_prefix="cachedContents/test",
+        scope="test",
+        max_retries=1,
+        initial_backoff=0,
+        max_backoff=0,
+    )
+
+    first_config = provider._client.aio.models.generate_content.call_args_list[0].kwargs["config"]
+    retry_config = provider._client.aio.models.generate_content.call_args_list[1].kwargs["config"]
+
+    assert result.answer == "ok"
+    assert first_config.cached_content == "cachedContents/test"
+    assert retry_config.cached_content == "cachedContents/test"
+    assert retry_config.response_schema is StructuredAnswer
+    assert retry_config.response_mime_type == "application/json"
+    assert retry_config.system_instruction is None
+
+
 # ─── LiteLLM ──────────────────────────────────────────────────────────────────
 
 
-def _make_litellm_provider(extra_body=None):
+def _make_litellm_provider(extra_body=None, default_headers=None):
     pytest.importorskip("litellm")
     from hindsight_api.engine.providers.litellm_llm import LiteLLMLLM
 
@@ -218,6 +359,7 @@ def _make_litellm_provider(extra_body=None):
         base_url="",
         model="gpt-4o",
         extra_body=extra_body,
+        default_headers=default_headers,
     )
 
 
@@ -279,3 +421,107 @@ def test_litellm_router_forwards_extra_body():
         extra_body=EXTRA_BODY,
     )
     assert provider._extra_body == EXTRA_BODY
+
+
+def test_litellm_stores_default_headers():
+    provider = _make_litellm_provider(default_headers=DEFAULT_HEADERS)
+    assert provider._default_headers == DEFAULT_HEADERS
+
+
+def test_litellm_empty_default_headers_defaults_to_dict():
+    provider = _make_litellm_provider(default_headers=None)
+    assert provider._default_headers == {}
+
+
+@pytest.mark.asyncio
+async def test_litellm_call_passes_default_headers_as_extra_headers():
+    """``call()`` forwards default_headers to acompletion via ``extra_headers``."""
+    provider = _make_litellm_provider(default_headers=DEFAULT_HEADERS)
+    provider._acompletion = AsyncMock(return_value=_fake_litellm_response())
+
+    with patch("hindsight_api.engine.providers.litellm_llm.get_metrics_collector"):
+        await provider.call(messages=[{"role": "user", "content": "hi"}], scope="test", max_retries=0)
+
+    assert provider._acompletion.call_args.kwargs.get("extra_headers") == DEFAULT_HEADERS
+
+
+@pytest.mark.asyncio
+async def test_litellm_no_default_headers_omits_extra_headers():
+    """``call()`` does not pass ``extra_headers`` when none are configured."""
+    provider = _make_litellm_provider(default_headers=None)
+    provider._acompletion = AsyncMock(return_value=_fake_litellm_response())
+
+    with patch("hindsight_api.engine.providers.litellm_llm.get_metrics_collector"):
+        await provider.call(messages=[{"role": "user", "content": "hi"}], scope="test", max_retries=0)
+
+    assert "extra_headers" not in provider._acompletion.call_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_litellm_default_headers_passed_as_fresh_copy():
+    """Each call gets its own ``extra_headers`` copy so downstream mutation can't
+    contaminate the stored headers or other requests."""
+    provider = _make_litellm_provider(default_headers=DEFAULT_HEADERS)
+    provider._acompletion = AsyncMock(return_value=_fake_litellm_response())
+
+    with patch("hindsight_api.engine.providers.litellm_llm.get_metrics_collector"):
+        await provider.call(messages=[{"role": "user", "content": "hi"}], scope="test", max_retries=0)
+
+    passed = provider._acompletion.call_args.kwargs["extra_headers"]
+    assert passed == DEFAULT_HEADERS
+    assert passed is not provider._default_headers
+    passed["X-Injected"] = "1"
+    assert "X-Injected" not in provider._default_headers
+
+
+def test_litellm_default_headers_copied_from_caller_dict():
+    """A caller-owned dict cannot be mutated through the provider."""
+    caller_dict = {"X-Component-Id": "hindsight"}
+    provider = _make_litellm_provider(default_headers=caller_dict)
+    caller_dict["X-Mutated"] = "1"
+    assert "X-Mutated" not in provider._default_headers
+
+
+def _make_litellm_router_provider(default_headers=None):
+    pytest.importorskip("litellm")
+    from hindsight_api.engine.providers.litellm_router_llm import LiteLLMRouterLLM
+
+    config = {"model_list": [{"model_name": "default", "litellm_params": {"model": "gpt-4o", "api_key": "x"}}]}
+    return LiteLLMRouterLLM(
+        provider="litellmrouter",
+        api_key="",
+        base_url="",
+        model="default",
+        config=config,
+        default_headers=default_headers,
+    )
+
+
+def test_litellm_router_stores_default_headers():
+    provider = _make_litellm_router_provider(default_headers=DEFAULT_HEADERS)
+    assert provider._default_headers == DEFAULT_HEADERS
+
+
+@pytest.mark.asyncio
+async def test_litellm_router_call_passes_default_headers_as_extra_headers():
+    """The Router's ``_build_common_kwargs`` override must also forward default_headers
+    as ``extra_headers`` — storage alone doesn't reach the provider behind the Router."""
+    provider = _make_litellm_router_provider(default_headers=DEFAULT_HEADERS)
+    provider._acompletion = AsyncMock(return_value=_fake_litellm_response())
+
+    with patch("hindsight_api.engine.providers.litellm_llm.get_metrics_collector"):
+        await provider.call(messages=[{"role": "user", "content": "hi"}], scope="test", max_retries=0)
+
+    assert provider._acompletion.call_args.kwargs.get("extra_headers") == DEFAULT_HEADERS
+
+
+@pytest.mark.asyncio
+async def test_litellm_router_no_default_headers_omits_extra_headers():
+    """The Router omits ``extra_headers`` entirely when none are configured."""
+    provider = _make_litellm_router_provider(default_headers=None)
+    provider._acompletion = AsyncMock(return_value=_fake_litellm_response())
+
+    with patch("hindsight_api.engine.providers.litellm_llm.get_metrics_collector"):
+        await provider.call(messages=[{"role": "user", "content": "hi"}], scope="test", max_retries=0)
+
+    assert "extra_headers" not in provider._acompletion.call_args.kwargs

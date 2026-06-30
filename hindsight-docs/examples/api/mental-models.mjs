@@ -55,10 +55,10 @@ const result2 = await client.createMentalModel(
     BANK_ID,
     'Project Status',
     'What is the current project status?',
-    { trigger: { refreshAfterConsolidation: true } },
+    { trigger: { refreshCron: '0 3 * * *' } },
 );
 
-// This mental model will automatically refresh when observations are updated
+// This mental model checks daily at 03:00 UTC and refreshes when scoped memories changed
 console.log(`Operation ID: ${result2.operation_id}`);
 // [/docs:create-mental-model-with-trigger]
 

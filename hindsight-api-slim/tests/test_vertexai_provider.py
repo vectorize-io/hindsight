@@ -20,41 +20,7 @@ def test_llm_wrapper_vertexai_missing_dependency():
     try:
         llm_wrapper.VERTEXAI_AVAILABLE = False
 
-        with patch.dict(
-            os.environ,
-            {
-                "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID": "test-project",
-                "HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY": "/path/to/key.json",
-            },
-            clear=False,
-        ):
-            from hindsight_api.config import clear_config_cache
-
-            clear_config_cache()
-
-            with pytest.raises(ValueError, match="google-auth"):
-                from hindsight_api.engine.llm_wrapper import LLMProvider
-
-                LLMProvider(
-                    provider="vertexai",
-                    api_key="",
-                    base_url="",
-                    model="google/gemini-2.0-flash-001",
-                )
-
-            clear_config_cache()
-    finally:
-        llm_wrapper.VERTEXAI_AVAILABLE = original_available
-
-
-def test_llm_wrapper_vertexai_missing_project_id():
-    """Test error when project ID is not configured."""
-    with patch.dict(os.environ, {"HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID": ""}, clear=False):
-        from hindsight_api.config import clear_config_cache
-
-        clear_config_cache()
-
-        with pytest.raises(ValueError, match="HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID"):
+        with pytest.raises(ValueError, match="google-auth"):
             from hindsight_api.engine.llm_wrapper import LLMProvider
 
             LLMProvider(
@@ -62,49 +28,52 @@ def test_llm_wrapper_vertexai_missing_project_id():
                 api_key="",
                 base_url="",
                 model="google/gemini-2.0-flash-001",
+                vertexai_project_id="test-project",
+                vertexai_service_account_key="/path/to/key.json",
             )
+    finally:
+        llm_wrapper.VERTEXAI_AVAILABLE = original_available
 
-        clear_config_cache()
+
+def test_llm_wrapper_vertexai_missing_project_id():
+    """Test error when no project ID is provided."""
+    from hindsight_api.engine.llm_wrapper import LLMProvider
+
+    with pytest.raises(ValueError, match="HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID"):
+        LLMProvider(
+            provider="vertexai",
+            api_key="",
+            base_url="",
+            model="google/gemini-2.0-flash-001",
+        )
 
 
 def test_llm_wrapper_vertexai_adc_auth():
     """Test Vertex AI with ADC authentication creates native genai client."""
     from hindsight_api.engine.llm_wrapper import LLMProvider
 
-    with patch.dict(
-        os.environ,
-        {
-            "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID": "test-project",
-            "HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY": "",  # Clear SA key to test ADC path
-        },
-        clear=False,
-    ):
-        from hindsight_api.config import clear_config_cache
+    # No service account key → ADC path. genai.Client handles ADC internally —
+    # just verify it creates the client with the project/region passed in.
+    with patch("google.genai.Client") as mock_client_cls:
+        mock_client_cls.return_value = MagicMock()
 
-        clear_config_cache()
+        provider = LLMProvider(
+            provider="vertexai",
+            api_key="",
+            base_url="",
+            model="google/gemini-2.0-flash-001",
+            vertexai_project_id="test-project",
+        )
 
-        # genai.Client handles ADC internally — just verify it creates the client
-        with patch("google.genai.Client") as mock_client_cls:
-            mock_client_cls.return_value = MagicMock()
+        assert provider.provider == "vertexai"
+        assert provider.model == "gemini-2.0-flash-001"  # google/ prefix stripped
+        assert provider._gemini_client is not None
 
-            provider = LLMProvider(
-                provider="vertexai",
-                api_key="",
-                base_url="",
-                model="google/gemini-2.0-flash-001",
-            )
-
-            assert provider.provider == "vertexai"
-            assert provider.model == "gemini-2.0-flash-001"  # google/ prefix stripped
-            assert provider._gemini_client is not None
-
-            # Verify genai.Client was called with vertexai=True
-            call_kwargs = mock_client_cls.call_args.kwargs
-            assert call_kwargs["vertexai"] is True
-            assert call_kwargs["project"] == "test-project"
-            assert call_kwargs["location"] == "us-central1"
-
-        clear_config_cache()
+        # Verify genai.Client was called with vertexai=True
+        call_kwargs = mock_client_cls.call_args.kwargs
+        assert call_kwargs["vertexai"] is True
+        assert call_kwargs["project"] == "test-project"
+        assert call_kwargs["location"] == "us-central1"
 
 
 def test_llm_wrapper_vertexai_sa_auth():
@@ -113,99 +82,67 @@ def test_llm_wrapper_vertexai_sa_auth():
 
     mock_credentials = MagicMock()
 
-    with patch.dict(
-        os.environ,
-        {
-            "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID": "test-project",
-            "HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY": "/path/to/key.json",
-        },
-        clear=False,
+    with patch(
+        "google.oauth2.service_account.Credentials.from_service_account_file",
+        return_value=mock_credentials,
     ):
-        from hindsight_api.config import clear_config_cache
+        with patch("google.genai.Client") as mock_client_cls:
+            mock_client_cls.return_value = MagicMock()
 
-        clear_config_cache()
+            provider = LLMProvider(
+                provider="vertexai",
+                api_key="",
+                base_url="",
+                model="google/gemini-2.0-flash-001",
+                vertexai_project_id="test-project",
+                vertexai_service_account_key="/path/to/key.json",
+            )
 
-        with patch(
-            "google.oauth2.service_account.Credentials.from_service_account_file",
-            return_value=mock_credentials,
-        ):
-            with patch("google.genai.Client") as mock_client_cls:
-                mock_client_cls.return_value = MagicMock()
+            assert provider.provider == "vertexai"
+            assert provider._gemini_client is not None
 
-                provider = LLMProvider(
-                    provider="vertexai",
-                    api_key="",
-                    base_url="",
-                    model="google/gemini-2.0-flash-001",
-                )
-
-                assert provider.provider == "vertexai"
-                assert provider._gemini_client is not None
-
-                # Verify credentials were passed to genai.Client
-                call_kwargs = mock_client_cls.call_args.kwargs
-                assert call_kwargs["vertexai"] is True
-                assert call_kwargs["project"] == "test-project"
-                assert call_kwargs["location"] == "us-central1"
-                assert call_kwargs["credentials"] is mock_credentials
-
-        clear_config_cache()
+            # Verify credentials were passed to genai.Client
+            call_kwargs = mock_client_cls.call_args.kwargs
+            assert call_kwargs["vertexai"] is True
+            assert call_kwargs["project"] == "test-project"
+            assert call_kwargs["location"] == "us-central1"
+            assert call_kwargs["credentials"] is mock_credentials
 
 
 def test_llm_wrapper_vertexai_strips_google_prefix():
     """Test that google/ prefix is stripped from model name for native SDK."""
     from hindsight_api.engine.llm_wrapper import LLMProvider
 
-    with patch.dict(
-        os.environ,
-        {"HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID": "test-project"},
-        clear=False,
-    ):
-        from hindsight_api.config import clear_config_cache
+    with patch("google.genai.Client") as mock_client_cls:
+        mock_client_cls.return_value = MagicMock()
 
-        clear_config_cache()
+        provider = LLMProvider(
+            provider="vertexai",
+            api_key="",
+            base_url="",
+            model="google/gemini-2.0-flash-lite-001",
+            vertexai_project_id="test-project",
+        )
 
-        with patch("google.genai.Client") as mock_client_cls:
-            mock_client_cls.return_value = MagicMock()
-
-            provider = LLMProvider(
-                provider="vertexai",
-                api_key="",
-                base_url="",
-                model="google/gemini-2.0-flash-lite-001",
-            )
-
-            assert provider.model == "gemini-2.0-flash-lite-001"
-
-        clear_config_cache()
+        assert provider.model == "gemini-2.0-flash-lite-001"
 
 
 def test_llm_wrapper_vertexai_no_prefix_model():
     """Test that model without google/ prefix is unchanged."""
     from hindsight_api.engine.llm_wrapper import LLMProvider
 
-    with patch.dict(
-        os.environ,
-        {"HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID": "test-project"},
-        clear=False,
-    ):
-        from hindsight_api.config import clear_config_cache
+    with patch("google.genai.Client") as mock_client_cls:
+        mock_client_cls.return_value = MagicMock()
 
-        clear_config_cache()
+        provider = LLMProvider(
+            provider="vertexai",
+            api_key="",
+            base_url="",
+            model="gemini-2.0-flash-001",
+            vertexai_project_id="test-project",
+        )
 
-        with patch("google.genai.Client") as mock_client_cls:
-            mock_client_cls.return_value = MagicMock()
-
-            provider = LLMProvider(
-                provider="vertexai",
-                api_key="",
-                base_url="",
-                model="gemini-2.0-flash-001",
-            )
-
-            assert provider.model == "gemini-2.0-flash-001"
-
-        clear_config_cache()
+        assert provider.model == "gemini-2.0-flash-001"
 
 
 @pytest.mark.asyncio
@@ -228,6 +165,8 @@ async def test_vertexai_integration_actual_api():
         api_key="",
         base_url="",
         model="google/gemini-2.5-flash-lite",
+        vertexai_project_id=os.getenv("HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID"),
+        vertexai_service_account_key=os.getenv("HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY") or None,
     )
 
     try:

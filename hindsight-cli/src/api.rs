@@ -62,6 +62,7 @@ pub struct Operation {
     pub id: String,
     pub task_type: String,
     pub items_count: i32,
+    pub filename: Option<String>,
     pub document_id: Option<String>,
     pub created_at: String,
     pub status: String,
@@ -425,8 +426,8 @@ impl ApiClient {
                 .client
                 .list_documents(
                     agent_id,
-                    limit.map(|l| l as i64),
-                    offset.map(|o| o as i64),
+                    limit.map(|l| l as u64),
+                    offset.map(|o| o as u64),
                     q,
                     None,
                     None,
@@ -524,8 +525,8 @@ impl ApiClient {
                     bank_id,
                     None, // consolidation_state
                     None, // document_id
-                    limit,
-                    offset,
+                    limit.map(|l| l as u64),
+                    offset.map(|o| o as u64),
                     q,
                     None, // state
                     type_filter,
@@ -546,7 +547,12 @@ impl ApiClient {
         self.runtime.block_on(async {
             let response = self
                 .client
-                .list_entities(bank_id, limit, offset, None)
+                .list_entities(
+                    bank_id,
+                    limit.map(|l| l as u64),
+                    offset.map(|o| o as u64),
+                    None,
+                )
                 .await?;
             Ok(response.into_inner())
         })
@@ -664,7 +670,17 @@ impl ApiClient {
         self.runtime.block_on(async {
             let response = self
                 .client
-                .get_graph(bank_id, None, None, limit, None, None, None, type_filter, None)
+                .get_graph(
+                    bank_id,
+                    None,
+                    None,
+                    limit.map(|l| l as u64),
+                    None,
+                    None,
+                    None,
+                    type_filter,
+                    None,
+                )
                 .await?;
             Ok(response.into_inner())
         })
@@ -726,7 +742,14 @@ impl ApiClient {
         self.runtime.block_on(async {
             let response = self
                 .client
-                .list_tags(bank_id, limit, offset, q, None, None)
+                .list_tags(
+                    bank_id,
+                    limit.map(|l| l as u64),
+                    offset.map(|o| o as u64),
+                    q,
+                    None,
+                    None,
+                )
                 .await?;
             Ok(response.into_inner())
         })
@@ -1290,6 +1313,7 @@ mod tests {
             "id": "test-op-123",
             "task_type": "retain",
             "items_count": 5,
+            "filename": "notes.md",
             "document_id": "doc-456",
             "created_at": "2024-01-15T10:00:00Z",
             "status": "pending",
@@ -1299,6 +1323,7 @@ mod tests {
         assert_eq!(op.id, "test-op-123");
         assert_eq!(op.task_type, "retain");
         assert_eq!(op.items_count, 5);
+        assert_eq!(op.filename, Some("notes.md".to_string()));
         assert_eq!(op.document_id, Some("doc-456".to_string()));
         assert_eq!(op.status, "pending");
         assert!(op.error_message.is_none());
@@ -1310,6 +1335,7 @@ mod tests {
             "id": "test-op-456",
             "task_type": "retain",
             "items_count": 3,
+            "filename": null,
             "document_id": null,
             "created_at": "2024-01-15T10:00:00Z",
             "status": "failed",
@@ -1317,6 +1343,7 @@ mod tests {
         }"#;
         let op: Operation = serde_json::from_str(json).unwrap();
         assert_eq!(op.status, "failed");
+        assert_eq!(op.filename, None);
         assert_eq!(op.error_message, Some("Something went wrong".to_string()));
     }
 
@@ -1358,6 +1385,7 @@ mod tests {
                     "id": "op-1",
                     "task_type": "retain",
                     "items_count": 2,
+                    "filename": "first.md",
                     "document_id": null,
                     "created_at": "2024-01-15T10:00:00Z",
                     "status": "pending",
@@ -1367,6 +1395,7 @@ mod tests {
                     "id": "op-2",
                     "task_type": "retain",
                     "items_count": 3,
+                    "filename": null,
                     "document_id": "doc-123",
                     "created_at": "2024-01-15T11:00:00Z",
                     "status": "completed",
@@ -1378,6 +1407,8 @@ mod tests {
         assert_eq!(ops.bank_id, "test-bank");
         assert_eq!(ops.operations.len(), 2);
         assert_eq!(ops.operations[0].status, "pending");
+        assert_eq!(ops.operations[0].filename, Some("first.md".to_string()));
         assert_eq!(ops.operations[1].status, "completed");
+        assert_eq!(ops.operations[1].filename, None);
     }
 }

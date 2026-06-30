@@ -44,7 +44,7 @@ class HindsightContinueConfig:
             it via ``options.bankId``).
         budget: Recall budget level (low/mid/high).
         max_tokens: Maximum tokens for recall results.
-        recall_types: Fact types to filter (world, experience, opinion, observation).
+        recall_types: Fact types to filter (world, experience, observation).
         recall_tags: Tags to filter recalled memories.
         recall_tags_match: Tag matching mode (any/all/any_strict/all_strict).
         item_name: Title shown for the injected context item in Continue.

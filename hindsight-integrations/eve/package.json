@@ -1,0 +1,61 @@
+{
+  "name": "@vectorize-io/hindsight-eve",
+  "version": "0.1.0",
+  "description": "Hindsight long-term memory for Vercel Eve agents - a one-line MCP connection exposing retain, recall, and reflect",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "keywords": [
+    "eve",
+    "vercel",
+    "agents",
+    "mcp",
+    "memory",
+    "hindsight",
+    "llm",
+    "long-term-memory"
+  ],
+  "author": "Vectorize <support@vectorize.io>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vectorize-io/hindsight.git",
+    "directory": "hindsight-integrations/eve"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "peerDependencies": {
+    "eve": ">=0.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "eve": "0.11.4",
+    "tsup": "^8.5.1",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.2"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "overrides": {
+    "rollup": "^4.59.0",
+    "picomatch": ">=2.3.2 <3.0.0 || >=4.0.4",
+    "vite": ">=8.0.5"
+  }
+}

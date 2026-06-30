@@ -53,7 +53,7 @@ async def _count_memory_units(memory, bank_id: str) -> int:
     )
 
 
-async def _run_retain_through_worker(memory, extraction_error: Exception):
+async def _run_retain_through_worker(memory, extraction_error: Exception, *, retry_count: int = 0):
     """Enqueue a one-item retain and run it through the real poller + executor.
 
     ``extraction_error`` is raised by the mock LLM on the ``retain_extract_facts``
@@ -90,16 +90,18 @@ async def _run_retain_through_worker(memory, extraction_error: Exception):
         "operation_id": str(operation_id),
         "bank_id": bank_id,
         "contents": [{"content": "Alice moved to Berlin in March 2024 and joined Acme as a staff engineer."}],
+        "_retry_count": retry_count,
     }
     await pool.execute(
         """
         INSERT INTO async_operations
-            (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
-        VALUES ($1, $2, 'retain', 'processing', $3::jsonb, 'test-worker-1', now())
+            (operation_id, bank_id, operation_type, status, task_payload, retry_count, worker_id, claimed_at)
+        VALUES ($1, $2, 'retain', 'processing', $3::jsonb, $4, 'test-worker-1', now())
         """,
         operation_id,
         bank_id,
         json.dumps(task_payload),
+        retry_count,
     )
 
     poller = WorkerPoller(
@@ -150,3 +152,26 @@ async def test_extraction_failure_is_retried_never_silently_completed(memory, ex
     )
     assert final["status"] == "pending", f"expected task reset to 'pending' for retry, got {final['status']!r}"
     assert final["retry_count"] == 1, f"expected retry_count bumped to 1, got {final['retry_count']}"
+
+
+@pytest.mark.asyncio
+async def test_extraction_failure_at_retry_cap_fails_terminally(memory):
+    """Once the worker retry cap is reached, extraction failures must fail terminally.
+
+    This guards the recovered-worker path seen in vectorize-io/hindsight#2413:
+    repeated structured-output parse failures should eventually release the
+    worker slot and leave an inspectable failed operation, not remain pending or
+    processing indefinitely.
+    """
+    final, bank_id = await _run_retain_through_worker(
+        memory,
+        RuntimeError("structured JSON parse failed after all retain_extract_facts attempts"),
+        retry_count=3,
+    )
+    unit_count = await _count_memory_units(memory, bank_id)
+
+    assert final["status"] == "failed", f"expected retry-capped task to fail, got {final['status']!r}"
+    assert final["retry_count"] == 3
+    assert final["error_message"] is not None
+    assert "structured JSON parse failed" in final["error_message"]
+    assert unit_count == 0

@@ -79,8 +79,10 @@ Browse all supported integrations in the Integrations Hub.
 - DeepSeek
 - z.ai
 - opencode-go
+- Atlas Cloud
 - Volcano Engine
 - OpenRouter
+- Requesty
 - OpenAI Codex
 - Claude Code
 - AWS Bedrock

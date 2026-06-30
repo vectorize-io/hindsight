@@ -2522,6 +2522,12 @@ export type MentalModelTriggerInput = {
    */
   refresh_after_consolidation?: boolean;
   /**
+   * Refresh Cron
+   *
+   * Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) for refreshing this mental model on a fixed schedule. Mutually exclusive with refresh_after_consolidation — a model refreshes either after consolidation or on a cron schedule, not both. A scheduled refresh only runs when the model is stale (new memories in its scope since the last refresh); if nothing changed, the tick is skipped to avoid a wasted LLM call. null = no schedule.
+   */
+  refresh_cron?: string | null;
+  /**
    * Fact Types
    *
    * Filter which fact types are retrieved during reflect. None means all types (world, experience, observation).
@@ -2590,6 +2596,12 @@ export type MentalModelTriggerOutput = {
    */
   refresh_after_consolidation?: boolean;
   /**
+   * Refresh Cron
+   *
+   * Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) for refreshing this mental model on a fixed schedule. Mutually exclusive with refresh_after_consolidation — a model refreshes either after consolidation or on a cron schedule, not both. A scheduled refresh only runs when the model is stale (new memories in its scope since the last refresh); if nothing changed, the tick is skipped to avoid a wasted LLM call. null = no schedule.
+   */
+  refresh_cron?: string | null;
+  /**
    * Fact Types
    *
    * Filter which fact types are retrieved during reflect. None means all types (world, experience, observation).
@@ -2639,6 +2651,45 @@ export type MentalModelTriggerOutput = {
    * Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens).
    */
   recall_chunks_max_tokens?: number | null;
+};
+
+/**
+ * MinScores
+ *
+ * Optional per-stage score floors for recall (all inclusive, AND-ed).
+ *
+ * ``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into the SQL
+ * arms (overriding the global ``semantic_min_similarity`` / ``bm25_min_score``
+ * config for this request), so they prune weak matches before fusion. ``reranker``
+ * and ``final`` are **post-query** filters applied to the scored results after
+ * reranking. Any field left None imposes no floor; all-None (the default) means
+ * no score filtering.
+ */
+export type MinScores = {
+  /**
+   * Semantic
+   *
+   * Retrieval-level: minimum vector similarity (0-1).
+   */
+  semantic?: number | null;
+  /**
+   * Keyword
+   *
+   * Retrieval-level: minimum keyword/full-text (BM25) score.
+   */
+  keyword?: number | null;
+  /**
+   * Reranker
+   *
+   * Post-query: minimum normalized reranker score (0-1).
+   */
+  reranker?: number | null;
+  /**
+   * Final
+   *
+   * Post-query: minimum final ranking score.
+   */
+  final?: number | null;
 };
 
 /**
@@ -2743,6 +2794,12 @@ export type OperationResponse = {
    * Document Id
    */
   document_id?: string | null;
+  /**
+   * Filename
+   *
+   * Original filename for file-conversion operations (file_convert_retain); null for other task types.
+   */
+  filename?: string | null;
   /**
    * Created At
    */
@@ -2897,6 +2954,12 @@ export type RecallRequest = {
    * List of fact types to recall: 'world', 'experience', 'observation'. Defaults to world and experience if not specified.
    */
   types?: Array<string> | null;
+  /**
+   * Prefer Observations
+   *
+   * When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. Disabled by default; set to true to enable. No effect unless 'observation' and at least one raw type are both requested.
+   */
+  prefer_observations?: boolean;
   budget?: Budget;
   /**
    * Max Tokens
@@ -2919,13 +2982,13 @@ export type RecallRequest = {
   /**
    * Tags
    *
-   * Filter memories by tags. If not specified, all memories are returned.
+   * Filter memories by tags. If not specified, all memories are returned. Omitting tags (or passing []) together with tags_match='exact' filters to untagged/global observations only (the scope written by observation_scopes='shared').
    */
   tags?: Array<string> | null;
   /**
    * Tags Match
    *
-   * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
+   * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set-equality on the full scope, excludes untagged). With 'exact' and no tags (or []), the empty global scope is selected and only untagged memories match.
    */
   tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
   /**
@@ -2934,6 +2997,10 @@ export type RecallRequest = {
    * Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.
    */
   tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
+  /**
+   * Optional per-stage score floors (all inclusive, AND-ed). `semantic` and `keyword` are retrieval-level cutoffs pushed into the SQL arms (overriding the global similarity/BM25 minimums for this request); `reranker` and `final` are post-ranking filters on the scored results. Any field left unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering. Use with care — the reranker's absolute scores are not calibrated across queries (a clearly-relevant match may score ~0.001 even though it is ranked first).
+   */
+  min_scores?: MinScores | null;
 };
 
 /**
@@ -3038,6 +3105,45 @@ export type RecallResult = {
    * Source Fact Ids
    */
   source_fact_ids?: Array<string> | null;
+  scores?: RecallScores | null;
+};
+
+/**
+ * RecallScores
+ *
+ * Per-result recall scores from different stages of the pipeline.
+ *
+ * ``final`` is the value results are ranked by. The others are diagnostic and
+ * can be filtered on via the recall ``min_scores`` request parameter. ``semantic``
+ * and ``keyword`` are the raw per-strategy retrieval scores (``None`` when that
+ * strategy did not surface this result); ``reranker`` is the cross-encoder's
+ * normalized relevance.
+ */
+export type RecallScores = {
+  /**
+   * Final
+   *
+   * Final ranking score (combined reranker + recency/temporal/proof boosts)
+   */
+  final: number;
+  /**
+   * Reranker
+   *
+   * Cross-encoder relevance, normalized 0-1. None when the reranker is a passthrough (rrf/interleave modes).
+   */
+  reranker?: number | null;
+  /**
+   * Semantic
+   *
+   * Vector cosine similarity (0-1). None if this result was not surfaced semantically.
+   */
+  semantic?: number | null;
+  /**
+   * Keyword
+   *
+   * Keyword/full-text (BM25) score (>= 0, unbounded). None if this result was not surfaced by keyword search.
+   */
+  keyword?: number | null;
 };
 
 /**
@@ -3625,13 +3731,13 @@ export type TokenUsage = {
   /**
    * Output Tokens
    *
-   * Number of output/completion tokens generated
+   * Number of visible output/completion tokens generated (excludes reasoning/thoughts)
    */
   output_tokens?: number;
   /**
    * Total Tokens
    *
-   * Total tokens (input + output)
+   * Total tokens (input + output, excludes thoughts)
    */
   total_tokens?: number;
   /**
@@ -3640,6 +3746,12 @@ export type TokenUsage = {
    * Cached/cache-read prompt tokens, when reported by the provider
    */
   cached_tokens?: number;
+  /**
+   * Thoughts Tokens
+   *
+   * Reasoning/thinking tokens generated by the model. Billed at the output rate by some providers (e.g. Gemini 2.5+ family) but not surfaced in the visible response.
+   */
+  thoughts_tokens?: number;
 };
 
 /**

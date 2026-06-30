@@ -322,3 +322,136 @@ def test_plain_text_lines_not_treated_as_jsonl():
     # Sanity: these are not JSON objects (so the JSONL path correctly declined).
     with pytest.raises(json.JSONDecodeError):
         json.loads(chunks[0])
+
+
+# ---------------------------------------------------------------------------
+# Idempotency — re-chunking a produced chunk must be a no-op (issue #2301)
+# ---------------------------------------------------------------------------
+#
+# The streaming retain pipeline pre-chunks each document once (producer) and then
+# re-chunks every piece during extraction (consumer), stamping all sub-chunks of
+# one piece with that piece's single chunk_index. If a piece re-split, its
+# sub-chunks would derive the same chunk_id = {bank}_{doc}_{index} and the
+# ON CONFLICT upsert would fail with CardinalityViolationError. This can only
+# happen when structured_chunk_size > max_chars (a chunk legitimately exceeds the
+# re-chunk budget); the defaults (structured == max_chars) never trip it.
+
+
+def _assert_idempotent(text: str, *, max_chars: int, structured_chunk_size: int) -> list[str]:
+    chunks = chunk_text(text, max_chars=max_chars, structured_chunk_size=structured_chunk_size)
+    for chunk in chunks:
+        rechunked = chunk_text(chunk, max_chars=max_chars, structured_chunk_size=structured_chunk_size)
+        assert rechunked == [chunk], (
+            f"re-chunking a produced chunk split it again ({len(chunk)} chars -> "
+            f"{len(rechunked)} pieces) — not idempotent (issue #2301)"
+        )
+    return chunks
+
+
+def test_conversation_turn_over_chunk_size_is_rechunk_stable():
+    """A conversation turn larger than max_chars but kept whole by the larger
+    structured cap must survive a re-chunk unchanged (issue #2301)."""
+    content = json.dumps([{"role": "assistant", "content": "x" * 6000}])
+
+    _assert_idempotent(content, max_chars=3000, structured_chunk_size=5000)
+
+
+def test_jsonl_line_over_chunk_size_is_rechunk_stable():
+    """A single oversized JSONL line, kept whole within the structured cap, must
+    not be re-split when handed back through chunk_text (issue #2301)."""
+    text = "\n".join([json.dumps({"event": "x" * 3800}), json.dumps({"event": "small"})])
+
+    _assert_idempotent(text, max_chars=3000, structured_chunk_size=4500)
+
+
+def test_oversized_unit_fragments_stay_within_chunk_budget():
+    """A unit past even the structured cap is fragmented as text; no fragment may
+    exceed max_chars, so a re-chunk leaves the fragments intact (issue #2301)."""
+    text = "\n".join([json.dumps({"event": "z" * 9000}), json.dumps({"e": "s"})])
+
+    chunks = _assert_idempotent(text, max_chars=3000, structured_chunk_size=4500)
+
+    assert all(len(c) <= 3000 for c in chunks)
+
+
+def test_single_json_object_kept_whole_within_structured_cap():
+    """A lone JSON object over max_chars but within the structured cap is returned
+    whole rather than plain-text-split (the basis of re-chunk stability)."""
+    obj = json.dumps({"role": "assistant", "content": "x" * 4000})
+
+    assert chunk_text(obj, max_chars=3000, structured_chunk_size=5000) == [obj]
+
+
+def test_rechunk_preserves_one_chunk_id_per_pre_chunk():
+    """End-to-end of the producer/consumer chunk_id derivation: each pre-chunk
+    (one global index) must re-chunk to exactly one piece, so the derived
+    chunk_ids stay unique within an upsert batch (issue #2301)."""
+    content = json.dumps([{"role": "assistant", "content": "x" * 6000}])
+
+    pre_chunks = chunk_text(content, max_chars=3000, structured_chunk_size=5000)
+    chunk_ids = []
+    for global_idx, pre in enumerate(pre_chunks):
+        for _ in chunk_text(pre, max_chars=3000, structured_chunk_size=5000):
+            chunk_ids.append(f"bank_doc_{global_idx}")
+
+    assert len(chunk_ids) == len(set(chunk_ids)), f"duplicate chunk_ids in one batch: {chunk_ids}"
+
+
+# ---------------------------------------------------------------------------
+# Append-mode JSON array merge simulation (issue #2409)
+# ---------------------------------------------------------------------------
+
+
+def test_newline_joined_json_arrays_bypass_conversation_chunking():
+    """Newline-joined JSON arrays (the pre-fix append-mode storage format)
+    fail both the conversation and JSONL detection paths and fall through
+    to sentence-boundary text splitting.
+
+    This test documents the broken state that issue #2409 fixes at the
+    orchestrator level. chunk_text() itself is not changed; the fix
+    merges the arrays before they reach chunk_text().
+    """
+    turn1 = json.dumps([{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi there"}])
+    turn2 = json.dumps([{"role": "user", "content": "How are you"}, {"role": "assistant", "content": "Fine"}])
+    corrupted = turn1 + "\n" + turn2
+
+    chunks = chunk_text(corrupted, max_chars=80)
+
+    # The corrupted format does NOT route through _chunk_conversation.
+    # At least one chunk will not be a valid JSON array of dicts.
+    has_non_json_chunk = False
+    for chunk in chunks:
+        try:
+            parsed = json.loads(chunk)
+            if not (isinstance(parsed, list) and all(isinstance(e, dict) for e in parsed)):
+                has_non_json_chunk = True
+        except json.JSONDecodeError:
+            has_non_json_chunk = True
+    assert has_non_json_chunk, (
+        "Newline-joined JSON arrays should NOT produce valid conversation chunks. "
+        "If this fails, chunk_text() learned to handle the format and the "
+        "orchestrator-level merge in #2409 may be redundant."
+    )
+
+
+def test_merged_json_array_routes_to_conversation_chunking():
+    """A properly merged flat JSON array (the post-fix format) routes
+    through _chunk_conversation and produces chunks that are each valid
+    JSON arrays of complete message dicts.
+    """
+    messages = [
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there"},
+        {"role": "user", "content": "How are you"},
+        {"role": "assistant", "content": "Fine, thanks for asking"},
+    ]
+    text = json.dumps(messages)
+
+    chunks = chunk_text(text, max_chars=120)
+
+    assert len(chunks) > 1, "Should produce multiple chunks at this budget"
+    for chunk in chunks:
+        parsed = json.loads(chunk)
+        assert isinstance(parsed, list), f"Chunk must be a JSON array: {chunk[:60]}"
+        assert all(isinstance(e, dict) for e in parsed), f"Every element must be a dict: {chunk[:60]}"
+        assert all("role" in e for e in parsed), f"Every element must have a role key: {chunk[:60]}"

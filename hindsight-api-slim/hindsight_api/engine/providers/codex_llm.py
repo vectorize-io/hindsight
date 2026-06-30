@@ -26,6 +26,7 @@ from typing import Any
 import httpx
 
 from hindsight_api.engine.llm_interface import LLMInterface
+from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 
@@ -413,6 +414,16 @@ class CodexLLM(LLMInterface):
 
                 # Parse SSE stream
                 content = await self._parse_sse_stream(response)
+
+                # Codex SSE carries no usage block; stash the same char/4 estimate
+                # the success path traces so a later parse/validate failure records
+                # consistent (estimated) token counts rather than zero (#2387).
+                stash_response_usage(
+                    LLMResponseUsage(
+                        input_tokens=sum(len(m.get("content", "")) for m in messages) // 4,
+                        output_tokens=len(content) // 4,
+                    )
+                )
 
                 # Handle structured output
                 if response_format is not None:

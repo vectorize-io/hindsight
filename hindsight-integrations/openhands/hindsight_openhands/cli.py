@@ -25,6 +25,7 @@ from .openhands_config import (
     apply_to_config,
     build_shttp_server,
     default_config_path,
+    mcp_endpoint_url,
     remove_from_config,
     render_snippet,
 )
@@ -106,6 +107,10 @@ def cmd_init(args: argparse.Namespace) -> None:
     print(f"  Wrote recall/retain rule to {outcome.agents_md_path}")
     print("\nDone. Start OpenHands in this project — the hindsight MCP tools")
     print("(recall/retain/reflect) are available and used automatically.")
+    print("\nRunning the OpenHands Docker app? It reads MCP servers from its UI")
+    print("settings, not this config.toml — add the server in Settings -> MCP as")
+    print(f"a Streamable HTTP (shttp) server, URL {mcp_endpoint_url(cfg.hindsight_api_url, cfg.bank_id)}")
+    print("(use http://host.docker.internal:<port> so the container can reach a local server).")
 
 
 def cmd_status(args: argparse.Namespace) -> None:

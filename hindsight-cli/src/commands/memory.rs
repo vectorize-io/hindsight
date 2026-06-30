@@ -277,6 +277,7 @@ pub fn recall(
     tags: Vec<String>,
     tags_match: Option<String>,
     query_timestamp: Option<String>,
+    prefer_observations: bool,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
@@ -310,10 +311,12 @@ pub fn recall(
         max_tokens,
         trace,
         query_timestamp,
+        prefer_observations,
         include,
         tags: if tags.is_empty() { None } else { Some(tags) },
         tags_match: parse_tags_match(&tags_match),
         tag_groups: None,
+        min_scores: None,
     };
 
     let response = client.recall(agent_id, &request, verbose);

@@ -165,8 +165,11 @@ Mental models can be configured to **automatically refresh** when observations a
 |---------|------|---------|-------------|
 | `mode` | `"full"` \| `"delta"` | `"full"` | Refresh strategy. See [Refresh Mode](#refresh-mode) below. |
 | `refresh_after_consolidation` | bool | false | Automatically refresh after observations consolidation |
+| `refresh_cron` | string \| null | null | UTC 5-field cron expression for scheduled refreshes, such as `"0 3 * * *"` for daily at 03:00 UTC |
 
 When `refresh_after_consolidation` is enabled, the mental model will be re-generated every time the bank's observations are consolidated — ensuring it always reflects the latest synthesized knowledge.
+
+When `refresh_cron` is set, Hindsight checks the schedule on the server's mental-model refresh tick and refreshes the model only if memories in its scope have changed since the last refresh. `refresh_cron` and `refresh_after_consolidation` are mutually exclusive, so a model refreshes either after consolidation or on a fixed UTC schedule, not both.
 
 ### Refresh Mode
 
@@ -197,10 +200,10 @@ result = client.create_mental_model(
     bank_id=BANK_ID,
     name="Project Status",
     source_query="What is the current project status?",
-    trigger={"refresh_after_consolidation": True}
+    trigger={"refresh_cron": "0 3 * * *"}
 )
 
-# This mental model will automatically refresh when observations are updated
+# This mental model checks daily at 03:00 UTC and refreshes when scoped memories changed
 print(f"Operation ID: {result.operation_id}")
 ```
 
@@ -212,10 +215,10 @@ const result2 = await client.createMentalModel(
     BANK_ID,
     'Project Status',
     'What is the current project status?',
-    { trigger: { refreshAfterConsolidation: true } },
+    { trigger: { refreshCron: '0 3 * * *' } },
 );
 
-// This mental model will automatically refresh when observations are updated
+// This mental model checks daily at 03:00 UTC and refreshes when scoped memories changed
 console.log(`Operation ID: ${result2.operation_id}`);
 ```
 

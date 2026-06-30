@@ -392,7 +392,7 @@ class SearchTracer:
 
             # Extract score components (only include non-None values)
             # Keys from ScoredResult.to_dict(): cross_encoder_score, cross_encoder_score_normalized,
-            # rrf_normalized, temporal, recency, combined_score, weight
+            # rrf_normalized, temporal, recency, proof_norm, combined_score, weight
             score_components = {}
             for key in [
                 "cross_encoder_score",
@@ -401,6 +401,7 @@ class SearchTracer:
                 "rrf_normalized",
                 "temporal",
                 "recency",
+                "proof_norm",
                 "combined_score",
             ]:
                 if key in result and result[key] is not None:

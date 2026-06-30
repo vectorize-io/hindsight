@@ -102,19 +102,22 @@ Create `~/.hindsight/opencode.json` for persistent configuration:
 
 ### Environment Variables
 
-| Variable                      | Description                         | Default                               |
-| ----------------------------- | ----------------------------------- | ------------------------------------- |
-| `HINDSIGHT_API_URL`           | Hindsight API base URL              | `https://api.hindsight.vectorize.io`  |
-| `HINDSIGHT_API_TOKEN`         | API key for authentication          | (none — required for Hindsight Cloud) |
-| `HINDSIGHT_BANK_ID`           | Static memory bank ID               | `opencode`                            |
-| `HINDSIGHT_AGENT_NAME`        | Agent name for dynamic bank IDs     | `opencode`                            |
-| `HINDSIGHT_AUTO_RECALL`       | Auto-recall on session start        | `true`                                |
-| `HINDSIGHT_AUTO_RETAIN`       | Auto-retain on session idle         | `true`                                |
-| `HINDSIGHT_RETAIN_MODE`       | `full-session` or `last-turn`       | `full-session`                        |
-| `HINDSIGHT_RECALL_BUDGET`     | Recall budget: `low`, `mid`, `high` | `mid`                                 |
-| `HINDSIGHT_RECALL_MAX_TOKENS` | Max tokens for recall results       | `1024`                                |
-| `HINDSIGHT_DYNAMIC_BANK_ID`   | Enable dynamic bank ID derivation   | `false`                               |
-| `HINDSIGHT_BANK_MISSION`      | Bank mission/context                | (none)                                |
+| Variable                      | Description                                              | Default                               |
+| ----------------------------- | -------------------------------------------------------- | ------------------------------------- |
+| `HINDSIGHT_API_URL`           | Hindsight API base URL                                   | `https://api.hindsight.vectorize.io`  |
+| `HINDSIGHT_API_TOKEN`         | API key for authentication                               | (none — required for Hindsight Cloud) |
+| `HINDSIGHT_BANK_ID`           | Static memory bank ID                                    | `opencode`                            |
+| `HINDSIGHT_AGENT_NAME`        | Agent name for dynamic bank IDs                          | `opencode`                            |
+| `HINDSIGHT_AUTO_RECALL`       | Auto-recall on session start                             | `true`                                |
+| `HINDSIGHT_AUTO_RETAIN`       | Auto-retain on session idle                              | `true`                                |
+| `HINDSIGHT_RETAIN_MODE`       | `full-session` or `last-turn`                            | `full-session`                        |
+| `HINDSIGHT_RECALL_BUDGET`     | Recall budget: `low`, `mid`, `high`                      | `mid`                                 |
+| `HINDSIGHT_RECALL_MAX_TOKENS` | Max tokens for recall results                            | `1024`                                |
+| `HINDSIGHT_RECALL_TAGS`       | Comma-separated, filter recalls                          | (none)                                |
+| `HINDSIGHT_RECALL_TAGS_MATCH` | Tag match mode: `any`, `all`, `any_strict`, `all_strict` | `any`                                 |
+| `HINDSIGHT_RETAIN_TAGS`       | Comma-separated, added to every retain                   | (none)                                |
+| `HINDSIGHT_DYNAMIC_BANK_ID`   | Enable dynamic bank ID derivation                        | `false`                               |
+| `HINDSIGHT_BANK_MISSION`      | Bank mission/context                                     | (none)                                |
 
 > **Debug logging** is a config-only option (`"debug": true` in `opencode.json`
 > plugin options or `~/.hindsight/opencode.json`) — there is intentionally no

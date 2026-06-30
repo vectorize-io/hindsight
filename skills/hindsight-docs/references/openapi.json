@@ -115,6 +115,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 1000,
               "title": "Limit"
             }
@@ -341,6 +342,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 100,
               "title": "Limit"
             }
@@ -351,6 +353,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 0,
               "title": "Offset"
             }
@@ -1082,6 +1085,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "description": "Maximum number of entities to return",
               "default": 100,
               "title": "Limit"
@@ -1094,6 +1098,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "description": "Offset for pagination",
               "default": 0,
               "title": "Offset"
@@ -1165,6 +1170,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "description": "Maximum number of co-occurrence edges to return",
               "default": 1000,
               "title": "Limit"
@@ -2474,6 +2480,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 100,
               "title": "Limit"
             }
@@ -2484,6 +2491,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 0,
               "title": "Offset"
             }
@@ -2960,6 +2968,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "description": "Maximum number of tags to return",
               "default": 100,
               "title": "Limit"
@@ -2972,6 +2981,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "description": "Offset for pagination",
               "default": 0,
               "title": "Offset"
@@ -10046,6 +10056,18 @@
             "description": "If true, refresh this mental model after observations consolidation (real-time mode)",
             "default": false
           },
+          "refresh_cron": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Cron",
+            "description": "Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) for refreshing this mental model on a fixed schedule. Mutually exclusive with refresh_after_consolidation \u2014 a model refreshes either after consolidation or on a cron schedule, not both. A scheduled refresh only runs when the model is stale (new memories in its scope since the last refresh); if nothing changed, the tick is skipped to avoid a wasted LLM call. null = no schedule."
+          },
           "fact_types": {
             "anyOf": [
               {
@@ -10193,6 +10215,18 @@
             "description": "If true, refresh this mental model after observations consolidation (real-time mode)",
             "default": false
           },
+          "refresh_cron": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Cron",
+            "description": "Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) for refreshing this mental model on a fixed schedule. Mutually exclusive with refresh_after_consolidation \u2014 a model refreshes either after consolidation or on a cron schedule, not both. A scheduled refresh only runs when the model is stale (new memories in its scope since the last refresh); if nothing changed, the tick is skipped to avoid a wasted LLM call. null = no schedule."
+          },
           "fact_types": {
             "anyOf": [
               {
@@ -10321,6 +10355,61 @@
         "type": "object",
         "title": "MentalModelTrigger",
         "description": "Trigger settings for a mental model."
+      },
+      "MinScores": {
+        "properties": {
+          "semantic": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Semantic",
+            "description": "Retrieval-level: minimum vector similarity (0-1)."
+          },
+          "keyword": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword",
+            "description": "Retrieval-level: minimum keyword/full-text (BM25) score."
+          },
+          "reranker": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker",
+            "description": "Post-query: minimum normalized reranker score (0-1)."
+          },
+          "final": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final",
+            "description": "Post-query: minimum final ranking score."
+          }
+        },
+        "type": "object",
+        "title": "MinScores",
+        "description": "Optional per-stage score floors for recall (all inclusive, AND-ed).\n\n``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into the SQL\narms (overriding the global ``semantic_min_similarity`` / ``bm25_min_score``\nconfig for this request), so they prune weak matches before fusion. ``reranker``\nand ``final`` are **post-query** filters applied to the scored results after\nreranking. Any field left None imposes no floor; all-None (the default) means\nno score filtering."
       },
       "ObservationScope": {
         "properties": {
@@ -10469,6 +10558,18 @@
               }
             ],
             "title": "Document Id"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename",
+            "description": "Original filename for file-conversion operations (file_convert_retain); null for other task types."
           },
           "created_at": {
             "type": "string",
@@ -10795,6 +10896,12 @@
             "title": "Types",
             "description": "List of fact types to recall: 'world', 'experience', 'observation'. Defaults to world and experience if not specified."
           },
+          "prefer_observations": {
+            "type": "boolean",
+            "title": "Prefer Observations",
+            "description": "When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. Disabled by default; set to true to enable. No effect unless 'observation' and at least one raw type are both requested.",
+            "default": false
+          },
           "budget": {
             "$ref": "#/components/schemas/Budget",
             "default": "mid"
@@ -10839,7 +10946,7 @@
               }
             ],
             "title": "Tags",
-            "description": "Filter memories by tags. If not specified, all memories are returned."
+            "description": "Filter memories by tags. If not specified, all memories are returned. Omitting tags (or passing []) together with tags_match='exact' filters to untagged/global observations only (the scope written by observation_scopes='shared')."
           },
           "tags_match": {
             "type": "string",
@@ -10851,7 +10958,7 @@
               "exact"
             ],
             "title": "Tags Match",
-            "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
+            "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set-equality on the full scope, excludes untagged). With 'exact' and no tags (or []), the empty global scope is selected and only untagged memories match.",
             "default": "any"
           },
           "tag_groups": {
@@ -10881,6 +10988,17 @@
             ],
             "title": "Tag Groups",
             "description": "Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}."
+          },
+          "min_scores": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MinScores"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional per-stage score floors (all inclusive, AND-ed). `semantic` and `keyword` are retrieval-level cutoffs pushed into the SQL arms (overriding the global similarity/BM25 minimums for this request); `reranker` and `final` are post-ranking filters on the scored results. Any field left unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering. Use with care \u2014 the reranker's absolute scores are not calibrated across queries (a clearly-relevant match may score ~0.001 even though it is ranked first)."
           }
         },
         "type": "object",
@@ -11167,6 +11285,16 @@
               }
             ],
             "title": "Source Fact Ids"
+          },
+          "scores": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecallScores"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -11198,6 +11326,57 @@
           "text": "Alice works at Google on the AI team",
           "type": "world"
         }
+      },
+      "RecallScores": {
+        "properties": {
+          "final": {
+            "type": "number",
+            "title": "Final",
+            "description": "Final ranking score (combined reranker + recency/temporal/proof boosts)"
+          },
+          "reranker": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker",
+            "description": "Cross-encoder relevance, normalized 0-1. None when the reranker is a passthrough (rrf/interleave modes)."
+          },
+          "semantic": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Semantic",
+            "description": "Vector cosine similarity (0-1). None if this result was not surfaced semantically."
+          },
+          "keyword": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword",
+            "description": "Keyword/full-text (BM25) score (>= 0, unbounded). None if this result was not surfaced by keyword search."
+          }
+        },
+        "type": "object",
+        "required": [
+          "final"
+        ],
+        "title": "RecallScores",
+        "description": "Per-result recall scores from different stages of the pipeline.\n\n``final`` is the value results are ranked by. The others are diagnostic and\ncan be filtered on via the recall ``min_scores`` request parameter. ``semantic``\nand ``keyword`` are the raw per-strategy retrieval scores (``None`` when that\nstrategy did not surface this result); ``reranker`` is the cross-encoder's\nnormalized relevance."
       },
       "RecoverConsolidationResponse": {
         "properties": {
@@ -12246,19 +12425,25 @@
           "output_tokens": {
             "type": "integer",
             "title": "Output Tokens",
-            "description": "Number of output/completion tokens generated",
+            "description": "Number of visible output/completion tokens generated (excludes reasoning/thoughts)",
             "default": 0
           },
           "total_tokens": {
             "type": "integer",
             "title": "Total Tokens",
-            "description": "Total tokens (input + output)",
+            "description": "Total tokens (input + output, excludes thoughts)",
             "default": 0
           },
           "cached_tokens": {
             "type": "integer",
             "title": "Cached Tokens",
             "description": "Cached/cache-read prompt tokens, when reported by the provider",
+            "default": 0
+          },
+          "thoughts_tokens": {
+            "type": "integer",
+            "title": "Thoughts Tokens",
+            "description": "Reasoning/thinking tokens generated by the model. Billed at the output rate by some providers (e.g. Gemini 2.5+ family) but not surfaced in the visible response.",
             "default": 0
           }
         },

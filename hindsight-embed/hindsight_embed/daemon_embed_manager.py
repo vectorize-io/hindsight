@@ -166,23 +166,27 @@ class DaemonEmbedManager(EmbedManager):
         return None
 
     @staticmethod
-    def _windows_gui_interpreter() -> str | None:
+    def _windows_gui_interpreter(preferred_dir: Path | None = None) -> str | None:
         """Path to the GUI-subsystem Python (pythonw.exe), or None.
 
         Returns None on non-Windows, or when pythonw.exe can't be located next
-        to the running interpreter.
+        to the preferred scripts directory or running interpreter.
 
         On Windows 11 with Windows Terminal as the default terminal app,
         spawning the console-subsystem (CUI, subsystem 3) hindsight-api.exe
         launcher makes ConPTY pop a visible terminal tab on daemon start, even
         with DETACHED_PROCESS / CREATE_NO_WINDOW (issue #1885). Launching the
         daemon through the GUI-subsystem (subsystem 2) pythonw.exe interpreter
-        never allocates a console, so no window appears. pythonw.exe sits next
-        to sys.executable, whose environment is the one we just confirmed has
-        hindsight-api installed, so `pythonw.exe -m hindsight_api.main` resolves.
+        never allocates a console, so no window appears. Prefer the scripts dir
+        that contains hindsight-api.exe because wrapper entry points can make
+        sys.executable point at a different launcher directory (issue #2389).
         """
         if platform.system() != "Windows":
             return None
+        if preferred_dir is not None:
+            pythonw = preferred_dir / "pythonw.exe"
+            if pythonw.exists():
+                return str(pythonw)
         pythonw = Path(sys.executable).with_name("pythonw.exe")
         return str(pythonw) if pythonw.exists() else None
 
@@ -221,7 +225,7 @@ class DaemonEmbedManager(EmbedManager):
             # The console exe lives in sys.executable's scripts dir, so
             # hindsight_api is importable by the GUI interpreter; prefer it on
             # Windows to avoid ConPTY popping a terminal tab (issue #1885).
-            gui_python = self._windows_gui_interpreter()
+            gui_python = self._windows_gui_interpreter(scripts_dir)
             if gui_python is not None:
                 return [gui_python, "-m", "hindsight_api.main"]
             return [str(candidate)]

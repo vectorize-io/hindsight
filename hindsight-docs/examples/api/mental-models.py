@@ -63,10 +63,10 @@ result = client.create_mental_model(
     bank_id=BANK_ID,
     name="Project Status",
     source_query="What is the current project status?",
-    trigger={"refresh_after_consolidation": True}
+    trigger={"refresh_cron": "0 3 * * *"}
 )
 
-# This mental model will automatically refresh when observations are updated
+# This mental model checks daily at 03:00 UTC and refreshes when scoped memories changed
 print(f"Operation ID: {result.operation_id}")
 # [/docs:create-mental-model-with-trigger]
 

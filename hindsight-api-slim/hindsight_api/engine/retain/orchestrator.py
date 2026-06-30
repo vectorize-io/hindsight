@@ -834,6 +834,28 @@ async def retain_batch(
             if first.get("tags"):
                 existing_content["tags"] = first["tags"]
             contents_dicts = [existing_content, *contents_dicts]
+            # Merge JSON arrays to keep original_text valid (#2409).
+            # Without this, combined_content joins items with "\n", producing
+            # "[...]\n[...]" which is not valid JSON. On the next append cycle
+            # chunk_text() fails to parse it and falls through to sentence-
+            # boundary text splitting, breaking speaker attribution.
+            try:
+                _merged = []
+                for _item in contents_dicts:
+                    _parsed = json.loads(_item.get("content", ""))
+                    if isinstance(_parsed, list) and all(isinstance(_e, dict) for _e in _parsed):
+                        _merged.extend(_parsed)
+                    else:
+                        _merged = None
+                        break
+                if _merged is not None:
+                    contents_dicts = [{"content": json.dumps(_merged, ensure_ascii=False)}]
+                    if first.get("context"):
+                        contents_dicts[0]["context"] = first["context"]
+                    if first.get("tags"):
+                        contents_dicts[0]["tags"] = first["tags"]
+            except (json.JSONDecodeError, ValueError, TypeError):
+                pass
             # Rebuild contents list to match
             contents = _build_contents(contents_dicts, document_tags)
             log_buffer.append(

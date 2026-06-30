@@ -187,6 +187,7 @@ export interface MentalModel {
   trigger: {
     mode?: "full" | "delta";
     refresh_after_consolidation: boolean;
+    refresh_cron?: string | null;
     fact_types?: Array<"world" | "experience" | "observation">;
     exclude_mental_models?: boolean;
     exclude_mental_model_ids?: string[];
@@ -343,6 +344,7 @@ export class ControlPlaneClient {
   async recall(params: {
     query: string;
     types?: string[];
+    prefer_observations?: boolean;
     bank_id: string;
     budget?: string;
     max_tokens?: number;
@@ -355,6 +357,12 @@ export class ControlPlaneClient {
     query_timestamp?: string;
     tags?: string[];
     tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
+    min_scores?: {
+      semantic?: number | null;
+      keyword?: number | null;
+      reranker?: number | null;
+      final?: number | null;
+    };
   }) {
     return this.fetchApi("/api/recall", {
       method: "POST",
@@ -501,6 +509,7 @@ export class ControlPlaneClient {
         task_type: string;
         items_count: number;
         document_id: string | null;
+        filename?: string | null;
         created_at: string;
         updated_at?: string | null;
         status: string;
@@ -1217,6 +1226,7 @@ export class ControlPlaneClient {
         trigger: {
           mode?: "full" | "delta";
           refresh_after_consolidation: boolean;
+          refresh_cron?: string | null;
           fact_types?: Array<"world" | "experience" | "observation">;
           exclude_mental_models?: boolean;
           exclude_mental_model_ids?: string[];
@@ -1251,6 +1261,7 @@ export class ControlPlaneClient {
       trigger?: {
         mode?: "full" | "delta";
         refresh_after_consolidation: boolean;
+        refresh_cron?: string | null;
         fact_types?: Array<"world" | "experience" | "observation">;
         exclude_mental_models?: boolean;
         exclude_mental_model_ids?: string[];
@@ -1293,6 +1304,7 @@ export class ControlPlaneClient {
       trigger?: {
         mode?: "full" | "delta";
         refresh_after_consolidation: boolean;
+        refresh_cron?: string | null;
         fact_types?: Array<"world" | "experience" | "observation">;
         exclude_mental_models?: boolean;
         exclude_mental_model_ids?: string[];
@@ -1314,6 +1326,7 @@ export class ControlPlaneClient {
       max_tokens: number;
       trigger: {
         refresh_after_consolidation: boolean;
+        refresh_cron?: string | null;
         fact_types?: Array<"world" | "experience" | "observation">;
         exclude_mental_models?: boolean;
         exclude_mental_model_ids?: string[];

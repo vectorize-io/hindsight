@@ -38,6 +38,7 @@ jobs:
       integrations-claude-code: ${{ steps.filter.outputs.integrations-claude-code }}
       integrations-cline: ${{ steps.filter.outputs.integrations-cline }}
       integrations-codex: ${{ steps.filter.outputs.integrations-codex }}
+      integrations-github-copilot: ${{ steps.filter.outputs.integrations-github-copilot }}
       integrations-continue: ${{ steps.filter.outputs.integrations-continue }}
       integrations-cursor-cli: ${{ steps.filter.outputs.integrations-cursor-cli }}
       integrations-crewai: ${{ steps.filter.outputs.integrations-crewai }}
@@ -50,6 +51,7 @@ jobs:
       integrations-llamaindex: ${{ steps.filter.outputs.integrations-llamaindex }}
       integrations-paperclip: ${{ steps.filter.outputs.integrations-paperclip }}
       integrations-opencode: ${{ steps.filter.outputs.integrations-opencode }}
+      integrations-eve: ${{ steps.filter.outputs.integrations-eve }}
       integrations-cursor: ${{ steps.filter.outputs.integrations-cursor }}
       integrations-zed: ${{ steps.filter.outputs.integrations-zed }}
       integrations-n8n: ${{ steps.filter.outputs.integrations-n8n }}
@@ -59,6 +61,7 @@ jobs:
       integrations-lockfiles: ${{ steps.filter.outputs.integrations-lockfiles }}
       integrations-openai-agents: ${{ steps.filter.outputs.integrations-openai-agents }}
       integrations-openhands: ${{ steps.filter.outputs.integrations-openhands }}
+      integrations-devin-desktop: ${{ steps.filter.outputs.integrations-devin-desktop }}
       integrations-pipecat: ${{ steps.filter.outputs.integrations-pipecat }}
       integrations-agentcore: ${{ steps.filter.outputs.integrations-agentcore }}
       integrations-smolagents: ${{ steps.filter.outputs.integrations-smolagents }}
@@ -143,6 +146,8 @@ jobs:
             - 'hindsight-integrations/cline/**'
           integrations-codex:
             - 'hindsight-integrations/codex/**'
+          integrations-github-copilot:
+            - 'hindsight-integrations/github-copilot/**'
           integrations-continue:
             - 'hindsight-integrations/continue/**'
           integrations-cursor-cli:
@@ -169,6 +174,8 @@ jobs:
             - 'hindsight-integrations/paperclip/**'
           integrations-opencode:
             - 'hindsight-integrations/opencode/**'
+          integrations-eve:
+            - 'hindsight-integrations/eve/**'
           integrations-cursor:
             - 'hindsight-integrations/cursor/**'
           integrations-zed:
@@ -189,6 +196,8 @@ jobs:
             - 'hindsight-integrations/openai-agents/**'
           integrations-openhands:
             - 'hindsight-integrations/openhands/**'
+          integrations-devin-desktop:
+            - 'hindsight-integrations/devin-desktop/**'
           integrations-pipecat:
             - 'hindsight-integrations/pipecat/**'
           integrations-agentcore:
@@ -591,6 +600,45 @@ jobs:
       working-directory: ./hindsight-integrations/cline
       run: uv run pytest tests -v
 
+  test-github-copilot-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-github-copilot == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build github-copilot integration
+      working-directory: ./hindsight-integrations/github-copilot
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/github-copilot
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/github-copilot
+      # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
+      # (requires_real_llm) needs a live Hindsight server and runs separately.
+      run: uv run pytest tests -v -m "not requires_real_llm"
+
   test-codex-integration:
     needs: [detect-changes]
     if: >-
@@ -746,6 +794,37 @@ jobs:
 
     - name: Build
       working-directory: ./hindsight-integrations/opencode
+      run: npm run build
+
+  test-eve-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-eve == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '24'
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/eve
+      run: npm ci
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/eve
+      run: npm test
+
+    - name: Build
+      working-directory: ./hindsight-integrations/eve
       run: npm run build
 
   test-n8n-integration:
@@ -3787,6 +3866,45 @@ jobs:
       # (requires_real_llm) needs a live Hindsight server and runs separately.
       run: uv run pytest tests -v -m "not requires_real_llm"
 
+  test-devin-desktop-integration:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-devin-desktop == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build devin-desktop integration
+      working-directory: ./hindsight-integrations/devin-desktop
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/devin-desktop
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/devin-desktop
+      # PR CI runs only the deterministic bucket; the real-LLM E2E bucket
+      # (requires_real_llm) needs a live Hindsight server and runs separately.
+      run: uv run pytest tests -v -m "not requires_real_llm"
+
   test-claude-agent-sdk-integration:
     needs: [detect-changes]
     if: >-
@@ -4788,11 +4906,13 @@ jobs:
       - test-claude-code-integration
       - test-cursor-integration
       - test-cline-integration
+      - test-github-copilot-integration
       - test-codex-integration
       - test-cursor-cli-integration
       - build-ai-sdk-integration
       - test-ai-sdk-integration-deno
       - test-opencode-integration
+      - test-eve-integration
       - test-omo-integration
       - test-cloudflare-oauth-proxy-integration
       - build-chat-integration
@@ -4837,6 +4957,7 @@ jobs:
       - test-llamaindex-integration
       - test-openai-agents-integration
       - test-openhands-integration
+      - test-devin-desktop-integration
       - test-agentcore-integration
       - test-haystack-integration
       - test-pip-slim

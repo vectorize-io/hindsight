@@ -180,6 +180,32 @@ describe("createKnowledgeTools", () => {
     expect(body.types).toEqual(["observation"]);
   });
 
+  it("recall ignores max_results entirely — no slicing, no token-budget mapping", async () => {
+    const manyResults = Array.from({ length: 30 }, (_, i) => ({ text: `fact-${i}` }));
+    mockFetch.mockReturnValueOnce(mockResponse({ results: manyResults }));
+
+    const tool = tools.find((t) => t.name === "agent_knowledge_recall")!;
+    const result = await tool.execute({ query: "budget test", max_results: 25 });
+
+    // max_results must not be mapped to the recall token budget...
+    const body = await getBody(mockFetch.mock.calls[0]);
+    expect(body.max_tokens).toBe(1024);
+
+    // ...nor truncate the returned results: the param is unsupported and inert.
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.results).toHaveLength(30);
+  });
+
+  it("recall max_tokens still controls recall token budget", async () => {
+    mockFetch.mockReturnValueOnce(mockResponse({ results: [{ text: "found" }] }));
+
+    const tool = tools.find((t) => t.name === "agent_knowledge_recall")!;
+    await tool.execute({ query: "token budget", max_tokens: 512 });
+
+    const body = await getBody(mockFetch.mock.calls[0]);
+    expect(body.max_tokens).toBe(512);
+  });
+
   it("reflect sends POST with conservative defaults", async () => {
     mockFetch.mockReturnValueOnce(mockResponse({ text: "answer" }));
 

@@ -23,6 +23,8 @@ var _ MappedNullable = &RecallRequest{}
 type RecallRequest struct {
 	Query string `json:"query"`
 	Types []string `json:"types,omitempty"`
+	// When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. Disabled by default; set to true to enable. No effect unless 'observation' and at least one raw type are both requested.
+	PreferObservations *bool `json:"prefer_observations,omitempty"`
 	Budget *Budget `json:"budget,omitempty"`
 	MaxTokens *int32 `json:"max_tokens,omitempty"`
 	Trace *bool `json:"trace,omitempty"`
@@ -30,9 +32,10 @@ type RecallRequest struct {
 	// Options for including additional data (entities are included by default)
 	Include *IncludeOptions `json:"include,omitempty"`
 	Tags []string `json:"tags,omitempty"`
-	// How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
+	// How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set-equality on the full scope, excludes untagged). With 'exact' and no tags (or []), the empty global scope is selected and only untagged memories match.
 	TagsMatch *string `json:"tags_match,omitempty"`
 	TagGroups []MentalModelTriggerInputTagGroupsInner `json:"tag_groups,omitempty"`
+	MinScores NullableMinScores `json:"min_scores,omitempty"`
 }
 
 type _RecallRequest RecallRequest
@@ -44,6 +47,8 @@ type _RecallRequest RecallRequest
 func NewRecallRequest(query string) *RecallRequest {
 	this := RecallRequest{}
 	this.Query = query
+	var preferObservations bool = false
+	this.PreferObservations = &preferObservations
 	var maxTokens int32 = 4096
 	this.MaxTokens = &maxTokens
 	var trace bool = false
@@ -58,6 +63,8 @@ func NewRecallRequest(query string) *RecallRequest {
 // but it doesn't guarantee that properties required by API are set
 func NewRecallRequestWithDefaults() *RecallRequest {
 	this := RecallRequest{}
+	var preferObservations bool = false
+	this.PreferObservations = &preferObservations
 	var maxTokens int32 = 4096
 	this.MaxTokens = &maxTokens
 	var trace bool = false
@@ -122,6 +129,38 @@ func (o *RecallRequest) HasTypes() bool {
 // SetTypes gets a reference to the given []string and assigns it to the Types field.
 func (o *RecallRequest) SetTypes(v []string) {
 	o.Types = v
+}
+
+// GetPreferObservations returns the PreferObservations field value if set, zero value otherwise.
+func (o *RecallRequest) GetPreferObservations() bool {
+	if o == nil || IsNil(o.PreferObservations) {
+		var ret bool
+		return ret
+	}
+	return *o.PreferObservations
+}
+
+// GetPreferObservationsOk returns a tuple with the PreferObservations field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *RecallRequest) GetPreferObservationsOk() (*bool, bool) {
+	if o == nil || IsNil(o.PreferObservations) {
+		return nil, false
+	}
+	return o.PreferObservations, true
+}
+
+// HasPreferObservations returns a boolean if a field has been set.
+func (o *RecallRequest) HasPreferObservations() bool {
+	if o != nil && !IsNil(o.PreferObservations) {
+		return true
+	}
+
+	return false
+}
+
+// SetPreferObservations gets a reference to the given bool and assigns it to the PreferObservations field.
+func (o *RecallRequest) SetPreferObservations(v bool) {
+	o.PreferObservations = &v
 }
 
 // GetBudget returns the Budget field value if set, zero value otherwise.
@@ -392,6 +431,48 @@ func (o *RecallRequest) SetTagGroups(v []MentalModelTriggerInputTagGroupsInner) 
 	o.TagGroups = v
 }
 
+// GetMinScores returns the MinScores field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RecallRequest) GetMinScores() MinScores {
+	if o == nil || IsNil(o.MinScores.Get()) {
+		var ret MinScores
+		return ret
+	}
+	return *o.MinScores.Get()
+}
+
+// GetMinScoresOk returns a tuple with the MinScores field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RecallRequest) GetMinScoresOk() (*MinScores, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.MinScores.Get(), o.MinScores.IsSet()
+}
+
+// HasMinScores returns a boolean if a field has been set.
+func (o *RecallRequest) HasMinScores() bool {
+	if o != nil && o.MinScores.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetMinScores gets a reference to the given NullableMinScores and assigns it to the MinScores field.
+func (o *RecallRequest) SetMinScores(v MinScores) {
+	o.MinScores.Set(&v)
+}
+// SetMinScoresNil sets the value for MinScores to be an explicit nil
+func (o *RecallRequest) SetMinScoresNil() {
+	o.MinScores.Set(nil)
+}
+
+// UnsetMinScores ensures that no value is present for MinScores, not even an explicit nil
+func (o *RecallRequest) UnsetMinScores() {
+	o.MinScores.Unset()
+}
+
 func (o RecallRequest) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -405,6 +486,9 @@ func (o RecallRequest) ToMap() (map[string]interface{}, error) {
 	toSerialize["query"] = o.Query
 	if o.Types != nil {
 		toSerialize["types"] = o.Types
+	}
+	if !IsNil(o.PreferObservations) {
+		toSerialize["prefer_observations"] = o.PreferObservations
 	}
 	if !IsNil(o.Budget) {
 		toSerialize["budget"] = o.Budget
@@ -429,6 +513,9 @@ func (o RecallRequest) ToMap() (map[string]interface{}, error) {
 	}
 	if o.TagGroups != nil {
 		toSerialize["tag_groups"] = o.TagGroups
+	}
+	if o.MinScores.IsSet() {
+		toSerialize["min_scores"] = o.MinScores.Get()
 	}
 	return toSerialize, nil
 }

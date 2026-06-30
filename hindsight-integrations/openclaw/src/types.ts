@@ -80,6 +80,25 @@ export interface PluginConfig {
    * `observations_mission` field on first use.
    */
   observationsMission?: string;
+  /**
+   * Fact extraction mode stamped onto dynamic/static banks on first use.
+   * Leave unset to keep the Hindsight server default for new banks.
+   */
+  retainExtractionMode?: "concise" | "verbose" | "custom" | "verbatim" | "chunks";
+  /** Toggle observation consolidation for new banks. */
+  enableObservations?: boolean;
+  /** Toggle automatic consolidation scheduling for new banks. */
+  enableAutoConsolidation?: boolean;
+  /** Reflect disposition traits (1–5) stamped on first bank use. */
+  dispositionSkepticism?: number;
+  dispositionLiteralism?: number;
+  dispositionEmpathy?: number;
+  /**
+   * Controlled vocabulary for entity labels. Either a list of attribute defs or
+   * a `{ attributes: [...] }` object — passed through to PATCH /banks/{id}/config
+   * as `entity_labels`. Other shapes are ignored (the server only accepts these two).
+   */
+  entityLabels?: unknown;
   embedPort?: number;
   daemonIdleTimeout?: number; // Seconds before daemon shuts down (0 = never)
   embedVersion?: string; // hindsight-embed version (default: "latest")

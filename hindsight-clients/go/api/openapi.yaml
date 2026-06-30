@@ -80,6 +80,7 @@ paths:
         required: false
         schema:
           default: 1000
+          minimum: 0
           title: Limit
           type: integer
         style: form
@@ -212,6 +213,7 @@ paths:
         required: false
         schema:
           default: 100
+          minimum: 0
           title: Limit
           type: integer
         style: form
@@ -221,6 +223,7 @@ paths:
         required: false
         schema:
           default: 0
+          minimum: 0
           title: Offset
           type: integer
         style: form
@@ -732,6 +735,7 @@ paths:
         schema:
           default: 100
           description: Maximum number of entities to return
+          minimum: 0
           title: Limit
           type: integer
         style: form
@@ -743,6 +747,7 @@ paths:
         schema:
           default: 0
           description: Offset for pagination
+          minimum: 0
           title: Offset
           type: integer
         style: form
@@ -792,6 +797,7 @@ paths:
         schema:
           default: 1000
           description: Maximum number of co-occurrence edges to return
+          minimum: 0
           title: Limit
           type: integer
         style: form
@@ -1690,6 +1696,7 @@ paths:
         required: false
         schema:
           default: 100
+          minimum: 0
           title: Limit
           type: integer
         style: form
@@ -1699,6 +1706,7 @@ paths:
         required: false
         schema:
           default: 0
+          minimum: 0
           title: Offset
           type: integer
         style: form
@@ -2046,6 +2054,7 @@ paths:
         schema:
           default: 100
           description: Maximum number of tags to return
+          minimum: 0
           title: Limit
           type: integer
         style: form
@@ -2057,6 +2066,7 @@ paths:
         schema:
           default: 0
           description: Offset for pagination
+          minimum: 0
           title: Offset
           type: integer
         style: form
@@ -6560,6 +6570,7 @@ components:
             mode: full
             refresh_after_consolidation: false
             recall_chunks_max_tokens: 1
+            refresh_cron: refresh_cron
             tag_groups:
             - match: any_strict
               tags:
@@ -6597,6 +6608,7 @@ components:
             mode: full
             refresh_after_consolidation: false
             recall_chunks_max_tokens: 1
+            refresh_cron: refresh_cron
             tag_groups:
             - match: any_strict
               tags:
@@ -6645,6 +6657,7 @@ components:
           mode: full
           refresh_after_consolidation: false
           recall_chunks_max_tokens: 1
+          refresh_cron: refresh_cron
           tag_groups:
           - match: any_strict
             tags:
@@ -6735,6 +6748,9 @@ components:
             \ (real-time mode)"
           title: Refresh After Consolidation
           type: boolean
+        refresh_cron:
+          nullable: true
+          type: string
         fact_types:
           items:
             enum:
@@ -6785,6 +6801,7 @@ components:
         mode: full
         refresh_after_consolidation: false
         recall_chunks_max_tokens: 1
+        refresh_cron: refresh_cron
         tag_groups:
         - match: any_strict
           tags:
@@ -6824,6 +6841,9 @@ components:
             \ (real-time mode)"
           title: Refresh After Consolidation
           type: boolean
+        refresh_cron:
+          nullable: true
+          type: string
         fact_types:
           items:
             enum:
@@ -6868,6 +6888,30 @@ components:
           nullable: true
           type: integer
       title: MentalModelTrigger
+    MinScores:
+      description: |-
+        Optional per-stage score floors for recall (all inclusive, AND-ed).
+
+        ``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into the SQL
+        arms (overriding the global ``semantic_min_similarity`` / ``bm25_min_score``
+        config for this request), so they prune weak matches before fusion. ``reranker``
+        and ``final`` are **post-query** filters applied to the scored results after
+        reranking. Any field left None imposes no floor; all-None (the default) means
+        no score filtering.
+      properties:
+        semantic:
+          nullable: true
+          type: number
+        keyword:
+          nullable: true
+          type: number
+        reranker:
+          nullable: true
+          type: number
+        final:
+          nullable: true
+          type: number
+      title: MinScores
     ObservationScope:
       description: "A distinct observation scope: an exact tag set plus its observation\
         \ count."
@@ -6960,6 +7004,9 @@ components:
           title: Items Count
           type: integer
         document_id:
+          nullable: true
+          type: string
+        filename:
           nullable: true
           type: string
         created_at:
@@ -7113,6 +7160,17 @@ components:
             type: string
           nullable: true
           type: array
+        prefer_observations:
+          default: false
+          description: "When recalling raw facts ('world'/'experience') together with\
+            \ 'observation', drop any raw fact that an observation in the results\
+            \ was consolidated from, so the observation supersedes it and you don't\
+            \ get duplicate content. The freed slots are backfilled with the next\
+            \ results, keeping the result count at the requested budget. Disabled\
+            \ by default; set to true to enable. No effect unless 'observation' and\
+            \ at least one raw type are both requested."
+          title: Prefer Observations
+          type: boolean
         budget:
           $ref: '#/components/schemas/Budget'
         max_tokens:
@@ -7137,7 +7195,9 @@ components:
           default: any
           description: "How to match tags: 'any' (OR, includes untagged), 'all' (AND,\
             \ includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict'\
-            \ (AND, excludes untagged)."
+            \ (AND, excludes untagged), 'exact' (set-equality on the full scope, excludes\
+            \ untagged). With 'exact' and no tags (or []), the empty global scope\
+            \ is selected and only untagged memories match."
           enum:
           - any
           - all
@@ -7151,6 +7211,8 @@ components:
             $ref: '#/components/schemas/MentalModelTrigger_Input_tag_groups_inner'
           nullable: true
           type: array
+        min_scores:
+          $ref: '#/components/schemas/MinScores'
       required:
       - query
       title: RecallRequest
@@ -7274,10 +7336,39 @@ components:
             type: string
           nullable: true
           type: array
+        scores:
+          $ref: '#/components/schemas/RecallScores'
       required:
       - id
       - text
       title: RecallResult
+    RecallScores:
+      description: |-
+        Per-result recall scores from different stages of the pipeline.
+
+        ``final`` is the value results are ranked by. The others are diagnostic and
+        can be filtered on via the recall ``min_scores`` request parameter. ``semantic``
+        and ``keyword`` are the raw per-strategy retrieval scores (``None`` when that
+        strategy did not surface this result); ``reranker`` is the cross-encoder's
+        normalized relevance.
+      properties:
+        final:
+          description: Final ranking score (combined reranker + recency/temporal/proof
+            boosts)
+          title: Final
+          type: number
+        reranker:
+          nullable: true
+          type: number
+        semantic:
+          nullable: true
+          type: number
+        keyword:
+          nullable: true
+          type: number
+      required:
+      - final
+      title: RecallScores
     RecoverConsolidationResponse:
       description: Response model for recovering failed consolidation.
       example:
@@ -7843,18 +7934,26 @@ components:
           type: integer
         output_tokens:
           default: 0
-          description: Number of output/completion tokens generated
+          description: Number of visible output/completion tokens generated (excludes
+            reasoning/thoughts)
           title: Output Tokens
           type: integer
         total_tokens:
           default: 0
-          description: Total tokens (input + output)
+          description: "Total tokens (input + output, excludes thoughts)"
           title: Total Tokens
           type: integer
         cached_tokens:
           default: 0
           description: "Cached/cache-read prompt tokens, when reported by the provider"
           title: Cached Tokens
+          type: integer
+        thoughts_tokens:
+          default: 0
+          description: Reasoning/thinking tokens generated by the model. Billed at
+            the output rate by some providers (e.g. Gemini 2.5+ family) but not surfaced
+            in the visible response.
+          title: Thoughts Tokens
           type: integer
       title: TokenUsage
     ToolCallsIncludeOptions:

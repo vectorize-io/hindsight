@@ -1354,6 +1354,26 @@ async def test_patch_config_persists_override_for_uncreated_bank(api_client, fie
     assert response.json()["name"] == test_bank_id
 
 
+@pytest.mark.asyncio
+async def test_patch_bank_does_not_create_missing_bank(api_client):
+    """PATCH /banks/{bank_id} updates existing banks only."""
+    test_bank_id = f"patch_missing_bank_{datetime.now().timestamp()}"
+
+    response = await api_client.patch(
+        f"/v1/default/banks/{test_bank_id}",
+        json={"name": "Should Not Exist"},
+    )
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"] == f"Bank '{test_bank_id}' not found"
+
+    profile = await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
+    assert profile.status_code == 404, profile.text
+
+    banks = await api_client.get("/v1/default/banks")
+    assert banks.status_code == 200, banks.text
+    assert test_bank_id not in {bank["bank_id"] for bank in banks.json()["banks"]}
+
+
 @pytest.mark.hs_llm_core
 @pytest.mark.asyncio
 async def test_full_api_workflow_llm_quality(api_client_real_llm):

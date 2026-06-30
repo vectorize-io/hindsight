@@ -10,6 +10,7 @@ export async function POST(request: NextRequest) {
       query,
       types,
       fact_type,
+      prefer_observations,
       max_tokens,
       trace,
       budget,
@@ -17,6 +18,7 @@ export async function POST(request: NextRequest) {
       query_timestamp,
       tags,
       tags_match,
+      min_scores,
     } = body;
 
     const response = await sdk.recallMemories({
@@ -25,6 +27,7 @@ export async function POST(request: NextRequest) {
       body: {
         query,
         types: types || fact_type,
+        prefer_observations,
         max_tokens,
         trace,
         budget: budget || "mid",
@@ -32,6 +35,7 @@ export async function POST(request: NextRequest) {
         query_timestamp,
         tags,
         tags_match,
+        min_scores,
       },
     });
 

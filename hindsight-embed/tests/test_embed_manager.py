@@ -248,6 +248,30 @@ def test_find_api_command_windows_prefers_gui_interpreter(tmp_path, monkeypatch)
     assert manager._find_api_command("0.0.0") == [str(pythonw), "-m", "hindsight_api.main"]
 
 
+def test_find_api_command_windows_prefers_scripts_dir_pythonw_for_wrappers(tmp_path, monkeypatch):
+    """pip/uv wrapper executables can make sys.executable differ from Scripts."""
+    scripts_dir = tmp_path / "Scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "hindsight-api.exe").touch()
+    pythonw = scripts_dir / "pythonw.exe"
+    pythonw.touch()
+
+    wrapper_dir = tmp_path / "wrapper"
+    wrapper_dir.mkdir()
+    (wrapper_dir / "hindsight-embed.exe").touch()
+
+    manager = DaemonEmbedManager()
+    monkeypatch.setattr(
+        "hindsight_embed.daemon_embed_manager.__file__",
+        str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py"),
+    )
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sys.executable", str(wrapper_dir / "hindsight-embed.exe"))
+
+    assert manager._find_api_command("0.0.0") == [str(pythonw), "-m", "hindsight_api.main"]
+
+
 def test_find_pid_on_port_windows_hides_netstat_console(monkeypatch):
     """Windows netstat probes must not flash a console window."""
     calls = []

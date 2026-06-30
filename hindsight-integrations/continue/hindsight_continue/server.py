@@ -25,8 +25,19 @@ logger = logging.getLogger("hindsight_continue.server")
 _MAX_BODY_BYTES = 1_000_000
 
 
-def make_handler(client: Hindsight, config: HindsightContinueConfig):
-    """Build a request-handler class bound to a client and config."""
+def make_handler(config: HindsightContinueConfig, client: Optional[Hindsight] = None):
+    """Build a request-handler class.
+
+    When ``client`` is None (production), a fresh Hindsight client is resolved
+    **per request**. This is deliberate: the adapter runs on a
+    :class:`ThreadingHTTPServer` (one worker thread per request), and the
+    Hindsight client's underlying aiohttp session is bound to the thread /
+    event loop that first used it. A single shared client therefore succeeds on
+    the first request and then raises ``Timeout context manager should be used
+    inside a task`` on every request after it. Resolving per request keeps each
+    recall on its own thread's client. Tests may inject a client directly (they
+    drive the handler single-threaded).
+    """
 
     class _Handler(BaseHTTPRequestHandler):
         # Quiet the default per-request stderr logging; route through our logger.
@@ -66,8 +77,10 @@ def make_handler(client: Hindsight, config: HindsightContinueConfig):
                 self._write_json(400, {"error": "request body must be a JSON object"})
                 return
 
+            request_client = None
             try:
-                items = build_context_items(payload, client=client, config=config)
+                request_client = client if client is not None else resolve_client()
+                items = build_context_items(payload, client=request_client, config=config)
             except HindsightError as e:
                 # Surface the failure so it shows up in Continue's warnings rather
                 # than silently returning no memory.
@@ -77,6 +90,15 @@ def make_handler(client: Hindsight, config: HindsightContinueConfig):
                 logger.exception("Unexpected error handling context request")
                 self._write_json(500, {"error": f"internal error: {e}"})
                 return
+            finally:
+                # Close only a client we created here (a per-request client),
+                # not a test-injected one. Otherwise the fresh aiohttp session
+                # leaks a connector every request on the long-running server.
+                if client is None and request_client is not None:
+                    try:
+                        request_client.close()
+                    except Exception:  # pragma: no cover - best-effort cleanup
+                        logger.debug("client close failed", exc_info=True)
 
             self._write_json(200, serialize(items))
 
@@ -88,8 +110,10 @@ def build_server(
 ) -> ThreadingHTTPServer:
     """Create (but do not start) the adapter HTTP server."""
     config = config or get_config()
-    client = client or resolve_client()
-    handler = make_handler(client, config)
+    # Do not pre-resolve a shared client: pass it through so the handler resolves
+    # a fresh client per request (see make_handler). A test-injected client is
+    # used as-is.
+    handler = make_handler(config, client)
     return ThreadingHTTPServer((config.host, config.port), handler)
 
 

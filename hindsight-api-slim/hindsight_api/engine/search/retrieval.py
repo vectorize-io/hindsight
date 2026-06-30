@@ -104,6 +104,8 @@ async def retrieve_semantic_bm25_combined(
     tag_groups: list[TagGroup] | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
+    min_semantic: float | None = None,
+    min_keyword: float | None = None,
 ) -> dict[str, tuple[list[RetrievalResult], list[RetrievalResult]]]:
     """
     Combined semantic + BM25 retrieval for multiple fact types in a single query.
@@ -142,6 +144,12 @@ async def retrieve_semantic_bm25_combined(
 
     config = get_config()
     tokens = tokenize_query(query_text)
+
+    # Per-request retrieval-level score floors (recall min_scores.semantic / .keyword)
+    # override the global config defaults for this query, pruning weak matches in
+    # the SQL arms before fusion.
+    sem_min = min_semantic if min_semantic is not None else config.semantic_min_similarity
+    bm25_min = min_keyword if min_keyword is not None else config.bm25_min_score
 
     # Over-fetch for HNSW approximation; semantic results trimmed to limit in Python.
     hnsw_fetch = max(limit * 5, 100)
@@ -203,7 +211,7 @@ async def retrieve_semantic_bm25_combined(
             embedding_param="$1",
             bank_id_param="$2",
             fetch_limit=hnsw_fetch,
-            min_similarity=config.semantic_min_similarity,
+            min_similarity=sem_min,
             tags_clause=tags_clause,
             groups_clause=groups_clause,
             extra_where=created_range_clause,
@@ -229,7 +237,7 @@ async def retrieve_semantic_bm25_combined(
                     arm_index=i,
                     text_search_extension=text_ext,
                     bm25_language=config.text_search_extension_native_language,
-                    bm25_min_score=config.bm25_min_score,
+                    bm25_min_score=bm25_min,
                     extra_where=created_range_clause,
                 )
             )
@@ -277,7 +285,7 @@ async def retrieve_semantic_bm25_combined(
                     embedding_param="$1",
                     bank_id_param="$2",
                     fetch_limit=hnsw_fetch,
-                    min_similarity=config.semantic_min_similarity,
+                    min_similarity=sem_min,
                     tags_clause=fb_tags_clause,
                     groups_clause=fb_groups_clause,
                     extra_where=fb_created_clause,
@@ -706,6 +714,8 @@ async def retrieve_all_fact_types_parallel(
     tag_groups: list[TagGroup] | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
+    min_semantic: float | None = None,
+    min_keyword: float | None = None,
 ) -> MultiFactTypeRetrievalResult:
     """
     Optimized retrieval for multiple fact types using batched queries.
@@ -766,6 +776,8 @@ async def retrieve_all_fact_types_parallel(
             tag_groups=tag_groups,
             created_after=created_after,
             created_before=created_before,
+            min_semantic=min_semantic,
+            min_keyword=min_keyword,
         )
         semantic_bm25_time = time.time() - semantic_bm25_start
 
@@ -781,7 +793,7 @@ async def retrieve_all_fact_types_parallel(
                 tc_start,
                 tc_end,
                 budget=thinking_budget,
-                semantic_threshold=0.1,
+                semantic_threshold=min_semantic if min_semantic is not None else 0.1,
                 tags=tags,
                 tags_match=tags_match,
                 tag_groups=tag_groups,

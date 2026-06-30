@@ -20,6 +20,7 @@ from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 
 from hindsight_api.engine.llm_interface import LLMInterface
+from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
@@ -48,6 +49,18 @@ def _to_int(value: Any) -> int:
         return int(value)
     except (ValueError, TypeError):
         return 0
+
+
+def _usage_from_gemini_response(response: Any) -> LLMResponseUsage:
+    """Extract prompt/candidate/cached token counts from a Gemini usage_metadata block."""
+    usage = getattr(response, "usage_metadata", None)
+    if not usage:
+        return LLMResponseUsage()
+    return LLMResponseUsage(
+        input_tokens=usage.prompt_token_count or 0,
+        output_tokens=usage.candidates_token_count or 0,
+        cached_tokens=getattr(usage, "cached_content_token_count", 0) or 0,
+    )
 
 
 class GeminiLLM(LLMInterface):
@@ -258,16 +271,13 @@ class GeminiLLM(LLMInterface):
             else:
                 gemini_contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=content)]))
 
-        # Add the JSON schema as a textual hint in the system_instruction (matching
-        # the normal uncached path). Structured output is still enforced via
-        # response_schema regardless; this is just guidance text.
-        if response_format is not None and hasattr(response_format, "model_json_schema"):
+        def _system_instruction_with_schema() -> str:
             schema = response_format.model_json_schema()
-            schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
-            if system_instruction:
-                system_instruction += schema_msg
-            else:
-                system_instruction = schema_msg
+            schema_msg = (
+                f"\n\nYou must respond with valid JSON matching this schema:\n"
+                f"{json.dumps(schema, indent=2, ensure_ascii=False)}"
+            )
+            return (system_instruction + schema_msg) if system_instruction else schema_msg
 
         # Apply safety settings: context var (per-request bank override) takes precedence over instance default
         effective_safety_settings = _safety_settings_ctx.get()
@@ -287,9 +297,15 @@ class GeminiLLM(LLMInterface):
             self._apply_service_tier(config_kwargs)
             if use_cache:
                 config_kwargs["cached_content"] = cached_prefix
+            elif (
+                use_schema_prompt_fallback
+                and response_format is not None
+                and hasattr(response_format, "model_json_schema")
+            ):
+                config_kwargs["system_instruction"] = _system_instruction_with_schema()
             elif system_instruction:
                 config_kwargs["system_instruction"] = system_instruction
-            if response_format is not None:
+            if response_format is not None and not use_schema_prompt_fallback:
                 config_kwargs["response_mime_type"] = "application/json"
                 config_kwargs["response_schema"] = response_format
             if temperature is not None:
@@ -307,6 +323,7 @@ class GeminiLLM(LLMInterface):
             return genai_types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
 
         cache_active = using_cache
+        use_schema_prompt_fallback = False
         generation_config = _build_generation_config(cache_active)
 
         last_exception = None
@@ -323,6 +340,9 @@ class GeminiLLM(LLMInterface):
                     ),
                     timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
                 )
+                # Stash usage before parse/validate, which may raise locally
+                # even though the provider charged for these tokens (#2387).
+                stash_response_usage(_usage_from_gemini_response(response))
 
                 content = response.text
 
@@ -424,12 +444,26 @@ class GeminiLLM(LLMInterface):
                         output_tokens=output_tokens,
                         total_tokens=input_tokens + output_tokens,
                         cached_tokens=cached_tokens,
+                        thoughts_tokens=thoughts_tokens,
                     )
                     return result, token_usage
                 return result
 
             except json.JSONDecodeError as e:
                 last_exception = e
+                if (
+                    attempt < max_retries
+                    and response_format is not None
+                    and hasattr(response_format, "model_json_schema")
+                    and not cache_active
+                    and not use_schema_prompt_fallback
+                ):
+                    logger.warning("Gemini returned invalid JSON, retrying with prompt-side schema guidance...")
+                    cache_active = False
+                    use_schema_prompt_fallback = True
+                    generation_config = _build_generation_config(cache_active)
+                    await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
+                    continue
                 if attempt < max_retries:
                     logger.warning("Gemini returned invalid JSON, retrying...")
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
@@ -675,6 +709,7 @@ class GeminiLLM(LLMInterface):
                     ),
                     timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
                 )
+                stash_response_usage(_usage_from_gemini_response(response))
 
                 # Extract content and tool calls
                 content = None
@@ -762,6 +797,8 @@ class GeminiLLM(LLMInterface):
                     finish_reason=finish_reason,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
+                    cached_tokens=cached_input_tokens,
+                    thoughts_tokens=thoughts_tokens,
                 )
 
             except genai_errors.APIError as e:

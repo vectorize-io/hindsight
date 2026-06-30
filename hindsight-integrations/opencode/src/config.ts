@@ -109,6 +109,14 @@ const ENV_OVERRIDES: Record<string, [keyof HindsightConfig, "string" | "bool" | 
   HINDSIGHT_RECALL_CONTEXT_TURNS: ["recallContextTurns", "int"],
   HINDSIGHT_DYNAMIC_BANK_ID: ["dynamicBankId", "bool"],
   HINDSIGHT_BANK_MISSION: ["bankMission", "string"],
+  HINDSIGHT_BANK_ID_PREFIX: ["bankIdPrefix", "string"],
+  HINDSIGHT_RETAIN_EVERY_N_TURNS: ["retainEveryNTurns", "int"],
+  HINDSIGHT_RETAIN_OVERLAP_TURNS: ["retainOverlapTurns", "int"],
+  HINDSIGHT_RECALL_TAGS: ["recallTags", "string"],
+  HINDSIGHT_RETAIN_TAGS: ["retainTags", "string"],
+  HINDSIGHT_RECALL_TAGS_MATCH: ["recallTagsMatch", "string"],
+  HINDSIGHT_RECALL_PROMPT_PREAMBLE: ["recallPromptPreamble", "string"],
+  HINDSIGHT_RETAIN_CONTEXT: ["retainContext", "string"],
   // NOTE: `debug` is intentionally NOT an env override. It is a proper config
   // option set via opencode.json plugin options or ~/.hindsight/opencode.json,
   // because env vars are unreliable to set for OpenCode's plugin runtime
@@ -177,6 +185,14 @@ export function loadConfig(pluginOptions?: Record<string, unknown>): HindsightCo
   const recallTagsMatchEnv = process.env["HINDSIGHT_RECALL_TAGS_MATCH"];
   if (recallTagsMatchEnv !== undefined) {
     config["recallTagsMatch"] = recallTagsMatchEnv;
+  }
+
+  const retainTagsEnv = process.env["HINDSIGHT_RETAIN_TAGS"];
+  if (retainTagsEnv !== undefined) {
+    config["retainTags"] = retainTagsEnv
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
   }
 
   const result = config as unknown as HindsightConfig;

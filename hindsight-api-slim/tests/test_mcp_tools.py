@@ -1959,6 +1959,7 @@ def _reflect_mcp_with_trace(include_bank_id_param: bool):
         "based_on": {"world": []},
         "tool_trace": [{"tool": "recall", "output": "x" * 1000}],
         "llm_trace": [{"model": "test", "output": "y" * 1000}],
+        "directives_applied": [{"id": "d1", "name": "Tone", "content": "z" * 1000}],
     }
     memory = MagicMock()
     memory.reflect_async = AsyncMock(
@@ -1985,7 +1986,7 @@ def _reflect_result_data(result) -> dict:
 
 @pytest.mark.asyncio
 class TestReflectTraceOmission:
-    """reflect must not leak the agentic tool_trace/llm_trace into MCP responses by default."""
+    """reflect must not leak the agentic tool_trace/llm_trace/directives_applied into MCP responses by default."""
 
     @pytest.mark.parametrize("multi_bank", [True, False])
     async def test_trace_omitted_by_default(self, multi_bank):
@@ -1994,6 +1995,9 @@ class TestReflectTraceOmission:
         assert data["text"] == "answer"
         assert "tool_trace" not in data
         assert "llm_trace" not in data
+        # directives_applied is built "for the trace" and carries full directive content,
+        # so it must be omitted by default like the other trace fields.
+        assert "directives_applied" not in data
 
     @pytest.mark.parametrize("multi_bank", [True, False])
     async def test_trace_included_when_requested(self, multi_bank):
@@ -2001,6 +2005,7 @@ class TestReflectTraceOmission:
         data = _reflect_result_data(await _tools(mcp)["reflect"].fn(query="q", include_trace=True))
         assert "tool_trace" in data
         assert "llm_trace" in data
+        assert "directives_applied" in data
 
     @pytest.mark.parametrize("multi_bank", [True, False])
     async def test_based_on_flag_is_independent_of_trace(self, multi_bank):
@@ -2009,3 +2014,4 @@ class TestReflectTraceOmission:
         data = _reflect_result_data(await _tools(mcp)["reflect"].fn(query="q", include_based_on=True))
         assert "based_on" in data
         assert "tool_trace" not in data
+        assert "directives_applied" not in data

@@ -22,6 +22,7 @@ from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.budget import Budget
 from hindsight_client_api.models.include_options import IncludeOptions
 from hindsight_client_api.models.mental_model_trigger_input_tag_groups_inner import MentalModelTriggerInputTagGroupsInner
+from hindsight_client_api.models.min_scores import MinScores
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -31,15 +32,17 @@ class RecallRequest(BaseModel):
     """ # noqa: E501
     query: StrictStr
     types: Optional[List[StrictStr]] = None
+    prefer_observations: Optional[StrictBool] = Field(default=False, description="When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact that an observation in the results was consolidated from, so the observation supersedes it and you don't get duplicate content. The freed slots are backfilled with the next results, keeping the result count at the requested budget. Disabled by default; set to true to enable. No effect unless 'observation' and at least one raw type are both requested.")
     budget: Optional[Budget] = None
     max_tokens: Optional[StrictInt] = 4096
     trace: Optional[StrictBool] = False
     query_timestamp: Optional[StrictStr] = None
     include: Optional[IncludeOptions] = Field(default=None, description="Options for including additional data (entities are included by default)")
     tags: Optional[List[StrictStr]] = None
-    tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).")
+    tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set-equality on the full scope, excludes untagged). With 'exact' and no tags (or []), the empty global scope is selected and only untagged memories match.")
     tag_groups: Optional[List[MentalModelTriggerInputTagGroupsInner]] = None
-    __properties: ClassVar[List[str]] = ["query", "types", "budget", "max_tokens", "trace", "query_timestamp", "include", "tags", "tags_match", "tag_groups"]
+    min_scores: Optional[MinScores] = None
+    __properties: ClassVar[List[str]] = ["query", "types", "prefer_observations", "budget", "max_tokens", "trace", "query_timestamp", "include", "tags", "tags_match", "tag_groups", "min_scores"]
 
     @field_validator('tags_match')
     def tags_match_validate_enum(cls, value):
@@ -100,6 +103,9 @@ class RecallRequest(BaseModel):
                 if _item_tag_groups:
                     _items.append(_item_tag_groups.to_dict())
             _dict['tag_groups'] = _items
+        # override the default output from pydantic by calling `to_dict()` of min_scores
+        if self.min_scores:
+            _dict['min_scores'] = self.min_scores.to_dict()
         # set to None if types (nullable) is None
         # and model_fields_set contains the field
         if self.types is None and "types" in self.model_fields_set:
@@ -120,6 +126,11 @@ class RecallRequest(BaseModel):
         if self.tag_groups is None and "tag_groups" in self.model_fields_set:
             _dict['tag_groups'] = None
 
+        # set to None if min_scores (nullable) is None
+        # and model_fields_set contains the field
+        if self.min_scores is None and "min_scores" in self.model_fields_set:
+            _dict['min_scores'] = None
+
         return _dict
 
     @classmethod
@@ -134,6 +145,7 @@ class RecallRequest(BaseModel):
         _obj = cls.model_validate({
             "query": obj.get("query"),
             "types": obj.get("types"),
+            "prefer_observations": obj.get("prefer_observations") if obj.get("prefer_observations") is not None else False,
             "budget": obj.get("budget"),
             "max_tokens": obj.get("max_tokens") if obj.get("max_tokens") is not None else 4096,
             "trace": obj.get("trace") if obj.get("trace") is not None else False,
@@ -141,7 +153,8 @@ class RecallRequest(BaseModel):
             "include": IncludeOptions.from_dict(obj["include"]) if obj.get("include") is not None else None,
             "tags": obj.get("tags"),
             "tags_match": obj.get("tags_match") if obj.get("tags_match") is not None else 'any',
-            "tag_groups": [MentalModelTriggerInputTagGroupsInner.from_dict(_item) for _item in obj["tag_groups"]] if obj.get("tag_groups") is not None else None
+            "tag_groups": [MentalModelTriggerInputTagGroupsInner.from_dict(_item) for _item in obj["tag_groups"]] if obj.get("tag_groups") is not None else None,
+            "min_scores": MinScores.from_dict(obj["min_scores"]) if obj.get("min_scores") is not None else None
         })
         return _obj
 

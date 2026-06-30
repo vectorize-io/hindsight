@@ -119,6 +119,7 @@ from hindsight_client_api.models.mental_model_trigger_input import MentalModelTr
 from hindsight_client_api.models.mental_model_trigger_input_tag_groups_inner import MentalModelTriggerInputTagGroupsInner
 from hindsight_client_api.models.mental_model_trigger_output import MentalModelTriggerOutput
 from hindsight_client_api.models.mental_model_trigger_output_tag_groups_inner import MentalModelTriggerOutputTagGroupsInner
+from hindsight_client_api.models.min_scores import MinScores
 from hindsight_client_api.models.model_not import ModelNot
 from hindsight_client_api.models.not1 import Not1
 from hindsight_client_api.models.observation_scope import ObservationScope
@@ -131,6 +132,7 @@ from hindsight_client_api.models.operations_list_response import OperationsListR
 from hindsight_client_api.models.recall_request import RecallRequest
 from hindsight_client_api.models.recall_response import RecallResponse
 from hindsight_client_api.models.recall_result import RecallResult
+from hindsight_client_api.models.recall_scores import RecallScores
 from hindsight_client_api.models.recover_consolidation_response import RecoverConsolidationResponse
 from hindsight_client_api.models.reflect_based_on import ReflectBasedOn
 from hindsight_client_api.models.reflect_directive import ReflectDirective

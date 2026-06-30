@@ -53,6 +53,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "claude-agent-sdk": IntegrationMeta("hindsight-claude-agent-sdk", "Claude Agent SDK"),
     "llamaindex": IntegrationMeta("hindsight-llamaindex", "LlamaIndex"),
     "codex": IntegrationMeta("hindsight-codex", "Codex"),
+    "github-copilot": IntegrationMeta("hindsight-copilot", "GitHub Copilot"),
     "cline": IntegrationMeta("hindsight-cline", "Cline"),
     "cursor-cli": IntegrationMeta("hindsight-cursor-cli", "Cursor CLI"),
     "cursor": IntegrationMeta("hindsight-cursor", "Cursor"),
@@ -60,6 +61,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "aider": IntegrationMeta("hindsight-aider", "Aider"),
     "paperclip": IntegrationMeta("@vectorize-io/hindsight-paperclip", "Paperclip"),
     "opencode": IntegrationMeta("@vectorize-io/opencode-hindsight", "OpenCode"),
+    "eve": IntegrationMeta("@vectorize-io/hindsight-eve", "Eve"),
     "cloudflare-oauth-proxy": IntegrationMeta("hindsight-cloudflare-oauth-proxy"),
     "openai-agents": IntegrationMeta("hindsight-openai-agents"),
     "pipecat": IntegrationMeta("hindsight-pipecat", "Pipecat"),
@@ -80,6 +82,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "continue": IntegrationMeta("hindsight-continue", "Continue"),
     "zed": IntegrationMeta("hindsight-zed", "Zed"),
     "openhands": IntegrationMeta("hindsight-openhands", "OpenHands"),
+    "devin-desktop": IntegrationMeta("hindsight-devin-desktop", "Devin Desktop"),
 }
 
 VALID_INTEGRATIONS = list(INTEGRATIONS.keys())

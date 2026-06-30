@@ -8,9 +8,12 @@ relevance score, independent of the cross-encoder model's score calibration.
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
-from hindsight_api.engine.search.reranking import apply_combined_scoring, _RECENCY_ALPHA, _TEMPORAL_ALPHA
+from hindsight_api.engine.search.reranking import (
+    _RECENCY_ALPHA,
+    _TEMPORAL_ALPHA,
+    apply_combined_scoring,
+    compute_recency_decay,
+)
 from hindsight_api.engine.search.types import MergedCandidate, RetrievalResult, ScoredResult
 
 UTC = timezone.utc
@@ -200,3 +203,52 @@ class TestBoostFormula:
 
     def test_empty_list_is_noop(self):
         apply_combined_scoring([], now=NOW)  # must not raise
+
+
+class TestRecencyDecayFunction:
+    """The configurable age→freshness curve (compute_recency_decay)."""
+
+    def test_linear_is_default_and_unchanged(self):
+        """Default function reproduces the historical linear decay over 365 days."""
+        assert compute_recency_decay(0) == 1.0
+        assert abs(compute_recency_decay(182.5) - 0.5) < 1e-6  # neutral at half the window
+        assert compute_recency_decay(400) == 0.1  # floored past the window
+
+    def test_linear_window_is_configurable(self):
+        """A custom window moves the neutral crossing; 730d window → neutral at 365d."""
+        assert abs(compute_recency_decay(365, "linear", linear_window_days=730) - 0.5) < 1e-6
+
+    def test_exponential_neutral_at_halflife(self):
+        """Exponential decay is exactly neutral (0.5) at the configured half-life."""
+        assert compute_recency_decay(0, "exponential", halflife_days=90) == 1.0
+        assert abs(compute_recency_decay(90, "exponential", halflife_days=90) - 0.5) < 1e-9
+        assert abs(compute_recency_decay(180, "exponential", halflife_days=90) - 0.25) < 1e-9
+
+    def test_exponential_penalises_old_less_harshly_than_linear(self):
+        """A 1-year-old memory keeps more freshness under a 90d-halflife exponential
+        than under the linear floor — the curve never hard-cuts to 0.1."""
+        lin = compute_recency_decay(365, "linear")
+        exp = compute_recency_decay(365, "exponential", halflife_days=180)
+        assert exp > lin
+
+    def test_none_is_always_neutral(self):
+        """'none' disables the recency signal — always neutral, no boost."""
+        assert compute_recency_decay(0, "none") == 0.5
+        assert compute_recency_decay(10_000, "none") == 0.5
+
+    def test_future_dates_clamp_to_max(self):
+        """Negative ages (future-dated memories) never exceed full freshness."""
+        assert compute_recency_decay(-100, "linear") == 1.0
+        assert compute_recency_decay(-100, "exponential", halflife_days=90) == 1.0
+
+    def test_nonpositive_halflife_falls_back_to_neutral(self):
+        """A misconfigured (<=0) half-life degrades to neutral rather than dividing by zero."""
+        assert compute_recency_decay(30, "exponential", halflife_days=0) == 0.5
+
+    def test_function_threads_through_apply_combined_scoring(self):
+        """The decay function chosen at the call site is what scores sr.recency."""
+        old = NOW - timedelta(days=180)
+        sr = _make_result(ce_norm=0.5, occurred_start=old)
+        apply_combined_scoring([sr], now=NOW, recency_decay_function="none")
+        assert sr.recency == 0.5
+        assert abs(sr.weight - 0.5) < 1e-9  # neutral → no recency boost

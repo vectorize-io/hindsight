@@ -51,6 +51,7 @@ import type {
   TagGroupAndInput,
   TagGroupOrInput,
   TagGroupNotInput,
+  MinScores,
   AsyncOperationSubmitResponse,
   CreateMentalModelResponse,
   DirectiveListResponse,
@@ -317,6 +318,8 @@ export class HindsightClient {
     query: string,
     options?: {
       types?: string[];
+      /** When recalling raw facts ('world'/'experience') together with 'observation', drop any raw fact a returned observation was consolidated from, so the observation supersedes it (no duplicate content). Disabled by default; no effect unless 'observation' and at least one raw type are both in types. */
+      preferObservations?: boolean;
       maxTokens?: number;
       budget?: Budget;
       trace?: boolean;
@@ -335,6 +338,8 @@ export class HindsightClient {
       tagsMatch?: "any" | "all" | "any_strict" | "all_strict" | "exact";
       /** Compound tag filter using boolean groups. Groups are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. Mutually exclusive with tags/tagsMatch. */
       tagGroups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput>;
+      /** Optional per-stage score floors, e.g. {semantic: 0.2, final: 0.5}. 'semantic' and 'keyword' are retrieval-level cutoffs; 'reranker' and 'final' are applied to the scored results after reranking. Any omitted stage imposes no floor. */
+      minScores?: MinScores;
       signal?: AbortSignal;
     }
   ): Promise<RecallResponse> {
@@ -344,6 +349,7 @@ export class HindsightClient {
       body: {
         query,
         types: options?.types,
+        prefer_observations: options?.preferObservations,
         max_tokens: options?.maxTokens,
         budget: options?.budget || "mid",
         trace: options?.trace,
@@ -365,6 +371,7 @@ export class HindsightClient {
         tags: options?.tags,
         tags_match: options?.tagsMatch,
         tag_groups: options?.tagGroups,
+        min_scores: options?.minScores,
       },
       signal: options?.signal,
     });
@@ -1102,6 +1109,7 @@ export type {
   TagGroupAndInput,
   TagGroupOrInput,
   TagGroupNotInput,
+  MinScores,
   AsyncOperationSubmitResponse,
   CreateMentalModelResponse,
   DirectiveListResponse,

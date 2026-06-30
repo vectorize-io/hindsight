@@ -23,11 +23,28 @@ from litellm.exceptions import Timeout as LiteLLMTimeout
 
 from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
 from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
+from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
 logger = logging.getLogger(__name__)
+
+
+def _usage_from_litellm_response(response: Any) -> LLMResponseUsage:
+    """Extract prompt/completion/cached token counts from a LiteLLM (OpenAI-shaped) usage block."""
+    usage = getattr(response, "usage", None)
+    if not usage:
+        return LLMResponseUsage()
+    cached_tokens = 0
+    details = getattr(usage, "prompt_tokens_details", None)
+    if details:
+        cached_tokens = getattr(details, "cached_tokens", 0) or 0
+    return LLMResponseUsage(
+        input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+        output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+        cached_tokens=cached_tokens,
+    )
 
 
 class LiteLLMLLM(LLMInterface):
@@ -54,6 +71,7 @@ class LiteLLMLLM(LLMInterface):
         timeout: float | None = None,
         extra_body: dict[str, Any] | None = None,
         bedrock_service_tier: str | None = None,
+        default_headers: dict[str, Any] | None = None,
         **kwargs: Any,
     ):
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
@@ -67,6 +85,13 @@ class LiteLLMLLM(LLMInterface):
         # drops any the target model rejects (litellm.drop_params=True below).
         # Sourced from llm_extra_body (env: HINDSIGHT_API_LLM_EXTRA_BODY).
         self._extra_body: dict[str, Any] = extra_body or {}
+        # Operator-configured default headers forwarded to litellm.acompletion as
+        # ``extra_headers`` (used by deployments routing through proxies / request-
+        # tracing middleware). Mirrors the Anthropic provider's default_headers
+        # wiring. Sourced from llm_default_headers (env: HINDSIGHT_API_LLM_DEFAULT_HEADERS).
+        # Copied so a caller-owned dict can't be mutated through us, and a fresh
+        # copy is handed to each call below to avoid cross-request contamination.
+        self._default_headers: dict[str, Any] = dict(default_headers or {})
         self.bedrock_service_tier = bedrock_service_tier
 
         try:
@@ -126,6 +151,13 @@ class LiteLLMLLM(LLMInterface):
         # so explicit per-call params (model, messages, temperature, …) always win.
         for key, value in self._extra_body.items():
             kwargs.setdefault(key, value)
+
+        # Forward operator-configured default headers as ``extra_headers`` so they
+        # reach the provider behind LiteLLM (proxies / request-tracing middleware).
+        # ``setdefault`` keeps any explicit per-call ``extra_headers`` authoritative;
+        # a per-call copy prevents LiteLLM/downstream from mutating the stored dict.
+        if self._default_headers:
+            kwargs.setdefault("extra_headers", dict(self._default_headers))
 
         # Bedrock service tier: flex (50% cheaper), priority, or reserved
         if self.model.startswith("bedrock/") and self.bedrock_service_tier is not None:
@@ -219,6 +251,10 @@ class LiteLLMLLM(LLMInterface):
                     self._acompletion(**call_kwargs),
                     timeout=self.timeout,
                 )
+                # Stash usage before the length check and parse/validate below,
+                # which may raise locally even though the provider charged for
+                # these tokens (#2387).
+                stash_response_usage(_usage_from_litellm_response(response))
 
                 content = response.choices[0].message.content or ""
                 finish_reason = response.choices[0].finish_reason
@@ -249,8 +285,9 @@ class LiteLLMLLM(LLMInterface):
                     result = content
 
                 # Extract usage
-                input_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
-                output_tokens = getattr(response.usage, "completion_tokens", 0) or 0
+                response_usage = _usage_from_litellm_response(response)
+                input_tokens = response_usage.input_tokens
+                output_tokens = response_usage.output_tokens
                 total_tokens = input_tokens + output_tokens
 
                 # Record metrics
@@ -386,6 +423,14 @@ class LiteLLMLLM(LLMInterface):
                     self._acompletion(**call_kwargs),
                     timeout=self.timeout,
                 )
+                # Stash usage before the tool-call argument parse below, which
+                # can raise json.JSONDecodeError locally even though the provider
+                # already billed for these tokens; without this the error trace
+                # records 0/0 tokens (#2387). Mirrors call() and the anthropic/
+                # gemini call_with_tools paths so the litellm tool path (and the
+                # LiteLLMRouterLLM subclass that inherits this method) completes
+                # the #2396 usage-on-error coverage.
+                stash_response_usage(_usage_from_litellm_response(response))
 
                 message = response.choices[0].message
                 content = message.content

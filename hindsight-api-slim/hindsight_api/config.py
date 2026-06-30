@@ -148,6 +148,16 @@ ENV_LLM_DEFAULT_HEADERS = "HINDSIGHT_API_LLM_DEFAULT_HEADERS"
 ENV_LLM_STRICT_SCHEMA = "HINDSIGHT_API_LLM_STRICT_SCHEMA"
 ENV_LLM_SEND_BANK_AS_USER = "HINDSIGHT_API_LLM_SEND_BANK_AS_USER"
 
+# Multi-LLM strategy. Extra LLMs are configured by index alongside the unindexed
+# primary (e.g. HINDSIGHT_API_LLM_1_PROVIDER, HINDSIGHT_API_LLM_2_PROVIDER, ...),
+# and HINDSIGHT_API_LLM_STRATEGY (JSON) selects how to route across them — see
+# _parse_llm_members / _parse_llm_strategy below. Each operation can override the
+# global chain with its own HINDSIGHT_API_<OP>_LLM_<n>_* members + _STRATEGY.
+ENV_LLM_STRATEGY = "HINDSIGHT_API_LLM_STRATEGY"
+ENV_RETAIN_LLM_STRATEGY = "HINDSIGHT_API_RETAIN_LLM_STRATEGY"
+ENV_REFLECT_LLM_STRATEGY = "HINDSIGHT_API_REFLECT_LLM_STRATEGY"
+ENV_CONSOLIDATION_LLM_STRATEGY = "HINDSIGHT_API_CONSOLIDATION_LLM_STRATEGY"
+
 # LiteLLM Router chain — provider-specific config consumed by the "litellmrouter"
 # provider. Each entry is a deployment; the Router tries them in declared order and
 # falls back to the next on transient errors (5xx, rate-limit, timeout).
@@ -271,6 +281,11 @@ ENV_EMBEDDINGS_OPENROUTER_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENROUTER_MODEL"
 ENV_RERANKER_OPENROUTER_API_KEY = "HINDSIGHT_API_RERANKER_OPENROUTER_API_KEY"
 ENV_RERANKER_OPENROUTER_MODEL = "HINDSIGHT_API_RERANKER_OPENROUTER_MODEL"
 ENV_RERANKER_OPENROUTER_BASE_URL = "HINDSIGHT_API_RERANKER_OPENROUTER_BASE_URL"
+
+# Requesty configuration (OpenAI-compatible gateway; embeddings)
+ENV_REQUESTY_API_KEY = "HINDSIGHT_API_REQUESTY_API_KEY"
+ENV_EMBEDDINGS_REQUESTY_API_KEY = "HINDSIGHT_API_EMBEDDINGS_REQUESTY_API_KEY"
+ENV_EMBEDDINGS_REQUESTY_MODEL = "HINDSIGHT_API_EMBEDDINGS_REQUESTY_MODEL"
 
 # ZeroEntropy configuration (embeddings)
 ENV_EMBEDDINGS_ZEROENTROPY_API_KEY = "HINDSIGHT_API_EMBEDDINGS_ZEROENTROPY_API_KEY"
@@ -575,6 +590,14 @@ ENV_RECALL_MAX_CANDIDATES_PER_SOURCE = "HINDSIGHT_API_RECALL_MAX_CANDIDATES_PER_
 # Empty disables the feature.
 ENV_RECALL_STRATEGY_BOOSTS = "HINDSIGHT_API_RECALL_STRATEGY_BOOSTS"
 
+# Recency decay used by recall reranking (engine/search/reranking.py). The decay
+# function maps a memory's age onto a freshness signal that nudges its final
+# ranking via a small multiplicative boost. "linear" (default) preserves the
+# historical behaviour; "exponential" decays by half-life; "none" disables it.
+ENV_RECENCY_DECAY_FUNCTION = "HINDSIGHT_API_RECENCY_DECAY_FUNCTION"
+ENV_RECENCY_DECAY_LINEAR_WINDOW_DAYS = "HINDSIGHT_API_RECENCY_DECAY_LINEAR_WINDOW_DAYS"
+ENV_RECENCY_DECAY_HALFLIFE_DAYS = "HINDSIGHT_API_RECENCY_DECAY_HALFLIFE_DAYS"
+
 # Audit log settings
 ENV_AUDIT_LOG_ENABLED = "HINDSIGHT_API_AUDIT_LOG_ENABLED"
 ENV_AUDIT_LOG_ACTIONS = "HINDSIGHT_API_AUDIT_LOG_ACTIONS"
@@ -588,6 +611,7 @@ ENV_LLM_TRACE_MAX_CHARS = "HINDSIGHT_API_LLM_TRACE_MAX_CHARS"
 
 # Background maintenance settings
 ENV_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS = "HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS"
+ENV_MENTAL_MODEL_REFRESH_TICK_SECONDS = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS"
 
 # Disposition settings
 ENV_DISPOSITION_SKEPTICISM = "HINDSIGHT_API_DISPOSITION_SKEPTICISM"
@@ -610,6 +634,7 @@ PROVIDER_DEFAULT_MODELS = {
     "deepseek": "deepseek-v4-flash",
     "zai": "glm-4.5-flash",
     "opencode-go": "deepseek-v4-flash",
+    "atlas": "deepseek-ai/deepseek-v4-pro",
     "ollama": "gemma3:12b",
     "ollama-cloud": "gemma3:12b",
     "llamacpp": "gemma-4-e2b-it",
@@ -623,6 +648,7 @@ PROVIDER_DEFAULT_MODELS = {
     "bedrock": "us.amazon.nova-2-lite-v1:0",
     "volcano": "doubao-pro-32k",
     "openrouter": "qwen/qwen3.5-9b",
+    "requesty": "openai/gpt-4o-mini",
     "fireworks": "accounts/fireworks/models/llama-v3p1-8b-instruct",
     "nous": "deepseek/deepseek-v4-flash",
 }
@@ -713,6 +739,14 @@ DEFAULT_RECALL_MAX_CANDIDATES_PER_SOURCE = 0
 # "graph:high,semantic:low"). Empty disables the feature. See
 # ENV_RECALL_STRATEGY_BOOSTS for the full rationale.
 DEFAULT_RECALL_STRATEGY_BOOSTS = ""
+# Recency decay shape used by recall reranking. "linear" reproduces the
+# historical straight-line decay; defaults below keep behaviour unchanged.
+RECENCY_DECAY_FUNCTIONS = ("linear", "exponential", "none")
+DEFAULT_RECENCY_DECAY_FUNCTION = "linear"
+# Linear: days over which freshness decays from 1.0 to its 0.1 floor.
+DEFAULT_RECENCY_DECAY_LINEAR_WINDOW_DAYS = 365.0
+# Exponential: age (days) at which the recency signal is neutral (0.5).
+DEFAULT_RECENCY_DECAY_HALFLIFE_DAYS = 90.0
 # Retrieval arms that can be boosted; mirrors fusion.py source_names.
 RECALL_STRATEGY_NAMES = ("semantic", "bm25", "graph", "temporal")
 # User-facing priority levels. Kept in sync with recall_boost.BOOST_LEVELS by a
@@ -770,6 +804,9 @@ DEFAULT_RERANKER_COHERE_MODEL = "rerank-english-v3.0"
 DEFAULT_EMBEDDINGS_OPENROUTER_MODEL = "perplexity/pplx-embed-v1-0.6b"
 DEFAULT_RERANKER_OPENROUTER_MODEL = "cohere/rerank-v3.5"
 DEFAULT_RERANKER_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/rerank"
+
+# Requesty defaults
+DEFAULT_EMBEDDINGS_REQUESTY_MODEL = "openai/text-embedding-3-small"
 
 # ZeroEntropy defaults
 DEFAULT_EMBEDDINGS_ZEROENTROPY_MODEL = "zembed-1"
@@ -1011,6 +1048,11 @@ DEFAULT_LLM_TRACE_MAX_CHARS = 50000  # Truncate stored input/output beyond this 
 # 0 disables the reconcile sweep.
 DEFAULT_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS = 300
 
+# How often the maintenance loop checks for cron-scheduled mental models that are
+# due for a refresh. This is the *check* cadence; the actual schedule is the
+# per-model cron expression in the mental model's trigger. 0 disables the sweep.
+DEFAULT_MENTAL_MODEL_REFRESH_TICK_SECONDS = 60
+
 # Default MCP tool descriptions (can be customized via env vars)
 DEFAULT_MCP_RETAIN_DESCRIPTION = """Store important information to long-term memory.
 
@@ -1208,6 +1250,18 @@ def _validate_recall_budget_function(function: str) -> str:
     return function_lower
 
 
+def _validate_recency_decay_function(function: str) -> str:
+    """Validate and normalize the recency decay function."""
+    function_lower = function.lower()
+    if function_lower not in RECENCY_DECAY_FUNCTIONS:
+        logger.warning(
+            f"Invalid recency decay function '{function}', must be one of {RECENCY_DECAY_FUNCTIONS}. "
+            f"Defaulting to '{DEFAULT_RECENCY_DECAY_FUNCTION}'."
+        )
+        return DEFAULT_RECENCY_DECAY_FUNCTION
+    return function_lower
+
+
 def _parse_bank_priority(raw: str) -> dict[str, int]:
     """Parse ``bank-pattern:priority,...`` into ``{pattern: priority}``.
 
@@ -1261,6 +1315,132 @@ def _parse_llm_router_config(env_var: str) -> dict | None:
         return json.loads(raw)
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid {env_var}: invalid JSON: {e}") from e
+
+
+@dataclass
+class LLMMemberConfig:
+    """One extra LLM in a multi-LLM chain, configured via indexed env vars.
+
+    Mirrors the subset of LLM settings an indexed member supports
+    (``HINDSIGHT_API_<OP>LLM_<n>_*``). The unindexed config remains the primary
+    member (index 0); these describe members 1..N.
+    """
+
+    provider: str
+    api_key: str | None
+    model: str
+    base_url: str | None
+    reasoning_effort: str | None
+    extra_body: dict | None
+    default_headers: dict | None
+    bedrock_service_tier: str | None
+    gemini_service_tier: str | None
+    vertexai_project_id: str | None = None
+    vertexai_region: str | None = None
+    vertexai_service_account_key: str | None = None
+    litellmrouter_config: dict | None = None
+
+
+# Valid multi-LLM strategy modes.
+LLM_STRATEGY_FAILOVER = "failover"
+LLM_STRATEGY_ROUND_ROBIN = "round-robin"
+_VALID_LLM_STRATEGY_MODES = (LLM_STRATEGY_FAILOVER, LLM_STRATEGY_ROUND_ROBIN)
+
+
+@dataclass
+class LLMStrategyConfig:
+    """How to route a request across the members of a multi-LLM chain.
+
+    ``mode`` is "failover" (try members in order) or "round-robin" (rotate the
+    starting member per request, then fall through the rest on error). ``weights``
+    is round-robin only: positive integers, one per member (primary first), giving
+    an unbalanced rotation; ``None`` means uniform.
+    """
+
+    mode: str
+    weights: list[int] | None = None
+
+
+def _parse_llm_strategy(raw: str | None) -> LLMStrategyConfig | None:
+    """Parse a multi-LLM strategy from a JSON env var.
+
+    Returns ``None`` when unset. The value must be a JSON object with a ``mode``
+    of "failover" or "round-robin"; ``weights`` (round-robin only) must be a list
+    of positive ints. Raises ``ValueError`` on any malformed input so
+    misconfiguration fails fast at startup rather than silently degrading.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid {ENV_LLM_STRATEGY}: invalid JSON: {e}") from e
+    if not isinstance(parsed, dict):
+        raise ValueError(f"Invalid LLM strategy: expected a JSON object, got {type(parsed).__name__}")
+
+    mode = parsed.get("mode")
+    if mode not in _VALID_LLM_STRATEGY_MODES:
+        raise ValueError(f"Invalid LLM strategy mode {mode!r}. Must be one of: {', '.join(_VALID_LLM_STRATEGY_MODES)}.")
+
+    weights = parsed.get("weights")
+    if weights is not None:
+        if mode != LLM_STRATEGY_ROUND_ROBIN:
+            raise ValueError(f"LLM strategy 'weights' is only valid with mode '{LLM_STRATEGY_ROUND_ROBIN}'.")
+        if not isinstance(weights, list) or not weights or not all(isinstance(w, int) and w > 0 for w in weights):
+            raise ValueError("LLM strategy 'weights' must be a non-empty list of positive integers.")
+
+    return LLMStrategyConfig(mode=mode, weights=weights)
+
+
+def _parse_llm_members(prefix: str) -> list[LLMMemberConfig]:
+    """Parse indexed extra-LLM members for an operation env prefix.
+
+    ``prefix`` is the operation segment in the env name: ``""`` (global),
+    ``"RETAIN_"``, ``"REFLECT_"`` or ``"CONSOLIDATION_"``. Members are read from
+    ``HINDSIGHT_API_{prefix}LLM_{n}_PROVIDER`` for n = 1, 2, ... and scanning
+    stops at the first index whose ``_PROVIDER`` is unset (so indices must be
+    contiguous from 1). ``MODEL`` defaults to the provider's default model.
+    """
+    from .engine.llm_wrapper import requires_api_key
+
+    members: list[LLMMemberConfig] = []
+    index = 1
+    while True:
+        base = f"HINDSIGHT_API_{prefix}LLM_{index}_"
+        provider = os.getenv(base + "PROVIDER")
+        if not provider:
+            break
+
+        api_key = os.getenv(base + "API_KEY") or None
+        if not api_key and requires_api_key(provider):
+            raise ValueError(
+                f"{base}API_KEY is required for provider '{provider}' (member {index} of the multi-LLM chain)."
+            )
+
+        gemini_service_tier = os.getenv(base + "GEMINI_SERVICE_TIER")
+        members.append(
+            LLMMemberConfig(
+                provider=provider,
+                api_key=api_key,
+                model=os.getenv(base + "MODEL") or _get_default_model_for_provider(provider),
+                base_url=os.getenv(base + "BASE_URL") or None,
+                reasoning_effort=os.getenv(base + "REASONING_EFFORT") or None,
+                extra_body=json.loads(os.getenv(base + "EXTRA_BODY", "null")),
+                default_headers=json.loads(os.getenv(base + "DEFAULT_HEADERS", "null")),
+                bedrock_service_tier=os.getenv(base + "BEDROCK_SERVICE_TIER") or None,
+                gemini_service_tier=(
+                    parse_gemini_service_tier(gemini_service_tier) if provider.lower() == "gemini" else None
+                ),
+                vertexai_project_id=os.getenv(base + "VERTEXAI_PROJECT_ID") or None,
+                vertexai_region=os.getenv(base + "VERTEXAI_REGION") or None,
+                vertexai_service_account_key=os.getenv(base + "VERTEXAI_SERVICE_ACCOUNT_KEY") or None,
+                litellmrouter_config=_parse_llm_router_config(base + "LITELLMROUTER_CONFIG"),
+            )
+        )
+        index += 1
+
+    return members
 
 
 def _parse_default_bank_template(raw: str | None) -> dict | None:
@@ -1429,6 +1609,8 @@ class HindsightConfig:
     embeddings_cohere_output_dimensions: int | None
     embeddings_openrouter_api_key: str | None
     embeddings_openrouter_model: str
+    embeddings_requesty_api_key: str | None
+    embeddings_requesty_model: str
     embeddings_litellm_api_base: str
     embeddings_litellm_api_key: str | None
     embeddings_litellm_model: str
@@ -1464,6 +1646,9 @@ class HindsightConfig:
     bm25_min_score: float
     recall_max_candidates_per_source: int
     recall_strategy_boosts: dict[str, str]
+    recency_decay_function: str
+    recency_decay_linear_window_days: float
+    recency_decay_halflife_days: float
     reranker_cohere_api_key: str | None
     reranker_cohere_model: str
     reranker_cohere_base_url: str | None
@@ -1689,6 +1874,9 @@ class HindsightConfig:
     # Interval for the periodic sweep that re-schedules consolidation for banks with
     # eligible-but-unscheduled facts. 0 = disabled.
     consolidation_reconcile_interval_seconds: int
+    # How often the maintenance loop checks for cron-scheduled mental models due for
+    # refresh (the per-model schedule lives in the mental model trigger). 0 = disabled.
+    mental_model_refresh_tick_seconds: int
 
     # Webhook configuration (static - server-level only, not per-bank)
     webhook_url: str | None  # Global webhook URL (None = disabled)
@@ -1713,6 +1901,20 @@ class HindsightConfig:
     file_parser_markitdown_ocr_model: str | None = None
     file_parser_markitdown_ocr_prompt: str = DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT
 
+    # Multi-LLM chains (static, server-level). Index 0 of each chain is the
+    # corresponding unindexed/base LLM config above; these hold the extra indexed
+    # members and the routing strategy. Per-op members fall back to the global
+    # members when unset (see MemoryEngine._build_llm). Credential fields (members
+    # embed api_keys/base_urls).
+    llm_members: list[LLMMemberConfig] = field(default_factory=list)
+    llm_strategy: LLMStrategyConfig | None = None
+    retain_llm_members: list[LLMMemberConfig] = field(default_factory=list)
+    retain_llm_strategy: LLMStrategyConfig | None = None
+    reflect_llm_members: list[LLMMemberConfig] = field(default_factory=list)
+    reflect_llm_strategy: LLMStrategyConfig | None = None
+    consolidation_llm_members: list[LLMMemberConfig] = field(default_factory=list)
+    consolidation_llm_strategy: LLMStrategyConfig | None = None
+
     # Class-level sets for configuration categorization
 
     # CREDENTIAL_FIELDS: Never exposed via API, never configurable per-tenant/bank
@@ -1727,6 +1929,11 @@ class HindsightConfig:
         "retain_llm_litellmrouter_config",
         "reflect_llm_litellmrouter_config",
         "consolidation_llm_litellmrouter_config",
+        # Multi-LLM chains — members embed api_keys and base_urls
+        "llm_members",
+        "retain_llm_members",
+        "reflect_llm_members",
+        "consolidation_llm_members",
         # Base URLs (could expose infrastructure)
         "llm_base_url",
         "retain_llm_base_url",
@@ -2146,6 +2353,15 @@ class HindsightConfig:
             if os.getenv(ENV_CONSOLIDATION_LLM_TIMEOUT)
             else None,
             consolidation_llm_litellmrouter_config=_parse_llm_router_config(ENV_CONSOLIDATION_LLM_LITELLMROUTER_CONFIG),
+            # Multi-LLM chains (indexed members + routing strategy)
+            llm_members=_parse_llm_members(""),
+            llm_strategy=_parse_llm_strategy(os.getenv(ENV_LLM_STRATEGY)),
+            retain_llm_members=_parse_llm_members("RETAIN_"),
+            retain_llm_strategy=_parse_llm_strategy(os.getenv(ENV_RETAIN_LLM_STRATEGY)),
+            reflect_llm_members=_parse_llm_members("REFLECT_"),
+            reflect_llm_strategy=_parse_llm_strategy(os.getenv(ENV_REFLECT_LLM_STRATEGY)),
+            consolidation_llm_members=_parse_llm_members("CONSOLIDATION_"),
+            consolidation_llm_strategy=_parse_llm_strategy(os.getenv(ENV_CONSOLIDATION_LLM_STRATEGY)),
             # Embeddings
             embeddings_provider=os.getenv(ENV_EMBEDDINGS_PROVIDER, DEFAULT_EMBEDDINGS_PROVIDER),
             embeddings_local_model=os.getenv(ENV_EMBEDDINGS_LOCAL_MODEL, DEFAULT_EMBEDDINGS_LOCAL_MODEL),
@@ -2210,6 +2426,11 @@ class HindsightConfig:
             or os.getenv(ENV_OPENROUTER_API_KEY)
             or os.getenv(ENV_LLM_API_KEY),
             embeddings_openrouter_model=os.getenv(ENV_EMBEDDINGS_OPENROUTER_MODEL, DEFAULT_EMBEDDINGS_OPENROUTER_MODEL),
+            # Requesty embeddings (with fallback to shared Requesty key, then LLM key)
+            embeddings_requesty_api_key=os.getenv(ENV_EMBEDDINGS_REQUESTY_API_KEY)
+            or os.getenv(ENV_REQUESTY_API_KEY)
+            or os.getenv(ENV_LLM_API_KEY),
+            embeddings_requesty_model=os.getenv(ENV_EMBEDDINGS_REQUESTY_MODEL, DEFAULT_EMBEDDINGS_REQUESTY_MODEL),
             # ZeroEntropy embeddings
             embeddings_zeroentropy_api_key=os.getenv(ENV_EMBEDDINGS_ZEROENTROPY_API_KEY)
             or os.getenv("ZEROENTROPY_API_KEY"),
@@ -2315,6 +2536,15 @@ class HindsightConfig:
             ),
             recall_strategy_boosts=_parse_strategy_boosts(
                 os.getenv(ENV_RECALL_STRATEGY_BOOSTS, DEFAULT_RECALL_STRATEGY_BOOSTS)
+            ),
+            recency_decay_function=_validate_recency_decay_function(
+                os.getenv(ENV_RECENCY_DECAY_FUNCTION, DEFAULT_RECENCY_DECAY_FUNCTION)
+            ),
+            recency_decay_linear_window_days=float(
+                os.getenv(ENV_RECENCY_DECAY_LINEAR_WINDOW_DAYS, str(DEFAULT_RECENCY_DECAY_LINEAR_WINDOW_DAYS))
+            ),
+            recency_decay_halflife_days=float(
+                os.getenv(ENV_RECENCY_DECAY_HALFLIFE_DAYS, str(DEFAULT_RECENCY_DECAY_HALFLIFE_DAYS))
             ),
             # Cohere reranker (with backward-compatible fallback to shared API key)
             reranker_cohere_api_key=os.getenv(ENV_RERANKER_COHERE_API_KEY) or os.getenv(ENV_COHERE_API_KEY),
@@ -2697,6 +2927,12 @@ class HindsightConfig:
                 os.getenv(
                     ENV_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS,
                     str(DEFAULT_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS),
+                )
+            ),
+            mental_model_refresh_tick_seconds=int(
+                os.getenv(
+                    ENV_MENTAL_MODEL_REFRESH_TICK_SECONDS,
+                    str(DEFAULT_MENTAL_MODEL_REFRESH_TICK_SECONDS),
                 )
             ),
             # Webhook configuration (static, server-level only)
