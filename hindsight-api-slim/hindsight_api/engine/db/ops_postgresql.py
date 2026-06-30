@@ -432,11 +432,9 @@ class PostgreSQLOps(DataAccessOps):
             WHERE e.id = c.entity_id_1
               AND e.bank_id = $1
               AND NOT EXISTS (
-                  SELECT 1
-                  FROM {ue_table} u1
-                  JOIN {ue_table} u2 ON u1.unit_id = u2.unit_id
-                  WHERE u1.entity_id = c.entity_id_1
-                    AND u2.entity_id = c.entity_id_2
+                  SELECT unit_id FROM {ue_table} WHERE entity_id = c.entity_id_1
+                  INTERSECT
+                  SELECT unit_id FROM {ue_table} WHERE entity_id = c.entity_id_2
               )
             """,
             bank_id,
