@@ -448,6 +448,7 @@ class MemoryEngineInterface(ABC):
         self,
         bank_id: str,
         *,
+        include_entity_links: bool = True,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
         """
@@ -455,6 +456,17 @@ class MemoryEngineInterface(ABC):
 
         Args:
             bank_id: The memory bank ID.
+            include_entity_links: When True (default), include the
+                entity-link total in `link_counts["entity"]`. This count
+                comes from a join + group on `unit_entities ⨝ memory_units`
+                that dominates the query cost on banks with many memories
+                and many distinct entities per memory. Callers that don't
+                surface entity link counts (or that prefer a fast response
+                over an approximate cap value) can pass False to skip the
+                aggregation entirely. When skipped, the "entity" key in
+                `link_counts` is omitted — matching the existing
+                "no entity edges" rendering — so downstream readers that
+                already tolerate a missing key see no behavior change.
             request_context: Request context for authentication.
 
         Returns:

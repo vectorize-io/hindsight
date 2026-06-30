@@ -19,7 +19,18 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture
 def llm_config():
-    """Create LLM config from environment."""
+    """Create LLM config from environment.
+
+    Mirrors the retain-build pattern in MemoryEngine (see memory_engine.py
+    where `_retain_base_llm` is constructed): per-op overrides take
+    precedence for provider/api_key/model/base_url, while provider-specific
+    required fields (Vertex AI project/region/SA key, litellmrouter config)
+    are sourced from the same `config` object the production builder uses.
+    Threading these explicitly is required since the constructor stopped
+    backfilling from global config — the test fixture is otherwise
+    indistinguishable from the production retain-config build, so no new
+    attack surface is introduced (same env vars, same fields).
+    """
     clear_config_cache()
     config = get_config()
     return LLMConfig(
@@ -27,6 +38,10 @@ def llm_config():
         api_key=config.retain_llm_api_key or config.llm_api_key,
         model=config.retain_llm_model or config.llm_model,
         base_url=config.retain_llm_base_url or config.llm_base_url,
+        vertexai_project_id=config.llm_vertexai_project_id,
+        vertexai_region=config.llm_vertexai_region,
+        vertexai_service_account_key=config.llm_vertexai_service_account_key,
+        litellmrouter_config=(config.retain_llm_litellmrouter_config or config.llm_litellmrouter_config),
     )
 
 

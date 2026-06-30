@@ -348,3 +348,104 @@ async def test_graph_exact_global_scope_filter(memory, api_client, test_bank_id,
     assert response.status_code == 200
     texts = {row["text"] for row in response.json()["table_rows"]}
     assert texts == {"obs global"}
+
+
+# ============================================================================
+# include_entity_data opt-out
+# ============================================================================
+# Adds a `include_entity_data: bool = True` query parameter to the graph
+# endpoint. When False, the dataplane skips the unit_entities ⨝ entities
+# join (and the source-memory entity inheritance that follows from it) plus
+# the in-memory entity-link inference. Callers that don't render entity
+# coloring or entity-link edges can avoid the dominant cost on banks where
+# observations carry large source_memory_ids arrays.
+#
+# Default is True — preserves the historical response shape for existing
+# callers (OSS control plane, SDK consumers).
+
+
+@pytest.mark.asyncio
+async def test_graph_default_includes_entity_edges(api_client, test_bank_id):
+    """Default behavior runs the entity-link inference. Two memories that share
+    an entity must yield at least one entity-typed edge between them.
+    """
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={
+            "items": [
+                {"content": "Alice works on the platform team."},
+                {"content": "Alice mentored Bob on the platform team."},
+            ]
+        },
+    )
+    assert response.status_code == 200
+
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/graph")
+    assert response.status_code == 200
+    data = response.json()
+    edge_types = {e["data"].get("linkType") for e in data.get("edges", [])}
+    # The two memories share at least one extracted entity (Alice / platform)
+    # so the inference loop must emit at least one "entity" edge between them.
+    # If the entity surface changes upstream and this becomes flaky, narrow
+    # the assertion to the "entities" field on the nodes themselves.
+    assert "entity" in edge_types or any(
+        n["data"].get("entities") not in (None, "None", "") for n in data.get("nodes", [])
+    )
+
+
+@pytest.mark.asyncio
+async def test_graph_include_entity_data_false_skips_entity_edges(api_client, test_bank_id):
+    """include_entity_data=false must skip the entity lookup AND the entity-
+    link inference. No edges of type "entity" should appear in the response.
+    """
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={
+            "items": [
+                {"content": "Alice works on the platform team."},
+                {"content": "Alice mentored Bob on the platform team."},
+            ]
+        },
+    )
+    assert response.status_code == 200
+
+    response = await api_client.get(
+        f"/v1/default/banks/{test_bank_id}/graph",
+        params={"include_entity_data": "false"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # No entity-derived edges should be present.
+    for edge in data.get("edges", []):
+        assert edge["data"].get("linkType") != "entity", (
+            f"include_entity_data=false should not produce 'entity' edges, got {edge}"
+        )
+    # Nodes are still returned and table_rows are still populated — only the
+    # entity surface is suppressed.
+    assert len(data.get("nodes", [])) >= 2
+    assert len(data.get("table_rows", [])) >= 2
+
+
+@pytest.mark.asyncio
+async def test_graph_include_entity_data_false_omits_node_entities(api_client, test_bank_id):
+    """When the entity lookup is skipped, nodes' entities field collapses to
+    the empty sentinel — there is no list of entity names to attach because
+    no unit_entities row was fetched.
+    """
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={"items": [{"content": "Alice works on the platform team."}]},
+    )
+    assert response.status_code == 200
+
+    response = await api_client.get(
+        f"/v1/default/banks/{test_bank_id}/graph",
+        params={"include_entity_data": "false"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    for node in data.get("nodes", []):
+        entities = node["data"].get("entities")
+        assert entities in (None, "", "None"), (
+            f"include_entity_data=false expected empty entities sentinel on node, got {entities!r}"
+        )

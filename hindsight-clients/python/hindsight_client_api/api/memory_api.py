@@ -16,7 +16,7 @@ from pydantic import validate_call, Field, StrictFloat, StrictStr, StrictInt
 from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Annotated
 
-from pydantic import Field, StrictStr, field_validator
+from pydantic import Field, StrictBool, StrictStr, field_validator
 from typing import Any, List, Optional
 from typing_extensions import Annotated
 from hindsight_client_api.models.clear_memory_observations_response import ClearMemoryObservationsResponse
@@ -958,6 +958,7 @@ class MemoryApi:
         tags_match: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
         chunk_id: Optional[StrictStr] = None,
+        include_entity_data: Optional[StrictBool] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -992,6 +993,8 @@ class MemoryApi:
         :type document_id: str
         :param chunk_id:
         :type chunk_id: str
+        :param include_entity_data:
+        :type include_entity_data: bool
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1025,6 +1028,7 @@ class MemoryApi:
             tags_match=tags_match,
             document_id=document_id,
             chunk_id=chunk_id,
+            include_entity_data=include_entity_data,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -1058,6 +1062,7 @@ class MemoryApi:
         tags_match: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
         chunk_id: Optional[StrictStr] = None,
+        include_entity_data: Optional[StrictBool] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1092,6 +1097,8 @@ class MemoryApi:
         :type document_id: str
         :param chunk_id:
         :type chunk_id: str
+        :param include_entity_data:
+        :type include_entity_data: bool
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1125,6 +1132,7 @@ class MemoryApi:
             tags_match=tags_match,
             document_id=document_id,
             chunk_id=chunk_id,
+            include_entity_data=include_entity_data,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -1158,6 +1166,7 @@ class MemoryApi:
         tags_match: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
         chunk_id: Optional[StrictStr] = None,
+        include_entity_data: Optional[StrictBool] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1192,6 +1201,8 @@ class MemoryApi:
         :type document_id: str
         :param chunk_id:
         :type chunk_id: str
+        :param include_entity_data:
+        :type include_entity_data: bool
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1225,6 +1236,7 @@ class MemoryApi:
             tags_match=tags_match,
             document_id=document_id,
             chunk_id=chunk_id,
+            include_entity_data=include_entity_data,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -1253,6 +1265,7 @@ class MemoryApi:
         tags_match,
         document_id,
         chunk_id,
+        include_entity_data,
         authorization,
         _request_auth,
         _content_type,
@@ -1306,6 +1319,10 @@ class MemoryApi:
         if chunk_id is not None:
             
             _query_params.append(('chunk_id', chunk_id))
+            
+        if include_entity_data is not None:
+            
+            _query_params.append(('include_entity_data', include_entity_data))
             
         # process the header parameters
         if authorization is not None:

@@ -439,7 +439,7 @@ export const listBanks = <ThrowOnError extends boolean = false>(
 /**
  * Get statistics for memory bank
  *
- * Get statistics about nodes and links for a specific agent
+ * Get statistics about nodes and links for a specific agent. Pass include_entity_links=false to skip the entity-link aggregation when the caller doesn't need the per-entity slice; this can significantly reduce response time on banks with many memories and many distinct entities. Default is true, preserving the historical response shape.
  */
 export const getAgentStats = <ThrowOnError extends boolean = false>(
   options: Options<GetAgentStatsData, ThrowOnError>

@@ -4274,6 +4274,10 @@ export type GetGraphData = {
      * Chunk Id
      */
     chunk_id?: string | null;
+    /**
+     * Include Entity Data
+     */
+    include_entity_data?: boolean;
   };
   url: "/v1/default/banks/{bank_id}/graph";
 };
@@ -4631,7 +4635,12 @@ export type GetAgentStatsData = {
      */
     bank_id: string;
   };
-  query?: never;
+  query?: {
+    /**
+     * Include Entity Links
+     */
+    include_entity_links?: boolean;
+  };
   url: "/v1/default/banks/{bank_id}/stats";
 };
 

@@ -3541,9 +3541,18 @@ def _register_routes(app: FastAPI):
         tags_match: str = "all_strict",
         document_id: str | None = None,
         chunk_id: str | None = None,
+        include_entity_data: bool = True,
         request_context: RequestContext = Depends(get_request_context),
     ):
-        """Get graph data from database, filtered by bank_id and optionally by type."""
+        """Get graph data from database, filtered by bank_id and optionally by type.
+
+        Pass include_entity_data=false to skip the entity lookup
+        (unit_entities ⨝ entities) and the in-memory entity-link inference.
+        Callers that don't surface entity coloring or entity-link edges (e.g.
+        the cloud data view) can avoid the join + group cost on banks with
+        large source_memory_ids arrays. Default is true, preserving the
+        historical response shape.
+        """
         try:
             data = await app.state.memory.get_graph_data(
                 bank_id,
@@ -3554,6 +3563,7 @@ def _register_routes(app: FastAPI):
                 tags_match=tags_match,
                 document_id=document_id,
                 chunk_id=chunk_id,
+                include_entity_data=include_entity_data,
                 request_context=request_context,
             )
             return data
@@ -4185,17 +4195,29 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/stats",
         response_model=BankStatsResponse,
         summary="Get statistics for memory bank",
-        description="Get statistics about nodes and links for a specific agent",
+        description=(
+            "Get statistics about nodes and links for a specific agent. "
+            "Pass include_entity_links=false to skip the entity-link "
+            "aggregation when the caller doesn't need the per-entity slice; "
+            "this can significantly reduce response time on banks with many "
+            "memories and many distinct entities. Default is true, "
+            "preserving the historical response shape."
+        ),
         operation_id="get_agent_stats",
         tags=["Banks"],
     )
     async def api_stats(
         bank_id: str,
+        include_entity_links: bool = True,
         request_context: RequestContext = Depends(get_request_context),
     ):
         """Get statistics about memory nodes and links for a memory bank."""
         try:
-            stats = await app.state.memory.get_bank_stats(bank_id, request_context=request_context)
+            stats = await app.state.memory.get_bank_stats(
+                bank_id,
+                include_entity_links=include_entity_links,
+                request_context=request_context,
+            )
             nodes_by_type = stats["node_counts"]
             links_by_type = stats["link_counts"]
             links_by_fact_type = stats["link_counts_by_fact_type"]

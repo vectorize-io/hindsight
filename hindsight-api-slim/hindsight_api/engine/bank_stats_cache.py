@@ -19,17 +19,23 @@ from typing import Any, Awaitable, Callable
 
 
 class BankStatsCache:
-    """Per-process TTL cache keyed on (schema, bank_id).
+    """Per-process TTL cache keyed on (schema, bank_id, *key_suffix).
 
     `ttl_seconds <= 0` disables caching: each call passes straight through to
     the loader. `max_entries` bounds memory in environments with many banks.
+
+    Callers may extend the key with a `key_suffix` so semantically distinct
+    variants of the same `(schema, bank_id)` (e.g. with and without an
+    optional expensive aggregation) get separate cache slots. `invalidate`
+    clears every variant for a `(schema, bank_id)` so writers don't have to
+    know which suffixes the read path is using.
     """
 
     def __init__(self, *, ttl_seconds: float, max_entries: int) -> None:
         self._ttl = float(ttl_seconds)
         self._max_entries = int(max_entries) if max_entries and max_entries > 0 else 0
-        self._entries: OrderedDict[tuple[str, str], tuple[float, dict[str, Any]]] = OrderedDict()
-        self._in_flight: dict[tuple[str, str], asyncio.Future[dict[str, Any]]] = {}
+        self._entries: OrderedDict[tuple[Any, ...], tuple[float, dict[str, Any]]] = OrderedDict()
+        self._in_flight: dict[tuple[Any, ...], asyncio.Future[dict[str, Any]]] = {}
         self._lock = asyncio.Lock()
 
     @property
@@ -39,7 +45,7 @@ class BankStatsCache:
     def _now(self) -> float:
         return time.monotonic()
 
-    def _get_fresh_unlocked(self, key: tuple[str, str]) -> dict[str, Any] | None:
+    def _get_fresh_unlocked(self, key: tuple[Any, ...]) -> dict[str, Any] | None:
         entry = self._entries.get(key)
         if entry is None:
             return None
@@ -52,7 +58,7 @@ class BankStatsCache:
         self._entries.move_to_end(key)
         return value
 
-    def _store_unlocked(self, key: tuple[str, str], value: dict[str, Any]) -> None:
+    def _store_unlocked(self, key: tuple[Any, ...], value: dict[str, Any]) -> None:
         if not self.enabled:
             return
         self._entries[key] = (self._now() + self._ttl, value)
@@ -66,16 +72,21 @@ class BankStatsCache:
         schema: str,
         bank_id: str,
         loader: Callable[[], Awaitable[dict[str, Any]]],
+        *,
+        key_suffix: tuple[Any, ...] = (),
     ) -> dict[str, Any]:
-        """Return cached stats for `(schema, bank_id)` or call `loader()`.
+        """Return cached stats for `(schema, bank_id, *key_suffix)` or call `loader()`.
 
         Concurrent misses on the same key are coalesced onto a single
-        in-flight loader.
+        in-flight loader. `key_suffix` lets a caller carve out separate
+        slots for variants that compute different results (e.g. a flag that
+        toggles an optional expensive aggregation) without confusing each
+        other's responses.
         """
         if not self.enabled:
             return await loader()
 
-        key = (schema, bank_id)
+        key = (schema, bank_id, *key_suffix)
 
         async with self._lock:
             cached = self._get_fresh_unlocked(key)
@@ -120,13 +131,21 @@ class BankStatsCache:
         return value
 
     async def invalidate(self, schema: str, bank_id: str) -> None:
-        """Drop any cached stats for `(schema, bank_id)`."""
+        """Drop every cached stats variant for `(schema, bank_id)`.
+
+        Clears all entries whose key starts with `(schema, bank_id)`, so
+        writers that don't know which `key_suffix` values the read path is
+        using still wipe the bank cleanly. Detaches in-flight loaders
+        rather than cancelling them — existing callers may finish with
+        their pre-invalidation snapshot while post-invalidation callers
+        reload.
+        """
         async with self._lock:
-            key = (schema, bank_id)
-            self._entries.pop(key, None)
-            # Detach rather than cancel: existing callers may finish with the
-            # snapshot they requested, while post-invalidation callers reload.
-            self._in_flight.pop(key, None)
+            prefix = (schema, bank_id)
+            for key in [k for k in self._entries if k[:2] == prefix]:
+                self._entries.pop(key, None)
+            for key in [k for k in self._in_flight if k[:2] == prefix]:
+                self._in_flight.pop(key, None)
 
     async def clear(self) -> None:
         async with self._lock:

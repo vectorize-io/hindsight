@@ -426,6 +426,7 @@ type ApiGetGraphRequest struct {
 	tagsMatch *string
 	documentId *string
 	chunkId *string
+	includeEntityData *bool
 	authorization *string
 }
 
@@ -461,6 +462,11 @@ func (r ApiGetGraphRequest) DocumentId(documentId string) ApiGetGraphRequest {
 
 func (r ApiGetGraphRequest) ChunkId(chunkId string) ApiGetGraphRequest {
 	r.chunkId = &chunkId
+	return r
+}
+
+func (r ApiGetGraphRequest) IncludeEntityData(includeEntityData bool) ApiGetGraphRequest {
+	r.includeEntityData = &includeEntityData
 	return r
 }
 
@@ -546,6 +552,12 @@ func (a *MemoryAPIService) GetGraphExecute(r ApiGetGraphRequest) (*GraphDataResp
 	}
 	if r.chunkId != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "chunk_id", r.chunkId, "form", "")
+	}
+	if r.includeEntityData != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "include_entity_data", r.includeEntityData, "form", "")
+	} else {
+		var defaultValue bool = true
+		r.includeEntityData = &defaultValue
 	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
