@@ -253,6 +253,7 @@ def create_llm_provider(
     prompt_cache_enabled: bool = False,
     litellmrouter_config: dict[str, Any] | None = None,
     gemini_service_tier: str | None = None,
+    timeout: float | None = None,
 ) -> Any:  # Returns LLMInterface
     """
     Factory function to create the appropriate LLM provider implementation.
@@ -278,6 +279,12 @@ def create_llm_provider(
         vertexai_project_id: Vertex AI project ID (for VertexAI provider).
         vertexai_region: Vertex AI region (for VertexAI provider).
         vertexai_credentials: Vertex AI credentials object (for VertexAI provider).
+        timeout: Per-request LLM timeout in seconds (resolved by the caller from the
+            per-operation/global config). Threaded into the providers that honour a
+            configurable request timeout (LiteLLM, LiteLLM Router, OpenAI-compatible,
+            Nous). ``None`` lets each provider fall back to its own default
+            (``HINDSIGHT_API_LLM_TIMEOUT`` / ``DEFAULT_LLM_TIMEOUT`` for those four;
+            Anthropic and Gemini keep their provider-specific defaults).
 
     Returns:
         LLMInterface implementation for the specified provider.
@@ -375,6 +382,8 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            default_headers=default_headers,
+            timeout=timeout,
         )
 
     elif provider_lower == "litellmrouter":
@@ -393,6 +402,8 @@ def create_llm_provider(
             config=litellmrouter_config,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            default_headers=default_headers,
+            timeout=timeout,
         )
 
     elif provider_lower == "bedrock":
@@ -406,6 +417,7 @@ def create_llm_provider(
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
             bedrock_service_tier=bedrock_service_tier,
+            timeout=timeout,
         )
 
     elif provider_lower == "llamacpp":
@@ -452,6 +464,7 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            timeout=timeout,
         )
 
     elif provider_lower in (
@@ -477,6 +490,7 @@ def create_llm_provider(
             groq_service_tier=groq_service_tier,
             openai_service_tier=openai_service_tier,
             extra_body=extra_body,
+            timeout=timeout,
         )
 
     else:
@@ -509,6 +523,10 @@ class LLMProvider:
         vertexai_project_id: str | None = None,
         vertexai_region: str | None = None,
         vertexai_service_account_key: str | None = None,
+        timeout: float | None = None,
+        max_retries: int | None = None,
+        initial_backoff: float | None = None,
+        max_backoff: float | None = None,
     ):
         """
         Initialize LLM provider.
@@ -537,6 +555,17 @@ class LLMProvider:
                 ``"us-central1"`` when ``None``).
             vertexai_service_account_key: Path to a Vertex AI service-account key file for
                 ``provider="vertexai"`` (uses ADC when ``None``).
+            timeout: Per-request LLM timeout in seconds. Resolved by the caller from the
+                per-operation/global config (``retain_llm_timeout`` falling back to
+                ``llm_timeout``, etc.). ``None`` lets each provider apply its own default.
+            max_retries: Default retry-attempt budget for ``call`` / ``call_with_tools``
+                when the per-call argument is omitted. Resolved by the caller from the
+                per-operation/global config (``reflect_llm_max_retries`` falling back to
+                ``llm_max_retries``, etc.). ``None`` keeps each method's own fallback.
+            initial_backoff: Default initial retry backoff (seconds), same resolution as
+                ``max_retries``. ``None`` keeps each method's own fallback.
+            max_backoff: Default maximum retry backoff (seconds), same resolution as
+                ``max_retries``. ``None`` keeps each method's own fallback.
 
         This constructor uses every argument as passed and does not read global
         ``HindsightConfig``: resolving the server-level default for a ``None`` argument is the
@@ -550,6 +579,15 @@ class LLMProvider:
         self.base_url = base_url
         self.model = model
         self.reasoning_effort = reasoning_effort
+        # Per-request timeout (seconds). Used verbatim — the caller resolves the
+        # per-operation/global fallback. ``None`` defers to the provider default.
+        self.timeout = timeout
+        # Default retry policy for call()/call_with_tools(). The caller resolves the
+        # per-operation/global fallback; ``None`` keeps each method's own fallback so
+        # providers built without a resolved config (from_env, tests) are unchanged.
+        self.max_retries = max_retries
+        self.initial_backoff = initial_backoff
+        self.max_backoff = max_backoff
         self.litellmrouter_config = litellmrouter_config
         # Service tiers from hierarchical config (not env vars)
         self.groq_service_tier = groq_service_tier
@@ -697,6 +735,7 @@ class LLMProvider:
             gemini_safety_settings=self.gemini_safety_settings,
             prompt_cache_enabled=self.prompt_cache_enabled,
             litellmrouter_config=router_config,
+            timeout=self.timeout,
         )
 
         # Backward compatibility: Keep mock provider properties
@@ -753,9 +792,9 @@ class LLMProvider:
         max_completion_tokens: int | None = None,
         temperature: float | None = None,
         scope: str = "memory",
-        max_retries: int = 10,
-        initial_backoff: float = 1.0,
-        max_backoff: float = 60.0,
+        max_retries: int | None = None,
+        initial_backoff: float | None = None,
+        max_backoff: float | None = None,
         skip_validation: bool = False,
         strict_schema: bool = False,
         return_usage: bool = False,
@@ -770,9 +809,12 @@ class LLMProvider:
             max_completion_tokens: Maximum tokens in response.
             temperature: Sampling temperature (0.0-2.0).
             scope: Scope identifier for tracking.
-            max_retries: Maximum retry attempts.
-            initial_backoff: Initial backoff time in seconds.
-            max_backoff: Maximum backoff time in seconds.
+            max_retries: Maximum retry attempts. ``None`` uses the provider's configured
+                default (per-operation/global ``llm_max_retries``), else 10.
+            initial_backoff: Initial backoff time in seconds. ``None`` uses the provider's
+                configured default (``llm_initial_backoff``), else 1.0.
+            max_backoff: Maximum backoff time in seconds. ``None`` uses the provider's
+                configured default (``llm_max_backoff``), else 60.0.
             skip_validation: Return raw JSON without Pydantic validation.
             strict_schema: Per-call override requesting grammar-enforced (json_schema strict)
                 structured output instead of the soft json_object path. The server-level
@@ -796,6 +838,20 @@ class LLMProvider:
 
         structured = "+structured" if response_format is not None else ""
         set_stage(f"llm.{self.provider}.{scope}{structured}")
+
+        # Resolve the retry policy: explicit per-call arg wins, else the provider's
+        # configured per-operation/global default, else this method's own fallback.
+        max_retries = (
+            max_retries if max_retries is not None else (self.max_retries if self.max_retries is not None else 10)
+        )
+        initial_backoff = (
+            initial_backoff
+            if initial_backoff is not None
+            else (self.initial_backoff if self.initial_backoff is not None else 1.0)
+        )
+        max_backoff = (
+            max_backoff if max_backoff is not None else (self.max_backoff if self.max_backoff is not None else 60.0)
+        )
 
         # Resolve strict-schema once, here, rather than in each provider: the
         # per-call argument OR the server-level HINDSIGHT_API_LLM_STRICT_SCHEMA
@@ -899,9 +955,9 @@ class LLMProvider:
         max_completion_tokens: int | None = None,
         temperature: float | None = None,
         scope: str = "tools",
-        max_retries: int = 5,
-        initial_backoff: float = 1.0,
-        max_backoff: float = 30.0,
+        max_retries: int | None = None,
+        initial_backoff: float | None = None,
+        max_backoff: float | None = None,
         tool_choice: str | dict[str, Any] = "auto",
         cached_prefix: str | None = None,
     ) -> "LLMToolCallResult":
@@ -914,9 +970,12 @@ class LLMProvider:
             max_completion_tokens: Maximum tokens in response.
             temperature: Sampling temperature (0.0-2.0).
             scope: Scope identifier for tracking.
-            max_retries: Maximum retry attempts.
-            initial_backoff: Initial backoff time in seconds.
-            max_backoff: Maximum backoff time in seconds.
+            max_retries: Maximum retry attempts. ``None`` uses the provider's configured
+                default (per-operation/global ``llm_max_retries``), else 5.
+            initial_backoff: Initial backoff time in seconds. ``None`` uses the provider's
+                configured default (``llm_initial_backoff``), else 1.0.
+            max_backoff: Maximum backoff time in seconds. ``None`` uses the provider's
+                configured default (``llm_max_backoff``), else 30.0.
             tool_choice: How to choose tools - "auto", "none", "required", or {"type": "function", "function": {"name": "..."}}
 
         Returns:
@@ -925,6 +984,20 @@ class LLMProvider:
         from ..worker.stage import set_stage
 
         set_stage(f"llm.{self.provider}.{scope}+tools")
+
+        # Resolve the retry policy: explicit per-call arg wins, else the provider's
+        # configured per-operation/global default, else this method's own fallback.
+        max_retries = (
+            max_retries if max_retries is not None else (self.max_retries if self.max_retries is not None else 5)
+        )
+        initial_backoff = (
+            initial_backoff
+            if initial_backoff is not None
+            else (self.initial_backoff if self.initial_backoff is not None else 1.0)
+        )
+        max_backoff = (
+            max_backoff if max_backoff is not None else (self.max_backoff if self.max_backoff is not None else 30.0)
+        )
 
         # Failures forwarded to the GenAI recorder; successes recorded by providers.
         from ..tracing import get_span_recorder
@@ -1167,6 +1240,7 @@ class LLMProvider:
             DEFAULT_LLM_PROMPT_CACHE_ENABLED,
             DEFAULT_LLM_PROVIDER,
             DEFAULT_LLM_REASONING_EFFORT,
+            DEFAULT_LLM_TIMEOUT,
             ENV_LLM_API_KEY,
             ENV_LLM_BASE_URL,
             ENV_LLM_BEDROCK_SERVICE_TIER,
@@ -1179,6 +1253,7 @@ class LLMProvider:
             ENV_LLM_PROMPT_CACHE_ENABLED,
             ENV_LLM_PROVIDER,
             ENV_LLM_REASONING_EFFORT,
+            ENV_LLM_TIMEOUT,
             ENV_LLM_VERTEXAI_PROJECT_ID,
             ENV_LLM_VERTEXAI_REGION,
             ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY,
@@ -1230,6 +1305,7 @@ class LLMProvider:
             vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or None,
             vertexai_region=os.getenv(ENV_LLM_VERTEXAI_REGION) or None,
             vertexai_service_account_key=os.getenv(ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY) or None,
+            timeout=float(os.getenv(ENV_LLM_TIMEOUT, str(DEFAULT_LLM_TIMEOUT))),
         )
 
 

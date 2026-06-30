@@ -517,6 +517,10 @@ global cap; a reflect call without a per-op cap is bounded only by the global ca
 To reserve headroom for live chat/reflect on a rate-limited provider, cap retain and
 consolidation below the global value — e.g. global=4, retain=1, consolidation=1 leaves
 two slots that retain/consolidation cannot consume.
+
+Unlike the per-operation timeout and retry/backoff knobs, the `*_LLM_MAX_CONCURRENT`
+caps are process-global semaphores read from the environment once at startup. They are
+server-level only (not overridable per tenant/bank) and a change requires a restart.
 :::
 
 ### Embeddings
