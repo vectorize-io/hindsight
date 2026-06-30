@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { useParams } from "next/navigation";
 import { OperatorShell } from "@/components/operator-shell";
@@ -40,6 +40,17 @@ interface Amendment {
   author: string;
 }
 
+interface LiveDirective {
+  id: string;
+  name: string;
+  content: string;
+  priority: number;
+  tags: string[];
+  is_active: boolean;
+  bank_id: string;
+  bank_name: string;
+}
+
 export default function ConstitutionPage() {
   const t = useTranslations("operator");
   const params = useParams();
@@ -47,6 +58,8 @@ export default function ConstitutionPage() {
   const [loading, setLoading] = useState(true);
   const [banks, setBanks] = useState<{ bank_id: string; name: string; mission: string }[]>([]);
   const [complianceScore, setComplianceScore] = useState(87);
+  const [liveDirectives, setLiveDirectives] = useState<LiveDirective[]>([]);
+  const [directivesLoading, setDirectivesLoading] = useState(false);
 
   const [articles] = useState<Article[]>([
     {
@@ -55,7 +68,8 @@ export default function ConstitutionPage() {
       category: "Governance",
       status: "active",
       lastReviewed: "2026-06-15",
-      content: "All user data remains under user control. No data is shared with third parties without explicit consent.",
+      content:
+        "All user data remains under user control. No data is shared with third parties without explicit consent.",
     },
     {
       number: 2,
@@ -63,7 +77,8 @@ export default function ConstitutionPage() {
       category: "Ethics",
       status: "active",
       lastReviewed: "2026-06-10",
-      content: "All AI decisions must be explainable and auditable. Users have the right to know how decisions affecting them are made.",
+      content:
+        "All AI decisions must be explainable and auditable. Users have the right to know how decisions affecting them are made.",
     },
     {
       number: 3,
@@ -71,7 +86,8 @@ export default function ConstitutionPage() {
       category: "Privacy",
       status: "active",
       lastReviewed: "2026-05-28",
-      content: "Minimum data collection by default. Privacy settings default to maximum protection.",
+      content:
+        "Minimum data collection by default. Privacy settings default to maximum protection.",
     },
     {
       number: 4,
@@ -79,7 +95,8 @@ export default function ConstitutionPage() {
       category: "Governance",
       status: "active",
       lastReviewed: "2026-06-01",
-      content: "Critical decisions require human approval. AI operates as an assistant, not an autonomous decision-maker.",
+      content:
+        "Critical decisions require human approval. AI operates as an assistant, not an autonomous decision-maker.",
     },
     {
       number: 5,
@@ -87,7 +104,8 @@ export default function ConstitutionPage() {
       category: "Ethics",
       status: "amended",
       lastReviewed: "2026-06-20",
-      content: "Systems must be regularly audited for bias. Training data must be representative and inclusive.",
+      content:
+        "Systems must be regularly audited for bias. Training data must be representative and inclusive.",
     },
     {
       number: 6,
@@ -95,7 +113,8 @@ export default function ConstitutionPage() {
       category: "Security",
       status: "active",
       lastReviewed: "2026-06-18",
-      content: "All systems must maintain industry-standard security practices. Regular penetration testing and security audits are mandatory.",
+      content:
+        "All systems must maintain industry-standard security practices. Regular penetration testing and security audits are mandatory.",
     },
     {
       number: 7,
@@ -103,7 +122,8 @@ export default function ConstitutionPage() {
       category: "Governance",
       status: "active",
       lastReviewed: "2026-06-12",
-      content: "Clear lines of responsibility for all system actions. Incident response procedures must be documented and tested.",
+      content:
+        "Clear lines of responsibility for all system actions. Incident response procedures must be documented and tested.",
     },
     {
       number: 8,
@@ -111,15 +131,63 @@ export default function ConstitutionPage() {
       category: "Operations",
       status: "pending",
       lastReviewed: "2026-06-22",
-      content: "Regular review and updates to all policies. Feedback loops for continuous system improvement.",
+      content:
+        "Regular review and updates to all policies. Feedback loops for continuous system improvement.",
     },
   ]);
 
   const [amendments] = useState<Amendment[]>([
-    { id: "a1", article: 5, date: "2026-06-20", summary: "Added AI fairness audit requirement", author: "Oliver" },
-    { id: "a2", article: 3, date: "2026-05-28", summary: "Updated data retention policy", author: "Oliver" },
+    {
+      id: "a1",
+      article: 5,
+      date: "2026-06-20",
+      summary: "Added AI fairness audit requirement",
+      author: "Oliver",
+    },
+    {
+      id: "a2",
+      article: 3,
+      date: "2026-05-28",
+      summary: "Updated data retention policy",
+      author: "Oliver",
+    },
     { id: "a3", article: 1, date: "2026-05-15", summary: "Initial ratification", author: "Oliver" },
   ]);
+
+  const loadDirectives = useCallback(
+    async (bankList: { bank_id: string; name: string | null; mission: string }[]) => {
+      if (bankList.length === 0) return;
+      setDirectivesLoading(true);
+      const all: LiveDirective[] = [];
+      await Promise.allSettled(
+        bankList.slice(0, 4).map(async (bank) => {
+          try {
+            const res = await fetch(`/api/banks/${bank.bank_id}/directives`);
+            if (res.ok) {
+              const data = await res.json();
+              const items = data.directives || data.items || [];
+              items
+                .filter((d: any) => d.is_active)
+                .forEach((d: any) => {
+                  all.push({
+                    ...d,
+                    bank_id: bank.bank_id,
+                    bank_name: bank.name || bank.bank_id,
+                  });
+                });
+            }
+          } catch { /* ignore */ }
+        })
+      );
+      all.sort((a, b) => b.priority - a.priority);
+      setLiveDirectives(all);
+      if (all.length > 0) {
+        setComplianceScore(Math.round((all.filter((d) => d.is_active).length / all.length) * 100));
+      }
+      setDirectivesLoading(false);
+    },
+    []
+  );
 
   useEffect(() => {
     const load = async () => {
@@ -127,15 +195,18 @@ export default function ConstitutionPage() {
         const res = await fetch("/api/banks");
         if (res.ok) {
           const data = await res.json();
-          setBanks(data.banks || []);
+          const b = data.banks || [];
+          setBanks(b);
+          loadDirectives(b);
         }
       } catch {
+        /* ignore */
       } finally {
         setLoading(false);
       }
     };
     load();
-  }, []);
+  }, [loadDirectives]);
 
   if (loading) {
     return (
@@ -152,11 +223,23 @@ export default function ConstitutionPage() {
   const statusBadge = (status: string) => {
     switch (status) {
       case "active":
-        return <Badge className="bg-green-100 text-green-700 dark:bg-green-950/30 dark:text-green-400 border-green-200 dark:border-green-800">{status}</Badge>;
+        return (
+          <Badge className="bg-green-100 text-green-700 dark:bg-green-950/30 dark:text-green-400 border-green-200 dark:border-green-800">
+            {status}
+          </Badge>
+        );
       case "pending":
-        return <Badge variant="outline" className="text-amber-600 border-amber-300">{status}</Badge>;
+        return (
+          <Badge variant="outline" className="text-amber-600 border-amber-300">
+            {status}
+          </Badge>
+        );
       case "amended":
-        return <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400 border-blue-200 dark:border-blue-800">{status}</Badge>;
+        return (
+          <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400 border-blue-200 dark:border-blue-800">
+            {status}
+          </Badge>
+        );
       default:
         return <Badge variant="outline">{status}</Badge>;
     }
@@ -179,7 +262,9 @@ export default function ConstitutionPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs text-muted-foreground font-medium">Active Articles</CardTitle>
+              <CardTitle className="text-xs text-muted-foreground font-medium">
+                Active Articles
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <span className="text-2xl font-bold">{activeArticles}</span>
@@ -188,7 +273,9 @@ export default function ConstitutionPage() {
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs text-muted-foreground font-medium">Last Amended</CardTitle>
+              <CardTitle className="text-xs text-muted-foreground font-medium">
+                Last Amended
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <span className="text-2xl font-bold">3d ago</span>
@@ -196,7 +283,9 @@ export default function ConstitutionPage() {
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs text-muted-foreground font-medium">Compliance Score</CardTitle>
+              <CardTitle className="text-xs text-muted-foreground font-medium">
+                Compliance Score
+              </CardTitle>
             </CardHeader>
             <CardContent className="flex items-center gap-2">
               <span className="text-2xl font-bold">{complianceScore}%</span>
@@ -205,7 +294,9 @@ export default function ConstitutionPage() {
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs text-muted-foreground font-medium">Review Cycle</CardTitle>
+              <CardTitle className="text-xs text-muted-foreground font-medium">
+                Review Cycle
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <span className="text-2xl font-bold">30d</span>
@@ -216,13 +307,74 @@ export default function ConstitutionPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Articles */}
           <div className="lg:col-span-2 space-y-4">
+            {/* Live Prime Directives from Banks */}
+            {(directivesLoading || liveDirectives.length > 0) && (
+              <Card className="border-primary/30">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Gavel className="h-5 w-5 text-primary" />
+                    Live Prime Directives
+                  </CardTitle>
+                  <CardDescription>
+                    Active directives from Hindsight banks · sorted by priority
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {directivesLoading ? (
+                    <div className="flex items-center gap-2 py-4 text-muted-foreground text-sm">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Loading directives...
+                    </div>
+                  ) : (
+                    liveDirectives.map((d) => (
+                      <div
+                        key={`${d.bank_id}-${d.id}`}
+                        className="p-3 rounded-lg border bg-card/50"
+                      >
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-semibold">{d.name}</span>
+                            <Badge
+                              variant={
+                                d.priority >= 9
+                                  ? "destructive"
+                                  : d.priority >= 7
+                                    ? "default"
+                                    : "secondary"
+                              }
+                              className="text-[10px] h-5"
+                            >
+                              P{d.priority}
+                            </Badge>
+                            <Badge variant="outline" className="text-[9px] h-4 px-1 font-mono">
+                              {d.bank_name}
+                            </Badge>
+                          </div>
+                          <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0 mt-0.5" />
+                        </div>
+                        <p className="text-xs text-muted-foreground leading-relaxed">{d.content}</p>
+                        {d.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {d.tags.map((tag) => (
+                              <Badge key={tag} variant="outline" className="text-[9px] h-4 px-1">
+                                {tag}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
             <Card>
               <CardHeader>
                 <CardTitle className="text-base flex items-center gap-2">
                   <BookOpen className="h-5 w-5 text-primary" />
                   Articles
                 </CardTitle>
-                <CardDescription>Prime directives governing system behavior</CardDescription>
+                <CardDescription>Foundational governance articles</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 {articles.map((article) => (
@@ -236,7 +388,9 @@ export default function ConstitutionPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         {statusBadge(article.status)}
-                        <Badge variant="outline" className="text-[10px]">{article.category}</Badge>
+                        <Badge variant="outline" className="text-[10px]">
+                          {article.category}
+                        </Badge>
                       </div>
                     </div>
                     <p className="text-sm text-muted-foreground mb-2">{article.content}</p>
@@ -274,7 +428,9 @@ export default function ConstitutionPage() {
                 <div className="space-y-2 text-left">
                   {banks.slice(0, 4).map((bank) => (
                     <div key={bank.bank_id} className="flex items-center justify-between text-xs">
-                      <span className="text-muted-foreground truncate max-w-[150px]">{bank.name || bank.bank_id}</span>
+                      <span className="text-muted-foreground truncate max-w-[150px]">
+                        {bank.name || bank.bank_id}
+                      </span>
                       <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
                     </div>
                   ))}

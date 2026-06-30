@@ -17,10 +17,15 @@ export function OperatorShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const check = async () => {
       try {
-        const res = await fetch("http://localhost:8888/health", {
-          signal: AbortSignal.timeout(3000),
+        const res = await fetch("/api/health", {
+          signal: AbortSignal.timeout(4000),
         });
-        setSystemStatus(res.ok ? "healthy" : "degraded");
+        if (res.ok) {
+          const data = await res.json();
+          setSystemStatus(data.dataplane?.status === "connected" ? "healthy" : "degraded");
+        } else {
+          setSystemStatus("degraded");
+        }
       } catch {
         setSystemStatus("degraded");
       }

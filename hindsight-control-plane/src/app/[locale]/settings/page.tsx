@@ -30,6 +30,7 @@ export default function SettingsPage() {
   const locale = (params?.locale as string) || "en";
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
+  const [stackConfig, setStackConfig] = useState<any>(null);
 
   const [systemName, setSystemName] = useState("CollabMind Hindsight");
   const [language, setLanguage] = useState("en");
@@ -54,9 +55,11 @@ export default function SettingsPage() {
         const res = await fetch("/api/system/config");
         if (res.ok) {
           const data = await res.json();
-          if (data?.llm?.provider) setSystemName(`CollabMind ${data.llm.provider}`);
+          setStackConfig(data);
+          if (data?.llm?.provider) setSystemName(`CollabMind · ${data.llm.provider}`);
         }
       } catch {
+        /* ignore */
       } finally {
         setLoading(false);
       }
@@ -105,6 +108,9 @@ export default function SettingsPage() {
             </TabsTrigger>
             <TabsTrigger value="security" className="flex items-center gap-2">
               <Shield className="h-4 w-4" /> Security
+            </TabsTrigger>
+            <TabsTrigger value="stack" className="flex items-center gap-2">
+              <Monitor className="h-4 w-4" /> Stack Config
             </TabsTrigger>
           </TabsList>
 
@@ -224,28 +230,36 @@ export default function SettingsPage() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium">System Alerts</p>
-                      <p className="text-xs text-muted-foreground">Critical system events and failures</p>
+                      <p className="text-xs text-muted-foreground">
+                        Critical system events and failures
+                      </p>
                     </div>
                     <Switch checked={systemAlerts} onCheckedChange={setSystemAlerts} />
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium">Agent Notifications</p>
-                      <p className="text-xs text-muted-foreground">Agent task completions and failures</p>
+                      <p className="text-xs text-muted-foreground">
+                        Agent task completions and failures
+                      </p>
                     </div>
                     <Switch checked={agentNotifications} onCheckedChange={setAgentNotifications} />
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium">Error Reports</p>
-                      <p className="text-xs text-muted-foreground">Detailed error reports for debugging</p>
+                      <p className="text-xs text-muted-foreground">
+                        Detailed error reports for debugging
+                      </p>
                     </div>
                     <Switch checked={errorReports} onCheckedChange={setErrorReports} />
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium">Weekly Digest</p>
-                      <p className="text-xs text-muted-foreground">Weekly summary of system activity</p>
+                      <p className="text-xs text-muted-foreground">
+                        Weekly summary of system activity
+                      </p>
                     </div>
                     <Switch checked={weeklyDigest} onCheckedChange={setWeeklyDigest} />
                   </div>
@@ -258,7 +272,9 @@ export default function SettingsPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Security Settings</CardTitle>
-                <CardDescription>Authentication, encryption, and audit configuration</CardDescription>
+                <CardDescription>
+                  Authentication, encryption, and audit configuration
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -299,6 +315,102 @@ export default function SettingsPage() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        <TabsContent value="stack" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Live Stack Configuration</CardTitle>
+              <CardDescription>
+                Read-only view of the active Hindsight configuration
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {stackConfig ? (
+                <div className="space-y-4">
+                  {/* LLM */}
+                  <div>
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                      LLM
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div className="p-2 rounded border bg-muted/30">
+                        <div className="text-[10px] text-muted-foreground">Provider</div>
+                        <div className="text-sm font-mono font-medium">
+                          {stackConfig.llm?.provider || "—"}
+                        </div>
+                      </div>
+                      <div className="p-2 rounded border bg-muted/30">
+                        <div className="text-[10px] text-muted-foreground">Model</div>
+                        <div className="text-sm font-mono font-medium truncate">
+                          {stackConfig.llm?.model || "—"}
+                        </div>
+                      </div>
+                      <div className="p-2 rounded border bg-muted/30">
+                        <div className="text-[10px] text-muted-foreground">Prompt Cache</div>
+                        <div className="text-sm font-medium">
+                          {stackConfig.llm?.prompt_cache_enabled ? "Enabled" : "Disabled"}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Embeddings */}
+                  <div>
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                      Embeddings
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div className="p-2 rounded border bg-muted/30">
+                        <div className="text-[10px] text-muted-foreground">Provider</div>
+                        <div className="text-sm font-mono font-medium">
+                          {stackConfig.embeddings?.provider || "—"}
+                        </div>
+                      </div>
+                      <div className="p-2 rounded border bg-muted/30">
+                        <div className="text-[10px] text-muted-foreground">Model</div>
+                        <div className="text-sm font-mono font-medium truncate">
+                          {stackConfig.embeddings?.model || "—"}
+                        </div>
+                      </div>
+                      <div className="p-2 rounded border bg-muted/30">
+                        <div className="text-[10px] text-muted-foreground">Dimensions</div>
+                        <div className="text-sm font-medium">
+                          {stackConfig.embeddings?.dimension ?? "—"}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Reranker & Database */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                        Reranker
+                      </h4>
+                      <div className="p-2 rounded border bg-muted/30">
+                        <div className="text-[10px] text-muted-foreground">Provider</div>
+                        <div className="text-sm font-mono font-medium">
+                          {stackConfig.reranker?.provider || "—"}
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                        Database
+                      </h4>
+                      <div className="p-2 rounded border bg-muted/30">
+                        <div className="text-[10px] text-muted-foreground">Type</div>
+                        <div className="text-sm font-mono font-medium">
+                          {stackConfig.database?.type || "—"}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">Config not available</div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <div className="flex items-center gap-3">
           <Button onClick={handleSave} className="flex items-center gap-2">

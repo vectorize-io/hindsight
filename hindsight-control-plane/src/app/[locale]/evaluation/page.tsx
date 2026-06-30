@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { OperatorShell } from "@/components/operator-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,7 +20,10 @@ import {
   FlaskConical,
   Brain,
   TrendingUp,
+  Zap,
+  RefreshCw,
 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 
 interface StatCardProps {
   label: string;
@@ -73,8 +76,90 @@ interface ModelScore {
 export default function EvaluationPage() {
   const t = useTranslations("operator.evaluation");
 
-  const [activeTab, setActiveTab] = useState<"suites" | "runs" | "comparison">("suites");
+  const [activeTab, setActiveTab] = useState<"suites" | "runs" | "comparison" | "playground">(
+    "suites"
+  );
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Playground state
+  const [pgModels, setPgModels] = useState<string[]>([]);
+  const [pgModel, setPgModel] = useState("auto");
+  const [pgSystemPrompt, setPgSystemPrompt] = useState("");
+  const [pgUserMessage, setPgUserMessage] = useState("");
+  const [pgTemperature, setPgTemperature] = useState(0.7);
+  const [pgMaxTokens, setPgMaxTokens] = useState(512);
+  const [pgRunning, setPgRunning] = useState(false);
+  const [pgResponse, setPgResponse] = useState("");
+  const [pgLatency, setPgLatency] = useState<number | null>(null);
+  const pgAbort = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    fetch("/api/chat/models")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.data) setPgModels(["auto", ...data.data.map((m: any) => m.id)]);
+      })
+      .catch(() => {});
+  }, []);
+
+  const runPlayground = async () => {
+    if (!pgUserMessage.trim() || pgRunning) return;
+    pgAbort.current?.abort();
+    pgAbort.current = new AbortController();
+    setPgRunning(true);
+    setPgResponse("");
+    setPgLatency(null);
+    const t0 = Date.now();
+    try {
+      const messages = [
+        ...(pgSystemPrompt.trim() ? [{ role: "system", content: pgSystemPrompt.trim() }] : []),
+        { role: "user", content: pgUserMessage.trim() },
+      ];
+      const res = await fetch("/api/chat/proxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages,
+          model: pgModel,
+          stream: true,
+          temperature: pgTemperature,
+          max_tokens: pgMaxTokens,
+        }),
+        signal: pgAbort.current.signal,
+      });
+      if (!res.ok) {
+        setPgResponse(`Error: ${res.status}`);
+        return;
+      }
+      const reader = res.body?.getReader();
+      if (!reader) {
+        return;
+      }
+      const decoder = new TextDecoder();
+      let text = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        for (const line of chunk.split("\n")) {
+          if (!line.startsWith("data: ")) continue;
+          const raw = line.slice(6).trim();
+          if (raw === "[DONE]") break;
+          try {
+            const parsed = JSON.parse(raw);
+            const delta = parsed.choices?.[0]?.delta?.content ?? "";
+            text += delta;
+            setPgResponse(text);
+          } catch { /* ignore */ }
+        }
+      }
+      setPgLatency(Date.now() - t0);
+    } catch (e: any) {
+      if (e?.name !== "AbortError") setPgResponse(`Error: ${e?.message}`);
+    } finally {
+      setPgRunning(false);
+    }
+  };
 
   const testSuites: TestSuite[] = [
     {
@@ -278,6 +363,12 @@ export default function EvaluationPage() {
           >
             {t("modelComparison")}
           </button>
+          <button
+            onClick={() => setActiveTab("playground")}
+            className={`text-sm pb-2 px-1 -mb-2 border-b-2 transition-colors ${activeTab === "playground" ? "border-primary font-medium" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+          >
+            Playground
+          </button>
           <div className="ml-auto relative">
             <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
             <Input
@@ -420,6 +511,185 @@ export default function EvaluationPage() {
               </table>
             </CardContent>
           </Card>
+        )}
+
+        {/* Playground Tab */}
+        {activeTab === "playground" && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Input Panel */}
+            <div className="space-y-4">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Zap className="h-4 w-4 text-primary" /> Model Playground
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Model Selector */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      Model
+                    </label>
+                    <select
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm"
+                      value={pgModel}
+                      onChange={(e) => setPgModel(e.target.value)}
+                    >
+                      {pgModels.length > 0 ? (
+                        pgModels.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="auto">auto</option>
+                      )}
+                    </select>
+                  </div>
+                  {/* System Prompt */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      System Prompt
+                    </label>
+                    <Textarea
+                      placeholder="Optional system prompt..."
+                      value={pgSystemPrompt}
+                      onChange={(e) => setPgSystemPrompt(e.target.value)}
+                      rows={3}
+                      className="text-sm resize-none"
+                    />
+                  </div>
+                  {/* User Message */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      User Message
+                    </label>
+                    <Textarea
+                      placeholder="Enter your test message..."
+                      value={pgUserMessage}
+                      onChange={(e) => setPgUserMessage(e.target.value)}
+                      rows={4}
+                      className="text-sm resize-none"
+                    />
+                  </div>
+                  {/* Parameters */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        Temperature ({pgTemperature.toFixed(1)})
+                      </label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="2"
+                        step="0.1"
+                        value={pgTemperature}
+                        onChange={(e) => setPgTemperature(parseFloat(e.target.value))}
+                        className="w-full"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        Max Tokens ({pgMaxTokens})
+                      </label>
+                      <input
+                        type="range"
+                        min="64"
+                        max="4096"
+                        step="64"
+                        value={pgMaxTokens}
+                        onChange={(e) => setPgMaxTokens(parseInt(e.target.value))}
+                        className="w-full"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      className="flex-1"
+                      onClick={runPlayground}
+                      disabled={pgRunning || !pgUserMessage.trim()}
+                    >
+                      {pgRunning ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> Running...
+                        </>
+                      ) : (
+                        <>
+                          <Play className="h-4 w-4 mr-1.5" /> Run Test
+                        </>
+                      )}
+                    </Button>
+                    {pgRunning && (
+                      <Button variant="outline" onClick={() => pgAbort.current?.abort()}>
+                        Stop
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Output Panel */}
+            <Card className="flex flex-col">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm">Response</CardTitle>
+                  <div className="flex items-center gap-3">
+                    {pgLatency !== null && (
+                      <span className="text-[11px] text-muted-foreground font-mono">
+                        {pgLatency}ms
+                      </span>
+                    )}
+                    {pgResponse && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 text-[11px]"
+                        onClick={() => {
+                          setPgResponse("");
+                          setPgLatency(null);
+                        }}
+                      >
+                        <RefreshCw className="h-3 w-3 mr-1" /> Clear
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="flex-1">
+                {pgRunning && !pgResponse ? (
+                  <div className="flex items-center justify-center h-32 text-muted-foreground">
+                    <Loader2 className="h-5 w-5 animate-spin mr-2" /> Waiting for response...
+                  </div>
+                ) : pgResponse ? (
+                  <div className="relative">
+                    <pre className="text-sm text-foreground whitespace-pre-wrap font-sans leading-relaxed break-words">
+                      {pgResponse}
+                      {pgRunning && (
+                        <span className="inline-block w-1 h-4 bg-primary ml-0.5 animate-pulse" />
+                      )}
+                    </pre>
+                    {pgLatency && (
+                      <div className="mt-4 pt-3 border-t text-[11px] text-muted-foreground flex items-center gap-4">
+                        <span>
+                          Model: <span className="font-mono">{pgModel}</span>
+                        </span>
+                        <span>Latency: {pgLatency}ms</span>
+                        <span>Temp: {pgTemperature.toFixed(1)}</span>
+                        <span>MaxTok: {pgMaxTokens}</span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-48 text-muted-foreground text-center gap-2">
+                    <FlaskConical className="h-8 w-8 opacity-30" />
+                    <p className="text-sm">Enter a message and click Run Test to start</p>
+                    <p className="text-xs">Results stream in real-time via SSE</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         )}
       </div>
     </OperatorShell>
