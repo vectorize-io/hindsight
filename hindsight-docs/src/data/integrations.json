@@ -373,7 +373,7 @@
     {
       "id": "eve",
       "name": "Eve",
-      "description": "Long-term memory for Vercel Eve agents. A one-line MCP connection exposing retain, recall, and reflect.",
+      "description": "Automatic long-term memory for Vercel Eve agents. Memory is injected before each turn and retained after, with no model tool-calling.",
       "type": "official",
       "by": "hindsight",
       "category": "framework",
