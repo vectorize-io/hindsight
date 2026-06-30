@@ -119,7 +119,7 @@ def create_hindsight_tools(
     if include_retain:
 
         @tool
-        async def hindsight_retain(content: str, config: RunnableConfig) -> str:
+        async def hindsight_retain(content: str, runnable_config: RunnableConfig) -> str:
             """Store information to long-term memory for later retrieval.
 
             Use this to save important facts, user preferences, decisions,
@@ -129,7 +129,7 @@ def create_hindsight_tools(
                 content: The information to store in memory.
             """
             try:
-                resolved_bank_id = _resolve_bank_id(bank_id, config, bank_id_from_config)
+                resolved_bank_id = _resolve_bank_id(bank_id, runnable_config, bank_id_from_config)
                 retain_kwargs: dict[str, Any] = {"bank_id": resolved_bank_id, "content": content}
                 if effective_tags:
                     retain_kwargs["tags"] = effective_tags
@@ -150,7 +150,7 @@ def create_hindsight_tools(
     if include_recall:
 
         @tool
-        async def hindsight_recall(query: str, config: RunnableConfig) -> str:
+        async def hindsight_recall(query: str, runnable_config: RunnableConfig) -> str:
             """Search long-term memory for relevant information.
 
             Use this to find previously stored facts, preferences, or context.
@@ -160,7 +160,7 @@ def create_hindsight_tools(
                 query: What to search for in memory.
             """
             try:
-                resolved_bank_id = _resolve_bank_id(bank_id, config, bank_id_from_config)
+                resolved_bank_id = _resolve_bank_id(bank_id, runnable_config, bank_id_from_config)
                 recall_kwargs: dict[str, Any] = {
                     "bank_id": resolved_bank_id,
                     "query": query,
@@ -192,7 +192,7 @@ def create_hindsight_tools(
     if include_reflect:
 
         @tool
-        async def hindsight_reflect(query: str, config: RunnableConfig) -> str:
+        async def hindsight_reflect(query: str, runnable_config: RunnableConfig) -> str:
             """Synthesize a thoughtful answer from long-term memories.
 
             Use this when you need a coherent summary or reasoned response
@@ -202,7 +202,7 @@ def create_hindsight_tools(
                 query: The question to reflect on using stored memories.
             """
             try:
-                resolved_bank_id = _resolve_bank_id(bank_id, config, bank_id_from_config)
+                resolved_bank_id = _resolve_bank_id(bank_id, runnable_config, bank_id_from_config)
                 reflect_kwargs: dict[str, Any] = {
                     "bank_id": resolved_bank_id,
                     "query": query,
