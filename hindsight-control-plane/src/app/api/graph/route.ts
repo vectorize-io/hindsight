@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     if (chunkId) params.append("chunk_id", chunkId);
 
     const response = await fetch(`${DATAPLANE_URL}/v1/default/banks/${bankId}/graph?${params}`, {
-      headers: getDataplaneHeaders(),
+      headers: getDataplaneHeaders(request),
     });
 
     if (!response.ok) {

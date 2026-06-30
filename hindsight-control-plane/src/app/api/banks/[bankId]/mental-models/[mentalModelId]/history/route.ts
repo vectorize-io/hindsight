@@ -21,7 +21,7 @@ export async function GET(
 
     const response = await fetch(
       dataplaneBankUrl(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}/history`),
-      { method: "GET", headers: getDataplaneHeaders() }
+      { method: "GET", headers: getDataplaneHeaders(request) }
     );
 
     if (!response.ok) {

@@ -21,7 +21,7 @@ export async function GET(
 
     const response = await fetch(
       dataplaneBankUrl(bankId, `/directives/${encodeURIComponent(directiveId)}`),
-      { method: "GET", headers: getDataplaneHeaders() }
+      { method: "GET", headers: getDataplaneHeaders(request) }
     );
 
     if (!response.ok) {
@@ -73,7 +73,7 @@ export async function PATCH(
       dataplaneBankUrl(bankId, `/directives/${encodeURIComponent(directiveId)}`),
       {
         method: "PATCH",
-        headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+        headers: getDataplaneHeaders(request, { "Content-Type": "application/json" }),
         body: JSON.stringify(body),
       }
     );
@@ -123,7 +123,7 @@ export async function DELETE(
 
     const response = await fetch(
       dataplaneBankUrl(bankId, `/directives/${encodeURIComponent(directiveId)}`),
-      { method: "DELETE", headers: getDataplaneHeaders() }
+      { method: "DELETE", headers: getDataplaneHeaders(request) }
     );
 
     if (!response.ok) {

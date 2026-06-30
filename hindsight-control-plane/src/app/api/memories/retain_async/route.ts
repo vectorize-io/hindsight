@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { sdk, lowLevelClient } from "@/lib/hindsight-client";
+import { sdk, getDataplaneClient } from "@/lib/hindsight-client";
 import { respondWithSdk } from "@/lib/sdk-response";
 
 export async function POST(request: NextRequest) {
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
   const { items } = body;
 
   const response = await sdk.retainMemories({
-    client: lowLevelClient,
+    client: getDataplaneClient(request),
     path: { bank_id: bankId },
     body: { items, async: true },
   });
