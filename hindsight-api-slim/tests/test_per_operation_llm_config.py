@@ -91,6 +91,34 @@ class TestPerOperationLLMConfig:
         assert engine._reflect_llm_config.provider == "mock"
         assert engine._reflect_llm_config.model == "reflect-model"
 
+    def test_groq_openai_service_tier_threaded_into_per_operation_configs(self, monkeypatch):
+        """The groq/openai service-tier config knobs must reach every per-operation
+        LLM config, like bedrock/gemini already do. Previously they were parsed into
+        HindsightConfig but never threaded into the constructed providers, so setting
+        them was a silent no-op (groq is the default provider)."""
+        from hindsight_api import MemoryEngine
+        from hindsight_api.config import clear_config_cache
+
+        monkeypatch.setenv("HINDSIGHT_API_LLM_GROQ_SERVICE_TIER", "flex")
+        monkeypatch.setenv("HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER", "flex")
+        clear_config_cache()
+
+        engine = MemoryEngine(
+            skip_llm_verification=True,
+            lazy_reranker=True,
+        )
+
+        for cfg in (
+            engine._llm_config,
+            engine._retain_llm_config,
+            engine._reflect_llm_config,
+            engine._consolidation_llm_config,
+        ):
+            assert cfg.groq_service_tier == "flex"
+            assert cfg.openai_service_tier == "flex"
+
+        clear_config_cache()
+
     def test_memory_engine_with_explicit_params(self):
         """Test that explicit params override env config."""
         from hindsight_api import MemoryEngine

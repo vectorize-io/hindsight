@@ -520,6 +520,40 @@ const canSpyOnModules = typeof (globalThis as any).Deno === "undefined";
     spy.mockRestore();
   });
 
+  test("recall threads minScores into request body", async () => {
+    const bankId = randomBankId();
+    const spy = jest.spyOn(sdk, "recallMemories").mockResolvedValue({
+      data: { results: [] },
+    } as any);
+
+    await client.recall(bankId, "test", {
+      minScores: { semantic: 0.2, final: 0.5 },
+    });
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({ min_scores: { semantic: 0.2, final: 0.5 } }),
+      })
+    );
+    spy.mockRestore();
+  });
+
+  test("recall omits min_scores when not provided", async () => {
+    const bankId = randomBankId();
+    const spy = jest.spyOn(sdk, "recallMemories").mockResolvedValue({
+      data: { results: [] },
+    } as any);
+
+    await client.recall(bankId, "test");
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({ min_scores: undefined }),
+      })
+    );
+    spy.mockRestore();
+  });
+
   test("getBankProfile passes abort signal to SDK", async () => {
     const bankId = randomBankId();
     const controller = new AbortController();

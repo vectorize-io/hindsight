@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from hindsight_api.extensions.base import Extension
@@ -82,6 +83,18 @@ class ValidationResult:
 # =============================================================================
 
 
+class PrecheckOperation(StrEnum):
+    """Route operation names passed to the pre-body-parse precheck hook."""
+
+    DRY_RUN_EXTRACT = "dry_run_extract"
+    FILES_RETAIN = "files_retain"
+    MENTAL_MODEL_CREATE = "mental_model_create"
+    MENTAL_MODEL_REFRESH = "mental_model_refresh"
+    RECALL = "recall"
+    REFLECT = "reflect"
+    RETAIN = "retain"
+
+
 @dataclass
 class PrecheckContext:
     """Context for a pre-body-parse precheck on an operation.
@@ -91,9 +104,7 @@ class PrecheckContext:
     therefore intentionally carries only the cheap, already-resolved
     pieces of request state:
 
-    - ``operation``: a short string identifying the route, e.g. ``"retain"``,
-      ``"recall"``, ``"reflect"``, ``"files_retain"``, ``"mental_model_create"``,
-      ``"mental_model_refresh"``.
+    - ``operation``: a short string-compatible enum identifying the route.
     - ``bank_id``: parsed from the URL path.
     - ``request_context``: the authenticated :class:`RequestContext` (tenant
       already resolved by the tenant extension).
@@ -108,7 +119,7 @@ class PrecheckContext:
     the source of truth for the precise per-call cost / quota arithmetic.
     """
 
-    operation: str
+    operation: PrecheckOperation
     bank_id: str
     request_context: "RequestContext"
     content_length: int | None = None
@@ -303,12 +314,77 @@ class ConsolidateResult:
 # =============================================================================
 
 
+class BankReadOperation(StrEnum):
+    """Bank-scoped read operation names passed to validate_bank_read."""
+
+    GET_BANK_CONFIG = "get_bank_config"
+    GET_BANK_PROFILE = "get_bank_profile"
+    GET_BANK_STATS = "get_bank_stats"
+    GET_CHUNK = "get_chunk"
+    GET_DIRECTIVE = "get_directive"
+    GET_DOCUMENT = "get_document"
+    GET_ENTITY = "get_entity"
+    GET_ENTITY_GRAPH = "get_entity_graph"
+    GET_ENTITY_STATE = "get_entity_state"
+    GET_GRAPH_DATA = "get_graph_data"
+    GET_MEMORIES_TIMESERIES = "get_memories_timeseries"
+    GET_MEMORY_UNIT = "get_memory_unit"
+    GET_OBSERVATION_HISTORY = "get_observation_history"
+    GET_OPERATION_STATUS = "get_operation_status"
+    LIST_DIRECTIVES = "list_directives"
+    LIST_DOCUMENT_CHUNKS = "list_document_chunks"
+    LIST_DOCUMENTS = "list_documents"
+    LIST_ENTITIES = "list_entities"
+    LIST_MEMORY_UNITS = "list_memory_units"
+    LIST_MENTAL_MODEL_TAGS = "list_mental_model_tags"
+    LIST_MENTAL_MODELS = "list_mental_models"
+    LIST_OBSERVATION_SCOPES = "list_observation_scopes"
+    LIST_OPERATIONS = "list_operations"
+    LIST_TAGS = "list_tags"
+    LIST_WEBHOOK_DELIVERIES = "list_webhook_deliveries"
+    LIST_WEBHOOKS = "list_webhooks"
+
+
+class BankWriteOperation(StrEnum):
+    """Bank-scoped write operation names passed to validate_bank_write."""
+
+    CANCEL_OPERATION = "cancel_operation"
+    CLEAR_MENTAL_MODEL = "clear_mental_model"
+    CLEAR_OBSERVATIONS = "clear_observations"
+    CLEAR_OBSERVATIONS_FOR_MEMORY = "clear_observations_for_memory"
+    CREATE_DIRECTIVE = "create_directive"
+    CREATE_MENTAL_MODEL = "create_mental_model"
+    CREATE_WEBHOOK = "create_webhook"
+    DELETE_BANK = "delete_bank"
+    DELETE_DIRECTIVE = "delete_directive"
+    DELETE_DOCUMENT = "delete_document"
+    DELETE_MENTAL_MODEL = "delete_mental_model"
+    DELETE_WEBHOOK = "delete_webhook"
+    MERGE_BANK_MISSION = "merge_bank_mission"
+    REPROCESS_DOCUMENT = "reprocess_document"
+    RESET_BANK_CONFIG = "reset_bank_config"
+    RETRY_FAILED_CONSOLIDATION = "retry_failed_consolidation"
+    RETRY_OPERATION = "retry_operation"
+    RUN_CONSOLIDATION = "run_consolidation"
+    SET_BANK_MISSION = "set_bank_mission"
+    SUBMIT_ASYNC_CONSOLIDATION = "submit_async_consolidation"
+    SUBMIT_ASYNC_GRAPH_MAINTENANCE = "submit_async_graph_maintenance"
+    UPDATE_BANK = "update_bank"
+    UPDATE_BANK_CONFIG = "update_bank_config"
+    UPDATE_BANK_DISPOSITION = "update_bank_disposition"
+    UPDATE_DIRECTIVE = "update_directive"
+    UPDATE_DOCUMENT = "update_document"
+    UPDATE_MEMORY_UNIT = "update_memory_unit"
+    UPDATE_MENTAL_MODEL = "update_mental_model"
+    UPDATE_WEBHOOK = "update_webhook"
+
+
 @dataclass
 class BankReadContext:
     """Context for a bank read operation validation (pre-operation)."""
 
     bank_id: str
-    operation: str  # "get_bank_profile", "get_bank_stats"
+    operation: BankReadOperation
     request_context: "RequestContext"
 
 
@@ -317,7 +393,7 @@ class BankWriteContext:
     """Context for a bank write operation validation (pre-operation)."""
 
     bank_id: str
-    operation: str  # "delete_bank", "update_bank", "update_bank_disposition", "set_bank_mission", "merge_bank_mission", "clear_observations", "clear_observations_for_memory"
+    operation: BankWriteOperation
     request_context: "RequestContext"
 
 

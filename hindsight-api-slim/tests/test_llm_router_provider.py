@@ -194,6 +194,7 @@ def _make_router_provider(config: dict[str, Any], mock_router: Any) -> LiteLLMRo
         provider.model = "unused"
         provider.reasoning_effort = "low"
         provider.timeout = 300.0
+        provider._default_headers = {}
         provider.config = config
         provider._litellm = fake_litellm
         provider._router = mock_router

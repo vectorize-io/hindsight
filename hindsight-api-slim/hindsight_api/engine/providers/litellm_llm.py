@@ -71,6 +71,7 @@ class LiteLLMLLM(LLMInterface):
         timeout: float | None = None,
         extra_body: dict[str, Any] | None = None,
         bedrock_service_tier: str | None = None,
+        default_headers: dict[str, Any] | None = None,
         **kwargs: Any,
     ):
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
@@ -84,6 +85,13 @@ class LiteLLMLLM(LLMInterface):
         # drops any the target model rejects (litellm.drop_params=True below).
         # Sourced from llm_extra_body (env: HINDSIGHT_API_LLM_EXTRA_BODY).
         self._extra_body: dict[str, Any] = extra_body or {}
+        # Operator-configured default headers forwarded to litellm.acompletion as
+        # ``extra_headers`` (used by deployments routing through proxies / request-
+        # tracing middleware). Mirrors the Anthropic provider's default_headers
+        # wiring. Sourced from llm_default_headers (env: HINDSIGHT_API_LLM_DEFAULT_HEADERS).
+        # Copied so a caller-owned dict can't be mutated through us, and a fresh
+        # copy is handed to each call below to avoid cross-request contamination.
+        self._default_headers: dict[str, Any] = dict(default_headers or {})
         self.bedrock_service_tier = bedrock_service_tier
 
         try:
@@ -100,12 +108,14 @@ class LiteLLMLLM(LLMInterface):
             raise RuntimeError("LiteLLM SDK not installed. Run: uv add litellm or pip install litellm") from e
 
     async def verify_connection(self) -> None:
+        from ...config import get_config
+
         try:
             test_messages = [{"role": "user", "content": "test"}]
             await self.call(
                 messages=test_messages,
                 max_completion_tokens=50,
-                temperature=0.0,
+                temperature=get_config().llm_temperature_verification,
                 scope="verification",
                 max_retries=0,
             )
@@ -143,6 +153,13 @@ class LiteLLMLLM(LLMInterface):
         # so explicit per-call params (model, messages, temperature, …) always win.
         for key, value in self._extra_body.items():
             kwargs.setdefault(key, value)
+
+        # Forward operator-configured default headers as ``extra_headers`` so they
+        # reach the provider behind LiteLLM (proxies / request-tracing middleware).
+        # ``setdefault`` keeps any explicit per-call ``extra_headers`` authoritative;
+        # a per-call copy prevents LiteLLM/downstream from mutating the stored dict.
+        if self._default_headers:
+            kwargs.setdefault("extra_headers", dict(self._default_headers))
 
         # Bedrock service tier: flex (50% cheaper), priority, or reserved
         if self.model.startswith("bedrock/") and self.bedrock_service_tier is not None:
@@ -408,6 +425,14 @@ class LiteLLMLLM(LLMInterface):
                     self._acompletion(**call_kwargs),
                     timeout=self.timeout,
                 )
+                # Stash usage before the tool-call argument parse below, which
+                # can raise json.JSONDecodeError locally even though the provider
+                # already billed for these tokens; without this the error trace
+                # records 0/0 tokens (#2387). Mirrors call() and the anthropic/
+                # gemini call_with_tools paths so the litellm tool path (and the
+                # LiteLLMRouterLLM subclass that inherits this method) completes
+                # the #2396 usage-on-error coverage.
+                stash_response_usage(_usage_from_litellm_response(response))
 
                 message = response.choices[0].message
                 content = message.content

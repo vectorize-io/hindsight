@@ -54,6 +54,40 @@
         "type": "string",
         "description": "Mission stamped onto the bank's observations_mission column on first use. Controls what gets synthesised into observations during consolidation."
       },
+      "retainExtractionMode": {
+        "type": "string",
+        "description": "Fact extraction mode stamped onto each bank on first use (dynamic or static). Options: concise, verbose, custom, verbatim, chunks. Leave unset to keep the Hindsight server default for new banks.",
+        "enum": ["concise", "verbose", "custom", "verbatim", "chunks"]
+      },
+      "enableObservations": {
+        "type": "boolean",
+        "description": "When set, stamped onto each bank on first use to toggle observation consolidation after retain."
+      },
+      "enableAutoConsolidation": {
+        "type": "boolean",
+        "description": "When set, stamped onto each bank on first use via PATCH /banks/{id}/config to toggle automatic consolidation scheduling."
+      },
+      "dispositionSkepticism": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 5,
+        "description": "Reflect skepticism trait (1=trusting, 5=skeptical) stamped on first bank use."
+      },
+      "dispositionLiteralism": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 5,
+        "description": "Reflect literalism trait (1=flexible, 5=literal) stamped on first bank use."
+      },
+      "dispositionEmpathy": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 5,
+        "description": "Reflect empathy trait (1=detached, 5=empathetic) stamped on first bank use."
+      },
+      "entityLabels": {
+        "description": "Controlled vocabulary for entity labels. Either a list of attribute defs (e.g. [{\"name\":\"person\",\"description\":\"Human user\"}]) or a { \"attributes\": [...] } object, passed through to PATCH /banks/{id}/config as entity_labels on first bank use. Other shapes are ignored."
+      },
       "embedVersion": {
         "type": "string",
         "description": "hindsight-embed version to use (e.g. 'latest', '0.4.2', or empty for latest)",
@@ -328,6 +362,34 @@
     "observationsMission": {
       "label": "Observations Mission",
       "placeholder": "Controls what gets synthesised into observations..."
+    },
+    "retainExtractionMode": {
+      "label": "Retain Extraction Mode",
+      "placeholder": "verbose, concise, custom, verbatim, or chunks"
+    },
+    "enableObservations": {
+      "label": "Enable Observations",
+      "placeholder": "true or false — stamped on first bank use"
+    },
+    "enableAutoConsolidation": {
+      "label": "Enable Auto Consolidation",
+      "placeholder": "true or false — stamped on first bank use"
+    },
+    "dispositionSkepticism": {
+      "label": "Disposition Skepticism",
+      "placeholder": "1–5"
+    },
+    "dispositionLiteralism": {
+      "label": "Disposition Literalism",
+      "placeholder": "1–5"
+    },
+    "dispositionEmpathy": {
+      "label": "Disposition Empathy",
+      "placeholder": "1–5"
+    },
+    "entityLabels": {
+      "label": "Entity Labels",
+      "placeholder": "e.g. [{\"name\":\"person\",\"description\":\"Human user\"}]"
     },
     "embedVersion": {
       "label": "Hindsight Embed Version",

@@ -18,6 +18,7 @@ from hindsight_api.engine.reflect.agent import (
     _clean_answer_text,
     _clean_done_answer,
     _count_messages_tokens,
+    _generate_structured_output,
     _is_context_overflow_error,
     _is_done_tool,
     _normalize_tool_name,
@@ -67,6 +68,25 @@ class TestCleanAnswerText:
         })"""
         cleaned = _clean_answer_text(text)
         assert cleaned == "Summary of findings."
+
+    def test_clean_text_recovers_leaked_done_arguments(self):
+        """A done tool-call argument object rendered as text should keep only answer."""
+        text = """{
+            "answer": "Use the inbound table for API consumers.",
+            "directive_compliance": "Directive 1 followed.",
+            "memory_ids": ["mem-1"],
+            "mental_model_ids": [],
+            "observation_ids": []
+        }"""
+        cleaned = _clean_answer_text(text)
+        assert cleaned == "Use the inbound table for API consumers."
+        assert "directive_compliance" not in cleaned
+
+    def test_clean_text_leaves_non_done_json_answer_unchanged(self):
+        """Plain JSON answers are valid user-visible content."""
+        text = '{"status": "ok", "items": [1, 2]}'
+        cleaned = _clean_answer_text(text)
+        assert cleaned == text
 
 
 class TestCleanDoneAnswer:
@@ -140,6 +160,37 @@ class TestCleanDoneAnswer:
         assert "Point 1" in cleaned
         assert "Point 2" in cleaned
         assert "mental_model_ids" not in cleaned
+
+    def test_clean_answer_recovers_leaked_done_arguments(self):
+        """A done answer that contains leaked done arguments should keep answer content."""
+        text = """{
+            "answer": "Render two markdown tables: inbound and outbound.",
+            "directive_compliance": "All directives followed.",
+            "memory_ids": ["mem-1", "mem-2"],
+            "mental_model_ids": [],
+            "observation_ids": ["obs-1"]
+        }"""
+        cleaned = _clean_done_answer(text)
+        assert cleaned == "Render two markdown tables: inbound and outbound."
+
+    def test_clean_answer_recovers_fenced_leaked_done_arguments(self):
+        """Some providers put leaked done arguments in a JSON code fence."""
+        text = """```json
+{
+  "answer": "The current interface is HTTP only.",
+  "memory_ids": [],
+  "mental_model_ids": [],
+  "observation_ids": []
+}
+```"""
+        cleaned = _clean_done_answer(text)
+        assert cleaned == "The current interface is HTTP only."
+
+    def test_clean_answer_rejects_done_arguments_with_unexpected_keys(self):
+        """Avoid rewriting user-requested JSON that happens to contain answer."""
+        text = '{"answer": "yes", "payload": {"format": "json"}, "memory_ids": []}'
+        cleaned = _clean_done_answer(text)
+        assert cleaned == text
 
 
 class TestToolNameNormalization:
@@ -232,6 +283,36 @@ class TestMentalModelFreshnessHelper:
         # only responsible for freshness/content of the models it is given.
         assert _all_mental_models_are_usable_and_fresh({"mental_models": []}) is True
         assert _all_mental_models_are_usable_and_fresh({}) is True
+
+
+class TestReflectStructuredOutput:
+    """Tests for the second-pass structured-output extraction."""
+
+    @pytest.mark.asyncio
+    async def test_structured_output_uses_short_retry_budget(self):
+        """A provider-specific structured-output failure must not consume the full reflect timeout."""
+        llm = MagicMock()
+        llm.call = AsyncMock(side_effect=RuntimeError("empty message content: finish_reason=length"))
+
+        result = await _generate_structured_output(
+            answer="Alice prefers concise engineering updates.",
+            response_schema={
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string"},
+                },
+                "required": ["summary"],
+            },
+            llm_config=llm,
+            reflect_id="test-reflect",
+        )
+
+        assert result.structured_output is None
+        call_kwargs = llm.call.await_args.kwargs
+        assert call_kwargs["scope"] == "reflect_structured"
+        assert call_kwargs["max_retries"] == 1
+        assert call_kwargs["initial_backoff"] == 0.25
+        assert call_kwargs["max_backoff"] == 1.0
 
 
 class TestReflectAgentMocked:
@@ -1022,7 +1103,6 @@ class TestContextOverflowIntegration:
 
             # Patch get_config where memory_engine uses it, injecting a tiny
             # max_context_tokens.  Everything else delegates to the real config.
-            real_config = memory._get_raw_config() if hasattr(memory, "_get_raw_config") else None
             from hindsight_api.config import get_config as _real_get_config
 
             class _TinyContextProxy:

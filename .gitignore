@@ -6,6 +6,7 @@ dist/
 wheels/
 *.egg-info
 .mcp.json
+.playwright-mcp/
 .osgrep
 # Virtual environments
 .venv

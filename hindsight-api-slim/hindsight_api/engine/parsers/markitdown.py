@@ -5,12 +5,34 @@ import logging
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from hindsight_api.config import DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT
 
 from .base import FileParser
 
+if TYPE_CHECKING:
+    from markitdown import StreamInfo
+
 logger = logging.getLogger(__name__)
+
+# Extensions whose markitdown converters decode the raw bytes as text. markitdown
+# samples only the first chunk for charset detection, so a UTF-8 file with a long
+# ASCII-only prefix is mis-detected as ASCII; the JSON/ipynb converter then crashes
+# decoding the first multibyte byte. Passing an explicit UTF-8 hint when the bytes
+# are valid UTF-8 sidesteps the faulty detection without affecting other encodings.
+_TEXT_EXTENSIONS = {
+    ".json",
+    ".jsonl",
+    ".ipynb",
+    ".txt",
+    ".text",
+    ".md",
+    ".markdown",
+    ".csv",
+    ".html",
+    ".htm",
+}
 
 
 @dataclass(frozen=True)
@@ -134,8 +156,9 @@ class MarkitdownParser(FileParser):
             tmp_path = tmp.name
 
         try:
-            # Parse using markitdown
-            result = self._markitdown.convert(tmp_path)
+            # Parse using markitdown, passing an explicit charset hint for text
+            # files to avoid markitdown's sample-based (and crash-prone) detection.
+            result = self._markitdown.convert(tmp_path, stream_info=self._utf8_stream_info(file_data, filename))
 
             if not result or not result.text_content:
                 raise RuntimeError(f"No content extracted from '{filename}'")
@@ -152,6 +175,23 @@ class MarkitdownParser(FileParser):
                 Path(tmp_path).unlink()
             except Exception:
                 pass
+
+    @staticmethod
+    def _utf8_stream_info(file_data: bytes, filename: str) -> "StreamInfo | None":
+        """Return a UTF-8 charset hint for text files that decode cleanly as UTF-8.
+
+        Returns None for binary files or non-UTF-8 text so markitdown falls back
+        to its own detection.
+        """
+        if Path(filename).suffix.lower() not in _TEXT_EXTENSIONS:
+            return None
+        try:
+            file_data.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        from markitdown import StreamInfo
+
+        return StreamInfo(charset="utf-8")
 
     @staticmethod
     def _is_image_file(filename: str) -> bool:

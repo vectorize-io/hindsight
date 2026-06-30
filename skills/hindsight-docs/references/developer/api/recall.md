@@ -622,7 +622,7 @@ The retrieval-level floors (`semantic`/`keyword`) change *which candidates are c
 
 **Use floors with care.** The reranker's scores are reliable for *ordering* but not as *absolute* values — a clearly-relevant memory can score `~0.001` on one query and `~1.0` on another, so a fixed cutoff risks silently dropping good results. Calibrate any threshold against the scores you actually observe (recall with no `min_scores` first and inspect the [`scores`](#scores) object).
 
-The threshold is compared against the same `score` value the response reports. See the note under [`score`](#score) on why the scale is relative, not absolute, before relying on a fixed threshold.
+Each threshold is compared against the matching field in the response [`scores`](#scores) object. See the note under [`scores`](#scores) on why the scale is relative, not absolute, before relying on a fixed threshold.
 
 ---
 

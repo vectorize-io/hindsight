@@ -8,6 +8,12 @@ import PageHero from '@site/src/components/PageHero';
 
 ← LangGraph integration
 
+## [0.3.0](https://github.com/vectorize-io/hindsight/tree/integrations/langgraph/v0.3.0)
+
+**Bug Fixes**
+
+- Fixes LangGraph integration to correctly load tool bank IDs from configuration, improving tool selection and execution.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/koriyoshi2041" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@koriyoshi2041</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/760bfc744" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>760bfc744</a>
+
 ## [0.2.0](https://github.com/vectorize-io/hindsight/tree/integrations/langgraph/v0.2.0)
 
 **Breaking Changes**

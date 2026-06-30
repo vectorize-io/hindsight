@@ -1,6 +1,6 @@
 [project]
 name = "hindsight-cursor-cli"
-version = "0.2.0"
+version = "0.3.0"
 description = "Cursor CLI integration for Hindsight - persistent long-term memory via Cursor CLI hooks"
 readme = "README.md"
 requires-python = ">=3.11"
