@@ -146,6 +146,16 @@ class LiteLLMRouterLLM(LiteLLMLLM):
             kwargs["max_completion_tokens"] = self._cap_max_completion_tokens(max_completion_tokens)
         if temperature is not None:
             kwargs["temperature"] = temperature
+
+        # Forward operator-configured default headers as ``extra_headers`` so they
+        # reach the provider behind the Router (proxies / request-tracing middleware).
+        # This override deliberately omits api_key/base_url/extra_body (those live in
+        # the per-deployment Router config), but headers are a cross-cutting operator
+        # concern, so we inject them here too — mirroring the base provider.
+        # ``setdefault`` keeps any explicit per-call ``extra_headers`` authoritative;
+        # a per-call copy prevents LiteLLM/downstream from mutating the stored dict.
+        if self._default_headers:
+            kwargs.setdefault("extra_headers", dict(self._default_headers))
         return kwargs
 
     async def verify_connection(self) -> None:
