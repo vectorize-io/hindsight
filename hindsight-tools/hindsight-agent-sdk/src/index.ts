@@ -90,8 +90,6 @@ function normalizeFactTypes(input: unknown, defaultTypes: readonly FactType[]): 
   return [...new Set(normalized)];
 }
 
-const MAX_RESULTS_MIN = 1;
-const MAX_RESULTS_MAX = 50;
 const DEFAULT_RECALL_MAX_TOKENS = 1024;
 
 function parseRecallMaxTokens(input: unknown): number {
@@ -99,21 +97,6 @@ function parseRecallMaxTokens(input: unknown): number {
   const n = Math.floor(Number(input));
   if (!Number.isFinite(n) || n < 1) return DEFAULT_RECALL_MAX_TOKENS;
   return n;
-}
-
-function parseMaxResults(input: unknown): number | undefined {
-  if (input === undefined || input === null) return undefined;
-  const n = Math.floor(Number(input));
-  if (!Number.isFinite(n)) return undefined;
-  return Math.min(MAX_RESULTS_MAX, Math.max(MAX_RESULTS_MIN, n));
-}
-
-function applyMaxResults<T extends { results?: unknown }>(
-  result: T,
-  maxResults: number | undefined
-): T {
-  if (maxResults === undefined || !Array.isArray(result.results)) return result;
-  return { ...result, results: result.results.slice(0, maxResults) };
 }
 
 // ── Factory ────────────────────────────────────────────
@@ -263,15 +246,9 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
         type: "object",
         properties: {
           query: { type: "string", description: "What to search for" },
-          max_results: {
-            type: "number",
-            description:
-              "Maximum number of memories/results to return (1-50). Does not affect the recall token budget.",
-          },
           max_tokens: {
             type: "number",
-            description:
-              "Token budget for recall results (default 1024). Distinct from max_results, which caps result count.",
+            description: "Token budget for recall results (default 1024).",
           },
           fact_types: {
             type: "array",
@@ -289,7 +266,6 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
       },
       async execute(params: Record<string, unknown>) {
         const maxTokens = parseRecallMaxTokens(params.max_tokens);
-        const maxResults = parseMaxResults(params.max_results);
         const types = normalizeFactTypes(
           params.fact_types ?? params.types,
           DEFAULT_RECALL_FACT_TYPES
@@ -298,7 +274,7 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
           maxTokens,
           types,
         });
-        return ok(applyMaxResults(result, maxResults));
+        return ok(result);
       },
     },
     {

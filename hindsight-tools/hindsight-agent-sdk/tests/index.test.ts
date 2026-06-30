@@ -180,20 +180,20 @@ describe("createKnowledgeTools", () => {
     expect(body.types).toEqual(["observation"]);
   });
 
-  it("recall uses default max_tokens and does not map max_results to token budget", async () => {
+  it("recall ignores max_results entirely — no slicing, no token-budget mapping", async () => {
     const manyResults = Array.from({ length: 30 }, (_, i) => ({ text: `fact-${i}` }));
     mockFetch.mockReturnValueOnce(mockResponse({ results: manyResults }));
 
     const tool = tools.find((t) => t.name === "agent_knowledge_recall")!;
     const result = await tool.execute({ query: "budget test", max_results: 25 });
 
+    // max_results must not be mapped to the recall token budget...
     const body = await getBody(mockFetch.mock.calls[0]);
     expect(body.max_tokens).toBe(1024);
 
+    // ...nor truncate the returned results: the param is unsupported and inert.
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.results).toHaveLength(25);
-    expect(parsed.results[0].text).toBe("fact-0");
-    expect(parsed.results[24].text).toBe("fact-24");
+    expect(parsed.results).toHaveLength(30);
   });
 
   it("recall max_tokens still controls recall token budget", async () => {
@@ -204,19 +204,6 @@ describe("createKnowledgeTools", () => {
 
     const body = await getBody(mockFetch.mock.calls[0]);
     expect(body.max_tokens).toBe(512);
-  });
-
-  it("recall clamps max_results to 1-50 and ignores invalid values", async () => {
-    const manyResults = Array.from({ length: 60 }, (_, i) => ({ text: `fact-${i}` }));
-    mockFetch.mockReturnValueOnce(mockResponse({ results: manyResults }));
-
-    const tool = tools.find((t) => t.name === "agent_knowledge_recall")!;
-    const clamped = await tool.execute({ query: "clamp high", max_results: 100 });
-    expect(JSON.parse(clamped.content[0].text).results).toHaveLength(50);
-
-    mockFetch.mockReturnValueOnce(mockResponse({ results: manyResults }));
-    const ignored = await tool.execute({ query: "ignore invalid", max_results: "nope" });
-    expect(JSON.parse(ignored.content[0].text).results).toHaveLength(60);
   });
 
   it("reflect sends POST with conservative defaults", async () => {
