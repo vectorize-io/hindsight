@@ -253,6 +253,7 @@ def create_llm_provider(
     prompt_cache_enabled: bool = False,
     litellmrouter_config: dict[str, Any] | None = None,
     gemini_service_tier: str | None = None,
+    timeout: float | None = None,
 ) -> Any:  # Returns LLMInterface
     """
     Factory function to create the appropriate LLM provider implementation.
@@ -267,6 +268,9 @@ def create_llm_provider(
         openai_service_tier: OpenAI service tier (for OpenAI provider) - None (default) or "flex" (50% cheaper).
         bedrock_service_tier: Bedrock service tier (for Bedrock provider) - None (default), "flex", "priority", or "reserved".
         gemini_service_tier: Gemini service tier (for Gemini provider) - None (default) or "flex" (50% cheaper).
+        timeout: Per-call hard timeout (seconds) for the constructed provider. Threaded into LiteLLM
+            (incl. the ``bedrock/`` alias), which wraps each request in ``asyncio.wait_for(timeout)``.
+            ``None`` lets the provider fall back to ``HINDSIGHT_API_LLM_TIMEOUT`` / the built-in default.
         extra_body: Extra request-body params merged into the provider's native
             call. Threaded into OpenAI-compatible, Fireworks, Anthropic, Gemini/
             VertexAI and LiteLLM providers (each merges them in its own parameter
@@ -378,6 +382,7 @@ def create_llm_provider(
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
             default_headers=default_headers,
+            timeout=timeout,
         )
 
     elif provider_lower == "litellmrouter":
@@ -411,6 +416,7 @@ def create_llm_provider(
             extra_body=extra_body,
             default_headers=default_headers,
             bedrock_service_tier=bedrock_service_tier,
+            timeout=timeout,
         )
 
     elif provider_lower == "llamacpp":
@@ -503,6 +509,7 @@ class LLMProvider:
         base_url: str,
         model: str,
         reasoning_effort: str = "low",
+        timeout: float | None = None,
         groq_service_tier: str | None = None,
         openai_service_tier: str | None = None,
         bedrock_service_tier: str | None = None,
@@ -525,6 +532,9 @@ class LLMProvider:
             base_url: Base URL for the API.
             model: Model name.
             reasoning_effort: Reasoning effort level for supported providers.
+            timeout: Per-call hard timeout (seconds) for this provider. Resolved by the caller from
+                the per-op config (``retain``/``reflect``/``consolidation``) with the global
+                ``llm_timeout`` fallback; ``None`` defers to the provider's own env/default.
             groq_service_tier: Groq service tier ("on_demand", "flex", "auto") - from config.
             openai_service_tier: OpenAI service tier (None or "flex") - from config.
             bedrock_service_tier: Bedrock service tier (None, "flex", "priority", "reserved") - from config.
@@ -556,6 +566,7 @@ class LLMProvider:
         self.base_url = base_url
         self.model = model
         self.reasoning_effort = reasoning_effort
+        self.timeout = timeout
         self.litellmrouter_config = litellmrouter_config
         # Service tiers from hierarchical config (not env vars)
         self.groq_service_tier = groq_service_tier
@@ -694,6 +705,7 @@ class LLMProvider:
             base_url=self.base_url,
             model=self.model,
             reasoning_effort=self.reasoning_effort,
+            timeout=self.timeout,
             groq_service_tier=self.groq_service_tier,
             openai_service_tier=self.openai_service_tier,
             bedrock_service_tier=self.bedrock_service_tier,
@@ -1178,6 +1190,7 @@ class LLMProvider:
             DEFAULT_LLM_PROMPT_CACHE_ENABLED,
             DEFAULT_LLM_PROVIDER,
             DEFAULT_LLM_REASONING_EFFORT,
+            DEFAULT_LLM_TIMEOUT,
             ENV_LLM_API_KEY,
             ENV_LLM_BASE_URL,
             ENV_LLM_BEDROCK_SERVICE_TIER,
@@ -1192,6 +1205,7 @@ class LLMProvider:
             ENV_LLM_PROMPT_CACHE_ENABLED,
             ENV_LLM_PROVIDER,
             ENV_LLM_REASONING_EFFORT,
+            ENV_LLM_TIMEOUT,
             ENV_LLM_VERTEXAI_PROJECT_ID,
             ENV_LLM_VERTEXAI_REGION,
             ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY,
@@ -1229,6 +1243,7 @@ class LLMProvider:
             base_url=base_url,
             model=model,
             reasoning_effort=os.getenv(ENV_LLM_REASONING_EFFORT, DEFAULT_LLM_REASONING_EFFORT),
+            timeout=float(os.getenv(ENV_LLM_TIMEOUT, str(DEFAULT_LLM_TIMEOUT))),
             extra_body=extra_body,
             default_headers=default_headers,
             groq_service_tier=os.getenv(ENV_LLM_GROQ_SERVICE_TIER, DEFAULT_LLM_GROQ_SERVICE_TIER),
