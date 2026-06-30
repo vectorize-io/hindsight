@@ -389,6 +389,53 @@ async def test_retain_extract_success_records_usage_once(registered_recorder):
     assert r.cached_tokens == 20
 
 
+# ── real provider: litellm tool-call arg-parse failure keeps usage (#2387) ────
+
+
+def _litellm_tool_response_with_usage(arguments: str):
+    """A successful LiteLLM (OpenAI-shaped) tool-call response carrying usage,
+    like ``call_with_tools`` sees right before it ``json.loads`` the tool
+    arguments."""
+    function = SimpleNamespace(name="extract", arguments=arguments)
+    tool_call = SimpleNamespace(id="call_1", function=function)
+    message = SimpleNamespace(content=None, tool_calls=[tool_call])
+    choice = SimpleNamespace(finish_reason="tool_calls", message=message)
+    usage = SimpleNamespace(
+        prompt_tokens=140,
+        completion_tokens=18,
+        total_tokens=158,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=20),
+    )
+    return SimpleNamespace(error=None, usage=usage, choices=[choice])
+
+
+@pytest.mark.asyncio
+async def test_litellm_tool_call_arg_parse_failure_keeps_usage(registered_recorder):
+    """The litellm tool path bills the provider response, then ``json.loads`` the
+    tool-call arguments locally; malformed args raise after billing, so the error
+    trace must keep the provider-reported tokens. Exercises the real
+    ``LiteLLMLLM.call_with_tools`` stash that ``LiteLLMRouterLLM`` also inherits
+    (the wrapper-level tools test uses a provider that already stashes)."""
+    llm = LLMProvider(provider="litellm", api_key="test-key", base_url="https://example.test/v1", model="gpt-4o-mini")
+    # Valid response + usage, but the tool arguments are not valid JSON.
+    llm._provider_impl._acompletion = AsyncMock(return_value=_litellm_tool_response_with_usage("{not valid json"))
+
+    with pytest.raises(json.JSONDecodeError):
+        await llm.call_with_tools(
+            messages=[{"role": "user", "content": "x"}],
+            tools=[],
+            scope="tools",
+            max_retries=0,
+        )
+
+    assert len(registered_recorder.records) == 1
+    r = registered_recorder.records[0]
+    assert r.status == "error"
+    assert r.input_tokens == 140
+    assert r.output_tokens == 18
+    assert r.cached_tokens == 20
+
+
 @pytest.mark.asyncio
 async def test_configured_provider_binds_bank_context(registered_recorder):
     llm = LLMProvider(provider="mock", api_key="", base_url="", model="mock")

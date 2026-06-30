@@ -27,7 +27,7 @@ from hindsight_api.engine.audit import (
     AuditLogStatsResponse,
 )
 from hindsight_api.engine.llm_trace import LLMRequestListResponse, LLMRequestStatsResponse
-from hindsight_api.extensions import AuthenticationError
+from hindsight_api.extensions import AuthenticationError, PrecheckOperation
 
 
 def _parse_metadata(metadata: Any) -> dict[str, Any]:
@@ -3380,7 +3380,7 @@ def _register_routes(app: FastAPI):
                 api_key = authorization.strip()
         return RequestContext(api_key=api_key)
 
-    def precheck_for(operation: str):
+    def precheck_for(operation: PrecheckOperation):
         """
         Build a FastAPI dependency that runs ``OperationValidator.precheck``.
 
@@ -3631,7 +3631,7 @@ def _register_routes(app: FastAPI):
     async def _require_dry_run_enabled() -> None:
         """Feature-flag gate for dry-run extraction.
 
-        Declared as a dependency BEFORE ``precheck_for("dry_run_extract")`` so a
+        Declared as a dependency BEFORE ``precheck_for(PrecheckOperation.DRY_RUN_EXTRACT)`` so a
         disabled route returns 404 regardless of tenant/billing state — FastAPI
         resolves path-operation dependencies in signature order, so this runs
         first and preserves the original "disabled → 404" contract.
@@ -3661,7 +3661,7 @@ def _register_routes(app: FastAPI):
         body: DryRunExtractRequest,
         request_context: RequestContext = Depends(get_request_context),
         _enabled: None = Depends(_require_dry_run_enabled),
-        _precheck: None = Depends(precheck_for("dry_run_extract")),
+        _precheck: None = Depends(precheck_for(PrecheckOperation.DRY_RUN_EXTRACT)),
     ):
         try:
             override_fields = (
@@ -3829,7 +3829,7 @@ def _register_routes(app: FastAPI):
         request: RecallRequest,
         http_request: Request,
         request_context: RequestContext = Depends(get_request_context),
-        _precheck: None = Depends(precheck_for("recall")),
+        _precheck: None = Depends(precheck_for(PrecheckOperation.RECALL)),
     ):
         """Run a recall and return results with trace."""
         import time
@@ -4033,7 +4033,7 @@ def _register_routes(app: FastAPI):
         request: ReflectRequest,
         http_request: Request,
         request_context: RequestContext = Depends(get_request_context),
-        _precheck: None = Depends(precheck_for("reflect")),
+        _precheck: None = Depends(precheck_for(PrecheckOperation.REFLECT)),
     ):
         metrics = get_metrics_collector()
 
@@ -4580,7 +4580,7 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         body: CreateMentalModelRequest,
         request_context: RequestContext = Depends(get_request_context),
-        _precheck: None = Depends(precheck_for("mental_model_create")),
+        _precheck: None = Depends(precheck_for(PrecheckOperation.MENTAL_MODEL_CREATE)),
     ):
         """Create a mental model (async - returns operation_id)."""
         try:
@@ -4629,7 +4629,7 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         mental_model_id: str,
         request_context: RequestContext = Depends(get_request_context),
-        _precheck: None = Depends(precheck_for("mental_model_refresh")),
+        _precheck: None = Depends(precheck_for(PrecheckOperation.MENTAL_MODEL_REFRESH)),
     ):
         """Refresh a mental model by re-running its source query (async)."""
         try:
@@ -6215,9 +6215,11 @@ def _register_routes(app: FastAPI):
             # Authenticate and set schema context for multi-tenant DB queries
             await app.state.memory._authenticate_tenant(request_context)
             if app.state.memory._operation_validator:
-                from hindsight_api.extensions import BankReadContext
+                from hindsight_api.extensions import BankReadContext, BankReadOperation
 
-                ctx = BankReadContext(bank_id=bank_id, operation="get_bank_config", request_context=request_context)
+                ctx = BankReadContext(
+                    bank_id=bank_id, operation=BankReadOperation.GET_BANK_CONFIG, request_context=request_context
+                )
                 await app.state.memory._validate_operation(
                     app.state.memory._operation_validator.validate_bank_read(ctx)
                 )
@@ -6263,9 +6265,11 @@ def _register_routes(app: FastAPI):
             # Authenticate and set schema context for multi-tenant DB queries
             await app.state.memory._authenticate_tenant(request_context)
             if app.state.memory._operation_validator:
-                from hindsight_api.extensions import BankWriteContext
+                from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-                ctx = BankWriteContext(bank_id=bank_id, operation="update_bank_config", request_context=request_context)
+                ctx = BankWriteContext(
+                    bank_id=bank_id, operation=BankWriteOperation.UPDATE_BANK_CONFIG, request_context=request_context
+                )
                 await app.state.memory._validate_operation(
                     app.state.memory._operation_validator.validate_bank_write(ctx)
                 )
@@ -6322,9 +6326,11 @@ def _register_routes(app: FastAPI):
             # Authenticate and set schema context for multi-tenant DB queries
             await app.state.memory._authenticate_tenant(request_context)
             if app.state.memory._operation_validator:
-                from hindsight_api.extensions import BankWriteContext
+                from hindsight_api.extensions import BankWriteContext, BankWriteOperation
 
-                ctx = BankWriteContext(bank_id=bank_id, operation="reset_bank_config", request_context=request_context)
+                ctx = BankWriteContext(
+                    bank_id=bank_id, operation=BankWriteOperation.RESET_BANK_CONFIG, request_context=request_context
+                )
                 await app.state.memory._validate_operation(
                     app.state.memory._operation_validator.validate_bank_write(ctx)
                 )
@@ -6695,7 +6701,7 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         request: RetainRequest,
         request_context: RequestContext = Depends(get_request_context),
-        _precheck: None = Depends(precheck_for("retain")),
+        _precheck: None = Depends(precheck_for(PrecheckOperation.RETAIN)),
     ):
         """Retain memories with optional async processing."""
         metrics = get_metrics_collector()
@@ -6878,7 +6884,7 @@ def _register_routes(app: FastAPI):
         files: list[UploadFile] = File(..., description="Files to upload and convert"),
         request: str = Form(..., description="JSON string with FileRetainRequest model"),
         request_context: RequestContext = Depends(get_request_context),
-        _precheck: None = Depends(precheck_for("files_retain")),
+        _precheck: None = Depends(precheck_for(PrecheckOperation.FILES_RETAIN)),
     ):
         """Upload and convert files to memories."""
         from hindsight_api.config import get_config

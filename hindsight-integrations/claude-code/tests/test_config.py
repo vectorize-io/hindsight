@@ -4,7 +4,6 @@ import json
 import os
 
 import pytest
-
 from lib.config import _cast_env, load_config
 
 
@@ -81,6 +80,32 @@ class TestLoadConfig:
         monkeypatch.setenv("HINDSIGHT_REQUEST_TIMEOUT_SECONDS", "60")
         cfg = load_config()
         assert cfg["requestTimeoutSeconds"] == 60
+
+    def test_recall_tags_env_override_accepts_comma_list(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        monkeypatch.setenv("HINDSIGHT_RECALL_TAGS", "memory_type:rule, tech_stack:supabase")
+        cfg = load_config()
+        assert cfg["recallTags"] == ["memory_type:rule", "tech_stack:supabase"]
+
+    def test_recall_tag_groups_env_override_accepts_json(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        monkeypatch.setenv(
+            "HINDSIGHT_RECALL_TAG_GROUPS",
+            '[{"op":"all","tags":["memory_type:rule","tech_stack:supabase"]}]',
+        )
+        cfg = load_config()
+        assert cfg["recallTagGroups"] == [{"op": "all", "tags": ["memory_type:rule", "tech_stack:supabase"]}]
+
+    def test_recall_additional_bank_filters_env_override_accepts_json(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        monkeypatch.setenv(
+            "HINDSIGHT_RECALL_ADDITIONAL_BANK_FILTERS",
+            '{"normative":{"recallTags":["memory_type:rule"],"recallTagsMatch":"all"}}',
+        )
+        cfg = load_config()
+        assert cfg["recallAdditionalBankFilters"] == {
+            "normative": {"recallTags": ["memory_type:rule"], "recallTagsMatch": "all"}
+        }
 
     def test_invalid_settings_json_falls_back_to_defaults(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))

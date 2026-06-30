@@ -126,6 +126,16 @@ async def test_dedup_llm_keep_does_not_merge() -> None:
     conn.execute.assert_not_called()  # kept distinct → no merge
 
 
+async def test_dedup_llm_missing_action_defaults_to_keep() -> None:
+    kwargs, conn, llm = _ctx()
+    llm.call.return_value = _DedupDecision(reason="underfilled structured response")
+    with _patch_embed(), _patch_probe([_obs("Uzbek content on YouTube is described as very rich.", 0.98)]):
+        result = await _dedup_reconcile_create(**kwargs)
+    assert result is None
+    llm.call.assert_awaited_once()
+    conn.execute.assert_not_called()  # missing action is a conservative no-merge
+
+
 async def test_dedup_llm_merge_folds_into_twin() -> None:
     kwargs, conn, llm = _ctx()
     kwargs["create_source_ids"] = [uuid.uuid4(), uuid.uuid4()]

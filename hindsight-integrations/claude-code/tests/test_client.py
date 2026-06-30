@@ -6,7 +6,6 @@ from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from lib.client import USER_AGENT, HindsightClient, _validate_api_url
 
 
@@ -148,6 +147,29 @@ class TestHindsightClientRecall:
 
         assert captured["body"]["budget"] == "high"
         assert captured["body"]["types"] == ["world", "experience"]
+
+    def test_sends_tag_filters(self):
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["body"] = json.loads(req.data.decode())
+            return FakeResp({"results": []})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.recall(
+                "bank",
+                "query",
+                tags=["memory_type:rule"],
+                tags_match="any_strict",
+                tag_groups=[{"op": "all", "tags": ["memory_type:rule", "tech_stack:supabase"]}],
+            )
+
+        assert captured["body"]["tags"] == ["memory_type:rule"]
+        assert captured["body"]["tags_match"] == "any_strict"
+        assert captured["body"]["tag_groups"] == [
+            {"op": "all", "tags": ["memory_type:rule", "tech_stack:supabase"]}
+        ]
 
 
 class TestHindsightClientRetain:

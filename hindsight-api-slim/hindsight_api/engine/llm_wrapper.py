@@ -272,9 +272,11 @@ def create_llm_provider(
             VertexAI and LiteLLM providers (each merges them in its own parameter
             space). Keys must use each provider's native names (e.g. ``max_tokens``
             for OpenAI/Anthropic vs ``max_output_tokens`` for Gemini).
-        default_headers: Custom headers passed as ``default_headers`` to provider SDK clients
-            (used by operators routing through proxies / request-tracing middleware). Currently
-            wired into the Anthropic provider; other providers may opt in as needed.
+        default_headers: Custom headers passed to provider SDK clients (used by operators
+            routing through proxies / request-tracing middleware). Wired into the Anthropic
+            provider (SDK ``default_headers``) and the LiteLLM-backed providers — ``litellm``,
+            ``litellmrouter`` and ``bedrock`` — as the LiteLLM ``extra_headers`` completion
+            kwarg; other providers may opt in as needed.
         vertexai_project_id: Vertex AI project ID (for VertexAI provider).
         vertexai_region: Vertex AI region (for VertexAI provider).
         vertexai_credentials: Vertex AI credentials object (for VertexAI provider).
@@ -375,6 +377,7 @@ def create_llm_provider(
             model=model,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            default_headers=default_headers,
         )
 
     elif provider_lower == "litellmrouter":
@@ -393,6 +396,7 @@ def create_llm_provider(
             config=litellmrouter_config,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            default_headers=default_headers,
         )
 
     elif provider_lower == "bedrock":
@@ -405,6 +409,7 @@ def create_llm_provider(
             model=bedrock_model,
             reasoning_effort=reasoning_effort,
             extra_body=extra_body,
+            default_headers=default_headers,
             bedrock_service_tier=bedrock_service_tier,
         )
 
@@ -1168,6 +1173,8 @@ class LLMProvider:
         # does so without building the full HindsightConfig, keeping from_env() a
         # lightweight env-only loader (see test_llm_provider_from_env_keeps_lightweight_loader).
         from ..config import (
+            DEFAULT_LLM_GROQ_SERVICE_TIER,
+            DEFAULT_LLM_OPENAI_SERVICE_TIER,
             DEFAULT_LLM_PROMPT_CACHE_ENABLED,
             DEFAULT_LLM_PROVIDER,
             DEFAULT_LLM_REASONING_EFFORT,
@@ -1178,8 +1185,10 @@ class LLMProvider:
             ENV_LLM_EXTRA_BODY,
             ENV_LLM_GEMINI_SAFETY_SETTINGS,
             ENV_LLM_GEMINI_SERVICE_TIER,
+            ENV_LLM_GROQ_SERVICE_TIER,
             ENV_LLM_LITELLMROUTER_CONFIG,
             ENV_LLM_MODEL,
+            ENV_LLM_OPENAI_SERVICE_TIER,
             ENV_LLM_PROMPT_CACHE_ENABLED,
             ENV_LLM_PROVIDER,
             ENV_LLM_REASONING_EFFORT,
@@ -1222,6 +1231,8 @@ class LLMProvider:
             reasoning_effort=os.getenv(ENV_LLM_REASONING_EFFORT, DEFAULT_LLM_REASONING_EFFORT),
             extra_body=extra_body,
             default_headers=default_headers,
+            groq_service_tier=os.getenv(ENV_LLM_GROQ_SERVICE_TIER, DEFAULT_LLM_GROQ_SERVICE_TIER),
+            openai_service_tier=os.getenv(ENV_LLM_OPENAI_SERVICE_TIER, DEFAULT_LLM_OPENAI_SERVICE_TIER),
             bedrock_service_tier=os.getenv(ENV_LLM_BEDROCK_SERVICE_TIER) or None,
             gemini_service_tier=(
                 parse_gemini_service_tier(os.getenv(ENV_LLM_GEMINI_SERVICE_TIER))

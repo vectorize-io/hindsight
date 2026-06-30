@@ -18,6 +18,13 @@ import { mkdirSync } from "fs";
 import { createRequire } from "module";
 import { homedir } from "os";
 import { createKnowledgeTools, TOOL_NAMES } from "@vectorize-io/hindsight-agent-sdk";
+import {
+  applyConfiguredBankDefaults,
+  hasConfiguredBankDefaults,
+  normalizeDispositionTrait,
+  normalizeEntityLabels,
+  normalizeRetainExtractionMode,
+} from "./bank-defaults.js";
 
 function loadPackageVersion(): string {
   try {
@@ -84,11 +91,8 @@ const MIN_VERSION_FOR_UPDATE_MODE_APPEND = "0.5.0";
 // Store the current plugin config for bank ID derivation
 let currentPluginConfig: PluginConfig | null = null;
 
-// Track which banks have had their mission set (to avoid re-setting on every request).
-// Under the old bespoke client we also cached a client instance per bank because the
-// client carried a mutable bankId. HindsightClient takes bankId as a parameter on every
-// call, so no per-bank caching is needed anymore — one module-level client is enough.
-const banksWithMissionSet = new Set<string>();
+// Track which banks have had configured defaults applied (missions + bank config).
+const banksWithDefaultsApplied = new Set<string>();
 
 // In-flight recall deduplication: concurrent recalls for the same bank reuse one promise
 import type { RecallResponse } from "./types.js";
@@ -169,34 +173,22 @@ function scopeClient(c: HindsightClient, bankId: string): BankScopedClient {
   };
 }
 
-/**
- * Stamp configured missions onto a bank exactly once per process lifetime.
- * No-op if no mission fields are set in plugin config — this is what lets
- * users manage per-bank missions out-of-band without the plugin clobbering
- * them on every gateway restart.
- */
-async function applyConfiguredMissions(
-  scoped: BankScopedClient,
-  config: PluginConfig
-): Promise<void> {
-  const missions: BankMissionsUpdate = {};
-  if (typeof config.bankMission === "string" && config.bankMission.length > 0) {
-    missions.reflectMission = config.bankMission;
-  }
-  if (typeof config.retainMission === "string" && config.retainMission.length > 0) {
-    missions.retainMission = config.retainMission;
-  }
-  if (typeof config.observationsMission === "string" && config.observationsMission.length > 0) {
-    missions.observationsMission = config.observationsMission;
-  }
-  if (
-    missions.reflectMission === undefined &&
-    missions.retainMission === undefined &&
-    missions.observationsMission === undefined
-  ) {
+async function ensureBankDefaultsApplied(bankId: string, config: PluginConfig): Promise<void> {
+  if (!client || !clientOptions || !hasConfiguredBankDefaults(config)) {
     return;
   }
-  await scoped.setMissions(missions);
+  if (banksWithDefaultsApplied.has(bankId)) {
+    return;
+  }
+  try {
+    await applyConfiguredBankDefaults(client, bankId, config, clientOptions);
+    banksWithDefaultsApplied.add(bankId);
+    debug(`[Hindsight] Applied configured defaults for bank: ${bankId}`);
+  } catch (error) {
+    log.warn(
+      `could not apply bank defaults for ${bankId}: ${error instanceof Error ? error.message : error}`
+    );
+  }
 }
 
 /**
@@ -216,14 +208,6 @@ export function formatHookPerf(
     parts.push(`${k}=${v}`);
   }
   return `perf: ${hook} ${parts.join(" ")}`;
-}
-
-function hasConfiguredMissions(config: PluginConfig): boolean {
-  return (
-    (typeof config.bankMission === "string" && config.bankMission.length > 0) ||
-    (typeof config.retainMission === "string" && config.retainMission.length > 0) ||
-    (typeof config.observationsMission === "string" && config.observationsMission.length > 0)
-  );
 }
 
 /**
@@ -378,19 +362,11 @@ async function lazyReinit(configOverride?: PluginConfig): Promise<void> {
 
     const llmConfig = detectLLMConfig(config);
     clientOptions = buildClientOptions(llmConfig, config, externalApi);
-    banksWithMissionSet.clear();
+    banksWithDefaultsApplied.clear();
     client = new HindsightClient(clientOptions);
 
-    if (hasConfiguredMissions(config) && usesStaticBank(config)) {
-      const bankId = getStaticBankId(config);
-      try {
-        await applyConfiguredMissions(scopeClient(client, bankId), config);
-        banksWithMissionSet.add(bankId);
-      } catch (err) {
-        log.warn(
-          `could not set bank missions for ${bankId}: ${err instanceof Error ? err.message : err}`
-        );
-      }
+    if (usesStaticBank(config)) {
+      await ensureBankDefaultsApplied(getStaticBankId(config), config);
     }
 
     usingExternalApi = true;
@@ -454,17 +430,8 @@ if (typeof global !== "undefined") {
       const bankId = usesStaticBank(config) ? getStaticBankId(config) : deriveBankId(ctx, config);
       const scoped = scopeClient(client, bankId);
 
-      // Stamp configured missions onto this bank on first use.
-      if (hasConfiguredMissions(config) && !banksWithMissionSet.has(bankId)) {
-        try {
-          await applyConfiguredMissions(scoped, config);
-          banksWithMissionSet.add(bankId);
-          debug(`[Hindsight] Set missions for new bank: ${bankId}`);
-        } catch (error) {
-          // Log but don't fail - bank missions are not critical
-          log.warn(`could not set bank missions for ${bankId}: ${error}`);
-        }
-      }
+      // Stamp configured defaults onto this bank on first use (recall or retain).
+      await ensureBankDefaultsApplied(bankId, config);
 
       return scoped;
     },
@@ -887,9 +854,8 @@ export function resolveSessionIdentity(
   const sessionParsed = ctx.sessionKey ? parseSessionKey(ctx.sessionKey) : {};
   const messageProvider = ctx.messageProvider || sessionParsed.provider;
   const channelId = ctx.channelId || sessionParsed.channel;
-  const senderId =
-    ctx.senderId ||
-    (messageProvider === "telegram" ? extractTelegramDirectSenderId(channelId) : undefined);
+  // direct:<id> channel ids carry the user id for any provider (telegram, msteams, …).
+  const senderId = ctx.senderId || extractTelegramDirectSenderId(channelId);
 
   return {
     ...ctx,
@@ -1211,6 +1177,84 @@ export function deriveBankId(
   return pluginConfig.bankIdPrefix ? `${pluginConfig.bankIdPrefix}-${baseBankId}` : baseBankId;
 }
 
+function usesUserScopedBanking(pluginConfig: PluginConfig): boolean {
+  if (usesStaticBank(pluginConfig)) {
+    return false;
+  }
+  const granularity = pluginConfig.dynamicBankGranularity?.length
+    ? pluginConfig.dynamicBankGranularity
+    : DEFAULT_DYNAMIC_BANK_GRANULARITY;
+  return granularity.includes("user");
+}
+
+export interface KnowledgeToolBankResolution {
+  bankId: string;
+  resolvedCtx: PluginHookAgentContext | undefined;
+  identityError?: string;
+}
+
+/**
+ * Resolve the Hindsight bank for knowledge tools using the same identity path as
+ * auto-recall/retain. When user-scoped dynamic banking is enabled, unresolved
+ * identity must not silently route to the shared default or anonymous bank.
+ */
+export function resolveBankIdForKnowledgeTools(
+  toolCtx: PluginToolContext,
+  pluginConfig: PluginConfig
+): KnowledgeToolBankResolution {
+  if (usesStaticBank(pluginConfig)) {
+    return { bankId: getStaticBankId(pluginConfig), resolvedCtx: undefined };
+  }
+
+  const hookCtx: PluginHookAgentContext = {
+    agentId: toolCtx.agentId,
+    sessionKey: toolCtx.sessionKey,
+    workspaceDir: toolCtx.workspaceDir,
+  };
+
+  const { resolvedCtx, skipReason } = resolveAndCacheIdentity({
+    sessionKey: toolCtx.sessionKey,
+    ctx: hookCtx,
+    pluginConfig,
+  });
+  const { reason: identityReason } = getIdentitySkipReason(resolvedCtx, pluginConfig);
+  const effectiveSkip = skipReason ?? identityReason;
+  const bankId = deriveBankId(resolvedCtx, pluginConfig);
+
+  if (usesUserScopedBanking(pluginConfig)) {
+    const userSegment = resolvedCtx?.senderId || "anonymous";
+    if (effectiveSkip) {
+      return {
+        bankId,
+        resolvedCtx,
+        identityError:
+          `Hindsight knowledge tools skipped: ${formatIdentitySkipReason(effectiveSkip)}. ` +
+          "Knowledge tools use the same per-user memory bank as auto-recall/retain.",
+      };
+    }
+    if (userSegment === "anonymous") {
+      return {
+        bankId,
+        resolvedCtx,
+        identityError:
+          "Hindsight knowledge tools skipped: missing stable sender identity. " +
+          "Knowledge tools use the same per-user memory bank as auto-recall/retain.",
+      };
+    }
+    if (bankId === getDefaultBankId(pluginConfig)) {
+      return {
+        bankId,
+        resolvedCtx,
+        identityError:
+          "Hindsight knowledge tools skipped: could not resolve per-user memory bank. " +
+          "Knowledge tools use the same per-user memory bank as auto-recall/retain.",
+      };
+    }
+  }
+
+  return { bankId, resolvedCtx };
+}
+
 export function formatMemories(results: MemoryResult[]): string {
   if (!results || results.length === 0) return "";
   return results
@@ -1474,6 +1518,17 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
       typeof config.observationsMission === "string" && config.observationsMission.length > 0
         ? config.observationsMission
         : undefined,
+    retainExtractionMode: normalizeRetainExtractionMode(config.retainExtractionMode),
+    enableObservations:
+      typeof config.enableObservations === "boolean" ? config.enableObservations : undefined,
+    enableAutoConsolidation:
+      typeof config.enableAutoConsolidation === "boolean"
+        ? config.enableAutoConsolidation
+        : undefined,
+    dispositionSkepticism: normalizeDispositionTrait(config.dispositionSkepticism),
+    dispositionLiteralism: normalizeDispositionTrait(config.dispositionLiteralism),
+    dispositionEmpathy: normalizeDispositionTrait(config.dispositionEmpathy),
+    entityLabels: normalizeEntityLabels(config.entityLabels),
     embedPort: config.embedPort || 0,
     daemonIdleTimeout: config.daemonIdleTimeout !== undefined ? config.daemonIdleTimeout : 0,
     embedVersion: config.embedVersion || "latest",
@@ -1724,24 +1779,17 @@ export default function (api: MoltbotPluginAPI) {
               // Initialize client for external API
               debug("[Hindsight] Creating HindsightClient (external API)...");
               clientOptions = buildClientOptions(llmConfig, pluginConfig, externalApi);
-              banksWithMissionSet.clear();
+              banksWithDefaultsApplied.clear();
               client = new HindsightClient(clientOptions);
 
               const defaultBankId = deriveBankId(undefined, pluginConfig);
               debug(`[Hindsight] Default bank: ${defaultBankId}`);
 
-              // Note: Missions are stamped per-bank when dynamic bank IDs are
-              // enabled. For static banks, stamp once here on init.
-              if (hasConfiguredMissions(pluginConfig) && usesStaticBank(pluginConfig)) {
-                debug(`[Hindsight] Setting bank missions...`);
-                try {
-                  await applyConfiguredMissions(scopeClient(client, defaultBankId), pluginConfig);
-                  banksWithMissionSet.add(defaultBankId);
-                } catch (err) {
-                  log.warn(
-                    `could not set bank missions for ${defaultBankId}: ${err instanceof Error ? err.message : err}`
-                  );
-                }
+              // Defaults are stamped per-bank when dynamic bank IDs are enabled.
+              // For static banks, stamp once here on init.
+              if (usesStaticBank(pluginConfig)) {
+                debug(`[Hindsight] Applying configured bank defaults...`);
+                await ensureBankDefaultsApplied(defaultBankId, pluginConfig);
               }
 
               if (!isInitialized) {
@@ -1779,24 +1827,17 @@ export default function (api: MoltbotPluginAPI) {
               // Initialize client pointed at the local daemon URL
               debug("[Hindsight] Creating HindsightClient (local daemon)...");
               clientOptions = { baseUrl: hindsightServer.getBaseUrl() };
-              banksWithMissionSet.clear();
+              banksWithDefaultsApplied.clear();
               client = new HindsightClient(clientOptions);
 
               const defaultBankId = deriveBankId(undefined, pluginConfig);
               debug(`[Hindsight] Default bank: ${defaultBankId}`);
 
-              // Note: Missions are stamped per-bank when dynamic bank IDs are
-              // enabled. For static banks, stamp once here on init.
-              if (hasConfiguredMissions(pluginConfig) && usesStaticBank(pluginConfig)) {
-                debug(`[Hindsight] Setting bank missions...`);
-                try {
-                  await applyConfiguredMissions(scopeClient(client, defaultBankId), pluginConfig);
-                  banksWithMissionSet.add(defaultBankId);
-                } catch (err) {
-                  log.warn(
-                    `could not set bank missions for ${defaultBankId}: ${err instanceof Error ? err.message : err}`
-                  );
-                }
+              // Defaults are stamped per-bank when dynamic bank IDs are enabled.
+              // For static banks, stamp once here on init.
+              if (usesStaticBank(pluginConfig)) {
+                debug(`[Hindsight] Applying configured bank defaults...`);
+                await ensureBankDefaultsApplied(defaultBankId, pluginConfig);
               }
 
               if (!isInitialized) {
@@ -1838,7 +1879,7 @@ export default function (api: MoltbotPluginAPI) {
               // Reset state for reinitialization attempt
               client = null;
               clientOptions = null;
-              banksWithMissionSet.clear();
+              banksWithDefaultsApplied.clear();
               isInitialized = false;
             }
           }
@@ -1856,7 +1897,7 @@ export default function (api: MoltbotPluginAPI) {
             hindsightServer = null;
             client = null;
             clientOptions = null;
-            banksWithMissionSet.clear();
+            banksWithDefaultsApplied.clear();
             isInitialized = false;
           }
         }
@@ -1878,22 +1919,12 @@ export default function (api: MoltbotPluginAPI) {
             await detectAppendCapability(externalApi.apiUrl, externalApi.apiToken);
 
             clientOptions = buildClientOptions(llmConfig, reinitPluginConfig, externalApi);
-            banksWithMissionSet.clear();
+            banksWithDefaultsApplied.clear();
             client = new HindsightClient(clientOptions);
             const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
 
-            if (hasConfiguredMissions(reinitPluginConfig) && usesStaticBank(reinitPluginConfig)) {
-              try {
-                await applyConfiguredMissions(
-                  scopeClient(client, defaultBankId),
-                  reinitPluginConfig
-                );
-                banksWithMissionSet.add(defaultBankId);
-              } catch (err) {
-                log.warn(
-                  `could not set bank missions for ${defaultBankId}: ${err instanceof Error ? err.message : err}`
-                );
-              }
+            if (usesStaticBank(reinitPluginConfig)) {
+              await ensureBankDefaultsApplied(defaultBankId, reinitPluginConfig);
             }
 
             isInitialized = true;
@@ -1920,22 +1951,12 @@ export default function (api: MoltbotPluginAPI) {
             await hindsightServer.start();
 
             clientOptions = { baseUrl: hindsightServer.getBaseUrl() };
-            banksWithMissionSet.clear();
+            banksWithDefaultsApplied.clear();
             client = new HindsightClient(clientOptions);
             const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
 
-            if (hasConfiguredMissions(reinitPluginConfig) && usesStaticBank(reinitPluginConfig)) {
-              try {
-                await applyConfiguredMissions(
-                  scopeClient(client, defaultBankId),
-                  reinitPluginConfig
-                );
-                banksWithMissionSet.add(defaultBankId);
-              } catch (err) {
-                log.warn(
-                  `could not set bank missions for ${defaultBankId}: ${err instanceof Error ? err.message : err}`
-                );
-              }
+            if (usesStaticBank(reinitPluginConfig)) {
+              await ensureBankDefaultsApplied(defaultBankId, reinitPluginConfig);
             }
 
             isInitialized = true;
@@ -1972,7 +1993,7 @@ export default function (api: MoltbotPluginAPI) {
 
           client = null;
           clientOptions = null;
-          banksWithMissionSet.clear();
+          banksWithDefaultsApplied.clear();
           isInitialized = false;
 
           stopLogger();
@@ -2637,16 +2658,30 @@ ${memoriesFormatted}
         })();
         const apiToken = pluginConfig.hindsightApiToken || undefined;
 
-        // Factory: called per session with agent context, returns tools scoped to that bank
+        // Factory: called per session with agent context, returns tools scoped to that bank.
+        // Identity is resolved the same way as auto-recall/retain so PluginToolContext
+        // (which lacks senderId/messageProvider) still routes to the per-user bank.
         const factory = (ctx: PluginToolContext) => {
-          const bankId = deriveBankId(ctx as any, pluginConfig);
-          const tools = createKnowledgeTools({ apiUrl, apiToken, bankId });
+          const resolution = resolveBankIdForKnowledgeTools(ctx, pluginConfig);
+          const tools = createKnowledgeTools({
+            apiUrl,
+            apiToken,
+            bankId: resolution.bankId,
+          });
           return tools.map((t) => ({
             name: t.name,
             label: t.label,
             description: t.description,
             parameters: t.parameters,
             async execute(_id: string, params: Record<string, unknown>) {
+              if (resolution.identityError) {
+                return {
+                  content: [{ type: "text", text: resolution.identityError }],
+                  details: {},
+                };
+              }
+              const config = currentPluginConfig || pluginConfig;
+              await ensureBankDefaultsApplied(resolution.bankId, config);
               return { ...(await t.execute(params)), details: {} };
             },
           }));

@@ -40,6 +40,24 @@ result = await agent.ainvoke(
 )
 ```
 
+### Dynamic Bank IDs with Tools
+
+If you build the agent once and serve multiple users, omit the static `bank_id`
+and resolve it per request from `config["configurable"]`:
+
+```python
+tools = create_hindsight_tools(bank_id_from_config="user_id")
+agent = create_react_agent(ChatOpenAI(model="gpt-4o"), tools=tools)
+
+result = await agent.ainvoke(
+    {"messages": [{"role": "user", "content": "Remember that I prefer dark mode"}]},
+    config={"configurable": {"user_id": "user-456"}},
+)
+```
+
+Passing `bank_id="user-123"` still pins all tool calls to that bank and takes
+precedence over `bank_id_from_config`.
+
 ## Quick Start: Memory Nodes
 
 Add recall and retain nodes to your graph for automatic memory injection before LLM calls and storage after responses.

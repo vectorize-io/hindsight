@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Optional
 
 from hindsight_client import Hindsight
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
 
 from ._client import resolve_client
@@ -19,9 +20,26 @@ from .errors import HindsightError
 logger = logging.getLogger(__name__)
 
 
+def _resolve_bank_id(
+    bank_id: Optional[str],
+    config: Optional[RunnableConfig],
+    bank_id_from_config: str,
+) -> str:
+    if bank_id:
+        return bank_id
+    if config:
+        configurable = config.get("configurable", {})
+        resolved_bank_id = configurable.get(bank_id_from_config)
+        if resolved_bank_id:
+            return resolved_bank_id
+    raise HindsightError(
+        f"No bank_id available for Hindsight tool. Pass bank_id or set config['configurable']['{bank_id_from_config}']."
+    )
+
+
 def create_hindsight_tools(
     *,
-    bank_id: str,
+    bank_id: Optional[str] = None,
     client: Optional[Hindsight] = None,
     hindsight_api_url: Optional[str] = None,
     api_key: Optional[str] = None,
@@ -36,6 +54,7 @@ def create_hindsight_tools(
     # Recall options
     recall_types: Optional[list[str]] = None,
     recall_include_entities: bool = False,
+    bank_id_from_config: str = "user_id",
     # Reflect options
     reflect_context: Optional[str] = None,
     reflect_max_tokens: Optional[int] = None,
@@ -52,7 +71,8 @@ def create_hindsight_tools(
     ToolNode and ChatModel.bind_tools().
 
     Args:
-        bank_id: The Hindsight memory bank to operate on.
+        bank_id: Static Hindsight memory bank ID. If omitted, the tools
+            resolve the bank at invocation time from RunnableConfig.
         client: Pre-configured Hindsight client (preferred).
         hindsight_api_url: API URL (used if no client provided).
         api_key: API key (used if no client provided).
@@ -65,6 +85,9 @@ def create_hindsight_tools(
         retain_document_id: Default document_id for retain (groups/upserts memories).
         recall_types: Fact types to filter (world, experience, observation).
         recall_include_entities: Include entity information in recall results.
+        bank_id_from_config: Config key to read bank_id from at runtime.
+            Looked up in ``config["configurable"][bank_id_from_config]``.
+            Only used when ``bank_id`` is not provided.
         reflect_context: Additional context for reflect operations.
         reflect_max_tokens: Max tokens for reflect results (defaults to max_tokens).
         reflect_response_schema: JSON schema to constrain reflect output format.
@@ -96,7 +119,7 @@ def create_hindsight_tools(
     if include_retain:
 
         @tool
-        async def hindsight_retain(content: str) -> str:
+        async def hindsight_retain(content: str, runnable_config: RunnableConfig) -> str:
             """Store information to long-term memory for later retrieval.
 
             Use this to save important facts, user preferences, decisions,
@@ -106,7 +129,8 @@ def create_hindsight_tools(
                 content: The information to store in memory.
             """
             try:
-                retain_kwargs: dict[str, Any] = {"bank_id": bank_id, "content": content}
+                resolved_bank_id = _resolve_bank_id(bank_id, runnable_config, bank_id_from_config)
+                retain_kwargs: dict[str, Any] = {"bank_id": resolved_bank_id, "content": content}
                 if effective_tags:
                     retain_kwargs["tags"] = effective_tags
                 if retain_metadata:
@@ -115,6 +139,8 @@ def create_hindsight_tools(
                     retain_kwargs["document_id"] = retain_document_id
                 await resolved_client.aretain(**retain_kwargs)
                 return "Memory stored successfully."
+            except HindsightError:
+                raise
             except Exception as e:
                 logger.error(f"Retain failed: {e}")
                 raise HindsightError(f"Retain failed: {e}") from e
@@ -124,7 +150,7 @@ def create_hindsight_tools(
     if include_recall:
 
         @tool
-        async def hindsight_recall(query: str) -> str:
+        async def hindsight_recall(query: str, runnable_config: RunnableConfig) -> str:
             """Search long-term memory for relevant information.
 
             Use this to find previously stored facts, preferences, or context.
@@ -134,8 +160,9 @@ def create_hindsight_tools(
                 query: What to search for in memory.
             """
             try:
+                resolved_bank_id = _resolve_bank_id(bank_id, runnable_config, bank_id_from_config)
                 recall_kwargs: dict[str, Any] = {
-                    "bank_id": bank_id,
+                    "bank_id": resolved_bank_id,
                     "query": query,
                     "budget": effective_budget,
                     "max_tokens": effective_max_tokens,
@@ -154,6 +181,8 @@ def create_hindsight_tools(
                 for i, result in enumerate(response.results, 1):
                     lines.append(f"{i}. {result.text}")
                 return "\n".join(lines)
+            except HindsightError:
+                raise
             except Exception as e:
                 logger.error(f"Recall failed: {e}")
                 raise HindsightError(f"Recall failed: {e}") from e
@@ -163,7 +192,7 @@ def create_hindsight_tools(
     if include_reflect:
 
         @tool
-        async def hindsight_reflect(query: str) -> str:
+        async def hindsight_reflect(query: str, runnable_config: RunnableConfig) -> str:
             """Synthesize a thoughtful answer from long-term memories.
 
             Use this when you need a coherent summary or reasoned response
@@ -173,8 +202,9 @@ def create_hindsight_tools(
                 query: The question to reflect on using stored memories.
             """
             try:
+                resolved_bank_id = _resolve_bank_id(bank_id, runnable_config, bank_id_from_config)
                 reflect_kwargs: dict[str, Any] = {
-                    "bank_id": bank_id,
+                    "bank_id": resolved_bank_id,
                     "query": query,
                     "budget": effective_budget,
                 }
@@ -193,6 +223,8 @@ def create_hindsight_tools(
                     reflect_kwargs["tags_match"] = effective_reflect_tags_match
                 response = await resolved_client.areflect(**reflect_kwargs)
                 return response.text or "No relevant memories found."
+            except HindsightError:
+                raise
             except Exception as e:
                 logger.error(f"Reflect failed: {e}")
                 raise HindsightError(f"Reflect failed: {e}") from e

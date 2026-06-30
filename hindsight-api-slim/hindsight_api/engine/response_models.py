@@ -243,7 +243,7 @@ class MemoryFact(BaseModel):
 
     id: str = Field(description="Unique identifier for the memory fact")
     text: str = Field(description="The actual text content of the memory")
-    fact_type: str = Field(description="Type of fact: 'world', 'experience', 'opinion', or 'observation'")
+    fact_type: str = Field(description="Type of fact: 'world', 'experience', or 'observation'")
     entities: list[str] | None = Field(None, description="Entity names mentioned in this fact")
     context: str | None = Field(None, description="Additional context for the memory")
     occurred_start: str | None = Field(None, description="ISO format date when the event started occurring")

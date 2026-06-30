@@ -20,6 +20,7 @@ import {
   getIdentitySkipReason,
   isEphemeralOperationalText,
   deriveBankId,
+  resolveBankIdForKnowledgeTools,
   normalizeRetainTags,
   extractInlineRetainTags,
   stripInlineRetainTags,
@@ -1183,6 +1184,20 @@ describe("session identity helpers", () => {
     });
   });
 
+  it("resolves msteams direct identity from session key when senderId is missing", () => {
+    const resolved = resolveSessionIdentity({
+      agentId: "nemoclaw",
+      sessionKey: "agent:nemoclaw:msteams:direct:user-teams-42",
+    });
+
+    expect(resolved).toMatchObject({
+      agentId: "nemoclaw",
+      messageProvider: "msteams",
+      channelId: "direct:user-teams-42",
+      senderId: "user-teams-42",
+    });
+  });
+
   it("derives bank ids from resolved telegram direct identity", () => {
     const bankId = deriveBankId(
       {
@@ -1640,6 +1655,48 @@ describe("getPluginConfig — mission semantics (#1270, #1353)", () => {
   });
 });
 
+describe("getPluginConfig — dynamic bank defaults", () => {
+  it("leaves bank default fields unset when not configured", () => {
+    const cfg = getPluginConfig(makeApi({}));
+    expect(cfg.retainExtractionMode).toBeUndefined();
+    expect(cfg.enableObservations).toBeUndefined();
+    expect(cfg.enableAutoConsolidation).toBeUndefined();
+    expect(cfg.dispositionSkepticism).toBeUndefined();
+    expect(cfg.entityLabels).toBeUndefined();
+  });
+
+  it("normalizes configured bank default fields", () => {
+    const labels = [{ name: "person", description: "Human" }];
+    const cfg = getPluginConfig(
+      makeApi({
+        retainExtractionMode: "VERBOSE",
+        enableObservations: true,
+        enableAutoConsolidation: false,
+        dispositionSkepticism: 4,
+        dispositionLiteralism: 2,
+        dispositionEmpathy: 5,
+        entityLabels: labels,
+      })
+    );
+    expect(cfg.retainExtractionMode).toBe("verbose");
+    expect(cfg.enableObservations).toBe(true);
+    expect(cfg.enableAutoConsolidation).toBe(false);
+    expect(cfg.dispositionSkepticism).toBe(4);
+    expect(cfg.entityLabels).toEqual(labels);
+  });
+
+  it("rejects invalid retainExtractionMode and disposition values", () => {
+    const cfg = getPluginConfig(
+      makeApi({
+        retainExtractionMode: "not-a-mode",
+        dispositionSkepticism: 9,
+      })
+    );
+    expect(cfg.retainExtractionMode).toBeUndefined();
+    expect(cfg.dispositionSkepticism).toBeUndefined();
+  });
+});
+
 describe("getPluginConfig — retainContext", () => {
   it("defaults retainContext to the built-in OpenClaw transcript guidance", () => {
     const cfg = getPluginConfig(makeApi({}));
@@ -1669,5 +1726,58 @@ describe("getPluginConfig — retainContext", () => {
     expect(openclawManifest.configSchema?.properties?.retainContext?.default).toBe(
       DEFAULT_RETAIN_CONTEXT
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveBankIdForKnowledgeTools — dynamic user-scoped banking (#2441)
+// ---------------------------------------------------------------------------
+
+describe("resolveBankIdForKnowledgeTools", () => {
+  const userScopedConfig: PluginConfig = {
+    dynamicBankGranularity: ["user"],
+    bankIdPrefix: "nemoclaw_intel",
+  };
+
+  it("routes msteams direct sessions to the per-user bank, not shared defaults", () => {
+    const userId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+    const resolution = resolveBankIdForKnowledgeTools(
+      {
+        agentId: "nemoclaw",
+        sessionKey: `agent:nemoclaw:msteams:direct:${userId}`,
+      },
+      userScopedConfig
+    );
+
+    expect(resolution.identityError).toBeUndefined();
+    expect(resolution.bankId).toBe(`nemoclaw_intel-${userId}`);
+    expect(resolution.bankId).not.toBe("openclaw");
+    expect(resolution.bankId).not.toBe("nemoclaw_intel-openclaw");
+    expect(resolution.bankId).not.toBe("nemoclaw_intel-anonymous");
+  });
+
+  it("does not silently fall back to shared/default bank when user identity is missing", () => {
+    const resolution = resolveBankIdForKnowledgeTools(
+      {
+        agentId: "nemoclaw",
+        sessionKey: "agent:nemoclaw:msteams:group:19:general@thread.tacv2",
+      },
+      userScopedConfig
+    );
+
+    expect(resolution.identityError).toMatch(/missing stable sender identity/);
+    expect(resolution.bankId).not.toBe("openclaw");
+    expect(resolution.bankId).not.toBe("nemoclaw_intel-openclaw");
+    expect(resolution.bankId).toBe("nemoclaw_intel-anonymous");
+  });
+
+  it("uses static bankId when dynamicBankId is false", () => {
+    const resolution = resolveBankIdForKnowledgeTools(
+      { sessionKey: "agent:nemoclaw:main" },
+      { dynamicBankId: false, bankId: "shared-team-memory" }
+    );
+
+    expect(resolution.identityError).toBeUndefined();
+    expect(resolution.bankId).toBe("shared-team-memory");
   });
 });

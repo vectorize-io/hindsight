@@ -250,7 +250,7 @@ Recall performs 4 retrieval strategies in parallel:
 - Graph: Entity/temporal/causal links
 - Temporal: Time range filtering
 
-![Retain Operation](hindsight-docs/static/img/recall-operation.webp)
+![Recall Operation](hindsight-docs/static/img/recall-operation.webp)
 
 The individual results from the retrievals are merged, then ordered by relevance using reciprocal rank fusion and a cross-encoder reranking model.
 
@@ -276,7 +276,7 @@ client = Hindsight(base_url="http://localhost:8888")
 client.reflect(bank_id="my-bank", query="What should I know about Alice?")
 ```
 
-![Retain Operation](hindsight-docs/static/img/reflect-operation.webp)
+![Reflect Operation](hindsight-docs/static/img/reflect-operation.webp)
 
 ---
 

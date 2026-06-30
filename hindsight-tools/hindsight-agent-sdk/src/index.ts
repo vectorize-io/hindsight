@@ -90,6 +90,15 @@ function normalizeFactTypes(input: unknown, defaultTypes: readonly FactType[]): 
   return [...new Set(normalized)];
 }
 
+const DEFAULT_RECALL_MAX_TOKENS = 1024;
+
+function parseRecallMaxTokens(input: unknown): number {
+  if (input === undefined || input === null) return DEFAULT_RECALL_MAX_TOKENS;
+  const n = Math.floor(Number(input));
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_RECALL_MAX_TOKENS;
+  return n;
+}
+
 // ── Factory ────────────────────────────────────────────
 
 /**
@@ -237,7 +246,10 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
         type: "object",
         properties: {
           query: { type: "string", description: "What to search for" },
-          max_tokens: { type: "number", description: "Token budget for results (default 1024)" },
+          max_tokens: {
+            type: "number",
+            description: "Token budget for recall results (default 1024).",
+          },
           fact_types: {
             type: "array",
             items: { type: "string", enum: ["world", "experience", "observation"] },
@@ -253,10 +265,7 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
         required: ["query"],
       },
       async execute(params: Record<string, unknown>) {
-        const maxTokens =
-          (params.max_tokens as number | undefined) ??
-          (params.max_results as number | undefined) ??
-          1024;
+        const maxTokens = parseRecallMaxTokens(params.max_tokens);
         const types = normalizeFactTypes(
           params.fact_types ?? params.types,
           DEFAULT_RECALL_FACT_TYPES

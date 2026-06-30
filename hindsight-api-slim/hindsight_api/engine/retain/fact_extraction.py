@@ -193,7 +193,7 @@ class ExtractedFact(BaseModel):
     occurred_start: str | None = Field(default=None, description="ISO timestamp for events")
     occurred_end: str | None = Field(default=None, description="ISO timestamp for event end")
     fact_type: Literal["world", "assistant"] = Field(
-        description="'world' = objective/external facts. 'assistant' = first-person actions, experiences, or observations by the speaker."
+        description="'world' = objective/external facts, including user preferences, rules, corrections, and constraints even when stated during a conversation. 'assistant' = actions, experiences, or observations the assistant/agent actually performed."
     )
     entities: list[Entity] | None = Field(default=None, description="People, places, concepts")
     causal_relations: list[FactCausalRelation] | None = Field(
@@ -296,7 +296,7 @@ class ExtractedFactVerbose(BaseModel):
     )
 
     fact_type: Literal["world", "assistant"] = Field(
-        description="'world' = objective/external facts about other people, events, general knowledge. 'assistant' = first-person actions, experiences, or observations by the speaker (e.g., 'I changed X', 'I discovered Y')."
+        description="'world' = objective/external facts about the user, other people, events, general knowledge, preferences, rules, corrections, or constraints. 'assistant' = actions, experiences, or observations the assistant/agent actually performed (e.g., 'I changed X', 'I discovered Y')."
     )
 
     entities: list[Entity] | None = Field(
@@ -346,7 +346,7 @@ class ExtractedFactNoCausal(BaseModel):
     occurred_start: str | None = Field(default=None, description="WHEN the event happened (ISO timestamp).")
     occurred_end: str | None = Field(default=None, description="WHEN the event ended (ISO timestamp).")
     fact_type: Literal["world", "assistant"] = Field(
-        description="'world' = about the user/others. 'assistant' = experience with assistant."
+        description="'world' = about the user/others, including user preferences, rules, corrections, and constraints. 'assistant' = actions or experiences the assistant/agent actually performed."
     )
     entities: list[Entity] | None = Field(
         default=None,
@@ -663,8 +663,8 @@ fact_kind:
 - "conversation": Ongoing state, preference, trait (no dates)
 
 fact_type:
-- "world": About other people, external events, general knowledge, objective facts
-- "assistant": First-person actions, experiences, or observations by the speaker/author (e.g., "I changed X", "I discovered Y", "I debugged Z"). Also includes interactions with the user (requests, recommendations). If the narrator describes something they did, tried, learned, or decided — use "assistant".
+- "world": Objective/external facts, including the user's preferences, rules, corrections, constraints, plans, traits, or context. These stay "world" even when the user states them during an assistant interaction (e.g., "User prefers browser_navigate over web_search", "User corrected the project deadline").
+- "assistant": Actions, experiences, or observations the assistant/agent actually performed (e.g., "I changed X", "I discovered Y", "I debugged Z"). Use this for the assistant/agent doing, trying, learning, deciding, recommending, or responding — not merely for user facts mentioned in conversation.
 
 ══════════════════════════════════════════════════════════════════════════
 TEMPORAL HANDLING
@@ -766,7 +766,7 @@ RULES:
 - Extract all entities (people, places, organizations, objects, concepts).
 - Extract temporal information (occurred_start, occurred_end, fact_kind, when).
 - Extract location (where) and people (who).
-- fact_type: use "world" unless the content is clearly an interaction with the assistant."""
+- fact_type: use "world" for user preferences, rules, corrections, constraints, traits, and other objective facts, even when stated during an assistant interaction. Use "assistant" only for actions or experiences the assistant/agent actually performed."""
 
 VERBATIM_FACT_EXTRACTION_PROMPT = _BASE_FACT_EXTRACTION_PROMPT.format(
     retain_mission_section="{retain_mission_section}",
@@ -867,8 +867,8 @@ For CONVERSATIONS (fact_kind="conversation"):
 FACT TYPE
 ══════════════════════════════════════════════════════════════════════════
 
-- **world**: User's life, other people, events (would exist without this conversation)
-- **assistant**: Interactions with assistant (requests, recommendations, help)
+- **world**: User's life, preferences, rules, corrections, constraints, other people, and events (facts that would exist without this conversation)
+- **assistant**: Actions or experiences the assistant/agent actually performed while helping the user (requests, recommendations, help)
   ⚠️ CRITICAL for assistant facts: ALWAYS capture the user's request/question in the fact!
   Include: what the user asked, what problem they wanted solved, what context they provided
 
@@ -1814,7 +1814,14 @@ async def extract_facts_from_text(
         total_usage = total_usage + chunk_usage
 
     if failed_chunks:
-        failed_summary = ", ".join(f"chunk {idx}: {type(err).__name__}" for idx, err in failed_chunks[:5])
+        # Include the exception message — not just the type — so operators
+        # can tell a structured-JSON parse failure apart from a rate limit
+        # apart from a network 5xx, all of which can surface as the same
+        # exception types. The error_message we propagate to the
+        # async_operations row is the only inspection surface a worker-side
+        # failure leaves behind, and a bare "chunk 0: RuntimeError" is not
+        # actionable.
+        failed_summary = ", ".join(f"chunk {idx}: {type(err).__name__}: {err}" for idx, err in failed_chunks[:5])
         quota_errors = [err for _, err in failed_chunks if isinstance(err, ProviderRateLimitResetError)]
         if quota_errors and len(quota_errors) == len(failed_chunks):
             retry_at = max(err.retry_at for err in quota_errors)
