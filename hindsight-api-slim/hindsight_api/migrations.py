@@ -82,8 +82,7 @@ def _ensure_pgvector_extension_in_public(conn: Connection) -> None:
         else:
             # Extension in wrong schema - try to fix if we have permissions
             logger.warning(
-                f"pgvector extension found in schema '{ext_schema}' instead of 'public'. "
-                f"Attempting to relocate..."
+                f"pgvector extension found in schema '{ext_schema}' instead of 'public'. Attempting to relocate..."
             )
             try:
                 conn.execute(text("DROP EXTENSION vector CASCADE"))
@@ -131,8 +130,7 @@ def _ensure_pgvector_extension_in_public(conn: Connection) -> None:
                     f"See: https://github.com/pgvector/pgvector#installation"
                 )
                 raise RuntimeError(
-                    "pgvector extension is required but not installed. "
-                    "Please install it with: CREATE EXTENSION vector;"
+                    "pgvector extension is required but not installed. Please install it with: CREATE EXTENSION vector;"
                 ) from e
 
 
