@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const LANGFUSE_BASE_URL =
-  process.env.LANGFUSE_BASE_URL || "http://localhost:3002";
+const LANGFUSE_BASE_URL = process.env.LANGFUSE_BASE_URL || "http://localhost:3002";
 
 function getBasicAuth(): string {
   const pk = process.env.LANGFUSE_PUBLIC_KEY || "";

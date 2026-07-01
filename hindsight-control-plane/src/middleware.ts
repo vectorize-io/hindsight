@@ -13,6 +13,7 @@ const PUBLIC_PATTERNS = [
   "/api/auth/",
   "/api/health",
   "/api/version",
+  "/api/system/", // System monitoring APIs (internal use)
   "/logo.png",
   "/favicon",
   "/_next",
@@ -75,7 +76,8 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  return intlMiddleware(request);
+  // @ts-ignore: Type mismatch due to monorepo node_modules resolution
+  return (intlMiddleware as any)(request);
 }
 
 export const config = {

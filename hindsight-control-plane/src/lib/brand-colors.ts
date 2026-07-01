@@ -1,11 +1,11 @@
 /**
  * Brand Colors
- * 
+ *
  * Centralized color constants for components that use hardcoded colors.
  * Import these instead of using hex codes directly.
  */
 
-import { whitelabelConfig } from './whitelabel-config';
+import { whitelabelConfig } from "./whitelabel-config";
 
 /**
  * Primary brand colors from whitelabel configuration
@@ -25,10 +25,10 @@ export const CHART_COLORS = {
   secondary: whitelabelConfig.colors.secondary,
   accent: whitelabelConfig.colors.accent,
   // Additional semantic colors
-  success: '#10b981',
-  warning: '#f59e0b',
-  error: '#ef4444',
-  info: '#3b82f6',
+  success: "#10b981",
+  warning: "#f59e0b",
+  error: "#ef4444",
+  info: "#3b82f6",
 } as const;
 
 /**
@@ -39,15 +39,15 @@ export const GRAPH_COLORS = {
   semantic: whitelabelConfig.colors.primary,
   temporal: whitelabelConfig.colors.secondary,
   causal: whitelabelConfig.colors.accent,
-  reference: '#8b5cf6',
-  
+  reference: "#8b5cf6",
+
   // Node defaults
   defaultNode: whitelabelConfig.colors.primary,
   highlightNode: whitelabelConfig.colors.accent,
-  
+
   // Background/UI
-  background: '#ffffff',
-  backgroundDark: '#1f2937',
+  background: "#ffffff",
+  backgroundDark: "#1f2937",
 } as const;
 
 /**
@@ -58,11 +58,11 @@ export function getChartPalette(): string[] {
     whitelabelConfig.colors.primary,
     whitelabelConfig.colors.secondary,
     whitelabelConfig.colors.accent,
-    '#10b981', // success green
-    '#8b5cf6', // purple
-    '#ec4899', // pink
-    '#f59e0b', // amber
-    '#06b6d4', // cyan
+    "#10b981", // success green
+    "#8b5cf6", // purple
+    "#ec4899", // pink
+    "#f59e0b", // amber
+    "#06b6d4", // cyan
   ];
 }
 

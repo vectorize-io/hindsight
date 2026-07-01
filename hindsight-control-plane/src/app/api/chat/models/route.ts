@@ -7,8 +7,7 @@
 
 import { NextResponse } from "next/server";
 
-const PROXY_URL =
-  process.env.COLLABMIND_AI_PROXY_URL || "http://0.0.0.0:3001/v1";
+const PROXY_URL = process.env.COLLABMIND_AI_PROXY_URL || "http://0.0.0.0:3001/v1";
 
 export async function GET() {
   try {
@@ -39,9 +38,6 @@ export async function GET() {
     return NextResponse.json(data);
   } catch (error: any) {
     console.error("Chat models error:", error);
-    return NextResponse.json(
-      { error: error?.message || "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: error?.message || "Internal server error" }, { status: 500 });
   }
 }

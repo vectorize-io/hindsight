@@ -15,13 +15,13 @@ export async function GET(request: NextRequest) {
       `${hindsightApiUrl}/v1/default/banks/${defaultBank}/llm-requests/stats`,
       {
         signal: AbortSignal.timeout(5000),
-      },
+      }
     );
 
     if (!res.ok) {
       return NextResponse.json(
         { error: `Hindsight returned HTTP ${res.status}` },
-        { status: res.status },
+        { status: res.status }
       );
     }
 

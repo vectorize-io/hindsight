@@ -2,61 +2,77 @@
 
 import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
-import { useParams } from "next/navigation";
 import { OperatorShell } from "@/components/operator-shell";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import {
   Settings2,
   Zap,
-  Bell,
-  Shield,
   Monitor,
-  Globe,
-  Clock,
-  Palette,
   Loader2,
   Save,
   CheckCircle2,
+  AlertCircle,
+  MessageSquare,
 } from "lucide-react";
+
+interface BankConfig {
+  retain_mission?: string;
+  retain_extraction_mode?: string;
+  retain_chunk_size?: number;
+  retain_chunk_batch_size?: number;
+  retain_structured_chunk_size?: number;
+  disposition_skepticism?: number;
+  disposition_literalism?: number;
+  disposition_empathy?: number;
+  enable_observations?: boolean;
+  [key: string]: unknown;
+}
 
 export default function SettingsPage() {
   const t = useTranslations("operator");
-  const params = useParams();
-  const locale = (params?.locale as string) || "en";
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [stackConfig, setStackConfig] = useState<any>(null);
+  const [bankConfig, setBankConfig] = useState<BankConfig>({});
 
-  const [systemName, setSystemName] = useState("CollabMind Hindsight");
-  const [language, setLanguage] = useState("en");
-  const [timezone, setTimezone] = useState("UTC");
-  const [theme, setTheme] = useState("system");
-  const [workerCount, setWorkerCount] = useState(4);
-  const [cacheTTL, setCacheTTL] = useState(300);
-  const [batchSize, setBatchSize] = useState(50);
-  const [pollingInterval, setPollingInterval] = useState(30);
-  const [systemAlerts, setSystemAlerts] = useState(true);
-  const [agentNotifications, setAgentNotifications] = useState(true);
-  const [errorReports, setErrorReports] = useState(true);
-  const [weeklyDigest, setWeeklyDigest] = useState(false);
-  const [sessionTimeout, setSessionTimeout] = useState(60);
-  const [maxLoginAttempts, setMaxLoginAttempts] = useState(5);
-  const [apiKeyRotation, setApiKeyRotation] = useState(90);
-  const [auditLogRetention, setAuditLogRetention] = useState(365);
+  // Editable fields
+  const [retainMission, setRetainMission] = useState("");
+  const [extractionMode, setExtractionMode] = useState("concise");
+  const [chunkSize, setChunkSize] = useState(3000);
+  const [structuredChunkSize, setStructuredChunkSize] = useState(12000);
+  const [chunkBatchSize, setChunkBatchSize] = useState(10);
+  const [enableObservations, setEnableObservations] = useState(true);
+  const [skepticism, setSkepticism] = useState(3);
+  const [literalism, setLiteralism] = useState(3);
+  const [empathy, setEmpathy] = useState(3);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetch("/api/system/config");
-        if (res.ok) {
-          const data = await res.json();
-          setStackConfig(data);
-          if (data?.llm?.provider) setSystemName(`CollabMind · ${data.llm.provider}`);
+        // Read-only stack config
+        const sysRes = await fetch("/api/system/config");
+        if (sysRes.ok) setStackConfig(await sysRes.json());
+
+        // Editable bank config
+        const bankRes = await fetch("/api/banks/default/config");
+        if (bankRes.ok) {
+          const data: BankConfig = await bankRes.json();
+          setBankConfig(data);
+          setRetainMission(data.retain_mission || "");
+          setExtractionMode(data.retain_extraction_mode || "concise");
+          setChunkSize(data.retain_chunk_size ?? 3000);
+          setStructuredChunkSize(data.retain_structured_chunk_size ?? 12000);
+          setChunkBatchSize(data.retain_chunk_batch_size ?? 10);
+          setEnableObservations(data.enable_observations ?? true);
+          setSkepticism(data.disposition_skepticism ?? 3);
+          setLiteralism(data.disposition_literalism ?? 3);
+          setEmpathy(data.disposition_empathy ?? 3);
         }
       } catch {
         /* ignore */
@@ -67,9 +83,45 @@ export default function SettingsPage() {
     load();
   }, []);
 
-  const handleSave = () => {
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const payload: Record<string, unknown> = {};
+      if (bankConfig.retain_mission !== undefined) payload.retain_mission = retainMission;
+      if (bankConfig.retain_extraction_mode !== undefined)
+        payload.retain_extraction_mode = extractionMode;
+      if (bankConfig.retain_chunk_size !== undefined) payload.retain_chunk_size = chunkSize;
+      if (bankConfig.retain_structured_chunk_size !== undefined)
+        payload.retain_structured_chunk_size = structuredChunkSize;
+      if (bankConfig.retain_chunk_batch_size !== undefined)
+        payload.retain_chunk_batch_size = chunkBatchSize;
+      if (bankConfig.enable_observations !== undefined)
+        payload.enable_observations = enableObservations;
+      if (bankConfig.disposition_skepticism !== undefined)
+        payload.disposition_skepticism = skepticism;
+      if (bankConfig.disposition_literalism !== undefined)
+        payload.disposition_literalism = literalism;
+      if (bankConfig.disposition_empathy !== undefined) payload.disposition_empathy = empathy;
+
+      const res = await fetch("/api/banks/default/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Update failed" }));
+        throw new Error(err.error || err.detail || "Update failed");
+      }
+
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (e: any) {
+      setError(e.message || "Failed to save settings");
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading) {
@@ -98,16 +150,10 @@ export default function SettingsPage() {
         <Tabs defaultValue="general" className="space-y-4">
           <TabsList>
             <TabsTrigger value="general" className="flex items-center gap-2">
-              <Monitor className="h-4 w-4" /> General
+              <MessageSquare className="h-4 w-4" /> Extraction
             </TabsTrigger>
             <TabsTrigger value="performance" className="flex items-center gap-2">
-              <Zap className="h-4 w-4" /> Performance
-            </TabsTrigger>
-            <TabsTrigger value="notifications" className="flex items-center gap-2">
-              <Bell className="h-4 w-4" /> Notifications
-            </TabsTrigger>
-            <TabsTrigger value="security" className="flex items-center gap-2">
-              <Shield className="h-4 w-4" /> Security
+              <Zap className="h-4 w-4" /> Processing
             </TabsTrigger>
             <TabsTrigger value="stack" className="flex items-center gap-2">
               <Monitor className="h-4 w-4" /> Stack Config
@@ -117,55 +163,97 @@ export default function SettingsPage() {
           <TabsContent value="general" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">General Settings</CardTitle>
-                <CardDescription>System-wide preferences and localization</CardDescription>
+                <CardTitle className="text-base">Extraction Settings</CardTitle>
+                <CardDescription>Controls how memories are extracted and organized</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Extraction Mode</label>
+                  <select
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={extractionMode}
+                    onChange={(e) => setExtractionMode(e.target.value)}
+                  >
+                    <option value="concise">Concise (selective, fast)</option>
+                    <option value="verbose">Verbose (richer facts)</option>
+                    <option value="verbatim">Verbatim (store as-is)</option>
+                    <option value="chunks">Chunks (zero LLM cost)</option>
+                  </select>
+                  <p className="text-[10px] text-muted-foreground">
+                    Controls the level of detail in extracted memory facts
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Retain Mission (steering)</label>
+                  <textarea
+                    className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm resize-y"
+                    value={retainMission}
+                    onChange={(e) => setRetainMission(e.target.value)}
+                    placeholder="Focus on technical decisions, architecture choices..."
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    Natural language instruction that steers what gets extracted during retain
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Enable Observations</label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setEnableObservations(!enableObservations)}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        enableObservations ? "bg-primary" : "bg-input"
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          enableObservations ? "translate-x-6" : "translate-x-1"
+                        }`}
+                      />
+                    </button>
+                    <span className="text-xs text-muted-foreground">
+                      {enableObservations
+                        ? "Auto-synthesis of observations after retain"
+                        : "Disabled"}
+                    </span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">System Name</label>
-                    <Input value={systemName} onChange={(e) => setSystemName(e.target.value)} />
+                    <label className="text-sm font-medium">Skepticism ({skepticism}/5)</label>
+                    <Input
+                      type="range"
+                      min={1}
+                      max={5}
+                      value={skepticism}
+                      onChange={(e) => setSkepticism(Number(e.target.value))}
+                    />
+                    <p className="text-[10px] text-muted-foreground">Critical evaluation level</p>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Default Language</label>
-                    <select
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      value={language}
-                      onChange={(e) => setLanguage(e.target.value)}
-                    >
-                      <option value="en">English</option>
-                      <option value="fr">Français</option>
-                      <option value="de">Deutsch</option>
-                      <option value="ja">日本語</option>
-                      <option value="zh">中文</option>
-                    </select>
+                    <label className="text-sm font-medium">Literalism ({literalism}/5)</label>
+                    <Input
+                      type="range"
+                      min={1}
+                      max={5}
+                      value={literalism}
+                      onChange={(e) => setLiteralism(Number(e.target.value))}
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      Literal vs abstract interpretation
+                    </p>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Timezone</label>
-                    <select
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      value={timezone}
-                      onChange={(e) => setTimezone(e.target.value)}
-                    >
-                      <option value="UTC">UTC</option>
-                      <option value="America/New_York">America/New_York</option>
-                      <option value="America/Los_Angeles">America/Los_Angeles</option>
-                      <option value="Europe/London">Europe/London</option>
-                      <option value="Europe/Paris">Europe/Paris</option>
-                      <option value="Asia/Tokyo">Asia/Tokyo</option>
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Theme</label>
-                    <select
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      value={theme}
-                      onChange={(e) => setTheme(e.target.value)}
-                    >
-                      <option value="system">System</option>
-                      <option value="light">Light</option>
-                      <option value="dark">Dark</option>
-                    </select>
+                    <label className="text-sm font-medium">Empathy ({empathy}/5)</label>
+                    <Input
+                      type="range"
+                      min={1}
+                      max={5}
+                      value={empathy}
+                      onChange={(e) => setEmpathy(Number(e.target.value))}
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      Emotional context consideration
+                    </p>
                   </div>
                 </div>
               </CardContent>
@@ -175,248 +263,169 @@ export default function SettingsPage() {
           <TabsContent value="performance" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Performance Settings</CardTitle>
-                <CardDescription>Worker pool, caching, and processing tuning</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Worker Count ({workerCount})</label>
-                    <Input
-                      type="range"
-                      min={1}
-                      max={16}
-                      value={workerCount}
-                      onChange={(e) => setWorkerCount(Number(e.target.value))}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Cache TTL (seconds)</label>
-                    <Input
-                      type="number"
-                      value={cacheTTL}
-                      onChange={(e) => setCacheTTL(Number(e.target.value))}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Batch Size</label>
-                    <Input
-                      type="number"
-                      value={batchSize}
-                      onChange={(e) => setBatchSize(Number(e.target.value))}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Polling Interval (seconds)</label>
-                    <Input
-                      type="number"
-                      value={pollingInterval}
-                      onChange={(e) => setPollingInterval(Number(e.target.value))}
-                    />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="notifications" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Notification Preferences</CardTitle>
-                <CardDescription>Control what alerts you receive</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium">System Alerts</p>
-                      <p className="text-xs text-muted-foreground">
-                        Critical system events and failures
-                      </p>
-                    </div>
-                    <Switch checked={systemAlerts} onCheckedChange={setSystemAlerts} />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium">Agent Notifications</p>
-                      <p className="text-xs text-muted-foreground">
-                        Agent task completions and failures
-                      </p>
-                    </div>
-                    <Switch checked={agentNotifications} onCheckedChange={setAgentNotifications} />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium">Error Reports</p>
-                      <p className="text-xs text-muted-foreground">
-                        Detailed error reports for debugging
-                      </p>
-                    </div>
-                    <Switch checked={errorReports} onCheckedChange={setErrorReports} />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium">Weekly Digest</p>
-                      <p className="text-xs text-muted-foreground">
-                        Weekly summary of system activity
-                      </p>
-                    </div>
-                    <Switch checked={weeklyDigest} onCheckedChange={setWeeklyDigest} />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="security" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Security Settings</CardTitle>
+                <CardTitle className="text-base">Processing Settings</CardTitle>
                 <CardDescription>
-                  Authentication, encryption, and audit configuration
+                  Chunk sizes, batching, and memory processing tuning
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Session Timeout (minutes)</label>
+                    <label className="text-sm font-medium">Chunk Size ({chunkSize} chars)</label>
                     <Input
-                      type="number"
-                      value={sessionTimeout}
-                      onChange={(e) => setSessionTimeout(Number(e.target.value))}
+                      type="range"
+                      min={500}
+                      max={8000}
+                      step={100}
+                      value={chunkSize}
+                      onChange={(e) => setChunkSize(Number(e.target.value))}
                     />
+                    <p className="text-[10px] text-muted-foreground">
+                      Target max characters per content chunk
+                    </p>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Max Login Attempts</label>
+                    <label className="text-sm font-medium">
+                      Structured Chunk Size ({structuredChunkSize} chars)
+                    </label>
                     <Input
-                      type="number"
-                      value={maxLoginAttempts}
-                      onChange={(e) => setMaxLoginAttempts(Number(e.target.value))}
+                      type="range"
+                      min={2000}
+                      max={24000}
+                      step={500}
+                      value={structuredChunkSize}
+                      onChange={(e) => setStructuredChunkSize(Number(e.target.value))}
                     />
+                    <p className="text-[10px] text-muted-foreground">
+                      Max characters for JSONL/conversation turns
+                    </p>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">API Key Rotation (days)</label>
+                    <label className="text-sm font-medium">Batch Size ({chunkBatchSize})</label>
                     <Input
-                      type="number"
-                      value={apiKeyRotation}
-                      onChange={(e) => setApiKeyRotation(Number(e.target.value))}
+                      type="range"
+                      min={1}
+                      max={50}
+                      value={chunkBatchSize}
+                      onChange={(e) => setChunkBatchSize(Number(e.target.value))}
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Audit Log Retention (days)</label>
-                    <Input
-                      type="number"
-                      value={auditLogRetention}
-                      onChange={(e) => setAuditLogRetention(Number(e.target.value))}
-                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      Number of chunks to process in parallel
+                    </p>
                   </div>
                 </div>
               </CardContent>
             </Card>
           </TabsContent>
+
+          <TabsContent value="stack" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Live Stack Configuration</CardTitle>
+                <CardDescription>
+                  Read-only view of the active Hindsight stack config
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {stackConfig ? (
+                  <div className="space-y-4">
+                    <div>
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                        LLM
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div className="p-2 rounded border bg-muted/30">
+                          <div className="text-[10px] text-muted-foreground">Provider</div>
+                          <div className="text-sm font-mono font-medium">
+                            {stackConfig.llm?.provider || "—"}
+                          </div>
+                        </div>
+                        <div className="p-2 rounded border bg-muted/30">
+                          <div className="text-[10px] text-muted-foreground">Model</div>
+                          <div className="text-sm font-mono font-medium truncate">
+                            {stackConfig.llm?.model || "—"}
+                          </div>
+                        </div>
+                        <div className="p-2 rounded border bg-muted/30">
+                          <div className="text-[10px] text-muted-foreground">Prompt Cache</div>
+                          <div className="text-sm font-medium">
+                            {stackConfig.llm?.prompt_cache_enabled ? "Enabled" : "Disabled"}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                        Embeddings
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div className="p-2 rounded border bg-muted/30">
+                          <div className="text-[10px] text-muted-foreground">Provider</div>
+                          <div className="text-sm font-mono font-medium">
+                            {stackConfig.embeddings?.provider || "—"}
+                          </div>
+                        </div>
+                        <div className="p-2 rounded border bg-muted/30">
+                          <div className="text-[10px] text-muted-foreground">Model</div>
+                          <div className="text-sm font-mono font-medium truncate">
+                            {stackConfig.embeddings?.model || "—"}
+                          </div>
+                        </div>
+                        <div className="p-2 rounded border bg-muted/30">
+                          <div className="text-[10px] text-muted-foreground">Dimensions</div>
+                          <div className="text-sm font-medium">
+                            {stackConfig.embeddings?.dimension ?? "—"}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                          Reranker
+                        </h4>
+                        <div className="p-2 rounded border bg-muted/30">
+                          <div className="text-[10px] text-muted-foreground">Provider</div>
+                          <div className="text-sm font-mono font-medium">
+                            {stackConfig.reranker?.provider || "—"}
+                          </div>
+                        </div>
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                          Database
+                        </h4>
+                        <div className="p-2 rounded border bg-muted/30">
+                          <div className="text-[10px] text-muted-foreground">Type</div>
+                          <div className="text-sm font-mono font-medium">
+                            {stackConfig.database?.type || "—"}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground">Config not available</div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
 
-        <TabsContent value="stack" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Live Stack Configuration</CardTitle>
-              <CardDescription>
-                Read-only view of the active Hindsight configuration
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {stackConfig ? (
-                <div className="space-y-4">
-                  {/* LLM */}
-                  <div>
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                      LLM
-                    </h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <div className="p-2 rounded border bg-muted/30">
-                        <div className="text-[10px] text-muted-foreground">Provider</div>
-                        <div className="text-sm font-mono font-medium">
-                          {stackConfig.llm?.provider || "—"}
-                        </div>
-                      </div>
-                      <div className="p-2 rounded border bg-muted/30">
-                        <div className="text-[10px] text-muted-foreground">Model</div>
-                        <div className="text-sm font-mono font-medium truncate">
-                          {stackConfig.llm?.model || "—"}
-                        </div>
-                      </div>
-                      <div className="p-2 rounded border bg-muted/30">
-                        <div className="text-[10px] text-muted-foreground">Prompt Cache</div>
-                        <div className="text-sm font-medium">
-                          {stackConfig.llm?.prompt_cache_enabled ? "Enabled" : "Disabled"}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  {/* Embeddings */}
-                  <div>
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                      Embeddings
-                    </h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <div className="p-2 rounded border bg-muted/30">
-                        <div className="text-[10px] text-muted-foreground">Provider</div>
-                        <div className="text-sm font-mono font-medium">
-                          {stackConfig.embeddings?.provider || "—"}
-                        </div>
-                      </div>
-                      <div className="p-2 rounded border bg-muted/30">
-                        <div className="text-[10px] text-muted-foreground">Model</div>
-                        <div className="text-sm font-mono font-medium truncate">
-                          {stackConfig.embeddings?.model || "—"}
-                        </div>
-                      </div>
-                      <div className="p-2 rounded border bg-muted/30">
-                        <div className="text-[10px] text-muted-foreground">Dimensions</div>
-                        <div className="text-sm font-medium">
-                          {stackConfig.embeddings?.dimension ?? "—"}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  {/* Reranker & Database */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                        Reranker
-                      </h4>
-                      <div className="p-2 rounded border bg-muted/30">
-                        <div className="text-[10px] text-muted-foreground">Provider</div>
-                        <div className="text-sm font-mono font-medium">
-                          {stackConfig.reranker?.provider || "—"}
-                        </div>
-                      </div>
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                        Database
-                      </h4>
-                      <div className="p-2 rounded border bg-muted/30">
-                        <div className="text-[10px] text-muted-foreground">Type</div>
-                        <div className="text-sm font-mono font-medium">
-                          {stackConfig.database?.type || "—"}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-sm text-muted-foreground">Config not available</div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
         <div className="flex items-center gap-3">
-          <Button onClick={handleSave} className="flex items-center gap-2">
-            {saved ? (
+          {error && (
+            <div className="flex items-center gap-2 text-sm text-red-600">
+              <AlertCircle className="h-4 w-4" /> {error}
+            </div>
+          )}
+          <Button onClick={handleSave} disabled={saving} className="flex items-center gap-2">
+            {saving ? (
               <>
-                <CheckCircle2 className="h-4 w-4" /> Settings Saved
+                <Loader2 className="h-4 w-4 animate-spin" /> Saving...
+              </>
+            ) : saved ? (
+              <>
+                <CheckCircle2 className="h-4 w-4" /> Saved
               </>
             ) : (
               <>

@@ -118,13 +118,7 @@ const statusColor = (level: string) => {
 
 // ── Trace Detail Modal ──────────────────────────────────────────────
 
-function TraceDetail({
-  trace,
-  onClose,
-}: {
-  trace: LangfuseTrace;
-  onClose: () => void;
-}) {
+function TraceDetail({ trace, onClose }: { trace: LangfuseTrace; onClose: () => void }) {
   const [observations, setObservations] = useState<TraceObservation[]>([]);
   const [obsLoading, setObsLoading] = useState(false);
   const [expandedObs, setExpandedObs] = useState<string | null>(null);
@@ -222,7 +216,9 @@ function TraceDetail({
                     <div className="flex items-center gap-3 text-[10px] text-muted-foreground shrink-0">
                       {obs.totalTokens > 0 && <span>{obs.totalTokens}t</span>}
                       {obs.latency != null && <span>{formatDuration(obs.latency)}</span>}
-                      {obs.model && <span className="font-mono max-w-[100px] truncate">{obs.model}</span>}
+                      {obs.model && (
+                        <span className="font-mono max-w-[100px] truncate">{obs.model}</span>
+                      )}
                     </div>
                   </button>
                   {expandedObs === obs.id && (
@@ -272,13 +268,7 @@ function TraceDetail({
 
 // ── Trace Item ──────────────────────────────────────────────────────
 
-function TraceItem({
-  trace,
-  onClick,
-}: {
-  trace: LangfuseTrace;
-  onClick: () => void;
-}) {
+function TraceItem({ trace, onClick }: { trace: LangfuseTrace; onClick: () => void }) {
   return (
     <div
       className="flex items-center justify-between p-3 rounded-lg border hover:bg-accent/30 cursor-pointer transition-colors"
@@ -462,7 +452,12 @@ export default function TracesPage() {
               onKeyDown={(e) => e.key === "Enter" && fetchTraces(1)}
             />
           </div>
-          <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => fetchTraces(1)}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs"
+            onClick={() => fetchTraces(1)}
+          >
             <Filter className="w-3 h-3 mr-1" />
             Filter
           </Button>
@@ -510,11 +505,7 @@ export default function TracesPage() {
             ) : (
               <div className="space-y-2">
                 {traces.map((trace) => (
-                  <TraceItem
-                    key={trace.id}
-                    trace={trace}
-                    onClick={() => setSelectedTrace(trace)}
-                  />
+                  <TraceItem key={trace.id} trace={trace} onClick={() => setSelectedTrace(trace)} />
                 ))}
               </div>
             )}

@@ -21,6 +21,11 @@ import {
   Shield,
   Settings,
   BookOpen,
+  GitCompare,
+  FileJson,
+  Cpu,
+  Mic,
+  Plug,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -40,6 +45,11 @@ const PANELS: { id: OperatorPanel; href: string; icon: React.ElementType }[] = [
   { id: "audit", href: "/audit", icon: Shield },
   { id: "settings", href: "/settings", icon: Settings },
   { id: "constitution", href: "/constitution", icon: BookOpen },
+  { id: "router", href: "/router", icon: GitCompare },
+  { id: "api-center", href: "/api-center", icon: FileJson },
+  { id: "providers", href: "/providers", icon: Cpu },
+  { id: "voice", href: "/voice", icon: Mic },
+  { id: "connectors", href: "/connectors", icon: Plug },
 ];
 
 interface OperatorSidebarProps {

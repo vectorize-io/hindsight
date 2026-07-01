@@ -88,11 +88,7 @@ function formatDuration(seconds: number): string {
 
 // ── Service Status Card ───────────────────────────────────────────
 
-function ServiceCard({
-  service,
-}: {
-  service: ServiceStatus;
-}) {
+function ServiceCard({ service }: { service: ServiceStatus }) {
   const isHealthy = service.status === "running" && service.health === "healthy";
   const isDegraded = service.status === "running" && service.health !== "healthy";
   const isStopped = service.status === "stopped";
@@ -251,24 +247,24 @@ export default function MonitoringPage() {
   // Derived stats
   const failedOps = useMemo(
     () => operations.filter((o) => o.status === "failed").length,
-    [operations],
+    [operations]
   );
   const pendingOps = useMemo(
     () => operations.filter((o) => o.status === "pending" || o.status === "processing").length,
-    [operations],
+    [operations]
   );
   const completedOps = useMemo(
     () => operations.filter((o) => o.status === "completed").length,
-    [operations],
+    [operations]
   );
 
   const runningServices = useMemo(
     () => services.filter((s) => s.status === "running").length,
-    [services],
+    [services]
   );
   const healthyServices = useMemo(
     () => services.filter((s) => s.status === "running" && s.health === "healthy").length,
-    [services],
+    [services]
   );
 
   // Fetch functions
@@ -341,13 +337,13 @@ export default function MonitoringPage() {
 
   // Group services for grid display
   const coreServices = services.filter((s) =>
-    ["Hindsight API", "PostgreSQL", "Central API", "Cockpit"].includes(s.name),
+    ["Hindsight API", "PostgreSQL", "Central API", "Cockpit"].includes(s.name)
   );
   const aiServices = services.filter((s) =>
-    ["Ollama Embeddings", "Ollama LLM", "LM Studio", "Workers"].includes(s.name),
+    ["Ollama Embeddings", "Ollama LLM", "LM Studio", "Workers"].includes(s.name)
   );
   const infraServices = services.filter((s) =>
-    ["Memlord", "Grafana", "Control Plane"].includes(s.name),
+    ["Memlord", "Grafana", "Control Plane"].includes(s.name)
   );
 
   return (
@@ -365,12 +361,7 @@ export default function MonitoringPage() {
             <Badge variant="outline" className="text-[10px] font-mono">
               {healthyServices}/{services.length} healthy
             </Badge>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={fetchAll}
-              disabled={servicesLoading}
-            >
+            <Button variant="outline" size="sm" onClick={fetchAll} disabled={servicesLoading}>
               <RefreshCw className={`h-4 w-4 mr-1 ${servicesLoading ? "animate-spin" : ""}`} />
               Refresh
             </Button>
@@ -681,12 +672,8 @@ export default function MonitoringPage() {
           </CardHeader>
           <CardContent>
             <EngineLoadBar
-              cpu={
-                services.find((s) => s.name === "Hindsight API")?.cpu
-              }
-              memory={
-                services.find((s) => s.name === "Hindsight API")?.memory
-              }
+              cpu={services.find((s) => s.name === "Hindsight API")?.cpu}
+              memory={services.find((s) => s.name === "Hindsight API")?.memory}
             />
           </CardContent>
         </Card>

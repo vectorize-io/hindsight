@@ -62,11 +62,7 @@ export class VectorAdminClient {
     return this.request<CollectionInfo[]>(`/connections/${dbId}/collections`);
   }
 
-  async getDocuments(
-    dbId: string,
-    collection: string,
-    limit = 50
-  ): Promise<DocumentInfo[]> {
+  async getDocuments(dbId: string, collection: string, limit = 50): Promise<DocumentInfo[]> {
     return this.request<DocumentInfo[]>(
       `/connections/${dbId}/collections/${collection}/documents?limit=${limit}`
     );

@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
           meta: { page, limit, totalItems: 0, totalPages: 0 },
           error: `Langfuse returned HTTP ${res.status}: ${errorBody || res.statusText}`,
         },
-        { status: res.status },
+        { status: res.status }
       );
     }
 
@@ -68,7 +68,7 @@ export async function GET(request: NextRequest) {
         meta: { page, limit, totalItems: 0, totalPages: 0 },
         error: message,
       },
-      { status: 502 },
+      { status: 502 }
     );
   }
 }

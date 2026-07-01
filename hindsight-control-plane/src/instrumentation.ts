@@ -12,4 +12,16 @@ export async function register() {
   } else {
     console.log("[Control Plane] No API key configured (public access)");
   }
+
+  // Warm the Langfuse client singleton so auth is verified at startup
+  // instead of on first request. The SDK reads LANGFUSE_PUBLIC_KEY,
+  // LANGFUSE_SECRET_KEY, and LANGFUSE_BASE_URL from env automatically.
+  if (process.env.LANGFUSE_PUBLIC_KEY || process.env.HINDSIGHT_CP_LANGFUSE_PUBLIC_KEY) {
+    try {
+      const { getLangfuse } = await import("@/lib/langfuse");
+      getLangfuse();
+    } catch (err) {
+      console.warn("[Control Plane] Langfuse initialization skipped:", (err as Error).message);
+    }
+  }
 }

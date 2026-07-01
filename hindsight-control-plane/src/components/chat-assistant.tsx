@@ -117,12 +117,8 @@ export function ChatAssistant({
   const [expanded, setExpanded] = useState(false);
 
   // ── Conversation state (new) ──
-  const [conversations, setConversations] = useState<Conversation[]>([
-    newConversation(),
-  ]);
-  const [activeConversationId, setActiveConversationId] = useState<string>(
-    conversations[0].id
-  );
+  const [conversations, setConversations] = useState<Conversation[]>([newConversation()]);
+  const [activeConversationId, setActiveConversationId] = useState<string>(conversations[0].id);
   const [showSidebar, setShowSidebar] = useState(true);
 
   // ── Model & parameter state (new) ──
@@ -160,8 +156,7 @@ export function ChatAssistant({
         if (!res.ok) return;
         const data = await res.json();
         // Handle various response shapes
-        const list: ModelInfo[] =
-          data.data || data.models || data.model || [];
+        const list: ModelInfo[] = data.data || data.models || data.model || [];
         setModels(list);
         if (list.length > 0 && !selectedModel) {
           setSelectedModel(formatModelValue(list[0]));
@@ -206,9 +201,7 @@ export function ChatAssistant({
   const updateConversationMessages = useCallback(
     (convId: string, updater: (msgs: Message[]) => Message[]) => {
       setConversations((prev) =>
-        prev.map((c) =>
-          c.id === convId ? { ...c, messages: updater(c.messages) } : c
-        )
+        prev.map((c) => (c.id === convId ? { ...c, messages: updater(c.messages) } : c))
       );
     },
     []
@@ -235,9 +228,7 @@ export function ChatAssistant({
       // Also update title in conversation list
       setConversations((prev) =>
         prev.map((c) =>
-          c.id === convId && c.messages.length === 0
-            ? { ...c, title: text.slice(0, 40) }
-            : c
+          c.id === convId && c.messages.length === 0 ? { ...c, title: text.slice(0, 40) } : c
         )
       );
       return updated;
@@ -295,8 +286,7 @@ Current bank: ${currentBank || "none (global)"}`,
       };
 
       // Recent conversation (last 8 messages max) from this conversation
-      const currentConvMessages =
-        conversations.find((c) => c.id === convId)?.messages || [];
+      const currentConvMessages = conversations.find((c) => c.id === convId)?.messages || [];
       const recentConvMessages = [...currentConvMessages, userMsg].slice(-8);
       const conversationMessages = recentConvMessages.map((m) => ({
         role: m.role === "user" ? "user" : ("assistant" as const),
@@ -305,9 +295,7 @@ Current bank: ${currentBank || "none (global)"}`,
 
       const llmMessages = [
         systemMessage,
-        ...(memoryContext
-          ? [{ role: "system" as const, content: memoryContext }]
-          : []),
+        ...(memoryContext ? [{ role: "system" as const, content: memoryContext }] : []),
         ...conversationMessages,
       ];
 
@@ -330,9 +318,7 @@ Current bank: ${currentBank || "none (global)"}`,
 
       if (!proxyRes.ok) {
         const errorData = await proxyRes.json().catch(() => ({}));
-        throw new Error(
-          errorData.error || `Proxy returned ${proxyRes.status}`
-        );
+        throw new Error(errorData.error || `Proxy returned ${proxyRes.status}`);
       }
 
       // Step 4: Handle SSE stream
@@ -375,9 +361,7 @@ Current bank: ${currentBank || "none (global)"}`,
               fullContent += chunk;
               // Progressively update assistant message
               updateConversationMessages(convId, (msgs) =>
-                msgs.map((m) =>
-                  m.id === assistantId ? { ...m, content: fullContent } : m
-                )
+                msgs.map((m) => (m.id === assistantId ? { ...m, content: fullContent } : m))
               );
             }
           } catch (e) {
@@ -450,9 +434,7 @@ Current bank: ${currentBank || "none (global)"}`,
 
   // ── Render helpers ──
 
-  const containerClass = standalone
-    ? "flex flex-col h-full"
-    : "flex flex-col";
+  const containerClass = standalone ? "flex flex-col h-full" : "flex flex-col";
 
   const messagesClass = standalone
     ? "flex-1 overflow-y-auto px-4 py-4 space-y-4"
@@ -484,11 +466,7 @@ Current bank: ${currentBank || "none (global)"}`,
               onClick={() => setExpanded(!expanded)}
               title={expanded ? "Minimize" : "Expand"}
             >
-              {expanded ? (
-                <Minimize2 className="h-3 w-3" />
-              ) : (
-                <Maximize2 className="h-3 w-3" />
-              )}
+              {expanded ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
             </Button>
             <Button
               variant="ghost"
@@ -504,13 +482,7 @@ Current bank: ${currentBank || "none (global)"}`,
       )}
 
       {/* Main layout — sidebar + chat area (standalone only) */}
-      <div
-        className={
-          standalone
-            ? "flex flex-1 overflow-hidden"
-            : "flex flex-1 overflow-hidden"
-        }
-      >
+      <div className={standalone ? "flex flex-1 overflow-hidden" : "flex flex-1 overflow-hidden"}>
         {/* ── Conversation Sidebar (standalone mode) ── */}
         {standalone && showSidebar && (
           <div className="w-[220px] flex-shrink-0 border-r border-border bg-card flex flex-col overflow-hidden">
@@ -572,13 +544,11 @@ Current bank: ${currentBank || "none (global)"}`,
                     },
                     {
                       label: "📊 System health check",
-                      query:
-                        "What is the current health status of all system services?",
+                      query: "What is the current health status of all system services?",
                     },
                     {
                       label: "🏦 Memory bank overview",
-                      query:
-                        "Summarize my memory banks and what knowledge is stored in each one",
+                      query: "Summarize my memory banks and what knowledge is stored in each one",
                     },
                     {
                       label: "⚡ Recent activity",
@@ -604,9 +574,7 @@ Current bank: ${currentBank || "none (global)"}`,
               displayMessages.map((msg) => (
                 <div
                   key={msg.id}
-                  className={`flex gap-3 ${
-                    msg.role === "user" ? "justify-end" : "justify-start"
-                  }`}
+                  className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                 >
                   {/* Assistant avatar */}
                   {msg.role !== "user" && (
@@ -626,9 +594,7 @@ Current bank: ${currentBank || "none (global)"}`,
                   >
                     {msg.content ? (
                       <div className="prose prose-sm dark:prose-invert max-w-none">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {msg.content}
-                        </ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                       </div>
                     ) : loading ? (
                       <div className="flex items-center gap-2 text-muted-foreground">
@@ -673,8 +639,7 @@ Current bank: ${currentBank || "none (global)"}`,
                       {msg.based_on && (
                         <Badge variant="outline" className="text-[9px] h-4 px-1">
                           <Database className="w-2 h-2 mr-0.5" />
-                          {msg.based_on.total_nodes || msg.based_on.total || 0}{" "}
-                          nodes
+                          {msg.based_on.total_nodes || msg.based_on.total || 0} nodes
                         </Badge>
                       )}
                     </div>
@@ -700,22 +665,15 @@ Current bank: ${currentBank || "none (global)"}`,
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   {/* Model Selector */}
                   <div>
-                    <label className="text-xs text-muted-foreground block mb-1.5">
-                      Model
-                    </label>
+                    <label className="text-xs text-muted-foreground block mb-1.5">Model</label>
                     <select
                       value={selectedModel}
                       onChange={(e) => setSelectedModel(e.target.value)}
                       className="w-full text-xs h-8 rounded-md border border-input bg-background px-2"
                     >
-                      {models.length === 0 && (
-                        <option value="">No models available</option>
-                      )}
+                      {models.length === 0 && <option value="">No models available</option>}
                       {models.map((m) => (
-                        <option
-                          key={formatModelValue(m)}
-                          value={formatModelValue(m)}
-                        >
+                        <option key={formatModelValue(m)} value={formatModelValue(m)}>
                           {formatModelName(m)}
                         </option>
                       ))}
@@ -733,9 +691,7 @@ Current bank: ${currentBank || "none (global)"}`,
                       max={2}
                       step={0.05}
                       value={temperature}
-                      onChange={(e) =>
-                        setTemperature(parseFloat(e.target.value))
-                      }
+                      onChange={(e) => setTemperature(parseFloat(e.target.value))}
                       className="w-full"
                     />
                   </div>
@@ -789,10 +745,7 @@ Current bank: ${currentBank || "none (global)"}`,
                       title="Select model"
                     >
                       {models.map((m) => (
-                        <option
-                          key={formatModelValue(m)}
-                          value={formatModelValue(m)}
-                        >
+                        <option key={formatModelValue(m)} value={formatModelValue(m)}>
                           {formatModelName(m)}
                         </option>
                       ))}
@@ -858,7 +811,9 @@ Current bank: ${currentBank || "none (global)"}`,
                   )}
                 </div>
                 <span className="text-[10px] text-muted-foreground">
-                  {loading ? "Streaming..." : `Powered by Hindsight · Shift+Enter for newline · ${temperature.toFixed(2)}t · ${maxTokens}tk`}
+                  {loading
+                    ? "Streaming..."
+                    : `Powered by Hindsight · Shift+Enter for newline · ${temperature.toFixed(2)}t · ${maxTokens}tk`}
                 </span>
               </div>
             </div>

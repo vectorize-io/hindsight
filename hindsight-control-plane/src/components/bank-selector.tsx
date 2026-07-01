@@ -44,6 +44,7 @@ import {
   Copy,
   Monitor,
   Database,
+  LayoutDashboard,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useTheme } from "@/lib/theme-context";
@@ -626,6 +627,16 @@ function BankSelectorInner() {
 
         {/* Spacer */}
         <div className="flex-1" />
+
+        {/* Cockpit Link */}
+        <a
+          href={withBasePath("/cockpit")}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+          title="Operator Cockpit"
+        >
+          <LayoutDashboard className="h-5 w-5" />
+          <span className="text-sm font-medium">Cockpit</span>
+        </a>
 
         {/* Vector Admin Link */}
         <a

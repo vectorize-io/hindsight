@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
   if (!traceId) {
     return NextResponse.json(
       { data: [], error: "traceId query parameter is required" },
-      { status: 400 },
+      { status: 400 }
     );
   }
 
@@ -30,19 +30,22 @@ export async function GET(request: NextRequest) {
 
   try {
     const credentials = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
-    const res = await fetch(`${baseUrl}/api/public/observations?traceId=${encodeURIComponent(traceId)}`, {
-      headers: {
-        Authorization: `Basic ${credentials}`,
-        "Content-Type": "application/json",
-      },
-      signal: AbortSignal.timeout(10_000),
-    });
+    const res = await fetch(
+      `${baseUrl}/api/public/observations?traceId=${encodeURIComponent(traceId)}`,
+      {
+        headers: {
+          Authorization: `Basic ${credentials}`,
+          "Content-Type": "application/json",
+        },
+        signal: AbortSignal.timeout(10_000),
+      }
+    );
 
     if (!res.ok) {
       const errorBody = await res.text().catch(() => "");
       return NextResponse.json(
         { data: [], error: `Langfuse returned HTTP ${res.status}: ${errorBody || res.statusText}` },
-        { status: res.status },
+        { status: res.status }
       );
     }
 
@@ -50,9 +53,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(data);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json(
-      { data: [], error: message },
-      { status: 502 },
-    );
+    return NextResponse.json({ data: [], error: message }, { status: 502 });
   }
 }
