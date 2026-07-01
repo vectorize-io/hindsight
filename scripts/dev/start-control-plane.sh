@@ -33,7 +33,7 @@ fi
 # Map prefixed env vars to Next.js standard vars
 export HOSTNAME="${HINDSIGHT_CP_HOSTNAME:-0.0.0.0}"
 # Caller-provided values take priority over .env
-export PORT="${_CALLER_PORT:-${HINDSIGHT_CP_PORT:-9999}}"
+export PORT="${_CALLER_PORT:-${HINDSIGHT_CP_PORT:-9998}}"
 export HINDSIGHT_CP_DATAPLANE_API_URL="${_CALLER_DATAPLANE_URL:-${HINDSIGHT_CP_DATAPLANE_API_URL:-http://localhost:8888}}"
 
 # Run dev server

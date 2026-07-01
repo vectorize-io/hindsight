@@ -17,4 +17,5 @@ set -a
 source "$ENV_FILE"
 set +a
 
-uv run hindsight-api "$@"
+# Use installed binary directly (not uv run)
+hindsight-api "$@"

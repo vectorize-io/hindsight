@@ -11,7 +11,7 @@
     "public"
   ],
   "scripts": {
-    "dev": "next dev --turbopack -p ${PORT:-9999}",
+    "dev": "next dev --turbopack -p ${PORT:-8999}",
     "build": "NODE_ENV=production next build && npm run build:standalone",
     "build:standalone": "rm -rf standalone && SERVER_JS=$(find .next/standalone -path '*/node_modules' -prune -o -name 'server.js' -print | head -1) && test -n \"$SERVER_JS\" || (echo 'Error: server.js not found in .next/standalone - standalone build failed' && exit 1) && STANDALONE_ROOT=$(dirname \"$SERVER_JS\") && cp -r \"$STANDALONE_ROOT\" standalone && cp -r .next/standalone/node_modules standalone/node_modules && mkdir -p standalone/.next && cp -r .next/static standalone/.next/static && mkdir -p standalone/public && (cp -r public/* standalone/public/ 2>/dev/null || true)",
     "start": "next start",
@@ -59,8 +59,9 @@
     "cytoscape-fcose": "^2.2.0",
     "eslint": "^9.39.1",
     "eslint-config-next": "^16.0.1",
+    "langfuse": "^3.38.20",
     "lucide-react": "^0.553.0",
-    "next": "^16.2.6",
+    "next": "16.2.6",
     "next-intl": "^4.12.0",
     "next-themes": "^0.4.6",
     "postcss": "^8.5.6",

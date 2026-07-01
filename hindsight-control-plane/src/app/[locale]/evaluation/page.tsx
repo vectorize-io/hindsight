@@ -150,7 +150,9 @@ export default function EvaluationPage() {
             const delta = parsed.choices?.[0]?.delta?.content ?? "";
             text += delta;
             setPgResponse(text);
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
       }
       setPgLatency(Date.now() - t0);

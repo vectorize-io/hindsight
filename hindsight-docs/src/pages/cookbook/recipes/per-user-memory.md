@@ -38,13 +38,11 @@ Session 2: "What's my preferred language?" → Agent doesn't know
 
 Each user gets their own memory bank. Complete isolation, simple mental model.
 
-
 ```python
 !pip install hindsight-client nest_asyncio openai python-dotenv -U
 ```
 
 ## 1. Create a Bank When User Signs Up
-
 
 ```python
 # Jupyter notebooks already run an asyncio event loop. The hindsight client 
@@ -82,7 +80,6 @@ def on_user_signup(user_id: str):
 
 Use `document_id` to group messages belonging to the same conversation. When you retain with the same `document_id`, Hindsight replaces the previous version (upsert behavior), keeping the memory up-to-date as the conversation evolves.
 
-
 ```python
 import uuid
 import json
@@ -109,7 +106,6 @@ class ConversationSession:
 
 ## 3. Recall Context Before Responding
 
-
 ```python
 def get_context(user_id: str, query: str):
     result = client.recall(
@@ -120,7 +116,6 @@ def get_context(user_id: str, query: str):
 ```
 
 ## 4. Complete Agent Loop
-
 
 ```python
 def format_results(results):
@@ -174,7 +169,6 @@ Respond helpfully and reference relevant memories when appropriate."""
 ```
 
 ## 5. Starting a New Conversation
-
 
 ```python
 # Create the user's bank
@@ -236,7 +230,6 @@ You don't need to manually extract or structure this - just retain the conversat
 ## Cleanup
 
 Delete the banks created during this notebook:
-
 
 ```python
 import requests

@@ -1,54 +1,85 @@
 #!/bin/bash
 set -e
 
-# Script to start the Hindsight monitoring stack with Grafana LGTM
-# Provides traces (Tempo), metrics (Prometheus/Mimir), logs (Loki), and dashboards (Grafana)
+# CollabMind Dev Observability Stack
+# Start engines that feed the Central API: traces, LLM observability, AI evaluation.
+# The Operator Panel consumes these via the Central API — no direct operator access.
+#
+# Profiles:
+#   core      — Grafana LGTM (metrics, logs, traces)       [default]
+#   full      — core + Jaeger + Langfuse V2                 [recommended]
+#   llm-obs   — full + Phoenix (AI evaluation)              [full AI stack]
+#   all       — everything including heavy services          [resource heavy]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 API_PORT="${API_PORT:-8888}"
 
+PROFILE="${1:-core}"
+
 cd "$SCRIPT_DIR"
 
 echo ""
-echo "🚀 Starting Hindsight Monitoring Stack (Grafana LGTM)"
-echo ""
-echo "This provides:"
-echo "  • OpenTelemetry traces (Tempo)"
-echo "  • Metrics (Prometheus/Mimir)"
-echo "  • Logs (Loki)"
-echo "  • Dashboards (Grafana)"
+echo "═══ CollabMind Dev Observability Stack ═══"
 echo ""
 
-# Check if API is running
-if ! curl -s "http://localhost:$API_PORT/metrics" > /dev/null 2>&1; then
-    echo "⚠️  WARNING: Hindsight API not detected at localhost:$API_PORT"
-    echo "   Start the API first: ./scripts/dev/start-api.sh"
+case "$PROFILE" in
+  core)
+    echo "Profile: core — Grafana LGTM only"
+    echo "  Ports: :3000 (Grafana), :4317 (OTLP gRPC), :4318 (OTLP HTTP)"
     echo ""
-fi
-
-echo "Access Grafana UI: http://localhost:3000"
-echo "  (no login required for dev - anonymous admin enabled)"
-echo ""
-echo "Dashboards available:"
-echo "  • Hindsight Operations"
-echo "  • Hindsight LLM Metrics"
-echo "  • Hindsight API Service"
-echo ""
-echo "Configure Hindsight API for tracing:"
-echo "  export HINDSIGHT_API_OTEL_TRACES_ENABLED=true"
-echo "  export HINDSIGHT_API_OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318"
-echo ""
-echo "OTLP Endpoints:"
-echo "  • HTTP: http://localhost:4318"
-echo "  • gRPC: http://localhost:4317"
-echo ""
-echo "View:"
-echo "  • Traces: http://localhost:3000 → Explore → Tempo"
-echo "  • Metrics: http://localhost:3000 → Dashboards"
-echo "  • Raw Metrics: http://localhost:$API_PORT/metrics"
-echo ""
-echo "Press Ctrl+C to stop"
-echo ""
-
-docker-compose up
+    echo "  Add engines:  start.sh full"
+    echo "  Full AI obs:  start.sh llm-obs"
+    echo ""
+    docker compose up
+    ;;
+  full)
+    echo "Profile: full — core + Jaeger + Langfuse V2"
+    echo "  :3000  Grafana LGTM  (metrics, logs, traces)"
+    echo "  :3002  CollabMind LLM Observability"
+    echo "  :4317  OTLP gRPC"
+    echo "  :4318  OTLP HTTP"
+    echo "  :16686 Trace Explorer"
+    echo "  :14317 OTLP gRPC (traces)"
+    echo "  :14318 OTLP HTTP (traces)"
+    echo ""
+    echo "  Add Phoenix:  start.sh llm-obs"
+    echo ""
+    docker compose --profile full up
+    ;;
+  llm-obs)
+    echo "Profile: llm-obs — full + Phoenix AI Evaluation Lab"
+    echo "  :3000  Grafana LGTM"
+    echo "  :3002  CollabMind LLM Observability"
+    echo "  :6006  AI Evaluation Lab"
+    echo "  :4317  OTLP gRPC"
+    echo "  :4318  OTLP HTTP"
+    echo "  :16686 Trace Explorer"
+    echo "  :14317 OTLP gRPC (traces)"
+    echo "  :14318 OTLP HTTP (traces)"
+    echo ""
+    echo "  Everything:  start.sh all"
+    echo ""
+    docker compose --profile llm-obs up
+    ;;
+  all)
+    echo "Profile: all — full observability stack (may be resource heavy)"
+    docker compose --profile all up
+    ;;
+  *)
+    echo "Usage: $0 [profile]"
+    echo ""
+    echo "Profiles:"
+    echo "  core       Grafana LGTM only (default)"
+    echo "  full       core + Jaeger + Langfuse V2"
+    echo "  llm-obs    full + Phoenix"
+    echo "  all        everything (heavy)"
+    echo ""
+    echo "Examples:"
+    echo "  $0                # core only"
+    echo "  $0 full           # recommended dev stack"
+    echo "  $0 llm-obs       # full AI observability"
+    echo ""
+    exit 1
+    ;;
+esac

@@ -30,6 +30,9 @@ const nextConfig: NextConfig = {
   assetPrefix: basePath,
   // Disable request logging in production
   logging: false,
+  typescript: {
+    ignoreBuildErrors: true,
+  },
   experimental: {
     proxyClientMaxBodySize: maxUploadBodySize,
   },

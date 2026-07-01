@@ -41,13 +41,11 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 
 ## Installation
 
-
 ```python
 !pip install hindsight-litellm litellm nest_asyncio python-dotenv -U -q
 ```
 
 ## Setup
-
 
 ```python
 import os
@@ -86,7 +84,6 @@ This is all you need! After this, all LiteLLM calls will automatically:
 - Have relevant memories injected into the prompt
 - Store conversations to Hindsight after the response
 
-
 ```python
 # Generate a unique bank_id for this demo session
 bank_id = f"demo-{uuid.uuid4().hex[:8]}"
@@ -108,7 +105,6 @@ print("Hindsight memory integration enabled!")
 ## Conversation 1: User Introduces Themselves
 
 In this first conversation, the user shares some information about themselves. This will be automatically stored to Hindsight memory.
-
 
 ```python
 user_message_1 = "Hi! I'm Alex and I work at Google as a software engineer. I love Python and machine learning."
@@ -132,7 +128,6 @@ print("\n(Conversation automatically stored to Hindsight)")
 
 Hindsight needs a few seconds to process and extract facts from the conversation.
 
-
 ```python
 print("Waiting 12 seconds for memory processing...")
 time.sleep(12)
@@ -142,7 +137,6 @@ print("Done!")
 ## Conversation 2: Test Memory-Augmented Response
 
 Now we start a fresh conversation and ask what the assistant remembers. The memories from the previous conversation will be automatically injected into the prompt!
-
 
 ```python
 user_message_2 = "What do you know about me? What programming language should I use for my next project?"
@@ -168,14 +162,12 @@ The assistant should have remembered that Alex:
 
 And it should have recommended Python based on that knowledge!
 
-
 ```python
 print(f"Memories stored in bank: {bank_id}")
 print(f"View in UI: http://localhost:9999/banks/{bank_id}")
 ```
 
 ## Cleanup
-
 
 ```python
 hindsight_litellm.cleanup()

@@ -37,13 +37,11 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 
 Install the Hindsight Python client:
 
-
 ```python
 !pip install hindsight-client nest_asyncio python-dotenv -U
 ```
 
 ## Connect to Hindsight
-
 
 ```python
 # Jupyter notebooks already run an asyncio event loop. The hindsight client 
@@ -74,7 +72,6 @@ The `retain` operation is used to push new memories into Hindsight. It tells Hin
 
 Behind the scenes, the retain operation uses an LLM to extract key facts, temporal data, entities, and relationships.
 
-
 ```python
 # Simple retain
 client.retain(
@@ -85,7 +82,6 @@ client.retain(
 # View the stored document in the UI:
 print(f"View documents: {HINDSIGHT_UI_URL}/banks/my-bank?view=documents")
 ```
-
 
 ```python
 # Retain with context and timestamp
@@ -105,7 +101,6 @@ The `recall` operation retrieves memories matching a query. It performs 4 retrie
 - **Graph**: Entity/temporal/causal links
 - **Temporal**: Time range filtering
 
-
 ```python
 # Simple recall
 results = client.recall(bank_id="my-bank", query="What does Alice do?")
@@ -114,7 +109,6 @@ print("Memories:")
 for r in results.results:
     print(f"  - {r.text}")
 ```
-
 
 ```python
 # Temporal recall
@@ -127,13 +121,12 @@ for r in results.results:
 
 ## Reflect: Generate Insights
 
-The `reflect` operation performs a more thorough analysis of existing memories. This allows the agent to form new connections between memories which are then persisted as observations.
+The `reflect` operation performs a more thorough analysis of existing memories. This allows the agent to form new connections between memories which are then persisted as opinions and/or observations.
 
 Example use cases:
 - An AI Project Manager reflecting on what risks need to be mitigated
 - A Sales Agent reflecting on why certain outreach messages have gotten responses
 - A Support Agent reflecting on opportunities where customers have unanswered questions
-
 
 ```python
 response = client.reflect(bank_id="my-bank", query="What should I know about Alice?")
@@ -142,16 +135,16 @@ print(response)
 
 ## Memory Types
 
-Hindsight organizes memory into three networks to mimic human memory:
+Hindsight organizes memory into four networks to mimic human memory:
 
 - **World**: Facts about the world ("The stove gets hot")
 - **Experiences**: Agent's own experiences ("I touched the stove and it really hurt")
+- **Opinion**: Beliefs with confidence scores ("I shouldn't touch the stove again" - .99 confidence)
 - **Observation**: Complex mental models derived by reflecting on facts and experiences
 
 ## Cleanup
 
 Delete the bank created during this notebook:
-
 
 ```python
 import requests

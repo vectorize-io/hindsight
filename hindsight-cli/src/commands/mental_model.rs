@@ -116,6 +116,8 @@ pub fn create(
 
     // Only send a trigger when the user opted in, so the server's default
     // behaviour is preserved otherwise.
+    // Only send a trigger when the user opted in, so the server's default
+    // behaviour is preserved otherwise.
     let trigger = if trigger_refresh_after_consolidation {
         Some(types::MentalModelTriggerInput {
             mode: types::Mode::Full,
@@ -128,6 +130,7 @@ pub fn create(
             include_chunks: None,
             recall_max_tokens: None,
             recall_chunks_max_tokens: None,
+            refresh_cron: None,
         })
     } else {
         None
@@ -206,6 +209,7 @@ pub fn update(
         include_chunks: None,
         recall_max_tokens: None,
         recall_chunks_max_tokens: None,
+        refresh_cron: None,
     });
 
     let request = types::UpdateMentalModelRequest {

@@ -1,5 +1,5 @@
 ---
-sidebar_position: 8
+sidebar_position: 13
 ---
 
 # Movie Recommendation Assistant with Hindsight Memory
@@ -38,7 +38,6 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 
 ## 1. Install Dependencies
 
-
 ```python
 !pip install -q hindsight-client openai nest-asyncio
 ```
@@ -46,7 +45,6 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 ## 2. Configure OpenAI API Key
 
 Enter your OpenAI API key when prompted (used by both Hindsight and the demo).
-
 
 ```python
 import getpass
@@ -60,7 +58,6 @@ print("API key configured!")
 ```
 
 ## 3. Initialize Clients
-
 
 ```python
 import nest_asyncio
@@ -89,7 +86,6 @@ These functions demonstrate the three core Hindsight operations:
 - **retain()**: Store memories
 - **recall()**: Retrieve relevant memories
 - **reflect()**: Synthesize insights from memories
-
 
 ```python
 def get_recommendation(user_query: str) -> str:
@@ -168,7 +164,6 @@ print("Helper functions defined!")
 
 Watch how the assistant learns and remembers preferences across conversations.
 
-
 ```python
 import time
 
@@ -203,7 +198,6 @@ for i, query in enumerate(conversations, 1):
 
 Use `reflect()` to synthesize what Hindsight has learned about your movie tastes.
 
-
 ```python
 print("=" * 60)
 print("  What I've learned about your movie tastes:")
@@ -214,7 +208,6 @@ print(get_preference_summary())
 ## 7. Try Your Own Queries
 
 Experiment with your own movie preferences!
-
 
 ```python
 # Try your own query!
@@ -229,17 +222,14 @@ print(f"Assistant: {get_recommendation(your_query)}")
 
 Close the Hindsight client connection.
 
-
 ```python
 hindsight.close()
 print("Client connection closed.")
 ```
 
-
 ```python
 
 ```
-
 
 ```python
 

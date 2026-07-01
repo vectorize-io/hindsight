@@ -1,5 +1,5 @@
 ---
-sidebar_position: 6
+sidebar_position: 11
 ---
 
 # Fitness Coach with Hindsight Memory
@@ -39,7 +39,6 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 
 ## 1. Install Dependencies
 
-
 ```python
 !pip install -q hindsight-client openai nest-asyncio
 ```
@@ -47,7 +46,6 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 ## 2. Configure OpenAI API Key
 
 Enter your OpenAI API key when prompted (used by both Hindsight and the demo).
-
 
 ```python
 import getpass
@@ -61,7 +59,6 @@ print("API key configured!")
 ```
 
 ## 3. Initialize Clients
-
 
 ```python
 import nest_asyncio
@@ -84,7 +81,6 @@ print("Clients initialized!")
 ```
 
 ## 4. Define Helper Functions
-
 
 ```python
 def log_workout(workout_details: str) -> str:
@@ -196,7 +192,6 @@ print("Helper functions defined!")
 
 ## 5. Set Up User Profile
 
-
 ```python
 print("Setting up user profile...")
 
@@ -217,7 +212,6 @@ for info in profile_data:
 ```
 
 ## 6. Log Workout History
-
 
 ```python
 print("Logging workout history...")
@@ -253,7 +247,6 @@ for note in recovery:
 
 ## 7. Talk to Your Fitness Coach
 
-
 ```python
 import time
 
@@ -278,7 +271,6 @@ for query in queries:
 
 ## 8. Generate Progress Report
 
-
 ```python
 print("=" * 60)
 print("  Progress Report")
@@ -287,7 +279,6 @@ print(get_progress_report())
 ```
 
 ## 9. Try Your Own Query
-
 
 ```python
 your_query = "What exercises should I do today?"  # Change this!
@@ -298,7 +289,6 @@ print(f"Coach: {fitness_coach(your_query)}")
 ```
 
 ## 10. Cleanup
-
 
 ```python
 hindsight.close()

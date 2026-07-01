@@ -29,7 +29,7 @@ if [ "$RANDOM_PORT" = true ]; then
     echo "Using random ports — API: $API_PORT, Control Plane: $CP_PORT"
 else
     API_PORT="${HINDSIGHT_API_PORT:-8888}"
-    CP_PORT="${HINDSIGHT_CP_PORT:-9999}"
+    CP_PORT="${HINDSIGHT_CP_PORT:-9998}"
 fi
 
 PIDS=()

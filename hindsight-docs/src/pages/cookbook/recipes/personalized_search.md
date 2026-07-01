@@ -1,5 +1,5 @@
 ---
-sidebar_position: 10
+sidebar_position: 15
 ---
 
 # Personalized Search Agent with Hindsight Memory
@@ -40,7 +40,6 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 
 ## 1. Install Dependencies
 
-
 ```python
 # Tavily is optional - demo works with simulated results if not installed
 !pip install -q hindsight-client openai tavily-python nest-asyncio
@@ -49,7 +48,6 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 ## 2. Configure API Keys
 
 Enter your API keys when prompted. Tavily is optional - press Enter to skip for simulated search results.
-
 
 ```python
 import getpass
@@ -69,7 +67,6 @@ print("API keys configured!")
 ```
 
 ## 3. Initialize Clients
-
 
 ```python
 import nest_asyncio
@@ -101,7 +98,6 @@ print("Clients initialized!")
 ```
 
 ## 4. Define Helper Functions
-
 
 ```python
 def store_preference(preference: str) -> str:
@@ -223,7 +219,6 @@ print("Helper functions defined!")
 
 ## 5. Build User Profile
 
-
 ```python
 print("Learning user preferences...")
 
@@ -246,7 +241,6 @@ for pref in preferences:
 ```
 
 ## 6. Personalized Search Results
-
 
 ```python
 import time
@@ -271,7 +265,6 @@ for query in searches:
 
 ## 7. View Preference Profile
 
-
 ```python
 print("=" * 60)
 print("  User Preference Profile")
@@ -280,7 +273,6 @@ print(get_preference_profile())
 ```
 
 ## 8. Try Your Own Search
-
 
 ```python
 your_search = "Best hiking trails near me"  # Change this!
@@ -291,7 +283,6 @@ print(personalized_search(your_search))
 ```
 
 ## 9. Cleanup
-
 
 ```python
 hindsight.close()

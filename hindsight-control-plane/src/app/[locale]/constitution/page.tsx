@@ -176,7 +176,9 @@ export default function ConstitutionPage() {
                   });
                 });
             }
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         })
       );
       all.sort((a, b) => b.priority - a.priority);

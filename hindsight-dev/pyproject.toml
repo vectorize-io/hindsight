@@ -8,7 +8,6 @@ version = "0.8.3"
 description = "Development utilities for Hindsight"
 requires-python = ">=3.11"
 dependencies = [
-    "hindsight-api==0.8.3",
     "python-fasthtml>=0.12.33",
     "streamlit>=1.54.0",
     "openai>=1.0.0",
@@ -26,9 +25,6 @@ test = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["hindsight_dev", "benchmarks", "upgrade_tests"]
-
-[tool.uv.sources]
-hindsight-api = { workspace = true }
 
 [project.scripts]
 generate-openapi = "hindsight_dev.generate_openapi:generate_openapi_spec"

@@ -1,5 +1,5 @@
 ---
-sidebar_position: 9
+sidebar_position: 14
 ---
 
 # Personal AI Assistant with Hindsight Memory
@@ -39,7 +39,6 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 
 ## 1. Install Dependencies
 
-
 ```python
 !pip install -q hindsight-client openai nest-asyncio
 ```
@@ -47,7 +46,6 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 ## 2. Configure OpenAI API Key
 
 Enter your OpenAI API key when prompted (used by both Hindsight and the demo).
-
 
 ```python
 import getpass
@@ -61,7 +59,6 @@ print("API key configured!")
 ```
 
 ## 3. Initialize Clients
-
 
 ```python
 import nest_asyncio
@@ -84,7 +81,6 @@ print("Clients initialized!")
 ```
 
 ## 4. Define Helper Functions
-
 
 ```python
 def remember(info: str, category: str = "general") -> str:
@@ -180,7 +176,6 @@ print("Helper functions defined!")
 
 ## 5. Build Context
 
-
 ```python
 print("Building context...")
 
@@ -202,7 +197,6 @@ for info, category in initial_context:
 ```
 
 ## 6. Have a Conversation
-
 
 ```python
 import time
@@ -230,14 +224,12 @@ for message in conversations:
 
 ## 7. View Summary
 
-
 ```python
 print("=" * 60)
 print("  What I Know About You")
 print("=" * 60)
 print(get_summary())
 ```
-
 
 ```python
 print("=" * 60)
@@ -248,7 +240,6 @@ print(get_summary("family"))
 
 ## 8. Try Your Own Message
 
-
 ```python
 your_message = "What should I focus on this month with my training?"  # Change this!
 
@@ -258,7 +249,6 @@ print(f"Assistant: {chat(your_message)}")
 ```
 
 ## 9. Cleanup
-
 
 ```python
 hindsight.close()

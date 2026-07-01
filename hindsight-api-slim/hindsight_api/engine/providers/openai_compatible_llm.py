@@ -610,6 +610,14 @@ class OpenAICompatibleLLM(LLMInterface):
 
         return None
 
+    def _is_local_endpoint(self) -> bool:
+        """Return True if this provider routes to a local machine."""
+        if self.provider in ("lmstudio", "ollama", "llamacpp"):
+            return True
+        if self.base_url and any(local in self.base_url for local in ("localhost", "127.0.0.1", "192.168.", "0.0.0.0")):
+            return True
+        return False
+
     def _max_tokens_param_name(self) -> str:
         """Return the correct parameter name for limiting response tokens.
 
@@ -947,7 +955,10 @@ class OpenAICompatibleLLM(LLMInterface):
                 )
                 logger.warning(f"APIConnectionError (HTTP {status_code}), attempt {attempt + 1}: {str(e)[:200]}")
                 if attempt < max_retries:
-                    backoff = min(initial_backoff * (2**attempt), max_backoff)
+                    if self._is_local_endpoint():
+                        backoff = min(initial_backoff * (4**attempt), max_backoff * 2)
+                    else:
+                        backoff = min(initial_backoff * (2**attempt), max_backoff)
                     await asyncio.sleep(backoff)
                     continue
                 else:
@@ -1007,7 +1018,10 @@ class OpenAICompatibleLLM(LLMInterface):
                         f"APIStatusError ({self.provider}/{self.model}, scope={scope}, "
                         f"attempt {attempt + 1}/{max_retries + 1}): {_summarize_status_error(e)}"
                     )
-                    backoff = min(initial_backoff * (2**attempt), max_backoff)
+                    if self._is_local_endpoint():
+                        backoff = min(initial_backoff * (4**attempt), max_backoff * 2)
+                    else:
+                        backoff = min(initial_backoff * (2**attempt), max_backoff)
                     jitter = backoff * 0.2 * (2 * (time.time() % 1) - 1)
                     sleep_time = backoff + jitter
                     await asyncio.sleep(sleep_time)

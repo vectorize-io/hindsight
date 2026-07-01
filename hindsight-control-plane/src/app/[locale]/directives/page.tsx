@@ -83,7 +83,9 @@ export default function DirectivesPage() {
           setBanks(b);
           if (b.length > 0) setSelectedBankId(b[0].bank_id);
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       setBanksLoading(false);
     };
     loadBanks();
@@ -98,7 +100,9 @@ export default function DirectivesPage() {
         const data = await res.json();
         setDirectives(data.directives || data.items || []);
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setLoading(false);
   }, [selectedBankId]);
 
@@ -132,7 +136,9 @@ export default function DirectivesPage() {
         setNewTags("");
         loadDirectives();
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setCreateLoading(false);
   };
 

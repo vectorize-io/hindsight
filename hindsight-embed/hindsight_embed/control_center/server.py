@@ -29,7 +29,7 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
     token: str = ""
     version: str = "unknown"
 
-    server_version = "HindsightControlCenter"
+    server_version = "CollabMindControlCenter"
 
     # Quieter logs — default BaseHTTPRequestHandler spams stderr per request.
     def log_message(self, format: str, *args) -> None:  # noqa: A002

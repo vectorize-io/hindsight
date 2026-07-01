@@ -1,8 +1,22 @@
-[tool.uv.workspace]
-members = ["hindsight-all", "hindsight-api", "hindsight-api-slim", "hindsight-all-slim", "hindsight-dev", "hindsight-mcp-server", "hindsight-clients/python", "hindsight-embed"]
+[project]
+name = "hindsight"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "gcloud>=0.18.3",
+    "genkit-plugin-google-genai>=0.7.0",
+    "huggingface>=0.0.1",
+    "huggingface-hub>=1.21.0",
+    "litellm>=1.90.0",
+    "ollama>=0.6.2",
+]
 
-[tool.uv]
-# Allow uv to search all configured indexes for packages, not just the first one
-# This prevents dependency resolution failures when using pytorch index + PyPI
-index-strategy = "unsafe-best-match"
-dev-dependencies = []
+[dependency-groups]
+dev = [
+    "hindsight",
+]
+
+[tool.uv.sources]
+hindsight = { workspace = true }

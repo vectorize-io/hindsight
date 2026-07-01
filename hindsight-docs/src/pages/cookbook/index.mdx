@@ -4,11 +4,25 @@ hide_table_of_contents: true
 ---
 
 import CookbookGrid from '@site/src/components/CookbookGrid';
-import PageHero from '@site/src/components/PageHero';
-
-<PageHero title="Cookbook" subtitle="Practical examples and complete applications built with Hindsight." />
 
 <div>
+
+<div style={{textAlign: 'center', marginBottom: '3.5rem'}}>
+  <h1 style={{
+    fontSize: '3rem',
+    fontWeight: 800,
+    background: 'linear-gradient(135deg, #0074d9, #009296)',
+    WebkitBackgroundClip: 'text',
+    WebkitTextFillColor: 'transparent',
+    backgroundClip: 'text',
+    letterSpacing: '-0.03em',
+    lineHeight: 1.15,
+    marginBottom: '0.75rem',
+  }}>Cookbook</h1>
+  <p style={{fontSize: '1.05rem', color: 'var(--ifm-color-emphasis-600)', maxWidth: 520, margin: '0 auto', lineHeight: 1.7}}>
+    Practical examples and complete applications built with Hindsight.
+  </p>
+</div>
 
 ## Recipes
 
@@ -45,6 +59,30 @@ import PageHero from '@site/src/components/PageHero';
       tags: { sdk: "hindsight-litellm", topic: "Learning" }
     },
     {
+      title: "LangGraph ReAct Agent with Long-Term Memory",
+      href: "/cookbook/recipes/langgraph-react-agent",
+      description: "Build a LangGraph ReAct agent with persistent long-term memory using Hindsight retain/recall/reflect tools and automa...",
+      tags: { sdk: "hindsight-langgraph", topic: "Agents" }
+    },
+    {
+      title: "LangChain Chatbot with Long-Term Memory",
+      href: "/cookbook/recipes/langchain-memory",
+      description: "Add persistent long-term memory to a LangChain chatbot using Hindsight tools with bind_tools().",
+      tags: { sdk: "hindsight-langgraph", topic: "Chatbots" }
+    },
+    {
+      title: "LlamaIndex Agents with Long-Term Memory",
+      href: "/cookbook/recipes/llamaindex-react-agent"
+    },
+    {
+      title: "AutoGen Assistant Agent with Long-Term Memory",
+      href: "/cookbook/recipes/autogen-assistant-agent"
+    },
+    {
+      title: "OpenAI Agents SDK with Long-Term Memory",
+      href: "/cookbook/recipes/openai-agents-memory"
+    },
+    {
       title: "Fitness Coach with Hindsight Memory",
       href: "/cookbook/recipes/fitness_tracker",
       description: "Track workouts, diet, and progress with a personalized fitness coach",
@@ -79,6 +117,10 @@ import PageHero from '@site/src/components/PageHero';
       href: "/cookbook/recipes/study_buddy",
       description: "Track study sessions, identify knowledge gaps, and get personalized review suggestions",
       tags: { sdk: "hindsight-client", topic: "Learning" }
+    },
+    {
+      title: "Claude Agent SDK with Persistent Memory",
+      href: "/cookbook/recipes/claude-agent-sdk"
     }
   ]}
 />
@@ -87,6 +129,18 @@ import PageHero from '@site/src/components/PageHero';
 
 <CookbookGrid
   items={[
+    {
+      title: "AgentCore Runtime + Hindsight Memory",
+      href: "/cookbook/applications/agentcore-memory",
+      description: "Amazon Bedrock AgentCore Runtime agent with persistent long-term memory via Hindsight",
+      tags: { sdk: "hindsight-agentcore", topic: "Agents" }
+    },
+    {
+      title: "Agno + Hindsight Memory",
+      href: "/cookbook/applications/agno-memory",
+      description: "Personal assistant built with Agno that remembers across sessions using Hindsight for persistent long-term memory",
+      tags: { sdk: "hindsight-agno", topic: "Agents" }
+    },
     {
       title: "CableConnect — AI Customer Service Copilot Demo",
       href: "/cookbook/applications/cable-co",
@@ -118,6 +172,18 @@ import PageHero from '@site/src/components/PageHero';
       tags: { sdk: "hindsight-litellm", topic: "Agents" }
     },
     {
+      title: "Claude Code Memory",
+      href: "/cookbook/applications/claude-code-memory",
+      description: "Give Claude Code persistent memory across sessions using the Hindsight memory plugin",
+      tags: { sdk: "hindsight-claude-code", topic: "Agents" }
+    },
+    {
+      title: "Codex Memory",
+      href: "/cookbook/applications/codex-memory",
+      description: "Give OpenAI Codex CLI persistent memory across sessions using Hindsight hooks",
+      tags: { sdk: "hindsight-codex", topic: "Agents" }
+    },
+    {
       title: "CrewAI + Hindsight Memory",
       href: "/cookbook/applications/crewai-memory",
       description: "CrewAI agents with persistent long-term memory via Hindsight",
@@ -134,6 +200,12 @@ import PageHero from '@site/src/components/PageHero';
       href: "/cookbook/applications/go-memory-service",
       description: "Go HTTP microservice with per-user memory banks for a developer knowledge assistant",
       tags: { sdk: "hindsight-client-go", topic: "Learning" }
+    },
+    {
+      title: "Hermes + Hindsight Memory",
+      href: "/cookbook/applications/hermes-memory",
+      description: "Hermes agent with persistent long-term memory via Hindsight",
+      tags: { sdk: "hindsight", topic: "Agents" }
     },
     {
       title: "Memory Approaches Comparison Demo",
@@ -154,6 +226,18 @@ import PageHero from '@site/src/components/PageHero';
       tags: { sdk: "hindsight-api", topic: "Recommendation" }
     },
     {
+      title: "Paperclip Memory",
+      href: "/cookbook/applications/paperclip-memory",
+      description: "Paperclip AI agents with persistent memory via the @vectorize-io/hindsight-paperclip plugin",
+      tags: { sdk: "hindsight-paperclip", topic: "Agents" }
+    },
+    {
+      title: "Pipecat Memory",
+      href: "/cookbook/applications/pipecat-memory",
+      description: "Give Pipecat voice AI pipelines persistent memory across conversations using Hindsight",
+      tags: { sdk: "hindsight-pipecat", topic: "Voice AI" }
+    },
+    {
       title: "Pydantic AI + Hindsight Memory",
       href: "/cookbook/applications/pydantic-ai-memory",
       description: "Pydantic AI agent with persistent long-term memory via Hindsight",
@@ -166,10 +250,22 @@ import PageHero from '@site/src/components/PageHero';
       tags: { sdk: "@vectorize-io/hindsight-client", topic: "Learning" }
     },
     {
+      title: "SmolAgents + Hindsight Memory",
+      href: "/cookbook/applications/smolagents-memory",
+      description: "HuggingFace SmolAgents agent with persistent long-term memory via Hindsight",
+      tags: { sdk: "hindsight-smolagents", topic: "Agents" }
+    },
+    {
       title: "Stance Tracker",
       href: "/cookbook/applications/stancetracker",
       description: "Track political candidates' stances over time with automated web scraping",
       tags: { sdk: "@vectorize-io/hindsight-client", topic: "Recommendation" }
+    },
+    {
+      title: "Strands Agents + Hindsight Memory",
+      href: "/cookbook/applications/strands-memory",
+      description: "Strands Agents agent with persistent long-term memory via Hindsight",
+      tags: { sdk: "hindsight-strands", topic: "Agents" }
     },
     {
       title: "Hindsight AI SDK - Personal Chef",

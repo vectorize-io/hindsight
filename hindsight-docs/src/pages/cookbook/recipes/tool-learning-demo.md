@@ -42,13 +42,11 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 
 ## Installation
 
-
 ```python
 !pip install hindsight-litellm hindsight-client litellm nest_asyncio python-dotenv -U -q
 ```
 
 ## Setup
-
 
 ```python
 import os
@@ -81,7 +79,6 @@ if not os.getenv("OPENAI_API_KEY"):
 ## Define Tools
 
 These tool definitions are **intentionally ambiguous** - the descriptions don't reveal which channel handles what type of request.
-
 
 ```python
 TOOLS = [
@@ -136,7 +133,6 @@ TOOLS = [
 
 A mix of financial and technical requests to test routing accuracy.
 
-
 ```python
 TEST_SCENARIOS = [
     {
@@ -168,7 +164,6 @@ TEST_SCENARIOS = [
 ```
 
 ## Helper Functions
-
 
 ```python
 SYSTEM_PROMPT = """You are a customer service routing agent. Your job is to route customer requests to the appropriate processing channel.
@@ -236,7 +231,6 @@ This is important institutional knowledge for routing decisions."""
 
 The LLM has no prior knowledge about which channel handles what. With ambiguous tool descriptions, it may route incorrectly.
 
-
 ```python
 print("=" * 60)
 print("PHASE 1: WITHOUT HINDSIGHT (No Memory)")
@@ -263,7 +257,6 @@ print(f"\n>>> Phase 1 Accuracy: {phase1_accuracy:.0f}% ({sum(phase1_results)}/{l
 ## Phase 2: Teaching Phase
 
 Now we provide feedback about correct routing to build memory. This simulates a human supervisor correcting the AI's routing decisions.
-
 
 ```python
 bank_id = f"tool-learning-{uuid.uuid4().hex[:8]}"
@@ -303,7 +296,6 @@ print("Done!")
 
 The LLM now has access to learned routing knowledge via Hindsight. It should route requests correctly based on past feedback.
 
-
 ```python
 print("=" * 60)
 print("PHASE 3: WITH HINDSIGHT (Memory-Augmented)")
@@ -333,7 +325,6 @@ print(f"\n>>> Phase 3 Accuracy: {phase3_accuracy:.0f}% ({sum(phase3_results)}/{l
 
 ## Summary
 
-
 ```python
 print("=" * 60)
 print("SUMMARY")
@@ -360,7 +351,6 @@ print("to use, even when tool names/descriptions are ambiguous.")
 ```
 
 ## Cleanup
-
 
 ```python
 hindsight_litellm.cleanup()

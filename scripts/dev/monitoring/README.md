@@ -1,84 +1,83 @@
-# Hindsight Monitoring Stack
+# CollabMind Dev Observability Stack
 
-Docker-based monitoring stack using **Grafana LGTM** (Loki, Grafana, Tempo, Mimir) for complete observability.
+Docker-based observability engines that feed the Central API and Operator Panel.
+You never open these directly — the CollabMind Control Panel queries their APIs.
 
 ## Quick Start
 
 ```bash
-# Start the monitoring stack
-./scripts/dev/start-monitoring.sh
+# Core only — Grafana LGTM (metrics, logs, traces)
+./scripts/dev/monitoring/start.sh core
 
-# Or manually with docker-compose
-cd scripts/dev/monitoring && docker-compose up -d
+# Recommended dev stack — core + traces + LLM observability
+./scripts/dev/monitoring/start.sh full
+
+# Full AI observability — adds Phoenix evaluation lab
+./scripts/dev/monitoring/start.sh llm-obs
 ```
 
-## Access
+## Profiles
 
-- **Grafana UI**: http://localhost:3000
-  - No login required (anonymous admin enabled for dev)
+| Profile | Services | Use Case |
+|---------|----------|----------|
+| `core` | Grafana LGTM | Minimal — just metrics/logs/traces |
+| `full` | core + Jaeger + Langfuse V2 | **Recommended dev stack** |
+| `llm-obs` | full + Phoenix | Full AI evaluation stack |
 
-## Features
+## Services
 
-- **Traces**: OpenTelemetry traces with GenAI semantic conventions (Tempo)
-- **Metrics**: Prometheus scraping of Hindsight API `/metrics` endpoint
-- **Logs**: Loki log aggregation (future)
-- **Dashboards**: Pre-configured dashboards from `monitoring/grafana/dashboards/`:
-  - Hindsight Operations
-  - Hindsight LLM Metrics
-  - Hindsight API Service
+### Grafana LGTM (always on)
+- **Ports**: `:3000` (Grafana UI), `:4317` (OTLP gRPC), `:4318` (OTLP HTTP)
+- Traces via Tempo, metrics via Prometheus/Mimir, logs via Loki
+- Pre-configured dashboards in `monitoring/grafana/dashboards/`
 
-## Configure Hindsight API
+### Trace Explorer (profile: full)
+- **Ports**: `:16686` (dev UI), `:14317` (OTLP gRPC), `:14318` (OTLP HTTP)
+- Container: `collabmind-traces`
+- OTLP endpoints mapped to avoid conflict with LGTM
 
-Set these environment variables in your `.env`:
+### LLM Observability (profile: full)
+- **Port**: `:3002`
+- Container: `collabmind-llm-obs`
+- Uses host PostgreSQL (`langfuse` database on `:5432`)
+- Langfuse V2 (no ClickHouse required)
+
+### AI Evaluation Lab (profile: llm-obs)
+- **Port**: `:6006`
+- Container: `collabmind-ai-eval`
+- Arize AI Phoenix for LLM evaluation and debugging
+
+## Architecture
+
+```
+Operator Panel ──→ Central API ──→ Observability Engines (Docker)
+```
+The Operator Panel never talks to these engines directly — all routing goes through the Central API (Verify-Once-at-Edge pattern).
+
+## Configure Hindsight API for Tracing
 
 ```bash
-# Enable tracing
 HINDSIGHT_API_OTEL_TRACES_ENABLED=true
-
-# Grafana Tempo OTLP endpoint (HTTP)
 HINDSIGHT_API_OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-
-# Optional: Custom service name
-HINDSIGHT_API_OTEL_SERVICE_NAME=hindsight-api
-
-# Optional: Deployment environment
-HINDSIGHT_API_OTEL_DEPLOYMENT_ENVIRONMENT=development
 ```
-
-## View Data
-
-### Traces
-1. Open http://localhost:3000
-2. Go to **Explore** (compass icon)
-3. Select **Tempo** as data source
-4. Click "Search" to see recent traces
-
-### Metrics & Dashboards
-1. Open http://localhost:3000
-2. Go to **Dashboards** (dashboard icon)
-3. Browse the Hindsight folder
-
-### Raw Metrics
-- Prometheus metrics: http://localhost:8888/metrics
-- PromQL queries: Explore → Prometheus
-
-## Ports
-
-| Port | Service |
-|------|---------|
-| 3000 | Grafana UI |
-| 4317 | OTLP gRPC endpoint |
-| 4318 | OTLP HTTP endpoint |
 
 ## Stop
 
 ```bash
-cd scripts/dev/monitoring && docker-compose down
+cd scripts/dev/monitoring && docker compose down
+# Or with profile:
+cd scripts/dev/monitoring && docker compose --profile full down
 ```
 
-## Architecture
+## Ports
 
-- **Single Container**: Grafana LGTM (~515MB) provides all observability components
-- **Auto-provisioned Dashboards**: Dashboards from `monitoring/grafana/dashboards/` are automatically loaded
-- **Prometheus Scraping**: Configured to scrape Hindsight API at `host.docker.internal:8888/metrics` every 5 seconds
-- **Network**: Uses `hindsight-network` (shared with API for future service-to-service tracing)
+| Port | Service | Profile |
+|------|---------|---------|
+| 3000 | Grafana LGTM | core+ |
+| 3002 | LLM Observability | full+ |
+| 4317 | OTLP gRPC | core+ |
+| 4318 | OTLP HTTP | core+ |
+| 6006 | AI Evaluation Lab | llm-obs+ |
+| 16686 | Trace Explorer | full+ |
+| 14317 | OTLP gRPC (traces) | full+ |
+| 14318 | OTLP HTTP (traces) | full+ |

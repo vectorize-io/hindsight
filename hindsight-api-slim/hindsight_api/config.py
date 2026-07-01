@@ -403,6 +403,12 @@ ENV_OTEL_DEPLOYMENT_ENVIRONMENT = "HINDSIGHT_API_OTEL_DEPLOYMENT_ENVIRONMENT"
 ENV_METRICS_INCLUDE_BANK_ID = "HINDSIGHT_API_METRICS_INCLUDE_BANK_ID"
 ENV_METRICS_BACKLOG_ENABLED = "HINDSIGHT_API_METRICS_BACKLOG_ENABLED"
 
+# Langfuse tracing configuration
+ENV_LANGFUSE_ENABLED = "HINDSIGHT_API_LANGFUSE_ENABLED"
+ENV_LANGFUSE_PUBLIC_KEY = "HINDSIGHT_API_LANGFUSE_PUBLIC_KEY"
+ENV_LANGFUSE_SECRET_KEY = "HINDSIGHT_API_LANGFUSE_SECRET_KEY"
+ENV_LANGFUSE_HOST = "HINDSIGHT_API_LANGFUSE_HOST"
+
 # Vertex AI configuration
 ENV_LLM_VERTEXAI_PROJECT_ID = "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID"
 ENV_LLM_VERTEXAI_REGION = "HINDSIGHT_API_LLM_VERTEXAI_REGION"
@@ -1021,6 +1027,10 @@ DEFAULT_OTEL_SERVICE_NAME = "hindsight-api"
 DEFAULT_OTEL_DEPLOYMENT_ENVIRONMENT = "development"
 DEFAULT_METRICS_INCLUDE_BANK_ID = False  # Disabled by default to avoid high-cardinality OTel metric growth
 DEFAULT_METRICS_BACKLOG_ENABLED = False  # Disabled by default: runs periodic per-schema COUNT queries
+
+# Langfuse tracing defaults
+DEFAULT_LANGFUSE_ENABLED = False  # Disabled by default
+DEFAULT_LANGFUSE_HOST = "http://localhost:3002"
 
 # Audit log defaults
 DEFAULT_AUDIT_LOG_ENABLED = False  # Disabled by default
@@ -1847,6 +1857,12 @@ class HindsightConfig:
     otel_deployment_environment: str
     metrics_include_bank_id: bool
     metrics_backlog_enabled: bool
+
+    # Langfuse tracing configuration (separate from OTel — uses Langfuse SDK directly)
+    langfuse_enabled: bool
+    langfuse_public_key: str | None
+    langfuse_secret_key: str | None
+    langfuse_host: str
 
     # Audit log configuration (static - server-level only)
     audit_log_enabled: bool  # Master switch for audit logging
@@ -2889,6 +2905,12 @@ class HindsightConfig:
             in ("true", "1", "yes"),
             metrics_backlog_enabled=os.getenv(ENV_METRICS_BACKLOG_ENABLED, str(DEFAULT_METRICS_BACKLOG_ENABLED)).lower()
             in ("true", "1", "yes"),
+            # Langfuse tracing configuration
+            langfuse_enabled=os.getenv(ENV_LANGFUSE_ENABLED, str(DEFAULT_LANGFUSE_ENABLED)).lower()
+            in ("true", "1", "yes"),
+            langfuse_public_key=os.getenv(ENV_LANGFUSE_PUBLIC_KEY) or None,
+            langfuse_secret_key=os.getenv(ENV_LANGFUSE_SECRET_KEY) or None,
+            langfuse_host=os.getenv(ENV_LANGFUSE_HOST, DEFAULT_LANGFUSE_HOST),
             # Audit log configuration (static, server-level only)
             audit_log_enabled=os.getenv(ENV_AUDIT_LOG_ENABLED, str(DEFAULT_AUDIT_LOG_ENABLED)).lower() == "true",
             audit_log_actions=[

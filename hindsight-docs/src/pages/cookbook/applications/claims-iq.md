@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 7
 ---
 
 # ClaimsIQ — Insurance Claims Triage Agent Demo

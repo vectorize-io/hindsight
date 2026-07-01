@@ -1,5 +1,5 @@
 ---
-sidebar_position: 7
+sidebar_position: 12
 ---
 
 # Healthcare Assistant with Hindsight Memory
@@ -43,7 +43,6 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 
 ## 1. Install Dependencies
 
-
 ```python
 !pip install -q hindsight-client openai nest-asyncio
 ```
@@ -51,7 +50,6 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 ## 2. Configure OpenAI API Key
 
 Enter your OpenAI API key when prompted (used by both Hindsight and the demo).
-
 
 ```python
 import getpass
@@ -65,7 +63,6 @@ print("API key configured!")
 ```
 
 ## 3. Initialize Clients
-
 
 ```python
 import nest_asyncio
@@ -92,7 +89,6 @@ print("Clients initialized!")
 ```
 
 ## 4. Define Helper Functions
-
 
 ```python
 def store_patient_info(patient_id: str, info: str, category: str = "general") -> str:
@@ -213,7 +209,6 @@ print("Helper functions defined!")
 
 ## 5. Set Up Patient Profile
 
-
 ```python
 print("Setting up patient profile...")
 
@@ -235,7 +230,6 @@ for info, category in patient_info:
 ```
 
 ## 6. Healthcare Chat
-
 
 ```python
 import time
@@ -261,7 +255,6 @@ for message in conversations:
 
 ## 7. Schedule Appointment
 
-
 ```python
 print("=" * 60)
 print("  Scheduling Appointment")
@@ -270,7 +263,6 @@ print(schedule_appointment(PATIENT_ID, "General checkup", "Next Tuesday afternoo
 ```
 
 ## 8. Health Summary
-
 
 ```python
 print("=" * 60)
@@ -281,7 +273,6 @@ print(get_health_summary(PATIENT_ID))
 
 ## 9. Try Your Own Question
 
-
 ```python
 your_question = "Should I adjust my Metformin dose?"  # Change this!
 
@@ -291,7 +282,6 @@ print(f"Assistant: {healthcare_chat(PATIENT_ID, your_question)}")
 ```
 
 ## 10. Cleanup
-
 
 ```python
 hindsight.close()

@@ -3090,6 +3090,25 @@ def create_app(
                     logging.error(f"Failed to initialize tracing: {e}")
                     logging.warning("Continuing without tracing")
 
+        # Initialize Langfuse SDK tracing (separate from OTel pipeline)
+        if config.langfuse_enabled:
+            if not config.langfuse_public_key or not config.langfuse_secret_key:
+                logging.warning(
+                    "Langfuse tracing enabled but LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY missing. Tracing disabled."
+                )
+            else:
+                from hindsight_api.tracing import init_langfuse
+
+                try:
+                    init_langfuse(
+                        public_key=config.langfuse_public_key,
+                        secret_key=config.langfuse_secret_key,
+                        host=config.langfuse_host,
+                    )
+                except Exception as e:
+                    logging.error(f"Failed to initialize Langfuse tracing: {e}")
+                    logging.warning("Continuing without Langfuse")
+
         # Startup: Initialize database and memory system (migrations run inside initialize if enabled)
         if initialize_memory:
             await memory.initialize()

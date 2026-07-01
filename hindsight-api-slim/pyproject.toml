@@ -31,6 +31,7 @@ dependencies = [
     "httpx>=0.27.0",
     "PyJWT[crypto]>=2.8.0",
     "fastmcp>=3.2.0", # SSRF/path traversal, OAuth confused deputy, command injection fixes
+    "langfuse>=4.7.0", # LLM observability platform (works with Langfuse v2+ self-hosted)
     "python-dateutil>=2.8.0",
     # opentelemetry-exporter-prometheus 0.62b1 calls
     # MetricReader.__init__(otel_component_type=…), a kwarg added in

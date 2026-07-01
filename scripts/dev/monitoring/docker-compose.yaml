@@ -1,33 +1,90 @@
+# CollabMind Dev Observability Stack
+# Engines for traces, LLM observability, AI evaluation, and full observability.
+# The Central API and Operator Panel consume these — no direct operator access.
+#
+# Profiles:
+#   default   — Grafana LGTM (always on)
+#   full      — default + Jaeger + Langfuse V2
+#   llm-obs   — full + Phoenix (AI evaluation)
+#   all       — everything including heavy services (SigNoz, HyperDX)
+
 services:
+  # ── Metrics, Logs, Traces (always on, no profile constraint) ───
   grafana-lgtm:
     image: grafana/otel-lgtm:latest
     container_name: hindsight-monitoring
     ports:
-      # Grafana UI
-      - "3000:3000"
-      # OTLP gRPC (traces)
-      - "4317:4317"
-      # OTLP HTTP (traces)
-      - "4318:4318"
+      - "3000:3000"       # Grafana UI (dev access, not operator-facing)
+      - "4317:4317"       # OTLP gRPC
+      - "4318:4318"       # OTLP HTTP
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
       - GF_AUTH_DISABLE_LOGIN_FORM=true
     volumes:
-      # Mount Prometheus config for scraping Hindsight API metrics (override LGTM default)
       - ./prometheus.yml:/otel-lgtm/prometheus.yaml:ro
-      # Mount Hindsight dashboards to LGTM directory (where default dashboards are)
       - ../../../monitoring/grafana/dashboards/hindsight-operations.json:/otel-lgtm/hindsight-operations.json:ro
       - ../../../monitoring/grafana/dashboards/hindsight-llm.json:/otel-lgtm/hindsight-llm.json:ro
       - ../../../monitoring/grafana/dashboards/hindsight-api-service.json:/otel-lgtm/hindsight-api-service.json:ro
-      # Mount custom dashboard provisioning config that includes Hindsight dashboards
       - ./grafana-dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/grafana-dashboards.yaml:ro
     restart: unless-stopped
     networks:
       - hindsight
     extra_hosts:
-      # Allow container to reach host services (Hindsight API on localhost:8888)
       - "host.docker.internal:host-gateway"
+
+  # ── Trace Explorer (profile: full / llm-obs / all) ─────────────
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: collabmind-traces
+    profiles:
+      - full
+      - llm-obs
+      - all
+    ports:
+      - "16686:16686"     # Jaeger UI (dev access)
+      - "14317:4317"      # OTLP gRPC (host) ← mapped to avoid LGTM conflict
+      - "14318:4318"      # OTLP HTTP (host) ← mapped to avoid LGTM conflict
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped
+    networks:
+      - hindsight
+
+  # ── LLM Observability (profile: full / llm-obs / all) ──────────
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: collabmind-llm-obs
+    profiles:
+      - full
+      - llm-obs
+      - all
+    ports:
+      - "3002:3000"       # Langfuse UI (dev access)
+    environment:
+      - DATABASE_URL=postgresql://oliververmeulen@host.docker.internal:5432/langfuse
+      - NEXTAUTH_SECRET=dev-only-not-secret
+      - SALT=dev-salt
+      - NEXTAUTH_URL=http://localhost:3002
+      - TELEMETRY_ENABLED=false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    networks:
+      - hindsight
+
+  # ── AI Evaluation Lab (profile: llm-obs / all) ─────────────────
+  phoenix:
+    image: arizeai/phoenix:latest
+    container_name: collabmind-ai-eval
+    profiles:
+      - llm-obs
+      - all
+    ports:
+      - "6006:6006"       # Phoenix UI (dev access)
+    restart: unless-stopped
+    networks:
+      - hindsight
 
 networks:
   hindsight:

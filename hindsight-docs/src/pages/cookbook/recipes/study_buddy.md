@@ -1,5 +1,5 @@
 ---
-sidebar_position: 11
+sidebar_position: 16
 ---
 
 # Study Buddy with Hindsight Memory
@@ -39,7 +39,6 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 
 ## 1. Install Dependencies
 
-
 ```python
 !pip install -q hindsight-client openai nest-asyncio
 ```
@@ -47,7 +46,6 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 ## 2. Configure OpenAI API Key
 
 Enter your OpenAI API key when prompted (used by both Hindsight and the demo).
-
 
 ```python
 import getpass
@@ -61,7 +59,6 @@ print("API key configured!")
 ```
 
 ## 3. Initialize Clients
-
 
 ```python
 import nest_asyncio
@@ -84,7 +81,6 @@ print("Clients initialized!")
 ```
 
 ## 4. Define Helper Functions
-
 
 ```python
 def record_study_session(topic: str, notes: str, confidence: str = "medium") -> str:
@@ -216,7 +212,6 @@ print("Helper functions defined!")
 
 ## 5. Record Study Sessions
 
-
 ```python
 print("Recording study sessions...")
 
@@ -255,7 +250,6 @@ for session in sessions:
 
 ## 6. Record Questions
 
-
 ```python
 print("Recording questions...")
 
@@ -272,7 +266,6 @@ for topic, question, understood in questions:
 ```
 
 ## 7. Interactive Study Session
-
 
 ```python
 import time
@@ -297,7 +290,6 @@ for query in queries:
 
 ## 8. Get Review Suggestions
 
-
 ```python
 print("=" * 60)
 print("  Recommended Review Topics")
@@ -306,7 +298,6 @@ print(get_review_suggestions())
 ```
 
 ## 9. Knowledge Summary
-
 
 ```python
 print("=" * 60)
@@ -317,7 +308,6 @@ print(get_knowledge_summary())
 
 ## 10. Try Your Own Question
 
-
 ```python
 your_question = "What are my biggest knowledge gaps right now?"  # Change this!
 
@@ -327,7 +317,6 @@ print(f"Study Buddy: {study_buddy(your_question)}")
 ```
 
 ## 11. Cleanup
-
 
 ```python
 hindsight.close()

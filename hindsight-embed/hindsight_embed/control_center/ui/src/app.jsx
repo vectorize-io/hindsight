@@ -45,7 +45,8 @@ export function App() {
   const [cfg, setCfg] = useState(null);
   const [form, setForm] = useState({ provider: "", apiKey: "", model: "", apiPort: "", uiPort: "", apiVersion: "", cpVersion: "" });
 
-  // status / health
+  // create-profile form
+  const [newProfileName, setNewProfileName] = useState("");
   const [daemonRunning, setDaemonRunning] = useState(false);
   const [uiRunning, setUiRunning] = useState(false);
   const [daemonText, setDaemonText] = useState("—");
@@ -233,8 +234,24 @@ export function App() {
     }
   }
 
+  // create profile
+  async function createProfile() {
+    const name = newProfileName.trim();
+    if (!name) return;
+    setBusy(true);
+    try {
+      await api("POST", `/api/profiles/${pn(name)}/config`, { provider: "openai" });
+      setNewProfileName("");
+      await loadProfiles();
+      await selectProfile(name);
+    } catch (e) {
+      onUnauthorized(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // ----- effects -------------------------------------------------------
-  // Boot: health (version), providers, profiles, optional deep-link.
   useEffect(() => {
     (async () => {
       try {
@@ -321,6 +338,20 @@ export function App() {
               </li>
             ))}
           </ul>
+          <div class="create-profile">
+            <input
+              type="text"
+              placeholder="New profile name…"
+              value={newProfileName}
+              onInput={(e) => setNewProfileName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && createProfile()}
+            />
+            <div class="row">
+              <button class="ghost sm" disabled={busy || !newProfileName.trim()} onClick={createProfile}>
+                + Create
+              </button>
+            </div>
+          </div>
         </aside>
 
         <main class="content">
@@ -364,6 +395,15 @@ export function App() {
                     onStop={() => cpAction("stop")}
                   />
                 </div>
+                {paths && paths.ui_url && (
+                  <div class="nav-links">
+                    <span class="nav-label">Quick Links</span>
+                    <a class="nav-pill" href={paths.ui_url} target="_blank" rel="noopener">Dashboard</a>
+                    <a class="nav-pill" href={`${paths.ui_url}/providers`} target="_blank" rel="noopener">Providers</a>
+                    <a class="nav-pill" href={`${paths.ui_url}/connectors`} target="_blank" rel="noopener">Connectors</a>
+                    <a class="nav-pill" href={`${paths.ui_url}/system`} target="_blank" rel="noopener">System</a>
+                  </div>
+                )}
               </div>
 
               <div class="tabs">
@@ -526,8 +566,8 @@ export function App() {
 function AppBar({ version }) {
   return (
     <div class="appbar">
-      <img src="./logo.png" alt="Hindsight" />
-      <span class="title grad-text">Embed Control Center</span>
+      <img src="./logo.svg" alt="CollabMind" />
+      <span class="title grad-text">CollabMind Control Center</span>
       <span class="ver">{version}</span>
     </div>
   );

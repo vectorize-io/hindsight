@@ -45,7 +45,6 @@ A naive approach would index product docs into each user's memory bank, but this
 - User memory is 100% isolated
 - Simple mental model, no complex filtering
 
-
 ```python
 !pip install hindsight-client nest_asyncio openai python-dotenv -U
 ```
@@ -53,7 +52,6 @@ A naive approach would index product docs into each user's memory bank, but this
 ## 1. Set Up Memory Banks
 
 Create three types of banks:
-
 
 ```python
 # Jupyter notebooks already run an asyncio event loop. The hindsight client 
@@ -97,7 +95,6 @@ def create_user_bank(user_id: str):
 
 Index your product docs into the shared bank (do this once, or on doc updates):
 
-
 ```python
 # Index product documentation - retain each doc separately
 client.retain(
@@ -118,7 +115,6 @@ print(f"View documents: {HINDSIGHT_UI_URL}/banks/product-docs?view=documents")
 
 After each support interaction, retain it in the user's bank:
 
-
 ```python
 def save_conversation(user_id: str, messages: list):
     # Convert messages to string format
@@ -132,7 +128,6 @@ def save_conversation(user_id: str, messages: list):
 ## 4. Query Multiple Banks at Support Time
 
 When handling a user query, retrieve context from both banks:
-
 
 ```python
 def get_support_context(user_id: str, query: str):
@@ -157,7 +152,6 @@ def get_support_context(user_id: str, query: str):
 ## 5. Build the Agent Prompt
 
 Combine both contexts in your agent's prompt:
-
 
 ```python
 def format_results(results):
@@ -204,7 +198,6 @@ When the agent discovers a solution that's not in the docs, you can optionally p
                            all three banks
 ```
 
-
 ```python
 # Optional: Create a curated learnings bank
 learnings_bank = client.create_bank(
@@ -221,7 +214,6 @@ def promote_learning(insight: str):
 ```
 
 ## Complete Example
-
 
 ```python
 def format_results(results):
@@ -303,7 +295,6 @@ print(f"\nView user memory: {HINDSIGHT_UI_URL}/banks/user-bob?view=documents")
 ## Cleanup
 
 Delete the banks created during this notebook:
-
 
 ```python
 import requests

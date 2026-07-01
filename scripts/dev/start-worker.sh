@@ -17,4 +17,7 @@ set -a
 source "$ENV_FILE"
 set +a
 
-uv run hindsight-worker "$@"
+# Use local .venv binary (pipx-installed version may be outdated)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+"$ROOT_DIR/hindsight-api-slim/.venv/bin/hindsight-worker" "$@"
