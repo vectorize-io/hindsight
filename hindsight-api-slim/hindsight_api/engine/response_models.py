@@ -179,13 +179,18 @@ class RecallScores(BaseModel):
     can be filtered on via the recall ``min_scores`` request parameter. ``semantic``
     and ``keyword`` are the raw per-strategy retrieval scores (``None`` when that
     strategy did not surface this result); ``reranker`` is the cross-encoder's
-    normalized relevance.
+    normalized relevance and ``reranker_raw`` is the provider's raw score before
+    normalization.
     """
 
     final: float = Field(description="Final ranking score (combined reranker + recency/temporal/proof boosts)")
     reranker: float | None = Field(
         default=None,
         description="Cross-encoder relevance, normalized 0-1. None when the reranker is a passthrough (rrf/interleave modes).",
+    )
+    reranker_raw: float | None = Field(
+        default=None,
+        description="Raw cross-encoder/reranker score before normalization. None when the reranker is a passthrough.",
     )
     semantic: float | None = Field(
         default=None, description="Vector cosine similarity (0-1). None if this result was not surfaced semantically."
@@ -201,15 +206,18 @@ class MinScores(BaseModel):
 
     ``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into the SQL
     arms (overriding the global ``semantic_min_similarity`` / ``bm25_min_score``
-    config for this request), so they prune weak matches before fusion. ``reranker``
-    and ``final`` are **post-query** filters applied to the scored results after
-    reranking. Any field left None imposes no floor; all-None (the default) means
-    no score filtering.
+    config for this request), so they prune weak matches before fusion. ``reranker``,
+    ``reranker_raw``, and ``final`` are **post-query** filters applied to the scored
+    results after reranking. ``reranker`` uses the normalized reranker score;
+    ``reranker_raw`` uses the provider's raw reranker score before normalization.
+    Any field left None imposes no floor; all-None (the default) means no score
+    filtering.
     """
 
     semantic: float | None = Field(default=None, description="Retrieval-level: minimum vector similarity (0-1).")
     keyword: float | None = Field(default=None, description="Retrieval-level: minimum keyword/full-text (BM25) score.")
     reranker: float | None = Field(default=None, description="Post-query: minimum normalized reranker score (0-1).")
+    reranker_raw: float | None = Field(default=None, description="Post-query: minimum raw reranker score.")
     final: float | None = Field(default=None, description="Post-query: minimum final ranking score.")
 
 

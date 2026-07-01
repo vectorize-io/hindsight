@@ -10406,6 +10406,18 @@
             "title": "Reranker",
             "description": "Post-query: minimum normalized reranker score (0-1)."
           },
+          "reranker_raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker Raw",
+            "description": "Post-query: minimum raw reranker score."
+          },
           "final": {
             "anyOf": [
               {
@@ -10421,7 +10433,7 @@
         },
         "type": "object",
         "title": "MinScores",
-        "description": "Optional per-stage score floors for recall (all inclusive, AND-ed).\n\n``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into the SQL\narms (overriding the global ``semantic_min_similarity`` / ``bm25_min_score``\nconfig for this request), so they prune weak matches before fusion. ``reranker``\nand ``final`` are **post-query** filters applied to the scored results after\nreranking. Any field left None imposes no floor; all-None (the default) means\nno score filtering."
+        "description": "Optional per-stage score floors for recall (all inclusive, AND-ed).\n\n``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into the SQL\narms (overriding the global ``semantic_min_similarity`` / ``bm25_min_score``\nconfig for this request), so they prune weak matches before fusion. ``reranker``,\n``reranker_raw``, and ``final`` are **post-query** filters applied to the scored\nresults after reranking. ``reranker`` uses the normalized reranker score;\n``reranker_raw`` uses the provider's raw reranker score before normalization.\nAny field left None imposes no floor; all-None (the default) means no score\nfiltering."
       },
       "ObservationScope": {
         "properties": {
@@ -11010,7 +11022,7 @@
                 "type": "null"
               }
             ],
-            "description": "Optional per-stage score floors (all inclusive, AND-ed). `semantic` and `keyword` are retrieval-level cutoffs pushed into the SQL arms (overriding the global similarity/BM25 minimums for this request); `reranker` and `final` are post-ranking filters on the scored results. Any field left unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering. Use with care \u2014 the reranker's absolute scores are not calibrated across queries (a clearly-relevant match may score ~0.001 even though it is ranked first)."
+            "description": "Optional per-stage score floors (all inclusive, AND-ed). `semantic` and `keyword` are retrieval-level cutoffs pushed into the SQL arms (overriding the global similarity/BM25 minimums for this request); `reranker`, `reranker_raw`, and `final` are post-ranking filters on the scored results. Any field left unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering. Use with care \u2014 the reranker's absolute scores are not calibrated across queries (a clearly-relevant match may score ~0.001 even though it is ranked first)."
           }
         },
         "type": "object",
@@ -11358,6 +11370,18 @@
             "title": "Reranker",
             "description": "Cross-encoder relevance, normalized 0-1. None when the reranker is a passthrough (rrf/interleave modes)."
           },
+          "reranker_raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker Raw",
+            "description": "Raw cross-encoder/reranker score before normalization. None when the reranker is a passthrough."
+          },
           "semantic": {
             "anyOf": [
               {
@@ -11388,7 +11412,7 @@
           "final"
         ],
         "title": "RecallScores",
-        "description": "Per-result recall scores from different stages of the pipeline.\n\n``final`` is the value results are ranked by. The others are diagnostic and\ncan be filtered on via the recall ``min_scores`` request parameter. ``semantic``\nand ``keyword`` are the raw per-strategy retrieval scores (``None`` when that\nstrategy did not surface this result); ``reranker`` is the cross-encoder's\nnormalized relevance."
+        "description": "Per-result recall scores from different stages of the pipeline.\n\n``final`` is the value results are ranked by. The others are diagnostic and\ncan be filtered on via the recall ``min_scores`` request parameter. ``semantic``\nand ``keyword`` are the raw per-strategy retrieval scores (``None`` when that\nstrategy did not surface this result); ``reranker`` is the cross-encoder's\nnormalized relevance and ``reranker_raw`` is the provider's raw score before\nnormalization."
       },
       "RecoverConsolidationResponse": {
         "properties": {

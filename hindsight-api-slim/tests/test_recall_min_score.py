@@ -2,7 +2,7 @@
 
 Inserts memory_units with known content + real embeddings directly via SQL, then
 verifies that recall_async:
-  - returns a `scores` object (final/reranker/semantic/keyword) on every result,
+  - returns a `scores` object (final/reranker/reranker_raw/semantic/keyword) on every result,
   - applies the post-query floors (`reranker`, `final`) to the scored results,
   - applies the retrieval-level floors (`semantic`, `keyword`) inside the SQL arms,
   - is unchanged by the default (`min_scores=None`).
@@ -101,6 +101,8 @@ class TestRecallScores:
         for r in result.results:
             assert r.scores is not None, f"result {r.id} is missing scores"
             assert isinstance(r.scores.final, float)
+            if r.scores.reranker is not None:
+                assert r.scores.reranker_raw is not None
             # semantic surfaced these (vector arm) — should be populated and 0..1
             assert r.scores.semantic is not None
             assert 0.0 <= r.scores.semantic <= 1.0
