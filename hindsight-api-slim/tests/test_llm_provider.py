@@ -45,11 +45,22 @@ def _get_api_key() -> str:
 
 
 def _make_llm() -> LLMProvider:
+    # LLMProvider uses provider-specific settings as-passed (it does not resolve
+    # them from global config), so forward the ones whose providers require them:
+    # Vertex AI needs project/region, and litellmrouter needs its router config.
+    # Without these, provider=vertexai/litellmrouter raise at construction.
+    from hindsight_api.config import get_config
+
+    config = get_config()
     return LLMProvider(
         provider=_PROVIDER,
         api_key=_get_api_key(),
         base_url=os.environ.get("HINDSIGHT_API_LLM_BASE_URL", ""),
         model=_MODEL,
+        vertexai_project_id=config.llm_vertexai_project_id,
+        vertexai_region=config.llm_vertexai_region,
+        vertexai_service_account_key=config.llm_vertexai_service_account_key,
+        litellmrouter_config=config.llm_litellmrouter_config,
     )
 
 
