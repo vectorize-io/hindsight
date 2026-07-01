@@ -217,3 +217,43 @@ async def test_none_event_date_with_valid_facts_no_crash():
 
     assert len(facts) == 1
     assert "Alice visited Paris" in facts[0].fact
+
+
+def _make_batch_temp_config(temperature):
+    """Minimal config for _build_request_body temperature tests."""
+    from hindsight_api.config import HindsightConfig
+
+    cfg = MagicMock(spec=HindsightConfig)
+    cfg.llm_temperature_retain = temperature
+    cfg.retain_max_completion_tokens = None
+    cfg.llm_strict_schema = False
+    return cfg
+
+
+def _make_batch_llm_config():
+    """Minimal LLMProvider mock for _build_request_body (non-openai skips service_tier)."""
+    from hindsight_api.engine.llm_wrapper import LLMProvider
+
+    llm = MagicMock(spec=LLMProvider)
+    llm.model = "gpt-test"
+    llm.provider = "mock"
+    return llm
+
+
+def test_build_request_body_forwards_configured_temperature():
+    """Batch retain path must send the configured retain temperature."""
+    from hindsight_api.engine.retain.fact_extraction import _build_request_body
+
+    body = _build_request_body(_make_batch_llm_config(), _make_batch_temp_config(0.7), "sys", "user", dict)
+    assert body["temperature"] == 0.7
+
+
+def test_build_request_body_omits_temperature_when_none():
+    """HINDSIGHT_API_LLM_TEMPERATURE=none must drop temperature from the batch
+    request body too (Azure GPT-5.5 rejects explicit temperatures). Follow-up to
+    #2469, which only de-hardcoded the streaming path and left the batch
+    _build_request_body hardcoding temperature=0.1."""
+    from hindsight_api.engine.retain.fact_extraction import _build_request_body
+
+    body = _build_request_body(_make_batch_llm_config(), _make_batch_temp_config(None), "sys", "user", dict)
+    assert "temperature" not in body
