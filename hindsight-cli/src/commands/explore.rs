@@ -982,7 +982,8 @@ fn render_memories(f: &mut Frame, app: &mut App, area: Rect) {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(7),  // Memory metadata
-                Constraint::Min(0),     // Full text content
+                Constraint::Percentage(45), // Full text content
+                Constraint::Percentage(55), // Complete JSON details
             ])
             .split(area);
 
@@ -1020,6 +1021,13 @@ fn render_memories(f: &mut Frame, app: &mut App, area: Rect) {
             .style(Style::default().fg(Color::White));
 
         f.render_widget(content_widget, chunks[1]);
+
+        let details_widget = Paragraph::new(format_memory_details_json(memory))
+            .block(Block::default().borders(Borders::ALL).title("Details JSON"))
+            .wrap(Wrap { trim: false })
+            .style(Style::default().fg(Color::White));
+
+        f.render_widget(details_widget, chunks[2]);
     } else {
         // Show memory list as table
         let mut items = vec![
@@ -1061,6 +1069,11 @@ fn render_memories(f: &mut Frame, app: &mut App, area: Rect) {
 
         f.render_stateful_widget(list, area, &mut app.memories_state);
     }
+}
+
+fn format_memory_details_json(memory: &Map<String, Value>) -> String {
+    serde_json::to_string_pretty(memory)
+        .unwrap_or_else(|_| "Unable to render memory details".to_string())
 }
 
 fn render_entities(f: &mut Frame, app: &mut App, area: Rect) {
