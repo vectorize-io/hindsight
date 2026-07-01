@@ -205,8 +205,8 @@ A **bank** is an isolated memory store — like a separate "brain." These settin
 | Setting | Env Var | Default | Description |
 |---------|---------|---------|-------------|
 | `bankId` | `HINDSIGHT_BANK_ID` | `"claude_code"` | The bank ID to use when `dynamicBankId` is `false`. All sessions share this single bank. |
-| `bankMission` | `HINDSIGHT_BANK_MISSION` | generic assistant prompt | A short description of the agent's identity and purpose. Sent to Hindsight when creating or updating the bank, and used during recall to contextualize results. |
-| `retainMission` | — | extraction prompt | Instructions for the fact extraction LLM — tells it *what* to extract from conversations (e.g. "Extract technical decisions and user preferences"). |
+| `bankMission` | `HINDSIGHT_BANK_MISSION` | `""` (unset) | A short description of the agent's identity and purpose (the bank's reflect mission). Empty by default so the plugin does not stamp a generic persona; set it to seed a mission onto the bank. |
+| `retainMission` | — | `null` (unset) | Instructions for the fact extraction LLM — tells it *what* to extract from conversations (e.g. "Extract technical decisions and user preferences"). Empty by default; set it to seed a retain mission onto the bank. |
 | `dynamicBankId` | `HINDSIGHT_DYNAMIC_BANK_ID` | `false` | When `true`, the plugin derives a unique bank ID from context fields (see `dynamicBankGranularity`), giving each combination its own isolated memory. |
 | `dynamicBankGranularity` | — | `["agent", "project"]` | Which context fields to combine when building a dynamic bank ID. Available fields: `agent` (agent name), `project` (working directory), `session` (session ID), `channel` (channel ID), `user` (user ID). |
 | `bankIdPrefix` | — | `""` | A string prepended to all bank IDs — both static and dynamic. Useful for namespacing (e.g. `"prod"` or `"staging"`). |
