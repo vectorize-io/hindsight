@@ -1167,12 +1167,6 @@ export type CreateFolderRequest = {
    * Parent Id
    */
   parent_id?: string | null;
-  /**
-   * Mission
-   *
-   * Curator mission for the folder.
-   */
-  mission?: string | null;
 };
 
 /**
@@ -2032,9 +2026,9 @@ export type IncludeOptions = {
  *
  * A node in the knowledge-base tree — a folder or a page.
  *
- * Folders carry a ``mission`` (the curator's steering prompt); pages carry
- * ``description``/``tags`` from their backing mental model and a ``managed``
- * flag (true = curator-managed, false = pinned/human).
+ * Pages carry ``description``/``tags`` from their backing mental model. The
+ * knowledge base is client-managed (CRUD); ``managed`` lets a client tag a node
+ * as system-owned vs. hand-authored.
  */
 export type KnowledgeNode = {
   /**
@@ -2060,15 +2054,9 @@ export type KnowledgeNode = {
    */
   mental_model_id?: string | null;
   /**
-   * Mission
-   *
-   * Curator mission (folders only).
-   */
-  mission?: string | null;
-  /**
    * Managed
    *
-   * True for curator-managed nodes; false for pinned/human.
+   * Client-set flag: true = system-owned, false = hand-authored.
    */
   managed?: boolean;
   /**
@@ -4196,7 +4184,7 @@ export type UpdateMentalModelRequest = {
 /**
  * UpdateNodeRequest
  *
- * Rename, move, and/or set a folder's mission. Each field applies only when present.
+ * Rename and/or move a node. Each field applies only when present.
  */
 export type UpdateNodeRequest = {
   /**
@@ -4207,10 +4195,6 @@ export type UpdateNodeRequest = {
    * Parent Id
    */
   parent_id?: string | null;
-  /**
-   * Mission
-   */
-  mission?: string | null;
 };
 
 /**

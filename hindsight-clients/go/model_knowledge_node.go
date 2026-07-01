@@ -19,15 +19,14 @@ import (
 // checks if the KnowledgeNode type satisfies the MappedNullable interface at compile time
 var _ MappedNullable = &KnowledgeNode{}
 
-// KnowledgeNode A node in the knowledge-base tree — a folder or a page.  Folders carry a ``mission`` (the curator's steering prompt); pages carry ``description``/``tags`` from their backing mental model and a ``managed`` flag (true = curator-managed, false = pinned/human).
+// KnowledgeNode A node in the knowledge-base tree — a folder or a page.  Pages carry ``description``/``tags`` from their backing mental model. The knowledge base is client-managed (CRUD); ``managed`` lets a client tag a node as system-owned vs. hand-authored.
 type KnowledgeNode struct {
 	Id string `json:"id"`
 	Kind string `json:"kind"`
 	Name string `json:"name"`
 	ParentId NullableString `json:"parent_id,omitempty"`
 	MentalModelId NullableString `json:"mental_model_id,omitempty"`
-	Mission NullableString `json:"mission,omitempty"`
-	// True for curator-managed nodes; false for pinned/human.
+	// Client-set flag: true = system-owned, false = hand-authored.
 	Managed *bool `json:"managed,omitempty"`
 	Description NullableString `json:"description,omitempty"`
 	Tags []string `json:"tags,omitempty"`
@@ -215,48 +214,6 @@ func (o *KnowledgeNode) SetMentalModelIdNil() {
 // UnsetMentalModelId ensures that no value is present for MentalModelId, not even an explicit nil
 func (o *KnowledgeNode) UnsetMentalModelId() {
 	o.MentalModelId.Unset()
-}
-
-// GetMission returns the Mission field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *KnowledgeNode) GetMission() string {
-	if o == nil || IsNil(o.Mission.Get()) {
-		var ret string
-		return ret
-	}
-	return *o.Mission.Get()
-}
-
-// GetMissionOk returns a tuple with the Mission field value if set, nil otherwise
-// and a boolean to check if the value has been set.
-// NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *KnowledgeNode) GetMissionOk() (*string, bool) {
-	if o == nil {
-		return nil, false
-	}
-	return o.Mission.Get(), o.Mission.IsSet()
-}
-
-// HasMission returns a boolean if a field has been set.
-func (o *KnowledgeNode) HasMission() bool {
-	if o != nil && o.Mission.IsSet() {
-		return true
-	}
-
-	return false
-}
-
-// SetMission gets a reference to the given NullableString and assigns it to the Mission field.
-func (o *KnowledgeNode) SetMission(v string) {
-	o.Mission.Set(&v)
-}
-// SetMissionNil sets the value for Mission to be an explicit nil
-func (o *KnowledgeNode) SetMissionNil() {
-	o.Mission.Set(nil)
-}
-
-// UnsetMission ensures that no value is present for Mission, not even an explicit nil
-func (o *KnowledgeNode) UnsetMission() {
-	o.Mission.Unset()
 }
 
 // GetManaged returns the Managed field value if set, zero value otherwise.
@@ -457,9 +414,6 @@ func (o KnowledgeNode) ToMap() (map[string]interface{}, error) {
 	}
 	if o.MentalModelId.IsSet() {
 		toSerialize["mental_model_id"] = o.MentalModelId.Get()
-	}
-	if o.Mission.IsSet() {
-		toSerialize["mission"] = o.Mission.Get()
 	}
 	if !IsNil(o.Managed) {
 		toSerialize["managed"] = o.Managed

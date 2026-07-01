@@ -24,12 +24,11 @@ from typing_extensions import Self
 
 class UpdateNodeRequest(BaseModel):
     """
-    Rename, move, and/or set a folder's mission. Each field applies only when present.
+    Rename and/or move a node. Each field applies only when present.
     """ # noqa: E501
     name: Optional[StrictStr] = None
     parent_id: Optional[StrictStr] = None
-    mission: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["name", "parent_id", "mission"]
+    __properties: ClassVar[List[str]] = ["name", "parent_id"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -80,11 +79,6 @@ class UpdateNodeRequest(BaseModel):
         if self.parent_id is None and "parent_id" in self.model_fields_set:
             _dict['parent_id'] = None
 
-        # set to None if mission (nullable) is None
-        # and model_fields_set contains the field
-        if self.mission is None and "mission" in self.model_fields_set:
-            _dict['mission'] = None
-
         return _dict
 
     @classmethod
@@ -98,8 +92,7 @@ class UpdateNodeRequest(BaseModel):
 
         _obj = cls.model_validate({
             "name": obj.get("name"),
-            "parent_id": obj.get("parent_id"),
-            "mission": obj.get("mission")
+            "parent_id": obj.get("parent_id")
         })
         return _obj
 

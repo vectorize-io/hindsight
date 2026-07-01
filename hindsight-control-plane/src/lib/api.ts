@@ -44,7 +44,6 @@ export interface KnowledgeNode {
   name: string;
   parent_id: string | null;
   mental_model_id: string | null;
-  mission: string | null;
   managed: boolean;
   description: string | null;
   tags: string[];
@@ -658,11 +657,11 @@ export class ControlPlaneClient {
   }
 
   /**
-   * Create a folder, optionally under a parent folder, with an optional mission.
+   * Create a folder, optionally under a parent folder.
    */
   async createKnowledgeFolder(
     bankId: string,
-    body: { name: string; parent_id?: string | null; mission?: string | null }
+    body: { name: string; parent_id?: string | null }
   ) {
     return this.fetchApi<KnowledgeNode>(
       `/api/knowledge-base/folders?bank_id=${encodeURIComponent(bankId)}`,
@@ -689,7 +688,7 @@ export class ControlPlaneClient {
   async updateKnowledgeNode(
     bankId: string,
     nodeId: string,
-    body: { name?: string; parent_id?: string | null; mission?: string | null }
+    body: { name?: string; parent_id?: string | null }
   ) {
     return this.fetchApi<KnowledgeNode>(
       `/api/knowledge-base/nodes/${encodeURIComponent(nodeId)}?bank_id=${encodeURIComponent(bankId)}`,

@@ -24,20 +24,19 @@ from typing_extensions import Self
 
 class KnowledgeNode(BaseModel):
     """
-    A node in the knowledge-base tree — a folder or a page.  Folders carry a ``mission`` (the curator's steering prompt); pages carry ``description``/``tags`` from their backing mental model and a ``managed`` flag (true = curator-managed, false = pinned/human).
+    A node in the knowledge-base tree — a folder or a page.  Pages carry ``description``/``tags`` from their backing mental model. The knowledge base is client-managed (CRUD); ``managed`` lets a client tag a node as system-owned vs. hand-authored.
     """ # noqa: E501
     id: StrictStr
     kind: StrictStr
     name: StrictStr
     parent_id: Optional[StrictStr] = None
     mental_model_id: Optional[StrictStr] = None
-    mission: Optional[StrictStr] = None
-    managed: Optional[StrictBool] = Field(default=False, description="True for curator-managed nodes; false for pinned/human.")
+    managed: Optional[StrictBool] = Field(default=False, description="Client-set flag: true = system-owned, false = hand-authored.")
     description: Optional[StrictStr] = None
     tags: Optional[List[StrictStr]] = None
     timestamp: Optional[StrictStr] = None
     children: Optional[List[KnowledgeNode]] = None
-    __properties: ClassVar[List[str]] = ["id", "kind", "name", "parent_id", "mental_model_id", "mission", "managed", "description", "tags", "timestamp", "children"]
+    __properties: ClassVar[List[str]] = ["id", "kind", "name", "parent_id", "mental_model_id", "managed", "description", "tags", "timestamp", "children"]
 
     @field_validator('kind')
     def kind_validate_enum(cls, value):
@@ -102,11 +101,6 @@ class KnowledgeNode(BaseModel):
         if self.mental_model_id is None and "mental_model_id" in self.model_fields_set:
             _dict['mental_model_id'] = None
 
-        # set to None if mission (nullable) is None
-        # and model_fields_set contains the field
-        if self.mission is None and "mission" in self.model_fields_set:
-            _dict['mission'] = None
-
         # set to None if description (nullable) is None
         # and model_fields_set contains the field
         if self.description is None and "description" in self.model_fields_set:
@@ -134,7 +128,6 @@ class KnowledgeNode(BaseModel):
             "name": obj.get("name"),
             "parent_id": obj.get("parent_id"),
             "mental_model_id": obj.get("mental_model_id"),
-            "mission": obj.get("mission"),
             "managed": obj.get("managed") if obj.get("managed") is not None else False,
             "description": obj.get("description"),
             "tags": obj.get("tags"),

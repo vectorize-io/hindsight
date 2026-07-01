@@ -8285,18 +8285,6 @@
               }
             ],
             "title": "Parent Id"
-          },
-          "mission": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mission",
-            "description": "Curator mission for the folder."
           }
         },
         "type": "object",
@@ -9762,22 +9750,10 @@
             "title": "Mental Model Id",
             "description": "Backing mental model id (pages only)."
           },
-          "mission": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mission",
-            "description": "Curator mission (folders only)."
-          },
           "managed": {
             "type": "boolean",
             "title": "Managed",
-            "description": "True for curator-managed nodes; false for pinned/human.",
+            "description": "Client-set flag: true = system-owned, false = hand-authored.",
             "default": false
           },
           "description": {
@@ -9828,7 +9804,7 @@
           "name"
         ],
         "title": "KnowledgeNode",
-        "description": "A node in the knowledge-base tree \u2014 a folder or a page.\n\nFolders carry a ``mission`` (the curator's steering prompt); pages carry\n``description``/``tags`` from their backing mental model and a ``managed``\nflag (true = curator-managed, false = pinned/human)."
+        "description": "A node in the knowledge-base tree \u2014 a folder or a page.\n\nPages carry ``description``/``tags`` from their backing mental model. The\nknowledge base is client-managed (CRUD); ``managed`` lets a client tag a node\nas system-owned vs. hand-authored."
       },
       "KnowledgePageBundleFile": {
         "properties": {
@@ -13751,22 +13727,11 @@
               }
             ],
             "title": "Parent Id"
-          },
-          "mission": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mission"
           }
         },
         "type": "object",
         "title": "UpdateNodeRequest",
-        "description": "Rename, move, and/or set a folder's mission. Each field applies only when present."
+        "description": "Rename and/or move a node. Each field applies only when present."
       },
       "UpdateWebhookRequest": {
         "properties": {

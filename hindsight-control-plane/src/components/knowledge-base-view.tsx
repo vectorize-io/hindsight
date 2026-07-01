@@ -43,7 +43,6 @@ import {
   FolderPlus,
   Loader2,
   Network,
-  Pencil,
   Trash2,
   X,
 } from "lucide-react";
@@ -83,13 +82,10 @@ export function KnowledgeBaseView() {
   const [exporting, setExporting] = useState(false);
 
   const [createKind, setCreateKind] = useState<"folder" | "page" | null>(null);
-  const [form, setForm] = useState({ name: "", sourceQuery: "", parentId: "", mission: "" });
+  const [form, setForm] = useState({ name: "", sourceQuery: "", parentId: "" });
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<KnowledgeNode | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [missionFolder, setMissionFolder] = useState<KnowledgeNode | null>(null);
-  const [missionDraft, setMissionDraft] = useState("");
-  const [savingMission, setSavingMission] = useState(false);
 
   const loadTree = useCallback(async () => {
     if (!currentBank) return;
@@ -166,7 +162,7 @@ export function KnowledgeBaseView() {
   }, []);
 
   const openCreate = (kind: "folder" | "page", parentId = "") => {
-    setForm({ name: "", sourceQuery: "", parentId, mission: "" });
+    setForm({ name: "", sourceQuery: "", parentId });
     setCreateKind(kind);
   };
 
@@ -180,7 +176,6 @@ export function KnowledgeBaseView() {
         await client.createKnowledgeFolder(currentBank, {
           name: form.name.trim(),
           parent_id,
-          mission: form.mission.trim() || null,
         });
       } else {
         await client.createKnowledgePage(currentBank, {
@@ -197,27 +192,6 @@ export function KnowledgeBaseView() {
       // toast handled by interceptor
     } finally {
       setCreating(false);
-    }
-  };
-
-  const openMission = (folder: KnowledgeNode) => {
-    setMissionDraft(folder.mission ?? "");
-    setMissionFolder(folder);
-  };
-
-  const handleSaveMission = async () => {
-    if (!currentBank || !missionFolder) return;
-    setSavingMission(true);
-    try {
-      await client.updateKnowledgeNode(currentBank, missionFolder.id, {
-        mission: missionDraft.trim() || null,
-      });
-      setMissionFolder(null);
-      await loadTree();
-    } catch {
-      // toast handled by interceptor
-    } finally {
-      setSavingMission(false);
     }
   };
 
@@ -386,7 +360,6 @@ export function KnowledgeBaseView() {
                   onOpenPage={openPage}
                   onAddChild={openCreate}
                   onDelete={setDeleteTarget}
-                  onEditMission={openMission}
                   t={t}
                 />
               ))}
@@ -511,17 +484,6 @@ export function KnowledgeBaseView() {
                 autoFocus
               />
             </div>
-            {createKind === "folder" && (
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">{t("fieldMission")}</label>
-                <Textarea
-                  value={form.mission}
-                  onChange={(e) => setForm({ ...form, mission: e.target.value })}
-                  placeholder={t("missionPlaceholder")}
-                  className="min-h-[80px]"
-                />
-              </div>
-            )}
             {createKind === "page" && (
               <div className="space-y-2">
                 <label className="text-sm font-medium text-foreground">
@@ -571,38 +533,6 @@ export function KnowledgeBaseView() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit-mission dialog */}
-      <Dialog open={missionFolder !== null} onOpenChange={(o) => !o && setMissionFolder(null)}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{t("editMissionTitle")}</DialogTitle>
-            <DialogDescription>{missionFolder?.name}</DialogDescription>
-          </DialogHeader>
-          <div className="py-2">
-            <Textarea
-              value={missionDraft}
-              onChange={(e) => setMissionDraft(e.target.value)}
-              placeholder={t("missionPlaceholder")}
-              className="min-h-[120px]"
-              autoFocus
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setMissionFolder(null)}
-              disabled={savingMission}
-            >
-              {t("cancel")}
-            </Button>
-            <Button onClick={handleSaveMission} disabled={savingMission}>
-              {savingMission ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
-              {t("saveMission")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* Delete confirmation */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
         <AlertDialogContent>
@@ -638,7 +568,6 @@ function TreeRow({
   onOpenPage,
   onAddChild,
   onDelete,
-  onEditMission,
   t,
 }: {
   node: KnowledgeNode;
@@ -649,7 +578,6 @@ function TreeRow({
   onOpenPage: (id: string) => void;
   onAddChild: (kind: "folder" | "page", parentId: string) => void;
   onDelete: (node: KnowledgeNode) => void;
-  onEditMission: (node: KnowledgeNode) => void;
   t: ReturnType<typeof useTranslations>;
 }) {
   const isFolder = node.kind === "folder";
@@ -695,25 +623,10 @@ function TreeRow({
               </span>
             )}
           </div>
-          {isFolder && (
-            <div className="text-xs text-muted-foreground/80 truncate italic">
-              {node.mission || t("missionNone")}
-            </div>
-          )}
         </div>
         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
           {isFolder && (
             <>
-              <button
-                className="p-1 rounded hover:bg-background text-muted-foreground hover:text-foreground"
-                title={t("editMission")}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEditMission(node);
-                }}
-              >
-                <Pencil className="w-3.5 h-3.5" />
-              </button>
               <button
                 className="p-1 rounded hover:bg-background text-muted-foreground hover:text-foreground"
                 title={t("newFolder")}
@@ -761,7 +674,6 @@ function TreeRow({
               onOpenPage={onOpenPage}
               onAddChild={onAddChild}
               onDelete={onDelete}
-              onEditMission={onEditMission}
               t={t}
             />
           ))}

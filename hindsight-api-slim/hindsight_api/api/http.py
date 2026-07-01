@@ -2119,9 +2119,9 @@ class MentalModelListResponse(BaseModel):
 class KnowledgeNode(BaseModel):
     """A node in the knowledge-base tree — a folder or a page.
 
-    Folders carry a ``mission`` (the curator's steering prompt); pages carry
-    ``description``/``tags`` from their backing mental model and a ``managed``
-    flag (true = curator-managed, false = pinned/human).
+    Pages carry ``description``/``tags`` from their backing mental model. The
+    knowledge base is client-managed (CRUD); ``managed`` lets a client tag a node
+    as system-owned vs. hand-authored.
     """
 
     id: str
@@ -2129,8 +2129,7 @@ class KnowledgeNode(BaseModel):
     name: str
     parent_id: str | None = None
     mental_model_id: str | None = Field(default=None, description="Backing mental model id (pages only).")
-    mission: str | None = Field(default=None, description="Curator mission (folders only).")
-    managed: bool = Field(default=False, description="True for curator-managed nodes; false for pinned/human.")
+    managed: bool = Field(default=False, description="Client-set flag: true = system-owned, false = hand-authored.")
     description: str | None = Field(default=None, description="Page source query (OKF `description`).")
     tags: list[str] = FieldWithDefault(list)
     timestamp: str | None = Field(default=None, description="Last refresh (page) or last update (folder).")
@@ -2148,7 +2147,6 @@ class CreateFolderRequest(BaseModel):
 
     name: str
     parent_id: str | None = None
-    mission: str | None = Field(default=None, description="Curator mission for the folder.")
 
 
 class CreatePageRequest(BaseModel):
@@ -2163,11 +2161,10 @@ class CreatePageRequest(BaseModel):
 
 
 class UpdateNodeRequest(BaseModel):
-    """Rename, move, and/or set a folder's mission. Each field applies only when present."""
+    """Rename and/or move a node. Each field applies only when present."""
 
     name: str | None = None
     parent_id: str | None = None
-    mission: str | None = None
 
 
 class CreateKnowledgePageResponse(BaseModel):
@@ -2222,7 +2219,6 @@ def _knowledge_node_model(node: dict[str, Any]) -> KnowledgeNode:
         name=node["name"],
         parent_id=node.get("parent_id"),
         mental_model_id=node.get("mental_model_id"),
-        mission=node.get("mission"),
         managed=bool(node.get("managed")),
         description=node.get("source_query") if is_page else None,
         tags=list(node.get("tags") or []) if is_page else [],
@@ -4985,19 +4981,8 @@ def _register_routes(app: FastAPI):
                 bank_id=bank_id,
                 name=body.name,
                 parent_id=body.parent_id,
-                mission=body.mission,
                 request_context=request_context,
             )
-            # A new folder with a mission curates itself in the background, so its
-            # pages populate from existing memories without waiting for the next
-            # consolidation. Best-effort — scheduling must not fail folder creation.
-            if node.get("mission"):
-                try:
-                    await app.state.memory.submit_async_curate_folder(
-                        bank_id=bank_id, folder_id=node["id"], request_context=request_context
-                    )
-                except Exception as curate_err:
-                    logger.warning(f"Failed to schedule curation for new folder {node['id']}: {curate_err}")
             return _knowledge_node_model(node)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -5219,21 +5204,8 @@ def _register_routes(app: FastAPI):
                 updated = await app.state.memory.move_knowledge_node(
                     bank_id=bank_id, node_id=node_id, new_parent_id=body.parent_id, request_context=request_context
                 )
-            if "mission" in body.model_fields_set:
-                did_change = True
-                updated = await app.state.memory.set_folder_mission(
-                    bank_id=bank_id, folder_id=node_id, mission=body.mission, request_context=request_context
-                )
-                # Setting/changing a mission re-curates the folder in the background.
-                if updated and updated.get("mission"):
-                    try:
-                        await app.state.memory.submit_async_curate_folder(
-                            bank_id=bank_id, folder_id=node_id, request_context=request_context
-                        )
-                    except Exception as curate_err:
-                        logger.warning(f"Failed to schedule curation for folder {node_id}: {curate_err}")
             if not did_change:
-                raise HTTPException(status_code=400, detail="Provide name, parent_id, and/or mission to update")
+                raise HTTPException(status_code=400, detail="Provide name and/or parent_id to update")
             if updated is None:
                 raise HTTPException(status_code=404, detail=f"Knowledge node '{node_id}' not found")
             return _knowledge_node_model(updated)
