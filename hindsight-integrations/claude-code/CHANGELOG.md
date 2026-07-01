@@ -21,6 +21,11 @@
 - Tags that resolve to an empty namespace content (e.g. `"user:"` when
   `HINDSIGHT_USER_ID` is unset) are now dropped from retain requests. Previously
   such tags were sent as-is. Tags without `:` are unaffected.
+- The bundled `settings.json` no longer ships opinionated `bankMission` /
+  `retainMission` defaults; both are now empty (matching the internal config
+  defaults). The plugin only seeds missions you explicitly configure, so a
+  default install never stamps a generic persona onto a bank. Set these
+  fields to opt into seeding. See #2492.
 
 ## [0.1.0] - 2025-03-23
 

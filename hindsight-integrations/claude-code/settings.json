@@ -1,8 +1,8 @@
 {
   "hindsightApiUrl": "",
   "bankId": "claude_code",
-  "bankMission": "You are a Claude Code AI assistant. Focus on technical discussions, decisions, and context relevant to the user's projects.",
-  "retainMission": "Extract technical decisions, architectural choices, user preferences, project context, and people/tool relationships. Ignore routine greetings and transient operational details.",
+  "bankMission": "",
+  "retainMission": null,
   "autoRecall": true,
   "autoRetain": true,
   "retainMode": "full-session",
