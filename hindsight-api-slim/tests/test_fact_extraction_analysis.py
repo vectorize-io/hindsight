@@ -27,6 +27,13 @@ def llm_config():
         api_key=config.retain_llm_api_key or config.llm_api_key,
         model=config.retain_llm_model or config.llm_model,
         base_url=config.retain_llm_base_url or config.llm_base_url,
+        # LLMConfig uses these as-passed and no longer reads them from global config,
+        # so the caller must forward the Vertex AI settings (mirrors MemoryEngine's
+        # own LLMConfig construction). Without this, provider=vertexai raises
+        # "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID is required" even when it is set.
+        vertexai_project_id=config.llm_vertexai_project_id,
+        vertexai_region=config.llm_vertexai_region,
+        vertexai_service_account_key=config.llm_vertexai_service_account_key,
     )
 
 
