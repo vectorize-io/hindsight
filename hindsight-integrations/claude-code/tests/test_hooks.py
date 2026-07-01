@@ -754,3 +754,62 @@ class TestRetainHook:
             mod.main()
 
         assert "called" not in captured
+
+
+# ---------------------------------------------------------------------------
+# read_transcript — nested-format parsing and isMeta filtering
+# ---------------------------------------------------------------------------
+
+
+def _load_read_transcript():
+    """Import read_transcript from the retain hook script."""
+    scripts_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts"))
+    spec = importlib.util.spec_from_file_location("retain_read_transcript", os.path.join(scripts_dir, "retain.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.read_transcript
+
+
+def _write_jsonl(tmp_path, entries):
+    """Write raw transcript entries (Claude Code nested format) as JSONL."""
+    f = tmp_path / "transcript.jsonl"
+    f.write_text("\n".join(json.dumps(e) for e in entries))
+    return str(f)
+
+
+class TestReadTranscript:
+    def test_skips_isMeta_entries(self, tmp_path):
+        """isMeta turns (skill docs, schemas, slash-command expansions) are dropped."""
+        read_transcript = _load_read_transcript()
+        entries = [
+            {"type": "user", "message": {"role": "user", "content": "real question"}},
+            {"type": "user", "message": {"role": "user", "content": "injected skill doc"}, "isMeta": True},
+            {"type": "assistant", "message": {"role": "assistant", "content": "real answer"}},
+        ]
+        messages = read_transcript(_write_jsonl(tmp_path, entries))
+        contents = [m["content"] for m in messages]
+        assert "real question" in contents
+        assert "real answer" in contents
+        assert "injected skill doc" not in contents
+        assert len(messages) == 2
+
+    def test_keeps_non_meta_entries(self, tmp_path):
+        """A missing or falsey isMeta flag leaves the turn intact."""
+        read_transcript = _load_read_transcript()
+        entries = [
+            {"type": "user", "message": {"role": "user", "content": "hello"}, "isMeta": False},
+            {"type": "assistant", "message": {"role": "assistant", "content": "hi"}},
+        ]
+        messages = read_transcript(_write_jsonl(tmp_path, entries))
+        assert [m["content"] for m in messages] == ["hello", "hi"]
+
+    def test_unwraps_nested_message_format(self, tmp_path):
+        """Claude Code's {type, message:{role, content}} nesting is flattened."""
+        read_transcript = _load_read_transcript()
+        entries = [{"type": "user", "message": {"role": "user", "content": "nested"}}]
+        messages = read_transcript(_write_jsonl(tmp_path, entries))
+        assert messages == [{"role": "user", "content": "nested"}]
+
+    def test_missing_file_returns_empty(self, tmp_path):
+        read_transcript = _load_read_transcript()
+        assert read_transcript(str(tmp_path / "nope.jsonl")) == []

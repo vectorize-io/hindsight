@@ -11,8 +11,10 @@ from lib.content import (
     format_current_time,
     format_memories,
     prepare_retention_transcript,
+    sanitize_content,
     slice_last_turns_by_user_boundary,
     strip_channel_envelope,
+    strip_injected_context,
     strip_memory_tags,
     truncate_recall_query,
 )
@@ -65,6 +67,91 @@ class TestStripMemoryTags:
     def test_strips_multiline_block(self):
         raw = "<hindsight_memories>\n- mem1\n- mem2\n</hindsight_memories>"
         assert strip_memory_tags(raw).strip() == ""
+
+    def test_strips_memory_block_with_attributes(self):
+        raw = 'before <hindsight_memories count="3">secret</hindsight_memories> after'
+        result = strip_memory_tags(raw)
+        assert "hindsight_memories" not in result
+        assert "secret" not in result
+        assert "before" in result
+        assert "after" in result
+
+    def test_leaves_injected_context_alone(self):
+        # strip_memory_tags is single-responsibility: harness-injected context
+        # is sanitize_content's job, not this function's.
+        raw = "real question <system-reminder>harness noise</system-reminder>"
+        result = strip_memory_tags(raw)
+        assert "harness noise" in result
+
+
+# ---------------------------------------------------------------------------
+# sanitize_content
+# ---------------------------------------------------------------------------
+
+
+class TestSanitizeContent:
+    def test_strips_both_memory_tags_and_injected_context(self):
+        raw = (
+            "real question "
+            "<hindsight_memories>recalled</hindsight_memories> "
+            "<system-reminder>harness noise</system-reminder>"
+        )
+        result = sanitize_content(raw)
+        assert "recalled" not in result
+        assert "harness noise" not in result
+        assert "real question" in result
+
+    def test_passthrough_clean_text(self):
+        raw = "an ordinary user message"
+        assert sanitize_content(raw) == raw
+
+
+# ---------------------------------------------------------------------------
+# strip_injected_context
+# ---------------------------------------------------------------------------
+
+
+class TestStripInjectedContext:
+    def test_strips_system_reminder(self):
+        raw = "keep me <system-reminder>injected</system-reminder> too"
+        result = strip_injected_context(raw)
+        assert "injected" not in result
+        assert "keep me" in result
+        assert "too" in result
+
+    def test_strips_command_wrappers(self):
+        raw = (
+            "<command-name>/foo</command-name>"
+            "<command-message>msg</command-message>"
+            "<command-args>bar</command-args>"
+        )
+        assert strip_injected_context(raw).strip() == ""
+
+    def test_strips_multiline_task_notification(self):
+        raw = "before\n<task-notification>\nline1\nline2\n</task-notification>\nafter"
+        result = strip_injected_context(raw)
+        assert "task-notification" not in result
+        assert "line1" not in result
+        assert "before" in result
+        assert "after" in result
+
+    def test_strips_local_command_stdout(self):
+        raw = "q <local-command-stdout>output</local-command-stdout>"
+        assert "output" not in strip_injected_context(raw)
+
+    def test_strips_tag_with_attributes(self):
+        # The opening-tag pattern tolerates attributes so a future
+        # <system-reminder priority="high"> still gets stripped.
+        raw = 'keep <system-reminder priority="high">injected</system-reminder> me'
+        result = strip_injected_context(raw)
+        assert "injected" not in result
+        assert "system-reminder" not in result
+        assert "keep" in result
+        assert "me" in result
+
+    def test_passthrough_clean_text(self):
+        raw = "an ordinary user message"
+        assert strip_injected_context(raw) == raw
 
 
 # ---------------------------------------------------------------------------
