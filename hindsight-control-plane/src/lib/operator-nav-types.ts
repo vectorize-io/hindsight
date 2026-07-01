@@ -12,7 +12,14 @@ export type OperatorPanel =
   | "config"
   | "audit"
   | "settings"
-  | "constitution";
+  | "constitution"
+  | "router"
+  | "api-center"
+  | "providers"
+  | "voice"
+  | "connectors"
+  | "traces"
+  | "monitoring";
 
 export const OPERATOR_PANELS: { id: OperatorPanel; route: string; icon: string }[] = [
   { id: "cockpit", route: "/cockpit", icon: "LayoutDashboard" },
@@ -29,6 +36,13 @@ export const OPERATOR_PANELS: { id: OperatorPanel; route: string; icon: string }
   { id: "audit", route: "/audit", icon: "Shield" },
   { id: "settings", route: "/settings", icon: "Settings" },
   { id: "constitution", route: "/constitution", icon: "BookOpen" },
+  { id: "router", route: "/router", icon: "GitCompare" },
+  { id: "api-center", route: "/api-center", icon: "FileJson" },
+  { id: "providers", route: "/providers", icon: "Cpu" },
+  { id: "voice", route: "/voice", icon: "Mic" },
+  { id: "connectors", route: "/connectors", icon: "Plug" },
+  { id: "traces", route: "/traces", icon: "Activity" },
+  { id: "monitoring", route: "/monitoring", icon: "BarChart3" },
 ];
 
 export const OPERATOR_PANEL_LABELS: Record<OperatorPanel, { primary: string; secondary: string }> =
@@ -47,4 +61,11 @@ export const OPERATOR_PANEL_LABELS: Record<OperatorPanel, { primary: string; sec
     audit: { primary: "& provenance", secondary: "audit" },
     settings: { primary: "system", secondary: "settings" },
     constitution: { primary: "locked", secondary: "prime directives" },
+    router: { primary: "intelligent", secondary: "router" },
+    "api-center": { primary: "service", secondary: "catalog" },
+    providers: { primary: "models &", secondary: "providers" },
+    voice: { primary: "speech", secondary: "interface" },
+    connectors: { primary: "data", secondary: "sources" },
+    traces: { primary: "LLM", secondary: "traces" },
+    monitoring: { primary: "system", secondary: "graphs" },
   };

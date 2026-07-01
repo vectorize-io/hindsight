@@ -63,6 +63,16 @@ async function checkOllamaHealth(port: number): Promise<boolean> {
   }
 }
 
+async function checkGenericHealth(url: string): Promise<{ ok: boolean; body?: string }> {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(2000) });
+    const text = await response.text().catch(() => "");
+    return { ok: response.ok, body: text };
+  } catch {
+    return { ok: false };
+  }
+}
+
 function getWorkerCount(): number {
   const stateFile = "/tmp/hindsight-workers.state";
   if (!existsSync(stateFile)) return 0;
@@ -172,6 +182,73 @@ export async function GET(request: NextRequest) {
     uptime: undefined,
     cpu: undefined,
     memory: undefined,
+  });
+
+  // Check Central API (port 8000)
+  const centralApiPort = checkPort(8000);
+  const centralApiHealth = await checkGenericHealth("http://localhost:8000/health");
+  const centralApiStats = centralApiPort.pid ? getProcessStats(centralApiPort.pid) : null;
+  services.push({
+    name: "Central API",
+    port: 8000,
+    status: centralApiPort.running ? "running" : "stopped",
+    pid: centralApiPort.pid,
+    health: centralApiHealth.ok ? "healthy" : "unknown",
+    uptime: centralApiStats?.uptime,
+    cpu: centralApiStats?.cpu,
+    memory: centralApiStats?.memory,
+  });
+
+  // Check Memlord (port 8005)
+  const memlordPort = checkPort(8005);
+  const memlordHealth = await checkGenericHealth("http://localhost:8005/health");
+  const memlordStats = memlordPort.pid ? getProcessStats(memlordPort.pid) : null;
+  services.push({
+    name: "Memlord",
+    port: 8005,
+    status: memlordPort.running ? "running" : "stopped",
+    pid: memlordPort.pid,
+    health: memlordHealth.ok ? "healthy" : "unknown",
+    uptime: memlordStats?.uptime,
+    cpu: memlordStats?.cpu,
+    memory: memlordStats?.memory,
+  });
+
+  // Check Cockpit (port 8999) — we are Cockpit, so report our own status
+  const cockpitPort = checkPort(8999);
+  const cockpitStats = cockpitPort.pid ? getProcessStats(cockpitPort.pid) : null;
+  services.push({
+    name: "Cockpit",
+    port: 8999,
+    status: cockpitPort.running ? "running" : "stopped",
+    pid: cockpitPort.pid,
+    health: "healthy",
+    uptime: cockpitStats?.uptime,
+    cpu: cockpitStats?.cpu,
+    memory: cockpitStats?.memory,
+  });
+
+  // Check LM Studio (port 1234 on 192.168.1.144)
+  const lmStudioHealth = await checkGenericHealth("http://192.168.1.144:1234/health");
+  services.push({
+    name: "LM Studio",
+    port: 1234,
+    status: lmStudioHealth.ok ? "running" : "stopped",
+    health: lmStudioHealth.ok ? "healthy" : "unknown",
+  });
+
+  // Check Grafana (port 3000)
+  const grafanaPort = checkPort(3000);
+  const grafanaStats = grafanaPort.pid ? getProcessStats(grafanaPort.pid) : null;
+  services.push({
+    name: "Grafana",
+    port: 3000,
+    status: grafanaPort.running ? "running" : "stopped",
+    pid: grafanaPort.pid,
+    health: grafanaPort.running ? "healthy" : "unknown",
+    uptime: grafanaStats?.uptime,
+    cpu: grafanaStats?.cpu,
+    memory: grafanaStats?.memory,
   });
 
   return NextResponse.json({ services });
