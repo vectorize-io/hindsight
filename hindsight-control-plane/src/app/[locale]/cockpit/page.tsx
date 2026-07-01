@@ -122,7 +122,9 @@ export default function CockpitPage() {
         const vData = await vRes.json();
         setApiVersion(vData.api_version || vData.version || "");
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setServicesLoading(false);
   };
 
@@ -134,7 +136,9 @@ export default function CockpitPage() {
         const data = await res.json();
         setBanks(data.banks || []);
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setBanksLoading(false);
   };
 
@@ -146,7 +150,9 @@ export default function CockpitPage() {
         const data = await res.json();
         setOperations(data.operations || []);
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setOpsLoading(false);
   };
 
