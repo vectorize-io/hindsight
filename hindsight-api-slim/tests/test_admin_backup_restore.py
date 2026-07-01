@@ -88,7 +88,10 @@ async def test_backup_tables_covers_entire_schema(backup_test_schema):
         await conn.close()
 
     # alembic_version is migration bookkeeping, not data — never backed up.
-    schema_tables = {r["table_name"] for r in rows} - {"alembic_version"}
+    # bank_stats_cache is a derived TTL cache of get_bank_stats results: it has no
+    # FK to banks (so the restore cascade never touches it) and repopulates itself
+    # on demand, so it is deliberately not backed up — a restore starts it cold.
+    schema_tables = {r["table_name"] for r in rows} - {"alembic_version", "bank_stats_cache"}
     backup_tables = set(BACKUP_TABLES)
 
     missing = schema_tables - backup_tables
