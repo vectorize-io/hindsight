@@ -75,16 +75,27 @@ class BankStatsCache:
         schema: str,
         bank_id: str,
         loader: Callable[[], Awaitable[dict[str, Any]]],
+        *,
+        force_refresh: bool = False,
     ) -> dict[str, Any]:
         """Return cached stats for `(schema, bank_id)` or call `loader()`.
 
         Concurrent misses on the same key are coalesced onto a single
-        in-flight loader.
+        in-flight loader. When ``force_refresh`` is set the cached value is
+        ignored: the loader runs and its result replaces the cached entry.
         """
         if not self.enabled:
             return await loader()
 
         key = (schema, bank_id)
+
+        if force_refresh:
+            value = await loader()
+            async with self._lock:
+                self._store_unlocked(key, value)
+                # Supersede any loader that was in flight for this key.
+                self._in_flight.pop(key, None)
+            return value
 
         async with self._lock:
             cached = self._get_fresh_unlocked(key)
@@ -180,6 +191,8 @@ class DistributedBankStatsCache:
         schema: str,
         bank_id: str,
         loader: Callable[[], Awaitable[dict[str, Any]]],
+        *,
+        force_refresh: bool = False,
     ) -> dict[str, Any]:
         if not self.enabled:
             return await loader()
@@ -187,20 +200,22 @@ class DistributedBankStatsCache:
         table = self._qualified(schema)
 
         # 1. Fresh row? Single PK lookup; ``payload::text`` sidesteps any
-        #    jsonb->object codec so we always decode the same way.
-        try:
-            async with acquire_with_retry(self._backend) as conn:
-                row = await conn.fetchrow(
-                    f"SELECT payload::text AS payload FROM {table} "
-                    f"WHERE bank_id = $1 AND computed_at > now() - make_interval(secs => $2::double precision)",
-                    bank_id,
-                    self._ttl,
-                )
-            if row is not None:
-                return json.loads(row["payload"])
-        except Exception as exc:  # noqa: BLE001 — cache read must never break the endpoint
-            logger.debug("bank_stats_cache read failed for %s.%s (%s); computing uncached", schema, bank_id, exc)
-            return await loader()
+        #    jsonb->object codec so we always decode the same way. Skipped when
+        #    the caller forces a refresh — then we recompute and overwrite below.
+        if not force_refresh:
+            try:
+                async with acquire_with_retry(self._backend) as conn:
+                    row = await conn.fetchrow(
+                        f"SELECT payload::text AS payload FROM {table} "
+                        f"WHERE bank_id = $1 AND computed_at > now() - make_interval(secs => $2::double precision)",
+                        bank_id,
+                        self._ttl,
+                    )
+                if row is not None:
+                    return json.loads(row["payload"])
+            except Exception as exc:  # noqa: BLE001 — cache read must never break the endpoint
+                logger.debug("bank_stats_cache read failed for %s.%s (%s); computing uncached", schema, bank_id, exc)
+                return await loader()
 
         # 2. Miss — compute, then write the row back (best-effort).
         value = await loader()

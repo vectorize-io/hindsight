@@ -93,6 +93,40 @@ class TestDistributedBankStatsCache:
             await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    async def test_force_refresh_bypasses_and_updates_cache(
+        self, memory: MemoryEngine, request_context: RequestContext
+    ):
+        if memory._database_backend_type != "postgresql":
+            pytest.skip("distributed cache is PostgreSQL-only")
+
+        bank_id = f"test-dist-stats-fresh-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(memory, bank_id, request_context)
+        pool = await memory._get_pool()
+        async with pool.acquire() as conn:
+            await _insert_memory(conn, bank_id, "Alice loves hiking.")
+
+        _pin_distributed_cache(memory)
+        try:
+            # Warm the cache, then mutate the data without invalidation.
+            assert (await memory.get_bank_stats(bank_id, request_context=request_context))["node_counts"][
+                "experience"
+            ] == 1
+            async with pool.acquire() as conn:
+                await _insert_memory(conn, bank_id, "Bob enjoys cycling.")
+
+            # A normal read is served the stale cached count...
+            stale = await memory.get_bank_stats(bank_id, request_context=request_context)
+            assert stale["node_counts"]["experience"] == 1
+            # ...but force_refresh recomputes the true count.
+            fresh = await memory.get_bank_stats(bank_id, request_context=request_context, force_refresh=True)
+            assert fresh["node_counts"]["experience"] == 2
+            # The forced result also refreshed the cache for the next caller.
+            served = await memory.get_bank_stats(bank_id, request_context=request_context)
+            assert served["node_counts"]["experience"] == 2
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
     async def test_degrades_when_cache_table_unreachable(self, memory: MemoryEngine, request_context: RequestContext):
         if memory._database_backend_type != "postgresql":
             pytest.skip("distributed cache is PostgreSQL-only")

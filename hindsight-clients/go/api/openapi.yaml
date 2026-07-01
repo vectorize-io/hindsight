@@ -583,6 +583,19 @@ paths:
           title: Bank Id
           type: string
         style: simple
+      - description: "Force a fresh recompute, bypassing the cached value (and refreshing\
+          \ the cache)."
+        explode: true
+        in: query
+        name: refresh
+        required: false
+        schema:
+          default: false
+          description: "Force a fresh recompute, bypassing the cached value (and refreshing\
+            \ the cache)."
+          title: Refresh
+          type: boolean
+        style: form
       - explode: false
         in: header
         name: authorization
