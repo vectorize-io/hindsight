@@ -24,6 +24,7 @@ from hindsight_api.extensions import (
     TenantExtension,
     load_extension,
 )
+from hindsight_api.extensions.authz_profile import validate_authz_profile
 
 # Disable tokenizers parallelism to avoid warnings
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -41,6 +42,8 @@ if operation_validator:
 tenant_extension = load_extension("TENANT", TenantExtension)
 if tenant_extension:
     logging.info(f"Loaded tenant extension: {tenant_extension.__class__.__name__}")
+
+validate_authz_profile(tenant_extension, operation_validator)
 
 # Create app at module level (required for uvicorn import string)
 # MemoryEngine reads configuration from environment variables automatically

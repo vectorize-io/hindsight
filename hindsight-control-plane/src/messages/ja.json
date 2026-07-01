@@ -56,7 +56,8 @@
       "copyName": "名前をコピー",
       "copied": "クリップボードにコピーしました"
     },
-    "viewOnGitHub": "GitHubで表示"
+    "viewOnGitHub": "GitHubで表示",
+    "organizationSettings": "Organization settings"
   },
   "bank": {
     "dryRunExtraction": "ドライラン抽出",
@@ -1573,7 +1574,10 @@
     "signIn": "サインイン",
     "signingIn": "サインイン中...",
     "invalidKey": "無効なアクセスキー",
-    "connectFailed": "サーバーへの接続に失敗しました"
+    "connectFailed": "サーバーへの接続に失敗しました",
+    "signInAction": "Sign in",
+    "signUpAction": "Sign up",
+    "organizationNamePlaceholder": "Organization name"
   },
   "api": {
     "errors": {
@@ -1714,5 +1718,16 @@
         "deliveries": "Webhook配信の取得に失敗しました"
       }
     }
+  },
+  "settings": {
+    "organizationSettings": "Organization settings",
+    "noOrganizationSelected": "No organization selected",
+    "selectOrganization": "Select organization",
+    "newOrganization": "New organization",
+    "inviteLinkCreated": "Invite link created",
+    "inviteLinkOneTime": "Copy this link now. It is only shown after creation and will not be available after you leave or refresh this page.",
+    "apiKeys": "API keys",
+    "keyName": "Key name",
+    "organizationName": "Organization name"
   }
 }

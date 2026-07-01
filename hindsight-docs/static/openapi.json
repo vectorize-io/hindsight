@@ -8831,6 +8831,42 @@
       },
       "FeaturesInfo": {
         "properties": {
+          "authz_profile": {
+            "type": "string",
+            "title": "Authz Profile",
+            "description": "Configured authorization deployment profile",
+            "default": "disabled"
+          },
+          "tenant_extension": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Extension",
+            "description": "Loaded tenant extension class name"
+          },
+          "operation_validator_extension": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Validator Extension",
+            "description": "Loaded operation validator extension class name"
+          },
+          "supabase_org_ready": {
+            "type": "boolean",
+            "title": "Supabase Org Ready",
+            "description": "Whether the supabase_org profile is fully configured",
+            "default": false
+          },
           "observations": {
             "type": "boolean",
             "title": "Observations",

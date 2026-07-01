@@ -4,6 +4,12 @@ import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import createIntlMiddleware from "next-intl/middleware";
 
 import { ACCESS_KEY_COOKIE, verifySessionToken } from "@/lib/auth/session";
+import {
+  SUPABASE_ORG_ACCESS_TOKEN_COOKIE,
+  SUPABASE_ORG_SELECTED_ORG_COOKIE,
+  getControlPlaneAuthProvider,
+  isSupabaseOrgSessionPresent,
+} from "@/lib/auth/provider";
 import { stripBasePath, withBasePath } from "@/lib/base-path";
 import { routing } from "@/i18n/routing";
 
@@ -23,13 +29,13 @@ const PUBLIC_PATTERNS = [
 const intlMiddleware = createIntlMiddleware(routing);
 
 export async function middleware(request: NextRequest) {
-  const accessKey = process.env.HINDSIGHT_CP_ACCESS_KEY;
+  const authProvider = getControlPlaneAuthProvider();
   const { pathname } = request.nextUrl;
   const appPathname = stripBasePath(pathname);
 
   // API routes are not locale-prefixed — handle auth directly without i18n routing.
   if (appPathname.startsWith("/api/")) {
-    if (!accessKey) {
+    if (authProvider === "disabled") {
       return NextResponse.next();
     }
 
@@ -38,10 +44,7 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next();
     }
 
-    const sessionCookie = request.cookies.get(ACCESS_KEY_COOKIE)?.value;
-    const isAuthenticated = await verifySessionToken(sessionCookie, accessKey);
-
-    if (!isAuthenticated) {
+    if (!(await isRequestAuthenticated(request, authProvider))) {
       return NextResponse.json(
         localizeApiErrorPayload(request, {
           error: "Unauthorized",
@@ -57,14 +60,11 @@ export async function middleware(request: NextRequest) {
   // Page routes: enforce auth first, then delegate to the i18n middleware for
   // locale negotiation and rewriting. With localePrefix "never" the locale is
   // never in the path, so appPathname is already the canonical route.
-  if (accessKey) {
+  if (authProvider !== "disabled") {
     const isPublic = PUBLIC_PATTERNS.some((pattern) => appPathname.startsWith(pattern));
 
     if (!isPublic) {
-      const sessionCookie = request.cookies.get(ACCESS_KEY_COOKIE)?.value;
-      const isAuthenticated = await verifySessionToken(sessionCookie, accessKey);
-
-      if (!isAuthenticated) {
+      if (!(await isRequestAuthenticated(request, authProvider))) {
         // Next.js middleware redirects do not automatically inherit next.config basePath.
         // Prefix the target explicitly, but keep returnTo as the app-relative path so
         // client-side router.push() does not double-prefix after login.
@@ -76,6 +76,25 @@ export async function middleware(request: NextRequest) {
   }
 
   return intlMiddleware(request);
+}
+
+async function isRequestAuthenticated(
+  request: NextRequest,
+  authProvider: ReturnType<typeof getControlPlaneAuthProvider>
+): Promise<boolean> {
+  if (authProvider === "disabled") {
+    return true;
+  }
+  if (authProvider === "access_key") {
+    return verifySessionToken(
+      request.cookies.get(ACCESS_KEY_COOKIE)?.value,
+      process.env.HINDSIGHT_CP_ACCESS_KEY || ""
+    );
+  }
+  return isSupabaseOrgSessionPresent(
+    request.cookies.get(SUPABASE_ORG_ACCESS_TOKEN_COOKIE)?.value,
+    request.cookies.get(SUPABASE_ORG_SELECTED_ORG_COOKIE)?.value
+  );
 }
 
 export const config = {

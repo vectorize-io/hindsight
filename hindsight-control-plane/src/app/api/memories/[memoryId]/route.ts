@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
-import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeadersForRequest } from "@/lib/hindsight-client";
 
 export async function GET(
   request: NextRequest,
@@ -25,7 +25,7 @@ export async function GET(
       dataplaneBankUrl(bankId, `/memories/${encodeURIComponent(memoryId)}`),
       {
         method: "GET",
-        headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+        headers: getDataplaneHeadersForRequest(request, { "Content-Type": "application/json" }),
       }
     );
 
@@ -83,7 +83,7 @@ export async function PATCH(
       dataplaneBankUrl(bankId, `/memories/${encodeURIComponent(memoryId)}`),
       {
         method: "PATCH",
-        headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+        headers: getDataplaneHeadersForRequest(request, { "Content-Type": "application/json" }),
         body: JSON.stringify({
           text,
           context,

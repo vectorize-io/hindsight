@@ -42,6 +42,7 @@ import {
   ChevronRight,
   LogOut,
   Copy,
+  Settings,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useTheme } from "@/lib/theme-context";
@@ -664,7 +665,19 @@ function BankSelectorInner() {
 
         <LanguageSwitcher />
 
-        {features?.access_key_auth && (
+        {features?.auth_provider === "supabase_org" && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9"
+            title={tNav("organizationSettings")}
+            onClick={() => router.push("/settings")}
+          >
+            <Settings className="h-5 w-5" />
+          </Button>
+        )}
+
+        {(features?.access_key_auth || features?.auth_provider === "supabase_org") && (
           <>
             <div className="h-8 w-px bg-border" />
             <Button

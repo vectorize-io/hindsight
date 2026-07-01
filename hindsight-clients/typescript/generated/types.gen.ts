@@ -1811,6 +1811,30 @@ export type FactsIncludeOptions = {
  */
 export type FeaturesInfo = {
   /**
+   * Authz Profile
+   *
+   * Configured authorization deployment profile
+   */
+  authz_profile?: string;
+  /**
+   * Tenant Extension
+   *
+   * Loaded tenant extension class name
+   */
+  tenant_extension?: string | null;
+  /**
+   * Operation Validator Extension
+   *
+   * Loaded operation validator extension class name
+   */
+  operation_validator_extension?: string | null;
+  /**
+   * Supabase Org Ready
+   *
+   * Whether the supabase_org profile is fully configured
+   */
+  supabase_org_ready?: boolean;
+  /**
    * Observations
    *
    * Whether observations (auto-consolidation) are enabled

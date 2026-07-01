@@ -74,6 +74,24 @@ HINDSIGHT_LLM_API_KEY=sk-... \
 
 Skipped automatically if `HINDSIGHT_LLM_API_KEY` (or `OPENAI_API_KEY`) is not set.
 
+### 4. Supabase Organization Authz Tests
+
+`test_supabase_org_authz.py` validates the `supabase_org` resolver against real
+Supabase Auth and PostgREST by starting the local Supabase CLI stack from
+`hindsight-control-plane/supabase`.
+
+**Running:**
+```bash
+cd hindsight-integration-tests
+uv run pytest tests/test_supabase_org_authz.py -v
+```
+
+**Requirements:**
+- Supabase CLI installed
+- Docker available for the local Supabase stack
+
+The test fails if the Supabase CLI is missing or the local stack cannot start.
+
 ## Running All Tests
 
 ```bash

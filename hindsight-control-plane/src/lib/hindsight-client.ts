@@ -10,19 +10,74 @@ import {
   createConfig,
   sdk,
 } from "@vectorize-io/hindsight-client";
+import type { NextRequest } from "next/server";
+
+import {
+  SUPABASE_ORG_ACCESS_TOKEN_COOKIE,
+  SUPABASE_ORG_SELECTED_ORG_COOKIE,
+  getControlPlaneAuthProvider,
+} from "@/lib/auth/provider";
 
 export const DATAPLANE_URL = process.env.HINDSIGHT_CP_DATAPLANE_API_URL || "http://localhost:8888";
-const DATAPLANE_API_KEY = process.env.HINDSIGHT_CP_DATAPLANE_API_KEY || "";
+
+function getDataplaneApiKey(): string {
+  return process.env.HINDSIGHT_CP_DATAPLANE_API_KEY || "";
+}
 
 /**
  * Auth headers for direct fetch calls to the dataplane API.
  */
 export function getDataplaneHeaders(extra?: Record<string, string>): Record<string, string> {
   const headers: Record<string, string> = { ...extra };
-  if (DATAPLANE_API_KEY) {
-    headers["Authorization"] = `Bearer ${DATAPLANE_API_KEY}`;
+  const apiKey = getDataplaneApiKey();
+  if (apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
   }
   return headers;
+}
+
+export function getDataplaneHeadersForRequest(
+  request: NextRequest | Request,
+  extra?: Record<string, string>
+): Record<string, string> {
+  const provider = getControlPlaneAuthProvider();
+  if (provider !== "supabase_org") {
+    return getDataplaneHeaders(extra);
+  }
+
+  const headers: Record<string, string> = { ...extra };
+  const cookieHeader = request.headers.get("cookie") || "";
+  const cookies = parseCookieHeader(cookieHeader);
+  const accessToken = cookies[SUPABASE_ORG_ACCESS_TOKEN_COOKIE];
+  const selectedOrgId = cookies[SUPABASE_ORG_SELECTED_ORG_COOKIE];
+  if (accessToken) {
+    headers["Authorization"] = `Bearer ${accessToken}`;
+  }
+  if (selectedOrgId) {
+    headers["X-Hindsight-Org-Id"] = selectedOrgId;
+  }
+  return headers;
+}
+
+export function createDataplaneClientForRequest(request: NextRequest | Request) {
+  return createClient(
+    createConfig({
+      baseUrl: DATAPLANE_URL,
+      headers: getDataplaneHeadersForRequest(request),
+    })
+  );
+}
+
+function parseCookieHeader(cookieHeader: string): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  for (const part of cookieHeader.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator <= 0) continue;
+    const name = part.slice(0, separator).trim();
+    const value = part.slice(separator + 1).trim();
+    if (name) cookies[name] = decodeURIComponent(value);
+  }
+  return cookies;
 }
 
 /**
@@ -39,7 +94,7 @@ export function dataplaneBankUrl(bankId: string, suffix = ""): string {
  */
 export const hindsightClient = new HindsightClient({
   baseUrl: DATAPLANE_URL,
-  apiKey: DATAPLANE_API_KEY || undefined,
+  apiKey: getDataplaneApiKey() || undefined,
 });
 
 /**
@@ -48,7 +103,7 @@ export const hindsightClient = new HindsightClient({
 export const lowLevelClient = createClient(
   createConfig({
     baseUrl: DATAPLANE_URL,
-    headers: DATAPLANE_API_KEY ? { Authorization: `Bearer ${DATAPLANE_API_KEY}` } : undefined,
+    headers: getDataplaneApiKey() ? { Authorization: `Bearer ${getDataplaneApiKey()}` } : undefined,
   })
 );
 

@@ -7,8 +7,22 @@ import {
   createSessionToken,
   sessionCookieOptions,
 } from "@/lib/auth/session";
+import { getControlPlaneAuthProvider } from "@/lib/auth/provider";
+import {
+  acceptInviteForUser,
+  ensureInitialOrganizationForSignup,
+  listOrganizationsForUser,
+  setSupabaseOrgSessionCookies,
+  signInWithPassword,
+  signUpWithPassword,
+} from "@/lib/supabase-org/store";
 
 export async function POST(request: NextRequest) {
+  const provider = getControlPlaneAuthProvider();
+  if (provider === "supabase_org") {
+    return loginWithSupabaseOrg(request);
+  }
+
   const accessKey = process.env.HINDSIGHT_CP_ACCESS_KEY;
 
   // If no access key is configured, return 503
@@ -60,6 +74,93 @@ export async function POST(request: NextRequest) {
   });
 
   return response;
+}
+
+async function loginWithSupabaseOrg(request: NextRequest): Promise<NextResponse> {
+  let body: {
+    mode?: "login" | "signup";
+    email?: string;
+    password?: string;
+    organization_name?: string;
+    selected_org_id?: string;
+    invite_token?: string;
+  };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json(
+      localizeApiErrorPayload(request, {
+        error: "Invalid request body",
+        errorKey: "api.errors.auth.invalidRequestBody",
+      }),
+      { status: 400 }
+    );
+  }
+
+  if (!body.email || !body.password) {
+    return NextResponse.json({ error: "email and password are required" }, { status: 400 });
+  }
+
+  try {
+    const mode = body.mode || "login";
+    const session =
+      mode === "signup"
+        ? await signUpWithPassword(body.email, body.password)
+        : await signInWithPassword(body.email, body.password);
+
+    if (!session) {
+      return NextResponse.json(
+        {
+          success: false,
+          pending_email_confirmation: true,
+          error: "Email confirmation is required before login.",
+        },
+        { status: 202 }
+      );
+    }
+
+    const acceptedInvite = body.invite_token
+      ? await acceptInviteForUser(session.user, body.invite_token)
+      : null;
+    const organizations =
+      mode === "signup"
+        ? [await ensureInitialOrganizationForSignup(session.user, body.organization_name)]
+        : await listOrganizationsForUser(session.user.id);
+    if (organizations.length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "No organization is available for this user. Accept an invite or sign up with organization creation enabled.",
+        },
+        { status: 403 }
+      );
+    }
+
+    const selectedOrgId = acceptedInvite?.org_id || body.selected_org_id;
+    const selectedOrg = selectedOrgId
+      ? organizations.find((organization) => organization.id === selectedOrgId)
+      : organizations[0];
+    if (!selectedOrg) {
+      return NextResponse.json(
+        { error: "User is not a member of the selected organization" },
+        { status: 403 }
+      );
+    }
+
+    const response = NextResponse.json({
+      success: true,
+      user: session.user,
+      organizations,
+      selected_org_id: selectedOrg.id,
+    });
+    setSupabaseOrgSessionCookies(response, request, session, selectedOrg.id);
+    return response;
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Supabase login failed" },
+      { status: 401 }
+    );
+  }
 }
 
 /**

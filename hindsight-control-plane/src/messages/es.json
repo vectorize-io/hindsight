@@ -56,7 +56,8 @@
       "copyName": "Copiar nombre",
       "copied": "Copiado al portapapeles"
     },
-    "viewOnGitHub": "Ver en GitHub"
+    "viewOnGitHub": "Ver en GitHub",
+    "organizationSettings": "Organization settings"
   },
   "bank": {
     "dryRunExtraction": "Extracción de prueba",
@@ -1573,7 +1574,10 @@
     "signIn": "Iniciar sesión",
     "signingIn": "Iniciando sesión...",
     "invalidKey": "Clave de acceso inválida",
-    "connectFailed": "No se pudo conectar al servidor"
+    "connectFailed": "No se pudo conectar al servidor",
+    "signInAction": "Sign in",
+    "signUpAction": "Sign up",
+    "organizationNamePlaceholder": "Organization name"
   },
   "api": {
     "errors": {
@@ -1714,5 +1718,16 @@
         "deliveries": "No se pudieron obtener las entregas del webhook"
       }
     }
+  },
+  "settings": {
+    "organizationSettings": "Organization settings",
+    "noOrganizationSelected": "No organization selected",
+    "selectOrganization": "Select organization",
+    "newOrganization": "New organization",
+    "inviteLinkCreated": "Invite link created",
+    "inviteLinkOneTime": "Copy this link now. It is only shown after creation and will not be available after you leave or refresh this page.",
+    "apiKeys": "API keys",
+    "keyName": "Key name",
+    "organizationName": "Organization name"
   }
 }

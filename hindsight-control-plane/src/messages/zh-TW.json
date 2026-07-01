@@ -56,7 +56,8 @@
       "copyName": "複製名稱",
       "copied": "已複製到剪貼簿"
     },
-    "viewOnGitHub": "在 GitHub 上檢視"
+    "viewOnGitHub": "在 GitHub 上檢視",
+    "organizationSettings": "Organization settings"
   },
   "bank": {
     "dryRunExtraction": "試執行擷取",
@@ -1573,7 +1574,10 @@
     "signIn": "登入",
     "signingIn": "正在登入...",
     "invalidKey": "存取金鑰無效",
-    "connectFailed": "無法連線到伺服器"
+    "connectFailed": "無法連線到伺服器",
+    "signInAction": "Sign in",
+    "signUpAction": "Sign up",
+    "organizationNamePlaceholder": "Organization name"
   },
   "api": {
     "errors": {
@@ -1714,5 +1718,16 @@
         "deliveries": "取得 Webhook 投遞失敗"
       }
     }
+  },
+  "settings": {
+    "organizationSettings": "Organization settings",
+    "noOrganizationSelected": "No organization selected",
+    "selectOrganization": "Select organization",
+    "newOrganization": "New organization",
+    "inviteLinkCreated": "Invite link created",
+    "inviteLinkOneTime": "Copy this link now. It is only shown after creation and will not be available after you leave or refresh this page.",
+    "apiKeys": "API keys",
+    "keyName": "Key name",
+    "organizationName": "Organization name"
   }
 }

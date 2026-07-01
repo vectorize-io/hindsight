@@ -1308,6 +1308,9 @@ class MemoryEngine(MemoryEngineInterface):
             webhook_manager=None,
             current_schema=None,
         )
+        self._tenant_extension.set_context(self._ext_ctx)
+        if self._operation_validator is not None:
+            self._operation_validator.set_context(self._ext_ctx)
 
         loaded = load_extension("MEMORY_DEFENSE", MemoryDefenseExtension, context=self._ext_ctx)
         if loaded is not None:

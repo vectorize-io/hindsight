@@ -17,8 +17,8 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
-from typing import Any, ClassVar, Dict, List
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
+from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -26,6 +26,10 @@ class FeaturesInfo(BaseModel):
     """
     Feature flags indicating which capabilities are enabled.
     """ # noqa: E501
+    authz_profile: Optional[StrictStr] = Field(default='disabled', description="Configured authorization deployment profile")
+    tenant_extension: Optional[StrictStr] = None
+    operation_validator_extension: Optional[StrictStr] = None
+    supabase_org_ready: Optional[StrictBool] = Field(default=False, description="Whether the supabase_org profile is fully configured")
     observations: StrictBool = Field(description="Whether observations (auto-consolidation) are enabled")
     mcp: StrictBool = Field(description="Whether MCP (Model Context Protocol) server is enabled")
     worker: StrictBool = Field(description="Whether the background worker is enabled")
@@ -37,7 +41,7 @@ class FeaturesInfo(BaseModel):
     audit_log: StrictBool = Field(description="Whether audit logging is enabled")
     llm_trace: StrictBool = Field(description="Whether per-bank LLM request tracing is enabled")
     store_document_text: StrictBool = Field(description="Whether raw source text is persisted. When false, document/chunk source text is not stored.")
-    __properties: ClassVar[List[str]] = ["observations", "mcp", "worker", "bank_config_api", "bank_llm_health", "file_upload_api", "document_export_api", "document_import_api", "audit_log", "llm_trace", "store_document_text"]
+    __properties: ClassVar[List[str]] = ["authz_profile", "tenant_extension", "operation_validator_extension", "supabase_org_ready", "observations", "mcp", "worker", "bank_config_api", "bank_llm_health", "file_upload_api", "document_export_api", "document_import_api", "audit_log", "llm_trace", "store_document_text"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -78,6 +82,16 @@ class FeaturesInfo(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # set to None if tenant_extension (nullable) is None
+        # and model_fields_set contains the field
+        if self.tenant_extension is None and "tenant_extension" in self.model_fields_set:
+            _dict['tenant_extension'] = None
+
+        # set to None if operation_validator_extension (nullable) is None
+        # and model_fields_set contains the field
+        if self.operation_validator_extension is None and "operation_validator_extension" in self.model_fields_set:
+            _dict['operation_validator_extension'] = None
+
         return _dict
 
     @classmethod
@@ -90,6 +104,10 @@ class FeaturesInfo(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
+            "authz_profile": obj.get("authz_profile") if obj.get("authz_profile") is not None else 'disabled',
+            "tenant_extension": obj.get("tenant_extension"),
+            "operation_validator_extension": obj.get("operation_validator_extension"),
+            "supabase_org_ready": obj.get("supabase_org_ready") if obj.get("supabase_org_ready") is not None else False,
             "observations": obj.get("observations"),
             "mcp": obj.get("mcp"),
             "worker": obj.get("worker"),
