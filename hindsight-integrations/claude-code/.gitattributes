@@ -1,0 +1,4 @@
+# Shell scripts must always check out with LF endings. On Windows, a global
+# core.autocrlf=true otherwise rewrites them to CRLF, which breaks the `\`
+# line-continuations and the shebang when the hooks run under Git Bash.
+*.sh text eol=lf

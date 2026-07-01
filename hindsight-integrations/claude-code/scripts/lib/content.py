@@ -35,16 +35,45 @@ def strip_channel_envelope(content: str) -> str:
     return content
 
 
+# Claude Code injects harness context into transcript turns using these XML
+# wrappers. The text inside was never authored by the user or assistant (skill
+# reminders, task notifications, local command output, slash-command metadata),
+# so it should not be retained as memory.
+INJECTED_CONTEXT_TAGS = (
+    "system-reminder",
+    "task-notification",
+    "local-command-stdout",
+    "command-name",
+    "command-message",
+    "command-args",
+)
+
+
+def strip_injected_context(content: str) -> str:
+    """Remove Claude Code harness-injected context wrappers.
+
+    Claude Code rides synthetic context inside otherwise-real turns using XML
+    wrappers (``<system-reminder>``, ``<command-*>``, ...). These were never
+    sent by the user, so drop them before retention to keep memories limited to
+    the messages actually exchanged.
+    """
+    for tag in INJECTED_CONTEXT_TAGS:
+        content = re.sub(rf"<{tag}>[\s\S]*?</{tag}>", "", content)
+    return content
+
+
 def strip_memory_tags(content: str) -> str:
     """Remove <hindsight_memories> and <relevant_memories> blocks.
 
     Prevents retain feedback loop — these were injected during recall and
-    should not be re-stored.
+    should not be re-stored. Also drops Claude Code harness-injected context
+    (see strip_injected_context) so behind-the-scenes turns are not retained.
 
     Port of: stripMemoryTags() in index.js
     """
     content = re.sub(r"<hindsight_memories>[\s\S]*?</hindsight_memories>", "", content)
     content = re.sub(r"<relevant_memories>[\s\S]*?</relevant_memories>", "", content)
+    content = strip_injected_context(content)
     return content
 
 
