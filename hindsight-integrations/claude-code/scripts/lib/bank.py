@@ -143,37 +143,83 @@ def derive_bank_id(hook_input: dict, config: dict) -> str:
     return f"{prefix}-{base_bank_id}" if prefix else base_bank_id
 
 
-def ensure_bank_mission(client, bank_id: str, config: dict, debug_fn=None):
-    """Set bank mission on first use, skip if already set.
+def _mark_bank_reconciled(bank_id: str) -> None:
+    """Record that we've reconciled missions for a bank (local perf cache).
 
-    Port of: banksWithMissionSet Set tracking in index.js
-
-    Uses a state file to persist which banks have had their mission set
-    across ephemeral hook invocations.
+    This is only an optimization to avoid a GET on every hook invocation — it
+    is NOT the correctness boundary. Correctness comes from checking the
+    server's per-bank overrides before writing (see ensure_bank_mission).
     """
-    mission = config.get("bankMission", "")
-    if not mission or not mission.strip():
+    missions_set = read_state("bank_missions.json", {})
+    missions_set[bank_id] = True
+    # Cap tracked banks (mirrors Openclaw's MAX_TRACKED_BANK_CLIENTS)
+    if len(missions_set) > 10000:
+        keys = sorted(missions_set.keys())
+        for k in keys[: len(keys) // 2]:
+            del missions_set[k]
+    write_state("bank_missions.json", missions_set)
+
+
+def ensure_bank_mission(client, bank_id: str, config: dict, debug_fn=None):
+    """Seed configured missions onto a bank, filling only fields not already set.
+
+    Intent: guarantee a bank has reflect/retain missions before its first use,
+    using the plugin's configured defaults. But a bank shared by multiple
+    parties may already have missions authored out-of-band (control plane UI or
+    `PATCH /banks/{id}/config`). Those must win — the plugin only fills the
+    gaps, it never overwrites an existing per-bank mission.
+
+    To decide what is "already set" we inspect the bank's *overrides* (the
+    bank-specific config), not the fully-resolved config, so a global/tenant
+    default doesn't suppress seeding a brand-new bank.
+
+    A local state file caches which banks we've reconciled to avoid a GET on
+    every hook, but it is only an optimization: correctness is enforced by the
+    server-side check, so a wiped state file (fresh machine, cleared cache)
+    can no longer cause a clobber the way the old unconditional PATCH did.
+    """
+    reflect_mission = (config.get("bankMission") or "").strip()
+    retain_mission = (config.get("retainMission") or "").strip()
+    if not reflect_mission and not retain_mission:
+        # Nothing configured → explicit opt-out; manage missions out-of-band.
         return
 
-    # Check if we've already set mission for this bank
-    missions_set = read_state("bank_missions.json", {})
-    if bank_id in missions_set:
+    # Fast path: already reconciled this bank in a previous hook invocation.
+    if bank_id in read_state("bank_missions.json", {}):
         return
 
     try:
-        retain_mission = config.get("retainMission")
-        client.set_bank_mission(bank_id, mission, retain_mission=retain_mission, timeout=10)
-        missions_set[bank_id] = True
-        # Cap tracked banks (mirrors Openclaw's MAX_TRACKED_BANK_CLIENTS)
-        if len(missions_set) > 10000:
-            keys = sorted(missions_set.keys())
-            for k in keys[: len(keys) // 2]:
-                del missions_set[k]
-        write_state("bank_missions.json", missions_set)
-        if debug_fn:
-            debug_fn(f"Set mission for bank: {bank_id}")
+        existing = client.get_bank_config(bank_id, timeout=10)
+        overrides = existing.get("overrides") or {}
+        server_reflect = (overrides.get("reflect_mission") or "").strip()
+        server_retain = (overrides.get("retain_mission") or "").strip()
+
+        # Only send a mission field the bank doesn't already have set.
+        reflect_update = reflect_mission if (reflect_mission and not server_reflect) else None
+        retain_update = retain_mission if (retain_mission and not server_retain) else None
+
+        if reflect_update is not None or retain_update is not None:
+            client.set_bank_mission(
+                bank_id,
+                reflect_mission=reflect_update,
+                retain_mission=retain_update,
+                timeout=10,
+            )
+            if debug_fn:
+                fields = [
+                    name
+                    for name, val in (("reflect", reflect_update), ("retain", retain_update))
+                    if val is not None
+                ]
+                debug_fn(f"Seeded {', '.join(fields)} mission(s) for bank: {bank_id}")
+        elif debug_fn:
+            debug_fn(f"Bank {bank_id} already has missions set; leaving them unchanged")
+
+        # Mark reconciled either way so we don't re-GET on every hook.
+        _mark_bank_reconciled(bank_id)
     except Exception as e:
-        # Don't fail if mission set fails — bank might not exist yet,
-        # will be created on first retain (mirrors Openclaw behavior)
+        # Don't fail if reconciliation fails — bank might not exist yet, or the
+        # config API may be disabled. We deliberately do NOT mark the bank
+        # reconciled here, so a transient failure is retried on the next hook.
         if debug_fn:
-            debug_fn(f"Could not set bank mission for {bank_id}: {e}")
+            debug_fn(f"Could not reconcile bank missions for {bank_id}: {e}")

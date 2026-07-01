@@ -254,44 +254,88 @@ class TestDirectoryBankMap:
 
 
 class TestEnsureBankMission:
-    def test_sets_mission_on_first_call(self, state_dir):
+    def _client(self, overrides=None):
+        """MagicMock client whose bank has the given config overrides.
+
+        `overrides=None` simulates a bank that doesn't exist yet (GET 404 →
+        empty dict from get_bank_config).
+        """
         client = MagicMock()
+        client.get_bank_config.return_value = {"overrides": overrides} if overrides is not None else {}
+        return client
+
+    def test_seeds_reflect_mission_on_new_bank(self, state_dir):
+        client = self._client()
         cfg = _cfg(bankMission="You are a helpful assistant.", bankId="test-bank")
         ensure_bank_mission(client, "test-bank", cfg)
+        client.get_bank_config.assert_called_once_with("test-bank", timeout=10)
         client.set_bank_mission.assert_called_once_with(
-            "test-bank", "You are a helpful assistant.", retain_mission=None, timeout=10
+            "test-bank", reflect_mission="You are a helpful assistant.", retain_mission=None, timeout=10
         )
 
-    def test_skips_if_already_set(self, state_dir):
-        client = MagicMock()
-        cfg = _cfg(bankMission="mission text")
-        ensure_bank_mission(client, "bank-a", cfg)
-        ensure_bank_mission(client, "bank-a", cfg)  # second call
-        assert client.set_bank_mission.call_count == 1
-
-    def test_skips_if_mission_empty(self, state_dir):
-        client = MagicMock()
-        cfg = _cfg(bankMission="")
-        ensure_bank_mission(client, "bank-b", cfg)
-        client.set_bank_mission.assert_not_called()
-
-    def test_includes_retain_mission_if_set(self, state_dir):
-        client = MagicMock()
+    def test_seeds_both_missions_on_new_bank(self, state_dir):
+        client = self._client()
         cfg = _cfg(bankMission="reflect mission", retainMission="retain mission")
         ensure_bank_mission(client, "bank-c", cfg)
         client.set_bank_mission.assert_called_once_with(
-            "bank-c", "reflect mission", retain_mission="retain mission", timeout=10
+            "bank-c", reflect_mission="reflect mission", retain_mission="retain mission", timeout=10
         )
 
-    def test_graceful_on_api_error(self, state_dir):
-        client = MagicMock()
-        client.set_bank_mission.side_effect = RuntimeError("server down")
-        cfg = _cfg(bankMission="mission")
-        # Should not raise
-        ensure_bank_mission(client, "bank-d", cfg)
+    def test_does_not_overwrite_existing_server_missions(self, state_dir):
+        # Bank already has both missions authored out-of-band (control plane).
+        client = self._client(
+            overrides={"reflect_mission": "You are an artist", "retain_mission": "Extract paintings"}
+        )
+        cfg = _cfg(bankMission="Claude Code default", retainMission="tech default")
+        ensure_bank_mission(client, "bank-existing", cfg)
+        client.set_bank_mission.assert_not_called()
 
-    def test_different_banks_each_set_once(self, state_dir):
+    def test_fills_only_the_unset_field(self, state_dir):
+        # Bank has a reflect mission but no retain mission; plugin fills the gap.
+        client = self._client(overrides={"reflect_mission": "You are an artist"})
+        cfg = _cfg(bankMission="Claude Code default", retainMission="tech default")
+        ensure_bank_mission(client, "bank-partial", cfg)
+        client.set_bank_mission.assert_called_once_with(
+            "bank-partial", reflect_mission=None, retain_mission="tech default", timeout=10
+        )
+
+    def test_retain_only_config_seeds_retain(self, state_dir):
+        # bankMission empty but retainMission set — must still seed retain.
+        client = self._client()
+        cfg = _cfg(bankMission="", retainMission="retain only")
+        ensure_bank_mission(client, "bank-retain", cfg)
+        client.set_bank_mission.assert_called_once_with(
+            "bank-retain", reflect_mission=None, retain_mission="retain only", timeout=10
+        )
+
+    def test_skips_if_already_reconciled_locally(self, state_dir):
+        client = self._client()
+        cfg = _cfg(bankMission="mission text")
+        ensure_bank_mission(client, "bank-a", cfg)
+        ensure_bank_mission(client, "bank-a", cfg)  # second call → fast path
+        assert client.get_bank_config.call_count == 1
+        assert client.set_bank_mission.call_count == 1
+
+    def test_skips_if_no_missions_configured(self, state_dir):
+        client = self._client()
+        cfg = _cfg(bankMission="", retainMission=None)
+        ensure_bank_mission(client, "bank-b", cfg)
+        client.get_bank_config.assert_not_called()
+        client.set_bank_mission.assert_not_called()
+
+    def test_graceful_on_api_error_and_retries(self, state_dir):
         client = MagicMock()
+        client.get_bank_config.side_effect = RuntimeError("server down")
+        cfg = _cfg(bankMission="mission")
+        # Should not raise, and must not mark the bank reconciled (so it retries).
+        ensure_bank_mission(client, "bank-d", cfg)
+        client.get_bank_config.side_effect = None
+        client.get_bank_config.return_value = {}
+        ensure_bank_mission(client, "bank-d", cfg)
+        client.set_bank_mission.assert_called_once()
+
+    def test_different_banks_each_seeded_once(self, state_dir):
+        client = self._client()
         cfg = _cfg(bankMission="mission")
         ensure_bank_mission(client, "bank-x", cfg)
         ensure_bank_mission(client, "bank-y", cfg)
