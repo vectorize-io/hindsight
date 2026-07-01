@@ -18,6 +18,7 @@ uv run perf-test --output results.json  # save JSON results
 |-------|-----------------|
 | `retain` | Full retain pipeline with mock LLM: fact extraction callback, embedding generation, DB writes, entity linking |
 | `recall` | Pre-populated bank recall: 4-way parallel retrieval (semantic, BM25, graph, temporal), RRF fusion, percentile latency |
+| `stats` | `/stats` endpoint (`get_bank_stats`): uncached aggregation latency (node/link counts + entity rollup join) vs. cached latency, plus cache speedup. Runs with the result cache **disabled** (TTL=0) so the headline numbers are the real per-poll cost |
 
 ### Scale Configurations
 
@@ -27,6 +28,19 @@ uv run perf-test --output results.json  # save JSON results
 | `small` | 200 | 200 | 20 | 4 |
 | `medium` | 1,000 | 1,000 | 50 | 8 |
 | `large` | 5,000 | 5,000 | 100 | 16 |
+| `huge` | — (`stats` only) | — | — | — |
+
+The `huge` scale is a prod-simulation for the `stats` suite only: it bulk-loads
+~500k units and ~17.8M physical `memory_links` rows (semantic + temporal +
+caused_by) via COPY, plus a `unit_entities` set whose `LEAST(n-1, 10)` rollup
+reproduces the ~110.9k *derived* entity links (entity edges aren't stored). The
+other suites fall back to `large` sizing at this scale, so prefer
+`--suite stats --scale huge`. Bulk-load takes a few minutes; FK triggers and
+non-essential `memory_links` indexes are dropped during COPY and restored after.
+
+```bash
+uv run perf-test --suite stats --scale huge
+```
 
 ### CI
 
