@@ -169,16 +169,46 @@ class HindsightClient:
         }
         return self.request("POST", path, body, timeout=timeout)
 
-    def set_bank_mission(
-        self, bank_id: str, mission: str, retain_mission: Optional[str] = None, timeout: int = 15
-    ) -> dict:
-        """Set the mission/persona for a bank.
+    def get_bank_config(self, bank_id: str, timeout: int = 10) -> dict:
+        """Fetch a bank's configuration.
 
-        Uses PATCH /banks/{id}/config with reflect_mission and retain_mission.
-        The old PUT /banks/{id} with 'mission' field is deprecated in v0.4.19.
+        Returns the raw GET /banks/{id}/config response, which contains both
+        the fully-resolved `config` (global → tenant → bank) and the
+        bank-specific `overrides`. Banks are created lazily on first retain, so
+        a bank that has never been touched yields HTTP 404 — treated here as
+        "no config yet" and returned as an empty dict rather than raising.
         """
         path = f"/v1/default/banks/{urllib.parse.quote(bank_id, safe='')}/config"
-        updates = {"reflect_mission": mission}
-        if retain_mission:
+        try:
+            resp = self.request("GET", path, timeout=timeout)
+        except RuntimeError as e:
+            if "HTTP 404" in str(e):
+                return {}
+            raise
+        return resp if isinstance(resp, dict) else {}
+
+    def set_bank_mission(
+        self,
+        bank_id: str,
+        reflect_mission: Optional[str] = None,
+        retain_mission: Optional[str] = None,
+        timeout: int = 15,
+    ) -> dict:
+        """Set the mission(s)/persona for a bank.
+
+        Uses PATCH /banks/{id}/config. Only the mission fields passed as
+        non-None are sent, so callers can update reflect and retain missions
+        independently without clobbering the other. Returns an empty dict
+        (no request issued) when neither mission is provided.
+
+        The old PUT /banks/{id} with 'mission' field is deprecated in v0.4.19.
+        """
+        updates: dict = {}
+        if reflect_mission is not None:
+            updates["reflect_mission"] = reflect_mission
+        if retain_mission is not None:
             updates["retain_mission"] = retain_mission
+        if not updates:
+            return {}
+        path = f"/v1/default/banks/{urllib.parse.quote(bank_id, safe='')}/config"
         return self.request("PATCH", path, {"updates": updates}, timeout=timeout)
