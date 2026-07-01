@@ -14,12 +14,16 @@ Usage:
     uv run perf-test --suite retain
     uv run perf-test --suite recall
     uv run perf-test --suite graph-maintenance
+    uv run perf-test --suite stats
 
     # Configurable scale
     uv run perf-test --scale tiny      # ~10s, CI smoke test
     uv run perf-test --scale small     # ~30s, default
     uv run perf-test --scale medium    # ~2min
     uv run perf-test --scale large     # ~10min
+
+    # Prod-simulation for the stats suite (~500k units / ~18M links, bulk-loaded)
+    uv run perf-test --suite stats --scale huge
 
     # Save results as JSON
     uv run perf-test --output results.json
@@ -32,8 +36,8 @@ import statistics
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable
 
 from rich.console import Console
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -65,6 +69,7 @@ SCALES: dict[str, dict[str, int]] = {
         "recall_concurrency": 1,
         "consolidation_items": 20,
         "graph_maintenance_bank_size": 20,
+        "stats_bank_size": 20,
     },
     "small": {
         "retain_items": 200,
@@ -73,6 +78,7 @@ SCALES: dict[str, dict[str, int]] = {
         "recall_concurrency": 4,
         "consolidation_items": 200,
         "graph_maintenance_bank_size": 200,
+        "stats_bank_size": 200,
     },
     "medium": {
         "retain_items": 1_000,
@@ -81,6 +87,7 @@ SCALES: dict[str, dict[str, int]] = {
         "recall_concurrency": 8,
         "consolidation_items": 1_000,
         "graph_maintenance_bank_size": 1_000,
+        "stats_bank_size": 1_000,
     },
     "large": {
         "retain_items": 5_000,
@@ -94,6 +101,32 @@ SCALES: dict[str, dict[str, int]] = {
         # as an Index Scan on idx_mu_emb_*. medium (1k) stays in the exact-scan
         # regime, so the two scales cover both planner paths.
         "graph_maintenance_bank_size": 15_000,
+        # Large, entity-dense bank so the unit_entities→memory_units rollup join
+        # in _compute_bank_stats is exercised at a size where its cost shows.
+        "stats_bank_size": 15_000,
+    },
+    # Prod-simulation scale for the `stats` suite only. The numbers mirror a real
+    # deployed bank: ~500k units and ~17.8M *physical* memory_links rows
+    # (semantic + temporal + caused_by — entity links are NOT stored, they are
+    # derived at query time from unit_entities). At this size the real retain
+    # pipeline is infeasible, so `stats` bulk-loads via COPY (see
+    # _bulk_populate_stats_bank). The non-stats keys fall back to `large` sizing
+    # so a full `--scale huge` run doesn't try to retain 500k items.
+    "huge": {
+        "retain_items": 5_000,
+        "recall_bank_size": 5_000,
+        "recall_iterations": 10,
+        "recall_concurrency": 4,
+        "consolidation_items": 5_000,
+        "graph_maintenance_bank_size": 15_000,
+        "stats_bank_size": 500_000,  # unused by the bulk path; kept for key parity
+        "stats_units": 500_000,
+        "stats_semantic_links": 9_460_147,
+        "stats_temporal_links": 8_344_084,
+        "stats_caused_by_links": 30_015,
+        # Derived entity-link total to reproduce (unit_entities rollup, capped at
+        # LEAST(n-1, 10) per entity). Not stored as memory_links rows.
+        "stats_entity_links": 110_881,
     },
 }
 
@@ -200,6 +233,23 @@ class GraphMaintenanceResult:
 
 
 @dataclass
+class StatsResult:
+    bank_size: int
+    concurrency: int
+    total_units: int
+    total_links: int
+    total_entities: int
+    # Cache-miss path — engine._compute_bank_stats, the raw aggregation queries
+    # (node/link/ops/doc counts + the unit_entities→memory_units entity rollup).
+    cold_latency: PercentileStats
+    cold_throughput_per_sec: float
+    # Cache-hit path — engine.get_bank_stats, what a polling client actually
+    # sees once the short-TTL per-process cache is warm.
+    warm_latency: PercentileStats
+    cache_speedup: float
+
+
+@dataclass
 class SuiteResult:
     name: str
     duration_seconds: float
@@ -209,6 +259,7 @@ class SuiteResult:
     recall: RecallResult | None = None
     consolidation: ConsolidationResult | None = None
     graph_maintenance: GraphMaintenanceResult | None = None
+    stats: StatsResult | None = None
 
 
 @dataclass
@@ -290,6 +341,240 @@ async def _populate_bank(engine: Any, bank_id: str, size: int, event_date: str |
         await poller_task
     except asyncio.CancelledError:
         pass
+
+
+# Average entities mentioned per unit when bulk-loading the stats bank — mirrors
+# the handful of entities the mock fact callback attaches per unit during real
+# retain, so the unit_entities table reaches a prod-like row count.
+STATS_ENTITY_MENTIONS_PER_UNIT = 3
+
+# All memory_links indexes are dropped before the bulk COPY and recreated after.
+# Loading ~18M rows into an unindexed table + one bulk index build is far faster
+# than paying per-row btree maintenance on every insert (the dominant cost of the
+# load). Every index is restored afterward, so the table is left in its normal
+# shape — including idx_memory_links_bank_id_link_type, which the /stats link
+# GROUP BY relies on for its index-only scan, and the unique index, so this is
+# safe to run even against a shared database.
+_STATS_BULK_DROP_INDEXES = (
+    "idx_memory_links_unique",
+    "idx_memory_links_from_unit",
+    "idx_memory_links_to_unit",
+    "idx_memory_links_entity",
+    "idx_memory_links_bank_id_link_type",
+)
+
+
+async def _bulk_populate_stats_bank(
+    engine: Any,
+    bank_id: str,
+    *,
+    units: int,
+    semantic_links: int,
+    temporal_links: int,
+    caused_by_links: int,
+    entity_link_target: int,
+) -> None:
+    """Bulk-load a prod-scale bank for the stats suite via COPY (no LLM/embeddings).
+
+    Rows are shaped exactly as the real retain pipeline leaves them so
+    _compute_bank_stats sees a faithful workload:
+
+    * memory_units — `units` rows, NULL embeddings (stats never reads them), a
+      realistic experience/world/observation fact_type mix.
+    * memory_links — `semantic + temporal + caused_by` *physical* rows. Entity
+      links are deliberately NOT inserted here: on the deployed schema the
+      entity_id column is 100% NULL and the entity total is derived at query
+      time. Pairs are generated collision-free so the unique index never trips.
+    * entities / unit_entities — sized so the LEAST(n-1, 10) rollup in
+      _compute_bank_stats reconstructs ~`entity_link_target` entity links: each
+      of `entity_link_target` "shared" entities is attached to exactly 2 units
+      (→ 1 derived link each), with the remaining mentions as singletons (→ 0)
+      to reach a prod-like ~`units * STATS_ENTITY_MENTIONS_PER_UNIT` row count.
+
+    FK triggers on memory_links/unit_entities are disabled during the load (this
+    is a throwaway perf bank), so COPY doesn't validate ~35M edge endpoints.
+    """
+    from hindsight_api.engine.memory_engine import get_current_schema
+
+    pool = await engine._get_pool()
+    schema = get_current_schema()
+
+    # Bulk maintenance (multi-million-row COPY, unique-index rebuild, VACUUM)
+    # scales with the *whole* table, not just this bank, and can exceed the
+    # engine's OLTP command_timeout when other large banks already exist. Give
+    # these one-off fixture ops their own generous ceiling so a pre-existing
+    # bank can't trip an (empty-message) asyncio.TimeoutError mid-load.
+    bulk_timeout = 7200.0
+
+    unit_ids = [uuid.uuid4() for _ in range(units)]
+    base_date = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    def _fact_type(i: int) -> str:
+        m = i % 20
+        if m < 11:
+            return "experience"  # 55%
+        if m < 18:
+            return "world"  # 35%
+        return "observation"  # 10%
+
+    def unit_records():
+        for i, uid in enumerate(unit_ids):
+            # Spread event_date across ~a year so date indexes look realistic.
+            yield (uid, bank_id, f"perf stats unit {i}", base_date + timedelta(minutes=i % 525_600), _fact_type(i))
+
+    # Entity plan: `entity_link_target` shared entities (2 units each → 1 derived
+    # link) + singleton entities padding out to the target unit_entities count.
+    shared_entities = max(0, entity_link_target)
+    total_unit_entities = max(2 * shared_entities, units * STATS_ENTITY_MENTIONS_PER_UNIT)
+    singleton_entities = total_unit_entities - 2 * shared_entities
+    shared_eids = [uuid.uuid4() for _ in range(shared_entities)]
+    singleton_eids = [uuid.uuid4() for _ in range(singleton_entities)]
+    half = max(1, units // 2)
+
+    def entity_records():
+        for k, eid in enumerate(shared_eids):
+            yield (eid, f"perf_entity_s_{k}", bank_id)
+        for k, eid in enumerate(singleton_eids):
+            yield (eid, f"perf_entity_x_{k}", bank_id)
+
+    def unit_entity_records():
+        for j, eid in enumerate(shared_eids):
+            yield (unit_ids[j % units], eid)
+            yield (unit_ids[(j + half) % units], eid)
+        for k, eid in enumerate(singleton_eids):
+            yield (unit_ids[k % units], eid)
+
+    def link_records(link_type: str, count: int):
+        # Collision-free distinct (from, to) pairs: spread `from` across leading
+        # units, `to` across the rest skipping self. link_type is part of the
+        # unique index, so semantic/temporal/caused_by never collide with each
+        # other. COUNT(*) GROUP BY link_type is indifferent to the distribution.
+        span = units - 1
+        for k in range(count):
+            f = k // span
+            r = k % span
+            t = r if r < f else r + 1
+            yield (unit_ids[f], unit_ids[t], link_type, bank_id)
+
+    def _q(table: str) -> str:
+        return f'"{schema}".{table}' if schema else table
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        progress.add_task(
+            f"Bulk-loading {units:,} units, "
+            f"{semantic_links + temporal_links + caused_by_links:,} links, "
+            f"{total_unit_entities:,} unit-entities…"
+        )
+        async with pool.acquire() as conn:
+            # Every pooled connection carries a server-side statement_timeout
+            # (the engine's runaway-query safety net, default 600s). The unique-
+            # index rebuild and VACUUM over millions of rows legitimately exceed
+            # it, so disable it on this connection for the load and restore it
+            # after (PG cancels with "canceling statement due to statement
+            # timeout" otherwise — which is exactly how the first 18M run died).
+            prev_stmt_timeout = await conn.fetchval("SHOW statement_timeout")
+            await conn.execute("SET statement_timeout = 0")
+            await conn.copy_records_to_table(
+                "entities",
+                records=entity_records(),
+                columns=["id", "canonical_name", "bank_id"],
+                schema_name=schema,
+                timeout=bulk_timeout,
+            )
+            await conn.copy_records_to_table(
+                "memory_units",
+                records=unit_records(),
+                columns=["id", "bank_id", "text", "event_date", "fact_type"],
+                schema_name=schema,
+                timeout=bulk_timeout,
+            )
+
+            dropped: list[str] = []
+            triggers_disabled = False
+            try:
+                for idx in _STATS_BULK_DROP_INDEXES:
+                    await conn.execute(f"DROP INDEX IF EXISTS {_q(idx)}", timeout=bulk_timeout)
+                    dropped.append(idx)
+                try:
+                    await conn.execute(f"ALTER TABLE {_q('memory_links')} DISABLE TRIGGER ALL", timeout=bulk_timeout)
+                    await conn.execute(f"ALTER TABLE {_q('unit_entities')} DISABLE TRIGGER ALL", timeout=bulk_timeout)
+                    triggers_disabled = True
+                except Exception as exc:  # noqa: BLE001 — best effort; fall back to validated COPY
+                    console.print(f"  [yellow]Could not disable FK triggers ({exc}); COPY will validate FKs[/yellow]")
+
+                for link_type, count in (
+                    ("semantic", semantic_links),
+                    ("temporal", temporal_links),
+                    ("caused_by", caused_by_links),
+                ):
+                    if count > 0:
+                        await conn.copy_records_to_table(
+                            "memory_links",
+                            records=link_records(link_type, count),
+                            columns=["from_unit_id", "to_unit_id", "link_type", "bank_id"],
+                            schema_name=schema,
+                            timeout=bulk_timeout,
+                        )
+                await conn.copy_records_to_table(
+                    "unit_entities",
+                    records=unit_entity_records(),
+                    columns=["unit_id", "entity_id"],
+                    schema_name=schema,
+                    timeout=bulk_timeout,
+                )
+            finally:
+                if triggers_disabled:
+                    await conn.execute(f"ALTER TABLE {_q('memory_links')} ENABLE TRIGGER ALL", timeout=bulk_timeout)
+                    await conn.execute(f"ALTER TABLE {_q('unit_entities')} ENABLE TRIGGER ALL", timeout=bulk_timeout)
+                # Recreate the dropped indexes so the bank matches the prod schema
+                # (the planner sees the same index set when the query runs).
+                if "idx_memory_links_unique" in dropped:
+                    await conn.execute(
+                        f"CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_links_unique ON {_q('memory_links')} "
+                        "(from_unit_id, to_unit_id, link_type, "
+                        "COALESCE(entity_id, '00000000-0000-0000-0000-000000000000'::uuid))",
+                        timeout=bulk_timeout,
+                    )
+                if "idx_memory_links_from_unit" in dropped:
+                    await conn.execute(
+                        f"CREATE INDEX IF NOT EXISTS idx_memory_links_from_unit ON {_q('memory_links')} (from_unit_id)",
+                        timeout=bulk_timeout,
+                    )
+                if "idx_memory_links_to_unit" in dropped:
+                    await conn.execute(
+                        f"CREATE INDEX IF NOT EXISTS idx_memory_links_to_unit ON {_q('memory_links')} (to_unit_id)",
+                        timeout=bulk_timeout,
+                    )
+                if "idx_memory_links_entity" in dropped:
+                    await conn.execute(
+                        f"CREATE INDEX IF NOT EXISTS idx_memory_links_entity ON {_q('memory_links')} (entity_id)",
+                        timeout=bulk_timeout,
+                    )
+                if "idx_memory_links_bank_id_link_type" in dropped:
+                    # The index the /stats link-count GROUP BY uses — restore it
+                    # so the measured query plans against the prod index set.
+                    await conn.execute(
+                        f"CREATE INDEX IF NOT EXISTS idx_memory_links_bank_id_link_type "
+                        f"ON {_q('memory_links')} (bank_id, link_type)",
+                        timeout=bulk_timeout,
+                    )
+            # VACUUM ANALYZE (not just ANALYZE): refresh planner stats AND set the
+            # visibility map. Without the latter, the link_type COUNT can't use an
+            # index-only scan (every tuple needs a heap visibility check), so a
+            # fresh COPY measures a full heap scan that prod — where autovacuum
+            # keeps the vm set — never pays. On an 18M-row bank this is the
+            # difference between a ~1.6s seq scan and a ~1.0s index-only scan.
+            await conn.execute(f"VACUUM (ANALYZE) {_q('memory_units')}", timeout=bulk_timeout)
+            await conn.execute(f"VACUUM (ANALYZE) {_q('memory_links')}", timeout=bulk_timeout)
+            await conn.execute(f"VACUUM (ANALYZE) {_q('unit_entities')}", timeout=bulk_timeout)
+            # Restore the connection's statement_timeout before it returns to the
+            # pool so later acquirers keep the runaway-query safety net.
+            await conn.execute(f"SET statement_timeout = '{prev_stmt_timeout}'")
 
 
 # ---------------------------------------------------------------------------
@@ -1140,6 +1425,201 @@ async def run_graph_maintenance_suite(scale_cfg: dict[str, int]) -> SuiteResult:
 
 
 # ---------------------------------------------------------------------------
+# Suite: stats
+# ---------------------------------------------------------------------------
+
+
+async def run_stats_suite(scale_cfg: dict[str, int]) -> SuiteResult:
+    """Measure the /stats endpoint (get_bank_stats) on a populated bank.
+
+    /stats is polled by the control plane and CLI, so it gets hammered far more
+    often than retain/recall. Each cache miss runs a handful of bank-scoped
+    aggregations — node counts by fact_type, link counts by link_type, and a
+    unit_entities→memory_units rollup to reconstruct the entity-link total — so
+    the cost grows with unit/entity density.
+
+    The suite runs with the per-process result cache **disabled** (TTL=0) so the
+    headline numbers are the true uncached aggregation — the latency a server
+    configured with ``HINDSIGHT_API_BANK_STATS_CACHE_TTL_SECONDS=0`` actually
+    serves on every poll. It then re-enables the cache for a second pass to
+    quantify what that cache buys:
+
+    * uncached — cache off, every call pays the full aggregation (the metric the
+      "disable the cache" decision is about).
+    * cached — cache on and warmed, what a steady polling client would see.
+
+    Population is either the real retain pipeline (small ``stats_bank_size``
+    scales) or, for the prod-simulation ``huge`` scale, a direct COPY bulk-load
+    (``_bulk_populate_stats_bank``) since retain can't reach ~500k units / ~18M
+    links in reasonable time.
+    """
+    from hindsight_api.engine.bank_stats_cache import BankStatsCache
+    from hindsight_api.engine.schema import fq_table
+    from hindsight_api.models import RequestContext
+
+    bulk = "stats_semantic_links" in scale_cfg
+    iterations = scale_cfg["recall_iterations"]
+    concurrency = scale_cfg["recall_concurrency"]
+    bank_id = f"perf-stats-{uuid.uuid4().hex[:8]}"
+
+    if bulk:
+        bank_size = scale_cfg["stats_units"]
+        descr = (
+            f"units={bank_size:,}  links≈"
+            f"{scale_cfg['stats_semantic_links'] + scale_cfg['stats_temporal_links'] + scale_cfg['stats_caused_by_links']:,}"
+        )
+    else:
+        bank_size = scale_cfg["stats_bank_size"]
+        descr = f"bank_size={bank_size:,}"
+
+    console.print(
+        f"\n[bold cyan]Suite: stats[/bold cyan]  "
+        f"{descr}  iterations={iterations}  concurrency={concurrency}  bank={bank_id}"
+    )
+
+    engine = _build_engine(disable_observations=True)
+    await engine.initialize()
+
+    # Disable the result cache on the server so the uncached pass measures the
+    # real aggregation (mirrors HINDSIGHT_API_BANK_STATS_CACHE_TTL_SECONDS=0).
+    def _disable_stats_cache() -> None:
+        engine._bank_stats_cache = BankStatsCache(ttl_seconds=0, max_entries=0)
+
+    _disable_stats_cache()
+
+    if bulk:
+        await _bulk_populate_stats_bank(
+            engine,
+            bank_id,
+            units=scale_cfg["stats_units"],
+            semantic_links=scale_cfg["stats_semantic_links"],
+            temporal_links=scale_cfg["stats_temporal_links"],
+            caused_by_links=scale_cfg["stats_caused_by_links"],
+            entity_link_target=scale_cfg["stats_entity_links"],
+        )
+    else:
+        # Real retain pipeline so units, links and entities all exist — the
+        # entity rollup join is the part that scales with the bank.
+        await _populate_bank(engine, bank_id, bank_size)
+
+    request_context = RequestContext()
+    pool = await engine._get_pool()
+
+    units_row = await pool.fetchrow(
+        f"SELECT COUNT(*) AS count FROM {fq_table('memory_units')} WHERE bank_id = $1",
+        bank_id,
+    )
+    links_row = await pool.fetchrow(
+        f"SELECT COUNT(*) AS count FROM {fq_table('memory_links')} WHERE bank_id = $1",
+        bank_id,
+    )
+    # Derived entity-link total — the same unit_entities rollup _compute_bank_stats
+    # reports as link_counts["entity"] (entity edges aren't stored; each entity
+    # contributes LEAST(units_sharing - 1, 10) links). This is the prod-comparable
+    # "entity" number, not the raw distinct-entity count.
+    entities_row = await pool.fetchrow(
+        f"""
+        WITH per_entity AS (
+            SELECT ue.entity_id, COUNT(*) AS n
+            FROM {fq_table("unit_entities")} ue
+            JOIN {fq_table("memory_units")} mu ON mu.id = ue.unit_id
+            WHERE mu.bank_id = $1
+            GROUP BY ue.entity_id
+        )
+        SELECT COALESCE(SUM(LEAST(n - 1, 10)), 0)::bigint AS count FROM per_entity
+        """,
+        bank_id,
+    )
+    total_units = int(units_row["count"]) if units_row else 0
+    total_links = int(links_row["count"]) if links_row else 0
+    total_entities = int(entities_row["count"]) if entities_row else 0
+
+    async def _run_batches(label: str, call: "Callable[[], Any]") -> list[float]:
+        durations: list[float] = []
+
+        async def time_one() -> float:
+            t0 = time.perf_counter()
+            await call()
+            return time.perf_counter() - t0
+
+        remaining = iterations
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task(label, total=iterations)
+            while remaining > 0:
+                batch = min(concurrency, remaining)
+                durations.extend(await asyncio.gather(*[time_one() for _ in range(batch)]))
+                remaining -= batch
+                progress.advance(task, batch)
+        return durations
+
+    # Uncached: cache is disabled, so every get_bank_stats pays the full
+    # aggregation — the endpoint latency with the cache turned off.
+    cold_durations = await _run_batches(
+        "Running stats (cache disabled / uncached)…",
+        lambda: engine.get_bank_stats(bank_id, request_context=request_context),
+    )
+    # Cached: enable + warm the cache, then measure what a polling client sees.
+    engine._bank_stats_cache = BankStatsCache(ttl_seconds=300.0, max_entries=16)
+    await engine.get_bank_stats(bank_id, request_context=request_context)  # prime
+    warm_durations = await _run_batches(
+        "Running stats (cache enabled / warm)…",
+        lambda: engine.get_bank_stats(bank_id, request_context=request_context),
+    )
+    _disable_stats_cache()  # leave the engine as the suite found it
+
+    await engine.delete_bank(bank_id=bank_id, request_context=request_context)
+    await engine.close()
+
+    cold_stats = PercentileStats.from_samples(cold_durations)
+    warm_stats = PercentileStats.from_samples(warm_durations)
+    cold_total = sum(cold_durations)
+    cold_throughput = iterations / (cold_total / concurrency) if cold_total > 0 else 0
+    cache_speedup = cold_stats.p50 / warm_stats.p50 if warm_stats.p50 > 0 else 0
+
+    stats_result = StatsResult(
+        bank_size=bank_size,
+        concurrency=concurrency,
+        total_units=total_units,
+        total_links=total_links,
+        total_entities=total_entities,
+        cold_latency=cold_stats,
+        cold_throughput_per_sec=round(cold_throughput, 2),
+        warm_latency=warm_stats,
+        cache_speedup=round(cache_speedup, 1),
+    )
+
+    table = Table(title="Bank Stats Latency (cache disabled)")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green", justify="right")
+    table.add_row(
+        "Units / physical links / entity links (derived)",
+        f"{total_units:,} / {total_links:,} / {total_entities:,}",
+    )
+    table.add_row("Iterations / concurrency", f"{iterations} / {concurrency}")
+    table.add_row("Uncached throughput", f"{cold_throughput:.2f} calls/s")
+    table.add_row("Uncached mean", f"{cold_stats.mean:.3f}s")
+    table.add_row("Uncached p50 / p95 / p99", f"{cold_stats.p50:.3f}s / {cold_stats.p95:.3f}s / {cold_stats.p99:.3f}s")
+    table.add_row("Cached mean", f"{warm_stats.mean:.4f}s")
+    table.add_row("Cached p50 / p95 / p99", f"{warm_stats.p50:.4f}s / {warm_stats.p95:.4f}s / {warm_stats.p99:.4f}s")
+    table.add_row("Cache speedup (p50)", f"{cache_speedup:.1f}x")
+    console.print(table)
+
+    return SuiteResult(
+        name="stats",
+        duration_seconds=round(cold_total, 3),
+        success=True,
+        stats=stats_result,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Registry and orchestrator
 # ---------------------------------------------------------------------------
 
@@ -1150,6 +1630,7 @@ SUITES = {
     "recall-temporal": run_recall_temporal_suite,
     "consolidation": run_consolidation_suite,
     "graph-maintenance": run_graph_maintenance_suite,
+    "stats": run_stats_suite,
 }
 
 
@@ -1418,6 +1899,38 @@ def _print_summary(results: PerfTestResults) -> None:
                 "",
                 "  temporal",
                 f"{g.temporal_seconds}s ({g.temporal_calls} calls)",
+                "",
+                "",
+                "",
+            )
+
+        if suite.stats:
+            st = suite.stats
+            table.add_row(
+                suite.name,
+                status,
+                "uncached latency",
+                f"mean={st.cold_latency.mean:.3f}s",
+                f"{st.cold_latency.p50:.3f}s",
+                f"{st.cold_latency.p95:.3f}s",
+                f"{st.cold_latency.p99:.3f}s",
+            )
+            table.add_row(
+                "",
+                "",
+                "cached latency",
+                f"mean={st.warm_latency.mean:.4f}s",
+                f"{st.warm_latency.p50:.4f}s",
+                f"{st.warm_latency.p95:.4f}s",
+                f"{st.warm_latency.p99:.4f}s",
+            )
+            table.add_row("", "", "uncached throughput", f"{st.cold_throughput_per_sec} calls/s", "", "", "")
+            table.add_row("", "", "cache speedup (p50)", f"{st.cache_speedup}x", "", "", "")
+            table.add_row(
+                "",
+                "",
+                "units/phys-links/entity-links",
+                f"{st.total_units:,} / {st.total_links:,} / {st.total_entities:,}",
                 "",
                 "",
                 "",

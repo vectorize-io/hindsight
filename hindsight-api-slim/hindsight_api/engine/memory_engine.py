@@ -44,7 +44,7 @@ from ..utils import mask_network_location
 from ..worker.exceptions import DeferOperation, RetryTaskAt
 from ..worker.stage import set_stage
 from .audit import AuditLogger, audit_context
-from .bank_stats_cache import BankStatsCache
+from .bank_stats_cache import BankStatsCache, DistributedBankStatsCache
 from .db import DatabaseBackend, create_database_backend
 from .db_budget import budgeted_operation
 from .llm_interface import ProviderRateLimitResetError
@@ -1314,14 +1314,21 @@ class MemoryEngine(MemoryEngineInterface):
             regex_defense.set_context(self._ext_ctx)
             self._memory_defense = regex_defense
 
-        # Cache for get_bank_stats — short TTL + concurrent-loader coalescing.
-        # The query joins memory_links to memory_units and can be a multi-second
-        # parallel scan on large banks; a single polling client used to be able
-        # to pin the primary by issuing several concurrent calls.
-        self._bank_stats_cache = BankStatsCache(
-            ttl_seconds=config.bank_stats_cache_ttl_seconds,
-            max_entries=config.bank_stats_cache_max_entries,
-        )
+        # Cache for get_bank_stats — the query aggregates over memory_links /
+        # unit_entities and can be a multi-second scan on large banks. On
+        # PostgreSQL we back it with the shared bank_stats_cache table so one
+        # worker's computation serves all workers (and survives restarts);
+        # Oracle keeps the per-process in-memory cache.
+        if self._database_backend_type == "postgresql":
+            self._bank_stats_cache: BankStatsCache | DistributedBankStatsCache = DistributedBankStatsCache(
+                backend=self._backend,
+                ttl_seconds=config.bank_stats_cache_ttl_seconds,
+            )
+        else:
+            self._bank_stats_cache = BankStatsCache(
+                ttl_seconds=config.bank_stats_cache_ttl_seconds,
+                max_entries=config.bank_stats_cache_max_entries,
+            )
 
     @property
     def audit_logger(self) -> AuditLogger:
@@ -9681,13 +9688,15 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         *,
         request_context: "RequestContext",
+        force_refresh: bool = False,
     ) -> dict[str, Any]:
         """Get statistics about memory nodes and links for a bank.
 
-        Results are served from a short-TTL per-process cache so a polling
-        client cannot drive the link/unit aggregations multiple times per
-        second; concurrent misses on the same bank are coalesced onto a
-        single in-flight loader.
+        Results are served from a short-TTL cache (a shared table on PostgreSQL,
+        per-process on Oracle) so a polling client cannot drive the link/unit
+        aggregations multiple times per second. Pass ``force_refresh=True`` to
+        bypass the cached value and recompute (the fresh result also refreshes
+        the cache for subsequent callers).
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
@@ -9701,6 +9710,7 @@ class MemoryEngine(MemoryEngineInterface):
             schema,
             bank_id,
             lambda: self._compute_bank_stats(bank_id),
+            force_refresh=force_refresh,
         )
 
     async def _compute_bank_stats(self, bank_id: str) -> dict[str, Any]:

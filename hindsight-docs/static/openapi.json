@@ -881,6 +881,18 @@
             }
           },
           {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Force a fresh recompute, bypassing the cached value (and refreshing the cache).",
+              "default": false,
+              "title": "Refresh"
+            },
+            "description": "Force a fresh recompute, bypassing the cached value (and refreshing the cache)."
+          },
+          {
             "name": "authorization",
             "in": "header",
             "required": false,

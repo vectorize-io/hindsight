@@ -540,7 +540,14 @@ type ApiGetAgentStatsRequest struct {
 	ctx context.Context
 	ApiService *BanksAPIService
 	bankId string
+	refresh *bool
 	authorization *string
+}
+
+// Force a fresh recompute, bypassing the cached value (and refreshing the cache).
+func (r ApiGetAgentStatsRequest) Refresh(refresh bool) ApiGetAgentStatsRequest {
+	r.refresh = &refresh
+	return r
 }
 
 func (r ApiGetAgentStatsRequest) Authorization(authorization string) ApiGetAgentStatsRequest {
@@ -591,6 +598,12 @@ func (a *BanksAPIService) GetAgentStatsExecute(r ApiGetAgentStatsRequest) (*Bank
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 
+	if r.refresh != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "refresh", r.refresh, "form", "")
+	} else {
+		var defaultValue bool = false
+		r.refresh = &defaultValue
+	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 
