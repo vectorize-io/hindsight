@@ -23,7 +23,6 @@ var _ MappedNullable = &CreateFolderRequest{}
 type CreateFolderRequest struct {
 	Name string `json:"name"`
 	ParentId NullableString `json:"parent_id,omitempty"`
-	Mission NullableString `json:"mission,omitempty"`
 }
 
 type _CreateFolderRequest CreateFolderRequest
@@ -112,48 +111,6 @@ func (o *CreateFolderRequest) UnsetParentId() {
 	o.ParentId.Unset()
 }
 
-// GetMission returns the Mission field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *CreateFolderRequest) GetMission() string {
-	if o == nil || IsNil(o.Mission.Get()) {
-		var ret string
-		return ret
-	}
-	return *o.Mission.Get()
-}
-
-// GetMissionOk returns a tuple with the Mission field value if set, nil otherwise
-// and a boolean to check if the value has been set.
-// NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *CreateFolderRequest) GetMissionOk() (*string, bool) {
-	if o == nil {
-		return nil, false
-	}
-	return o.Mission.Get(), o.Mission.IsSet()
-}
-
-// HasMission returns a boolean if a field has been set.
-func (o *CreateFolderRequest) HasMission() bool {
-	if o != nil && o.Mission.IsSet() {
-		return true
-	}
-
-	return false
-}
-
-// SetMission gets a reference to the given NullableString and assigns it to the Mission field.
-func (o *CreateFolderRequest) SetMission(v string) {
-	o.Mission.Set(&v)
-}
-// SetMissionNil sets the value for Mission to be an explicit nil
-func (o *CreateFolderRequest) SetMissionNil() {
-	o.Mission.Set(nil)
-}
-
-// UnsetMission ensures that no value is present for Mission, not even an explicit nil
-func (o *CreateFolderRequest) UnsetMission() {
-	o.Mission.Unset()
-}
-
 func (o CreateFolderRequest) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -167,9 +124,6 @@ func (o CreateFolderRequest) ToMap() (map[string]interface{}, error) {
 	toSerialize["name"] = o.Name
 	if o.ParentId.IsSet() {
 		toSerialize["parent_id"] = o.ParentId.Get()
-	}
-	if o.Mission.IsSet() {
-		toSerialize["mission"] = o.Mission.Get()
 	}
 	return toSerialize, nil
 }

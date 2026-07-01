@@ -5512,7 +5512,6 @@ components:
     CreateFolderRequest:
       description: Create a folder under an optional parent folder.
       example:
-        mission: mission
         parent_id: parent_id
         name: name
       properties:
@@ -5520,9 +5519,6 @@ components:
           title: Name
           type: string
         parent_id:
-          nullable: true
-          type: string
-        mission:
           nullable: true
           type: string
       required:
@@ -6494,11 +6490,10 @@ components:
       description: |-
         A node in the knowledge-base tree — a folder or a page.
 
-        Folders carry a ``mission`` (the curator's steering prompt); pages carry
-        ``description``/``tags`` from their backing mental model and a ``managed``
-        flag (true = curator-managed, false = pinned/human).
+        Pages carry ``description``/``tags`` from their backing mental model. The
+        knowledge base is client-managed (CRUD); ``managed`` lets a client tag a node
+        as system-owned vs. hand-authored.
       example:
-        mission: mission
         children:
         - null
         - null
@@ -6532,12 +6527,9 @@ components:
         mental_model_id:
           nullable: true
           type: string
-        mission:
-          nullable: true
-          type: string
         managed:
           default: false
-          description: True for curator-managed nodes; false for pinned/human.
+          description: "Client-set flag: true = system-owned, false = hand-authored."
           title: Managed
           type: boolean
         description:
@@ -6678,8 +6670,7 @@ components:
       description: The knowledge base as a nested folder/page tree.
       example:
         roots:
-        - mission: mission
-          children:
+        - children:
           - null
           - null
           kind: folder
@@ -6693,8 +6684,7 @@ components:
           - tags
           - tags
           timestamp: timestamp
-        - mission: mission
-          children:
+        - children:
           - null
           - null
           kind: folder
@@ -8901,10 +8891,8 @@ components:
           $ref: '#/components/schemas/MentalModelTrigger-Input'
       title: UpdateMentalModelRequest
     UpdateNodeRequest:
-      description: "Rename, move, and/or set a folder's mission. Each field applies\
-        \ only when present."
+      description: Rename and/or move a node. Each field applies only when present.
       example:
-        mission: mission
         parent_id: parent_id
         name: name
       properties:
@@ -8912,9 +8900,6 @@ components:
           nullable: true
           type: string
         parent_id:
-          nullable: true
-          type: string
-        mission:
           nullable: true
           type: string
       title: UpdateNodeRequest

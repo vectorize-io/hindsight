@@ -135,17 +135,6 @@ class TestCreate:
         )
         assert resp.status_code == 400
 
-    async def test_create_folder_with_mission_schedules_curation(self, api_client, kb_bank):
-        bank_id, ids = kb_bank
-        # Creating a folder with a mission triggers a background curation; with the
-        # sync task backend it runs inline and must not fail the create.
-        resp = await api_client.post(
-            f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/folders",
-            json={"name": "Auto", "mission": "Collect everything about orders"},
-        )
-        assert resp.status_code == 201, resp.text
-        assert resp.json()["mission"] == "Collect everything about orders"
-
 
 class TestGraphAndExport:
     async def test_graph_shared_tag_edge(self, api_client, kb_bank):

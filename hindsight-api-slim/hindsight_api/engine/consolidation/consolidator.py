@@ -1390,17 +1390,6 @@ async def _run_consolidation_job(
         )
         stats["mental_models_refreshed"] = mental_models_refreshed
 
-        # Knowledge-base folders re-curate themselves after consolidation, on the
-        # same hook as the mental-model refresh: each mission-bearing folder gets
-        # its own background curate_folder task. Banks without knowledge-base
-        # folders no-op. Best-effort — scheduling must never break consolidation.
-        try:
-            stats["folders_curation_scheduled"] = await memory_engine.submit_async_curate_bank_folders(
-                bank_id=bank_id, request_context=request_context
-            )
-        except Exception as e:
-            logger.warning("Knowledge-base curation scheduling failed for %s: %s", bank_id, e)
-
     perf.flush()
 
     return {"status": "completed", "bank_id": bank_id, **stats}

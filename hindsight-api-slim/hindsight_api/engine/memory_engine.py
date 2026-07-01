@@ -1916,28 +1916,6 @@ class MemoryEngine(MemoryEngineInterface):
 
         logger.info(f"[REFRESH_MENTAL_MODEL_TASK] Completed for bank_id={bank_id}, mental_model_id={mental_model_id}")
 
-    async def _handle_curate_folder(self, task_dict: dict[str, Any]):
-        """Handler for curate_folder tasks — delegates to curate_folder.
-
-        Runs the mission-driven curator for one folder in the background (queued
-        on folder creation and after each consolidation), mirroring how
-        refresh_mental_model tasks run the async refresh.
-        """
-        bank_id = task_dict.get("bank_id")
-        folder_id = task_dict.get("folder_id")
-        if not bank_id or not folder_id:
-            raise ValueError("bank_id and folder_id are required for curate_folder task")
-
-        from hindsight_api.models import RequestContext
-
-        internal_context = RequestContext(
-            internal=True,
-            tenant_id=task_dict.get("_tenant_id"),
-            api_key_id=task_dict.get("_api_key_id"),
-            retry_count=task_dict.get("_retry_count", 0),
-        )
-        await self.curate_folder(bank_id=bank_id, folder_id=folder_id, request_context=internal_context)
-
     @_bind_bank_id("task_dict", key="bank_id")
     async def execute_task(self, task_dict: dict[str, Any]):
         """
@@ -1997,8 +1975,6 @@ class MemoryEngine(MemoryEngineInterface):
                     await self._handle_graph_maintenance(task_dict)
                 elif task_type == "refresh_mental_model":
                     await self._handle_refresh_mental_model(task_dict)
-                elif task_type == "curate_folder":
-                    await self._handle_curate_folder(task_dict)
                 elif task_type == "webhook_delivery":
                     await self._handle_webhook_delivery(task_dict)
                 else:
@@ -11485,11 +11461,7 @@ class MemoryEngine(MemoryEngineInterface):
             "name": row["name"],
             "mental_model_id": row["mental_model_id"],
             "sort_order": row["sort_order"],
-            "mission": row["mission"] if "mission" in row else None,
             "managed": (row["managed"] if "managed" in row else False),
-            "last_curated_at": (
-                row["last_curated_at"].isoformat() if "last_curated_at" in row and row["last_curated_at"] else None
-            ),
             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
             "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
         }
@@ -11502,14 +11474,11 @@ class MemoryEngine(MemoryEngineInterface):
         return node
 
     # Column list for plain (non-joined) knowledge_pages reads/RETURNING.
-    _KP_COLUMNS = (
-        "id, bank_id, parent_id, kind, name, mental_model_id, sort_order, mission, managed, "
-        "last_curated_at, created_at, updated_at"
-    )
+    _KP_COLUMNS = "id, bank_id, parent_id, kind, name, mental_model_id, sort_order, managed, created_at, updated_at"
 
     _KP_PAGE_SELECT = (
         "kp.id, kp.bank_id, kp.parent_id, kp.kind, kp.name, kp.mental_model_id, "
-        "kp.sort_order, kp.mission, kp.managed, kp.last_curated_at, kp.created_at, kp.updated_at, "
+        "kp.sort_order, kp.managed, kp.created_at, kp.updated_at, "
         "mm.tags AS mm_tags, mm.source_query AS mm_source_query, "
         "mm.last_refreshed_at AS mm_last_refreshed_at"
     )
@@ -11539,14 +11508,13 @@ class MemoryEngine(MemoryEngineInterface):
         name: str,
         *,
         parent_id: str | None = None,
-        mission: str | None = None,
         managed: bool = False,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
         """Create a folder (a container node) in the knowledge base.
 
-        ``mission`` is the curator's steering prompt for the folder; ``managed``
-        marks folders the curator spawned itself (vs. human-created).
+        The knowledge base is managed by clients (CRUD over folders/pages);
+        ``managed`` lets a client tag a node as system-owned vs. hand-authored.
         """
         await self._authenticate_tenant(request_context)
         backend = await self._get_backend()
@@ -11557,15 +11525,14 @@ class MemoryEngine(MemoryEngineInterface):
                 await self._kp_assert_folder_parent(conn, bank_id, parent_id)
                 row = await conn.fetchrow(
                     f"""
-                    INSERT INTO {fq_table("knowledge_pages")} (id, bank_id, parent_id, kind, name, mission, managed)
-                    VALUES ($1, $2, $3, 'folder', $4, $5, $6)
+                    INSERT INTO {fq_table("knowledge_pages")} (id, bank_id, parent_id, kind, name, managed)
+                    VALUES ($1, $2, $3, 'folder', $4, $5)
                     RETURNING {self._KP_COLUMNS}
                     """,
                     folder_id,
                     bank_id,
                     parent_id,
                     name,
-                    mission,
                     managed,
                 )
         return self._row_to_knowledge_node(row)
@@ -11587,12 +11554,11 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> dict[str, Any] | None:
         """Create a page: a backing mental model plus the tree node that refs it.
 
-        ``managed=True`` marks a curator-created page the curator may later
-        merge/delete; human-created pages default to ``managed=False`` (pinned).
+        ``managed`` lets a client tag the page as system-owned vs. hand-authored.
 
         Returns ``None`` when a page with the same name already exists in the same
-        folder (a uniqueness violation, e.g. two concurrent curator runs creating
-        the same page) — the caller should treat that as "already exists".
+        folder (a uniqueness violation) — the caller should treat that as
+        "already exists" (surfaced by the API as a 409).
         """
         await self._authenticate_tenant(request_context)
         # The mental model carries the content (and is created+validated by the
@@ -11784,93 +11750,6 @@ class MemoryEngine(MemoryEngineInterface):
                     node_id,
                 )
         return True
-
-    async def set_folder_mission(
-        self, bank_id: str, folder_id: str, mission: str | None, *, request_context: "RequestContext"
-    ) -> dict[str, Any] | None:
-        """Set (or clear) a folder's curator mission."""
-        await self._authenticate_tenant(request_context)
-        backend = await self._get_backend()
-        async with acquire_with_retry(backend) as conn:
-            row = await conn.fetchrow(
-                f"""
-                UPDATE {fq_table("knowledge_pages")}
-                SET mission = $3, updated_at = now()
-                WHERE bank_id = $1 AND id = $2 AND kind = 'folder'
-                RETURNING {self._KP_COLUMNS}
-                """,
-                bank_id,
-                folder_id,
-                mission,
-            )
-        return self._row_to_knowledge_node(row) if row else None
-
-    async def list_new_memory_texts(
-        self, bank_id: str, *, since: datetime | None, limit: int, request_context: "RequestContext"
-    ) -> list[str]:
-        """Return source-memory texts (world/experience) created since ``since``.
-
-        The folder curator uses this instead of a semantic recall — it sees the
-        new memories (the delta), like the mental-model refresh's ``created_after``
-        scope. Newest first, capped at ``limit``. ``since=None`` returns the most
-        recent ``limit`` memories (first curation of a folder).
-        """
-        await self._authenticate_tenant(request_context)
-        backend = await self._get_backend()
-        table = fq_table("memory_units")
-        async with acquire_with_retry(backend) as conn:
-            if since is None:
-                rows = await conn.fetch(
-                    f"SELECT text FROM {table} WHERE bank_id = $1 AND fact_type IN ('world', 'experience') "
-                    f"ORDER BY created_at DESC LIMIT $2",
-                    bank_id,
-                    limit,
-                )
-            else:
-                rows = await conn.fetch(
-                    f"SELECT text FROM {table} WHERE bank_id = $1 AND fact_type IN ('world', 'experience') "
-                    f"AND created_at > $2 ORDER BY created_at DESC LIMIT $3",
-                    bank_id,
-                    since,
-                    limit,
-                )
-        return [r["text"] for r in rows]
-
-    async def mark_folder_curated(self, bank_id: str, folder_id: str, *, request_context: "RequestContext") -> None:
-        """Stamp a folder's ``last_curated_at`` watermark to now (after a curation run)."""
-        await self._authenticate_tenant(request_context)
-        backend = await self._get_backend()
-        async with acquire_with_retry(backend) as conn:
-            await conn.execute(
-                f"UPDATE {fq_table('knowledge_pages')} SET last_curated_at = now() WHERE bank_id = $1 AND id = $2",
-                bank_id,
-                folder_id,
-            )
-
-    async def curate_folder(
-        self, bank_id: str, folder_id: str, *, request_context: "RequestContext", dry_run: bool = False
-    ):
-        """Run the mission-driven curator for a single folder (see knowledge_curator).
-
-        This is the synchronous worker-side entry point (called by the
-        ``curate_folder`` task handler). Callers that want it to run in the
-        background should use :meth:`submit_async_curate_folder` instead.
-
-        Serialized per folder: the folder-create trigger and the post-consolidation
-        sweep can both fire for the same folder, and without this lock they race —
-        both read ``last_curated_at`` before either advances it and create the same
-        pages twice. The lock makes the second run see the advanced watermark (and
-        the pages the first run created), so it no-ops. In-process only; a multi-
-        worker deployment would also need a DB advisory lock.
-        """
-        await self._authenticate_tenant(request_context)
-        from .knowledge_curator import curate_folder as _curate_folder
-
-        if not hasattr(self, "_curate_locks"):
-            self._curate_locks: dict[tuple[str, str], asyncio.Lock] = {}
-        lock = self._curate_locks.setdefault((bank_id, folder_id), asyncio.Lock())
-        async with lock:
-            return await _curate_folder(self, bank_id, folder_id, request_context=request_context, dry_run=dry_run)
 
     async def compute_mental_model_is_stale(
         self,
@@ -13677,51 +13556,3 @@ class MemoryEngine(MemoryEngineInterface):
             dedupe_by_bank=False,
         )
 
-    async def submit_async_curate_folder(
-        self, bank_id: str, folder_id: str, *, request_context: "RequestContext"
-    ) -> dict[str, Any]:
-        """Schedule a background curation run for one knowledge-base folder.
-
-        Returns ``{"operation_id": None}`` without scheduling when no LLM provider
-        is configured (curation needs the LLM, and this path is auto-triggered, so
-        a missing provider should be a silent no-op rather than an error).
-        """
-        if self._llm_config.provider == "none":
-            return {"operation_id": None}
-
-        await self._authenticate_tenant(request_context)
-        task_payload: dict[str, Any] = {"folder_id": folder_id}
-        if request_context.tenant_id:
-            task_payload["_tenant_id"] = request_context.tenant_id
-        if request_context.api_key_id:
-            task_payload["_api_key_id"] = request_context.api_key_id
-
-        return await self._submit_async_operation(
-            bank_id=bank_id,
-            operation_type="curate_folder",
-            task_type="curate_folder",
-            task_payload=task_payload,
-            result_metadata={"folder_id": folder_id},
-            dedupe_by_bank=False,
-        )
-
-    async def submit_async_curate_bank_folders(self, bank_id: str, *, request_context: "RequestContext") -> int:
-        """Schedule background curation for every mission-bearing folder (capped).
-
-        Used by the post-consolidation hook: each folder with a mission gets its
-        own ``curate_folder`` task so they run independently in the background.
-        Returns the number of curation tasks submitted.
-        """
-        from .knowledge_curator import MAX_FOLDERS_PER_RUN
-
-        await self._authenticate_tenant(request_context)
-        nodes = await self.list_knowledge_nodes(bank_id, request_context=request_context)
-        folders = [n for n in nodes if n.get("kind") == "folder" and n.get("mission")][:MAX_FOLDERS_PER_RUN]
-        submitted = 0
-        for folder in folders:
-            try:
-                await self.submit_async_curate_folder(bank_id, folder["id"], request_context=request_context)
-                submitted += 1
-            except Exception as e:
-                logger.warning("Failed to schedule curation for %s/%s: %s", bank_id, folder["id"], e)
-        return submitted
