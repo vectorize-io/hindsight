@@ -17,11 +17,12 @@ import (
 // checks if the MinScores type satisfies the MappedNullable interface at compile time
 var _ MappedNullable = &MinScores{}
 
-// MinScores Optional per-stage score floors for recall (all inclusive, AND-ed).  ``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into the SQL arms (overriding the global ``semantic_min_similarity`` / ``bm25_min_score`` config for this request), so they prune weak matches before fusion. ``reranker`` and ``final`` are **post-query** filters applied to the scored results after reranking. Any field left None imposes no floor; all-None (the default) means no score filtering.
+// MinScores Optional per-stage score floors for recall (all inclusive, AND-ed).  ``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into the SQL arms (overriding the global ``semantic_min_similarity`` / ``bm25_min_score`` config for this request), so they prune weak matches before fusion. ``reranker``, ``reranker_raw``, and ``final`` are **post-query** filters applied to the scored results after reranking. ``reranker`` uses the normalized reranker score; ``reranker_raw`` uses the provider's raw reranker score before normalization. Any field left None imposes no floor; all-None (the default) means no score filtering.
 type MinScores struct {
 	Semantic NullableFloat32 `json:"semantic,omitempty"`
 	Keyword NullableFloat32 `json:"keyword,omitempty"`
 	Reranker NullableFloat32 `json:"reranker,omitempty"`
+	RerankerRaw NullableFloat32 `json:"reranker_raw,omitempty"`
 	Final NullableFloat32 `json:"final,omitempty"`
 }
 
@@ -168,6 +169,48 @@ func (o *MinScores) UnsetReranker() {
 	o.Reranker.Unset()
 }
 
+// GetRerankerRaw returns the RerankerRaw field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MinScores) GetRerankerRaw() float32 {
+	if o == nil || IsNil(o.RerankerRaw.Get()) {
+		var ret float32
+		return ret
+	}
+	return *o.RerankerRaw.Get()
+}
+
+// GetRerankerRawOk returns a tuple with the RerankerRaw field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MinScores) GetRerankerRawOk() (*float32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.RerankerRaw.Get(), o.RerankerRaw.IsSet()
+}
+
+// HasRerankerRaw returns a boolean if a field has been set.
+func (o *MinScores) HasRerankerRaw() bool {
+	if o != nil && o.RerankerRaw.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRerankerRaw gets a reference to the given NullableFloat32 and assigns it to the RerankerRaw field.
+func (o *MinScores) SetRerankerRaw(v float32) {
+	o.RerankerRaw.Set(&v)
+}
+// SetRerankerRawNil sets the value for RerankerRaw to be an explicit nil
+func (o *MinScores) SetRerankerRawNil() {
+	o.RerankerRaw.Set(nil)
+}
+
+// UnsetRerankerRaw ensures that no value is present for RerankerRaw, not even an explicit nil
+func (o *MinScores) UnsetRerankerRaw() {
+	o.RerankerRaw.Unset()
+}
+
 // GetFinal returns the Final field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *MinScores) GetFinal() float32 {
 	if o == nil || IsNil(o.Final.Get()) {
@@ -228,6 +271,9 @@ func (o MinScores) ToMap() (map[string]interface{}, error) {
 	}
 	if o.Reranker.IsSet() {
 		toSerialize["reranker"] = o.Reranker.Get()
+	}
+	if o.RerankerRaw.IsSet() {
+		toSerialize["reranker_raw"] = o.RerankerRaw.Get()
 	}
 	if o.Final.IsSet() {
 		toSerialize["final"] = o.Final.Get()

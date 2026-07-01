@@ -24,13 +24,14 @@ from typing_extensions import Self
 
 class RecallScores(BaseModel):
     """
-    Per-result recall scores from different stages of the pipeline.  ``final`` is the value results are ranked by. The others are diagnostic and can be filtered on via the recall ``min_scores`` request parameter. ``semantic`` and ``keyword`` are the raw per-strategy retrieval scores (``None`` when that strategy did not surface this result); ``reranker`` is the cross-encoder's normalized relevance.
+    Per-result recall scores from different stages of the pipeline.  ``final`` is the value results are ranked by. The others are diagnostic and can be filtered on via the recall ``min_scores`` request parameter. ``semantic`` and ``keyword`` are the raw per-strategy retrieval scores (``None`` when that strategy did not surface this result); ``reranker`` is the cross-encoder's normalized relevance and ``reranker_raw`` is the provider's raw score before normalization.
     """ # noqa: E501
     final: Union[StrictFloat, StrictInt] = Field(description="Final ranking score (combined reranker + recency/temporal/proof boosts)")
     reranker: Optional[Union[StrictFloat, StrictInt]] = None
+    reranker_raw: Optional[Union[StrictFloat, StrictInt]] = None
     semantic: Optional[Union[StrictFloat, StrictInt]] = None
     keyword: Optional[Union[StrictFloat, StrictInt]] = None
-    __properties: ClassVar[List[str]] = ["final", "reranker", "semantic", "keyword"]
+    __properties: ClassVar[List[str]] = ["final", "reranker", "reranker_raw", "semantic", "keyword"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -76,6 +77,11 @@ class RecallScores(BaseModel):
         if self.reranker is None and "reranker" in self.model_fields_set:
             _dict['reranker'] = None
 
+        # set to None if reranker_raw (nullable) is None
+        # and model_fields_set contains the field
+        if self.reranker_raw is None and "reranker_raw" in self.model_fields_set:
+            _dict['reranker_raw'] = None
+
         # set to None if semantic (nullable) is None
         # and model_fields_set contains the field
         if self.semantic is None and "semantic" in self.model_fields_set:
@@ -100,6 +106,7 @@ class RecallScores(BaseModel):
         _obj = cls.model_validate({
             "final": obj.get("final"),
             "reranker": obj.get("reranker"),
+            "reranker_raw": obj.get("reranker_raw"),
             "semantic": obj.get("semantic"),
             "keyword": obj.get("keyword")
         })

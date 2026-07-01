@@ -605,20 +605,21 @@ When set to `true`, the response includes a detailed debug trace covering the qu
 
 ### min_scores
 
-An optional object of per-stage score floors, each compared **inclusively** (`>=`) against the matching field of a result's [`scores`](#scores) and AND-ed together. Any field you leave unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering at all. The four fields operate at **two different levels of the pipeline**:
+An optional object of per-stage score floors, each compared **inclusively** (`>=`) against the matching field of a result's [`scores`](#scores) and AND-ed together. Any field you leave unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering at all. The five fields operate at **two different levels of the pipeline**:
 
 | field | level | effect |
 |---|---|---|
 | `semantic` | retrieval | minimum vector similarity, pushed into the SQL — prunes weak vector matches **before** fusion (overrides the global similarity minimum for this request) |
 | `keyword` | retrieval | minimum keyword/full-text (BM25) score, pushed into the SQL — prunes weak keyword matches before fusion |
 | `reranker` | post-query | minimum normalized cross-encoder score, applied to the ranked results |
+| `reranker_raw` | post-query | minimum raw cross-encoder score before normalization, applied to the ranked results |
 | `final` | post-query | minimum final ranking score, applied to the ranked results |
 
 ```json
 { "query": "...", "min_scores": { "reranker": 0.5 } }
 ```
 
-The retrieval-level floors (`semantic`/`keyword`) change *which candidates are considered*, so they can also change the final ordering; the post-query floors (`reranker`/`final`) only drop already-ranked results. Because freed slots are **not** backfilled, any floor can return fewer results than the budget allows.
+The retrieval-level floors (`semantic`/`keyword`) change *which candidates are considered*, so they can also change the final ordering; the post-query floors (`reranker`/`reranker_raw`/`final`) only drop already-ranked results. Because freed slots are **not** backfilled, any floor can return fewer results than the budget allows.
 
 **Use floors with care.** The reranker's scores are reliable for *ordering* but not as *absolute* values — a clearly-relevant memory can score `~0.001` on one query and `~1.0` on another, so a fixed cutoff risks silently dropping good results. Calibrate any threshold against the scores you actually observe (recall with no `min_scores` first and inspect the [`scores`](#scores) object).
 
@@ -690,6 +691,7 @@ An object of the per-stage scores for this result. `null` for `source_facts` ent
 
 - **`final`** — the score this fact was ranked by (cross-encoder relevance × recency/temporal/evidence boosts). `results` is ordered by it descending. A relative signal, not a calibrated probability (see the note above).
 - **`reranker`** — the cross-encoder's normalized relevance (`0`–`1`). `null` when the deployment uses a passthrough reranker (RRF/interleave modes).
+- **`reranker_raw`** — the cross-encoder provider's raw score before normalization. `null` when the deployment uses a passthrough reranker.
 - **`semantic`** — the raw vector cosine similarity (`0`–`1`). `null` if this result was not surfaced by semantic search.
 - **`keyword`** — the raw keyword/full-text (BM25) score (`≥ 0`, unbounded). `null` if this result was not surfaced by keyword search.
 
