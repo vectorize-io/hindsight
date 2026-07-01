@@ -1,0 +1,55 @@
+[project]
+name = "collabmind-central-api"
+version = "0.1.0"
+description = "CollabMind memory control plane — Central API (FastAPI). Contract-first scaffold."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "httpx>=0.27",
+    "sqlalchemy[asyncio]>=2.0",
+    "greenlet>=3.0.0",
+    "alembic>=1.13",
+    "asyncpg>=0.29",
+    "aiosqlite>=0.22.1",
+]
+
+[project.optional-dependencies]
+# Real Google Drive access (read-only). Optional: the connector imports these
+# lazily, so the control plane, tests, and CI run without them installed.
+gdrive = [
+    "google-auth>=2.30",
+    "google-auth-oauthlib>=1.2",
+    "google-api-python-client>=2.130",
+]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "aiosqlite>=0.20",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true

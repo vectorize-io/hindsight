@@ -1,0 +1,55 @@
+# Commit Configuration
+
+# Enable Conventional Commits
+conventional_commits: true
+
+# Allowed commit types
+types:
+  - feat
+  - fix
+  - refactor
+  - docs
+  - test
+  - chore
+  - style
+  - perf
+
+# Branch prefix rules
+branch_prefixes:
+  feat: "feature/"
+  fix: "fix/"
+  refactor: "refactor/"
+  docs: "docs/"
+  test: "test/"
+  chore: "chore/"
+  hotfix: "hotfix/"
+  style: "style/"
+  perf: "perf/"
+
+# Commit message rules
+message:
+  max_subject_length: 72
+  require_body: false
+  body_wrap_length: 100
+
+# Scope rules
+scope:
+  required: false
+  # Allowed scopes list (empty means all allowed)
+  allowed: []
+
+# Co-Author settings
+co_author:
+  enabled: true
+  name: "First Fluke"
+  email: "our.first.fluke@gmail.com"
+
+# Forbidden file patterns (commit warnings)
+forbidden_patterns:
+  - "*.env"
+  - "*.env.*"
+  - "credentials.json"
+  - "secrets.yaml"
+  - "*.pem"
+  - "*.key"
+  - ".env.local"

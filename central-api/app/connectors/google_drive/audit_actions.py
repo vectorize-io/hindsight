@@ -1,0 +1,23 @@
+"""Canonical audit action names (Phase 9). One vocabulary, used everywhere."""
+
+from __future__ import annotations
+
+GOOGLE_DRIVE_CONNECTED = "google_drive_connected"
+GOOGLE_DRIVE_DISCONNECTED = "google_drive_disconnected"
+FILE_DISCOVERED = "file_discovered"
+FILE_PERMISSION_SNAPSHOT_CREATED = "file_permission_snapshot_created"
+FILE_INGESTION_QUEUED = "file_ingestion_queued"
+FILE_DOWNLOADED = "file_downloaded"
+FILE_PARSED = "file_parsed"
+FILE_CHUNKED = "file_chunked"
+FILE_EMBEDDED = "file_embedded"
+FILE_INDEXED = "file_indexed"
+FILE_INDEX_FAILED = "file_index_failed"
+FILE_SKIPPED = "file_skipped"
+FILE_DISABLED = "file_disabled"
+RETRIEVAL_PERMISSION_DENIED = "retrieval_permission_denied"
+RETRIEVAL_SOURCE_USED = "retrieval_source_used"
+MCP_TOOL_CALLED = "mcp_tool_called"
+AGENT_ACTION_REQUESTED = "agent_action_requested"
+AGENT_ACTION_DENIED = "agent_action_denied"
+AGENT_ACTION_APPROVED = "agent_action_approved"

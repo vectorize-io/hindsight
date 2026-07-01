@@ -1,0 +1,32 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - heading "CollabMind" [level=1] [ref=e4]
+      - generic [ref=e5]: Operator · v0.1
+      - navigation [ref=e6]:
+        - link "Dashboard" [ref=e7] [cursor=pointer]:
+          - /url: /
+        - link "Login" [ref=e8] [cursor=pointer]:
+          - /url: /login
+        - link "Workspaces" [ref=e9] [cursor=pointer]:
+          - /url: /workspaces
+        - link "Connectors" [ref=e10] [cursor=pointer]:
+          - /url: /connectors
+        - link "Google Drive" [ref=e11] [cursor=pointer]:
+          - /url: /google-drive
+        - link "Indexed Files" [ref=e12] [cursor=pointer]:
+          - /url: /files
+        - link "Ingestion Queue" [ref=e13] [cursor=pointer]:
+          - /url: /ingestion
+        - link "Audit Log" [ref=e14] [cursor=pointer]:
+          - /url: /audit
+        - link "Agent Activity" [ref=e15] [cursor=pointer]:
+          - /url: /agent-activity
+        - link "Permissions View" [ref=e16] [cursor=pointer]:
+          - /url: /permissions
+    - main [ref=e17]:
+      - generic [ref=e18]:
+        - heading "Login" [level=2] [ref=e19]
+        - generic [ref=e20]: v0.1 uses the Central API's dev identity. Production will redirect to Authentik (OIDC). The GUI never stores credentials or tokens.
+        - paragraph [ref=e22]: "Not authenticated: Failed to fetch"
+  - alert [ref=e23]

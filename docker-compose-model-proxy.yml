@@ -1,0 +1,12 @@
+# Docker Model Runner HTTP Proxy
+# Exposes Docker Model Runner's internal API to localhost
+
+services:
+  model-proxy:
+    image: nginx:alpine
+    container_name: docker-model-runner-proxy
+    ports:
+      - "6000:80"  # Single endpoint for all models
+    volumes:
+      - ./docker-model-nginx.conf:/etc/nginx/nginx.conf:ro
+    restart: unless-stopped

@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "stack-verify.schema.json",
+  "title": "Shared Stack Verify Contract",
+  "description": "Domain-agnostic verify definitions reused by oma-backend and oma-mobile stack schemas via $ref.",
+  "definitions": {
+    "commandCheck": {
+      "type": "object",
+      "required": ["cmd"],
+      "properties": {
+        "cmd": {
+          "type": "string",
+          "description": "Shell command executed via child_process."
+        },
+        "pass_signal": {
+          "type": "string",
+          "description": "Optional substring expected in stdout on pass (e.g., 'All tests passed')."
+        },
+        "skip_if_missing": {
+          "type": "string",
+          "description": "Binary that, if absent from PATH, causes the check to skip (e.g., uv, cargo, swift)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "verify": {
+      "type": "object",
+      "description": "Executable contract consumed by cli/commands/verify/verify.ts.",
+      "properties": {
+        "detect": {
+          "type": "string",
+          "description": "Relative path whose existence in the workspace selects this variant (e.g., package.json, Package.swift)."
+        },
+        "syntax": {
+          "$ref": "#/definitions/commandCheck"
+        },
+        "tests": {
+          "$ref": "#/definitions/commandCheck"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

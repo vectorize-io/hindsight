@@ -1,0 +1,65 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --border: #262b36;
+  --text: #e6e9ef;
+  --muted: #8b93a7;
+  --accent: #5b8cff;
+  --ok: #3fb950;
+  --warn: #d29922;
+  --bad: #f85149;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.layout { display: flex; min-height: 100vh; }
+.sidebar {
+  width: 220px; background: var(--panel); border-right: 1px solid var(--border);
+  padding: 16px; flex-shrink: 0;
+}
+.sidebar h1 { font-size: 15px; margin: 0 0 4px; }
+.sidebar .sub { color: var(--muted); font-size: 11px; margin-bottom: 16px; }
+.sidebar nav a { display: block; padding: 7px 10px; border-radius: 6px; color: var(--text); font-size: 14px; }
+.sidebar nav a:hover { background: #1f2430; text-decoration: none; }
+.main { flex: 1; padding: 24px 32px; max-width: 1100px; }
+
+h2 { margin-top: 0; }
+.muted { color: var(--muted); }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+button {
+  background: var(--accent); color: #fff; border: none; padding: 7px 13px;
+  border-radius: 6px; cursor: pointer; font-size: 13px;
+}
+button.secondary { background: #2a2f3a; }
+button.danger { background: var(--bad); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+input, select {
+  background: #0c0e12; color: var(--text); border: 1px solid var(--border);
+  padding: 7px 9px; border-radius: 6px; font-size: 13px;
+}
+
+table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; }
+code { background: #0c0e12; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+.badge { padding: 2px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border); }
+.badge.ok { color: var(--ok); border-color: var(--ok); }
+.badge.warn { color: var(--warn); border-color: var(--warn); }
+.badge.bad { color: var(--bad); border-color: var(--bad); }
+
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.error { color: var(--bad); font-size: 13px; }
+.banner { background: #1f2430; border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 12px; color: var(--muted); margin-bottom: 16px; }

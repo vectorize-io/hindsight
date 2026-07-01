@@ -1,0 +1,68 @@
+# oma-scholar configuration
+# Knows sidecar generation and remote access settings
+
+# Remote API
+api:
+  base_url: https://knows.academy
+  endpoints:
+    search: /api/proxy/search
+    sidecar: /api/proxy/sidecars/{record_id}
+    partial: /api/proxy/partial
+    stats: /api/proxy/jobs/stats
+  # No auth required for proxy endpoints
+  timeout_seconds: 30
+
+# Partial-fetch defaults: fields you can request individually
+# (must match `oma scholar get --section` enum; methods/provenance are NOT
+# available via partial fetch — fetch the full sidecar for those)
+partial_fields:
+  available:
+    - statements
+    - evidence
+    - relations
+    - artifacts
+    - citation
+  default_for_summary:
+    - statements
+    - citation
+
+# OpenAlex metadata enrichment (optional)
+# Used during Generate mode to backfill DOI/venue/year when missing
+openalex:
+  enabled_when_key_present: true
+  env_var: OPENALEX_API_KEY
+  # Polite-pool email also accepted for higher anonymous rate limits
+  polite_pool_env_var: OPENALEX_EMAIL
+  signup_url: https://openalex.org/
+  settings_url: https://openalex.org/settings/api
+  # Free daily allowance (no key): $1 value, ~10K list calls, ~1K search calls
+
+# Sidecar generation defaults
+generation:
+  # Minimum number of statements before warning user about under-extraction
+  min_statements_complex_paper: 15
+  # Average relations per statement (relation wiring quality threshold)
+  min_relations_per_statement: 1.5
+  # ID format
+  id_prefixes:
+    statement: "stmt:"
+    evidence: "ev:"
+    relation: "rel:"
+    method: "method:"
+    artifact: "art:"
+    actor: "actor:"
+
+# Output behavior
+output:
+  # When no output path is specified:
+  # "same_dir" = output next to the input source file
+  # "cwd" = output in current working directory
+  default_location: same_dir
+  filename_pattern: "{base}.knows.yaml"
+  review_filename_pattern: "{base}.review.knows.yaml"
+  overwrite: false  # Prompt before overwriting existing files
+
+# Lint behavior
+lint:
+  command: "oma scholar lint"
+  fail_on_warning: false

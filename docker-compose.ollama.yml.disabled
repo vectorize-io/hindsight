@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # Ollama Embeddings Lane - Docker (port 12434)
+  # Bare metal port 11434 remains available
+  ollama-embeddings:
+    image: ollama/ollama:latest
+    container_name: ollama-embeddings
+    ports:
+      - "12434:11434"
+    volumes:
+      - /Volumes/Mac/Users/oliververmeulen/.ollama/models:/root/.ollama/models
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Ollama LLM Lane - Docker (port 12435)
+  # Bare metal port 11435 remains available
+  ollama-llm:
+    image: ollama/ollama:latest
+    container_name: ollama-llm
+    ports:
+      - "12435:11434"
+    volumes:
+      - /Volumes/Mac/Users/oliververmeulen/.ollama/models:/root/.ollama/models
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 3

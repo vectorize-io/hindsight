@@ -1,0 +1,21 @@
+# oma-pdf configuration
+# PDF to Markdown conversion settings
+
+format: markdown
+image_output: "off"       # "off", "embedded" (base64), "external"
+image_format: png         # "png" or "jpeg"
+use_struct_tree: false    # Use Tagged PDF structure when available
+
+# OCR settings (hybrid mode only)
+ocr:
+  enabled: false
+  languages: "en"         # Comma-separated: "ko,en", "ja,en", etc.
+  hybrid_port: 5002
+
+# Output behavior
+output:
+  # When no output directory is specified:
+  # "same_dir" = output next to the input PDF
+  # "cwd" = output in current working directory
+  default_location: same_dir
+  overwrite: false        # Prompt before overwriting existing files

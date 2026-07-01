@@ -1,0 +1,7 @@
+node_modules/
+out/
+.remotion/
+# Fonts are provisioned by `oma video doctor`, not committed (see public/fonts/README.md).
+public/fonts/*.woff2
+public/fonts/*.ttf
+public/fonts/*.otf

@@ -1,0 +1,4 @@
+[     407ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/compiled/react-dom/cjs/react-dom.development.js:38559
+[     459ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:3011/favicon.ico:0
+[     488ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/me:0
+[     490ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/me:0

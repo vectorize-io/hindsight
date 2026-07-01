@@ -1,0 +1,28 @@
+# oma-hwp configuration
+# HWP / HWPX / HWPML to Markdown conversion settings
+
+format: markdown              # "markdown" (default) or "json"
+
+# kordoc version policy
+# - "latest": always use latest (recommended for active kordoc development)
+# - "pinned": use the version in `version.pinned`
+version:
+  channel: latest
+  pinned: "2.4.0"
+
+# Output behavior
+output:
+  # When no output directory is specified:
+  # "same_dir" = output next to the input file
+  # "cwd" = output in current working directory
+  default_location: same_dir
+
+# Officially supported formats (advertised scope).
+# kordoc supports more formats, but this skill only covers the Korean word
+# processor family. Route other inputs to the appropriate skill:
+# - .pdf  -> oma-pdf
+# - .xlsx / .docx -> out of scope (run `bunx kordoc ...` manually; oma-docs is the doc-drift skill, not a converter)
+supported_formats:
+  - hwp
+  - hwpx
+  - hwpml

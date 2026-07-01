@@ -1,0 +1,1421 @@
+{
+  "banks": [
+    {
+      "bank_id": "collabmind-platform",
+      "name": "CollabMind Platform Knowledge",
+      "mission": "Store architectural decisions, deployment patterns, and platform evolution"
+    },
+    {
+      "bank_id": "codebase-structure",
+      "name": "Codebase Structure",
+      "mission": "Store code relationships and implementation patterns from graphify"
+    },
+    {
+      "bank_id": "documentation",
+      "name": "Technical Documentation",
+      "mission": "Store deployment guides, API specs, and operational runbooks"
+    }
+  ],
+  "memories": [
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] graphify-neo4j-import.py",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "users_oliververmeulen_xai_v2_graphify_neo4j_import_py",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] load_graph()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_neo4j_import_load_graph",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] create_neo4j_dir()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_neo4j_import_create_neo4j_dir",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] export_nodes_csv()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_neo4j_import_export_nodes_csv",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] export_relationships_csv()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_neo4j_import_export_relationships_csv",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] create_import_cypher()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_neo4j_import_create_import_cypher",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] create_query_cypher()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_neo4j_import_create_query_cypher",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] create_docker_compose()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_neo4j_import_create_docker_compose",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] create_setup_script()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_neo4j_import_create_setup_script",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] main()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_neo4j_import_main",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Load the Graphify graph.json",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_neo4j_import_rationale_25",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Create Neo4j output directory",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_neo4j_import_rationale_30",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Export nodes to CSV format for Neo4j bulk import",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_neo4j_import_rationale_34",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Export relationships to CSV format for Neo4j bulk import",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_neo4j_import_rationale_72",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Create Cypher import script",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_neo4j_import_rationale_110",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Create useful exploration queries",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_neo4j_import_rationale_205",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Create docker-compose.yml for easy Neo4j setup",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_neo4j_import_rationale_366",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-neo4j-import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] graphify-html-generator.py",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "users_oliververmeulen_xai_v2_graphify_html_generator_py",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-html-generator.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] load_graph()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_html_generator_load_graph",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-html-generator.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] sample_graph_for_viz()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_html_generator_sample_graph_for_viz",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-html-generator.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] create_html_visualization()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_html_generator_create_html_visualization",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-html-generator.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] main()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_html_generator_main",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-html-generator.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Load the Graphify graph.json",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_html_generator_rationale_17",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-html-generator.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Sample the graph for visualization (full graph is too large to render)     Prior",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_html_generator_rationale_22",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-html-generator.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Create interactive HTML visualization",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_graphify_html_generator_rationale_87",
+        "source_file": "/Users/oliververmeulen/XAI-v2/graphify-html-generator.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] agent.py",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "users_oliververmeulen_xai_v2_agent_py",
+        "source_file": "/Users/oliververmeulen/XAI-v2/agent.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] main()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "xai_v2_agent_main",
+        "source_file": "/Users/oliververmeulen/XAI-v2/agent.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] import_no_apoc.py",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "users_oliververmeulen_xai_v2_neo4j_import_no_apoc_py",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_no_apoc.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] create_constraints()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_no_apoc_create_constraints",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_no_apoc.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] import_nodes()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_no_apoc_import_nodes",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_no_apoc.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] process_node_batch()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_no_apoc_process_node_batch",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_no_apoc.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] import_relationships()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_no_apoc_import_relationships",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_no_apoc.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] process_relationship_batch()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_no_apoc_process_relationship_batch",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_no_apoc.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] verify_import()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_no_apoc_verify_import",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_no_apoc.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] main()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_no_apoc_main",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_no_apoc.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Create constraints and indexes.",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_no_apoc_rationale_20",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_no_apoc.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Import nodes from CSV.",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_no_apoc_rationale_51",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_no_apoc.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Process a batch of nodes.",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_no_apoc_rationale_93",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_no_apoc.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Import relationships from CSV.",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_no_apoc_rationale_117",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_no_apoc.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Process a batch of relationships.",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_no_apoc_rationale_160",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_no_apoc.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Verify the import was successful.",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_no_apoc_rationale_186",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_no_apoc.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Main import function.",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_no_apoc_rationale_223",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_no_apoc.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] complete_import.py",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "users_oliververmeulen_xai_v2_neo4j_complete_import_py",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/complete_import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] main()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_complete_import_main",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/complete_import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] process_batch()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_complete_import_process_batch",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/complete_import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Process a batch using a single query.",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_complete_import_rationale_103",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/complete_import.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] test_connection.py",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "users_oliververmeulen_xai_v2_neo4j_test_connection_py",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/test_connection.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] test_connection()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_test_connection_test_connection",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/test_connection.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Test connection with given credentials.",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_test_connection_rationale_16",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/test_connection.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] import_rels_fast.py",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "users_oliververmeulen_xai_v2_neo4j_import_rels_fast_py",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_rels_fast.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] import_relationships_fast()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_rels_fast_import_relationships_fast",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_rels_fast.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] main()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_rels_fast_main",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_rels_fast.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Import relationships using bulk UNWIND.",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_rels_fast_rationale_20",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_rels_fast.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Main import function.",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "neo4j_import_rels_fast_rationale_78",
+        "source_file": "/Users/oliververmeulen/XAI-v2/neo4j/import_rels_fast.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] __init__.py",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "users_oliververmeulen_xai_v2_stacks_collabmind_memory_app_init_py",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind-memory/app/__init__.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] CollabMind Central API \u2014 memory control plane (FastAPI). Contract-first scaffold",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "app_init_rationale_1",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/central-api/app/__init__.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] main.py",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "stacks_collabmind_memory_app_main_py",
+        "source_file": "stacks/collabmind-memory/app/main.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] health()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "app_main_health",
+        "source_file": "stacks/collabmind/documents/app/main.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] search()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "app_main_search",
+        "source_file": "stacks/collabmind/documents/app/main.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] search_unified()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "app_main_search_unified",
+        "source_file": "stacks/collabmind-memory/app/main.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] write()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "app_main_write",
+        "source_file": "stacks/collabmind-memory/app/main.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] memory_store()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "app_main_memory_store",
+        "source_file": "stacks/collabmind-memory/app/main.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] status()",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "app_main_status",
+        "source_file": "stacks/collabmind-memory/app/main.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Documents / Retrieval service \u2014 minimal stub.  Backs /api/documents/* and /api/r",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "app_main_rationale_1",
+        "source_file": "stacks/collabmind/documents/app/main.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Unified federated search (stub returning shape expected by console).",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "app_main_rationale_24",
+        "source_file": "stacks/collabmind-memory/app/main.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[RATIONALE] Governance-aware memory store (console posts {content, memory_type} here).",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:rationale"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "app_main_rationale_40",
+        "source_file": "stacks/collabmind-memory/app/main.py"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] worker-configuration.d.ts",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "users_oliververmeulen_xai_v2_stacks_collabmind_memory_gateway_worker_configuration_d_ts",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] GlobalProps",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_globalprops",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] Env",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_env",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] StringifyValues",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_stringifyvalues",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] ProcessEnv",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_processenv",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] DOMException",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_domexception",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] WorkerGlobalScopeEventMap",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_workerglobalscopeeventmap",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] Console",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_console",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] BufferSource",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_buffersource",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] TypedArray",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_typedarray",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] CompileError",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_compileerror",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] RuntimeError",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_runtimeerror",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] ValueType",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_valuetype",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] GlobalDescriptor",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_globaldescriptor",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] Global",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_global",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] ImportValue",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_importvalue",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] ModuleImports",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_moduleimports",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] Imports",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_imports",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] ExportValue",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_exportvalue",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] Exports",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_exports",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] Instance",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_instance",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] MemoryDescriptor",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_memorydescriptor",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] Memory",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_memory",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] ImportExportKind",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_importexportkind",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] ModuleExportDescriptor",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_moduleexportdescriptor",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] ModuleImportDescriptor",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_moduleimportdescriptor",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] TableKind",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_tablekind",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] TableDescriptor",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_tabledescriptor",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] Table",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_table",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] ServiceWorkerGlobalScope",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_serviceworkerglobalscope",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] TestController",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_testcontroller",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] ExecutionContext",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_executioncontext",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] ExportedHandlerFetchHandler",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_exportedhandlerfetchhandler",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    },
+    {
+      "bank_id": "codebase-structure",
+      "content": "[CODE] ExportedHandlerConnectHandler",
+      "context": "code",
+      "tags": [
+        "source:graphify",
+        "type:code"
+      ],
+      "metadata": {
+        "source": "graphify",
+        "node_id": "memory_gateway_worker_configuration_d_exportedhandlerconnecthandler",
+        "source_file": "/Users/oliververmeulen/XAI-v2/stacks/collabmind/memory-gateway/worker-configuration.d.ts"
+      }
+    }
+  ]
+}

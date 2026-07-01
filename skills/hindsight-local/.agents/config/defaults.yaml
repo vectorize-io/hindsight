@@ -1,0 +1,116 @@
+# Profile B defaults (benchmark-leader assignments)
+# Generated: 2026-04-23 | Session: session-20260423-141500
+# Claude roles omit effort (cli-session managed).
+#
+# This file is a single source of truth (SSOT) shipped with oh-my-agent.
+# Do NOT edit it directly. To customize behavior, use one of:
+#   - .agents/oma-config.yaml                (agent_cli_mapping, session.quota_cap)
+#   - .agents/config/models.yaml             (add or override model slugs)
+# To receive newer Profile B defaults in future releases, run:
+#   oma install --update-defaults
+
+version: "2.1.0"
+
+agent_defaults:
+  orchestrator:  { model: "anthropic/claude-sonnet-4-6" }
+  architecture:  { model: "anthropic/claude-opus-4-7" }
+  qa:            { model: "anthropic/claude-sonnet-4-6" }
+  pm:            { model: "anthropic/claude-sonnet-4-6" }
+  backend:       { model: "openai/gpt-5.5", effort: "high" }
+  frontend:      { model: "openai/gpt-5.5", effort: "high" }
+  mobile:        { model: "openai/gpt-5.5", effort: "high" }
+  db:            { model: "openai/gpt-5.5", effort: "high" }
+  debug:         { model: "openai/gpt-5.5", effort: "high" }
+  tf-infra:      { model: "openai/gpt-5.5", effort: "high" }
+  explore:       { model: "openai/gpt-5.4-mini", effort: "low" }
+
+runtime_profiles:
+  claude:
+    description: "Claude — Max subscription holders"
+    agent_defaults:
+      orchestrator:  { model: "anthropic/claude-sonnet-4-6" }
+      architecture:  { model: "anthropic/claude-opus-4-7" }
+      qa:            { model: "anthropic/claude-sonnet-4-6" }
+      pm:            { model: "anthropic/claude-sonnet-4-6" }
+      backend:       { model: "anthropic/claude-sonnet-4-6" }
+      frontend:      { model: "anthropic/claude-sonnet-4-6" }
+      mobile:        { model: "anthropic/claude-sonnet-4-6" }
+      db:            { model: "anthropic/claude-sonnet-4-6" }
+      debug:         { model: "anthropic/claude-sonnet-4-6" }
+      tf-infra:      { model: "anthropic/claude-sonnet-4-6" }
+      explore:       { model: "anthropic/claude-haiku-4-5" }
+
+  codex:
+    description: "Codex — ChatGPT Plus/Pro"
+    agent_defaults:
+      orchestrator:  { model: "openai/gpt-5.5", effort: "medium" }
+      architecture:  { model: "openai/gpt-5.5", effort: "high" }
+      qa:            { model: "openai/gpt-5.5", effort: "high" }
+      pm:            { model: "openai/gpt-5.5", effort: "medium" }
+      backend:       { model: "openai/gpt-5.5", effort: "high" }
+      frontend:      { model: "openai/gpt-5.5", effort: "high" }
+      mobile:        { model: "openai/gpt-5.5", effort: "high" }
+      db:            { model: "openai/gpt-5.5", effort: "high" }
+      debug:         { model: "openai/gpt-5.5", effort: "high" }
+      tf-infra:      { model: "openai/gpt-5.5", effort: "high" }
+      explore:       { model: "openai/gpt-5.4-mini", effort: "low" }
+
+  mixed:
+    description: "Mixed — role-optimal vendors per agent (Claude for orchestration/QA/PM, Codex for impl/explore)"
+    agent_defaults:
+      orchestrator:  { model: "anthropic/claude-sonnet-4-6" }
+      architecture:  { model: "anthropic/claude-opus-4-7" }
+      qa:            { model: "anthropic/claude-sonnet-4-6" }
+      pm:            { model: "anthropic/claude-sonnet-4-6" }
+      backend:       { model: "openai/gpt-5.5", effort: "high" }
+      frontend:      { model: "openai/gpt-5.5", effort: "high" }
+      mobile:        { model: "openai/gpt-5.5", effort: "high" }
+      db:            { model: "openai/gpt-5.5", effort: "high" }
+      debug:         { model: "openai/gpt-5.5", effort: "high" }
+      tf-infra:      { model: "openai/gpt-5.5", effort: "high" }
+      explore:       { model: "openai/gpt-5.4-mini", effort: "low" }
+
+  antigravity:
+    description: "Antigravity CLI (agy) — nominal Gemini 3.1 Pro for impl/architecture, Gemini 3.5 Flash for orchestration & explore (agy 1.0 has no --model flag; model is config-driven)"
+    agent_defaults:
+      orchestrator:  { model: "antigravity/gemini-3.5-flash" }
+      architecture:  { model: "antigravity/gemini-3.1-pro" }
+      qa:            { model: "antigravity/gemini-3.1-pro" }
+      pm:            { model: "antigravity/gemini-3.5-flash" }
+      backend:       { model: "antigravity/gemini-3.1-pro" }
+      frontend:      { model: "antigravity/gemini-3.1-pro" }
+      mobile:        { model: "antigravity/gemini-3.1-pro" }
+      db:            { model: "antigravity/gemini-3.1-pro" }
+      debug:         { model: "antigravity/gemini-3.1-pro" }
+      tf-infra:      { model: "antigravity/gemini-3.1-pro" }
+      explore:       { model: "antigravity/gemini-3.5-flash" }
+
+  cursor:
+    description: "Cursor — Cursor Pro / Pro Student"
+    agent_defaults:
+      orchestrator:  { model: "cursor/composer-2.5-fast" }
+      architecture:  { model: "cursor/composer-2.5" }
+      qa:            { model: "cursor/composer-2.5-fast" }
+      pm:            { model: "cursor/composer-2.5-fast" }
+      backend:       { model: "cursor/composer-2.5" }
+      frontend:      { model: "cursor/composer-2.5" }
+      mobile:        { model: "cursor/composer-2.5" }
+      db:            { model: "cursor/composer-2.5" }
+      debug:         { model: "cursor/composer-2.5" }
+      tf-infra:      { model: "cursor/composer-2.5" }
+      explore:       { model: "cursor/composer-2.5-fast" }
+
+  qwen:
+    description: "Qwen Code — all agents routed external (no native parallel); Qwen has no --effort, only binary --thinking"
+    agent_defaults:
+      orchestrator:  { model: "qwen/qwen3-coder-next", thinking: false }
+      architecture:  { model: "qwen/qwen3.6-plus", thinking: true }
+      qa:            { model: "qwen/qwen3.6-plus", thinking: true }
+      pm:            { model: "qwen/qwen3-coder-next", thinking: false }
+      backend:       { model: "qwen/qwen3.6-plus", thinking: true }
+      frontend:      { model: "qwen/qwen3.6-plus", thinking: true }
+      mobile:        { model: "qwen/qwen3.6-plus", thinking: true }
+      db:            { model: "qwen/qwen3.6-plus", thinking: true }
+      debug:         { model: "qwen/qwen3.6-plus", thinking: true }
+      tf-infra:      { model: "qwen/qwen3.6-plus", thinking: true }
+      explore:       { model: "qwen/qwen3-coder-next", thinking: false }

@@ -1,0 +1,46 @@
+default_output_dir: .agents/results/images
+default_vendor: auto
+default_size: 1024x1024
+default_quality: auto
+default_count: 1
+default_timeout_sec: 180
+
+vendors:
+  codex:
+    enabled: true
+    model: gpt-image-2
+    extra_args: []
+  antigravity:
+    # Antigravity CLI (`agy`) is an agentic CLI that drives its own image
+    # generation tool over the Gemini Code Assist subscription. The exact
+    # model agy picks internally is opaque to us, so we deliberately leave
+    # `model` empty — no fictional model hint goes into the prompt, the
+    # manifest, or the output filename. Requires `agy` on PATH.
+    enabled: true
+    model: ""
+  pollinations:
+    enabled: true
+    model: flux
+
+cost_guardrail:
+  estimate_threshold_usd: 0.20
+  per_image_usd:
+    codex:
+      gpt-image-2:
+        low: 0.02
+        medium: 0.03
+        high: 0.04
+        auto: 0.03
+    antigravity:
+      "":
+        low: 0
+        medium: 0
+        high: 0
+        auto: 0
+
+compare:
+  folder_pattern: "{timestamp}-{shortid}-compare"
+  manifest: true
+
+naming:
+  single_folder_pattern: "{timestamp}-{shortid}"

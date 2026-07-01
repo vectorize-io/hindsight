@@ -1,0 +1,22 @@
+languages:
+- typescript
+- dart
+- terraform
+
+encoding: "utf-8"
+ignore_all_files_in_gitignore: true
+ignored_paths: []
+read_only: false
+excluded_tools: []
+initial_prompt: ""
+project_name: "hindsight-local"
+included_optional_tools: []
+base_modes:
+default_modes:
+fixed_tools: []
+symbol_info_budget:
+language_backend:
+read_only_memory_patterns: []
+line_ending:
+ignored_memory_patterns: []
+ls_specific_settings: {}

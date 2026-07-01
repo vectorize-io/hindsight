@@ -1,0 +1,19 @@
+# oma-voice configuration
+# Design reference: docs/plans/designs/012-oma-voice.md
+
+# Profile names returned by `voicebox_list_profiles`. Set after creating a
+# profile in the Voicebox app (Profiles tab → + New Profile). When null, the
+# skill asks the user which profile to use, or disables auto-notification.
+notification_profile: null
+asset_profile: null
+
+# Where TTS asset audio and STT transcripts are written.
+output_dir: .agents/results/voice
+
+# Trigger automatic voice notifications when the active task exceeds this many
+# seconds. Set to null to disable auto-notification.
+auto_notify_after_sec: 60
+
+# Hard limits. Above these the skill asks the user to split or truncate.
+max_tts_chars: 5000
+max_stt_minutes: 30

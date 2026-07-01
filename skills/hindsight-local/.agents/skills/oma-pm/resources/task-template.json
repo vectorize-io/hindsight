@@ -1,0 +1,58 @@
+{
+  "project_name": "",
+  "description": "",
+  "tech_stack": {
+    "frontend": "",
+    "backend": "",
+    "mobile": "",
+    "database": "",
+    "infrastructure": ""
+  },
+  "architecture_decisions": [
+    {
+      "decision": "",
+      "rationale": "",
+      "alternatives_considered": []
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-1",
+      "agent": "backend|frontend|mobile|qa",
+      "title": "",
+      "description": "",
+      "priority": 1,
+      "dependencies": [],
+      "estimated_complexity": "low|medium|high|very-high",
+      "acceptance_criteria": [],
+      "artifacts_expected": [],
+      "scope": []
+    }
+  ],
+  "api_contracts": [
+    {
+      "endpoint": "",
+      "method": "GET|POST|PUT|DELETE|PATCH",
+      "request": {},
+      "response": {},
+      "headers": {}
+    }
+  ],
+  "data_models": [
+    {
+      "entity": "",
+      "fields": {}
+    }
+  ],
+  "non_functional_requirements": {
+    "security": [],
+    "performance": [],
+    "scalability": []
+  },
+  "testing_strategy": {
+    "unit_tests": "",
+    "integration_tests": "",
+    "e2e_tests": "",
+    "performance_tests": ""
+  }
+}

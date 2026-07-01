@@ -1,0 +1,36 @@
+services:
+  ollama-embeddings:
+    image: ollama/ollama:latest
+    container_name: ollama-embeddings
+    ports:
+      - "11434:11434"
+    volumes:
+      - /Volumes/Mac/Users/oliververmeulen/.ollama:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_NUM_PARALLEL=4
+      - OLLAMA_MAX_LOADED_MODELS=3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 16G
+
+  ollama-llm:
+    image: ollama/ollama:latest
+    container_name: ollama-llm
+    ports:
+      - "11435:11434"
+    volumes:
+      - /Volumes/Mac/Users/oliververmeulen/.ollama:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_MAX_LOADED_MODELS=2
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '6'
+          memory: 24G

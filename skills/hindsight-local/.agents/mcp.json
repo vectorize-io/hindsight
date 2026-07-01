@@ -1,0 +1,102 @@
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--no-usage-statistics",
+        "--isolated"
+      ]
+    },
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@latest"
+      ]
+    },
+    "serena": {
+      "command": "serena",
+      "args": [
+        "start-mcp-server",
+        "--context",
+        "claude-code",
+        "--project",
+        ".",
+        "--open-web-dashboard",
+        "false"
+      ],
+      "env": {
+        "SERENA_LOG_LEVEL": "info"
+      },
+      "available_tools": null
+    }
+  },
+  "memoryConfig": {
+    "provider": "serena",
+    "basePath": ".serena/memories",
+    "tools": {
+      "read": "read_memory",
+      "write": "write_memory",
+      "edit": "edit_memory",
+      "list": "list_memories",
+      "delete": "delete_memory"
+    }
+  },
+  "toolGroups": {
+    "memory": [
+      "read_memory",
+      "write_memory",
+      "edit_memory",
+      "list_memories",
+      "delete_memory"
+    ],
+    "code-analysis": [
+      "get_symbols_overview",
+      "find_symbol",
+      "find_referencing_symbols",
+      "search_for_pattern"
+    ],
+    "code-edit": [
+      "replace_symbol_body",
+      "insert_after_symbol",
+      "insert_before_symbol",
+      "rename_symbol"
+    ],
+    "browser": [
+      "navigate_page",
+      "take_screenshot",
+      "click",
+      "fill",
+      "fill_form",
+      "evaluate_script",
+      "list_network_requests",
+      "list_console_messages",
+      "lighthouse_audit",
+      "performance_start_trace",
+      "performance_stop_trace",
+      "performance_analyze_insight"
+    ],
+    "docs-search": [
+      "resolve-library-id",
+      "query-docs"
+    ],
+    "file-ops": [
+      "list_dir",
+      "find_file"
+    ],
+    "project": [
+      "activate_project",
+      "get_current_config",
+      "check_onboarding_performed",
+      "onboarding"
+    ],
+    "thinking": [
+      "think_about_collected_information",
+      "think_about_task_adherence",
+      "think_about_whether_you_are_done"
+    ],
+    "all": null
+  }
+}

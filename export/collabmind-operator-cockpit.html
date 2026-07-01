@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Collabmind — Operator Cockpit</title>
+<style>
+/* ============ TOKENS ============ */
+:root{
+  --bg:#0a0e14;
+  --bg-1:#0e131c;
+  --bg-2:#131a26;
+  --bg-3:#1a2333;
+  --panel:#10161f;
+  --line:#1e2937;
+  --line-2:#283648;
+  --txt:#c7d2e0;
+  --txt-dim:#7c8aa0;
+  --txt-mute:#54627a;
+  --cyan:#39d4d4;
+  --cyan-dim:#1d8a8a;
+  --green:#3fd07a;
+  --amber:#f5b942;
+  --red:#f05d6c;
+  --blue:#5b8def;
+  --violet:#9d7bf0;
+  --pg:#5b8def;       /* postgres */
+  --d1:#f5b942;       /* d1 edge */
+  --om:#9d7bf0;       /* openmemory */
+  --xai:#3fd07a;      /* xai */
+  --mem0:#39d4d4;     /* mem0 */
+  --gw:#f05d6c;       /* gateway */
+  --local:#7c8aa0;    /* local */
+  --mono:'JetBrains Mono','SF Mono',ui-monospace,'Cascadia Code',Consolas,monospace;
+  --sans:'Inter',-apple-system,system-ui,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{font-size:14px}
+body{
+  background:var(--bg);
+  color:var(--txt);
+  font-family:var(--mono);
+  font-feature-settings:"tnum" 1,"zero" 1;
+  overflow:hidden;
+  height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+/* subtle scanline texture */
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;
+  background:repeating-linear-gradient(0deg,rgba(255,255,255,0.012) 0 1px,transparent 1px 3px);
+  mix-blend-mode:overlay;opacity:.5;
+}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:0}
+::-webkit-scrollbar-thumb:hover{background:#3a4a60}
+
+/* ============ APP GRID ============ */
+#app{display:grid;grid-template-rows:auto 1fr auto;height:100vh}
+
+/* ============ TOP BAR ============ */
+.topbar{
+  display:flex;align-items:center;gap:0;
+  background:linear-gradient(180deg,#0e131c,#0a0e14);
+  border-bottom:1px solid var(--line-2);
+  height:46px;padding:0 14px;position:relative;z-index:50;
+}
+.brand{display:flex;align-items:center;gap:10px;padding-right:18px;border-right:1px solid var(--line)}
+.brand .logo{
+  width:22px;height:22px;border-radius:3px;
+  background:conic-gradient(from 140deg,var(--cyan),var(--violet),var(--green),var(--cyan));
+  box-shadow:0 0 12px rgba(57,212,212,.4);position:relative;
+}
+.brand .logo::after{content:"";position:absolute;inset:5px;border-radius:1px;background:var(--bg)}
+.brand .name{font-weight:700;letter-spacing:.5px;font-size:13px}
+.brand .name b{color:var(--cyan)}
+.brand .sub{font-size:9px;color:var(--txt-mute);letter-spacing:1.5px;text-transform:uppercase}
+
+.tabs{display:flex;height:100%;margin-left:6px}
+.tab{
+  display:flex;align-items:center;gap:7px;padding:0 18px;height:100%;
+  font-size:11.5px;letter-spacing:.5px;color:var(--txt-dim);cursor:pointer;
+  border-right:1px solid var(--line);position:relative;background:transparent;
+  text-transform:uppercase;font-weight:500;transition:color .15s,background .15s;
+}
+.tab .dot{width:5px;height:5px;border-radius:50%;background:var(--txt-mute)}
+.tab:hover{color:var(--txt);background:rgba(255,255,255,.02)}
+.tab.active{color:#fff;background:var(--bg-2)}
+.tab.active::after{content:"";position:absolute;bottom:-1px;left:0;right:0;height:2px;background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
+.tab.active .dot{background:var(--cyan);box-shadow:0 0 6px var(--cyan)}
+
+.topbar .spacer{flex:1}
+.sysclock{display:flex;align-items:center;gap:14px;font-size:11px;color:var(--txt-dim)}
+.sysclock .kv{display:flex;flex-direction:column;align-items:flex-end;line-height:1.2}
+.sysclock .kv .lbl{font-size:8px;color:var(--txt-mute);letter-spacing:1px;text-transform:uppercase}
+.sysclock .kv .val{font-size:12px;color:var(--txt)}
+.sysclock .val .ok{color:var(--green)}
+.pulse{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ============ MAIN ============ */
+.main{overflow:hidden;position:relative}
+.view{display:none;height:100%;overflow:auto;padding:14px}
+.view.active{display:block;animation:fade .25s ease}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* ============ STATUS BAR ============ */
+.statusbar{
+  display:flex;align-items:center;gap:0;height:26px;
+  background:#0c1119;border-top:1px solid var(--line-2);
+  font-size:10.5px;color:var(--txt-dim);padding:0 12px;letter-spacing:.3px;z-index:50;
+}
+.statusbar .seg{display:flex;align-items:center;gap:6px;padding:0 14px;height:100%;border-right:1px solid var(--line)}
+.statusbar .seg:first-child{padding-left:0}
+.statusbar .seg b{color:var(--txt)}
+.statusbar .spacer{flex:1}
+.statusbar .blink{animation:blink 1.1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* ============ PANELS ============ */
+.panel{
+  background:var(--panel);border:1px solid var(--line);border-radius:5px;
+  display:flex;flex-direction:column;overflow:hidden;position:relative;
+}
+.panel-h{
+  display:flex;align-items:center;gap:8px;padding:8px 12px;
+  border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.018),transparent);
+  font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--txt-dim);font-weight:600;
+}
+.panel-h .ico{width:12px;height:12px;opacity:.7}
+.panel-h .tag{margin-left:auto;font-size:9px;color:var(--txt-mute);letter-spacing:.5px;font-weight:500}
+.panel-b{padding:12px;flex:1;overflow:auto}
+.panel-h .live{display:flex;align-items:center;gap:5px;margin-left:auto;color:var(--green);font-size:9px;letter-spacing:.5px}
+.panel-h .live .pulse{width:5px;height:5px}
+
+/* utility */
+.row{display:flex;gap:12px}
+.col{display:flex;flex-direction:column;gap:12px}
+.grid{display:grid;gap:12px}
+.muted{color:var(--txt-mute)}
+.dim{color:var(--txt-dim)}
+.mono{font-family:var(--mono)}
+.right{text-align:right}
+.nowrap{white-space:nowrap}
+
+/* ============ METRIC TILES ============ */
+.metrics{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:12px}
+.metric{
+  background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:11px 13px;
+  position:relative;overflow:hidden;
+}
+.metric::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--cyan);opacity:.6}
+.metric.m-green::before{background:var(--green)}
+.metric.m-amber::before{background:var(--amber)}
+.metric.m-red::before{background:var(--red)}
+.metric.m-blue::before{background:var(--blue)}
+.metric.m-violet::before{background:var(--violet)}
+.metric .ml{font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--txt-mute);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center}
+.metric .mv{font-size:23px;font-weight:600;color:#fff;line-height:1;letter-spacing:-.5px}
+.metric .mv small{font-size:11px;color:var(--txt-dim);font-weight:400}
+.metric .md{font-size:9.5px;margin-top:6px;color:var(--txt-dim);display:flex;align-items:center;gap:4px}
+.delta-up{color:var(--green)}
+.delta-dn{color:var(--red)}
+.spark{height:22px;width:100%;margin-top:6px;display:block}
+
+/* ============ BADGES ============ */
+.badge{
+  display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:3px;
+  font-size:9.5px;letter-spacing:.5px;font-weight:600;text-transform:uppercase;border:1px solid;
+}
+.b-green{color:var(--green);border-color:rgba(63,208,122,.4);background:rgba(63,208,122,.1)}
+.b-amber{color:var(--amber);border-color:rgba(245,185,66,.4);background:rgba(245,185,66,.1)}
+.b-red{color:var(--red);border-color:rgba(240,93,108,.4);background:rgba(240,93,108,.1)}
+.b-blue{color:var(--blue);border-color:rgba(91,141,239,.4);background:rgba(91,141,239,.1)}
+.b-cyan{color:var(--cyan);border-color:rgba(57,212,212,.4);background:rgba(57,212,212,.1)}
+.b-violet{color:var(--violet);border-color:rgba(157,123,240,.4);background:rgba(157,123,240,.1)}
+.b-grey{color:var(--txt-dim);border-color:var(--line-2);background:rgba(255,255,255,.03)}
+.b-dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+
+/* ============ TABLES ============ */
+table.t{width:100%;border-collapse:collapse;font-size:11px}
+table.t th{
+  text-align:left;padding:7px 10px;font-size:9px;letter-spacing:.8px;text-transform:uppercase;
+  color:var(--txt-mute);border-bottom:1px solid var(--line-2);font-weight:600;position:sticky;top:0;background:var(--panel);
+}
+table.t td{padding:7px 10px;border-bottom:1px solid var(--line);color:var(--txt);vertical-align:middle}
+table.t tr:hover td{background:rgba(91,141,239,.05)}
+table.t tr{cursor:default}
+table.t .num{text-align:right;font-variant-numeric:tabular-nums}
+table.t tr.clickable{cursor:pointer}
+table.t tr.clickable:hover td{background:rgba(57,212,212,.06)}
+
+/* ============ BUTTONS ============ */
+.btn{
+  display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:4px;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.4px;cursor:pointer;
+  background:var(--bg-2);border:1px solid var(--line-2);color:var(--txt-dim);
+  transition:all .13s;text-transform:uppercase;font-weight:500;
+}
+.btn:hover{border-color:var(--cyan-dim);color:var(--cyan);background:rgba(57,212,212,.06)}
+.btn.primary{background:rgba(57,212,212,.12);border-color:var(--cyan-dim);color:var(--cyan)}
+.btn.primary:hover{background:rgba(57,212,212,.2);box-shadow:0 0 12px rgba(57,212,212,.25)}
+.btn.danger:hover{border-color:var(--red);color:var(--red);background:rgba(240,93,108,.08)}
+.btn.green:hover{border-color:var(--green);color:var(--green);background:rgba(63,208,122,.08)}
+.btn:active{transform:translateY(1px)}
+.btn.sm{padding:3px 8px;font-size:9.5px}
+.btn-row{display:flex;gap:7px;flex-wrap:wrap}
+
+/* ============ BARS ============ */
+.bar{height:5px;background:var(--bg-3);border-radius:3px;overflow:hidden;position:relative}
+.bar > i{display:block;height:100%;border-radius:3px;background:var(--cyan);transition:width .6s}
+.barlabel{display:flex;justify-content:space-between;font-size:10px;margin-bottom:4px;color:var(--txt-dim)}
+
+/* segmented control */
+.seg-ctl{display:inline-flex;background:var(--bg);border:1px solid var(--line-2);border-radius:5px;padding:2px;gap:2px}
+.seg-ctl button{
+  background:transparent;border:0;color:var(--txt-dim);font-family:var(--mono);font-size:10px;
+  padding:4px 11px;border-radius:3px;cursor:pointer;letter-spacing:.5px;text-transform:uppercase;transition:all .13s;
+}
+.seg-ctl button:hover{color:var(--txt)}
+.seg-ctl button.on{background:var(--cyan);color:#04181a;font-weight:600;box-shadow:0 0 10px rgba(57,212,212,.3)}
+
+/* toggle */
+.tg{width:34px;height:18px;border-radius:10px;background:var(--bg-3);border:1px solid var(--line-2);position:relative;cursor:pointer;transition:all .2s;flex:none}
+.tg::after{content:"";position:absolute;top:1px;left:1px;width:14px;height:14px;border-radius:50%;background:var(--txt-mute);transition:all .2s}
+.tg.on{background:rgba(57,212,212,.25);border-color:var(--cyan-dim)}
+.tg.on::after{left:17px;background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
+
+/* log feed */
+.feed{font-size:10.5px;line-height:1.65}
+.feed .ln{display:flex;gap:9px;padding:2px 0;border-bottom:1px solid rgba(30,41,55,.4);white-space:nowrap}
+.feed .ln .ts{color:var(--txt-mute);flex:none}
+.feed .ln .lv{flex:none;width:40px;font-weight:600}
+.feed .ln .lv.INFO{color:var(--blue)}
+.feed .ln .lv.OK{color:var(--green)}
+.feed .ln .lv.WARN{color:var(--amber)}
+.feed .ln .lv.ERR{color:var(--red)}
+.feed .ln .src{color:var(--violet);flex:none;width:120px;overflow:hidden;text-overflow:ellipsis}
+.feed .ln .msg{color:var(--txt-dim);overflow:hidden;text-overflow:ellipsis}
+
+/* dot grid heat */
+.heat{display:flex;gap:3px;flex-wrap:wrap}
+.heat i{width:9px;height:9px;border-radius:2px;background:var(--bg-3)}
+
+/* engine pill */
+.epill{display:inline-flex;align-items:center;gap:6px;font-size:10.5px}
+.epill .sw{width:8px;height:8px;border-radius:2px;flex:none}
+
+/* tooltip-ish kv list */
+.kvlist{display:flex;flex-direction:column;gap:0}
+.kvlist .kv{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:11px}
+.kvlist .kv .k{color:var(--txt-mute)}
+.kvlist .kv .v{color:var(--txt)}
+
+/* section title */
+.sec-t{display:flex;align-items:center;gap:8px;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--txt-mute);margin:2px 0 10px;font-weight:600}
+.sec-t::after{content:"";flex:1;height:1px;background:var(--line)}
+
+/* modal */
+.modal-bg{position:fixed;inset:0;background:rgba(5,8,12,.7);backdrop-filter:blur(3px);z-index:200;display:none;align-items:center;justify-content:center}
+.modal-bg.show{display:flex;animation:fade .2s}
+.modal{width:560px;max-width:92vw;max-height:84vh;background:var(--bg-1);border:1px solid var(--line-2);border-radius:7px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.6)}
+.modal-h{padding:13px 16px;border-bottom:1px solid var(--line-2);display:flex;align-items:center;gap:10px;background:var(--bg-2)}
+.modal-h .x{margin-left:auto;cursor:pointer;color:var(--txt-mute);font-size:16px;line-height:1}
+.modal-h .x:hover{color:var(--red)}
+.modal-b{padding:16px;overflow:auto}
+.codeblock{background:#070a0f;border:1px solid var(--line);border-radius:5px;padding:11px 13px;font-size:10.5px;line-height:1.6;color:var(--cyan);white-space:pre;overflow:auto}
+.codeblock .k{color:var(--violet)}.codeblock .s{color:var(--green)}.codeblock .n{color:var(--amber)}.codeblock .c{color:var(--txt-mute)}
+
+/* input */
+.inp{background:#070a0f;border:1px solid var(--line-2);border-radius:4px;color:var(--txt);font-family:var(--mono);font-size:11px;padding:7px 10px;width:100%}
+.inp:focus{outline:none;border-color:var(--cyan-dim);box-shadow:0 0 0 2px rgba(57,212,212,.12)}
+.inp::placeholder{color:var(--txt-mute)}
+
+/* flash highlight on live update */
+.flash{animation:flash 1s}
+@keyframes flash{0%{background:rgba(57,212,212,.18)}100%{background:transparent}}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- TOP BAR -->
+  <div class="topbar">
+    <div class="brand">
+      <div class="logo"></div>
+      <div>
+        <div class="name"><b>COLLAB</b>MIND</div>
+        <div class="sub">Operator Cockpit</div>
+      </div>
+    </div>
+    <div class="tabs" id="tabs">
+      <div class="tab active" data-view="monitor"><span class="dot"></span>Monitor</div>
+      <div class="tab" data-view="memory"><span class="dot"></span>Memory Ops</div>
+      <div class="tab" data-view="govern"><span class="dot"></span>Govern</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="sysclock">
+      <div class="kv"><span class="lbl">Spine</span><span class="val"><span class="ok">PG&#9656;D1</span> synced</span></div>
+      <div class="kv"><span class="lbl">Engines</span><span class="val"><span class="ok">5/5</span> online</span></div>
+      <div class="kv"><span class="lbl">UTC</span><span class="val" id="clock">--:--:--</span></div>
+      <div class="pulse" title="live"></div>
+    </div>
+  </div>
+
+  <!-- MAIN VIEWS -->
+  <div class="main">
+    <div class="view active" id="view-monitor"></div>
+    <div class="view" id="view-memory"></div>
+    <div class="view" id="view-govern"></div>
+  </div>
+
+  <!-- STATUS BAR -->
+  <div class="statusbar">
+    <div class="seg"><span class="pulse" style="width:6px;height:6px"></span> <b>LIVE</b></div>
+    <div class="seg">spine: <b style="color:var(--green)">healthy</b></div>
+    <div class="seg">strategy: <b id="sb-strat" style="color:var(--cyan)">tiered</b></div>
+    <div class="seg">p95: <b id="sb-p95">1.42s</b></div>
+    <div class="seg">cost/day: <b id="sb-cost">$28.47</b></div>
+    <div class="seg">queue: <b id="sb-q" style="color:var(--green)">0</b></div>
+    <div class="spacer"></div>
+    <div class="seg" id="sb-tick">tick <b class="blink">&#9608;</b></div>
+    <div class="seg">v1.0.0 · build 4424b6c</div>
+  </div>
+</div>
+
+<!-- MODAL MOUNT -->
+<div class="modal-bg" id="modalbg"><div class="modal" id="modal"></div></div>
+
+<script>
+/* ================= MOCK DATA MODEL (mirrors the repos) ================= */
+const ENGINES = [
+  {id:'memory.openmemory.primary', engine:'openmemory', label:'OpenMemory', color:'var(--om)', type:'memory', status:'canonical', api:'rest+mcp', endpoint:'reasoning-openmemory.collabmind.dev', auth:'authentik_oauth2', caps:{filter:true,decay:true,sectors:true}, scopes:['project','workspace'], vec:'qdrant', dim:1536, p95:1.9, calls:4821, err:0.4, share:38},
+  {id:'memory.gateway.edge', engine:'gateway', label:'Memory Gateway', color:'var(--gw)', type:'memory', status:'canonical', api:'rest', endpoint:'memory-gateway.workers.dev', auth:'bearer', caps:{filter:true,decay:false,sectors:false}, scopes:['session'], vec:'vectorize', dim:384, p95:0.21, calls:9103, err:0.1, share:21},
+  {id:'memory.xai.collections', engine:'xai_collections', label:'xAI Collections', color:'var(--xai)', type:'memory', status:'canonical', api:'rest', endpoint:'api.x.ai/v1/collections', auth:'x_api_key', caps:{filter:true,decay:false,sectors:false}, scopes:['workspace'], vec:'xai', dim:1536, p95:0.88, calls:3204, err:0.7, share:15},
+  {id:'memory.mem0.dev', engine:'mem0', label:'mem0', color:'var(--mem0)', type:'memory', status:'experimental', api:'rest', endpoint:'localhost:8432', auth:'bearer', caps:{filter:true,decay:false,sectors:false}, scopes:['operator'], vec:'qdrant', dim:1536, p95:0.62, calls:1876, err:0.3, share:11},
+  {id:'memory.local.collections', engine:'local', label:'Local Collections', color:'var(--local)', type:'memory', status:'experimental', api:'rest', endpoint:'collections-service:3012', auth:'authentik_oauth2', caps:{filter:true,decay:false,sectors:false}, scopes:['audit'], vec:'hnsw', dim:384, p95:0.34, calls:2410, err:0.2, share:15},
+];
+const SERVICES = [
+  {name:'Postgres (control plane)', host:'postgres:5432', st:'healthy', up:99.99, cpu:24, mem:61, role:'PRIMARY SPINE'},
+  {name:'Cloudflare D1 (edge mirror)', host:'d1.collabmind.dev', st:'healthy', up:99.97, cpu:8, mem:12, role:'EDGE MIRROR', sync:'42ms lag'},
+  {name:'Qdrant', host:'qdrant:6333', st:'healthy', up:99.95, cpu:41, mem:73, role:'VECTOR'},
+  {name:'Valkey', host:'valkey:6379', st:'healthy', up:100, cpu:11, mem:34, role:'VECTOR CACHE'},
+  {name:'Authentik', host:'auth.collabmind.dev', st:'healthy', up:99.98, cpu:17, mem:48, role:'IDENTITY'},
+  {name:'Traefik', host:':8006', st:'healthy', up:99.99, cpu:6, mem:19, role:'EDGE PROXY'},
+  {name:'LiteLLM', host:'litellm:4000', st:'degraded', up:99.4, cpu:33, mem:55, role:'MODEL ROUTER', note:'1 provider slow'},
+  {name:'OpenMetadata', host:':8585', st:'healthy', up:99.9, cpu:14, mem:42, role:'CATALOG'},
+  {name:'MinIO', host:'s3.collabmind.dev', st:'healthy', up:99.99, cpu:9, mem:28, role:'OBJECT STORE'},
+  {name:'Ara Voice Agent', host:':3010', st:'idle', up:99.7, cpu:3, mem:15, role:'VOICE'},
+];
+const SECTORS=[{k:'episodic',n:1240,d:0.015,c:'var(--blue)'},{k:'semantic',n:3810,d:0.005,c:'var(--green)'},{k:'procedural',n:2105,d:0.008,c:'var(--violet)'},{k:'emotional',n:430,d:0.020,c:'var(--red)'},{k:'reflective',n:920,d:0.001,c:'var(--cyan)'}];
+const FEEDMSG=[
+  ['OK','router','fanout query → 4 engines, fused 8 chunks (RRF)'],
+  ['INFO','postgres','memory_records insert mem_8f2a · scope=project'],
+  ['OK','d1-sync','projection synced txn#88213 → edge (38ms)'],
+  ['INFO','openmemory','composite_score 0.91 · sector=procedural'],
+  ['WARN','litellm','provider openai p95 2.3s — fallback armed'],
+  ['OK','evaluate','correction stored eval_4f10 → router reweighted'],
+  ['INFO','authentik','JWT minted sub=oliver.v access_level=operator'],
+  ['OK','gateway','vectorize upsert id=a91c · 384d'],
+  ['INFO','xai','collection search telecall · 12 candidates'],
+  ['ERR','xai','rate-limit 429 — retried, ok on attempt 2'],
+  ['OK','promote','mem_71bd draft→approved by operator'],
+  ['INFO','lineage','edge object→chunk→embed→answer recorded'],
+];
+const MEMRECS=[
+  {id:'mem_8f2a91', title:'Telecall SBC Failover Runbook', engine:'openmemory', sector:'procedural', scope:'project', status:'approved', conf:'internal', tenant:'telecall', score:0.94, ver:'1.2.0', age:'2h'},
+  {id:'mem_71bd03', title:'Carrier Priority Rollback Notes', engine:'gateway', sector:'—', scope:'session', status:'draft', conf:'internal', tenant:'telecall', score:0.81, ver:'0.3.0', age:'5h'},
+  {id:'mem_a3c8f1', title:'API Spec — Alaris Routing v3', engine:'xai_collections', sector:'—', scope:'workspace', status:'approved', conf:'restricted', tenant:'telecall', score:0.88, ver:'3.0.1', age:'1d'},
+  {id:'mem_22e0bb', title:'Operator preference: concise answers', engine:'mem0', sector:'—', scope:'operator', status:'approved', conf:'private', tenant:'_global', score:0.76, ver:'1.0.0', age:'3d'},
+  {id:'mem_5f1990', title:'Postmortem — June outage edge sync', engine:'local', sector:'—', scope:'audit', status:'review', conf:'internal', tenant:'collabmind', score:0.69, ver:'0.1.0', age:'6h'},
+  {id:'mem_9d4a72', title:'OpenMemory waypoint graph tuning', engine:'openmemory', sector:'reflective', scope:'project', status:'approved', conf:'internal', tenant:'collabmind', score:0.91, ver:'2.1.0', age:'12h'},
+  {id:'mem_c8b210', title:'Deprecated: SBC runbook v0.9', engine:'xai_collections', sector:'—', scope:'workspace', status:'deprecated', conf:'internal', tenant:'telecall', score:0.44, ver:'0.9.0', age:'14d'},
+  {id:'mem_e07f33', title:'Chunking profile experiment 512/128', engine:'local', sector:'—', scope:'audit', status:'draft', conf:'internal', tenant:'collabmind', score:0.58, ver:'0.0.4', age:'4h'},
+];
+const ROUTES=[
+  {scope:'operator', engine:'mem0', strat:'single', why:'personal memory isolation'},
+  {scope:'project', engine:'openmemory', strat:'tiered', why:'cognitive recall + decay'},
+  {scope:'workspace', engine:'xai_collections', strat:'single', why:'managed scale'},
+  {scope:'session', engine:'gateway', strat:'single', why:'fast edge cache'},
+  {scope:'audit', engine:'local', strat:'single', why:'private, on-prem'},
+  {scope:'*critical*', engine:'all', strat:'fanout', why:'max recall + cross-engine'},
+];
+
+/* ================= HELPERS ================= */
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
+function spark(vals,color='var(--cyan)',w=120,h=22){
+  const max=Math.max(...vals),min=Math.min(...vals),rng=(max-min)||1;
+  const pts=vals.map((v,i)=>`${(i/(vals.length-1)*w).toFixed(1)},${(h-((v-min)/rng)*(h-3)-1).toFixed(1)}`).join(' ');
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.4"/><polyline points="0,${h} ${pts} ${w},${h}" fill="${color}" opacity="0.08" stroke="none"/></svg>`;
+}
+function rnd(a,b){return a+Math.random()*(b-a)}
+function randSeries(n,a,b){return Array.from({length:n},()=>rnd(a,b))}
+/* ================= MONITOR VIEW ================= */
+function renderMonitor(){
+  const v=$('#view-monitor'); v.innerHTML='';
+
+  // metric tiles
+  const metrics=el('div','metrics');
+  const tiles=[
+    {l:'Queries / 24h',v:'12,842',d:'<span class="delta-up">&#9650; 12.5%</span> vs prev',cls:'',sp:randSeries(18,40,90),sc:'var(--cyan)'},
+    {l:'Avg Latency',v:'1.42<small>s</small>',d:'<span class="delta-up">&#9660; 8.3%</span> p95 1.9s',cls:'m-green',sp:randSeries(18,30,70),sc:'var(--green)'},
+    {l:'Faithfulness',v:'78.6<small>%</small>',d:'<span class="delta-up">&#9650; 6.2%</span> RAGAS',cls:'m-violet',sp:randSeries(18,55,80),sc:'var(--violet)'},
+    {l:'Cost / Day',v:'$28.47',d:'<span class="delta-dn">&#9650; 3.1%</span> budget $40',cls:'m-amber',sp:randSeries(18,20,60),sc:'var(--amber)'},
+    {l:'Corrections',v:'47',d:'stored this week',cls:'m-blue',sp:randSeries(18,10,50),sc:'var(--blue)'},
+    {l:'Error Rate',v:'0.38<small>%</small>',d:'<span class="delta-up">&#9660; 0.1%</span> 49 / 12.8k',cls:'m-red',sp:randSeries(18,5,40),sc:'var(--red)'},
+  ];
+  tiles.forEach(t=>{
+    metrics.appendChild(el('div','metric '+t.cls,
+      `<div class="ml">${t.l}</div><div class="mv">${t.v}</div><div class="md">${t.d}</div>${spark(t.sp,t.sc)}`));
+  });
+  v.appendChild(metrics);
+
+  // 3-col row: services | flow | feed
+  const grid=el('div','grid'); grid.style.gridTemplateColumns='1.15fr 1fr 1.15fr'; grid.style.height='calc(100% - 130px)';
+
+  // --- services panel ---
+  const sp=el('div','panel');
+  sp.appendChild(el('div','panel-h','&#9636; Service Health <span class="tag">10 services · docker</span>'));
+  const spb=el('div','panel-b'); spb.style.padding='0';
+  const tbl=el('table','t');
+  tbl.innerHTML=`<thead><tr><th>Service</th><th>Role</th><th>Status</th><th class="num">CPU</th><th class="num">MEM</th><th class="num">Uptime</th></tr></thead>`;
+  const tb=el('tbody');
+  SERVICES.forEach(s=>{
+    const b=s.st==='healthy'?'b-green':s.st==='degraded'?'b-amber':s.st==='idle'?'b-grey':'b-red';
+    const tr=el('tr','clickable');
+    tr.innerHTML=`<td><div style="font-size:11px">${s.name}</div><div class="muted" style="font-size:9.5px">${s.host}${s.sync?' · '+s.sync:''}${s.note?' · '+s.note:''}</div></td>
+      <td><span class="muted" style="font-size:9px;letter-spacing:.5px">${s.role}</span></td>
+      <td><span class="badge ${b}"><span class="b-dot"></span>${s.st}</span></td>
+      <td class="num">${s.cpu}%</td><td class="num">${s.mem}%</td><td class="num">${s.up}%</td>`;
+    tr.onclick=()=>serviceModal(s);
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb); spb.appendChild(tbl); sp.appendChild(spb); grid.appendChild(sp);
+
+  // --- engine flow / share panel ---
+  const fp=el('div','panel');
+  fp.appendChild(el('div','panel-h','&#9685; Engine Load <span class="live"><span class="pulse"></span>live</span>'));
+  const fpb=el('div','panel-b');
+  fpb.appendChild(el('div','sec-t','Query share by engine'));
+  ENGINES.forEach(e=>{
+    const wrap=el('div'); wrap.style.marginBottom='11px';
+    wrap.innerHTML=`<div class="barlabel"><span class="epill"><span class="sw" style="background:${e.color}"></span>${e.label}</span><span>${e.share}% · ${e.calls.toLocaleString()}</span></div>
+      <div class="bar"><i style="width:${e.share*2.3}%;background:${e.color}"></i></div>`;
+    fpb.appendChild(wrap);
+  });
+  fpb.appendChild(el('div','sec-t','Fusion strategy mix (24h)'));
+  const mix=[['tiered',54,'var(--cyan)'],['single-route',31,'var(--green)'],['fan-out',12,'var(--violet)'],['auto',3,'var(--amber)']];
+  const mixbar=el('div'); mixbar.style.cssText='display:flex;height:26px;border-radius:4px;overflow:hidden;border:1px solid var(--line);margin-bottom:8px';
+  mix.forEach(m=>{const seg=el('div');seg.style.cssText=`width:${m[1]}%;background:${m[2]};opacity:.8;display:flex;align-items:center;justify-content:center;font-size:9px;color:#04181a;font-weight:700`;seg.textContent=m[1]>8?m[1]+'%':'';mixbar.appendChild(seg);});
+  fpb.appendChild(mixbar);
+  const lg=el('div');lg.style.cssText='display:flex;gap:12px;flex-wrap:wrap;font-size:9.5px';
+  mix.forEach(m=>lg.appendChild(el('span','epill',`<span class="sw" style="background:${m[2]}"></span>${m[0]}`)));
+  fpb.appendChild(lg);
+  fp.appendChild(fpb); grid.appendChild(fp);
+
+  // --- live feed panel ---
+  const lp=el('div','panel');
+  lp.appendChild(el('div','panel-h','&#9776; Live Trace Stream <span class="live"><span class="pulse"></span>streaming</span>'));
+  const lpb=el('div','panel-b feed'); lpb.id='feedbox'; lpb.style.cssText='overflow:auto;font-size:10px';
+  lp.appendChild(lpb); grid.appendChild(lp);
+  v.appendChild(grid);
+  // seed feed
+  for(let i=0;i<22;i++) pushFeed(true);
+}
+function pushFeed(seed){
+  const box=$('#feedbox'); if(!box)return;
+  const m=FEEDMSG[Math.floor(Math.random()*FEEDMSG.length)];
+  const now=new Date(); const ts=now.toISOString().slice(11,23);
+  const ln=el('div','ln'+(seed?'':' flash'),
+    `<span class="ts">${ts}</span><span class="lv ${m[0]}">${m[0]}</span><span class="src">${m[1]}</span><span class="msg">${m[2]}</span>`);
+  box.appendChild(ln);
+  while(box.children.length>120) box.removeChild(box.firstChild);
+  if(!seed) box.scrollTop=box.scrollHeight;
+}
+function serviceModal(s){
+  openModal(`&#9636; ${s.name}`,`
+    <div class="kvlist">
+      <div class="kv"><span class="k">host</span><span class="v">${s.host}</span></div>
+      <div class="kv"><span class="k">role</span><span class="v">${s.role}</span></div>
+      <div class="kv"><span class="k">status</span><span class="v">${s.st}</span></div>
+      <div class="kv"><span class="k">uptime (30d)</span><span class="v">${s.up}%</span></div>
+      <div class="kv"><span class="k">cpu / mem</span><span class="v">${s.cpu}% / ${s.mem}%</span></div>
+      ${s.sync?`<div class="kv"><span class="k">replication lag</span><span class="v">${s.sync}</span></div>`:''}
+      ${s.note?`<div class="kv"><span class="k">note</span><span class="v" style="color:var(--amber)">${s.note}</span></div>`:''}
+    </div>
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn" onclick="toast('Opened logs for ${s.name}')">&#9776; View logs</button>
+      <button class="btn" onclick="toast('Restart queued (dry-run)')">&#10227; Restart</button>
+      <button class="btn green" onclick="toast('Health re-checked: OK')">&#10003; Re-check health</button>
+    </div>`);
+}
+/* ================= MEMORY OPS VIEW ================= */
+let memFilter={q:'',engine:'all',status:'all'};
+function renderMemory(){
+  const v=$('#view-memory'); v.innerHTML='';
+
+  // top: search + sector strip
+  const top=el('div','grid'); top.style.gridTemplateColumns='1.6fr 1fr'; top.style.marginBottom='12px';
+
+  // search/query panel
+  const qp=el('div','panel');
+  qp.appendChild(el('div','panel-h','&#9906; Unified Search <span class="tag">POST /search · metadata-first</span>'));
+  const qpb=el('div','panel-b');
+  qpb.innerHTML=`
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <input class="inp" id="memq" placeholder="semantic query… e.g. how should SBC failover preserve rollback state?">
+      <button class="btn primary" onclick="runSearch()">&#9654; Search</button>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+      <span class="muted" style="font-size:9px;letter-spacing:1px">HARD FILTERS</span>
+      <select class="inp" id="fEngine" style="width:auto" onchange="memFilter.engine=this.value;applyMem()">
+        <option value="all">engine: all</option>${ENGINES.map(e=>`<option value="${e.engine}">${e.label}</option>`).join('')}
+      </select>
+      <select class="inp" id="fStatus" style="width:auto" onchange="memFilter.status=this.value;applyMem()">
+        <option value="all">status: all</option><option>approved</option><option>draft</option><option>review</option><option>deprecated</option>
+      </select>
+      <span class="muted" id="filterEcho" style="font-size:9.5px;margin-left:auto"></span>
+    </div>
+    <div class="muted" style="font-size:9.5px;line-height:1.5">Filters applied in the control plane <b style="color:var(--cyan)">before</b> any vector query — semantic search runs only within the authorized set.</div>`;
+  qp.appendChild(qpb); top.appendChild(qp);
+
+  // sector distribution panel (OpenMemory cognitive)
+  const sp=el('div','panel');
+  sp.appendChild(el('div','panel-h','&#9682; OpenMemory Sectors <span class="tag">decay λ active</span>'));
+  const spb=el('div','panel-b');
+  const tot=SECTORS.reduce((a,s)=>a+s.n,0);
+  SECTORS.forEach(s=>{
+    const w=el('div');w.style.marginBottom='8px';
+    w.innerHTML=`<div class="barlabel"><span class="epill"><span class="sw" style="background:${s.c}"></span>${s.k}</span><span>${s.n.toLocaleString()} · λ${s.d}</span></div><div class="bar"><i style="width:${s.n/tot*100}%;background:${s.c}"></i></div>`;
+    spb.appendChild(w);
+  });
+  sp.appendChild(spb); top.appendChild(sp);
+  v.appendChild(top);
+
+  // records table panel
+  const rp=el('div','panel'); rp.style.height='calc(100% - 200px)';
+  const ph=el('div','panel-h','&#9783; Memory Records <span class="tag" id="recCount"></span>');
+  rp.appendChild(ph);
+  const rpb=el('div','panel-b'); rpb.style.padding='0'; rpb.id='recbox';
+  rp.appendChild(rpb); v.appendChild(rp);
+  applyMem();
+}
+function applyMem(){
+  const box=$('#recbox'); if(!box)return;
+  let rows=MEMRECS.filter(r=>
+    (memFilter.engine==='all'||r.engine===memFilter.engine)&&
+    (memFilter.status==='all'||r.status===memFilter.status)&&
+    (memFilter.q===''||r.title.toLowerCase().includes(memFilter.q.toLowerCase())||r.id.includes(memFilter.q))
+  );
+  const echo=$('#filterEcho'); if(echo)echo.textContent=`{ engine:"${memFilter.engine}", status:"${memFilter.status}" }`;
+  $('#recCount').textContent=rows.length+' of '+MEMRECS.length;
+  const tbl=el('table','t');
+  tbl.innerHTML=`<thead><tr><th>ID</th><th>Title</th><th>Engine</th><th>Scope</th><th>Status</th><th>Conf.</th><th class="num">Score</th><th class="num">Ver</th><th></th></tr></thead>`;
+  const tb=el('tbody');
+  rows.forEach(r=>{
+    const e=ENGINES.find(x=>x.engine===r.engine)||{color:'var(--txt-mute)',label:r.engine};
+    const sb=r.status==='approved'?'b-green':r.status==='draft'?'b-amber':r.status==='review'?'b-blue':'b-grey';
+    const cb=r.conf==='restricted'?'b-red':r.conf==='private'?'b-violet':'b-grey';
+    const tr=el('tr','clickable');
+    tr.innerHTML=`<td class="mono muted" style="font-size:9.5px">${r.id}</td>
+      <td><div style="font-size:11px">${r.title}</div><div class="muted" style="font-size:9px">${r.tenant}${r.sector!=='—'?' · '+r.sector:''} · ${r.age} ago</div></td>
+      <td><span class="epill"><span class="sw" style="background:${e.color}"></span><span style="font-size:9.5px">${e.label}</span></span></td>
+      <td><span class="muted" style="font-size:9.5px">${r.scope}</span></td>
+      <td><span class="badge ${sb}">${r.status}</span></td>
+      <td><span class="badge ${cb}" style="font-size:8.5px">${r.conf}</span></td>
+      <td class="num">${r.score.toFixed(2)}</td>
+      <td class="num muted">${r.ver}</td>
+      <td><button class="btn sm" onclick="event.stopPropagation();recModal('${r.id}')">open</button></td>`;
+    tr.onclick=()=>recModal(r.id);
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb); box.innerHTML=''; box.appendChild(tbl);
+}
+function runSearch(){
+  memFilter.q=$('#memq').value.trim();
+  toast(memFilter.q?`Searched "${memFilter.q.slice(0,40)}" · filters first, then fusion`:'Cleared query');
+  applyMem();
+}
+function recModal(id){
+  const r=MEMRECS.find(x=>x.id===id); if(!r)return;
+  const e=ENGINES.find(x=>x.engine===r.engine)||{};
+  openModal(`&#9783; ${r.id}`,`
+    <div style="font-size:13px;margin-bottom:12px;color:#fff">${r.title}</div>
+    <div class="kvlist">
+      <div class="kv"><span class="k">engine / adapter</span><span class="v">${e.label||r.engine} · ${e.id||''}</span></div>
+      <div class="kv"><span class="k">scope</span><span class="v">${r.scope}</span></div>
+      <div class="kv"><span class="k">status</span><span class="v">${r.status}</span></div>
+      <div class="kv"><span class="k">confidentiality</span><span class="v">${r.conf}</span></div>
+      <div class="kv"><span class="k">tenant</span><span class="v">${r.tenant}</span></div>
+      <div class="kv"><span class="k">version</span><span class="v">${r.ver}</span></div>
+      ${r.sector!=='—'?`<div class="kv"><span class="k">sector (OpenMemory)</span><span class="v">${r.sector}</span></div>`:''}
+      <div class="kv"><span class="k">composite score</span><span class="v">${r.score.toFixed(4)}</span></div>
+    </div>
+    <div class="sec-t" style="margin-top:16px">Control-plane record (Postgres → D1 mirror)</div>
+    <div class="codeblock"><span class="c">// memory_records (primary) + memory_registry (edge)</span>
+{
+  <span class="k">"memory_id"</span>:    <span class="s">"${r.id}"</span>,
+  <span class="k">"engine"</span>:       <span class="s">"${r.engine}"</span>,
+  <span class="k">"scope"</span>:        <span class="s">"${r.scope}"</span>,
+  <span class="k">"status"</span>:       <span class="s">"${r.status}"</span>,
+  <span class="k">"confidentiality"</span>: <span class="s">"${r.conf}"</span>,
+  <span class="k">"source_txn_id"</span>: <span class="s">"txn#${Math.floor(rnd(80000,90000))}"</span>,
+  <span class="k">"synced_at"</span>:    <span class="s">"${new Date().toISOString()}"</span>
+}</div>
+    <div class="btn-row" style="margin-top:16px">
+      ${r.status==='draft'||r.status==='review'?`<button class="btn green" onclick="promote('${r.id}')">&#10003; Promote → approved</button>`:''}
+      <button class="btn" onclick="toast('Opened correction editor')">&#9998; Add correction</button>
+      <button class="btn" onclick="toast('Lineage: object→chunk→embed→answer→eval')">&#8703; Trace lineage</button>
+      ${r.status!=='deprecated'?`<button class="btn danger" onclick="toast('Marked deprecated (operator gate)')">&#9888; Deprecate</button>`:''}
+    </div>`);
+}
+function promote(id){const r=MEMRECS.find(x=>x.id===id);if(r){r.status='approved';closeModal();applyMem();toast(`${id} promoted draft→approved · operator gate logged`);}}
+/* ================= GOVERN VIEW ================= */
+let activeStrategy='tiered';
+function renderGovern(){
+  const v=$('#view-govern'); v.innerHTML='';
+
+  // strategy control panel (full width)
+  const stp=el('div','panel'); stp.style.marginBottom='12px';
+  stp.appendChild(el('div','panel-h','&#9881; Fusion Strategy <span class="tag">operator-configurable · applies to next query</span>'));
+  const stpb=el('div','panel-b');
+  stpb.innerHTML=`<div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
+    <div class="seg-ctl" id="stratCtl">
+      <button data-s="fanout">Fan-out</button>
+      <button data-s="single">Single-route</button>
+      <button data-s="tiered" class="on">Tiered</button>
+      <button data-s="auto">Auto</button>
+    </div>
+    <div id="stratDesc" class="dim" style="font-size:11px;flex:1;min-width:260px"></div>
+  </div>
+  <div class="row" style="margin-top:14px;gap:18px">
+    <div style="flex:1">
+      <div class="barlabel"><span>candidate set per engine (retrieve wide)</span><span id="topkv">top 50</span></div>
+      <input type="range" min="10" max="100" value="50" id="topk" style="width:100%" oninput="$('#topkv').textContent='top '+this.value">
+    </div>
+    <div style="flex:1">
+      <div class="barlabel"><span>final chunks (rerank narrow)</span><span id="finalv">8</span></div>
+      <input type="range" min="4" max="20" value="8" id="finalk" style="width:100%" oninput="$('#finalv').textContent=this.value">
+    </div>
+    <div style="flex:1">
+      <div class="barlabel"><span>tiered confidence threshold</span><span id="confv">0.82</span></div>
+      <input type="range" min="50" max="98" value="82" id="conf" style="width:100%" oninput="$('#confv').textContent=(this.value/100).toFixed(2)">
+    </div>
+  </div>`;
+  stp.appendChild(stpb); v.appendChild(stp);
+
+  // two-col: adapters | routing map + policy
+  const grid=el('div','grid'); grid.style.gridTemplateColumns='1.5fr 1fr'; grid.style.height='calc(100% - 168px)';
+
+  // adapters registry
+  const ap=el('div','panel');
+  ap.appendChild(el('div','panel-h','&#9638; Adapter Registry <span class="tag">selectable by id, never hardcoded</span>'));
+  const apb=el('div','panel-b'); apb.style.padding='0';
+  const tbl=el('table','t');
+  tbl.innerHTML=`<thead><tr><th>Adapter ID</th><th>Status</th><th>Caps</th><th>Auth</th><th class="num">p95</th><th>Enabled</th></tr></thead>`;
+  const tb=el('tbody');
+  ENGINES.forEach(e=>{
+    const sb=e.status==='canonical'?'b-green':e.status==='experimental'?'b-amber':'b-grey';
+    const caps=Object.entries(e.caps).filter(([k,vv])=>vv).map(([k])=>k[0].toUpperCase()).join('');
+    const tr=el('tr','clickable');
+    tr.innerHTML=`<td><div class="epill"><span class="sw" style="background:${e.color}"></span><span style="font-size:10px" class="mono">${e.id}</span></div><div class="muted" style="font-size:9px;margin-left:14px">${e.endpoint}</div></td>
+      <td><span class="badge ${sb}">${e.status}</span></td>
+      <td><span class="mono" style="font-size:10px;color:var(--cyan)" title="filter/decay/sectors">${caps}</span></td>
+      <td><span class="muted" style="font-size:9px">${e.auth}</span></td>
+      <td class="num">${e.p95<1?(e.p95*1000).toFixed(0)+'ms':e.p95+'s'}</td>
+      <td><div class="tg on" onclick="event.stopPropagation();this.classList.toggle('on');toast('${e.label} '+(this.classList.contains('on')?'enabled':'disabled')+' for routing')"></div></td>`;
+    tr.onclick=()=>adapterModal(e);
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb); apb.appendChild(tbl); ap.appendChild(apb); grid.appendChild(ap);
+
+  // right col: routing map + policy
+  const rc=el('div','col');
+  // routing
+  const rp=el('div','panel'); rp.style.flex='1';
+  rp.appendChild(el('div','panel-h','&#8703; Scope → Engine Routing'));
+  const rpb=el('div','panel-b'); rpb.style.padding='0';
+  const rtbl=el('table','t');
+  rtbl.innerHTML=`<thead><tr><th>Scope</th><th>Engine</th><th>Strategy</th></tr></thead>`;
+  const rtb=el('tbody');
+  ROUTES.forEach(r=>{
+    const e=ENGINES.find(x=>x.engine===r.engine);
+    const star=r.scope.includes('*');
+    rtb.innerHTML+=`<tr><td><span class="mono" style="font-size:10.5px;color:${star?'var(--amber)':'var(--txt)'}">${r.scope}</span></td>
+      <td><span class="epill">${e?`<span class="sw" style="background:${e.color}"></span>`:'<span class="sw" style="background:var(--cyan)"></span>'}<span style="font-size:10px">${e?e.label:'ALL engines'}</span></span></td>
+      <td><span class="badge b-cyan" style="font-size:8.5px">${r.strat}</span></td></tr>`;
+  });
+  rtbl.appendChild(rtb); rpb.appendChild(rtbl); rp.appendChild(rpb); rc.appendChild(rp);
+
+  // policy / guardrails
+  const pp=el('div','panel'); pp.style.flex='1';
+  pp.appendChild(el('div','panel-h','&#9911; Guardrails &amp; Policy'));
+  const ppb=el('div','panel-b');
+  const policies=[
+    ['Metadata filters before vector query','on',true],
+    ['Operator approval gate (draft→approved)','on',true],
+    ['Auto-promote on high eval score','off',false],
+    ['Auto-retrain / fine-tune','off',false],
+    ['Transparent token (single sign-on)','on',true],
+    ['D1 edge fallback to Postgres on stale','on',true],
+  ];
+  policies.forEach(p=>{
+    const row=el('div'); row.style.cssText='display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)';
+    row.innerHTML=`<div class="tg ${p[1]==='on'?'on':''}" onclick="this.classList.toggle('on');toast('Policy: ${p[0]} → '+(this.classList.contains('on')?'ON':'OFF'))"></div>
+      <span style="font-size:10.5px;flex:1">${p[0]}</span>
+      ${!p[2]?'<span class="badge b-grey" style="font-size:8px">requires approval</span>':'<span class="badge b-green" style="font-size:8px">enforced</span>'}`;
+    ppb.appendChild(row);
+  });
+  pp.appendChild(ppb); rc.appendChild(pp);
+  grid.appendChild(rc); v.appendChild(grid);
+
+  // wire strategy control
+  setStrat('tiered');
+  $$('#stratCtl button').forEach(b=>b.onclick=()=>{$$('#stratCtl button').forEach(x=>x.classList.remove('on'));b.classList.add('on');setStrat(b.dataset.s);});
+}
+const STRAT_DESC={
+  fanout:'Query <b>every</b> enabled engine in parallel, normalize, merge with Reciprocal Rank Fusion, dedupe by source id. Highest recall & cost — best for critical/cross-domain queries.',
+  single:'Router picks <b>one</b> engine by scope or metadata engine_hint. Lowest latency & cost — best when a scope maps cleanly to one engine.',
+  tiered:'Hit the <b>fast</b> engine (gateway/edge) first; escalate to the <b>deep</b> cognitive engine (OpenMemory) only if confidence is low. Balanced default.',
+  auto:'Router chooses strategy per query class using policy + recent eval scores. Adaptive — cost varies.'
+};
+function setStrat(s){activeStrategy=s;const d=$('#stratDesc');if(d)d.innerHTML=STRAT_DESC[s];$('#sb-strat').textContent=s==='single'?'single-route':s;}
+function adapterModal(e){
+  openModal(`&#9638; ${e.label}`,`
+    <div class="kvlist">
+      <div class="kv"><span class="k">adapter_id</span><span class="v mono" style="font-size:10px">${e.id}</span></div>
+      <div class="kv"><span class="k">engine</span><span class="v">${e.engine}</span></div>
+      <div class="kv"><span class="k">status</span><span class="v">${e.status}</span></div>
+      <div class="kv"><span class="k">api_type</span><span class="v">${e.api}</span></div>
+      <div class="kv"><span class="k">endpoint</span><span class="v">${e.endpoint}</span></div>
+      <div class="kv"><span class="k">auth_type</span><span class="v">${e.auth}</span></div>
+      <div class="kv"><span class="k">vector_backend</span><span class="v">${e.vec} · ${e.dim}d</span></div>
+      <div class="kv"><span class="k">scopes</span><span class="v">${e.scopes.join(', ')}</span></div>
+      <div class="kv"><span class="k">capabilities</span><span class="v">filter:${e.caps.filter} decay:${e.caps.decay} sectors:${e.caps.sectors}</span></div>
+      <div class="kv"><span class="k">24h calls / err</span><span class="v">${e.calls.toLocaleString()} / ${e.err}%</span></div>
+    </div>
+    <div class="sec-t" style="margin-top:16px">EngineAdapter interface — implemented</div>
+    <div class="codeblock"><span class="k">export const</span> adapter = {
+  <span class="k">id</span>: <span class="s">"${e.id}"</span>,
+  <span class="k">engine</span>: <span class="s">"${e.engine}"</span>,
+  <span class="k">capabilities</span>: { filter:${e.caps.filter}, decay:${e.caps.decay}, sectors:${e.caps.sectors} },
+  <span class="k">async</span> remember(input) { <span class="c">/* → ${e.endpoint} */</span> },
+  <span class="k">async</span> search({query,filters,limit}) { <span class="c">/* metadata-first */</span> }
+}</div>
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn green" onclick="toast('Health: ${e.label} OK · ${e.p95}s p95')">&#10003; Test adapter</button>
+      <button class="btn" onclick="toast('Promoted ${e.status}→canonical (dry-run)')">&#9650; Change status</button>
+      <button class="btn danger" onclick="toast('${e.label} disabled — router will skip')">&#9888; Disable</button>
+    </div>`);
+}
+/* ================= MODAL / TOAST ================= */
+function openModal(title,html){
+  $('#modal').innerHTML=`<div class="modal-h"><span style="font-size:13px;color:#fff;letter-spacing:.3px">${title}</span><span class="x" onclick="closeModal()">&times;</span></div><div class="modal-b">${html}</div>`;
+  $('#modalbg').classList.add('show');
+}
+function closeModal(){$('#modalbg').classList.remove('show');}
+$('#modalbg').onclick=e=>{if(e.target===$('#modalbg'))closeModal();};
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+let toastT;
+function toast(msg){
+  let t=$('#toast');
+  if(!t){t=el('div');t.id='toast';t.style.cssText='position:fixed;bottom:42px;left:50%;transform:translateX(-50%);background:var(--bg-1);border:1px solid var(--cyan-dim);color:var(--cyan);padding:9px 18px;border-radius:5px;font-family:var(--mono);font-size:11px;z-index:300;box-shadow:0 8px 30px rgba(0,0,0,.5);letter-spacing:.3px;max-width:80vw';document.body.appendChild(t);}
+  t.innerHTML='&#9656; '+msg; t.style.opacity='1';
+  clearTimeout(toastT); toastT=setTimeout(()=>t.style.opacity='0',2600);
+  t.style.transition='opacity .4s';
+}
+
+/* ================= TABS ================= */
+$$('#tabs .tab').forEach(t=>t.onclick=()=>{
+  $$('#tabs .tab').forEach(x=>x.classList.remove('active'));
+  $$('.view').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');
+  const view=t.dataset.view;
+  $('#view-'+view).classList.add('active');
+});
+
+/* ================= LIVE LOOP ================= */
+function clock(){
+  const d=new Date();
+  $('#clock').textContent=d.toISOString().slice(11,19);
+}
+function tick(){
+  // feed
+  if(Math.random()>0.35) pushFeed(false);
+  // jitter status bar
+  $('#sb-p95').textContent=(1.3+Math.random()*0.4).toFixed(2)+'s';
+  $('#sb-cost').textContent='$'+(28+Math.random()*1.2).toFixed(2);
+  const q=Math.random()>0.8?Math.floor(Math.random()*3):0;
+  const qe=$('#sb-q'); qe.textContent=q; qe.style.color=q>0?'var(--amber)':'var(--green)';
+}
+clock(); setInterval(clock,1000);
+setInterval(tick,1400);
+
+/* ================= BOOT ================= */
+renderMonitor();
+renderMemory();
+renderGovern();
+// wire memory search enter key
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&document.activeElement&&document.activeElement.id==='memq')runSearch();});
+console.log('%cCollabmind Operator Cockpit ready','color:#39d4d4;font-family:monospace');
+</script>
+</body>
+</html>

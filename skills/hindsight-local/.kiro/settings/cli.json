@@ -1,0 +1,26 @@
+{
+  "chat.defaultAgent": "oma-hooks",
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--no-usage-statistics",
+        "--isolated"
+      ]
+    },
+    "serena": {
+      "command": "serena",
+      "args": [
+        "start-mcp-server",
+        "--context",
+        "ide",
+        "--project",
+        ".",
+        "--open-web-dashboard",
+        "false"
+      ]
+    }
+  }
+}

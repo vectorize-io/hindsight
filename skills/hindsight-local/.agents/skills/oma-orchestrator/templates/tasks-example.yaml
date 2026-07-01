@@ -1,0 +1,15 @@
+# Example parallel tasks file
+# Usage: ./parallel-run.sh tasks-example.yaml
+
+tasks:
+  - agent: backend
+    task: "Implement JWT authentication with register and login endpoints"
+    workspace: ./backend
+
+  - agent: frontend
+    task: "Create login and registration forms with validation"
+    workspace: ./frontend
+
+  - agent: mobile
+    task: "Build authentication screens for iOS and Android"
+    workspace: ./mobile

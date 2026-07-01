@@ -1,0 +1,41 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - heading "CollabMind" [level=1] [ref=e4]
+      - generic [ref=e5]: Operator · v0.1
+      - navigation [ref=e6]:
+        - link "Dashboard" [ref=e7] [cursor=pointer]:
+          - /url: /
+        - link "Login" [ref=e8] [cursor=pointer]:
+          - /url: /login
+        - link "Workspaces" [ref=e9] [cursor=pointer]:
+          - /url: /workspaces
+        - link "Connectors" [ref=e10] [cursor=pointer]:
+          - /url: /connectors
+        - link "Google Drive" [ref=e11] [cursor=pointer]:
+          - /url: /google-drive
+        - link "Indexed Files" [ref=e12] [cursor=pointer]:
+          - /url: /files
+        - link "Ingestion Queue" [ref=e13] [cursor=pointer]:
+          - /url: /ingestion
+        - link "Audit Log" [ref=e14] [cursor=pointer]:
+          - /url: /audit
+        - link "Agent Activity" [ref=e15] [cursor=pointer]:
+          - /url: /agent-activity
+        - link "Permissions View" [ref=e16] [cursor=pointer]:
+          - /url: /permissions
+    - main [ref=e17]:
+      - generic [ref=e18]:
+        - heading "Operator Dashboard" [level=2] [ref=e19]
+        - generic [ref=e20]:
+          - text: "Active workspace:"
+          - emphasis [ref=e21]: none selected — pick one on Workspaces
+          - text: . The GUI calls only the Central API; it never touches Google Drive or the vector DB directly.
+        - generic [ref=e22]:
+          - heading "Identity" [level=3] [ref=e23]
+          - paragraph [ref=e24]: Failed to fetch
+          - paragraph [ref=e25]: Loading… (is the Central API running at http://localhost:8000?)
+        - generic [ref=e26]:
+          - heading "Governed flow (v0.1)" [level=3] [ref=e27]
+          - paragraph [ref=e28]: Connect Google Drive → discover file metadata → snapshot permissions → queue ingestion → process jobs → inspect audit. All access is permission-checked and fails closed. No chat over Drive yet.
+  - alert [ref=e29]

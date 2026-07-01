@@ -1,0 +1,43 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - heading "CollabMind" [level=1] [ref=e4]
+      - generic [ref=e5]: Operator · v0.1
+      - navigation [ref=e6]:
+        - link "Dashboard" [ref=e7] [cursor=pointer]:
+          - /url: /
+        - link "Login" [ref=e8] [cursor=pointer]:
+          - /url: /login
+        - link "Workspaces" [ref=e9] [cursor=pointer]:
+          - /url: /workspaces
+        - link "Connectors" [ref=e10] [cursor=pointer]:
+          - /url: /connectors
+        - link "Google Drive" [ref=e11] [cursor=pointer]:
+          - /url: /google-drive
+        - link "Indexed Files" [ref=e12] [cursor=pointer]:
+          - /url: /files
+        - link "Ingestion Queue" [ref=e13] [cursor=pointer]:
+          - /url: /ingestion
+        - link "Audit Log" [ref=e14] [cursor=pointer]:
+          - /url: /audit
+        - link "Agent Activity" [ref=e15] [cursor=pointer]:
+          - /url: /agent-activity
+        - link "Permissions View" [ref=e16] [cursor=pointer]:
+          - /url: /permissions
+    - main [ref=e17]:
+      - generic [ref=e18]:
+        - heading "Workspaces" [level=2] [ref=e19]
+        - generic [ref=e21]:
+          - textbox "New workspace name" [ref=e22]
+          - button "Create" [ref=e23] [cursor=pointer]
+          - button "Refresh" [ref=e24] [cursor=pointer]
+        - paragraph [ref=e25]: Failed to fetch
+        - table [ref=e26]:
+          - rowgroup [ref=e27]:
+            - row "Name ID Active" [ref=e28]:
+              - columnheader "Name" [ref=e29]
+              - columnheader "ID" [ref=e30]
+              - columnheader "Active" [ref=e31]
+              - columnheader [ref=e32]
+          - rowgroup
+  - alert [ref=e33]

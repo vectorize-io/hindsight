@@ -1,0 +1,49 @@
+# Configuration management: project pointers (read with commit-config.yaml)
+
+documented_process:
+  contributing: CONTRIBUTING.md
+  security: SECURITY.md
+  # adr_glob: "docs/adr/*.md"
+
+# github-flow | gitlab-flow | git-flow | trunk-based | custom
+branching_strategy: github-flow
+
+baselines:
+  default_branch: main
+  # release_branch: "release/"
+  # version_files: ["package.json", "cli/package.json"]
+
+change_governance:
+  require_issue_link: false
+  require_pr_for_default_branch: true
+  require_codeowners: true
+
+ownership:
+  codeowners_file: ".github/CODEOWNERS"
+  critical_paths:
+    - ".agents/hooks/**"
+    - ".agents/workflows/**"
+
+status_accounting:
+  changelog: CHANGELOG.md
+
+audit:
+  mention_signed_commits: false
+  mention_merge_queue: false
+
+onboarding_metrics:
+  lookback: "1 year ago"
+  ownership:
+    bus_factor_warning_percent: 60
+    inactive_months_warning: 6
+  velocity:
+    drop_warning_percent: 50
+    stagnation_window_months: 12
+  firefighting:
+    keywords: ["revert", "hotfix", "emergency", "rollback"]
+
+large_merge_thresholds:
+  changed_files: 150
+  changed_lines: 3000
+  hotspot_paths: 3
+  high_risk_score: 60

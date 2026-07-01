@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": false,
+    "outDir": ".tmp/api-contract-tests",
+    "rootDir": ".",
+    "incremental": false,
+    "types": ["node"],
+    "jsx": "react-jsx"
+  },
+  "include": ["lib/operatorApiClient.ts", "lib/operatorApiClient.test.ts"]
+}

@@ -1,0 +1,30 @@
+{
+  "name": "oma-hooks",
+  "description": "Default Kiro CLI agent with oh-my-agent hook context enabled.",
+  "prompt": "You are Kiro CLI running in an oh-my-agent workspace. Follow project instructions and use hook-provided context when present.",
+  "includeMcpJson": true,
+  "hooks": {
+    "userPromptSubmit": [
+      {
+        "command": "bun .kiro/hooks/keyword-detector.ts"
+      },
+      {
+        "command": "bun .kiro/hooks/state-boundary.ts"
+      },
+      {
+        "command": "bun .kiro/hooks/skill-injector.ts"
+      }
+    ],
+    "preToolUse": [
+      {
+        "matcher": "execute_bash",
+        "command": "bun .kiro/hooks/test-filter.ts"
+      }
+    ],
+    "stop": [
+      {
+        "command": "bun .kiro/hooks/persistent-mode.ts"
+      }
+    ]
+  }
+}
