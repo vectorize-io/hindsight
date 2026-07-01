@@ -573,7 +573,6 @@ ENV_LLAMACPP_EXTRA_ARGS = "HINDSIGHT_API_LLAMACPP_EXTRA_ARGS"
 
 # Optimization flags
 ENV_SKIP_LLM_VERIFICATION = "HINDSIGHT_API_SKIP_LLM_VERIFICATION"
-ENV_LAZY_RERANKER = "HINDSIGHT_API_LAZY_RERANKER"
 
 # Database migrations
 ENV_RUN_MIGRATIONS_ON_STARTUP = "HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP"
@@ -1886,7 +1885,6 @@ class HindsightConfig:
 
     # Optimization flags
     skip_llm_verification: bool
-    lazy_reranker: bool
 
     # Database migrations
     run_migrations_on_startup: bool
@@ -2730,7 +2728,6 @@ class HindsightConfig:
             ),
             # Optimization flags
             skip_llm_verification=os.getenv(ENV_SKIP_LLM_VERIFICATION, "false").lower() == "true",
-            lazy_reranker=os.getenv(ENV_LAZY_RERANKER, "false").lower() == "true",
             # Retain settings
             retain_max_completion_tokens=int(
                 os.getenv(ENV_RETAIN_MAX_COMPLETION_TOKENS, str(DEFAULT_RETAIN_MAX_COMPLETION_TOKENS))

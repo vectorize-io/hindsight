@@ -1,5 +1,5 @@
 """
-Startup/lazy model-init must fail fast instead of hanging forever.
+Startup model-init must fail fast instead of hanging forever.
 
 Covers issue #1897: if a model load blocks (e.g. an offline HuggingFace
 download or an unreachable provider), initialization is capped by a wall-clock
@@ -68,7 +68,7 @@ def test_default_model_init_timeout_is_300s():
 
 
 @pytest.mark.asyncio
-async def test_lazy_reranker_init_fails_fast_on_hang():
+async def test_reranker_ensure_initialized_fails_fast_on_hang():
     """A stuck cross-encoder load raises RuntimeError within the timeout, not forever."""
     reranker = CrossEncoderReranker(cross_encoder=_HangingCrossEncoder())
     config = _make_config(model_init_timeout=0.1)
@@ -81,7 +81,7 @@ async def test_lazy_reranker_init_fails_fast_on_hang():
 
 
 @pytest.mark.asyncio
-async def test_lazy_reranker_init_succeeds_within_timeout():
+async def test_reranker_ensure_initialized_succeeds_within_timeout():
     """A fast init completes normally and marks the reranker initialized."""
     encoder = _FastCrossEncoder()
     reranker = CrossEncoderReranker(cross_encoder=encoder)
