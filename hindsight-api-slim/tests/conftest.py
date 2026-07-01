@@ -54,6 +54,29 @@ async def _teardown_memory_engine(mem: MemoryEngine) -> None:
         unregister_span_recorder(mem._llm_recorder)
 
 
+@pytest.fixture(autouse=True)
+def _cleanup_leaked_span_recorders():
+    """Fail-safe for the process-global LLM-trace recorder registry (#2229).
+
+    ``MemoryEngine.__init__`` registers its recorder in the shared registry, and
+    only ``close()`` removes it. Tests that construct an engine directly (without
+    ``_teardown_memory_engine``/``close()``) leak an *enabled* recorder; a later
+    test's LLM calls then get recorded into the shared DB, flaking
+    ``test_llm_trace::test_disabled_writes_no_rows`` (it observes rows for its
+    bank even though its own recorder is disabled). ``_teardown_memory_engine``
+    guards the fixtures; this guards everything else by dropping any recorder a
+    test added to the registry.
+    """
+    from hindsight_api.tracing import get_span_recorder
+
+    recorders = get_span_recorder()._recorders
+    before = {id(r) for r in recorders}
+    yield
+    for recorder in list(recorders):
+        if id(recorder) not in before:
+            recorders.remove(recorder)
+
+
 # Default pg0 instance configuration for tests
 DEFAULT_PG0_INSTANCE_NAME = "hindsight-test"
 DEFAULT_PG0_PORT = int(os.environ.get("HINDSIGHT_TEST_PG_PORT", "5556"))
