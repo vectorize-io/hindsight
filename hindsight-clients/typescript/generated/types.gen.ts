@@ -2660,10 +2660,12 @@ export type MentalModelTriggerOutput = {
  *
  * ``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into the SQL
  * arms (overriding the global ``semantic_min_similarity`` / ``bm25_min_score``
- * config for this request), so they prune weak matches before fusion. ``reranker``
- * and ``final`` are **post-query** filters applied to the scored results after
- * reranking. Any field left None imposes no floor; all-None (the default) means
- * no score filtering.
+ * config for this request), so they prune weak matches before fusion. ``reranker``,
+ * ``reranker_raw``, and ``final`` are **post-query** filters applied to the scored
+ * results after reranking. ``reranker`` uses the normalized reranker score;
+ * ``reranker_raw`` uses the provider's raw reranker score before normalization.
+ * Any field left None imposes no floor; all-None (the default) means no score
+ * filtering.
  */
 export type MinScores = {
   /**
@@ -2684,6 +2686,12 @@ export type MinScores = {
    * Post-query: minimum normalized reranker score (0-1).
    */
   reranker?: number | null;
+  /**
+   * Reranker Raw
+   *
+   * Post-query: minimum raw reranker score.
+   */
+  reranker_raw?: number | null;
   /**
    * Final
    *
@@ -2998,7 +3006,7 @@ export type RecallRequest = {
    */
   tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
   /**
-   * Optional per-stage score floors (all inclusive, AND-ed). `semantic` and `keyword` are retrieval-level cutoffs pushed into the SQL arms (overriding the global similarity/BM25 minimums for this request); `reranker` and `final` are post-ranking filters on the scored results. Any field left unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering. Use with care — the reranker's absolute scores are not calibrated across queries (a clearly-relevant match may score ~0.001 even though it is ranked first).
+   * Optional per-stage score floors (all inclusive, AND-ed). `semantic` and `keyword` are retrieval-level cutoffs pushed into the SQL arms (overriding the global similarity/BM25 minimums for this request); `reranker`, `reranker_raw`, and `final` are post-ranking filters on the scored results. Any field left unset imposes no floor; omitting `min_scores` entirely (the default) applies no score filtering. Use with care — the reranker's absolute scores are not calibrated across queries (a clearly-relevant match may score ~0.001 even though it is ranked first).
    */
   min_scores?: MinScores | null;
 };
@@ -3117,7 +3125,8 @@ export type RecallResult = {
  * can be filtered on via the recall ``min_scores`` request parameter. ``semantic``
  * and ``keyword`` are the raw per-strategy retrieval scores (``None`` when that
  * strategy did not surface this result); ``reranker`` is the cross-encoder's
- * normalized relevance.
+ * normalized relevance and ``reranker_raw`` is the provider's raw score before
+ * normalization.
  */
 export type RecallScores = {
   /**
@@ -3132,6 +3141,12 @@ export type RecallScores = {
    * Cross-encoder relevance, normalized 0-1. None when the reranker is a passthrough (rrf/interleave modes).
    */
   reranker?: number | null;
+  /**
+   * Reranker Raw
+   *
+   * Raw cross-encoder/reranker score before normalization. None when the reranker is a passthrough.
+   */
+  reranker_raw?: number | null;
   /**
    * Semantic
    *

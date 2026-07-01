@@ -24,13 +24,14 @@ from typing_extensions import Self
 
 class MinScores(BaseModel):
     """
-    Optional per-stage score floors for recall (all inclusive, AND-ed).  ``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into the SQL arms (overriding the global ``semantic_min_similarity`` / ``bm25_min_score`` config for this request), so they prune weak matches before fusion. ``reranker`` and ``final`` are **post-query** filters applied to the scored results after reranking. Any field left None imposes no floor; all-None (the default) means no score filtering.
+    Optional per-stage score floors for recall (all inclusive, AND-ed).  ``semantic`` and ``keyword`` are **retrieval-level** cutoffs pushed into the SQL arms (overriding the global ``semantic_min_similarity`` / ``bm25_min_score`` config for this request), so they prune weak matches before fusion. ``reranker``, ``reranker_raw``, and ``final`` are **post-query** filters applied to the scored results after reranking. ``reranker`` uses the normalized reranker score; ``reranker_raw`` uses the provider's raw reranker score before normalization. Any field left None imposes no floor; all-None (the default) means no score filtering.
     """ # noqa: E501
     semantic: Optional[Union[StrictFloat, StrictInt]] = None
     keyword: Optional[Union[StrictFloat, StrictInt]] = None
     reranker: Optional[Union[StrictFloat, StrictInt]] = None
+    reranker_raw: Optional[Union[StrictFloat, StrictInt]] = None
     final: Optional[Union[StrictFloat, StrictInt]] = None
-    __properties: ClassVar[List[str]] = ["semantic", "keyword", "reranker", "final"]
+    __properties: ClassVar[List[str]] = ["semantic", "keyword", "reranker", "reranker_raw", "final"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -86,6 +87,11 @@ class MinScores(BaseModel):
         if self.reranker is None and "reranker" in self.model_fields_set:
             _dict['reranker'] = None
 
+        # set to None if reranker_raw (nullable) is None
+        # and model_fields_set contains the field
+        if self.reranker_raw is None and "reranker_raw" in self.model_fields_set:
+            _dict['reranker_raw'] = None
+
         # set to None if final (nullable) is None
         # and model_fields_set contains the field
         if self.final is None and "final" in self.model_fields_set:
@@ -106,6 +112,7 @@ class MinScores(BaseModel):
             "semantic": obj.get("semantic"),
             "keyword": obj.get("keyword"),
             "reranker": obj.get("reranker"),
+            "reranker_raw": obj.get("reranker_raw"),
             "final": obj.get("final")
         })
         return _obj

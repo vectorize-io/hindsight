@@ -192,6 +192,30 @@ def apply_combined_scoring(
         sr.weight = sr.combined_score
 
 
+def filter_scored_results_by_min_scores(
+    scored_results: list[ScoredResult],
+    *,
+    min_reranker: float | None = None,
+    min_reranker_raw: float | None = None,
+    min_final: float | None = None,
+) -> list[ScoredResult]:
+    """Apply post-query recall min_scores filters to scored results.
+
+    Retrieval-level floors (semantic/keyword) are applied earlier by the SQL arms;
+    this helper only handles floors that need reranked/final scores.
+    """
+    if min_reranker is None and min_reranker_raw is None and min_final is None:
+        return scored_results
+
+    return [
+        sr
+        for sr in scored_results
+        if (min_reranker is None or sr.cross_encoder_score_normalized >= min_reranker)
+        and (min_reranker_raw is None or sr.cross_encoder_score >= min_reranker_raw)
+        and (min_final is None or sr.weight >= min_final)
+    ]
+
+
 class CrossEncoderReranker:
     """
     Neural reranking using a cross-encoder model.

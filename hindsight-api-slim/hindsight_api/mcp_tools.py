@@ -860,7 +860,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 query_timestamp: Temporal context for the query (ISO format, e.g., '2024-01-15T10:30:00Z').
                     Anchors relative temporal expressions and recency scoring.
                 min_scores: Optional per-stage score floors as an object with any of: "semantic", "keyword"
-                    (retrieval-level cutoffs), "reranker", "final" (post-ranking). E.g. {"reranker": 0.5}.
+                    (retrieval-level cutoffs), "reranker", "reranker_raw", "final" (post-ranking).
+                    E.g. {"reranker": 0.5}.
                     All inclusive and AND-ed; omit for no score filtering. The reranker's absolute scores are
                     not calibrated across queries, so only threshold against scores you've calibrated for your
                     own data.
@@ -945,7 +946,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 query_timestamp: Temporal context for the query (ISO format, e.g., '2024-01-15T10:30:00Z').
                     Anchors relative temporal expressions and recency scoring.
                 min_scores: Optional per-stage score floors as an object with any of: "semantic", "keyword"
-                    (retrieval-level cutoffs), "reranker", "final" (post-ranking). E.g. {"reranker": 0.5}.
+                    (retrieval-level cutoffs), "reranker", "reranker_raw", "final" (post-ranking).
+                    E.g. {"reranker": 0.5}.
                     All inclusive and AND-ed; omit for no score filtering. The reranker's absolute scores are
                     not calibrated across queries, so only threshold against scores you've calibrated for your
                     own data.

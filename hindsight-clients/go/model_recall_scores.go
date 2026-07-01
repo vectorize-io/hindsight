@@ -19,11 +19,12 @@ import (
 // checks if the RecallScores type satisfies the MappedNullable interface at compile time
 var _ MappedNullable = &RecallScores{}
 
-// RecallScores Per-result recall scores from different stages of the pipeline.  ``final`` is the value results are ranked by. The others are diagnostic and can be filtered on via the recall ``min_scores`` request parameter. ``semantic`` and ``keyword`` are the raw per-strategy retrieval scores (``None`` when that strategy did not surface this result); ``reranker`` is the cross-encoder's normalized relevance.
+// RecallScores Per-result recall scores from different stages of the pipeline.  ``final`` is the value results are ranked by. The others are diagnostic and can be filtered on via the recall ``min_scores`` request parameter. ``semantic`` and ``keyword`` are the raw per-strategy retrieval scores (``None`` when that strategy did not surface this result); ``reranker`` is the cross-encoder's normalized relevance and ``reranker_raw`` is the provider's raw score before normalization.
 type RecallScores struct {
 	// Final ranking score (combined reranker + recency/temporal/proof boosts)
 	Final float32 `json:"final"`
 	Reranker NullableFloat32 `json:"reranker,omitempty"`
+	RerankerRaw NullableFloat32 `json:"reranker_raw,omitempty"`
 	Semantic NullableFloat32 `json:"semantic,omitempty"`
 	Keyword NullableFloat32 `json:"keyword,omitempty"`
 }
@@ -112,6 +113,48 @@ func (o *RecallScores) SetRerankerNil() {
 // UnsetReranker ensures that no value is present for Reranker, not even an explicit nil
 func (o *RecallScores) UnsetReranker() {
 	o.Reranker.Unset()
+}
+
+// GetRerankerRaw returns the RerankerRaw field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RecallScores) GetRerankerRaw() float32 {
+	if o == nil || IsNil(o.RerankerRaw.Get()) {
+		var ret float32
+		return ret
+	}
+	return *o.RerankerRaw.Get()
+}
+
+// GetRerankerRawOk returns a tuple with the RerankerRaw field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RecallScores) GetRerankerRawOk() (*float32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.RerankerRaw.Get(), o.RerankerRaw.IsSet()
+}
+
+// HasRerankerRaw returns a boolean if a field has been set.
+func (o *RecallScores) HasRerankerRaw() bool {
+	if o != nil && o.RerankerRaw.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetRerankerRaw gets a reference to the given NullableFloat32 and assigns it to the RerankerRaw field.
+func (o *RecallScores) SetRerankerRaw(v float32) {
+	o.RerankerRaw.Set(&v)
+}
+// SetRerankerRawNil sets the value for RerankerRaw to be an explicit nil
+func (o *RecallScores) SetRerankerRawNil() {
+	o.RerankerRaw.Set(nil)
+}
+
+// UnsetRerankerRaw ensures that no value is present for RerankerRaw, not even an explicit nil
+func (o *RecallScores) UnsetRerankerRaw() {
+	o.RerankerRaw.Unset()
 }
 
 // GetSemantic returns the Semantic field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -211,6 +254,9 @@ func (o RecallScores) ToMap() (map[string]interface{}, error) {
 	toSerialize["final"] = o.Final
 	if o.Reranker.IsSet() {
 		toSerialize["reranker"] = o.Reranker.Get()
+	}
+	if o.RerankerRaw.IsSet() {
+		toSerialize["reranker_raw"] = o.RerankerRaw.Get()
 	}
 	if o.Semantic.IsSet() {
 		toSerialize["semantic"] = o.Semantic.Get()

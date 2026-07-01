@@ -369,7 +369,7 @@ from .response_models import (
 from .response_models import RecallResult as RecallResultModel
 from .retain import bank_utils, embedding_utils
 from .retain.types import RetainContentDict
-from .search.reranking import CrossEncoderReranker, apply_combined_scoring
+from .search.reranking import CrossEncoderReranker, apply_combined_scoring, filter_scored_results_by_min_scores
 from .search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause
 from .search.types import ScoredResult
 from .task_backend import TaskBackend
@@ -4840,7 +4840,7 @@ class MemoryEngine(MemoryEngineInterface):
                 if strategy_boosts:
                     log_buffer.append(f"  [4.7] Strategy boosts applied: {strategy_boosts}")
 
-            # Step 4.9: post-query min_scores filters (reranker + final). The
+            # Step 4.9: post-query min_scores filters (reranker + raw + final). The
             # semantic/text floors are applied earlier inside the SQL arms (see
             # retrieve_semantic_bm25_combined); here we apply the post-rank floors on
             # the scored results, after the final sort and before truncation, so every
@@ -4850,17 +4850,19 @@ class MemoryEngine(MemoryEngineInterface):
             # cross-encoder's absolute scores are not calibrated for a fixed cutoff
             # (a clearly-relevant match can score ~0.001 while its *ranking* is right).
             min_reranker = min_scores.reranker if min_scores else None
+            min_reranker_raw = min_scores.reranker_raw if min_scores else None
             min_final = min_scores.final if min_scores else None
-            if (min_reranker is not None or min_final is not None) and scored_results:
+            if (min_reranker is not None or min_reranker_raw is not None or min_final is not None) and scored_results:
                 before_min_score = len(scored_results)
-                scored_results = [
-                    sr
-                    for sr in scored_results
-                    if (min_reranker is None or sr.cross_encoder_score_normalized >= min_reranker)
-                    and (min_final is None or sr.weight >= min_final)
-                ]
+                scored_results = filter_scored_results_by_min_scores(
+                    scored_results,
+                    min_reranker=min_reranker,
+                    min_reranker_raw=min_reranker_raw,
+                    min_final=min_final,
+                )
                 log_buffer.append(
-                    f"  [4.9] min_scores(reranker={min_reranker}, final={min_final}): "
+                    f"  [4.9] min_scores(reranker={min_reranker}, "
+                    f"reranker_raw={min_reranker_raw}, final={min_final}): "
                     f"{before_min_score}->{len(scored_results)} results"
                 )
 
@@ -5288,6 +5290,7 @@ class MemoryEngine(MemoryEngineInterface):
                 sr.id: RecallScores(
                     final=sr.weight,
                     reranker=None if reranker_passthrough else sr.cross_encoder_score_normalized,
+                    reranker_raw=None if reranker_passthrough else sr.cross_encoder_score,
                     semantic=sr.candidate.arm_scores.semantic,
                     keyword=sr.candidate.arm_scores.keyword,
                 )
