@@ -180,12 +180,9 @@ impl App {
             query_receiver: None,
         };
 
-        // Select first item by default
+        // Select first bank by default. Headered lists select their first data
+        // row after data is loaded.
         app.banks_state.select(Some(0));
-        app.memories_state.select(Some(0));
-        app.entities_state.select(Some(0));
-        app.documents_state.select(Some(0));
-        app.query_results_state.select(Some(0));
 
         app
     }
@@ -255,9 +252,7 @@ impl App {
         )?;
         self.memories = response.items;
 
-        if !self.memories.is_empty() && self.memories_state.selected().is_none() {
-            self.memories_state.select(Some(0));
-        }
+        normalize_headered_selection(&mut self.memories_state, self.memories.len());
 
         self.status_message = format!("Loaded {} memories (limit: {}, offset: {})",
             self.memories.len(), self.memories_limit, self.memories_offset);
@@ -286,9 +281,7 @@ impl App {
         let response = self.client.list_entities(bank_id, Some(100), None, false)?;
         self.entities = response.items;
 
-        if !self.entities.is_empty() && self.entities_state.selected().is_none() {
-            self.entities_state.select(Some(0));
-        }
+        normalize_headered_selection(&mut self.entities_state, self.entities.len());
 
         self.status_message = format!("Loaded {} entities", self.entities.len());
         Ok(())
@@ -298,9 +291,7 @@ impl App {
         let response = self.client.list_documents(bank_id, None, Some(100), Some(0), false)?;
         self.documents = response.items;
 
-        if !self.documents.is_empty() && self.documents_state.selected().is_none() {
-            self.documents_state.select(Some(0));
-        }
+        normalize_headered_selection(&mut self.documents_state, self.documents.len());
 
         self.status_message = format!("Loaded {} documents", self.documents.len());
         Ok(())
@@ -386,9 +377,7 @@ impl App {
             match receiver.try_recv() {
                 Ok(QueryResult::Recall(Ok(results))) => {
                     self.query_results = results;
-                    if !self.query_results.is_empty() {
-                        self.query_results_state.select(Some(0));
-                    }
+                    normalize_headered_selection(&mut self.query_results_state, self.query_results.len());
                     self.loading = false;
                     self.status_message = format!("Found {} results", self.query_results.len());
                     self.query_receiver = None;
@@ -478,57 +467,17 @@ impl App {
                 self.banks_state.select(Some(i));
             }
             View::Memories(_) => {
-                let i = match self.memories_state.selected() {
-                    Some(i) => {
-                        if i >= self.memories.len().saturating_sub(1) {
-                            0
-                        } else {
-                            i + 1
-                        }
-                    }
-                    None => 0,
-                };
-                self.memories_state.select(Some(i));
+                select_next_headered_row(&mut self.memories_state, self.memories.len());
             }
             View::Entities(_) => {
-                let i = match self.entities_state.selected() {
-                    Some(i) => {
-                        if i >= self.entities.len().saturating_sub(1) {
-                            0
-                        } else {
-                            i + 1
-                        }
-                    }
-                    None => 0,
-                };
-                self.entities_state.select(Some(i));
+                select_next_headered_row(&mut self.entities_state, self.entities.len());
             }
             View::Documents(_) => {
-                let i = match self.documents_state.selected() {
-                    Some(i) => {
-                        if i >= self.documents.len().saturating_sub(1) {
-                            0
-                        } else {
-                            i + 1
-                        }
-                    }
-                    None => 0,
-                };
-                self.documents_state.select(Some(i));
+                select_next_headered_row(&mut self.documents_state, self.documents.len());
             }
             View::Query(_) => {
                 if self.query_mode == QueryMode::Recall {
-                    let i = match self.query_results_state.selected() {
-                        Some(i) => {
-                            if i >= self.query_results.len().saturating_sub(1) {
-                                0
-                            } else {
-                                i + 1
-                            }
-                        }
-                        None => 0,
-                    };
-                    self.query_results_state.select(Some(i));
+                    select_next_headered_row(&mut self.query_results_state, self.query_results.len());
                 }
             }
         }
@@ -550,57 +499,17 @@ impl App {
                 self.banks_state.select(Some(i));
             }
             View::Memories(_) => {
-                let i = match self.memories_state.selected() {
-                    Some(i) => {
-                        if i == 0 {
-                            self.memories.len().saturating_sub(1)
-                        } else {
-                            i - 1
-                        }
-                    }
-                    None => 0,
-                };
-                self.memories_state.select(Some(i));
+                select_previous_headered_row(&mut self.memories_state, self.memories.len());
             }
             View::Entities(_) => {
-                let i = match self.entities_state.selected() {
-                    Some(i) => {
-                        if i == 0 {
-                            self.entities.len().saturating_sub(1)
-                        } else {
-                            i - 1
-                        }
-                    }
-                    None => 0,
-                };
-                self.entities_state.select(Some(i));
+                select_previous_headered_row(&mut self.entities_state, self.entities.len());
             }
             View::Documents(_) => {
-                let i = match self.documents_state.selected() {
-                    Some(i) => {
-                        if i == 0 {
-                            self.documents.len().saturating_sub(1)
-                        } else {
-                            i - 1
-                        }
-                    }
-                    None => 0,
-                };
-                self.documents_state.select(Some(i));
+                select_previous_headered_row(&mut self.documents_state, self.documents.len());
             }
             View::Query(_) => {
                 if self.query_mode == QueryMode::Recall {
-                    let i = match self.query_results_state.selected() {
-                        Some(i) => {
-                            if i == 0 {
-                                self.query_results.len().saturating_sub(1)
-                            } else {
-                                i - 1
-                            }
-                        }
-                        None => 0,
-                    };
-                    self.query_results_state.select(Some(i));
+                    select_previous_headered_row(&mut self.query_results_state, self.query_results.len());
                 }
             }
         }
@@ -620,7 +529,7 @@ impl App {
                 }
             }
             View::Memories(_) => {
-                if let Some(i) = self.memories_state.selected() {
+                if let Some(i) = selected_headered_data_index(&self.memories_state) {
                     if let Some(memory) = self.memories.get(i) {
                         self.viewing_memory = Some(memory.clone());
                         self.status_message = "Viewing memory details (Esc to close)".to_string();
@@ -628,7 +537,7 @@ impl App {
                 }
             }
             View::Entities(_) => {
-                if let Some(i) = self.entities_state.selected() {
+                if let Some(i) = selected_headered_data_index(&self.entities_state) {
                     if let Some(entity) = self.entities.get(i).cloned() {
                         self.viewing_entity = Some(entity);
                         self.status_message = "Viewing entity details (Esc to close)".to_string();
@@ -636,7 +545,7 @@ impl App {
                 }
             }
             View::Documents(bank_id) => {
-                if let Some(i) = self.documents_state.selected() {
+                if let Some(i) = selected_headered_data_index(&self.documents_state) {
                     if let Some(doc) = self.documents.get(i) {
                         // Fetch full document content
                         let doc_id = doc.get("id")
@@ -664,7 +573,7 @@ impl App {
             View::Query(_) => {
                 // View recall result details if in recall mode
                 if self.query_mode == QueryMode::Recall {
-                    if let Some(i) = self.query_results_state.selected() {
+                    if let Some(i) = selected_headered_data_index(&self.query_results_state) {
                         if let Some(result) = self.query_results.get(i).cloned() {
                             self.viewing_recall_result = Some(result);
                             self.status_message = "Viewing recall result (Esc to close)".to_string();
@@ -717,7 +626,7 @@ impl App {
 
     fn delete_selected_document(&mut self) -> Result<()> {
         if let View::Documents(bank_id) = &self.view {
-            if let Some(i) = self.documents_state.selected() {
+            if let Some(i) = selected_headered_data_index(&self.documents_state) {
                 if let Some(doc) = self.documents.get(i) {
                     let doc_id = doc.get("id")
                         .and_then(|v| v.as_str())
@@ -739,6 +648,46 @@ impl App {
         }
         Ok(())
     }
+}
+
+fn normalize_headered_selection(state: &mut ListState, data_len: usize) {
+    if data_len == 0 {
+        state.select(None);
+        return;
+    }
+
+    let selected = match state.selected() {
+        Some(i) if (1..=data_len).contains(&i) => i,
+        Some(i) if i > data_len => data_len,
+        _ => 1,
+    };
+    state.select(Some(selected));
+}
+
+fn selected_headered_data_index(state: &ListState) -> Option<usize> {
+    state.selected()?.checked_sub(1)
+}
+
+fn select_next_headered_row(state: &mut ListState, data_len: usize) {
+    if data_len == 0 {
+        state.select(None);
+        return;
+    }
+
+    let current = selected_headered_data_index(state).unwrap_or(0);
+    let next = if current + 1 >= data_len { 0 } else { current + 1 };
+    state.select(Some(next + 1));
+}
+
+fn select_previous_headered_row(state: &mut ListState, data_len: usize) {
+    if data_len == 0 {
+        state.select(None);
+        return;
+    }
+
+    let current = selected_headered_data_index(state).unwrap_or(0);
+    let previous = if current == 0 { data_len - 1 } else { current - 1 };
+    state.select(Some(previous + 1));
 }
 
 fn ui(f: &mut Frame, app: &mut App) {
@@ -1567,4 +1516,55 @@ pub fn run(client: &ApiClient) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn headered_selection_maps_visible_rows_to_data_indices() {
+        let mut state = ListState::default();
+
+        normalize_headered_selection(&mut state, 3);
+        assert_eq!(state.selected(), Some(1));
+        assert_eq!(selected_headered_data_index(&state), Some(0));
+
+        select_next_headered_row(&mut state, 3);
+        assert_eq!(state.selected(), Some(2));
+        assert_eq!(selected_headered_data_index(&state), Some(1));
+
+        select_next_headered_row(&mut state, 3);
+        assert_eq!(state.selected(), Some(3));
+        assert_eq!(selected_headered_data_index(&state), Some(2));
+
+        select_next_headered_row(&mut state, 3);
+        assert_eq!(state.selected(), Some(1));
+        assert_eq!(selected_headered_data_index(&state), Some(0));
+    }
+
+    #[test]
+    fn headered_selection_never_selects_the_header_row() {
+        let mut state = ListState::default();
+        state.select(Some(0));
+
+        normalize_headered_selection(&mut state, 2);
+        assert_eq!(state.selected(), Some(1));
+
+        select_previous_headered_row(&mut state, 2);
+        assert_eq!(state.selected(), Some(2));
+        assert_eq!(selected_headered_data_index(&state), Some(1));
+    }
+
+    #[test]
+    fn headered_selection_clears_when_no_data_exists() {
+        let mut state = ListState::default();
+        state.select(Some(2));
+
+        normalize_headered_selection(&mut state, 0);
+        assert_eq!(state.selected(), None);
+
+        select_next_headered_row(&mut state, 0);
+        assert_eq!(state.selected(), None);
+    }
 }
