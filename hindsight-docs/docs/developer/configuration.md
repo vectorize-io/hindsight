@@ -258,6 +258,10 @@ export HINDSIGHT_API_LLM_MODEL=your-model-name
 export HINDSIGHT_API_LLM_PROVIDER=openai-codex
 export HINDSIGHT_API_LLM_MODEL=gpt-5.4-mini
 # No API key needed - uses OAuth tokens from ~/.codex/auth.json
+# For long-running services, set CODEX_HOME to a dedicated auth directory so
+# Hindsight doesn't share (and lose) its refresh token with another Codex process.
+# See Models docs → "Isolating Codex auth for long-running services".
+# export CODEX_HOME=/var/lib/hindsight/codex
 
 # Claude Code (Claude Pro/Max subscription - uses OAuth, no API key needed)
 export HINDSIGHT_API_LLM_PROVIDER=claude-code

@@ -338,6 +338,54 @@ You can use any model supported by OpenAI Codex CLI
 - Usage is billed to your ChatGPT subscription (not separate API costs)
 - For personal development use only (see ChatGPT Terms of Service)
 
+#### Isolating Codex auth for long-running services
+
+By default Hindsight reads Codex credentials from `~/.codex/auth.json` — the
+same file the `@openai/codex` CLI, editor plugins, and other agent runtimes use.
+This is convenient for local development but can cause a subtle failure mode when
+Hindsight runs as a **long-lived service** (systemd unit, container, background
+daemon) alongside another Codex process:
+
+- Codex refresh tokens are single-use and rotate on refresh.
+- If another process refreshes the shared token, Hindsight's long-running
+  process is left holding a stale refresh token.
+- Recall and `/health` keep working (the database and API are fine), but
+  `/reflect` fails with an error such as:
+  ```text
+  Codex refresh_token is permanently invalid (error.code=refresh_token_reused).
+  Run 'codex auth login' to re-authenticate.
+  ```
+
+To avoid this, give the Hindsight service its **own dedicated Codex auth home**
+via the `CODEX_HOME` environment variable. Hindsight honors `CODEX_HOME` exactly
+like the `@openai/codex` CLI: when set, it reads `$CODEX_HOME/auth.json` instead
+of `~/.codex/auth.json`.
+
+```bash
+# Dedicated credentials directory for the Hindsight service
+export CODEX_HOME=/var/lib/hindsight/codex
+
+# One-time login into that isolated home (opens a browser / device-code flow)
+codex auth login   # writes $CODEX_HOME/auth.json
+
+export HINDSIGHT_API_LLM_PROVIDER=openai-codex
+hindsight-api
+```
+
+For a systemd unit, set it in the service definition so it never shares auth
+with an interactive Codex session:
+
+```ini
+[Service]
+Environment=CODEX_HOME=/var/lib/hindsight/codex
+```
+
+After a fresh login into the dedicated home and restarting only the Hindsight
+service, `/reflect` uses its own token that other Codex processes will not
+rotate out from under it.
+
+`CODEX_HOME` is also honored by the `openai-codex` embeddings provider.
+
 ---
 
 ### Nous Portal Setup (Hermes)
