@@ -13,9 +13,18 @@ in-flight task so that N concurrent callers produce one query rather than N.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import time
 from collections import OrderedDict
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
+
+from .db_utils import acquire_with_retry
+
+if TYPE_CHECKING:
+    from .db.base import DatabaseBackend
+
+logger = logging.getLogger(__name__)
 
 
 class BankStatsCache:
@@ -132,3 +141,99 @@ class BankStatsCache:
         async with self._lock:
             self._entries.clear()
             self._in_flight.clear()
+
+
+class DistributedBankStatsCache:
+    """Table-backed (cross-process) TTL cache for `get_bank_stats`.
+
+    Same ``get_or_load`` / ``invalidate`` / ``clear`` contract as
+    :class:`BankStatsCache`, but the store is the per-schema ``bank_stats_cache``
+    table instead of a per-process dict — so one worker's computation is shared
+    with every other worker, and no caller recomputes while a fresh row exists.
+
+    On a hit, a call is a single primary-key ``SELECT`` (sub-millisecond); only a
+    miss runs the (expensive) ``loader`` and writes the row back. Concurrent
+    misses are *not* coalesced across processes (that would need a lock): they
+    each compute and ``UPSERT``, last write wins — all results are correct, at the
+    cost of a brief redundant compute at expiry.
+
+    Every DB touch is best-effort: if the cache table is unreachable or missing
+    (e.g. a schema mid-migration), the call degrades to computing without caching
+    rather than failing ``get_bank_stats``. PostgreSQL only — the engine keeps the
+    in-process :class:`BankStatsCache` for Oracle.
+    """
+
+    def __init__(self, *, backend: "DatabaseBackend", ttl_seconds: float) -> None:
+        self._backend = backend
+        self._ttl = float(ttl_seconds)
+
+    @property
+    def enabled(self) -> bool:
+        return self._ttl > 0
+
+    @staticmethod
+    def _qualified(schema: str) -> str:
+        return f'"{schema}".bank_stats_cache' if schema else "bank_stats_cache"
+
+    async def get_or_load(
+        self,
+        schema: str,
+        bank_id: str,
+        loader: Callable[[], Awaitable[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        if not self.enabled:
+            return await loader()
+
+        table = self._qualified(schema)
+
+        # 1. Fresh row? Single PK lookup; ``payload::text`` sidesteps any
+        #    jsonb->object codec so we always decode the same way.
+        try:
+            async with acquire_with_retry(self._backend) as conn:
+                row = await conn.fetchrow(
+                    f"SELECT payload::text AS payload FROM {table} "
+                    f"WHERE bank_id = $1 AND computed_at > now() - make_interval(secs => $2::double precision)",
+                    bank_id,
+                    self._ttl,
+                )
+            if row is not None:
+                return json.loads(row["payload"])
+        except Exception as exc:  # noqa: BLE001 — cache read must never break the endpoint
+            logger.debug("bank_stats_cache read failed for %s.%s (%s); computing uncached", schema, bank_id, exc)
+            return await loader()
+
+        # 2. Miss — compute, then write the row back (best-effort).
+        value = await loader()
+        try:
+            async with acquire_with_retry(self._backend) as conn:
+                await conn.execute(
+                    f"INSERT INTO {table} (bank_id, payload, computed_at) VALUES ($1, $2::jsonb, now()) "
+                    f"ON CONFLICT (bank_id) DO UPDATE SET payload = EXCLUDED.payload, computed_at = now()",
+                    bank_id,
+                    json.dumps(value),
+                )
+        except Exception as exc:  # noqa: BLE001 — a failed write just means no caching this round
+            logger.warning("bank_stats_cache write failed for %s.%s (%s)", schema, bank_id, exc)
+        return value
+
+    async def invalidate(self, schema: str, bank_id: str) -> None:
+        """Drop the cached row so the next read recomputes."""
+        if not self.enabled:
+            return
+        try:
+            async with acquire_with_retry(self._backend) as conn:
+                await conn.execute(f"DELETE FROM {self._qualified(schema)} WHERE bank_id = $1", bank_id)
+        except Exception as exc:  # noqa: BLE001 — invalidation must never break the write path
+            logger.debug("bank_stats_cache invalidate failed for %s.%s (%s)", schema, bank_id, exc)
+
+    async def clear(self) -> None:
+        """Drop all cached rows in the current schema (best-effort)."""
+        if not self.enabled:
+            return
+        from .memory_engine import get_current_schema
+
+        try:
+            async with acquire_with_retry(self._backend) as conn:
+                await conn.execute(f"DELETE FROM {self._qualified(get_current_schema())}")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("bank_stats_cache clear failed (%s)", exc)
