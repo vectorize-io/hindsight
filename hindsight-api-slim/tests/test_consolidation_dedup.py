@@ -84,7 +84,13 @@ def _ctx(threshold: float = 0.97):
         conn=conn,
         memory_engine=types.SimpleNamespace(embeddings=object()),
         bank_id="bank1",
-        config=types.SimpleNamespace(consolidation_dedup_threshold=threshold),
+        # The merge path builds a search_vector UPDATE clause from the text-search
+        # config, so these must be present (production defaults: native/english).
+        config=types.SimpleNamespace(
+            consolidation_dedup_threshold=threshold,
+            text_search_extension="native",
+            text_search_extension_native_language="english",
+        ),
         dedup_llm_config=llm,
         create_text="YouTube content in Uzbek is very rich.",
         create_source_ids=[uuid.uuid4()],
@@ -179,7 +185,13 @@ def _update_ctx(threshold: float = 0.97):
         conn=conn,
         memory_engine=types.SimpleNamespace(embeddings=object()),
         bank_id="bank1",
-        config=types.SimpleNamespace(consolidation_dedup_threshold=threshold),
+        # The merge path builds a search_vector UPDATE clause from the text-search
+        # config, so these must be present (production defaults: native/english).
+        config=types.SimpleNamespace(
+            consolidation_dedup_threshold=threshold,
+            text_search_extension="native",
+            text_search_extension_native_language="english",
+        ),
         dedup_llm_config=llm,
         updated_id=_UPDATED_ID,
         updated_text="Uzbek content on YouTube is very rich and growing.",
