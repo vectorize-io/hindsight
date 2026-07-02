@@ -154,12 +154,23 @@ export function MentalModelsView() {
 
     setLoading(true);
     try {
-      const mentalModelsData = await client.listMentalModels(
-        currentBank,
-        selectedTags.length > 0 ? selectedTags : undefined,
-        selectedTags.length > 0 ? tagsMatch : undefined
-      );
-      setMentalModels(mentalModelsData.items || []);
+      // The API caps each response at PAGE_SIZE, so page through until a short
+      // page is returned to load every mental model for this bank.
+      const PAGE_SIZE = 1000;
+      const all: MentalModel[] = [];
+      for (let offset = 0; ; offset += PAGE_SIZE) {
+        const page = await client.listMentalModels(
+          currentBank,
+          selectedTags.length > 0 ? selectedTags : undefined,
+          selectedTags.length > 0 ? tagsMatch : undefined,
+          PAGE_SIZE,
+          offset
+        );
+        const items = page.items || [];
+        all.push(...items);
+        if (items.length < PAGE_SIZE) break;
+      }
+      setMentalModels(all);
     } catch (error) {
       console.error("Error loading mental models:", error);
     } finally {

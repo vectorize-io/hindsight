@@ -1205,13 +1205,25 @@ export class ControlPlaneClient {
   /**
    * List mental models for a bank
    */
-  async listMentalModels(bankId: string, tags?: string[], tagsMatch?: string) {
+  async listMentalModels(
+    bankId: string,
+    tags?: string[],
+    tagsMatch?: string,
+    limit?: number,
+    offset?: number
+  ) {
     const params = new URLSearchParams();
     if (tags && tags.length > 0) {
       tags.forEach((t) => params.append("tags", t));
     }
     if (tagsMatch) {
       params.append("tags_match", tagsMatch);
+    }
+    if (limit !== undefined) {
+      params.append("limit", String(limit));
+    }
+    if (offset !== undefined) {
+      params.append("offset", String(offset));
     }
     const query = params.toString();
     return this.fetchApi<{
