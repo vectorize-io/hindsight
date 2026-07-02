@@ -314,6 +314,53 @@ class TestReflectStructuredOutput:
         assert call_kwargs["initial_backoff"] == 0.25
         assert call_kwargs["max_backoff"] == 1.0
 
+    @pytest.mark.asyncio
+    async def test_structured_output_forwards_max_tokens(self):
+        """Structured extraction must receive the reflect output-token budget so
+        reasoning / preamble models do not exhaust the provider default before
+        emitting JSON (finish_reason=length, empty content -> issue #2431). The
+        plain reflect calls already pass max_completion_tokens=max_tokens; the
+        structured second pass must too."""
+        llm = MagicMock()
+        llm.call = AsyncMock(side_effect=RuntimeError("empty message content: finish_reason=length"))
+
+        await _generate_structured_output(
+            answer="Alice prefers concise engineering updates.",
+            response_schema={
+                "type": "object",
+                "properties": {"summary": {"type": "string"}},
+                "required": ["summary"],
+            },
+            llm_config=llm,
+            reflect_id="test-reflect",
+            max_tokens=4096,
+        )
+
+        call_kwargs = llm.call.await_args.kwargs
+        assert call_kwargs["max_completion_tokens"] == 4096
+
+    @pytest.mark.asyncio
+    async def test_structured_output_omits_budget_when_unset(self):
+        """With no max_tokens (default), the structured call forwards
+        max_completion_tokens=None -- which LLMProvider.call omits, exactly like
+        the plain reflect calls -- so behavior is unchanged for callers that do
+        not request a budget."""
+        llm = MagicMock()
+        llm.call = AsyncMock(side_effect=RuntimeError("boom"))
+
+        await _generate_structured_output(
+            answer="Alice prefers concise engineering updates.",
+            response_schema={
+                "type": "object",
+                "properties": {"summary": {"type": "string"}},
+                "required": ["summary"],
+            },
+            llm_config=llm,
+            reflect_id="test-reflect",
+        )
+
+        assert llm.call.await_args.kwargs.get("max_completion_tokens") is None
+
 
 class TestReflectAgentMocked:
     """Test reflect agent with mocked LLM outputs."""

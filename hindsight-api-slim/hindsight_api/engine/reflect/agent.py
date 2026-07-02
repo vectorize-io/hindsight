@@ -224,6 +224,7 @@ async def _generate_structured_output(
     response_schema: dict,
     llm_config: "LLMProvider",
     reflect_id: str,
+    max_tokens: int | None = None,
 ) -> StructuredOutputResult:
     """Generate structured output from an answer using the provided JSON schema.
 
@@ -232,6 +233,10 @@ async def _generate_structured_output(
         response_schema: JSON Schema for the expected output structure
         llm_config: LLM provider for making the extraction call
         reflect_id: Reflect ID for logging
+        max_tokens: Output-token budget for the extraction call, mirroring the
+            plain reflect calls (omitted when None); without it, reasoning /
+            preamble models can exhaust the provider default before emitting any
+            JSON (finish_reason=length, empty content -> issue #2431)
 
     Returns:
         A StructuredOutputResult carrying the structured output (None if
@@ -322,6 +327,7 @@ OUTPUT:"""
             ],
             response_format=DynamicModel,
             scope="reflect_structured",
+            max_completion_tokens=max_tokens,
             max_retries=1,
             initial_backoff=0.25,
             max_backoff=1.0,
@@ -640,7 +646,7 @@ async def run_reflect_agent(
             # Generate structured output if schema provided
             structured_output = None
             if response_schema and answer:
-                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
+                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
                 structured_output = struct.structured_output
                 total_input_tokens += struct.input_tokens
                 total_output_tokens += struct.output_tokens
@@ -704,7 +710,7 @@ async def run_reflect_agent(
 
             structured_output = None
             if response_schema and answer:
-                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
+                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
                 structured_output = struct.structured_output
                 total_input_tokens += struct.input_tokens
                 total_output_tokens += struct.output_tokens
@@ -831,7 +837,7 @@ async def run_reflect_agent(
             # Generate structured output if schema provided
             structured_output = None
             if response_schema and answer:
-                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
+                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
                 structured_output = struct.structured_output
                 total_input_tokens += struct.input_tokens
                 total_output_tokens += struct.output_tokens
@@ -908,7 +914,7 @@ async def run_reflect_agent(
                 # Generate structured output if schema provided
                 structured_output = None
                 if response_schema and answer:
-                    struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
+                    struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
                     structured_output = struct.structured_output
                     total_input_tokens += struct.input_tokens
                     total_output_tokens += struct.output_tokens
@@ -963,7 +969,7 @@ async def run_reflect_agent(
             # Generate structured output if schema provided
             structured_output = None
             if response_schema and answer:
-                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
+                struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
                 structured_output = struct.structured_output
                 total_input_tokens += struct.input_tokens
                 total_output_tokens += struct.output_tokens
@@ -1035,6 +1041,7 @@ async def run_reflect_agent(
                     directives_applied=directives_applied,
                     llm_config=llm_config,
                     response_schema=response_schema,
+                    max_tokens=max_tokens,
                 )
 
         # Execute other tools in parallel (exclude done tool in all its format variants)
@@ -1244,6 +1251,7 @@ async def _process_done_tool(
     directives_applied: list[DirectiveInfo],
     llm_config: "LLMProvider | None" = None,
     response_schema: dict | None = None,
+    max_tokens: int | None = None,
 ) -> ReflectAgentResult:
     """Process the done tool call and return the result."""
     args = done_call.arguments
@@ -1263,7 +1271,7 @@ async def _process_done_tool(
     structured_output = None
     final_usage = usage
     if response_schema and llm_config and answer:
-        struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id)
+        struct = await _generate_structured_output(answer, response_schema, llm_config, reflect_id, max_tokens)
         structured_output = struct.structured_output
         # Add structured output tokens to usage
         final_usage = TokenUsageSummary(
