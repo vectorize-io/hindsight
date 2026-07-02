@@ -15,10 +15,11 @@ import functools
 import inspect
 import json
 import logging
+import math
 import sys
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar, cast, overload
@@ -841,6 +842,125 @@ def _resolve_refresh_tag_filtering(
     trigger_tags_match = trigger_data.get("tags_match")
     tags_match: TagsMatch = trigger_tags_match if trigger_tags_match else ("all_strict" if model_tags else "any")
     return RefreshTagFiltering(tags=model_tags, tags_match=tags_match, tag_groups=None)
+
+
+_FULL_REFRESH_INTERVAL_UNITS: dict[str, int] = {
+    "s": 1,
+    "m": 60,
+    "h": 60 * 60,
+    "d": 24 * 60 * 60,
+    "w": 7 * 24 * 60 * 60,
+}
+
+
+def _parse_full_refresh_interval(value: Any) -> timedelta | None:
+    """Parse ``trigger.full_refresh_interval`` into a positive duration.
+
+    Accepted forms are seconds as a number/string (``604800``) or compact strings
+    with a unit suffix: ``s``, ``m``, ``h``, ``d``, ``w`` (for example ``"7d"``).
+    ``None``/empty/zero disables the periodic full-refresh override.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("full_refresh_interval must be a duration, not a boolean")
+
+    seconds: float
+    if isinstance(value, int | float):
+        seconds = float(value)
+    elif isinstance(value, str):
+        raw = value.strip().lower()
+        if not raw:
+            return None
+        if raw[-1] in _FULL_REFRESH_INTERVAL_UNITS:
+            number = raw[:-1].strip()
+            if not number:
+                raise ValueError(f"invalid full_refresh_interval: {value!r}")
+            seconds = float(number) * _FULL_REFRESH_INTERVAL_UNITS[raw[-1]]
+        else:
+            seconds = float(raw)
+    else:
+        raise ValueError(f"full_refresh_interval must be a string or number, got {type(value).__name__}")
+
+    if not math.isfinite(seconds):
+        raise ValueError("full_refresh_interval must be finite")
+    if seconds <= 0:
+        return None
+    return timedelta(seconds=seconds)
+
+
+def _parse_refresh_datetime(value: Any) -> datetime | None:
+    """Parse a refresh timestamp from JSON/DB values into timezone-aware UTC."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+    else:
+        return None
+
+    if dt.tzinfo is None or dt.utcoffset() is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    """Return a JSON object from a dict/JSON-string DB value, or {}."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def mental_model_periodic_full_refresh_due(
+    mental_model: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Whether a delta-mode mental model should force a periodic full refresh.
+
+    The trigger is intentionally stored as JSONB, so this helper is defensive:
+    invalid/malformed intervals are ignored with a warning instead of breaking a
+    refresh for models created before the field was validated by the HTTP API.
+    """
+    trigger_data = _as_dict(mental_model.get("trigger"))
+    if (trigger_data.get("mode") or "full") != "delta":
+        return False
+
+    try:
+        interval = _parse_full_refresh_interval(trigger_data.get("full_refresh_interval"))
+    except (TypeError, ValueError) as exc:
+        logger.warning(
+            "[MENTAL_MODELS] Ignoring invalid full_refresh_interval %r for %s: %s",
+            trigger_data.get("full_refresh_interval"),
+            mental_model.get("id") or mental_model.get("mental_model_id"),
+            exc,
+        )
+        return False
+    if interval is None:
+        return False
+
+    reflect_response = _as_dict(mental_model.get("reflect_response"))
+    last_full = _parse_refresh_datetime(reflect_response.get("last_full_refreshed_at"))
+    if last_full is None:
+        return True
+
+    now_utc = _parse_refresh_datetime(now) or utcnow()
+    return now_utc - last_full >= interval
 
 
 @dataclass
@@ -10494,7 +10614,7 @@ class MemoryEngine(MemoryEngineInterface):
         # Create parent span for mental model refresh operation
         with create_operation_span("mental_model_refresh", bank_id):
             # Read reflect options from trigger (if stored)
-            trigger_data = mental_model.get("trigger") or {}
+            trigger_data = _as_dict(mental_model.get("trigger"))
             fact_types = trigger_data.get("fact_types")
             exclude_mental_models = trigger_data.get("exclude_mental_models", False)
             stored_exclude_ids: list[str] = trigger_data.get("exclude_mental_model_ids") or []
@@ -10502,6 +10622,12 @@ class MemoryEngine(MemoryEngineInterface):
             recall_max_tokens_override = trigger_data.get("recall_max_tokens")
             recall_chunks_max_tokens_override = trigger_data.get("recall_chunks_max_tokens")
             refresh_mode = trigger_data.get("mode") or "full"
+            refresh_started_at = utcnow()
+            previous_reflect_response = _as_dict(mental_model.get("reflect_response"))
+            force_periodic_full = mental_model_periodic_full_refresh_due(
+                mental_model,
+                now=refresh_started_at,
+            )
 
             current_content = (mental_model.get("content") or "").strip()
             current_source_query = mental_model["source_query"]
@@ -10515,7 +10641,7 @@ class MemoryEngine(MemoryEngineInterface):
             use_delta = False
             stored_structured_content: dict[str, Any] | None = None
             has_delta_baseline = bool(current_content) and current_content != MENTAL_MODEL_PENDING_CONTENT
-            if refresh_mode == "delta" and has_delta_baseline:
+            if refresh_mode == "delta" and has_delta_baseline and not force_periodic_full:
                 backend = await self._get_backend()
                 async with acquire_with_retry(backend) as conn:
                     tracking_row = await conn.fetchrow(
@@ -10640,8 +10766,7 @@ class MemoryEngine(MemoryEngineInterface):
             # grounded on ALL facts ever used, not just the latest delta's new
             # ones. Merge previous based_on with current, deduplicating by id.
             if use_delta:
-                prev_rr = mental_model.get("reflect_response") or {}
-                prev_based_on = prev_rr.get("based_on") or {}
+                prev_based_on = previous_reflect_response.get("based_on") or {}
                 for ftype, prev_facts in prev_based_on.items():
                     if not isinstance(prev_facts, list):
                         continue
@@ -10654,7 +10779,23 @@ class MemoryEngine(MemoryEngineInterface):
                 "text": reflect_result.text,
                 "based_on": based_on_serialized_payload,
                 "mental_models": [],  # Mental models are included in based_on["mental-models"]
+                "refresh_mode_requested": refresh_mode,
+                "refresh_mode_effective": "delta" if use_delta else "full",
             }
+            previous_last_full_refreshed_at = previous_reflect_response.get("last_full_refreshed_at")
+            if use_delta:
+                if previous_last_full_refreshed_at is not None:
+                    reflect_response_payload["last_full_refreshed_at"] = previous_last_full_refreshed_at
+            else:
+                reflect_response_payload["last_full_refreshed_at"] = refresh_started_at.isoformat()
+                if force_periodic_full:
+                    reflect_response_payload["refresh_full_reason"] = "full_refresh_interval"
+                elif refresh_mode == "full":
+                    reflect_response_payload["refresh_full_reason"] = "mode_full"
+                elif not has_delta_baseline:
+                    reflect_response_payload["refresh_full_reason"] = "delta_baseline_missing"
+                else:
+                    reflect_response_payload["refresh_full_reason"] = "delta_fallback"
 
             # Delta-mode path: emit structured operations against the existing
             # structured doc, apply them, then re-render to markdown. Sections

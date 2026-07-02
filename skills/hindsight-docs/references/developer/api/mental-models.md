@@ -166,10 +166,13 @@ Mental models can be configured to **automatically refresh** when observations a
 | `mode` | `"full"` \| `"delta"` | `"full"` | Refresh strategy. See [Refresh Mode](#refresh-mode) below. |
 | `refresh_after_consolidation` | bool | false | Automatically refresh after observations consolidation |
 | `refresh_cron` | string \| null | null | UTC 5-field cron expression for scheduled refreshes, such as `"0 3 * * *"` for daily at 03:00 UTC |
+| `full_refresh_interval` | string \| number \| null | null | For `mode: "delta"`, force a full re-synthesis when the previous full refresh is older than this duration (for example `"7d"` for weekly) |
 
 When `refresh_after_consolidation` is enabled, the mental model will be re-generated every time the bank's observations are consolidated — ensuring it always reflects the latest synthesized knowledge.
 
 When `refresh_cron` is set, Hindsight checks the schedule on the server's mental-model refresh tick and refreshes the model only if memories in its scope have changed since the last refresh. `refresh_cron` and `refresh_after_consolidation` are mutually exclusive, so a model refreshes either after consolidation or on a fixed UTC schedule, not both.
+
+When `full_refresh_interval` is set on a delta-mode model, Hindsight normally performs delta refreshes but periodically forces a full refresh to reset accumulated drift. The interval accepts seconds as a number/string or compact duration strings with `s`, `m`, `h`, `d`, or `w` suffixes. A scheduled refresh whose full interval is due bypasses the usual stale-content skip, so the full sweep can run even if no new memories arrived.
 
 ### Refresh Mode
 
@@ -195,30 +198,30 @@ If the LLM call fails or returns an empty answer, the existing content is preser
 ### Python
 
 ```python
-# Create a mental model with automatic refresh enabled
+# Create a delta-mode mental model with daily refreshes and a weekly full sweep
 result = client.create_mental_model(
     bank_id=BANK_ID,
     name="Project Status",
     source_query="What is the current project status?",
-    trigger={"refresh_cron": "0 3 * * *"}
+    trigger={"mode": "delta", "refresh_cron": "0 3 * * *", "full_refresh_interval": "7d"}
 )
 
-# This mental model checks daily at 03:00 UTC and refreshes when scoped memories changed
+# This model refreshes daily with delta updates, then does a full rebuild weekly to reset drift
 print(f"Operation ID: {result.operation_id}")
 ```
 
 ### Node.js
 
 ```javascript
-// Create a mental model with automatic refresh enabled
+// Create a delta-mode mental model with daily refreshes and a weekly full sweep
 const result2 = await client.createMentalModel(
     BANK_ID,
     'Project Status',
     'What is the current project status?',
-    { trigger: { refreshCron: '0 3 * * *' } },
+    { trigger: { mode: 'delta', refreshCron: '0 3 * * *', fullRefreshInterval: '7d' } },
 );
 
-// This mental model checks daily at 03:00 UTC and refreshes when scoped memories changed
+// This model refreshes daily with delta updates, then does a full rebuild weekly to reset drift
 console.log(`Operation ID: ${result2.operation_id}`);
 ```
 

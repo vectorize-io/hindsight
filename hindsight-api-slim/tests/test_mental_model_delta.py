@@ -22,6 +22,7 @@ This file contains two kinds of tests:
 
 import os
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -270,6 +271,117 @@ class TestDeltaRefreshPlumbing:
 
         assert refreshed["content"] == "# Customers\n\nBrand new topic."
         assert len(llm_calls) == 0, "Source-query change must bypass the delta merge"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_delta_mode_periodic_full_interval_forces_full_refresh(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_llm_call,
+    ):
+        """Delta models can periodically force a full re-synthesis to reset drift.
+
+        ``trigger.full_refresh_interval`` is evaluated against the previous
+        full-refresh timestamp recorded in ``reflect_response``. When the interval
+        has elapsed, refresh must bypass the structured-delta merge and run as a
+        full refresh even though ``trigger.mode`` remains ``delta``.
+        """
+        bank_id = f"test-delta-periodic-full-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        old_full_refresh = datetime.now(timezone.utc) - timedelta(days=8)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query="Tell me about the team",
+            content="# Team\n\nBaseline.",
+            trigger={"mode": "delta", "full_refresh_interval": "7d"},
+            request_context=request_context,
+        )
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            # Seed last_refreshed_at so a normal delta refresh would scope recall.
+            content="# Team\n\nBaseline.",
+            reflect_response={"last_full_refreshed_at": old_full_refresh.isoformat()},
+            request_context=request_context,
+        )
+
+        reflect_calls = patch_reflect(memory, text="# Team\n\nFull weekly rebuild.")
+        llm_calls = patch_llm_call(memory, returns="should-not-be-called")
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+
+        assert refreshed["content"] == "# Team\n\nFull weekly rebuild."
+        assert "created_after" not in reflect_calls[0]
+        assert len(llm_calls) == 0, "Periodic full refresh must bypass the delta merge"
+        rr = refreshed.get("reflect_response") or {}
+        assert rr.get("refresh_mode_effective") == "full"
+        assert rr.get("refresh_full_reason") == "full_refresh_interval"
+        assert rr.get("last_full_refreshed_at") is not None
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_delta_mode_periodic_full_interval_preserves_delta_until_due(
+        self,
+        memory: MemoryEngine,
+        request_context: RequestContext,
+        patch_reflect,
+        patch_llm_call,
+    ):
+        """A recent full refresh should not disable normal delta behavior."""
+        bank_id = f"test-delta-periodic-notdue-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        recent_full_refresh = datetime.now(timezone.utc) - timedelta(days=1)
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Team Info",
+            source_query="Tell me about the team",
+            content="# Team\n\nAlice is the lead.\n\n## Members\n\n- Alice — lead\n",
+            trigger={"mode": "delta", "full_refresh_interval": "7d"},
+            request_context=request_context,
+        )
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            # Seed last_refreshed_at and previous full-refresh metadata.
+            content="# Team\n\nAlice is the lead.\n\n## Members\n\n- Alice — lead\n",
+            reflect_response={"last_full_refreshed_at": recent_full_refresh.isoformat()},
+            request_context=request_context,
+        )
+
+        reflect_calls = patch_reflect(
+            memory,
+            text="# Team\n\nAlice is the lead. Bob joined.",
+            facts=[{"id": "obs-bob", "text": "Bob joined the team", "type": "observation", "context": None}],
+        )
+        llm_calls = patch_llm_call(
+            memory,
+            returns=[
+                {
+                    "op": "append_block",
+                    "section_id": "members",
+                    "block": {"type": "bullet_list", "items": ["Bob — engineer"]},
+                }
+            ],
+        )
+
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
+        )
+
+        assert "created_after" in reflect_calls[0]
+        assert len(llm_calls) == 1
+        assert "Bob — engineer" in refreshed["content"]
+        rr = refreshed.get("reflect_response") or {}
+        assert rr.get("delta_applied") is True
+        assert rr.get("refresh_mode_effective") == "delta"
+        assert rr.get("last_full_refreshed_at") == recent_full_refresh.isoformat()
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -843,10 +955,7 @@ class TestDeltaRefreshGeminiEval:
         the same bytes after the refresh as before. The new fact itself must
         appear somewhere in the output.
         """
-        from hindsight_api.engine.reflect.structured_doc import (
-            StructuredDocument,
-            render_section,
-        )
+        from hindsight_api.engine.reflect.structured_doc import render_section
 
         bank_id = f"eval-delta-add-{uuid.uuid4().hex[:8]}"
         seeded = await self._seed(
@@ -861,11 +970,6 @@ class TestDeltaRefreshGeminiEval:
             ],
         )
         first_content = seeded["first"]["content"]
-        first_struct = StructuredDocument.model_validate(
-            seeded["first"]["reflect_response"]["delta_operations_applied"]
-            and seeded["first"].get("structured_content")
-            or {"version": 1, "sections": []}
-        )
         # The first refresh's structured snapshot is what the second refresh
         # will operate on. Re-fetch via get_mental_model would also work.
         # For preservation comparison we re-parse first_content.

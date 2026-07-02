@@ -50,15 +50,15 @@ console.log(`Created with custom ID: ${resultWithId.operation_id}`);
 await new Promise(r => setTimeout(r, 5000));
 
 // [docs:create-mental-model-with-trigger]
-// Create a mental model with automatic refresh enabled
+// Create a delta-mode mental model with daily refreshes and a weekly full sweep
 const result2 = await client.createMentalModel(
     BANK_ID,
     'Project Status',
     'What is the current project status?',
-    { trigger: { refreshCron: '0 3 * * *' } },
+    { trigger: { mode: 'delta', refreshCron: '0 3 * * *', fullRefreshInterval: '7d' } },
 );
 
-// This mental model checks daily at 03:00 UTC and refreshes when scoped memories changed
+// This model refreshes daily with delta updates, then does a full rebuild weekly to reset drift
 console.log(`Operation ID: ${result2.operation_id}`);
 // [/docs:create-mental-model-with-trigger]
 

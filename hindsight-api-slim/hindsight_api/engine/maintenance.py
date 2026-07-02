@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 from ..config import HindsightConfig, get_config
 from ..models import RequestContext
 from .db_utils import acquire_with_retry
+from .memory_engine import mental_model_periodic_full_refresh_due
 from .schema import _is_oracle, fq_table
 
 if TYPE_CHECKING:
@@ -313,20 +314,23 @@ class MaintenanceLoop:
             try:
                 context = RequestContext(internal=True, tenant_id=tenant_id)
                 # Skip if nothing in the model's scope changed since its last
-                # refresh — a scheduled refresh must not regenerate identical
-                # content. compute_mental_model_is_stale needs the model's tags +
-                # trigger, which the discovery routine doesn't return, so re-read
-                # the row under the bank's schema context.
+                # refresh — unless a delta model's periodic full-refresh interval
+                # is due. A periodic full rebuild intentionally resets drift even
+                # if no new memories arrived, so it must bypass the staleness gate.
+                # compute_mental_model_is_stale needs the model's tags + trigger,
+                # which the discovery routine doesn't return, so re-read the row
+                # under the bank's schema context.
                 async with acquire_with_retry(engine._backend, max_retries=1) as conn:
                     mm_row = await conn.fetchrow(
-                        f"SELECT id, tags, trigger, last_refreshed_at FROM {fq_table('mental_models')} "
+                        f"SELECT id, tags, trigger, last_refreshed_at, reflect_response FROM {fq_table('mental_models')} "
                         "WHERE bank_id = $1 AND id = $2",
                         bank_id,
                         mm_id,
                     )
                     if mm_row is None:
                         continue
-                    is_stale = await engine.compute_mental_model_is_stale(conn, bank_id, mm_row)
+                    force_full = mental_model_periodic_full_refresh_due(dict(mm_row), now=now)
+                    is_stale = force_full or await engine.compute_mental_model_is_stale(conn, bank_id, mm_row)
                 if not is_stale:
                     skipped_fresh += 1
                     continue

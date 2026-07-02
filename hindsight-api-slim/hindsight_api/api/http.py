@@ -52,6 +52,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from hindsight_api import MemoryEngine
+from hindsight_api.engine.memory_engine import _parse_full_refresh_interval
 
 
 def _annotation_is_nullable(annotation: Any) -> bool:
@@ -1990,6 +1991,17 @@ class MentalModelTrigger(BaseModel):
             "wasted LLM call. null = no schedule."
         ),
     )
+    full_refresh_interval: str | int | float | None = Field(
+        default=None,
+        description=(
+            "Optional periodic full-refresh interval for delta-mode models. When set, a delta model "
+            "forces a full re-synthesis if its previous full refresh is older than this duration, "
+            "then returns to normal delta refreshes. Supports seconds as a number/string or compact "
+            "duration strings with s/m/h/d/w suffixes (for example '7d' for weekly). A scheduled "
+            "refresh whose full interval is due bypasses the usual staleness skip so drift can be "
+            "reset even when no new memories arrived. null or 0 disables periodic full refresh."
+        ),
+    )
     fact_types: list[Literal["world", "experience", "observation"]] | None = Field(
         default=None,
         description="Filter which fact types are retrieved during reflect. None means all types (world, experience, observation).",
@@ -2060,6 +2072,17 @@ class MentalModelTrigger(BaseModel):
 
         if not croniter.is_valid(v):
             raise ValueError(f"refresh_cron is not a valid cron expression: {v!r}")
+        return v
+
+    @field_validator("full_refresh_interval", mode="before")
+    @classmethod
+    def validate_full_refresh_interval(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        # Reuse engine parser so API validation matches runtime semantics.
+        _parse_full_refresh_interval(v)
         return v
 
     @model_validator(mode="after")

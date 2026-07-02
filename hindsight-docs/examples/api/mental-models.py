@@ -58,15 +58,15 @@ print(f"Created with custom ID: {result_with_id.operation_id}")
 time.sleep(5)
 
 # [docs:create-mental-model-with-trigger]
-# Create a mental model with automatic refresh enabled
+# Create a delta-mode mental model with daily refreshes and a weekly full sweep
 result = client.create_mental_model(
     bank_id=BANK_ID,
     name="Project Status",
     source_query="What is the current project status?",
-    trigger={"refresh_cron": "0 3 * * *"}
+    trigger={"mode": "delta", "refresh_cron": "0 3 * * *", "full_refresh_interval": "7d"}
 )
 
-# This mental model checks daily at 03:00 UTC and refreshes when scoped memories changed
+# This model refreshes daily with delta updates, then does a full rebuild weekly to reset drift
 print(f"Operation ID: {result.operation_id}")
 # [/docs:create-mental-model-with-trigger]
 

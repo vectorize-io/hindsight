@@ -27,6 +27,20 @@ def test_refresh_cron_and_auto_refresh_are_mutually_exclusive():
         MentalModelTrigger(refresh_after_consolidation=True, refresh_cron="0 3 * * *")
 
 
+def test_full_refresh_interval_validates_duration_values():
+    """full_refresh_interval accepts durations but rejects booleans/malformed values."""
+    assert MentalModelTrigger(full_refresh_interval="7d").full_refresh_interval == "7d"
+    assert MentalModelTrigger(full_refresh_interval=604800).full_refresh_interval == 604800
+    assert MentalModelTrigger(full_refresh_interval="").full_refresh_interval is None
+
+    with pytest.raises(ValueError, match="duration"):
+        MentalModelTrigger(full_refresh_interval=True)
+    with pytest.raises(ValueError, match="finite"):
+        MentalModelTrigger(full_refresh_interval="nan")
+    with pytest.raises(ValueError):
+        MentalModelTrigger(full_refresh_interval="not-a-duration")
+
+
 async def _make_bank(memory: MemoryEngine, request_context) -> str:
     bank_id = f"mmcron-{uuid.uuid4().hex[:8]}"
     await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
@@ -156,6 +170,39 @@ async def test_due_but_not_stale_model_is_skipped(memory: MemoryEngine, request_
     await MaintenanceLoop(memory)._run_scheduled_mm_refresh()
 
     assert mm_id not in submitted
+
+
+@pytest.mark.asyncio
+async def test_due_periodic_full_refresh_bypasses_staleness_skip(
+    memory: MemoryEngine, request_context, monkeypatch
+):
+    """A due delta full-refresh interval submits even when no new facts arrived."""
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
+        await conn.execute(
+            """
+            UPDATE mental_models
+            SET trigger = $1::jsonb,
+                reflect_response = $2::jsonb
+            WHERE id = $3
+            """,
+            json.dumps(
+                {
+                    "refresh_after_consolidation": False,
+                    "refresh_cron": "*/5 * * * *",
+                    "mode": "delta",
+                    "full_refresh_interval": "7d",
+                }
+            ),
+            json.dumps({"last_full_refreshed_at": "2000-01-01T00:00:00+00:00"}),
+            mm_id,
+        )
+
+    submitted = _patch_submit(memory, monkeypatch)
+    await MaintenanceLoop(memory)._run_scheduled_mm_refresh()
+
+    assert mm_id in submitted
 
 
 @pytest.mark.asyncio

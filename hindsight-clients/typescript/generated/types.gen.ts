@@ -2528,6 +2528,12 @@ export type MentalModelTriggerInput = {
    */
   refresh_cron?: string | null;
   /**
+   * Full Refresh Interval
+   *
+   * Optional periodic full-refresh interval for delta-mode models. When set, a delta model forces a full re-synthesis if its previous full refresh is older than this duration, then returns to normal delta refreshes. Supports seconds as a number/string or compact duration strings with s/m/h/d/w suffixes (for example '7d' for weekly). A scheduled refresh whose full interval is due bypasses the usual staleness skip so drift can be reset even when no new memories arrived. null or 0 disables periodic full refresh.
+   */
+  full_refresh_interval?: string | number | null;
+  /**
    * Fact Types
    *
    * Filter which fact types are retrieved during reflect. None means all types (world, experience, observation).
@@ -2601,6 +2607,12 @@ export type MentalModelTriggerOutput = {
    * Cron expression (UTC, standard 5-field syntax, e.g. '0 3 * * *' for daily at 03:00 UTC) for refreshing this mental model on a fixed schedule. Mutually exclusive with refresh_after_consolidation — a model refreshes either after consolidation or on a cron schedule, not both. A scheduled refresh only runs when the model is stale (new memories in its scope since the last refresh); if nothing changed, the tick is skipped to avoid a wasted LLM call. null = no schedule.
    */
   refresh_cron?: string | null;
+  /**
+   * Full Refresh Interval
+   *
+   * Optional periodic full-refresh interval for delta-mode models. When set, a delta model forces a full re-synthesis if its previous full refresh is older than this duration, then returns to normal delta refreshes. Supports seconds as a number/string or compact duration strings with s/m/h/d/w suffixes (for example '7d' for weekly). A scheduled refresh whose full interval is due bypasses the usual staleness skip so drift can be reset even when no new memories arrived. null or 0 disables periodic full refresh.
+   */
+  full_refresh_interval?: string | number | null;
   /**
    * Fact Types
    *
