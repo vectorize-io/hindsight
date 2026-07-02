@@ -11,6 +11,7 @@ import base64
 import io
 import json
 import logging
+import os
 import time
 from contextvars import ContextVar
 from typing import Any
@@ -27,6 +28,45 @@ from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
 logger = logging.getLogger(__name__)
+
+
+def _dump_request_on_4xx(scope: str, contents: Any, config: Any, err: Any) -> None:
+    """Diagnostic: when ``HINDSIGHT_API_LLM_DEBUG_DUMP_4XX`` is truthy, log the exact
+    request that produced a Gemini 4xx — the serialized GenerateContentConfig (response
+    schema as the SDK renders it on the wire, plus generation params, safety settings,
+    cached-content ref) and the per-message role/size with a truncated text preview.
+
+    Off by default (the env var is unset in normal operation). The config carries no
+    user content; message previews are capped so an enabled dump can't flood logs or
+    spill large bodies. Use only to capture an otherwise-unreproducible rejected request.
+    """
+    if os.getenv("HINDSIGHT_API_LLM_DEBUG_DUMP_4XX", "").strip().lower() not in ("1", "true", "yes", "on"):
+        return
+    try:
+        try:
+            cfg_repr = config.model_dump_json(exclude_none=True) if config is not None else "null"
+        except Exception:
+            cfg_repr = repr(config)[:8000]
+        parts_summary = []
+        for c in contents or []:
+            text = ""
+            for p in getattr(c, "parts", None) or []:
+                t = getattr(p, "text", None)
+                if t:
+                    text += t
+            parts_summary.append(
+                {"role": getattr(c, "role", "?"), "chars": len(text), "preview": text[:1500]}
+            )
+        logger.error(
+            "[LLM_4XX_DUMP] scope=%s code=%s err=%s config=%s contents=%s",
+            scope,
+            getattr(err, "code", "?"),
+            str(err)[:200],
+            cfg_repr,
+            json.dumps(parts_summary, ensure_ascii=False),
+        )
+    except Exception as dump_exc:  # never let diagnostics break the request path
+        logger.warning("[LLM_4XX_DUMP] failed to serialize rejected request: %s", dump_exc)
 
 # Per-request Gemini safety settings override.
 # Set exclusively by ConfiguredLLMProvider.call() / call_with_tools() via token-based
@@ -478,6 +518,11 @@ class GeminiLLM(LLMInterface):
                 if e.code in (401, 403):
                     logger.error(f"Gemini auth error (HTTP {e.code}), not retrying: {str(e)}")
                     raise
+
+                # Diagnostic dump (opt-in) of the exact request behind any 4xx, captured
+                # before the cache-drop retry rebuilds the config so we see what failed.
+                if e.code and 400 <= e.code < 500:
+                    _dump_request_on_4xx(scope, gemini_contents, generation_config, e)
 
                 # Cached-request safety net: a stale/invalid/expired CachedContent
                 # (or an incompatibility like cache + tool_config) surfaces as a 400.
