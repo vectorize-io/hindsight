@@ -188,6 +188,72 @@ def _clean_answer_text(text: str) -> str:
     return cleaned if cleaned else text
 
 
+# Raw, unparsed tool-call scaffolding that some providers leak as answer text
+# when they fail to turn a model's tool-call turn into structured tool_calls
+# (notably gpt-oss / harmony-format models served via litellm Vertex MaaS).
+# See issue #2222.
+#
+# Harmony frame tokens delimit a real harmony turn. A frame token must be present
+# before anything is flagged, so prose that merely quotes the routing namespace
+# (``to=functions.x``) or a lone control token while explaining the format is not
+# mistaken for a leak.
+_HARMONY_FRAME_TOKEN = re.compile(r"<\|(?:start|channel|message)\|>")
+# Evidence of an actual tool call inside that frame: the ``<|call|>`` commit token
+# that terminates a call, or the tool-routing namespace (e.g. ``to=functions.recall``).
+_HARMONY_CALL_TOKEN = re.compile(r"<\|call\|>")
+_HARMONY_TOOL_ROUTING = re.compile(r"(?:^|[\s>])to=(?:functions|tool)\b", re.IGNORECASE)
+# The done() tool's internal citation fields. They never appear in a legitimate
+# free-text answer, so a JSON object carrying any of them is an unambiguous
+# leaked done() payload (vs. a plain ``{"answer": ...}`` blob with no id fields,
+# which is intentionally left alone since it is indistinguishable from a valid
+# JSON answer).
+_DONE_TOOL_ID_FIELDS = ("memory_ids", "mental_model_ids", "observation_ids")
+
+
+def _looks_like_unparsed_tool_call(text: str) -> bool:
+    """Return True if ``text`` is raw, unparsed tool-call scaffolding.
+
+    Some providers intermittently fail to parse a model's tool-call turn into
+    structured ``tool_calls`` (notably gpt-oss / harmony-format models served
+    through litellm Vertex MaaS). The raw harmony tool-call structure
+    (``<|channel|>commentary to=functions.recall<|message|>{...}<|call|>``), or a
+    done() payload emitted as bare JSON that carries the tool's internal citation
+    id fields, then land in ``message.content`` with no tool executed. Surfacing
+    that verbatim returns corrupt, unsynthesized output to the user (issue
+    #2222), so it must be treated as a failed parse and routed to final synthesis
+    instead of accepted as an answer.
+
+    Detection is intentionally narrow to avoid rejecting valid answers. Harmony
+    scaffolding is only flagged when a harmony frame token is present together
+    with call evidence (a ``<|call|>`` commit token or the ``to=functions/tool``
+    routing namespace); an answer that merely quotes one of those tokens while
+    explaining the format has no such pairing and is left untouched. A bare
+    ``{"answer": ...}`` object with no id fields is likewise left alone, being
+    indistinguishable from a valid JSON answer. (An answer that embeds a full
+    harmony tool-call example verbatim would be re-synthesized rather than echoed
+    — an accepted, non-destructive trade-off given how rare that is for a
+    memory-synthesis answer and that the fallback reuses the same evidence.)
+    """
+    if not text:
+        return False
+    stripped = text.strip()
+    if _HARMONY_FRAME_TOKEN.search(stripped) and (
+        _HARMONY_CALL_TOKEN.search(stripped) or _HARMONY_TOOL_ROUTING.search(stripped)
+    ):
+        return True
+    # done() emitted as bare JSON text instead of a structured tool call. Key on
+    # the internal id fields (which never appear in a real answer); the ``answer``
+    # field is optional so a leaked payload that omits it is still caught.
+    if stripped.startswith("{") and stripped.endswith("}"):
+        try:
+            obj = json.loads(stripped)
+        except (ValueError, TypeError):
+            return False
+        if isinstance(obj, dict) and any(f in obj for f in _DONE_TOOL_ID_FIELDS):
+            return True
+    return False
+
+
 def _clean_done_answer(text: str) -> str:
     """Clean up the answer field from a done() tool call.
 
@@ -860,7 +926,19 @@ async def run_reflect_agent(
                 bool(available_memory_ids) or bool(available_mental_model_ids) or bool(available_observation_ids)
             )
             directive_leak_risk = directives and not has_gathered_evidence
-            if result.content and not directive_leak_risk:
+            # Some providers (e.g. gpt-oss / harmony models via litellm Vertex
+            # MaaS) intermittently fail to parse a tool-call turn into structured
+            # ``tool_calls`` and leave raw harmony scaffolding (or a done() payload
+            # carrying internal citation ids) in ``content`` with ``tool_calls``
+            # empty. Accepting that as the answer surfaces corrupt, unsynthesized
+            # text to the user (issue #2222), so route it to final synthesis.
+            unparsed_tool_call = bool(result.content) and _looks_like_unparsed_tool_call(result.content)
+            if unparsed_tool_call:
+                logger.warning(
+                    f"[REFLECT {reflect_id}] Discarding unparsed tool-call scaffolding in answer "
+                    f"text on iteration {iteration + 1}; forcing final synthesis."
+                )
+            if result.content and not directive_leak_risk and not unparsed_tool_call:
                 answer = _clean_answer_text(result.content.strip())
 
                 # The call_with_tools call above is intentionally uncapped so the

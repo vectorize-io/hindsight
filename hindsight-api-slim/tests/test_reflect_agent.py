@@ -21,6 +21,7 @@ from hindsight_api.engine.reflect.agent import (
     _generate_structured_output,
     _is_context_overflow_error,
     _is_done_tool,
+    _looks_like_unparsed_tool_call,
     _normalize_tool_name,
     run_reflect_agent,
 )
@@ -191,6 +192,53 @@ class TestCleanDoneAnswer:
         text = '{"answer": "yes", "payload": {"format": "json"}, "memory_ids": []}'
         cleaned = _clean_done_answer(text)
         assert cleaned == text
+
+
+class TestUnparsedToolCallDetection:
+    """Detect raw harmony / tool-call scaffolding leaking as answer text (issue #2222)."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Full leaked harmony tool call: frame tokens + routing + commit.
+            "<|start|>assistant<|channel|>commentary to=functions.recall<|message|>{\"query\": \"x\"}<|call|>",
+            # Frame token + <|call|> commit (no routing namespace visible).
+            "<|channel|>commentary<|message|>{\"name\": \"recall\"}<|call|>",
+            # Frame token + routing, truncated before the commit token.
+            "<|channel|>commentary to=functions.recall<|message|>{\"query\": \"x\"}",
+            # done() emitted as bare JSON carrying the tool's internal id fields.
+            '{"answer": "Confirmed.", "memory_ids": ["mem-1"]}',
+            '  {"answer": "no data", "observation_ids": [], "mental_model_ids": []}  ',
+            # Leaked done payload that omits "answer" but keeps the id fields.
+            '{"memory_ids": ["mem-1"], "mental_model_ids": []}',
+        ],
+    )
+    def test_detects_scaffolding(self, text):
+        assert _looks_like_unparsed_tool_call(text) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "",
+            None,
+            "The team meets every Tuesday to review the roadmap.",
+            "Here is the answer: the launch is on Friday.",
+            "I found that the user prefers concise answers and dislikes long emails.",
+            "The function to=string mapping was discussed, but no tool was called.",
+            # Legitimate answers that merely *explain* harmony syntax must not be
+            # flagged: a frame token alone, or the routing namespace alone, is not
+            # a leaked call.
+            "The `<|channel|>` token marks a section boundary in the harmony format.",
+            "Use `<|start|>` and `<|message|>` to frame a turn; they are control tokens.",
+            "Use `to=functions.recall` for the recall tool and `to=tool.foo` for foo.",
+            # A bare answer object with no internal id fields is indistinguishable
+            # from a valid JSON answer, so it is deliberately NOT flagged.
+            '{"answer": "I\'m sorry, but I don\'t have that information."}',
+            '{"result": 42, "status": "ok"}',
+        ],
+    )
+    def test_passes_clean_prose(self, text):
+        assert _looks_like_unparsed_tool_call(text) is False
 
 
 class TestToolNameNormalization:
@@ -830,6 +878,65 @@ class TestReflectAgentMocked:
 
         assert result.text == short_answer
         mock_llm.call.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unparsed_harmony_scaffolding_is_not_returned_as_answer(self, mock_llm, mock_functions):
+        """If a provider leaves raw harmony tool-call scaffolding in ``content`` with empty
+        ``tool_calls`` (litellm failing to parse a gpt-oss tool turn, issue #2222), the agent
+        must NOT surface that scaffolding; it routes to final synthesis instead.
+        """
+        leaked = (
+            "<|start|>assistant<|channel|>commentary "
+            'to=functions.recall<|message|>{"query": "recent activity"}<|call|>'
+        )
+        # Every agent turn leaks scaffolding instead of a parsed tool call.
+        mock_llm.call_with_tools.return_value = LLMToolCallResult(
+            tool_calls=[],
+            content=leaked,
+            finish_reason="stop",
+            input_tokens=10,
+            output_tokens=40,
+        )
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="summarize recent activity",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            **mock_functions,
+        )
+
+        # The corrupt scaffolding must never reach the user-visible answer.
+        assert "<|" not in result.text
+        assert "to=functions" not in result.text
+        # Instead the agent fell through to the forced final-synthesis path.
+        assert result.text == "Fallback answer from final iteration"
+        mock_llm.call.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_leaked_done_payload_with_ids_is_not_returned_as_answer(self, mock_llm, mock_functions):
+        """A done() payload emitted as bare JSON carrying the tool's internal id fields
+        (no real tool call) must be rejected and routed to final synthesis, not surfaced.
+        """
+        mock_llm.call_with_tools.return_value = LLMToolCallResult(
+            tool_calls=[],
+            content='{"answer": "I\'m sorry, but I don\'t have that information.", "memory_ids": []}',
+            finish_reason="stop",
+            input_tokens=10,
+            output_tokens=15,
+        )
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="what is the status?",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            **mock_functions,
+        )
+
+        assert "memory_ids" not in result.text
+        assert result.text == "Fallback answer from final iteration"
+        mock_llm.call.assert_called()
 
     @pytest.mark.asyncio
     async def test_max_iterations_reached(self, mock_llm, mock_functions):
