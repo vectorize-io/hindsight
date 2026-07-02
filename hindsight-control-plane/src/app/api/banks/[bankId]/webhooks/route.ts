@@ -5,7 +5,7 @@ import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 export async function GET(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
   const { bankId } = await params;
   const res = await fetch(dataplaneBankUrl(bankId, "/webhooks"), {
-    headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+    headers: getDataplaneHeaders(request, { "Content-Type": "application/json" }),
   });
   const data = await res.json();
   if (!res.ok)
@@ -24,7 +24,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ban
   const body = await request.json();
   const res = await fetch(dataplaneBankUrl(bankId, "/webhooks"), {
     method: "POST",
-    headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+    headers: getDataplaneHeaders(request, { "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
   const data = await res.json();

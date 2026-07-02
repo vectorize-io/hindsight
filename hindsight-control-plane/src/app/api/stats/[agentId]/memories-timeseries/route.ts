@@ -14,7 +14,7 @@ export async function GET(
       agentId,
       `/stats/memories-timeseries?period=${encodeURIComponent(period)}&time_field=${encodeURIComponent(timeField)}`
     );
-    const upstream = await fetch(url, { headers: getDataplaneHeaders() });
+    const upstream = await fetch(url, { headers: getDataplaneHeaders(request) });
     const body = await upstream.json();
     return NextResponse.json(body, { status: upstream.status });
   } catch (error) {

@@ -23,7 +23,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
     const url = dataplaneBankUrl(bankId, `/llm-requests${query ? `?${query}` : ""}`);
     const response = await fetch(url, {
       method: "GET",
-      headers: getDataplaneHeaders(),
+      headers: getDataplaneHeaders(request),
     });
 
     const data = await response.json();

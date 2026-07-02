@@ -15,7 +15,7 @@ export async function POST(
     const url = dataplaneBankUrl(bankId, `/import${dryRun ? "?dry_run=true" : ""}`);
     const response = await fetch(url, {
       method: "POST",
-      headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+      headers: getDataplaneHeaders(request, { "Content-Type": "application/json" }),
       body: JSON.stringify(body),
     });
 

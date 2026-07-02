@@ -362,25 +362,46 @@ class WorkerPoller:
             return []
 
         schemas = await self._get_schemas()
-        if not schemas:
-            return []
 
         # Scan: find which schemas have pending work using a lightweight
         # EXISTS check (no locks). Then only claim from those schemas
         # using the expensive FOR UPDATE SKIP LOCKED query.
+        #
+        # On the server-side routine path, _scan_active_schemas() is the
+        # authority on where claimable work lives and is independent of
+        # _get_schemas(): the routine probes pg_namespace directly, so it
+        # returns tenant schemas this process never initialized in memory.
+        # That matters because list_tenants() (the source of _get_schemas())
+        # only knows about schemas THIS process created during an
+        # authenticated request — a worker process serves no user requests,
+        # so its in-memory tenant set is empty. We must therefore derive the
+        # claimable schema universe from the scan result UNIONed with
+        # _get_schemas(), never gate claiming on _get_schemas() alone.
         active_schemas = await self._scan_active_schemas(schemas)
 
         if not active_schemas:
-            self._next_schema_idx = (self._next_schema_idx + 1) % len(schemas)
+            if schemas:
+                self._next_schema_idx = (self._next_schema_idx + 1) % len(schemas)
             return []
+
+        # Union the configured tenant list with any schemas the scan
+        # discovered (the routine may surface schemas absent from the
+        # in-memory tenant list). Preserve _get_schemas() ordering first for
+        # stable rotation, then append scan-only schemas deterministically.
+        ordered_schemas: list[str | None] = list(schemas)
+        seen = set(ordered_schemas)
+        for s in sorted(active_schemas, key=lambda x: (x is not None, x or "")):
+            if s not in seen:
+                ordered_schemas.append(s)
+                seen.add(s)
 
         # Build rotation list from active schemas only, preserving their
         # original positions for correct offset advancement.
-        all_indexed = list(enumerate(schemas))
+        all_indexed = list(enumerate(ordered_schemas))
         active_indexed = [(i, s) for i, s in all_indexed if s in active_schemas]
 
         # Rotate so no tenant is always first.
-        start = self._next_schema_idx % len(schemas)
+        start = self._next_schema_idx % len(ordered_schemas)
         rotated = [x for x in active_indexed if x[0] >= start] + [x for x in active_indexed if x[0] < start]
 
         all_tasks: list[ClaimedTask] = []
@@ -440,9 +461,9 @@ class WorkerPoller:
         # Advance offset past the last schema we serviced, or by 1 if
         # nothing was claimed (so we don't keep re-hitting an empty head).
         if last_serviced_idx is not None:
-            self._next_schema_idx = (last_serviced_idx + 1) % len(schemas)
+            self._next_schema_idx = (last_serviced_idx + 1) % len(ordered_schemas)
         else:
-            self._next_schema_idx = (start + 1) % len(schemas)
+            self._next_schema_idx = (start + 1) % len(ordered_schemas)
 
         return all_tasks
 

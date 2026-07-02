@@ -32,6 +32,57 @@ HINDSIGHT_API_TENANT_SUPABASE_SERVICE_KEY=your-service-role-key
 
 See the [source code](https://github.com/vectorize-io/hindsight/blob/main/hindsight-api-slim/hindsight_api/extensions/builtin/supabase_tenant.py) for complete configuration options and implementation details.
 
+**Built-in: OidcTenantExtension**
+
+Generic OpenID Connect / OAuth multi-tenancy for any standard OIDC provider (Auth0, Okta, Keycloak, Microsoft Entra ID, Google, ...). Each authenticated user gets their own PostgreSQL schema (`{prefix}_{subject}`), ensuring complete data separation. Tokens are verified locally using JWKS discovered from the provider's `/.well-known/openid-configuration` document (no network call per request).
+
+```bash
+HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.oidc_tenant:OidcTenantExtension
+HINDSIGHT_API_TENANT_OIDC_ISSUER=https://your-tenant.auth0.com/
+
+# Optional
+HINDSIGHT_API_TENANT_OIDC_AUDIENCE=your-api-audience        # expected `aud` claim
+HINDSIGHT_API_TENANT_OIDC_JWKS_URI=https://.../jwks.json    # skip discovery
+HINDSIGHT_API_TENANT_SUBJECT_CLAIM=sub                      # claim used to derive the schema
+HINDSIGHT_API_TENANT_SCHEMA_PREFIX=user                     # schema prefix (default "user")
+HINDSIGHT_API_TENANT_ALGORITHMS=RS256,ES256                 # allowed signing algorithms
+```
+
+The subject claim is sanitized into a valid Postgres identifier; long/opaque subjects are hashed to stay within the identifier length limit. See the [source code](https://github.com/vectorize-io/hindsight/blob/main/hindsight-api-slim/hindsight_api/extensions/builtin/oidc_tenant.py) for details.
+
+**Built-in: GitHubTenantExtension**
+
+A purpose-built configuration of `OidcTenantExtension` for **GitHub OAuth** that adds **team-based role assignment**. GitHub OAuth user access tokens are opaque (not JWTs), so this variant validates them against the GitHub REST API instead of JWKS.
+
+Like the other tenant extensions, **each GitHub user gets their own isolated schema** — `{prefix}_{github_user_id}`, keyed on the immutable numeric user id. In addition, the user's GitHub **team membership** in a configured org is mapped to a Hindsight role that **gates capabilities** (the schema stays per-user):
+
+| Role | Memory operations | Bank config |
+| --- | --- | --- |
+| `admin` | retain / recall / reflect | all configurable fields |
+| `member` | retain / recall / reflect | a curated subset of fields |
+| `viewer` | recall only (read-only) | none (read-only) |
+
+```bash
+HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.github_tenant:GitHubTenantExtension
+HINDSIGHT_API_TENANT_GITHUB_ORG=my-org
+
+# Team slugs (comma-separated) mapped to each role
+HINDSIGHT_API_TENANT_GITHUB_ADMIN_TEAMS=platform-admins
+HINDSIGHT_API_TENANT_GITHUB_MEMBER_TEAMS=engineering,data
+HINDSIGHT_API_TENANT_GITHUB_VIEWER_TEAMS=analysts
+
+# Optional
+HINDSIGHT_API_TENANT_GITHUB_DEFAULT_ROLE=viewer             # role for org members in no mapped team; empty = deny
+HINDSIGHT_API_TENANT_GITHUB_API_URL=https://api.github.com  # set for GitHub Enterprise Server
+HINDSIGHT_API_TENANT_GITHUB_ROLE_CACHE_TTL=300              # seconds to cache resolved roles
+HINDSIGHT_API_TENANT_SCHEMA_PREFIX=user
+
+# Companion validator that enforces read/write gating on retain/recall/reflect
+HINDSIGHT_API_OPERATION_VALIDATOR_EXTENSION=hindsight_api.extensions.builtin.github_role_validator:GitHubRoleOperationValidator
+```
+
+Role enforcement is split across two hooks: bank-config write permissions are enforced by the tenant extension's `get_allowed_config_fields`, while retain/recall/reflect gating is enforced by the companion `GitHubRoleOperationValidator`. The resolved role is propagated to the validator through `RequestContext.tenant_id` (encoded as `gh_<id>:<role>`), so no extra GitHub API call is made per operation. See the [source code](https://github.com/vectorize-io/hindsight/blob/main/hindsight-api-slim/hindsight_api/extensions/builtin/github_tenant.py) for details.
+
 For other multi-tenant setups with separate schemas per tenant (e.g., custom JWT-based auth), implement a custom `TenantExtension`.
 
 ---
