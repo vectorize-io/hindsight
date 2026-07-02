@@ -852,10 +852,13 @@ def ensure_text_search_extension(
 
     engine = create_engine(to_libpq_url(database_url), poolclass=NullPool)
     with engine.connect() as conn:
-        # Tables with search_vector columns to check
+        # Tables with search_vector columns to check. The invalidation archive
+        # is cold storage, so its column must match memory_units for lossless
+        # INSERT ... SELECT moves, but it must not get a recall-path index.
         tables_to_check = [
-            "memory_units",
-            "reflections",  # Renamed from pinned_reflections in p1k2l3m4n5o6 migration
+            ("memory_units", True),
+            ("reflections", True),  # Renamed from pinned_reflections in p1k2l3m4n5o6 migration
+            ("invalidated_memory_units", False),
         ]
 
         # Determine target column type and index type
@@ -883,7 +886,7 @@ def ensure_text_search_extension(
         mismatched_tables = []
         tables_with_data = []
 
-        for table_name in tables_to_check:
+        for table_name, requires_text_search_index in tables_to_check:
             # Check if table exists
             table_exists = conn.execute(
                 text("""
@@ -913,7 +916,7 @@ def ensure_text_search_extension(
 
             if not current_column_info:
                 logger.warning(f"No search_vector column found for {table_name}, will create it")
-                mismatched_tables.append((table_name, None, None, False))
+                mismatched_tables.append((table_name, None, None, False, requires_text_search_index))
                 continue
 
             # Check column type (udt_name contains the actual type: tsvector, bm25vector, etc.)
@@ -944,7 +947,10 @@ def ensure_text_search_extension(
 
             # Check if column and index types match target
             column_matches = current_column_type == target_column_type
-            index_matches = current_index_type == target_index_type if current_index_type else False
+            if requires_text_search_index:
+                index_matches = current_index_type == target_index_type if current_index_type else False
+            else:
+                index_matches = True
             # When both target and current sit at column=text/index=bm25, the
             # access-method check alone can't tell pg_textsearch from pg_search —
             # require the key_field reloption to agree with the configured backend.
@@ -958,12 +964,28 @@ def ensure_text_search_extension(
                     f"column={current_column_type} (want {target_column_type}), "
                     f"index={current_index_type} (want {target_index_type})"
                 )
-                mismatched_tables.append((table_name, current_column_type, current_index_type, current_is_pg_search))
+                mismatched_tables.append(
+                    (
+                        table_name,
+                        current_column_type,
+                        current_index_type,
+                        current_is_pg_search,
+                        requires_text_search_index,
+                    )
+                )
 
                 # Check if table has data
                 row_count = conn.execute(text(f"SELECT COUNT(*) FROM {schema_name}.{table_name}")).scalar()
 
-                if row_count > 0:
+                # Archive-only TEXT reconciliation is safe with existing data:
+                # pgroonga/pg_textsearch/pg_search keep search_vector as passive
+                # text copied from memory_units, and no index needs rebuilding.
+                safe_archive_text_reconcile = (
+                    not requires_text_search_index
+                    and target_column_type == "text"
+                    and (current_column_type is None or current_column_type != target_column_type)
+                )
+                if row_count > 0 and not safe_archive_text_reconcile:
                     tables_with_data.append((table_name, row_count))
             else:
                 logger.debug(f"Text search OK for {table_name}: {current_column_type}/{current_index_type}")
@@ -996,15 +1018,55 @@ def ensure_text_search_extension(
                 f"Cannot change text search extension from {current_ext} to {text_search_extension}: "
                 f"the following tables contain data: {table_list}. "
                 f"To change text search extension, you must either:\n"
-                f"  1. Clear all data: DELETE FROM {schema_name}.memory_units; "
-                f"DELETE FROM {schema_name}.reflections; then restart\n"
+                f"  1. Clear all data: "
+                f"{'; '.join(f'DELETE FROM {schema_name}.{table}' for table, _count in tables_with_data)}; "
+                f"then restart\n"
                 f"  2. Use the current text search extension (set HINDSIGHT_API_TEXT_SEARCH_EXTENSION='{current_ext}')"
             )
 
         # Tables are empty, safe to recreate columns/indexes
         logger.info(f"Recreating text search columns/indexes for {text_search_extension}")
 
-        for table_name, current_col_type, current_idx_type, _was_pg_search in mismatched_tables:
+        for (
+            table_name,
+            current_col_type,
+            current_idx_type,
+            _was_pg_search,
+            requires_text_search_index,
+        ) in mismatched_tables:
+            if not requires_text_search_index:
+                if current_col_type:
+                    logger.info(f"Converting passive {table_name}.search_vector column to {target_column_type}")
+                    if target_column_type == "text":
+                        conn.execute(
+                            text(
+                                f"ALTER TABLE {schema_name}.{table_name} "
+                                "ALTER COLUMN search_vector TYPE TEXT USING search_vector::TEXT"
+                            )
+                        )
+                    elif target_column_type == "bm25vector":
+                        conn.execute(text(f"ALTER TABLE {schema_name}.{table_name} DROP COLUMN search_vector"))
+                        conn.execute(
+                            text(
+                                f"ALTER TABLE {schema_name}.{table_name} "
+                                "ADD COLUMN search_vector bm25_catalog.bm25vector"
+                            )
+                        )
+                    else:
+                        conn.execute(text(f"ALTER TABLE {schema_name}.{table_name} DROP COLUMN search_vector"))
+                        conn.execute(
+                            text(
+                                f"ALTER TABLE {schema_name}.{table_name} ADD COLUMN search_vector {target_column_type}"
+                            )
+                        )
+                else:
+                    logger.info(f"Creating passive {target_column_type} search_vector on {table_name}")
+                    column_type = (
+                        "bm25_catalog.bm25vector" if target_column_type == "bm25vector" else target_column_type
+                    )
+                    conn.execute(text(f"ALTER TABLE {schema_name}.{table_name} ADD COLUMN search_vector {column_type}"))
+                continue
+
             # Drop existing index if it exists
             if current_idx_type:
                 logger.info(f"Dropping {current_idx_type} index on {table_name}")
