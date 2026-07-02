@@ -6570,13 +6570,18 @@ class MemoryEngine(MemoryEngineInterface):
                     )
 
                 collist = await self._memory_unit_columns(conn)
-                # The archive is cold storage, never a recall surface, so the schema gives it
-                # no `embedding` column at all (dropped in d4f6a8c2e1b3). The move in/out is
-                # therefore over every memory_units column EXCEPT embedding; on revert the
-                # embedding is recomputed from the unit's text/dates/entities below. This makes
-                # a model switch (which re-dimensions memory_units) structurally unable to trip
-                # a vector-dimension mismatch on the INSERT … SELECT round-trip (#2209).
-                arch_cols = ", ".join(c for c in (s.strip() for s in collist.split(",")) if c != '"embedding"')
+                # The archive is cold storage, never a recall surface and carries no index,
+                # so the schema gives it neither the `embedding` (dropped in d4f6a8c2e1b3)
+                # nor the `search_vector` column (dropped in e7c3a9f1b2d5). Both are
+                # recall-surface columns whose type/shape follows server
+                # config, so the move in/out is over every memory_units column EXCEPT those
+                # two; on revert each is recomputed from the unit's text/dates/entities below.
+                # This makes a model switch (which re-dimensions memory_units) structurally
+                # unable to trip a vector-dimension mismatch (#2209), and a text-search backend
+                # switch unable to trip a search_vector type mismatch (#2503), on the
+                # INSERT … SELECT round-trip.
+                _archive_omitted = ('"embedding"', '"search_vector"')
+                arch_cols = ", ".join(c for c in (s.strip() for s in collist.split(",")) if c not in _archive_omitted)
 
                 # --- Edit fields (live rows only): text / context / dates / fact_type / entities ---
                 doing_edit = any(
@@ -6695,14 +6700,29 @@ class MemoryEngine(MemoryEngineInterface):
                     arch_row = await conn.fetchrow(
                         f"SELECT entity_ids FROM {arch} WHERE id = $1 AND bank_id = $2", str(memory_uuid), bank_id
                     )
-                    # The archive has no embedding column (see arch_cols above), so the live
-                    # row's embedding defaults to NULL on the way back and is recomputed below
-                    # once entities are restored.
+                    # The archive keeps neither embedding nor search_vector (see arch_cols
+                    # above), so both default to NULL on the way back and are recomputed here:
+                    # the embedding below once entities are restored, the search_vector now
+                    # from the row's own text/context/text_signals.
                     await conn.execute(
                         f"INSERT INTO {mu} ({arch_cols}) SELECT {arch_cols} FROM {arch} WHERE id = $1 AND bank_id = $2",
                         str(memory_uuid),
                         bank_id,
                     )
+                    # Rebuild search_vector using the *current* text-search backend, so the
+                    # reverted unit is keyword-searchable again (more correct than carrying a
+                    # verbatim copy that could be stale/wrong-type if the backend changed while
+                    # the fact sat archived). None = pgroonga/pg_textsearch/pg_search, which
+                    # index base columns directly and leave search_vector empty (#2503).
+                    from .db.ops_postgresql import pg_search_vector_expr
+
+                    sv_expr = pg_search_vector_expr(get_config())
+                    if sv_expr is not None:
+                        await conn.execute(
+                            f"UPDATE {mu} SET search_vector = {sv_expr} WHERE id = $1 AND bank_id = $2",
+                            str(memory_uuid),
+                            bank_id,
+                        )
                     # Re-consolidate from scratch; links are rebuilt by graph maintenance.
                     await conn.execute(
                         f"UPDATE {mu} SET consolidated_at = NULL, consolidation_failed_at = NULL, updated_at = now() "

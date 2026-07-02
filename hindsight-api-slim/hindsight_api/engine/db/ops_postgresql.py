@@ -9,6 +9,33 @@ from .ops import DataAccessOps, TagListingParts
 from .result import ResultRow
 
 
+def pg_search_vector_expr(
+    config,
+    *,
+    text_col: str = "text",
+    context_col: str = "context",
+    signals_col: str = "text_signals",
+) -> str | None:
+    """SQL expression that builds ``search_vector`` for the configured PG text-search backend.
+
+    Single source of truth shared by the batch insert (over the ``input_data``
+    CTE columns) and the curation revert recompute (over a ``memory_units`` row),
+    so the two can never drift. Returns ``None`` for backends that leave
+    ``search_vector`` unpopulated — pgroonga / pg_textsearch / pg_search index the
+    base text columns directly and keep only a dummy column, so there is nothing
+    to build.
+
+    ``text_search_extension_native_language`` is validated as a PG identifier in
+    ``HindsightConfig.validate()``, so embedding it as a SQL literal is safe.
+    """
+    combined = f"COALESCE({text_col}, '') || ' ' || COALESCE({context_col}, '') || ' ' || COALESCE({signals_col}, '')"
+    if config.text_search_extension == "vchord":
+        return f"tokenize({combined}, 'llmlingua2')::bm25_catalog.bm25vector"
+    if config.text_search_extension == "native":
+        return f"to_tsvector('{config.text_search_extension_native_language}'::regconfig, {combined})"
+    return None
+
+
 class PostgreSQLOps(DataAccessOps):
     """PostgreSQL-specific data access operations using unnest and LATERAL."""
 
@@ -93,101 +120,39 @@ class PostgreSQLOps(DataAccessOps):
         config = get_config()
         table = self._get_mu_table()
 
-        if config.text_search_extension == "vchord":
-            query = f"""
-                WITH input_data AS (
-                    SELECT * FROM unnest(
-                        $2::text[], $3::vector[], $4::timestamptz[], $5::timestamptz[], $6::timestamptz[], $7::timestamptz[],
-                        $8::text[], $9::text[], $10::jsonb[], $11::text[], $12::text[], $13::jsonb[], $14::jsonb[], $15::text[]
-                    ) AS t(text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
-                           context, fact_type, metadata, chunk_id, document_id, tags_json,
-                           observation_scopes_json, text_signals)
-                )
-                INSERT INTO {table} (bank_id, text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
-                                     context, fact_type, metadata, chunk_id, document_id, tags,
-                                     observation_scopes, text_signals, search_vector)
-                SELECT
-                    $1,
-                    text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
-                    context, fact_type, metadata, chunk_id, document_id,
-                    COALESCE(
-                        (SELECT array_agg(elem) FROM jsonb_array_elements_text(tags_json) AS elem),
-                        '{{}}'::varchar[]
-                    ),
-                    observation_scopes_json,
-                    text_signals,
-                    tokenize(
-                        COALESCE(text, '') || ' ' || COALESCE(context, '') || ' ' || COALESCE(text_signals, ''),
-                        'llmlingua2'
-                    )::bm25_catalog.bm25vector
-                FROM input_data
-                RETURNING id
-            """
-        elif config.text_search_extension == "native":
-            # search_vector is a regular tsvector column populated here using the
-            # configured native dictionary. It used to be GENERATED ALWAYS with
-            # a hardcoded 'english', which prevented per-deployment language
-            # configuration. text_search_extension_native_language is validated
-            # in HindsightConfig.validate() as a PG identifier, so embedding it
-            # as a SQL literal is safe.
-            query = f"""
-                WITH input_data AS (
-                    SELECT * FROM unnest(
-                        $2::text[], $3::vector[], $4::timestamptz[], $5::timestamptz[], $6::timestamptz[], $7::timestamptz[],
-                        $8::text[], $9::text[], $10::jsonb[], $11::text[], $12::text[], $13::jsonb[], $14::jsonb[], $15::text[]
-                    ) AS t(text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
-                           context, fact_type, metadata, chunk_id, document_id, tags_json,
-                           observation_scopes_json, text_signals)
-                )
-                INSERT INTO {table} (bank_id, text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
-                                     context, fact_type, metadata, chunk_id, document_id, tags,
-                                     observation_scopes, text_signals, search_vector)
-                SELECT
-                    $1,
-                    text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
-                    context, fact_type, metadata, chunk_id, document_id,
-                    COALESCE(
-                        (SELECT array_agg(elem) FROM jsonb_array_elements_text(tags_json) AS elem),
-                        '{{}}'::varchar[]
-                    ),
-                    observation_scopes_json,
-                    text_signals,
-                    to_tsvector(
-                        '{config.text_search_extension_native_language}'::regconfig,
-                        COALESCE(text, '') || ' ' || COALESCE(context, '') || ' ' || COALESCE(text_signals, '')
-                    )
-                FROM input_data
-                RETURNING id
-            """
-        else:
-            # pg_textsearch, pgroonga, and pg_search: search_vector is a dummy
-            # TEXT column; the actual full-text index operates on the base text
-            # columns directly, so we don't populate search_vector at insert time.
-            query = f"""
-                WITH input_data AS (
-                    SELECT * FROM unnest(
-                        $2::text[], $3::vector[], $4::timestamptz[], $5::timestamptz[], $6::timestamptz[], $7::timestamptz[],
-                        $8::text[], $9::text[], $10::jsonb[], $11::text[], $12::text[], $13::jsonb[], $14::jsonb[], $15::text[]
-                    ) AS t(text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
-                           context, fact_type, metadata, chunk_id, document_id, tags_json,
-                           observation_scopes_json, text_signals)
-                )
-                INSERT INTO {table} (bank_id, text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
-                                     context, fact_type, metadata, chunk_id, document_id, tags,
-                                     observation_scopes, text_signals)
-                SELECT
-                    $1,
-                    text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
-                    context, fact_type, metadata, chunk_id, document_id,
-                    COALESCE(
-                        (SELECT array_agg(elem) FROM jsonb_array_elements_text(tags_json) AS elem),
-                        '{{}}'::varchar[]
-                    ),
-                    observation_scopes_json,
-                    text_signals
-                FROM input_data
-                RETURNING id
-            """
+        # search_vector is populated inline for backends that store a real vector
+        # (native tsvector, vchord bm25vector). pgroonga / pg_textsearch / pg_search
+        # index the base text columns directly and keep only a dummy column, so the
+        # expression is None and the column is left out of the insert entirely.
+        # Same expression is reused by curation revert (see pg_search_vector_expr).
+        sv_expr = pg_search_vector_expr(config)
+        sv_insert_col = ", search_vector" if sv_expr else ""
+        sv_select_val = f",\n                    {sv_expr}" if sv_expr else ""
+        query = f"""
+            WITH input_data AS (
+                SELECT * FROM unnest(
+                    $2::text[], $3::vector[], $4::timestamptz[], $5::timestamptz[], $6::timestamptz[], $7::timestamptz[],
+                    $8::text[], $9::text[], $10::jsonb[], $11::text[], $12::text[], $13::jsonb[], $14::jsonb[], $15::text[]
+                ) AS t(text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
+                       context, fact_type, metadata, chunk_id, document_id, tags_json,
+                       observation_scopes_json, text_signals)
+            )
+            INSERT INTO {table} (bank_id, text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
+                                 context, fact_type, metadata, chunk_id, document_id, tags,
+                                 observation_scopes, text_signals{sv_insert_col})
+            SELECT
+                $1,
+                text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
+                context, fact_type, metadata, chunk_id, document_id,
+                COALESCE(
+                    (SELECT array_agg(elem) FROM jsonb_array_elements_text(tags_json) AS elem),
+                    '{{}}'::varchar[]
+                ),
+                observation_scopes_json,
+                text_signals{sv_select_val}
+            FROM input_data
+            RETURNING id
+        """
 
         results = await conn.fetch(
             query,

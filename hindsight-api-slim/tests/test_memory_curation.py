@@ -101,11 +101,12 @@ async def _archive_row(conn, mem_id: uuid.UUID) -> dict | None:
     return dict(row) if row else None
 
 
-async def _archive_has_embedding_column(conn) -> bool:
+async def _archive_has_column(conn, column: str) -> bool:
     return bool(
         await conn.fetchval(
             "SELECT 1 FROM information_schema.columns "
-            "WHERE table_name = 'invalidated_memory_units' AND column_name = 'embedding'"
+            "WHERE table_name = 'invalidated_memory_units' AND column_name = $1",
+            column,
         )
     )
 
@@ -174,8 +175,11 @@ class TestInvalidate:
             arch = await _archive_row(conn, m1)
             assert arch is not None, "row must be in the archive"
             assert arch["invalidation_reason"] == "decommissioned"
-            assert not await _archive_has_embedding_column(conn), (
+            assert not await _archive_has_column(conn, "embedding"), (
                 "archive is cold storage; the schema drops the embedding column (#2209)"
+            )
+            assert not await _archive_has_column(conn, "search_vector"), (
+                "archive is cold storage with no index; the schema drops search_vector (#2503)"
             )
             assert await _link_count(conn, m1) == 0, "links cascade-pruned on move"
             assert str(obs_id) not in await _obs_ids(conn, bank_id), "derived observation removed"
@@ -216,6 +220,10 @@ class TestInvalidate:
             assert e1 in await _entity_ids_for(conn, m1), "entity associations restored on revert"
             reverted_emb = await conn.fetchval("SELECT embedding FROM memory_units WHERE id = $1", m1)
             assert reverted_emb is not None, "embedding recomputed on revert (archive keeps none)"
+            # Native backend (test default) stores a real tsvector; it must be rebuilt on
+            # revert so the reverted fact is keyword-searchable again (archive keeps none, #2503).
+            reverted_sv = await conn.fetchval("SELECT search_vector FROM memory_units WHERE id = $1", m1)
+            assert reverted_sv is not None, "search_vector recomputed on revert (archive keeps none)"
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
