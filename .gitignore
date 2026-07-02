@@ -41,6 +41,7 @@ nltk_data/
 logs/
 
 .DS_Store
+.sesskey
 
 # Generated docs files
 hindsight-docs/static/llms-full.txt
