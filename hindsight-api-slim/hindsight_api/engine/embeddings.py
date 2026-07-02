@@ -1226,6 +1226,10 @@ class LiteLLMSDKEmbeddings(Embeddings):
         self.encoding_format = encoding_format or None
         self._litellm = None  # Will be set during initialization
         self._dimension: int | None = None
+        # Max per-input tokens accepted by the embedding model, resolved at
+        # initialize(). None means "unknown" -> inputs are sent unchanged
+        # (preserves prior behavior for models we have no limit for).
+        self._max_input_tokens: int | None = None
 
     @property
     def provider_name(self) -> str:
@@ -1282,7 +1286,79 @@ class LiteLLMSDKEmbeddings(Embeddings):
         except Exception as e:
             raise RuntimeError(f"Failed to initialize LiteLLM SDK embeddings: {e}")
 
+        self._max_input_tokens = self._resolve_max_input_tokens()
+        if self._max_input_tokens is not None:
+            logger.info(
+                f"Embeddings: LiteLLM SDK max input tokens for {self.model} = {self._max_input_tokens} "
+                "(oversized inputs will be truncated before embedding)"
+            )
+
         logger.info(f"Embeddings: LiteLLM SDK provider initialized (model: {self.model}, dim: {self._dimension})")
+
+    def _resolve_max_input_tokens(self) -> int | None:
+        """Best-effort per-input token limit for the embedding model.
+
+        Returns None when unknown, in which case encode() sends inputs
+        unchanged. Checks a small table of known embedding-model limits first
+        (substring match on the model name), then falls back to LiteLLM's model
+        metadata. Any lookup failure degrades to None rather than raising.
+        """
+        model_lower = self.model.lower()
+        for marker, limit in _EMBEDDING_MODEL_MAX_INPUT_TOKENS.items():
+            if marker in model_lower:
+                return limit
+        try:
+            info = self._litellm.get_model_info(self.model)
+        except Exception:  # noqa: BLE001 - metadata lookup is best-effort
+            return None
+        if isinstance(info, dict):
+            limit = info.get("max_input_tokens")
+            if isinstance(limit, int) and limit > 0:
+                return limit
+        return None
+
+    def _truncate_to_max_input_tokens(self, text: str) -> str:
+        """Truncate a single input so it fits the model's input token limit.
+
+        Uses LiteLLM's tokenizer for the model when available; falls back to a
+        conservative character estimate if tokenization is unavailable. A safety
+        ratio leaves headroom because a provider's server-side tokenizer (e.g.
+        Amazon Titan) may count differently from the local tokenizer. When no
+        limit is known the text is returned unchanged.
+        """
+        limit = self._max_input_tokens
+        if limit is None:
+            return text
+        budget = max(1, int(limit * _EMBEDDING_INPUT_TOKEN_SAFETY_RATIO))
+        try:
+            tokens = self._litellm.encode(model=self.model, text=text)
+        except Exception:  # noqa: BLE001 - tokenizer may be unavailable
+            tokens = None
+        if tokens is not None:
+            token_count = len(tokens)
+            if token_count <= budget:
+                return text
+            # Input is known-oversized. Prefer an exact token-boundary
+            # truncation via decode; if decode is unavailable or yields an
+            # empty string, cut characters *proportionally* to the token
+            # overflow (robust for scripts where chars-per-token differs from
+            # the 4x estimate, e.g. CJK). Never return the oversized text —
+            # that is exactly the permanent-failure loop #2501 is fixing.
+            try:
+                truncated = self._litellm.decode(model=self.model, tokens=tokens[:budget])
+                if truncated:
+                    return truncated
+            except Exception:  # noqa: BLE001 - decode is best-effort
+                pass
+            proportional_chars = max(1, int(len(text) * budget / token_count))
+            return text[:proportional_chars]
+        # Tokenization unavailable: only shorten inputs that are obviously
+        # oversized by a conservative character estimate (~4 chars/token);
+        # leave smaller inputs untouched.
+        max_chars = budget * 4
+        if len(text) > max_chars:
+            return text[:max_chars]
+        return text
 
     def encode(self, texts: list[str]) -> list[list[float]]:
         """
@@ -1305,6 +1381,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
         # Process in batches
         for i in range(0, len(texts), self.batch_size):
             batch = texts[i : i + self.batch_size]
+            if self._max_input_tokens is not None:
+                batch = [self._truncate_to_max_input_tokens(text) for text in batch]
 
             try:
                 # Build kwargs for embedding call
@@ -1351,6 +1429,24 @@ class LiteLLMSDKEmbeddings(Embeddings):
 # names (e.g. "gemini-embedding-2-preview", "gemini-embedding-2"), with or
 # without a "google/" or "models/" prefix.
 _GEMINI_AGGREGATING_MODEL_MARKER = "gemini-embedding-2"
+
+# Known per-input token limits for embedding models, matched as a substring of
+# the (lowercased) model name. Sending an input longer than the provider's
+# limit fails the whole embedding call; for delta-refreshed mental models this
+# can pin a model in a permanent refresh-failure loop (see issue #2501). LiteLLM
+# model metadata is consulted as a fallback for anything not listed here.
+_EMBEDDING_MODEL_MAX_INPUT_TOKENS: dict[str, int] = {
+    "amazon.titan-embed-text-v2": 8192,
+    "amazon.titan-embed-text-v1": 8192,
+    "text-embedding-3-small": 8191,
+    "text-embedding-3-large": 8191,
+    "text-embedding-ada-002": 8191,
+}
+
+# Fraction of the model's input token limit to target when truncating. Leaves
+# headroom because a provider's server-side tokenizer may count more tokens
+# than the local tokenizer used for truncation.
+_EMBEDDING_INPUT_TOKEN_SAFETY_RATIO = 0.95
 
 
 def _gemini_model_aggregates_inputs(model: str) -> bool:

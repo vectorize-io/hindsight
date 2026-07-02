@@ -496,6 +496,158 @@ class TestLiteLLMSDKEmbeddings:
                 await emb.initialize()
 
 
+    async def test_resolve_max_input_tokens_from_known_table(self, mock_litellm):
+        """Known embedding models resolve their input-token limit from the table."""
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
+            emb = LiteLLMSDKEmbeddings(model="bedrock/amazon.titan-embed-text-v2:0")
+            await emb.initialize()
+
+            assert emb._max_input_tokens == 8192
+            mock_litellm.get_model_info.assert_not_called()
+
+    async def test_resolve_max_input_tokens_falls_back_to_litellm_metadata(self, mock_litellm):
+        """Unknown models fall back to litellm.get_model_info()['max_input_tokens']."""
+        mock_litellm.get_model_info.return_value = {"max_input_tokens": 2048}
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
+            emb = LiteLLMSDKEmbeddings(model="some-provider/mystery-embed")
+            await emb.initialize()
+
+            assert emb._max_input_tokens == 2048
+            mock_litellm.get_model_info.assert_called_once_with("some-provider/mystery-embed")
+
+    async def test_resolve_max_input_tokens_unknown_is_none(self, mock_litellm):
+        """When neither the table nor litellm metadata yields a limit, it stays None."""
+        mock_litellm.get_model_info.side_effect = Exception("no metadata")
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
+            emb = LiteLLMSDKEmbeddings(model="some-provider/mystery-embed")
+            await emb.initialize()
+
+            assert emb._max_input_tokens is None
+
+    async def test_encode_truncates_oversized_input(self, mock_litellm):
+        """Oversized single input is shortened to the model's token budget before embedding."""
+        oversized_tokens = list(range(9000))
+        mock_litellm.encode.return_value = oversized_tokens
+        mock_litellm.decode.return_value = "truncated-content"
+        mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+
+        emb = LiteLLMSDKEmbeddings(model="bedrock/amazon.titan-embed-text-v2:0")
+        emb._litellm = mock_litellm
+        emb._dimension = 768
+        emb._max_input_tokens = 8192
+
+        result = emb.encode(["x" * 100000])
+
+        assert len(result) == 1
+        decode_kwargs = mock_litellm.decode.call_args.kwargs
+        assert len(decode_kwargs["tokens"]) == int(8192 * 0.95)
+        embed_kwargs = mock_litellm.embedding.call_args.kwargs
+        assert embed_kwargs["input"] == ["truncated-content"]
+
+    async def test_encode_oversized_falls_back_to_char_cut_when_decode_empty(self, mock_litellm):
+        """If decode() yields an empty string, an oversized input is still cut (never sent whole).
+
+        Regression guard: a decode that returns "" must not let the original
+        oversized text through — that is the exact #2501 failure mode.
+        """
+        mock_litellm.encode.return_value = list(range(9000))
+        mock_litellm.decode.return_value = ""  # decode unavailable / empty
+        mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+
+        emb = LiteLLMSDKEmbeddings(model="bedrock/amazon.titan-embed-text-v2:0")
+        emb._litellm = mock_litellm
+        emb._dimension = 768
+        emb._max_input_tokens = 8192
+
+        budget = int(8192 * 0.95)
+        # Dense text where char count ~ token count (each "char" is one token
+        # in this mock: encode returns 9000 tokens for a 9000-char string), so a
+        # fixed budget*4 char cut would wrongly pass it through. The proportional
+        # fallback must cut to ~budget chars here.
+        dense = "d" * 9000
+        result = emb.encode([dense])
+
+        assert len(result) == 1
+        sent = mock_litellm.embedding.call_args.kwargs["input"][0]
+        # proportional cut: len(text) * budget / token_count = 9000 * budget / 9000 = budget
+        expected = int(9000 * budget / 9000)
+        assert sent == "d" * expected
+        assert len(sent) < len(dense)
+
+    async def test_encode_preserves_input_order_and_count_in_mixed_batch(self, mock_litellm):
+        """A mixed-size batch keeps 1:1 input->vector alignment; only oversized inputs change."""
+        # index 0 oversized, index 1 small, index 2 oversized.
+        def fake_encode(model, text):
+            return list(range(9000)) if text.startswith("BIG") else list(range(5))
+
+        mock_litellm.encode.side_effect = fake_encode
+        mock_litellm.decode.return_value = "CUT"
+
+        def fake_embedding(model, input, **kwargs):
+            resp = MagicMock()
+            resp.data = [{"embedding": [float(i)] * 768, "index": i} for i in range(len(input))]
+            return resp
+
+        mock_litellm.embedding.side_effect = fake_embedding
+
+        emb = LiteLLMSDKEmbeddings(model="bedrock/amazon.titan-embed-text-v2:0", batch_size=100)
+        emb._litellm = mock_litellm
+        emb._dimension = 768
+        emb._max_input_tokens = 8192
+
+        result = emb.encode(["BIG-a", "small-b", "BIG-c"])
+
+        assert len(result) == 3  # 1:1 alignment preserved
+        sent = mock_litellm.embedding.call_args.kwargs["input"]
+        assert sent[0] == "CUT"       # oversized truncated
+        assert sent[1] == "small-b"   # small untouched, position preserved
+        assert sent[2] == "CUT"       # oversized truncated
+
+    async def test_encode_does_not_truncate_within_budget(self, mock_litellm):
+        """Inputs already under the token budget are sent unchanged (no decode)."""
+        mock_litellm.encode.return_value = list(range(10))
+        mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+
+        emb = LiteLLMSDKEmbeddings(model="bedrock/amazon.titan-embed-text-v2:0")
+        emb._litellm = mock_litellm
+        emb._dimension = 768
+        emb._max_input_tokens = 8192
+
+        result = emb.encode(["short text"])
+
+        assert len(result) == 1
+        mock_litellm.decode.assert_not_called()
+        embed_kwargs = mock_litellm.embedding.call_args.kwargs
+        assert embed_kwargs["input"] == ["short text"]
+
+    async def test_encode_skips_truncation_when_limit_unknown(self, mock_litellm):
+        """When no input-token limit is known, inputs are sent unchanged (prior behavior)."""
+        mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+
+        emb = LiteLLMSDKEmbeddings(model="some-provider/mystery-embed")
+        emb._litellm = mock_litellm
+        emb._dimension = 768
+        emb._max_input_tokens = None
+
+        big_text = "x" * 100000
+        result = emb.encode([big_text])
+
+        assert len(result) == 1
+        mock_litellm.encode.assert_not_called()
+        mock_litellm.decode.assert_not_called()
+        embed_kwargs = mock_litellm.embedding.call_args.kwargs
+        assert embed_kwargs["input"] == [big_text]
+
+
 class TestLiteLLMSDKEmbeddingsFactory:
     """Test the factory function for creating LiteLLM SDK embeddings."""
 
