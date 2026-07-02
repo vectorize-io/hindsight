@@ -11,11 +11,17 @@
  * The only harness-specific step is (3): --harness selects how past sessions are read. Git ingest,
  * strategies, missions, and pages are identical across agents.
  *
+ * Shared connection/bank settings (api-url, api-token, bank, harness) come from the JSON config
+ * ~/.hindsight/coding-agent.json — the SAME file the runtime plugin reads; the matching --flags below
+ * override it. Operation flags (--repo, --conversations, --limit, --reset, --no-pages, --concurrency)
+ * are CLI-only.
+ *
  * Usage:
- *   hindsight-coding-backfill --repo <path> --bank <id> [--harness opencode] \
+ *   hindsight-coding-backfill --repo <path> [--bank <id>] [--harness opencode] \
  *       [--conversations <sessions.json>] [--api-url http://localhost:8888] [--api-token X] \
- *       [--limit N] [--reset] [--no-pages] [--concurrency 8]
+ *       [--config <path>] [--limit N] [--reset] [--no-pages] [--concurrency 8]
  */
+import { loadConfig, CONFIG_PATH } from "./core/config";
 import { HindsightClient } from "./core/hindsight";
 import { ingestGit } from "./core/git";
 import { ingestChats } from "./core/chat";
@@ -27,12 +33,15 @@ function arg(name: string, def?: string): string | undefined {
   return process.argv.includes(`--${name}`) ? "true" : def;
 }
 
+// Shared settings: config file provides the base; the matching --flag overrides per-run.
+const cfg = loadConfig(arg("config") ?? CONFIG_PATH);
 const REPO = arg("repo");
-const BANK = arg("bank");
-const HARNESS = arg("harness", "opencode") as string;
+const BANK = arg("bank") ?? cfg.bankId;
+const HARNESS = arg("harness") ?? cfg.harness;
+const API_URL = arg("api-url") ?? cfg.apiUrl;
+const API_TOKEN = arg("api-token") ?? cfg.apiToken;
+// Operation-only flags (never in config):
 const CONV = arg("conversations");
-const API_URL = arg("api-url", "http://localhost:8888") as string;
-const API_TOKEN = arg("api-token");
 const LIMIT = arg("limit") ? Number(arg("limit")) : undefined;
 const RESET = process.argv.includes("--reset");
 const NO_PAGES = process.argv.includes("--no-pages");
@@ -40,9 +49,10 @@ const CONCURRENCY = Number(arg("concurrency", "8"));
 
 if (!REPO || !BANK) {
   console.error(
-    "usage: hindsight-coding-backfill --repo <path> --bank <id> [--harness <name>] " +
-    "[--conversations f.json] [--api-url U] [--limit N] [--reset] [--no-pages] [--concurrency N]\n" +
-    `harnesses: ${HARNESS_NAMES.join(", ")}`,
+    "usage: hindsight-coding-backfill --repo <path> [--bank <id>] [--harness <name>] " +
+      "[--conversations f.json] [--api-url U] [--config path] [--limit N] [--reset] [--no-pages] [--concurrency N]\n" +
+      "shared settings default from ~/.hindsight/coding-agent.json; --bank is required there or via --bank.\n" +
+      `harnesses: ${HARNESS_NAMES.join(", ")}`
   );
   process.exit(1);
 }
@@ -69,8 +79,10 @@ async function main() {
   else await client.createPages();
 
   const failures = chatFails + gitFails;
-  console.log(`\n✅ backfill complete${failures ? ` (${failures} items failed to enqueue)` : ""}. ` +
-              "Point the plugin at this bank via HINDSIGHT_BANK_ID.");
+  console.log(
+    `\n✅ backfill complete${failures ? ` (${failures} items failed to enqueue)` : ""}. ` +
+      `Point the plugin at this bank by setting "bankId": "${BANK}" in ~/.hindsight/coding-agent.json.`
+  );
 }
 
 main().catch((e) => {

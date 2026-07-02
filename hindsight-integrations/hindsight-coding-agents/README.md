@@ -11,6 +11,15 @@ to a specific coding agent (opencode today; others slot in via the harness regis
   Hindsight `reflect`, gets back a synthesized **root-cause** answer drawn from the ingested history,
   and pushes it into the **system prompt** every turn (so it survives interventions). No tools, no
   recall — the memory is injected, not requested.
+- **On-demand memory tool (`memory_reflect`)** — the agent can also query project memory itself, at any
+  point mid-task, via a `memory_reflect` tool. Same synthesized `reflect` as the auto-injection, but on
+  demand: give it a symptom/question and it returns the root-cause answer (exact rules/values + REF-ID
+  citations) from this repo's history. Complements the automatic first-message injection.
+- **Incremental git-sync (opt-in)** — when enabled (`gitSync.enabled: true`), on load the plugin checks
+  whether the bank is up to date with the repo's target ref (`origin/main`, falling back to `HEAD`): it
+  diffs the ref's commits against the commit `document_id`s already ingested and **async-retains only the
+  missing ones**, using the same per-commit encoding as the backfill. Set-based, so it's correct across
+  rebases/force-push; best-effort and non-blocking. Off by default.
 - **Live write-back (opt-in)** — with `HINDSIGHT_RETAIN_SESSIONS` on, every few turns it upserts the
   user/assistant transcript (tool calls dropped) under a stable per-session `document_id`, so future
   sessions can learn from this one. Off by default.
@@ -31,47 +40,65 @@ type is extracted with settings suited to it — in one bank, one pass.
 A "harness" is a coding agent. Each one differs in exactly two places — everything else is shared
 core (`src/core/`):
 
-| harness | past-session source (backfill) | runtime binding |
-|---|---|---|
+| harness    | past-session source (backfill)             | runtime binding             |
+| ---------- | ------------------------------------------ | --------------------------- |
 | `opencode` | normalized JSON export (`--conversations`) | `@opencode-ai/plugin` hooks |
 
 Add an agent by implementing `HarnessAdapter` (`src/core/types.ts`) in one file under `src/harness/`
-and registering it in `src/harness/registry.ts`. Select it with `--harness` (backfill) or
-`HINDSIGHT_HARNESS` (runtime, default `opencode`).
+and registering it in `src/harness/registry.ts`. Select it with `--harness` (backfill) or the
+`harness` config key (runtime, default `opencode`).
 
 ## Backfill
+
+Shared settings (`--bank`, `--api-url`, `--api-token`, `--harness`) default from the config file
+(below); the flags override per run. Operation flags are CLI-only.
 
 ```bash
 hindsight-coding-backfill \
   --repo /path/to/repo \
-  --bank myproject \
-  --harness opencode \
-  --conversations sessions.json \
-  --api-url http://localhost:8888 \
-  [--limit 100] [--reset] [--no-pages] [--concurrency 8]
+  [--bank myproject] [--harness opencode] \
+  [--conversations sessions.json] [--api-url http://localhost:8888] [--api-token X] \
+  [--config <path>] [--limit 100] [--reset] [--no-pages] [--concurrency 8]
 ```
 
 `sessions.json` (opencode export): `[{ "id": "s1", "turns": [{"role":"user","text":"..."}, {"role":"assistant","text":"..."}] }, ...]`
 
 Tip: run with `--limit 100` first to validate the setup before a full-history ingest.
 
+## Configuration
+
+All configuration is a single JSON file — **`~/.hindsight/coding-agent.json`** — read by both the
+runtime plugin and the backfill CLI (there are **no environment variables**). The file is optional;
+every field has a default.
+
+```jsonc
+{
+  "apiUrl": "http://localhost:8888", // Hindsight API base URL
+  "apiToken": "...", // bearer token (optional)
+  "bankId": "myproject", // memory bank id (default "coding")
+  "harness": "opencode", // runtime adapter (default "opencode")
+  "disabled": false, // hard off-switch — inert plugin, for a no-memory baseline
+  "retainSessions": false, // enable live write-back
+  "retainEveryTurns": 5, // write-back cadence (user turns)
+  "reflectTimeoutMs": 120000, // reflect timeout
+  "gitSync": {
+    // incremental on-load git-sync
+    "enabled": false, //   off by default; set true to keep the bank current with new commits
+    "ref": "origin/main", //   sync target ref (falls back to HEAD if absent)
+    "fetch": false, //   git fetch the ref before diffing (no network by default)
+  },
+}
+```
+
 ## Plugin (opencode)
 
-Add to `opencode.json` and configure via env:
+Register the plugin in `opencode.json` (all behaviour is configured via the JSON file above):
 
 ```json
 { "plugin": ["/path/to/hindsight-coding-agents"] }
 ```
 
-```bash
-HINDSIGHT_API_URL=http://localhost:8888   # default
-HINDSIGHT_BANK_ID=myproject
-HINDSIGHT_HARNESS=opencode                # default; selects the runtime adapter
-# HINDSIGHT_API_TOKEN=...           (optional)
-# HINDSIGHT_RETAIN_SESSIONS=1       (enable live write-back)
-# HINDSIGHT_RETAIN_EVERY_TURNS=5    (write-back cadence)
-# HINDSIGHT_DISABLED=1              (hard off-switch — inert plugin, for a no-memory baseline)
-```
+The agent also gets a **`memory_reflect`** tool automatically (opencode) — no config needed.
 
 Local Hindsight: `docker run -d -p 8888:8888 -p 9999:9999 -e HINDSIGHT_API_LLM_PROVIDER=gemini -e HINDSIGHT_API_LLM_API_KEY=$GEMINI_API_KEY -e HINDSIGHT_API_LLM_MODEL=gemini-2.5-flash ghcr.io/vectorize-io/hindsight:latest`
 
@@ -79,8 +106,8 @@ Local Hindsight: `docker run -d -p 8888:8888 -p 9999:9999 -e HINDSIGHT_API_LLM_P
 
 ```
 src/
-  core/        # harness-agnostic: hindsight client, missions, git + chat ingest, inject, RuntimeCore
+  core/        # harness-agnostic: config, hindsight client, missions, git + chat ingest, git-sync, inject, RuntimeCore
   harness/     # per-agent adapters + registry (opencode)
-  index.ts     # opencode runtime entrypoint (resolves HINDSIGHT_HARNESS -> adapter -> RuntimeCore)
-  backfill.ts  # CLI (resolves --harness -> adapter.chatReader; shared git/chat/pages ingest)
+  index.ts     # opencode runtime entrypoint (loads config -> resolves harness -> adapter -> RuntimeCore)
+  backfill.ts  # CLI (config + --flags; resolves --harness -> adapter.chatReader; shared git/chat/pages ingest)
 ```

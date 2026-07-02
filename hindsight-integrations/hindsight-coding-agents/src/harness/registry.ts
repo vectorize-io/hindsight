@@ -1,6 +1,6 @@
 /**
  * Harness registry. Add a coding agent by implementing HarnessAdapter (one file in this dir) and
- * registering it here — the backfill's --harness flag and the runtime's HINDSIGHT_HARNESS env both
+ * registering it here — the backfill's --harness flag and the runtime's `harness` config key both
  * resolve through getHarness().
  */
 import type { HarnessAdapter } from "../core/types";
