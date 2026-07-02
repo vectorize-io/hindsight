@@ -642,18 +642,26 @@ def _effective_scope_limit(config: Any, fact_tags: list[str]) -> int:
 
 
 def _build_response_model(max_creates: int | None = None) -> type[_ConsolidationBatchResponse]:
-    """Build a response model, optionally constraining max creates via JSON schema."""
-    if max_creates is None or max_creates < 0:
-        return _ConsolidationBatchResponse
+    """Return the consolidation response model.
 
-    from pydantic import Field as PydanticField
+    This previously returned a dynamic subclass that attached a Pydantic
+    ``max_length`` to ``creates`` when an observation-scope cap was active. Pydantic
+    v2 serialises a list ``max_length`` to the JSON-schema ``maxItems`` keyword, and
+    Bedrock Converse rejects ``maxItems`` on array types outright
+    (``output_config.format.schema: For 'array' type, property 'maxItems' is not
+    supported``), so a single ``maxItems`` in the response schema breaks 100% of
+    consolidation for every Bedrock-backed bank that sets
+    ``max_observations_per_scope > 0`` (#2500).
 
-    clamped = max(max_creates, 0)
-
-    class _ConstrainedConsolidationBatchResponse(_ConsolidationBatchResponse):
-        creates: list[_CreateAction] = PydanticField(default=[], max_length=clamped)
-
-    return _ConstrainedConsolidationBatchResponse
+    The observation cap does not depend on this schema hint: it is enforced by the
+    prompt-level capacity note and, authoritatively, by the unconditional truncation
+    of ``creates`` to ``remaining_observation_slots`` in the batch-call path (see
+    ``_run_consolidation_batch``). The schema constraint was therefore redundant for
+    correctness and is dropped so the emitted schema stays provider-portable.
+    ``max_creates`` is retained for call-site stability and a possible future
+    provider-gated hint.
+    """
+    return _ConsolidationBatchResponse
 
 
 class ConsolidationPerfLog:
