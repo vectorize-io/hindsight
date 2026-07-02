@@ -156,7 +156,7 @@ export function MentalModelsView() {
     try {
       // The API caps each response at PAGE_SIZE, so page through until a short
       // page is returned to load every mental model for this bank.
-      const PAGE_SIZE = 1000;
+      const PAGE_SIZE = 100;
       const all: MentalModel[] = [];
       for (let offset = 0; ; offset += PAGE_SIZE) {
         const page = await client.listMentalModels(
