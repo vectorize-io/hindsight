@@ -1239,7 +1239,7 @@ function UpdateMentalModelDialog({
       const updated = await client.updateMentalModel(currentBank, mentalModel.id, {
         name: form.name.trim(),
         source_query: form.sourceQuery.trim(),
-        tags: tags.length > 0 ? tags : undefined,
+        tags,
         max_tokens: maxTokens,
         trigger: {
           mode: form.mode,
