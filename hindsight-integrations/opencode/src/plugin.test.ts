@@ -15,10 +15,15 @@ import { HindsightPlugin } from "./index.js";
 import { DEFAULT_HINDSIGHT_API_URL } from "./config.js";
 import { HindsightClient } from "@vectorize-io/hindsight-client";
 
+const MOCK_MESSAGES = [
+  { info: { role: "user" }, parts: [{ type: "text", text: "Help me with this" }] },
+  { info: { role: "assistant" }, parts: [{ type: "text", text: "Sure, let me help" }] },
+];
+
 const mockPluginInput = {
   client: {
     session: {
-      messages: vi.fn().mockResolvedValue({ data: [] }),
+      messages: vi.fn().mockResolvedValue({ data: MOCK_MESSAGES }),
     },
   },
   project: { id: "test-project", worktree: "/tmp/test", vcs: "git" },
@@ -117,21 +122,22 @@ describe("HindsightPlugin state sharing", () => {
     const result1 = await HindsightPlugin(mockPluginInput as any);
     const result2 = await HindsightPlugin(mockPluginInput as any);
 
-    // Trigger session.created on session 1 — should track 'sess-A'
-    await result1.event!({
-      event: { type: "session.created", properties: { info: { id: "sess-A" } } },
-    });
-
-    // Session 2's system transform should see 'sess-A' because state is shared
-    const output = { system: [] as string[] };
-    await result2["experimental.chat.system.transform"]!(
+    // Trigger system.transform on session 1 — should recall and track turn count
+    const output1 = { system: [] as string[] };
+    await result1["experimental.chat.system.transform"]!(
       { sessionID: "sess-A", model: {} },
-      output
+      output1
     );
 
-    // The recall was attempted (state was shared — sess-A was found in recalledSessions).
-    // If state were per-instance, result2 would have an empty recalledSessions and skip recall.
+    // Session 2's system transform should continue the turn count because state is shared
+    const output2 = { system: [] as string[] };
+    await result2["experimental.chat.system.transform"]!(
+      { sessionID: "sess-A", model: {} },
+      output2
+    );
+
     // result2 uses the second HindsightClient instance (index 1).
+    // Since we recall every turn (not just once per session), the client should have been called.
     const clientInstance = (HindsightClient as any).mock.instances[1];
     expect(clientInstance.recall).toHaveBeenCalled();
   });

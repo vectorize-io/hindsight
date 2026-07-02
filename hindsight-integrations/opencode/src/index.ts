@@ -30,8 +30,7 @@ import { Logger, type OpencodeLogClient } from "./logger.js";
 const state: PluginState = {
   turnCount: 0,
   missionsSet: new Set(),
-  recalledSessions: new Set(),
-  lastRetainedTurn: new Map(),
+  sessionTurnCount: new Map(),
 };
 
 const HindsightPlugin: Plugin = async (input, options) => {

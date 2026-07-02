@@ -143,8 +143,8 @@ export function sliceLastTurnsByUserBoundary(messages: Message[], turns: number)
 export function prepareRetentionTranscript(
   messages: Message[],
   retainFullWindow: boolean = false
-): { transcript: string | null; messageCount: number } {
-  if (!messages.length) return { transcript: null, messageCount: 0 };
+): string | null {
+  if (!messages.length) return null;
 
   let targetMessages: Message[];
   if (retainFullWindow) {
@@ -158,7 +158,7 @@ export function prepareRetentionTranscript(
         break;
       }
     }
-    if (lastUserIdx === -1) return { transcript: null, messageCount: 0 };
+    if (lastUserIdx === -1) return null;
     targetMessages = messages.slice(lastUserIdx);
   }
 
@@ -169,10 +169,10 @@ export function prepareRetentionTranscript(
     parts.push(`[role: ${msg.role}]\n${content}\n[${msg.role}:end]`);
   }
 
-  if (!parts.length) return { transcript: null, messageCount: 0 };
+  if (!parts.length) return null;
 
   const transcript = parts.join("\n\n");
-  if (transcript.trim().length < 10) return { transcript: null, messageCount: 0 };
+  if (transcript.trim().length < 10) return null;
 
-  return { transcript, messageCount: parts.length };
+  return transcript;
 }

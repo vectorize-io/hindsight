@@ -48,7 +48,7 @@ describe("createTools", () => {
       );
 
       expect(client.retain).toHaveBeenCalledWith("test-bank", "User likes TypeScript", {
-        context: "opencode",
+        context: "conversation between OpenCode Agent and the User",
         tags: undefined,
         metadata: undefined,
       });
@@ -90,7 +90,7 @@ describe("createTools", () => {
       await tools.hindsight_retain.execute({ content: "Fact" }, mockContext);
 
       expect(client.retain).toHaveBeenCalledWith("test-bank", "Fact", {
-        context: "opencode",
+        context: "conversation between OpenCode Agent and the User",
         tags: ["coding"],
         metadata: { source: "opencode" },
       });
@@ -116,7 +116,9 @@ describe("createTools", () => {
       expect(client.recall).toHaveBeenCalledWith("test-bank", "user preferences", {
         budget: "mid",
         maxTokens: 1024,
-        types: ["world", "experience"],
+        tags: undefined,
+        tagsMatch: undefined,
+        types: ["observation", "world", "experience"],
       });
       expect(result).toContain("User likes Python");
       expect(result).toContain("[world]");
@@ -148,7 +150,9 @@ describe("createTools", () => {
       expect(client.recall).toHaveBeenCalledWith("test-bank", "test", {
         budget: "high",
         maxTokens: 4096,
-        types: ["world", "experience"],
+        tags: undefined,
+        tagsMatch: undefined,
+        types: ["observation", "world", "experience"],
       });
     });
   });
